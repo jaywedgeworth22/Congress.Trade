@@ -40,7 +40,7 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Deno Deploy**, connecting to a **Turso (LibSQL)** database.
+- The backend app runs on **Coolify** (self-hosted Docker container on Oracle), connecting to a **Turso (LibSQL)** database.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
 - Queues are emulated using a custom `deno_runtime_queue` table in Turso, polled via a Deno cron.
 - Root files are supporting context:
@@ -293,4 +293,3 @@ Client apps (peer clients of the backend, not separate products):
 
 ## Production Deployment Urgency
 - **NO HOLDING OFF PRODUCTION**: Do not hold completed or near-completed work on preview servers or locally unless actively testing something known to be unsafe or broken in production. If the code is ready, merge and deploy it to production immediately.
-- **DEPLOYMENT QUOTA PROTECTION**: NEVER increase the `DEPLOY_MAX_PER_DAY` limit in `.github/workflows/deploy-deno.yml`. This cap is in place to prevent burning through Deno Deploy free tier quota during merge storms. If the cap is reached, wait for the daily reset or use `workflow_dispatch` with `force=true` sparingly. DO NOT bump the baseline integer value in the yaml file.
