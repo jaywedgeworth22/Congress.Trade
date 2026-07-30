@@ -40,7 +40,7 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Deno Deploy**, connecting to a **Turso (LibSQL)** database.
+- The backend app runs on **Coolify** (self-hosted Docker container on Oracle), connecting to a **Turso (LibSQL)** database.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
 - Queues are emulated using a custom `deno_runtime_queue` table in Turso, polled via a Deno cron.
 - Root files are supporting context:

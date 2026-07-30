@@ -149,8 +149,7 @@ console.log(`   OK: ${checked} inline <script> block(s) parsed cleanly.`);
 NODE_SMOKE
 }
 
-echo "==> Deploying"
-npm run deploy
+echo "==> Production deployment is managed by Coolify (triggered automatically on push to main)."
 
 echo "==> Live app liveness check"
 ADMIN_BASE="$BASE"
