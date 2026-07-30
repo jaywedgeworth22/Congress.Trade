@@ -19,13 +19,13 @@ jobs:
     steps:
       - name: Queue Coolify deployment
         env:
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_AGENTS }}
           COOLIFY_UUID: congress-trade
           FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${COOLIFY_TOKEN:-}" ]; then
-            echo "::error::COOLIFY_API_TOKEN secret missing. Auto-deploy still works via Coolify webhook on push to main."
+            echo "::error::COOLIFY_AGENTS secret missing (full-permission Coolify token; not the read-only server-stats token). Auto-deploy still works via Coolify webhook on push to main."
             exit 1
           fi
           force_q=""
