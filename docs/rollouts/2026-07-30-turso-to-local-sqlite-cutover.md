@@ -54,24 +54,27 @@ fresh full sync was performed instead of using the stale file.
   the owner's convenience.
 - **R2 writes are failing (pre-existing, unrelated to the DB cutover):**
   container logs show `bulk snapshot failed: Unauthorized` and
-  `Failed to delete raw file raw/H-... from R2 Unauthorized`. The `AWS_*`
-  secrets baked in `.prod.vars` exactly match current Infisical prod values,
-  so the app is presenting the "right" credentials — the R2 API token itself
-  is revoked/invalid on the `admin@congress.trade` Cloudflare account
-  (account id `0e9f5a0c...`; `CLOUDFLARE_CT_API_TOKEN` belongs to a different
-  account and cannot see it). Remediation: create a fresh R2 API token on that
-  Cloudflare account, update Infisical `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY`, then update `/tmp/.prod.vars` on the host (the
-  build-time injection source) or set the two keys as Coolify runtime envs.
-- Note the bucket mismatch baked in config: `AWS_S3_BUCKET_NAME` =
-  `congress-trade-bucket` vs `R2_BUCKET_NAME` = `congress-trade` — the AWS_*
-  value wins in `main.ts` resolution order; confirm which bucket is canonical
-  when minting the new token.
+  `Failed to delete raw file raw/H-... from R2 Unauthorized`. Verified with a
+  signed S3 call using the exact runtime config: endpoint and bucket
+  (`congress-trade-bucket`, which exists on the `admin@congress.trade`
+  account, created 2026-07-24) are correct, so the 401 means the R2 API token
+  itself was **deleted on that Cloudflare account** (R2 returns 401
+  "Unauthorized" for unknown access keys). Remediation (owner, dashboard
+  only): R2 → Manage R2 API Tokens → create Account/bucket-scoped token with
+  Object Read & Write on `congress-trade-bucket`, then update Infisical
+  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — the app picks the new values
+  up automatically within the 600s secrets-cache TTL now that
+  `INFISICAL_APP_PROJECT_ID` is set (see correction in
+  `2026-07-30-caddy-stable-alias-prod-502.md`). NOTE: the
+  `CLOUDFLARE_CT_API_TOKEN` value stored in Infisical is itself rejected by
+  the Cloudflare API (code 1000 "Invalid API Token", and at 53 chars it is
+  not shaped like a standard 40-char CF token) — worth re-checking what it
+  was meant to be.
 - The 45s cron-deadline starvation persists on local SQLite (root cause is
   network lanes: FMP/peer/bulk-snapshot attempts), reinforcing the flagged
   follow-up to split daily lanes onto staggered schedules.
 - Post-cutover, `app/scripts/ship.sh` / migrate paths still apply: schema
   changes continue to go through `POST /api/admin/migrate` against the local
-  file (admin token = the value baked in `.prod.vars`; Infisical prod
-  `ADMIN_TOKEN` is a different, rejected value — see
-  `2026-07-30-caddy-stable-alias-prod-502.md` follow-ups).
+  file (admin token = the Infisical prod `ADMIN_TOKEN`, live since the
+  `INFISICAL_APP_PROJECT_ID` fix — see correction in
+  `2026-07-30-caddy-stable-alias-prod-502.md`).
