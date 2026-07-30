@@ -143,6 +143,8 @@ export interface Transaction {
   createdAt: string;
   /** Monotonic cursor for REST `?since=` paging. Assigned at insert. */
   cursorSeq: number;
+  /** Audit note detailing data cleaning or normalization operations. */
+  cleaningNote?: string | null;
   // --- Optional resolved filer identity (feed/stream only) -----------------
   // Populated only on the dashboard feed + SSE paths (LEFT JOIN filers); absent
   // on the webhook/normalizer paths, hence optional. null when unresolved.

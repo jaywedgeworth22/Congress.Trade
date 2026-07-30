@@ -2929,7 +2929,7 @@ var FEED_COLS = [
   { id: 'traded', label: 'Date Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
-  { id: 'asset', label: 'Asset Type', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
+  { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
@@ -2942,6 +2942,7 @@ var FEED_COLS = [
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
+  { id: 'notes', label: 'Notes', sort: null, def: false, cls: 'muted', tip: 'Data normalization and asset cleaning audit notes.', cell: function (r) { return clipTextHtml(r.cleaningNote || '', '—', r.cleaningNote || ''); } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
@@ -3446,7 +3447,8 @@ function txToRow(tx) {
     refCountry: tx.refCountry || '',
     refExchangeShort: tx.refExchangeShort || '',
     refAssetClass: tx.refAssetClass || '',
-    refCompanyName: tx.refCompanyName || ''
+    refCompanyName: tx.refCompanyName || '',
+    cleaningNote: tx.cleaningNote || ''
   };
 }
 function rememberTradeRow(row) {
@@ -8072,6 +8074,7 @@ function openTrade(row) {
       kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
       kvRow('Asset Type', assetTypeDetailHtml(row)) +
       kvRow('Imported', esc(dateTimeText(row.imported))) +
+      (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
   var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sale' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';

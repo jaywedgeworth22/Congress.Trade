@@ -60,6 +60,7 @@ export interface TransactionRow {
   est_value: number | null;
   disclosure_lag_days?: number | null;
   stock_act_status?: string | null;
+  cleaning_note?: string | null;
 }
 
 /**
@@ -169,6 +170,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     cursorSeq: row.cursor_seq ?? 0,
     disclosureLagDays: row.disclosure_lag_days ?? null,
     stockActStatus: (row.stock_act_status as StockActStatus | null) ?? null,
+    cleaningNote: row.cleaning_note ?? null,
   };
   return transaction;
 }
