@@ -6,7 +6,7 @@ on:
 jobs:
   diagnostics:
     name: Diagnose workerd EPIPE on self-hosted runner
-    runs-on: [self-hosted, oracle-ci]
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - name: Checkout

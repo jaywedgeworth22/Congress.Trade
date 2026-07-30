@@ -7,14 +7,14 @@ const workflowNames = (await readdir(workflowsDir))
   .sort();
 
 const errors = [];
-// Allowed literal runner labels and the dynamic fallback expression.
 const allowedRunners = new Set([
   "[self-hosted, oracle-ci]",
   "[self-hosted, congress-ci]",
   "self-hosted",
+  "ubuntu-latest",
 ]);
-// Dynamic expressions retired with the self-hosted fleet (2026-07-29).
-const allowedRunnerExpression = "";
+// Dynamic expression: self-hosted when repo is private, cloud (ubuntu-latest) when public.
+const allowedRunnerExpression = '${{ github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}';
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
 

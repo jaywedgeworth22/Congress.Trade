@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ping:
-    runs-on: [self-hosted, oracle-ci]
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     env:
       BROWSER_UA: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36

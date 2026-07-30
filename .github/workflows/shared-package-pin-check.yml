@@ -18,7 +18,7 @@ permissions:
 jobs:
   pin-check:
     name: Verify vendored shared package matches tagged release
-    runs-on: [self-hosted, oracle-ci]
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

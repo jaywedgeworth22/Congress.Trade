@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   sync:
-    runs-on: [self-hosted, oracle-ci]
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Checkout
