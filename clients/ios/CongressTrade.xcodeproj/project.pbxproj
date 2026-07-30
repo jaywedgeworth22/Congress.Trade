@@ -20,6 +20,8 @@
 		9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */; };
 		9CDCA9446C95EB22EBF95E80 /* CongressTrade/Views/Feed/TickerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */; };
 		EA61E5001A55B0C1D2E30001 /* CongressTrade/Views/Components/EagleSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA61E5001A55B0C1D2E30002 /* CongressTrade/Views/Components/EagleSplashView.swift */; };
+		7F8000010000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000002 /* AppDelegate.swift */; };
+		7F8000010000000000000003 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000004 /* PushNotificationManager.swift */; };
 		D1A2B3C4D5E6F7A8B9C0D1E3 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */; };
 		D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */; };
 		F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27BB7081F81F5E987131893 /* FeedDashboardView.swift */; };
@@ -54,6 +56,9 @@
 		D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrendsView.swift; path = Views/TrendsView.swift; sourceTree = "<group>"; };
 		E27BB7081F81F5E987131893 /* FeedDashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FeedDashboardView.swift; path = Views/Feed/FeedDashboardView.swift; sourceTree = "<group>"; };
 		EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TradeDetailView.swift; path = Views/Feed/TradeDetailView.swift; sourceTree = "<group>"; };
+		7F8000010000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		7F8000010000000000000004 /* PushNotificationManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PushNotificationManager.swift; path = Store/PushNotificationManager.swift; sourceTree = "<group>"; };
+		7F8000010000000000000005 /* CongressTrade.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CongressTrade.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -78,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */,
+				7F8000010000000000000004 /* PushNotificationManager.swift */,
 			);
 			name = Store;
 			sourceTree = "<group>";
@@ -292,6 +298,8 @@
 				9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */,
 				9CDCA9446C95EB22EBF95E80 /* CongressTrade/Views/Feed/TickerDetailView.swift in Sources */,
 				EA61E5001A55B0C1D2E30001 /* CongressTrade/Views/Components/EagleSplashView.swift in Sources */,
+				7F8000010000000000000001 /* AppDelegate.swift in Sources */,
+				7F8000010000000000000003 /* PushNotificationManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -434,6 +442,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = CongressTrade/CongressTrade.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
@@ -457,6 +466,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = CongressTrade/CongressTrade.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;

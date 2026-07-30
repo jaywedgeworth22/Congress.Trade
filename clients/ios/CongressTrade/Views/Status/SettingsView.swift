@@ -15,6 +15,7 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
 
 struct SettingsView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var pushManager: PushNotificationManager
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @State private var isAuthenticating = false
     @State private var magicEmail = ""
@@ -29,6 +30,47 @@ struct SettingsView: View {
                         Text("Dark").tag("dark")
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section("Push Notifications (APNs)") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Real-Time Trade Alerts")
+                                .font(.body.weight(.medium))
+                            Text(pushManager.isAuthorized ? "APNs Notifications Active" : "Notifications Disabled")
+                                .font(.caption)
+                                .foregroundStyle(pushManager.isAuthorized ? .green : .secondary)
+                        }
+                        Spacer()
+                        if pushManager.isAuthorized {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Button("Enable Alerts") {
+                                Task { await pushManager.requestAuthorization() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+
+                    if let token = pushManager.deviceToken {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("APNs Device Token")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(token)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    if let error = pushManager.lastError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Section {
