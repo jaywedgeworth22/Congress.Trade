@@ -33,7 +33,7 @@
     "fflate": "^0.8.3",
     "hono": "^4.12.32",
     "jsonrepair": "^3.15.0",
-    "node-html-parser": "^9.0.0",
+    "node-html-parser": "^9.0.1",
     "pdf-lib": "^1.17.1",
     "unpdf": "^1.8.0",
     "zod": "^4.4.3"
