@@ -985,20 +985,19 @@ export async function backfillTradeLatencyCandidates(
   }>(
     env.DB,
     `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
-            COALESCE(t.filed_date, f.filed_date) AS filed_date,
-            COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+            f.filed_date AS filed_date,
+            COALESCE(f.first_seen_at, t.created_at) AS first_seen_at,
             fil.full_name AS full_name,
             f.source_url AS source_url,
             f.chamber AS chamber
        FROM transactions t
        LEFT JOIN filings f ON f.doc_id = t.doc_id
        LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
-      WHERE t.deprecated_at IS NULL
-        AND t.ticker IS NOT NULL
+      WHERE t.ticker IS NOT NULL
         AND t.tx_date IS NOT NULL
         AND fil.full_name IS NOT NULL
-        AND COALESCE(t.first_seen_at, t.created_at, f.first_seen_at) >= ?
-      ORDER BY COALESCE(t.first_seen_at, t.created_at) DESC
+        AND COALESCE(t.created_at, f.first_seen_at) >= ?
+      ORDER BY COALESCE(t.created_at, f.first_seen_at) DESC
       LIMIT ?`,
     [cutoff, limit],
   );
