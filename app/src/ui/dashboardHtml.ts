@@ -2109,6 +2109,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <thead><tr><th>Source</th><th>Status</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
+      <div id="sourceTimelineSection" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <h4 style="margin-bottom:6px;font-size:14px;font-weight:600">Source Ingestion & Error Timeline (Past 24 Hours)</h4>
+        <p class="sub" style="margin-bottom:14px">Live timeline graphic and numbers tracking poll attempts, error rates, and failure frequencies by source site.</p>
+        <div id="sourceStatsGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px"></div>
+        <div id="sourceTimelineGraphic" style="margin-bottom:16px;background:var(--bg-card);padding:14px;border:1px solid var(--border);border-radius:6px"></div>
+        <div id="sourceRecentErrors"></div>
+      </div>
     </div>
     <div class="section">
       <h3>Market Data Coverage</h3>
@@ -5064,6 +5071,8 @@ function loadHealth() {
     .then(okOrThrow)
     .then(function (data) {
       var sources = data.sources || [];
+      var timeline = data.timeline || [];
+      var recentFailures = data.recentFailures || [];
       var body = el('healthBody');
       var resetMsg = el('latencyResetMsg');
       if (resetMsg) resetMsg.textContent = data.latencyResetAt ? ('Latency reset: ' + dateTimeText(data.latencyResetAt)) : '';
@@ -5088,10 +5097,108 @@ function loadHealth() {
           '<td class="latency">' + esc(sti) + '</td>' +
         '</tr>';
       }).join('');
+
+      renderSourceHealthTimeline(sources, timeline, recentFailures);
     })
     .catch(function (e) {
       el('healthBody').innerHTML = stateRow(9, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
     });
+}
+
+function renderSourceHealthTimeline(sources, timeline, recentFailures) {
+  var grid = el('sourceStatsGrid');
+  var graphic = el('sourceTimelineGraphic');
+  var errorsEl = el('sourceRecentErrors');
+  if (!grid || !graphic) return;
+
+  // 1. Group 24-hour statistics per source
+  var statsBySource = {};
+  var knownSources = ['house', 'senate', 'executive'];
+  knownSources.forEach(function (src) {
+    statsBySource[src] = { total: 0, failures: 0, successes: 0, newFilings: 0 };
+  });
+
+  timeline.forEach(function (row) {
+    var src = row.source;
+    if (!statsBySource[src]) statsBySource[src] = { total: 0, failures: 0, successes: 0, newFilings: 0 };
+    statsBySource[src].total += (row.total || 0);
+    statsBySource[src].failures += (row.failures || 0);
+    statsBySource[src].successes += (row.successes || 0);
+    statsBySource[src].newFilings += (row.new_filings || 0);
+  });
+
+  grid.innerHTML = Object.keys(statsBySource).map(function (src) {
+    var st = statsBySource[src];
+    var errRate = st.total > 0 ? ((st.failures / st.total) * 100).toFixed(1) : '0.0';
+    var color = st.failures > 0 ? (Number(errRate) > 10 ? 'var(--sell)' : '#f59e0b') : 'var(--buy)';
+    return '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px 14px">' +
+      '<div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px">' + esc(chamberLabel(src)) + ' (24h)</div>' +
+      '<div style="font-size:18px;font-weight:700;color:' + color + '">' + st.failures + ' <span style="font-size:13px;font-weight:400;color:var(--text-muted)">errors / ' + st.total + ' polls (' + errRate + '%)</span></div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Successes: ' + st.successes + ' · Filings Discovered: ' + st.newFilings + '</div>' +
+    '</div>';
+  }).join('');
+
+  // 2. Build 24-Hour Timeline Bar Chart
+  var now = new Date();
+  var hours = [];
+  for (var i = 23; i >= 0; i--) {
+    var d = new Date(now.getTime() - i * 3600_000);
+    var hourKey = d.toISOString().slice(0, 13) + ':00:00.000Z';
+    var hourLabel = d.getHours() + ':00';
+    hours.push({ key: hourKey, label: hourLabel });
+  }
+
+  var hourlyMap = {};
+  hours.forEach(function (h) { hourlyMap[h.key] = { total: 0, failures: 0, houseFail: 0, senateFail: 0, ogeFail: 0 }; });
+
+  timeline.forEach(function (row) {
+    var hk = row.hour;
+    if (hourlyMap[hk]) {
+      hourlyMap[hk].total += (row.total || 0);
+      hourlyMap[hk].failures += (row.failures || 0);
+      if (row.source === 'house') hourlyMap[hk].houseFail += (row.failures || 0);
+      if (row.source === 'senate') hourlyMap[hk].senateFail += (row.failures || 0);
+      if (row.source === 'executive' || row.source === 'oge') hourlyMap[hk].ogeFail += (row.failures || 0);
+    }
+  });
+
+  var barHtml = hours.map(function (h) {
+    var hm = hourlyMap[h.key] || { total: 0, failures: 0 };
+    var hasFail = hm.failures > 0;
+    var barColor = hasFail ? 'var(--sell)' : (hm.total > 0 ? 'var(--buy)' : 'var(--border)');
+    var barHeight = Math.min(Math.max(hm.total * 3, 12), 48);
+    var tip = h.label + ' UTC: ' + hm.total + ' polls (' + hm.failures + ' errors)';
+
+    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center" title="' + esc(tip) + '">' +
+      '<div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">' + (hasFail ? '⚠️' : '') + '</div>' +
+      '<div style="width:100%;max-width:14px;height:' + barHeight + 'px;background:' + barColor + ';border-radius:2px"></div>' +
+      '<div style="font-size:9px;color:var(--text-muted);margin-top:4px;white-space:nowrap">' + h.label + '</div>' +
+    '</div>';
+  }).join('');
+
+  graphic.innerHTML = '<div style="font-size:12px;font-weight:600;margin-bottom:10px">Hourly Ingestion Health & Error Timeline (24 Hours)</div>' +
+    '<div style="display:flex;align-items:flex-end;gap:4px;height:70px;padding-top:10px;border-bottom:1px solid var(--border)">' + barHtml + '</div>' +
+    '<div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--text-muted)">' +
+      '<span><span style="display:inline-block;width:10px;height:10px;background:var(--buy);border-radius:2px;margin-right:4px"></span> 100% Successful Polls</span>' +
+      '<span><span style="display:inline-block;width:10px;height:10px;background:var(--sell);border-radius:2px;margin-right:4px"></span> Failed Poll Attempts</span>' +
+    '</div>';
+
+  // 3. Render Recent Failures Log
+  if (recentFailures.length > 0) {
+    errorsEl.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--sell)">Recent Ingestion Failures & Errors</div>' +
+      '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+        '<thead><tr style="text-align:left;color:var(--text-muted)"><th>Timestamp</th><th>Source</th><th>Error Message</th></tr></thead>' +
+        '<tbody>' + recentFailures.slice(0, 5).map(function (rf) {
+          return '<tr style="border-top:1px solid var(--border)">' +
+            '<td style="padding:6px 0" class="muted">' + esc(dateTimeText(rf.attempted_at)) + '</td>' +
+            '<td style="padding:6px 0"><strong>' + esc(chamberLabel(rf.source)) + '</strong></td>' +
+            '<td style="padding:6px 0;color:var(--sell)">' + esc(rf.error || 'Unknown error') + '</td>' +
+          '</tr>';
+        }).join('') + '</tbody>' +
+      '</table>';
+  } else {
+    errorsEl.innerHTML = '<div style="font-size:12px;color:var(--buy)">✓ No ingestion failures recorded in the recent log window.</div>';
+  }
 }
 
 function resetLatencyMetrics() {

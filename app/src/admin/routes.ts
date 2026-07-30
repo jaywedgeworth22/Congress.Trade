@@ -2940,7 +2940,44 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         avgSeenToImportedSec: await observedSeenToImportedLag(c.env, source, latencyResetAt),
       });
     }
-    return c.json({ sources, count: sources.length, latencyResetAt });
+
+    const timeline = await optionalAll<{
+      source: string;
+      hour: string;
+      total: number;
+      failures: number;
+      successes: number;
+      new_filings: number;
+    }>(
+      c.env,
+      `SELECT 
+         source,
+         strftime('%Y-%m-%dT%H:00:00.000Z', attempted_at) AS hour,
+         COUNT(*) AS total,
+         SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) AS failures,
+         SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS successes,
+         COALESCE(SUM(new_count), 0) AS new_filings
+        FROM source_attempts
+       WHERE attempted_at >= datetime('now', '-24 hours')
+       GROUP BY source, hour
+       ORDER BY hour ASC`,
+    );
+
+    const recentFailures = await optionalAll<{
+      id: number;
+      source: string;
+      attempted_at: string;
+      error: string | null;
+    }>(
+      c.env,
+      `SELECT id, source, attempted_at, error
+         FROM source_attempts
+        WHERE outcome = 'failure'
+        ORDER BY attempted_at DESC, id DESC
+        LIMIT 10`,
+    );
+
+    return c.json({ sources, count: sources.length, timeline, recentFailures, latencyResetAt });
   });
 
   // --- POST /sources/health/latency-reset ---------------------------------
