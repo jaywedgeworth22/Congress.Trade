@@ -68,7 +68,7 @@ function cacheTtlSeconds(env: Env): number {
 }
 
 const KNOWN_PROJECT_IDS: Record<string, string> = {
-  '***REMOVED***': 'f61a79de-8d77-4f0b-9361-4b7208598290',
+  '0be350b7-598a-4ac8-8497-81dc3c53ec44': 'f61a79de-8d77-4f0b-9361-4b7208598290',
   'e00e7a66-1236-4a27-bd08-95e4533d749f': '18f563a3-9c88-454c-96eb-28fc9678f3ba',
 };
 
