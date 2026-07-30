@@ -451,6 +451,9 @@ function buildTxFilters(
 
   // Retracted (un-published) rows are never served on the feed.
   where.push('t.deprecated_at IS NULL');
+  // Synthetic provider-discovered placeholder rows without an official filing stay off the main feed.
+  where.push("t.doc_id NOT LIKE 'provider-missing-%'");
+  where.push('t.filer_id IS NOT NULL');
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;
