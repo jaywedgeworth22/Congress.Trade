@@ -391,7 +391,7 @@ export interface BuiltQuery {
 
 /** Default and hard-cap page sizes for the transactions endpoint. */
 export const DEFAULT_TX_LIMIT = 100;
-export const MAX_TX_LIMIT = 500;
+export const MAX_TX_LIMIT = 250;
 
 /**
  * Historical freemium feed constants retained for compatibility. The public
