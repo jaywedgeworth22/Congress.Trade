@@ -216,7 +216,7 @@ const dummyCtx = {
 
 // Start HTTP Server
 const portStr = Deno.env.get('PORT');
-const port = portStr ? parseInt(portStr, 10) : 8000;
+const port = portStr ? parseInt(portStr, 10) : 5000;
 Deno.serve({ port }, async (req) => {
   const env = buildEnv();
   return app.fetch(req, env, dummyCtx as any);

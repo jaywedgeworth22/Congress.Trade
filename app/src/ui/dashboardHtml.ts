@@ -8050,32 +8050,45 @@ function openTrade(row) {
       var pEl = el('tradePerf'); if (pEl) pEl.innerHTML = perfLineHtml(d, row.type);
     }).catch(function () {});
   }
-  // Lazy-load the source-filing link (live rows have one; seed rows usually don't).
-  if (row.docId) {
-    fetch('/api/filings/' + encodeURIComponent(row.docId))
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) {
-        var sEl = el('tradeSource'); if (!sEl) return;
-        var reconstructed = reconstructFilingUrl(row.docId);
-        var url = reconstructed || (d && d.filing && d.filing.sourceUrl);
-        sEl.innerHTML = url
-          ? '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>'
-          : '<div class="tier-gate-note" style="margin-top:9px">Source document not stored for this row (historic import).</div>';
-      })
-      .catch(function () {
-        var sEl = el('tradeSource'); if (!sEl) return;
-        var url = reconstructFilingUrl(row.docId);
-        if (url) sEl.innerHTML = '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>';
-      });
+  // Load the source-filing link (checks direct URLs, reconstructed docId, API detail, or official portal fallback).
+  var sEl = el('tradeSource');
+  if (sEl) {
+    var initialUrl = row.pdfUrl || safeDocUrl(row.sourceUrl) || reconstructFilingUrl(row.docId) || fallbackDocPortalUrl(row);
+    if (initialUrl) {
+      sEl.innerHTML = '<a class="source-link" href="' + esc(initialUrl) + '" target="_blank" rel="noopener">🔗 View source filing</a>';
+    }
+    if (row.docId) {
+      fetch('/api/filings/' + encodeURIComponent(row.docId))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          var elNow = el('tradeSource'); if (!elNow) return;
+          var url = (d && d.filing && (d.filing.pdfUrl || d.filing.sourceUrl)) || initialUrl || fallbackDocPortalUrl(row);
+          if (url) {
+            elNow.innerHTML = '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>';
+          }
+        })
+        .catch(function () {});
+    }
   }
 }
-/* Rebuild a local proxy link to our R2 bucket from its docId (H-YYYY-NNNN or S-NNNN) */
+/* Rebuild a document link from its docId (H-YYYY-NNNN, S-NNNN, or numeric PTR ID) */
 function reconstructFilingUrl(docId) {
   var s = String(docId || '');
   if (s.slice(0, 2) === 'S-' || s.slice(0, 2) === 'H-') {
     return '/api/documents/' + encodeURIComponent(s) + '/pdf';
   }
+  var m = /(\d{8})/.exec(s);
+  if (m) {
+    return 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/' + m[1] + '.pdf';
+  }
   return '';
+}
+function fallbackDocPortalUrl(row) {
+  var ch = String((row && (row.chamber || row.memberType)) || '').toLowerCase();
+  if (ch.indexOf('senate') !== -1) {
+    return 'https://efdsearch.senate.gov/search/';
+  }
+  return 'https://disclosures-clerk.house.gov/FinancialDisclosure';
 }
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
