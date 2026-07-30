@@ -35,7 +35,17 @@ const DEV_VARS_FILE = resolve(
 const GLOBAL_API_KEYS_FILE = TEST_PATH_OVERRIDES && process.env.CT_LOCAL_BOOTSTRAP_TEST_GLOBAL_KEYS_FILE
   ? resolve(process.env.CT_LOCAL_BOOTSTRAP_TEST_GLOBAL_KEYS_FILE)
   : process.env.HOME?.trim()
-    ? resolve(process.env.HOME, '.secrets/global-api-keys')
+    ? [
+        resolve(process.env.HOME, '.secrets/global-api-keys'),
+        resolve(process.env.HOME, '.secrets/global-api-keys.env'),
+      ].find((p) => {
+        try {
+          const stat = lstatSync(p);
+          return stat.isFile() && !stat.isSymbolicLink();
+        } catch {
+          return false;
+        }
+      }) || null
     : null;
 
 const APP_PROJECT_ID = 'f61a79de-8d77-4f0b-9361-4b7208598290';
