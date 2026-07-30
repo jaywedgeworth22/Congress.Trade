@@ -40,7 +40,7 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Coolify (Docker container with Deno runtime)** on an Oracle ARM64 host (`141.148.182.224`), connecting to a LibSQL / SQLite database.
+- The backend app runs on **Coolify (Docker container with Deno runtime)** on an Oracle ARM64 host (`141.148.182.224`), reading/writing a **local SQLite file** at `/data/congress-trade/db.sqlite` on the host block volume (migrated off Turso 2026-07-30; `TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` is set as a Coolify env override). Deno KV lives alongside at `/data/congress-trade/kv.sqlite`.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
 - Queues are emulated using a custom `deno_runtime_queue` table in SQLite, polled via an internal Deno cron.
 - Root files are supporting context:
