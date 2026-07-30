@@ -1,73 +1,39 @@
-name: Deploy Oracle Monolith
+name: Deploy Coolify (Congress.Trade)
+
+# Primary path: Coolify GitHub webhook auto-deploy on push to main
+# (is_auto_deploy_enabled + webhooks/source/github/events/manual).
+# This workflow is a manual/API safety net only — no SSH into the host.
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      force:
+        description: Force rebuild
+        type: boolean
+        default: true
 
 jobs:
   deploy:
-    # GitHub-hosted only (2026-07-29). Self-hosted Oracle Actions runners retired.
-    # Deploys over SSH into the Oracle prod host rather than running compose on the runner.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-
-      - name: Require Oracle SSH secret
+      - name: Queue Coolify deployment
         env:
-          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          COOLIFY_UUID: congress-trade
+          FORCE: ${{ inputs.force }}
         run: |
-          if [ -z "${ORACLE_SSH_PRIVATE_KEY:-}" ]; then
-            echo "::error::ORACLE_SSH_PRIVATE_KEY secret is required now that Actions runners no longer live on the Oracle host."
-            echo "Add a private key that can SSH as ubuntu@141.148.182.224, then re-run."
+          set -euo pipefail
+          if [ -z "${COOLIFY_TOKEN:-}" ]; then
+            echo "::error::COOLIFY_API_TOKEN secret missing. Auto-deploy still works via Coolify webhook on push to main."
             exit 1
           fi
-
-      - name: Deploy via SSH to Oracle host
-        env:
-          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
-          ORACLE_SSH_HOST: 141.148.182.224
-          ORACLE_SSH_USER: ubuntu
-          INFISICAL_CT_CLIENT_ID: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
-          INFISICAL_CT_CLIENT_SECRET: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$ORACLE_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-          REMOTE_DIR="/tmp/congress-trade-deploy-${GITHUB_SHA}"
-          rsync -az --delete \
-            --exclude '.git' \
-            --exclude 'node_modules' \
-            --exclude 'app/node_modules' \
-            ./ "${ORACLE_SSH_USER}@${ORACLE_SSH_HOST}:${REMOTE_DIR}/"
-
-          ssh -o BatchMode=yes "${ORACLE_SSH_USER}@${ORACLE_SSH_HOST}" \
-            env REMOTE_DIR="$REMOTE_DIR" \
-                INFISICAL_CT_CLIENT_ID="${INFISICAL_CT_CLIENT_ID:-}" \
-                INFISICAL_CT_CLIENT_SECRET="${INFISICAL_CT_CLIENT_SECRET:-}" \
-                bash -s <<'REMOTE'
-          set -euo pipefail
-          cd "$REMOTE_DIR"
-          if [ -x scripts/cloud-setup.sh ] && [ -n "${INFISICAL_CT_CLIENT_ID:-}" ]; then
-            bash scripts/cloud-setup.sh || true
-          fi
-          touch app/.dev.vars 2>/dev/null || true
-          if [ -f app/.dev.vars ]; then
-            cp app/.dev.vars app/.env
-          else
-            touch app/.env
-          fi
-          if ! grep -q '^CT_COST_PROFILE=' app/.env 2>/dev/null; then
-            echo "CT_COST_PROFILE=paid" >> app/.env
-          fi
-          sudo mkdir -p /data/congress-trade
-          sudo chown -R "$USER:$USER" /data/congress-trade || true
-          cd app
-          docker compose up -d --build
-          echo "Deploy finished on $(hostname)"
-REMOTE
+          force_q=""
+          if [ "${FORCE}" = "true" ]; then force_q="&force=true"; fi
+          code=$(curl -sS -o /tmp/coolify-deploy.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H "Accept: application/json" \
+            "https://host.jays.services/api/v1/deploy?uuid=${COOLIFY_UUID}${force_q}")
+          echo "HTTP ${code}"
+          cat /tmp/coolify-deploy.json
+          test "$code" = "200" -o "$code" = "201"
