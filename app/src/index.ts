@@ -277,10 +277,12 @@ function scrubSentryEvent<T>(event: T): T {
   return scrubSentryValue(event) as T;
 }
 
+const DEFAULT_SENTRY_DSN = 'https://bc783575b3d86e8cada5843a975d30fc@o4511650476326912.ingest.us.sentry.io/4511651172253696';
+
 function sentryOptions(env: Env, tracesSampleRate: number) {
   return {
-    dsn: env.SENTRY_DSN,
-    environment: env.SENTRY_ENVIRONMENT,
+    dsn: env.SENTRY_DSN || DEFAULT_SENTRY_DSN,
+    environment: env.SENTRY_ENVIRONMENT || 'production',
     tracesSampleRate,
     // Fetch instrumentation records complete provider URLs (including query
     // credentials). Scrub at the final event hooks so errors, breadcrumbs, and

@@ -40,9 +40,9 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Coolify** (self-hosted Docker container on Oracle), connecting to a **Turso (LibSQL)** database.
+- The backend app runs on **Coolify (Docker container with Deno runtime)** on an Oracle ARM64 host (`141.148.182.224`), connecting to a LibSQL / SQLite database.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
-- Queues are emulated using a custom `deno_runtime_queue` table in Turso, polled via a Deno cron.
+- Queues are emulated using a custom `deno_runtime_queue` table in SQLite, polled via an internal Deno cron.
 - Root files are supporting context:
   - `congress-trade-feed-design.md` is historical design/product context.
   - `congress_trade_watch.py` is a standalone local House PTR watcher prototype.
@@ -125,7 +125,7 @@ npm test
 ```
 
 Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as production-affecting until proven otherwise.
-Note that the backend deployment targets Deno Deploy.
+Note that the backend deployment targets Coolify on the Oracle ARM64 host (`141.148.182.224`).
 
 Preview deploys are the default review path after verified app changes. If
 `app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
@@ -139,7 +139,7 @@ merges to `main` are always pre-approved — land finished work once CI is green
 without asking for merge approval. Production deploys remain part of completing
 app changes (`bash app/scripts/ship.sh`); do not hold ready work undeployed.
 
-Backfill and ingestion commands can mutate queues, Turso database state, R2, or provider
+Backfill and ingestion commands can mutate queues, database state, R2, or provider
 state. Do not run remote backfills, queue drains, production crawlers, or
 production ingestion jobs unless the user explicitly asks.
 
@@ -148,7 +148,7 @@ production ingestion jobs unless the user explicitly asks.
 - Local bootstrap values go in the gitignored `app/.dev.vars`; create or update
   it with `bash scripts/cloud-setup.sh`. `.dev.vars.example` is reference-only.
 - Never commit `.dev.vars`, real API keys, tokens, or generated local state.
-- Production provider/app secrets live in Infisical. Use the Deno Deploy dashboard or Infisical
+- Production provider/app secrets live in Infisical. Use Infisical
   only for the bootstrap identities (or a documented migration
   fallback), never to create a second provider-secret source of truth.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
@@ -158,11 +158,11 @@ production ingestion jobs unless the user explicitly asks.
 
 **Production schema is applied via `POST /api/admin/migrate` (the idempotent
 statement list in `app/src/admin/routes.ts`).**
-Do not use local SQLite migration commands against the production Turso database.
+Do not use local SQLite migration commands against the production database.
 
 **Canonical production deploy:** `bash app/scripts/ship.sh` — it runs `npm run deploy`
 then `POST /api/admin/migrate` (idempotent;
-"duplicate column" is treated as already-applied) against the Turso database.
+"duplicate column" is treated as already-applied) against the production database.
 `npm run deploy:full` now aliases `ship.sh`; `npm run migrate:remote` is intentionally
 disabled (it errors with guidance). `npm run migrate` (`--local`) is for local dev only.
 
@@ -293,3 +293,4 @@ Client apps (peer clients of the backend, not separate products):
 
 ## Production Deployment Urgency
 - **NO HOLDING OFF PRODUCTION**: Do not hold completed or near-completed work on preview servers or locally unless actively testing something known to be unsafe or broken in production. If the code is ready, merge and deploy it to production immediately.
+- **DEPLOYMENT DISCIPLINE**: Automatic production deployment is triggered via Coolify auto-deploy on push to main. Maintain test coverage and build checks before merging to main.
