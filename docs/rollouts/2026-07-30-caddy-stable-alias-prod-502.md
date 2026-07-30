@@ -51,13 +51,19 @@ Fixes applied on the Oracle host (141.148.182.224):
 
 - `api.congress.trade` is served in the Caddyfile but has **no Cloudflare DNS
   record** — either add the CNAME or remove it from the Caddyfile.
-- Secret-store drift (see effort log 2026-07-30 KIMI entries): the live prod
-  admin token is the image-baked `/app/.prod.vars` value, not the current
-  Infisical prod `ADMIN_TOKEN`; both baked Infisical machine identities are
-  revoked (401 at login), so Infisical rotation no longer reaches prod.
-  Escape hatch: Coolify runtime env vars override `.prod.vars`
-  (`buildEnvironmentValues` order) — set `ADMIN_TOKEN` and fresh identities in
-  Coolify env, no rebuild needed. `.prod.vars` baked into the image layer
+- Secret-store drift — **CORRECTED 2026-07-30 (later same day):** the earlier
+  claim that "both baked Infisical machine identities are revoked (401 at
+  login)" was a diagnostic artifact (shell quoting bug in my test; the owner
+  confirmed no identity was revoked). Real root cause: on Coolify,
+  `INFISICAL_APP_PROJECT_ID` was never set, so `resolveProjectId()` fell back
+  to using the app *client* ID as the *project* ID, the app-source fetch
+  silently failed, and every secret (incl. `ADMIN_TOKEN`) fell back to the
+  image-baked `.prod.vars` values — which is why the Infisical prod
+  `ADMIN_TOKEN` was rejected. **Fixed:** set `INFISICAL_APP_PROJECT_ID` and
+  `INFISICAL_SHARED_PROJECT_ID` as Coolify runtime envs and restarted; the
+  Infisical prod `ADMIN_TOKEN` now authorizes against the live admin API, and
+  Infisical rotations reach prod within the 600s secrets-cache TTL (no
+  rebuild/restart needed). `.prod.vars` baked into the image layer still
   carries all live provider secrets; flag for Dockerfile/Coolify build owner.
 - Deno cron ticks repeatedly hit the 45s deadline; late tick lanes (photo
   enrichment, ticker backfill, retention) are starved when earlier lanes run
