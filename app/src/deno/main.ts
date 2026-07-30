@@ -20,8 +20,25 @@ const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
 function buildEnvironmentValues(): Record<string, string | undefined> {
   const envObj: Record<string, string | undefined> = {};
+  const paths = ['.prod.vars', './.prod.vars', 'app/.prod.vars', '/app/.prod.vars'];
+  for (const p of paths) {
+    try {
+      const text = Deno.readTextFileSync(p);
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+          const idx = trimmed.indexOf('=');
+          const k = trimmed.slice(0, idx).trim();
+          const v = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+          if (k && v && !envObj[k]) envObj[k] = v;
+        }
+      }
+      if (Object.keys(envObj).length > 0) break;
+    } catch {}
+  }
   for (const key of Object.keys(Deno.env.toObject())) {
-    envObj[key] = Deno.env.get(key);
+    const v = Deno.env.get(key);
+    if (v) envObj[key] = v;
   }
   return envObj;
 }
