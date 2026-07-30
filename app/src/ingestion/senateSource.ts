@@ -248,7 +248,7 @@ export interface FetchSenatePtrFilingsOptions {
   politeDelayMs?: number;
   /** KV namespace for caching the Senate eFD session (Strategy B) */
   kv?: any;
-  /** Optional Hetzner/microservice relay URL (e.g. http://hetzner-host:8788). */
+  /** Optional Oracle/microservice relay URL (e.g. http://oracle-host:8788). */
   relayUrl?: string;
   /** Optional proxy URL for routing Senate requests. */
   proxyUrl?: string;

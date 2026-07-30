@@ -1542,57 +1542,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 
 
-/* --- Eagle Intro Animation --- */
-#eagle-intro {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 38px;
-  height: 38px;
-  background-image: url('/assets/eagle-splash.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  z-index: 10;
-  pointer-events: none;
-  animation: eagle-flight 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-@keyframes eagle-flight {
-  0% {
-    transform: translate(40vw, -40vh) scale(8) rotate(-15deg);
-    opacity: 0;
-    filter: blur(8px);
-  }
-  30% {
-    opacity: 1;
-    filter: blur(2px);
-  }
-  80% {
-    transform: translate(0, 0) scale(1) rotate(0deg);
-    opacity: 1;
-    filter: blur(0px);
-  }
-  100% {
-    transform: translate(0, 0) scale(1) rotate(0deg);
-    opacity: 0;
-  }
-}
-
-#brandLogo {
-  animation: logo-reveal 2.5s forwards;
-}
-@keyframes logo-reveal {
-  0%, 94% { opacity: 0; }
-  100% { opacity: 1; }
-}
 </style>
 </head>
 <body>
 
-
-
 <header class="top">
-  <div class="brand" aria-label="Congress.Trade" style="position: relative;">
-    <div id="eagle-intro" aria-hidden="true"></div><img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="40" decoding="async" /></div>
+  <div class="brand" aria-label="Congress.Trade">
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="40" decoding="async" /></div>
   <span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
