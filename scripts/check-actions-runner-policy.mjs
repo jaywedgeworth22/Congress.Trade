@@ -9,7 +9,9 @@ const workflowNames = (await readdir(workflowsDir))
 const errors = [];
 // Allowed literal runner labels and the dynamic fallback expression.
 const allowedRunners = new Set([
-  "ubuntu-latest",
+  "[self-hosted, oracle-ci]",
+  "[self-hosted, congress-ci]",
+  "self-hosted",
 ]);
 // Dynamic expressions retired with the self-hosted fleet (2026-07-29).
 const allowedRunnerExpression = "";

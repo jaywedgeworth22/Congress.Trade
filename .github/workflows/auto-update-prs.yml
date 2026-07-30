@@ -7,7 +7,7 @@ on:
 
 jobs:
   autoupdate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, oracle-ci]
     steps:
       - name: Automatically update PRs
         uses: chinthakagodawita/autoupdate@0707656cd062a3b0cf8fa9b2cda1d1404d74437e
