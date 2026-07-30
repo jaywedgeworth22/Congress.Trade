@@ -49,7 +49,7 @@ const ROW_BUDGET_BUCKET = 'tx-rows';
  * (max 250 rows/page, prev/next only) stays far below this; full-history
  * access is the Premium CSV export or the token-gated bulk snapshot.
  */
-export const MAX_PUBLIC_TX_OFFSET = 10_000;
+export const MAX_PUBLIC_TX_OFFSET = 2_000;
 
 /**
  * Path prefixes exempt from the guard. Admin/ingest/export enforce their own
