@@ -608,11 +608,11 @@ export interface Env {
   /** Widened Senate lookback (days) used for the daily deep sweep and outage
    *  catch-up (default 30; raise temporarily for one-off deep recovery). */
   SENATE_MAX_LOOKBACK_DAYS?: string;
-  /** Relay microservice URL (e.g. Hetzner Coolify host) for Senate eFD ingestion. */
+  /** Relay microservice URL (e.g. Oracle Coolify host) for Senate eFD ingestion. */
   SENATE_RELAY_URL?: string;
-  /** Relay microservice URL (e.g. Hetzner Coolify host) for House Clerk ingestion. */
+  /** Relay microservice URL (e.g. Oracle Coolify host) for House Clerk ingestion. */
   HOUSE_RELAY_URL?: string;
-  /** Relay microservice URL (e.g. Hetzner Coolify host) for Executive OGE ingestion. */
+  /** Relay microservice URL (e.g. Oracle Coolify host) for Executive OGE ingestion. */
   OGE_RELAY_URL?: string;
   /** Shared fallback relay microservice URL for all ingestion sources. */
   INGEST_RELAY_URL?: string;

@@ -14,7 +14,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ## Execution Workflow
 
-- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (e.g., Hetzner hosts). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
+- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (e.g., Oracle hosts). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
 
 
 - **Always Tagged**: Always explicitly identify as AG or Antigravity in Slack messages and commits to avoid "untagged" ghost work.
@@ -23,7 +23,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 - **Socialize First**: For cross-app changes (like API SDKs or UX overhauls), socialize the design in #agent-sync before executing.
 - **Never Say "Can Be Viewed Locally"**: NEVER tell the user that a task is finished and that it "can be viewed locally" (unless explicitly told to build local-only). Work is NOT finished until it is merged to `main` and fully deployed to production. Saying a task is done when it is only runnable locally leads to duplicate work and confusion. Always merge and run the production deployment script (`bash app/scripts/ship.sh`) as part of completing the task.
 - **Always Keep Branches Updated with Main**: All agents MUST merge or rebase `main` into their feature branch (`git fetch origin main && git merge origin/main`) before running final verification, before requesting review, and immediately before merging. Never leave active feature branches or PRs lagging behind `main`.
-- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners (`coolify-hetzner-congress` / `congress-ci` on Coolify, `socratic-ci`). NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
+- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners (`coolify-oracle-congress` / `congress-ci` on Coolify, `socratic-ci`). NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
 
 
 At session start in any repo, run one agent-sync poll pass:
