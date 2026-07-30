@@ -573,7 +573,7 @@ export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisc
 
 export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
-    const filedDate = normalizeDate(fieldString(payload, ['filed_at_date', 'filingDate', 'filedDate']));
+    const filedDate = normalizeDate(fieldString(payload, ['filed_at_date', 'filingDate', 'filedDate', 'filed_at', 'filing_date', 'date_filed', 'created_at']));
     const filerName = fieldString(payload, ['name', 'reporter']);
     return {
       provider: 'unusual_whales',
@@ -591,14 +591,14 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
       sourceUrl: firstUrl(payload),
       filedDate,
       filerName,
-      providerPublishedAt: null,
+      providerPublishedAt: normalizeTimestamp(fieldString(payload, ['created_at', 'published_at', 'inserted_at', 'updated_at'])),
     };
   });
 }
 
 export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defaultFilerName?: string): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
-    const filedDate = normalizeDate(fieldString(payload, ['Filed', 'ReportDate', 'report_date', 'filed_date']));
+    const filedDate = normalizeDate(fieldString(payload, ['Filed', 'ReportDate', 'report_date', 'filed_date', 'last_modified', 'DateRecieved', 'date_received', 'Date_Received', 'Report_Date']));
     const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']) || defaultFilerName || '';
     return {
       provider: 'quiver',
@@ -621,7 +621,7 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
       sourceUrl: firstUrl(payload),
       filedDate,
       filerName,
-      providerPublishedAt: normalizeTimestamp(fieldString(payload, ['Quiver_Upload_Time'])),
+      providerPublishedAt: normalizeTimestamp(fieldString(payload, ['Quiver_Upload_Time', 'last_modified', 'created_at'])),
     };
   });
 }
