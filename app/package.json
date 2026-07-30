@@ -12,7 +12,7 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "lint": "deno lint",
-    "migrate": "echo 'Run D1 migrations via Turso CLI instead'",
+    "migrate": "npx wrangler d1 migrations apply DB --local",
     "deploy:full": "bash scripts/ship.sh",
     "preview:provision": "bash scripts/provision-preview.sh",
     "preview:deploy": "bash scripts/deploy-preview.sh",
