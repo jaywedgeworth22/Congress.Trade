@@ -40,7 +40,7 @@ export const PUBLIC_API_LIMIT = 300;
 export const PUBLIC_API_WINDOW_SEC = 300;
 
 /** Feed rows a single IP may pull per UTC day across the corpus pagers. */
-export const DAILY_ROW_BUDGET = 20_000;
+export const DAILY_ROW_BUDGET = 3_000;
 const ROW_BUDGET_WINDOW_SEC = 86_400;
 const ROW_BUDGET_BUCKET = 'tx-rows';
 
