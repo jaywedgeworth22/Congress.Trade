@@ -639,7 +639,18 @@ export function matchDisclosureCandidate(
   const rParts = row.tradeHash.split('_');
   // Hash format: lastName_ticker_txDate_type
   if (cParts.length >= 4 && rParts.length >= 4) {
-    if (cParts[0] === rParts[0] && cParts[2] === rParts[2] && cParts[3] === rParts[3]) {
+    const sameFiler = cParts[0] && rParts[0] && cParts[0] === rParts[0];
+    const sameTicker = cParts[1] && rParts[1] && cParts[1] === rParts[1];
+    const sameDate = cParts[2] === rParts[2] || !cParts[2] || !rParts[2];
+    const sameType = cParts[3] === rParts[3];
+
+    // Case 1: Same politician, ticker, and trade side (even if tx date is unparsed on provider side)
+    if (sameFiler && sameTicker && sameDate && sameType) {
+      return { providerKey: row.providerKey, matchMethod: 'fuzzy-missing-date' };
+    }
+
+    // Case 2: Same politician, tx date, and trade side (even if ticker is unparsed on candidate side)
+    if (sameFiler && cParts[2] && rParts[2] && cParts[2] === rParts[2] && sameType) {
       return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
     }
   }
