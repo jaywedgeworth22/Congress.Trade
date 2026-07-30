@@ -53,10 +53,10 @@ on:
     workflows:
       # Names must match the `name:` field of workflow files exactly —
       # a stale entry here silently disables alerting for that pipeline.
+      # 2026-07-30: "Deploy Deno" + "Deploy Preview" removed — Deno Deploy is
+      # retired (owner: Oracle/Coolify only); the workflows were deleted.
       - CI
-      - Deploy Preview
-      - Deploy Deno
-      - Deploy Oracle Monolith
+      - Deploy Coolify (Congress.Trade)
       - Admin Maintenance
       - Effort Issues Sync
       - Shared Package Pin Check
@@ -83,7 +83,7 @@ jobs:
       github.event.workflow_run.conclusion == 'timed_out' ||
       github.event.workflow_run.conclusion == 'startup_failure' ||
       github.event.workflow_run.event == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, oracle-ci]
     timeout-minutes: 5
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)

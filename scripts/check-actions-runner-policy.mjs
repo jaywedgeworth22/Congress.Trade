@@ -7,11 +7,17 @@ const workflowNames = (await readdir(workflowsDir))
   .sort();
 
 const errors = [];
-// Allowed literal runner labels and the dynamic fallback expression.
+// Allowed literal runner labels: the owned Coolify self-hosted fleet
+// (AGENTS.md: "All GitHub Actions workflows MUST target the Coolify runners").
+// 2026-07-30: `ubuntu-latest` was REMOVED from the allowed set — GitHub-hosted
+// runners provisioned zero jobs for this repo for 24h+ (every workflow failed
+// in ~3s with no runner assigned), which stalled all required checks and PR
+// merges. The local Mac runner remains permanently banned (AGENTS.md).
 const allowedRunners = new Set([
-  "ubuntu-latest",
+  "[self-hosted, oracle-ci]",
+  "[self-hosted, congress-ci]",
 ]);
-// Dynamic expressions retired with the self-hosted fleet (2026-07-29).
+// Dynamic expressions retired with the hosted fleet (2026-07-30).
 const allowedRunnerExpression = "";
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
