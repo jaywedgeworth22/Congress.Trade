@@ -2612,9 +2612,10 @@ function isJunkAssetString(s) {
   ) {
     return true;
   }
-  var stripped = str.replace(/[\\.\\s\\-\\_\\:\\;\\,\\?\\!]/g, '');
+  var stripped = str.replace(/[.\\s:_;,?!\\/\\\\\\[\\]\\(\\)\\-]/g, '');
   if (stripped.length === 0) return true;
-  if (/[\\.\\_\\-]{2,}/.test(str) && stripped.length <= 2) return true;
+  if (/^[._\\-\\s\\]\\)]+[a-z]?$/i.test(str)) return true;
+  if (/[._\\-]{2,}/.test(str) && stripped.length <= 2) return true;
   return false;
 }
 function isScannedPdfPlaceholder(s) {
@@ -2629,8 +2630,13 @@ function cleanAsset(s) {
 
   if (isJunkAssetString(t)) return '';
 
+  t = t.replace(/(?:\\s*\\.{2,}[a-z0-9\\]\\)]*|\\s*\\]+)$/i, '');
+  t = t.replace(/^[.\\s\\]\\)\\-]+/, '');
+  t = t.replace(/\\s*\\.{2,}\\s*/g, ' ');
   t = t.replace(/[\\/\\-\\s]+$/, '');
   t = t.replace(/\\s*\\(\\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\\)\\s*$/i, '');
+
+  if (isJunkAssetString(t)) return '';
 
   if (t === t.toUpperCase() && /[A-Z]{4,}/.test(t)) {
     t = t.toLowerCase().replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });
@@ -2814,11 +2820,10 @@ function memberCellHtml(r) {
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
-  // Prefer a real company name when the reported asset text is missing or is just
-  // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
-  var nm = r.asset;
-  if (isJunkAssetString(nm)) nm = '';
-  if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
+  var nm = cleanAsset(r.asset);
+  if ((!nm || nm.toUpperCase() === (r.ticker || '').toUpperCase()) && r.refCompanyName) {
+    nm = cleanAsset(r.refCompanyName);
+  }
   nm = fmtCompany(nm);
   if (!r.ticker && !nm) {
     return '<div class="asset-cell"><span class="muted">—</span></div>';
@@ -2922,7 +2927,7 @@ var FEED_COLS = [
   { id: 'traded', label: 'Date Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
-  { id: 'asset', label: 'Asset Type', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
+  { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
@@ -3312,7 +3317,13 @@ function sortRows(rows) {
     var av = sortVal(a, sortKey), bv = sortVal(b, sortKey);
     if (av < bv) return -1 * sortDir;
     if (av > bv) return 1 * sortDir;
-    return 0;
+    var atx = sortVal(a, 'txdate'), btx = sortVal(b, 'txdate');
+    if (atx < btx) return 1;
+    if (atx > btx) return -1;
+    var ap = sortVal(a, 'published'), bp = sortVal(b, 'published');
+    if (ap < bp) return 1;
+    if (ap > bp) return -1;
+    return ((b.seq || 0) - (a.seq || 0));
   });
   return copy;
 }
