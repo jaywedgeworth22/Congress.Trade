@@ -8239,7 +8239,22 @@ function closeLogin() {
   el('loginOverlay').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
 }
-function loginGoogle() { window.location.href = '/auth/google/start'; }
+function loginGoogle() {
+  var msg = el('loginMsg');
+  if (msg) msg.textContent = 'Connecting to Google…';
+  fetch('/auth/google/start', { headers: { 'accept': 'application/json' } })
+    .then(function (r) {
+      if (r.status === 503 || r.status === 400 || r.status === 500) {
+        return r.json().then(function (j) {
+          if (msg) msg.textContent = (j && j.error === 'google login not configured')
+            ? 'Google Sign-In is not configured on this environment. Enter your email below for a Magic Link.'
+            : ((j && j.error) || 'Google sign-in unavailable.');
+        });
+      }
+      window.location.href = '/auth/google/start';
+    })
+    .catch(function () { window.location.href = '/auth/google/start'; });
+}
 function sendMagicLink() {
   var email = (el('magicEmail').value || '').trim();
   if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { el('loginMsg').textContent = 'Enter a valid email.'; return; }
@@ -8680,6 +8695,13 @@ function openDeepLink() {
     var ticker = sp.get('ticker');
     var member = sp.get('member');
     var trade = sp.get('trade');
+    var authError = sp.get('auth_error');
+    if (authError === 'google_not_configured') {
+      openLogin();
+      var msg = el('loginMsg');
+      if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
+      return;
+    }
     if (ticker) { openAsset(ticker); return; }
     if (member) { openMember(member); return; }
     if (trade) {

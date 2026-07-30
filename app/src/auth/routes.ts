@@ -98,7 +98,13 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /auth/google/start ---------------------------------------------
   r.get('/google/start', async (c) => {
-    if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
+    if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) {
+      const accept = c.req.header('Accept') || '';
+      if (accept.includes('text/html')) {
+        return c.redirect('/?auth_error=google_not_configured');
+      }
+      return c.json({ error: 'google login not configured' }, 503);
+    }
     const base = await baseUrl(c);
     const requestUrl = new URL(c.req.url);
     const callbackBase = new URL(base);
