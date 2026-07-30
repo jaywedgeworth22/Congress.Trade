@@ -40,7 +40,7 @@ export const PUBLIC_API_LIMIT = 300;
 export const PUBLIC_API_WINDOW_SEC = 300;
 
 /** Feed rows a single IP may pull per UTC day across the corpus pagers. */
-export const DAILY_ROW_BUDGET = 20_000;
+export const DAILY_ROW_BUDGET = 3_000;
 const ROW_BUDGET_WINDOW_SEC = 86_400;
 const ROW_BUDGET_BUCKET = 'tx-rows';
 
@@ -49,7 +49,7 @@ const ROW_BUDGET_BUCKET = 'tx-rows';
  * (max 250 rows/page, prev/next only) stays far below this; full-history
  * access is the Premium CSV export or the token-gated bulk snapshot.
  */
-export const MAX_PUBLIC_TX_OFFSET = 10_000;
+export const MAX_PUBLIC_TX_OFFSET = 2_000;
 
 /**
  * Path prefixes exempt from the guard. Admin/ingest/export enforce their own

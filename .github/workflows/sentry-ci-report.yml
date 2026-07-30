@@ -30,8 +30,8 @@ name: Sentry CI Report
 #
 # workflows observed (from `ls .github/workflows/` at authoring time — see
 # the `name:` header of each file):
-#   CI, Codex Autofix, Deploy Preview, Deploy, Effort Issues Sync,
-#   Shared package pin check, Security
+#   CI, Deploy Coolify (Congress.Trade), Admin Maintenance,
+#   Effort Issues Sync, Shared Package Pin Check, Security
 #
 # DELIBERATELY NOT observed:
 #   - Sentry CI Report (this file) — would recurse.
@@ -53,10 +53,11 @@ on:
     workflows:
       # Names must match the `name:` field of workflow files exactly —
       # a stale entry here silently disables alerting for that pipeline.
+      # 2026-07-30: "Deploy Deno" + "Deploy Preview" removed — Deno Deploy is
+      # retired (owner: Oracle/Coolify only); both workflows were deleted.
+      # "Deploy Oracle Monolith" renamed to match deploy-oracle.yml.
       - CI
-      - Deploy Preview
-      - Deploy Deno
-      - Deploy Oracle Monolith
+      - Deploy Coolify (Congress.Trade)
       - Admin Maintenance
       - Effort Issues Sync
       - Shared Package Pin Check
@@ -83,7 +84,7 @@ jobs:
       github.event.workflow_run.conclusion == 'timed_out' ||
       github.event.workflow_run.conclusion == 'startup_failure' ||
       github.event.workflow_run.event == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
