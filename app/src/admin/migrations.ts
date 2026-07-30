@@ -653,6 +653,58 @@ export const FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_filers_resolved_bioguide ON filers (resolved_bioguide_id)',
 ] as const;
 
+// 0067_clean_ocr_dot_leader_asset_names.sql — clean OCR dot leaders from asset_name and populate official company names from securities_ref.
+export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
+  'ALTER TABLE transactions ADD COLUMN cleaning_note TEXT',
+  `UPDATE transactions
+      SET cleaning_note = 'Cleaned OCR dot leader noise (Original: ' || asset_name || ')',
+          asset_name = NULL
+    WHERE asset_name IN (
+       '..', '...', '....', '.....', '......', '.......', '........', '.........', '..........',
+       '...........', '............', '.............', '..............', '...............',
+       '................', '.................', '..................', '...................',
+       '....................', '.....................', '......................',
+       '.......................', '........................', '................ me',
+       '..........................', '...........................', '.................',
+       '.....]', '......s', '..........A', '..o', '...................0', '...................e', '.............e'
+    )`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'ARCC' WHERE asset_name LIKE 'ARCC .%'`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'NVDA' WHERE asset_name LIKE 'NVDA .%'`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'XOM' WHERE asset_name LIKE 'XOM .%'`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'BAC' WHERE asset_name LIKE 'BAC .%'`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'FMAO' WHERE asset_name LIKE 'FMAO .%'`,
+  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'HD' WHERE asset_name LIKE 'HD .%'`,
+  `UPDATE transactions
+      SET cleaning_note = 'Cleaned junk OCR text (Original: ' || asset_name || ')',
+          asset_name = NULL
+    WHERE (asset_name LIKE '...%' OR asset_name LIKE '%...' OR asset_name LIKE '%....%')
+      AND cleaning_note IS NULL`,
+  `UPDATE transactions
+      SET cleaning_note = COALESCE(cleaning_note, 'Populated official company name from securities_ref for ticker: ' || ticker),
+          asset_name = (
+            SELECT s.company_name
+              FROM securities_ref s
+             WHERE UPPER(s.ticker) = UPPER(transactions.ticker)
+               AND s.company_name IS NOT NULL
+               AND s.company_name <> ''
+             LIMIT 1
+          )
+    WHERE transactions.ticker IS NOT NULL
+      AND (
+            transactions.asset_name IS NULL
+         OR transactions.asset_name = ''
+         OR transactions.asset_name = '(unknown)'
+         OR UPPER(transactions.asset_name) = UPPER(transactions.ticker)
+      )
+      AND EXISTS (
+            SELECT 1
+              FROM securities_ref s
+             WHERE UPPER(s.ticker) = UPPER(transactions.ticker)
+               AND s.company_name IS NOT NULL
+               AND s.company_name <> ''
+      )`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -729,4 +781,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...STOCK_ACT_STATUS_SCHEMA_STATEMENTS,
   // 0066_filer_bioguide_resolution.sql
   ...FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS,
+  // 0067_clean_ocr_dot_leader_asset_names.sql
+  ...CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS,
 ] as const;
