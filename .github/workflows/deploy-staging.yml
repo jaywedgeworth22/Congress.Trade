@@ -14,7 +14,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/staging'
     environment: preview
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     permissions:
       contents: read
