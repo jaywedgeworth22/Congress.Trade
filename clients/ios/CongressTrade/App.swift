@@ -29,60 +29,49 @@ struct MainTabView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showEagleSplash = true
 
     var body: some View {
-        ZStack {
-            TabView {
-                FeedDashboardView()
-                    .tabItem {
-                        Label("Trades", systemImage: "list.bullet.rectangle")
-                    }
-
-                TrendsView()
-                    .tabItem {
-                        Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
-                    }
-
-                DeliveryView()
-                    .tabItem {
-                        Label("Delivery", systemImage: "bell.badge")
-                    }
-
-                SettingsView()
-                    .tabItem {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-            }
-            .tint(.blue)
-            .task {
-                store.modelContext = modelContext
-                if store.feed == nil {
-                    await store.refresh()
+        TabView {
+            FeedDashboardView()
+                .tabItem {
+                    Label("Trades", systemImage: "list.bullet.rectangle")
                 }
-            }
-            // Pause the nextPollAfterSec poll loop while backgrounded.
-            .onChange(of: scenePhase) { _, phase in
-                store.setAutoRefreshPaused(phase != .active)
-            }
-            // congresstrade:// deep links. The auth callback
-            // (congresstrade://auth?token=…) arrives here on cold opens —
-            // e.g. tapping a magic link in Mail — while
-            // ASWebAuthenticationSession intercepts it for in-app OAuth.
-            .onOpenURL { url in
-                guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                      let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
-                      !token.isEmpty else { return }
-                _ = store.saveSessionToken(token)
-            }
 
-            if showEagleSplash {
-                EagleSplashView {
-                    showEagleSplash = false
+            TrendsView()
+                .tabItem {
+                    Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                 }
-                .transition(.opacity)
-                .zIndex(10)
+
+            DeliveryView()
+                .tabItem {
+                    Label("Delivery", systemImage: "bell.badge")
+                }
+
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape")
+                }
+        }
+        .tint(.blue)
+        .task {
+            store.modelContext = modelContext
+            if store.feed == nil {
+                await store.refresh()
             }
+        }
+        // Pause the nextPollAfterSec poll loop while backgrounded.
+        .onChange(of: scenePhase) { _, phase in
+            store.setAutoRefreshPaused(phase != .active)
+        }
+        // congresstrade:// deep links. The auth callback
+        // (congresstrade://auth?token=…) arrives here on cold opens —
+        // e.g. tapping a magic link in Mail — while
+        // ASWebAuthenticationSession intercepts it for in-app OAuth.
+        .onOpenURL { url in
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
+                  !token.isEmpty else { return }
+            _ = store.saveSessionToken(token)
         }
     }
 }

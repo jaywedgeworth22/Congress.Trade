@@ -2,7 +2,7 @@
  * app/scripts/senate-relay.ts
  *
  * Unified Ingestion Relay Microservice (Senate, House & Executive OGE).
- * Runs on the self-hosted Hetzner runner (coolify-hetzner-congress) or any
+ * Runs on the self-hosted Oracle runner (coolify-oracle-congress) or any
  * residential/VPS egress node. Proxying requests to government disclosure portals
  * (efdsearch.senate.gov, disclosures-clerk.house.gov, extapps2.oge.gov) bypasses
  * cloud-provider IP blocks without incurring third-party costs ($0.00).

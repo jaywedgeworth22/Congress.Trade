@@ -153,7 +153,7 @@ Last updated: 2026-07-24 (CURSOR)
   (FMP: first on 22 of 23 matched, median lead 1.5h, p90 13.6h); scrape guard
   active (bare curl on data APIs → 403; browsers 200; kill switch
   `SCRAPE_GUARD_ENABLED`, Infisical-overridable).
-- **Follow-ups**: fix workerd on the Hetzner runner container (suite then
+- **Follow-ups**: fix workerd on the Oracle runner container (suite then
   auto-resumes there); AG to commit or drop the overwritten benchmark
   experiment; consider folding a served-HTML script-parse smoke into ship.sh.
 
