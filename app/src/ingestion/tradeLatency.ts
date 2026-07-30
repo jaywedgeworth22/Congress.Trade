@@ -250,7 +250,7 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'fmp',
     label: 'Financial Modeling Prep',
-    secretNames: ['FMP_API_KEY'],
+    secretNames: ['FMP_LATENCY_API_KEY', 'FMP_API_KEY'],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
@@ -680,8 +680,9 @@ async function fetchFmpRows(
   pace: () => Promise<void> = async () => {},
 ): Promise<DisclosureProviderRow[]> {
   const fetchOne = async (chamber: Chamber) => {
+    const fmpLimit = Math.min(max, 25);
     const url =
-      `https://financialmodelingprep.com/stable/${chamber}-latest?page=0&limit=${max}` +
+      `https://financialmodelingprep.com/stable/${chamber}-latest?page=0&limit=${fmpLimit}` +
       '&apikey=' +
       encodeURIComponent(apiKey);
     try {
@@ -698,7 +699,7 @@ async function fetchFmpRows(
       throw err;
     }
   };
-  return (await Promise.all([fetchOne('house'), fetchOne('senate'), fetchOne('executive')])).flat();
+  return (await Promise.all([fetchOne('house'), fetchOne('senate')])).flat();
 }
 
 function unusualWhalesHeaders(apiKey: string): Record<string, string> {

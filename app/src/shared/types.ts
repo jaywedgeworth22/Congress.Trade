@@ -585,6 +585,8 @@ export interface Env {
   AGREEMENT_TEXT_NORMALIZATION?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
+  /** Dedicated FMP key for latency probes. */
+  FMP_LATENCY_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
   /** Shared FMP per-minute pacer ceiling (stringified int). Infisical-tunable. */
