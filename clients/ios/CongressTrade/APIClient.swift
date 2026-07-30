@@ -317,6 +317,24 @@ final class CongressTradeAPIClient {
         )
     }
 
+    func createAPNsSubscription(
+        apnsToken: String,
+        filters: SubscriptionFilters = SubscriptionFilters(),
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "create_subscription",
+                "payload": [
+                    "delivery": "apns",
+                    "targetUrl": apnsToken,
+                    "filters": filters.commandPayload
+                ]
+            ]
+        )
+    }
+
     func updatePreferences(
         tickers: [String],
         idempotencyKey: String
