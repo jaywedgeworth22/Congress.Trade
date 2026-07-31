@@ -128,9 +128,15 @@ export interface ScheduledTickOptions {
   signal?: AbortSignal;
   /** Singleton-lock TTL; bounds how long a crashed tick blocks successors. */
   lockTtlMs?: number;
+  /**
+   * Forwarded to the maintenance pipeline. The Deno internal cron passes
+   * false: dedicated staggered daily lane crons (deno/cronLanes.ts) own
+   * daily work, so the 45s 15-minute tick no longer runs (or starves) it.
+   */
+  includeDailyJobs?: boolean;
 }
 
-interface TickSingletonLock {
+export interface TickSingletonLock {
   token: string;
   release(): Promise<void>;
 }
@@ -140,14 +146,15 @@ const TICK_LOCK_KEY = 'scheduled-tick';
 const TICK_LOCK_DEFAULT_TTL_MS = 2 * 60_000;
 
 /**
- * DB-backed per-tick singleton over deno_runtime_kv so overlapping Deno.cron
- * invocations and POST /api/admin/runtime-tick calls (possibly in different
- * isolates) cannot run watcher/outbox/drain concurrently. The claim is one
- * atomic insert-or-replace-if-expired statement; release is token-guarded so a
- * slow tick never deletes its successor's lock.
+ * DB-backed singleton over deno_runtime_kv, generalized from the tick lock so
+ * the staggered daily lane crons (deno/cronLanes.ts) can also guard against
+ * cross-isolate overlap with distinct keys. The claim is one atomic
+ * insert-or-replace-if-expired statement; release is token-guarded so a slow
+ * holder never deletes its successor's lock.
  */
-async function acquireTickSingleton(
+export async function acquireDenoCronSingleton(
   env: Env,
+  lockKey: string,
   now: Date,
   ttlMs: number,
 ): Promise<TickSingletonLock | null> {
@@ -160,7 +167,7 @@ async function acquireTickSingleton(
       SET value = excluded.value, expires_at = excluded.expires_at
       WHERE deno_runtime_kv.expires_at IS NULL
          OR deno_runtime_kv.expires_at <= ?
-  `).bind(TICK_LOCK_NAMESPACE, TICK_LOCK_KEY, token, nowMs + ttlMs, nowMs).run();
+  `).bind(TICK_LOCK_NAMESPACE, lockKey, token, nowMs + ttlMs, nowMs).run();
   if ((claimed.meta.changes ?? 0) !== 1) return null;
   return {
     token,
@@ -168,7 +175,7 @@ async function acquireTickSingleton(
       await env.DB.prepare(`
         DELETE FROM deno_runtime_kv
         WHERE namespace = ? AND key = ? AND value = ?
-      `).bind(TICK_LOCK_NAMESPACE, TICK_LOCK_KEY, token).run();
+      `).bind(TICK_LOCK_NAMESPACE, lockKey, token).run();
     },
   };
 }
@@ -205,6 +212,12 @@ export interface MaintenancePipelineOptions {
   usageTelemetryLimit?: number;
   /** When true, run the disclosure-latency (missed-filing) probe. */
   disclosureLatency?: boolean;
+  /**
+   * When false, skip the daily_jobs lane entirely. The Deno internal cron
+   * passes false because dedicated staggered daily lane crons
+   * (deno/cronLanes.ts) own daily work; legacy/external paths leave it true.
+   */
+  includeDailyJobs?: boolean;
   now?: Date;
   signal?: AbortSignal;
   /** Gate for the two outbox lanes (Deno idle short-circuit). Default: run. */
@@ -319,7 +332,9 @@ export async function runMaintenancePipeline(
     if (options.disclosureLatency) {
       await runLane('disclosure_latency', () => runDisclosureLatencyProbe(env));
     }
-    await runLane('daily_jobs', () => maybeRunDailyJobs(env, now));
+    if (options.includeDailyJobs !== false) {
+      await runLane('daily_jobs', () => maybeRunDailyJobs(env, now));
+    }
     await runLane('d1_budget', () => flushD1Budget(env, now));
   } catch (err) {
     if (!isTickAbort(err)) throw err;
@@ -357,8 +372,9 @@ export async function runScheduledTick(
   // background work.
   let lock: TickSingletonLock | null = null;
   try {
-    lock = await acquireTickSingleton(
+    lock = await acquireDenoCronSingleton(
       env,
+      TICK_LOCK_KEY,
       now,
       Math.max(1_000, options.lockTtlMs ?? TICK_LOCK_DEFAULT_TTL_MS),
     );
@@ -386,6 +402,7 @@ export async function runScheduledTick(
       parkedDeliveryLimit: 50,
       usageTelemetryLimit: 25,
       disclosureLatency: true,
+      includeDailyJobs: options.includeDailyJobs,
       now,
       signal,
       // Idle short-circuit: skip multi-statement outbox flushes and the empty
