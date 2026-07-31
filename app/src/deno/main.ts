@@ -9,6 +9,7 @@ import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
 import { resolveDenoCostProfile } from './costProfile.ts';
 import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
+import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -164,7 +165,9 @@ if (!costProfile.disableInternalCron) {
         durableQueueHandlers,
         costProfile,
         new Date(),
-        { signal: tickAbort.signal },
+        // Daily work moved to dedicated staggered lane crons (cronLanes.ts)
+        // with multi-minute deadlines; the 45s tick must not run or starve it.
+        { signal: tickAbort.signal, includeDailyJobs: false },
       );
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -199,6 +202,13 @@ if (!costProfile.disableInternalCron) {
       tickInFlight = false;
     }
   });
+
+  // Staggered daily lane crons: market data (enrichment/prices) → bulk R2
+  // snapshot → filer (photos/bioguide/ticker backfill) → retention sweeps.
+  // Each lane has its own hourly window, KV date stamp, singleton lock, and
+  // multi-minute deadline, so a slow provider lane can no longer starve the
+  // lanes behind it (the old single-stamp chain died at the tick's 45s).
+  registerDailyLaneCrons(buildEnv, resolveDailyLaneDeadlineMs(Deno.env));
 } else {
   console.log(
     'Deno internal cron disabled (DENO_DISABLE_INTERNAL_CRON); ' +
