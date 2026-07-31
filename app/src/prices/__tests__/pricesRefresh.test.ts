@@ -40,6 +40,30 @@ vi.mock('../fmp', () => ({
   }),
 }));
 
+// Same shape for the Massive client, for the unmetered-provider 429 tests
+// below (per-symbol error MESSAGE so a test can pick 429 vs 403).
+const m = vi.hoisted(() => ({
+  eodCalls: [] as Array<{ symbol: string }>,
+  errors: new Map<string, string>(),
+  responses: new Map<string, Array<{ date: string; close: number }>>(),
+}));
+vi.mock('../massive', () => ({
+  buildMassivePriceClient: () => ({
+    eodHistory: async (symbol: string) => {
+      m.eodCalls.push({ symbol });
+      const err = m.errors.get(symbol);
+      if (err) throw new Error(err);
+      return m.responses.get(symbol) ?? [];
+    },
+    spxHistory: async () => {
+      m.eodCalls.push({ symbol: 'SPY' });
+      const err = m.errors.get('SPY');
+      if (err) throw new Error(err);
+      return m.responses.get('SPY') ?? [];
+    },
+  }),
+}));
+
 import type { Env } from '../../shared/types.ts';
 import { runPriceRefresh } from '../service.ts';
 import { openMigratedD1, type SqliteDatabase } from './sqliteD1.ts';
@@ -52,6 +76,9 @@ beforeEach(async () => {
   h.eodCalls.length = 0;
   h.responses.clear();
   h.errors.clear();
+  m.eodCalls.length = 0;
+  m.responses.clear();
+  m.errors.clear();
   const opened = await openMigratedD1();
   db = opened.db;
   close = opened.close;
@@ -364,5 +391,71 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     // No gap (cached min 2026-06-01 <= oldest trade) → narrow window off cached max
     // (2026-07-02 − 7d = 2026-06-25), not a full re-download of the series.
     expect(spy?.from).toBe('2026-06-25');
+  });
+});
+
+describe('runPriceRefresh — unmetered provider (massive): 429 is not run-fatal', () => {
+  // PRICE_PROVIDER=massive with a key → unmetered plan (fmpBudgeted === false).
+  function useMassive(): void {
+    const envx = env as unknown as Record<string, string>;
+    envx.PRICE_PROVIDER = 'massive';
+    envx.MASSIVE_API_KEY = 'test-massive-key';
+  }
+
+  it('skips a 429ing ticker and keeps pricing the rest of the run (no abort)', async () => {
+    useMassive();
+    seedTrade('t20', 'RATE1', '2026-01-05'); // oldest-traded → attempted first
+    seedTrade('t21', 'OK2', '2026-01-06');
+    // A 429 that persisted past the client's own bounded retries (./retry429.ts).
+    m.errors.set('RATE1', 'MASSIVE_HTTP_429');
+    m.responses.set('OK2', [{ date: '2026-07-11', close: 42 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(false);
+    expect(res.errors.some((e) => e.includes('RATE1') && e.includes('429'))).toBe(true);
+    // The failing ticker was skipped without a negative-cache write...
+    expect(srRow('RATE1')).toBeUndefined();
+    // ...and the run kept draining the backlog instead of aborting.
+    expect(srRow('OK2')?.current_price).toBe(42);
+    expect(res.tickersPriced).toBe(1);
+  });
+
+  it('does not abort when the SPX fetch 429s — the ticker loop still runs', async () => {
+    useMassive();
+    seedTrade('t22', 'OK3', '2026-01-05');
+    m.errors.set('SPY', 'MASSIVE_HTTP_429');
+    m.responses.set('OK3', [{ date: '2026-07-11', close: 7 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(false);
+    expect(res.errors.some((e) => e.startsWith('spx:'))).toBe(true);
+    expect(srRow('OK3')?.current_price).toBe(7);
+  });
+
+  it('still aborts on 403 (broken key/plan) even for an unmetered provider', async () => {
+    useMassive();
+    seedTrade('t23', 'AAA3', '2026-01-05');
+    m.errors.set('SPY', 'MASSIVE_HTTP_403');
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(true);
+    expect(m.eodCalls.some((c) => c.symbol === 'AAA3')).toBe(false);
+    expect(srRow('AAA3')).toBeUndefined();
+  });
+
+  it('still aborts mid-loop on a per-ticker 403 for an unmetered provider', async () => {
+    useMassive();
+    seedTrade('t24', 'FIRST4', '2026-01-05'); // oldest-traded → attempted first
+    seedTrade('t25', 'NEVER4', '2026-01-06');
+    m.errors.set('FIRST4', 'MASSIVE_HTTP_403');
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(true);
+    expect(m.eodCalls.some((c) => c.symbol === 'NEVER4')).toBe(false);
+    expect(srRow('NEVER4')).toBeUndefined();
   });
 });

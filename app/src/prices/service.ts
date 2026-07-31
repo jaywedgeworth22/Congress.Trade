@@ -123,18 +123,27 @@ function pricePlan(env: EnvX): PricePlan | null {
 }
 
 /**
- * Statuses that mean the provider key/plan itself is broken, or the account is
- * rate-limited hard enough that every subsequent call this run would fail
- * identically (auth/plan/429) — as opposed to a one-off transient blip (a
- * plain 5xx/network error). Every price client (FMP, Massive, Tiingo — see
- * ./fmp.ts, ./massive.ts, ./tiingo.ts) throws `<PROVIDER>_HTTP_<status>` for a
- * non-2xx, non-404 response, so matching just the numeric suffix (not the
- * provider prefix) classifies all three uniformly.
+ * Statuses that mean the provider key/plan itself is broken, so every subsequent
+ * call this run would fail identically (auth/plan) — as opposed to a one-off
+ * transient blip (a plain 5xx/network error). Every price client (FMP, Massive,
+ * Tiingo — see ./fmp.ts, ./massive.ts, ./tiingo.ts) throws
+ * `<PROVIDER>_HTTP_<status>` for a non-2xx, non-404 response, so matching just
+ * the numeric suffix (not the provider prefix) classifies all three uniformly.
  */
-const FATAL_PRICE_PROVIDER_ERROR = /_HTTP_(401|402|403|429)$/;
-function isFatalPriceProviderError(e: unknown): boolean {
+const FATAL_PRICE_PROVIDER_ERROR = /_HTTP_(401|402|403)$/;
+/**
+ * 429 is fatal ONLY for the metered FMP budget: there, every guaranteed-fail
+ * retry still burns the shared daily meter, so the run aborts to protect it.
+ * Massive/Tiingo are unmetered — their 429s are per-minute windows (usually a
+ * shared key saturated by sibling apps) that clear on their own, and the clients
+ * already retried them with backoff (./retry429.ts), so a 429 that still escapes
+ * skips just that one call instead of aborting the whole run.
+ */
+const RATE_LIMIT_PROVIDER_ERROR = /_HTTP_429$/;
+function isFatalPriceProviderError(e: unknown, fmpBudgeted: boolean): boolean {
   const message = e instanceof Error ? e.message : String(e ?? '');
-  return FATAL_PRICE_PROVIDER_ERROR.test(message);
+  if (FATAL_PRICE_PROVIDER_ERROR.test(message)) return true;
+  return fmpBudgeted && RATE_LIMIT_PROVIDER_ERROR.test(message);
 }
 
 function isoDaysAgo(days: number, from = new Date()): string {
@@ -217,10 +226,11 @@ export interface PriceRefreshResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
-  /** True when an auth/plan/rate-limit error (401/402/403/429) stopped the run
-   *  early — see isFatalPriceProviderError. Remaining un-attempted tickers are
-   *  left untouched for the next run rather than burning the rest of the
-   *  budget on calls guaranteed to fail identically. */
+  /** True when an auth/plan error (401/402/403 — or 429 for the metered FMP
+   *  budget only) stopped the run early — see isFatalPriceProviderError.
+   *  Remaining un-attempted tickers are left untouched for the next run rather
+   *  than burning the rest of the budget on calls guaranteed to fail
+   *  identically. */
   aborted: boolean;
   /** What THIS run actually fetched (for the App B outbound push — our delta only). */
   shareSpx: Close[];
@@ -377,12 +387,15 @@ export async function runPriceRefresh(
     }
   } catch (e) {
     result.errors.push('spx: ' + (e as Error).message);
-    // Auth/plan/rate-limit failure: every subsequent call this run (SPX or any
-    // ticker) shares the same key/plan and would fail identically, so abort the
-    // whole run rather than burning the rest of the day's budget on calls that
-    // are guaranteed to fail. Remaining tickers are left untouched for the next
-    // run — no negative-cache writes, no partial state.
-    if (isFatalPriceProviderError(e)) result.aborted = true;
+    // Auth/plan failure (or 429 under the metered FMP budget): every subsequent
+    // call this run (SPX or any ticker) shares the same key/plan and would fail
+    // identically, so abort the whole run rather than burning the rest of the
+    // day's budget on calls that are guaranteed to fail. Remaining tickers are
+    // left untouched for the next run — no negative-cache writes, no partial
+    // state. For unmetered providers a 429 is NOT fatal (see
+    // RATE_LIMIT_PROVIDER_ERROR): the per-minute window clears on its own, so
+    // only the SPX refresh is skipped and the ticker loop still runs.
+    if (isFatalPriceProviderError(e, fmpBudgeted)) result.aborted = true;
   }
 
   // 2) Per-ticker EOD history + per-trade performance anchors. Skipped
@@ -436,11 +449,12 @@ export async function runPriceRefresh(
       hist = await client.eodHistory(ticker, from, today());
     } catch (e) {
       result.errors.push(ticker + ': ' + (e as Error).message);
-      if (isFatalPriceProviderError(e)) {
+      if (isFatalPriceProviderError(e, fmpBudgeted)) {
         // Same key/plan will fail identically for every remaining ticker —
         // abort the whole run instead of spending the rest of the budget on
         // calls that cannot succeed. Tickers not yet reached this run are
         // left completely untouched (no negative-cache write) for next time.
+        // (Unmetered-provider 429s never reach here — non-fatal, skip only.)
         result.aborted = true;
         break;
       }
