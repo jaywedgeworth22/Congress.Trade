@@ -55,12 +55,15 @@ let warnedDay: string | null = null;
 /** Day we last emitted the HARD (100%) written-budget alert for. */
 let hardWarnedDay: string | null = null;
 
-// Reads are cheap ($0.001/M, 25B/mo included ≈ 833M/day free), so this is really
-// an anomaly tripwire for scan storms rather than a dollar cap. Writes are the
-// expensive dimension ($1/M, 50M/mo included ≈ 1.66M/day); 2M/day ≈ 60M/mo ≈
-// ~$10/mo of billable writes, matching the owner's budget. Both Infisical-tunable.
-const DEFAULT_READ_BUDGET = 200_000_000;
-const DEFAULT_WRITTEN_BUDGET = 2_000_000;
+// The production database is self-hosted SQLite on the Oracle host (migrated off
+// Cloudflare D1 / Turso 2026-07-30), so per-row pricing no longer applies. These
+// defaults are kept ONLY as an anomaly tripwire for runaway scans/backfills and
+// are sized far above any legitimate daily volume so normal operation never
+// trips them. Both Infisical-tunable (D1_DAILY_ROWS_READ_BUDGET /
+// D1_DAILY_ROWS_WRITTEN_BUDGET) should a real dollar cap ever become relevant
+// again.
+const DEFAULT_READ_BUDGET = 5_000_000_000;
+const DEFAULT_WRITTEN_BUDGET = 500_000_000;
 const SOFT_RATIO = 0.8;
 const DAY_TTL_SEC = 172_800; // 2 days, same as the FMP counter
 

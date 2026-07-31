@@ -24,6 +24,7 @@ import { runBulkSnapshot } from './export/snapshot.ts';
 import { resolveSecrets } from './secrets/infisical.ts';
 import { recordMeasuredThirdPartyUsage } from './shared/thirdPartyTelemetry.ts';
 import { isD1RowBudgetExceeded } from './shared/d1Budget.ts';
+import { runR2UsageSummary } from './shared/r2Usage.ts';
 // NOTE: runHouseReconciler (./ingestion/houseReconciler) is intentionally not
 // imported here yet -- it is reserved for future scheduled-job wiring. Importing
 // it unused would trip noUnusedLocals (enabled in this PR).
@@ -256,6 +257,11 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     'PRICE_PROVIDER',
     'FMP_API_KEY',
     'FMP_DAILY_CALL_CAP',
+    // R2 usage summary + Pushover delivery — folded into this one round trip.
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_R2_ANALYTICS_TOKEN',
+    'PUSHOVER_APP_TOKEN',
+    'PUSHOVER_USER_KEY',
   ]);
   // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
   // so pace calls to use that headroom without tripping 429s. Configurable via
@@ -393,6 +399,19 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   }
 
   if (await dailyBudgetExceeded(env, 'retention sweep')) return;
+
+  // Daily R2 free-tier usage summary → Pushover. Two HTTP calls and zero DB
+  // writes, so it deliberately sits OUTSIDE the dailyBudgetExceeded gates:
+  // an over-budget day is exactly when this report must still go out. No-ops
+  // when the Cloudflare analytics token or Pushover creds are unconfigured.
+  try {
+    const r2 = await runR2UsageSummary(env, now, secrets);
+    if (!r2.sent && r2.reason && !/not configured/.test(r2.reason)) {
+      console.warn('r2 usage summary not sent:', r2.reason);
+    }
+  } catch (err) {
+    console.warn('r2 usage summary failed:', (err as Error).message);
+  }
 
   // Prune unbounded operational tables (dead_letter_events / ingest_log /
   // source_attempts). Bounded batches + per-run cap; never blocks the cron.
