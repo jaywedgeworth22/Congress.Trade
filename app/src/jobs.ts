@@ -31,6 +31,29 @@ import { runR2UsageSummary } from './shared/r2Usage.ts';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
+/**
+ * Per-lane KV date stamps (`jobs:daily:lastdate:<lane>`). Each daily lane
+ * stamps itself BEFORE running so it fires once per UTC day even when it is
+ * scheduled on an hourly cron. The legacy whole-chain stamp (DAILY_KEY) is
+ * kept as a fast-path suppressor for the legacy combined entry point
+ * (maybeRunDailyJobs) and for tests; dedicated lane crons ignore it.
+ */
+const LANE_KEY_PREFIX = 'jobs:daily:lastdate:';
+
+export type DailyLaneStatus = 'ran' | 'stamped' | 'budget';
+
+async function stampDaily(env: Env, key: string, day: string): Promise<boolean> {
+  try {
+    const last = await env.CONFIG_KV.get(key);
+    if (last === day) return false;
+    // Stamp BEFORE running so the next cron tick doesn't double-fire.
+    await env.CONFIG_KV.put(key, day, { expirationTtl: 172800 });
+    return true;
+  } catch {
+    return false; // no KV → skip rather than risk hammering providers
+  }
+}
+
 async function dailyBudgetExceeded(env: Env, stage: string): Promise<boolean> {
   if (!(await isD1RowBudgetExceeded(env))) return false;
   console.warn(`daily jobs stopped before ${stage}: D1 row budget exceeded`);
@@ -218,16 +241,16 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
   return totalDeleted;
 }
 
-export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<void> {
+/**
+ * Daily lane 1 — market data: FMP/SEC enrichment, price refresh, peer share,
+ * usage telemetry, FMP-tier alert, and the cross-app freshness watchdog.
+ * Network-heavy by design (provider pacing); runs on its own hourly cron
+ * window (see deno/cronLanes.ts) with a multi-minute deadline, NOT inside the
+ * 45s 15-minute tick. Own KV date stamp; once per UTC day.
+ */
+export async function maybeRunDailyMarketDataJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
-  try {
-    const last = await env.CONFIG_KV.get(DAILY_KEY);
-    if (last === day) return;
-    // Stamp BEFORE running so the next minute's cron tick doesn't double-fire.
-    await env.CONFIG_KV.put(DAILY_KEY, day, { expirationTtl: 172800 });
-  } catch {
-    return; // no KV → skip rather than risk hammering providers every minute
-  }
+  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'market-data', day))) return 'stamped';
 
   // Opt-in D1 spend guard (D1_ROW_BUDGET_ENFORCE): if today's metered D1 rows
   // already exceeded the budget, skip this discretionary daily batch — its big
@@ -235,7 +258,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   // Default OFF (alert-only). The date stamp above stays set, so we don't
   // re-check every minute; a fresh budget frees the jobs next UTC day.
   if (await dailyBudgetExceeded(env, 'enrichment')) {
-    return;
+    return 'budget';
   }
 
   const errors: string[] = [];
@@ -287,7 +310,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     console.warn('daily enrichment failed:', (err as Error).message);
     errors.push('enrichment: ' + (err as Error).message);
   }
-  if (await dailyBudgetExceeded(env, 'price refresh')) return;
+  if (await dailyBudgetExceeded(env, 'price refresh')) return 'budget';
   try {
     const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
@@ -362,13 +385,20 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   } catch (err) {
     console.warn('freshness check failed:', (err as Error).message);
   }
+  return 'ran';
+}
 
-  if (await dailyBudgetExceeded(env, 'bulk snapshot')) return;
+/**
+ * Daily lane 2 — bulk market-data snapshot to R2 (prices, S&P, securities
+ * reference, fundamentals, analyst consensus) for App B to pull. Scheduled
+ * AFTER the market-data lane's window so it captures the freshest data
+ * written today. Best-effort + bounded; never blocks the cron.
+ */
+export async function maybeRunDailySnapshotJob(env: Env, now = new Date()): Promise<DailyLaneStatus> {
+  const day = now.toISOString().slice(0, 10);
+  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'snapshot', day))) return 'stamped';
+  if (await dailyBudgetExceeded(env, 'bulk snapshot')) return 'budget';
 
-  // Write the daily bulk market-data snapshot to R2 (prices, S&P, securities
-  // reference, fundamentals, analyst consensus) for App B to pull. Runs AFTER
-  // the enrichment + price refresh above so it captures the freshest data
-  // written today. Best-effort + bounded; never blocks the cron.
   try {
     const manifest = await runBulkSnapshot(env, day, now);
     const rows = Object.values(manifest.tables).reduce((s, t: any) => s + t.rowCount, 0);
@@ -376,42 +406,65 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   } catch (err) {
     console.warn('bulk snapshot failed:', (err as Error).message);
   }
+  return 'ran';
+}
 
-  if (await dailyBudgetExceeded(env, 'photo enrichment')) return;
+/**
+ * Daily lane 3 — filer data: politician headshots + party/state/district from
+ * congress-legislators (also fills resolved_bioguide_id), then ticker
+ * resolution backfill for name-but-no-ticker rows. Both COALESCE-preserving,
+ * bounded, and best-effort.
+ */
+export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
+  const day = now.toISOString().slice(0, 10);
+  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'filer', day))) return 'stamped';
+  if (await dailyBudgetExceeded(env, 'photo enrichment')) return 'budget';
 
-  // Fill politician headshots + party/state/district from congress-legislators.
-  // Best-effort, COALESCE-preserving, so new filers get a photo/party without a
-  // manual POST /enrich-photos. Never blocks the cron.
   try {
     await runPhotoEnrichment(env);
   } catch (err) {
     console.warn('photo enrichment failed:', (err as Error).message);
   }
 
-  if (await dailyBudgetExceeded(env, 'ticker backfill')) return;
+  if (await dailyBudgetExceeded(env, 'ticker backfill')) return 'budget';
 
-  // Backfill ticker resolution for name-but-no-ticker rows (seed/historic), so
-  // they become visible to the leaderboards. Bounded + best-effort.
   try {
     await runTickerBackfill(env, 5000);
   } catch (err) {
     console.warn('ticker backfill failed:', (err as Error).message);
   }
+  return 'ran';
+}
 
-  if (await dailyBudgetExceeded(env, 'retention sweep')) return;
+/**
+ * Daily lane 4 — retention: prune unbounded operational tables
+ * (dead_letter_events / ingest_log / source_attempts) in bounded batches,
+ * then the 5-year filing retention sweep (filings + transactions + R2 PDFs).
+ */
+export async function maybeRunDailyRetentionJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
+  const day = now.toISOString().slice(0, 10);
+  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'retention', day))) return 'stamped';
 
   // Daily R2 free-tier usage summary → Pushover. Two HTTP calls and zero DB
-  // writes, so it deliberately sits OUTSIDE the dailyBudgetExceeded gates:
-  // an over-budget day is exactly when this report must still go out. No-ops
+  // writes, so it deliberately runs BEFORE the dailyBudgetExceeded gate: an
+  // over-budget day is exactly when this report must still go out. No-ops
   // when the Cloudflare analytics token or Pushover creds are unconfigured.
   try {
-    const r2 = await runR2UsageSummary(env, now, secrets);
+    const r2Secrets = await resolveSecrets(env, [
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_R2_ANALYTICS_TOKEN',
+      'PUSHOVER_APP_TOKEN',
+      'PUSHOVER_USER_KEY',
+    ]);
+    const r2 = await runR2UsageSummary(env, now, r2Secrets);
     if (!r2.sent && r2.reason && !/not configured/.test(r2.reason)) {
       console.warn('r2 usage summary not sent:', r2.reason);
     }
   } catch (err) {
     console.warn('r2 usage summary failed:', (err as Error).message);
   }
+
+  if (await dailyBudgetExceeded(env, 'retention sweep')) return 'budget';
 
   // Prune unbounded operational tables (dead_letter_events / ingest_log /
   // source_attempts). Bounded batches + per-run cap; never blocks the cron.
@@ -431,5 +484,28 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     }
   } catch (err) {
     console.warn('5-year filing retention sweep failed:', (err as Error).message);
+  }
+  return 'ran';
+}
+
+/**
+ * Legacy combined entry point (Workers scheduled path, POST runtime-tick when
+ * the internal cron is disabled, and tests). Runs all four daily lanes in
+ * chain order, preserving the original semantics: one DAILY_KEY stamp
+ * suppresses repeat calls same-day, and a D1-budget trip in any lane ends
+ * the whole pass. Dedicated lane crons (deno/cronLanes.ts) call the lane
+ * functions directly and ignore DAILY_KEY.
+ */
+export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<void> {
+  const day = now.toISOString().slice(0, 10);
+  if (!(await stampDaily(env, DAILY_KEY, day))) return;
+  const lanes = [
+    maybeRunDailyMarketDataJobs,
+    maybeRunDailySnapshotJob,
+    maybeRunDailyFilerJobs,
+    maybeRunDailyRetentionJobs,
+  ];
+  for (const lane of lanes) {
+    if ((await lane(env, now)) === 'budget') return;
   }
 }
