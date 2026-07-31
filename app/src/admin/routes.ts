@@ -137,6 +137,7 @@ import { createRuntimeQueueHandlers } from '../deno/runtimeHandlers.ts';
 import { runScheduledTick } from '../deno/scheduledTick.ts';
 import { readTargetCircuits } from '../delivery/targetCircuit.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
+import { runR2UsageSummary } from '../shared/r2Usage.ts';
 import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
@@ -8329,6 +8330,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.post('/enrich-photos', async (c) => {
     try {
       return c.json(await runPhotoEnrichment(c.env));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /r2-usage-summary ---------------------------------------------
+  // On-demand trigger for the daily R2 free-tier usage summary (Cloudflare
+  // GraphQL analytics → Pushover). The daily-jobs cron lane also runs this
+  // once per UTC day; this endpoint exists for verification and for testing
+  // Pushover delivery after rotating credentials. Returns the computed
+  // summary plus the delivery result.
+  r.post('/r2-usage-summary', async (c) => {
+    try {
+      return c.json(await runR2UsageSummary(c.env));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
