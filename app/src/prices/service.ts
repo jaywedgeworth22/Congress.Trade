@@ -76,6 +76,8 @@ type EnvX = Env & {
   MASSIVE_API_KEY?: string;
   TIINGO_API_KEY?: string;
   APP_B_IMPORT_URL?: string;
+  /** Bearer token for the peer's (App B's) bearer-gated read endpoints. */
+  APP_B_INGEST_TOKEN?: string;
   /** Which provider supplies price history: 'fmp' (default), 'massive', or 'tiingo'. */
   PRICE_PROVIDER?: string;
 };
@@ -115,7 +117,7 @@ function pricePlan(env: EnvX): PricePlan | null {
   if (!baseClient) return null;
 
   if (env.APP_B_IMPORT_URL) {
-    const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL);
+    const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN);
     baseClient = buildFallbackPriceClient(peerClient, baseClient);
   }
 
@@ -284,6 +286,8 @@ export async function runPriceRefresh(
   opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<PriceRefreshResult> {
   const runtimeSecrets = await resolveSecrets(env, [
+    'APP_B_IMPORT_URL',
+    'APP_B_INGEST_TOKEN',
     'FMP_API_KEY',
     'FMP_DAILY_CALL_CAP',
     'FMP_MAX_PER_MINUTE',
