@@ -13,6 +13,7 @@
 import type { Close } from './compute.ts';
 import type { PriceClient } from './fmp.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { with429Retries, type Retry429Options } from './retry429.ts';
 
 /**
  * Parse a Tiingo `/prices` response into descending [{date, close}]. Shape:
@@ -33,7 +34,11 @@ export function parseTiingoPrices(json: unknown): Close[] {
 
 const BASE = 'https://api.tiingo.com/tiingo/daily/';
 
-export function buildTiingoPriceClient(apiKey: string, fetchImpl: typeof fetch = fetch): PriceClient {
+export function buildTiingoPriceClient(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+  retry: Retry429Options = {},
+): PriceClient {
   async function hist(symbol: string, from: string, to: string): Promise<Close[]> {
     const url =
       BASE +
@@ -44,9 +49,11 @@ export function buildTiingoPriceClient(apiKey: string, fetchImpl: typeof fetch =
       to +
       '&token=' +
       encodeURIComponent(apiKey);
-    const res = await trackedFetch(url, {
+    // 429s (per-minute limit) are retried with backoff first — see ./retry429.ts.
+    // A 429 that still persists after the retries throws below.
+    const res = await with429Retries(() => trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
+    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl), retry);
     if (!res.ok) {
       if (res.status === 404) return []; // symbol not found → genuinely no data (safe to negative-cache)
       // Auth/rate/server errors (401/403/429/5xx) fail identically for every

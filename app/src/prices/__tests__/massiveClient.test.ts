@@ -5,6 +5,15 @@ const fetchWith = (status: number, body: unknown = '') =>
   (async () =>
     new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })) as unknown as typeof fetch;
 
+// Fetch mock that replays a sequence of responses and records how often it ran.
+const fetchSequence = (responses: Response[], calls: { n: number }) =>
+  (async () => {
+    calls.n += 1;
+    return responses[Math.min(calls.n - 1, responses.length - 1)];
+  }) as unknown as typeof fetch;
+
+const noSleep = async () => {};
+
 // 2024-01-02 and 2024-01-03 at 00:00 ET (epoch ms).
 const aggs = {
   ticker: 'AAPL',
@@ -39,7 +48,60 @@ describe('buildMassivePriceClient', () => {
     // Auth/rate/server failures throw so the caller skips + retries instead of
     // negative-caching priceable tickers during a transient outage.
     await expect(buildMassivePriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('MASSIVE_HTTP_403');
-    await expect(buildMassivePriceClient('k', fetchWith(429)).spxHistory('a', 'b')).rejects.toThrow('MASSIVE_HTTP_429');
+    await expect(buildMassivePriceClient('k', fetchWith(429), { sleep: noSleep }).spxHistory('a', 'b')).rejects.toThrow('MASSIVE_HTTP_429');
     await expect(buildMassivePriceClient('k', fetchWith(500)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('MASSIVE_HTTP_500');
+  });
+});
+
+describe('buildMassivePriceClient — bounded 429 retry', () => {
+  it('retries a 429 and succeeds once the per-minute window clears', async () => {
+    const calls = { n: 0 };
+    const waits: number[] = [];
+    const fetchImpl = fetchSequence([
+      new Response('', { status: 429 }),
+      new Response('', { status: 429 }),
+      new Response(JSON.stringify(aggs), { status: 200 }),
+    ], calls);
+    const client = buildMassivePriceClient('k', fetchImpl, {
+      sleep: async (ms) => { waits.push(ms); },
+      random: () => 0.5, // midpoint jitter → exactly the base waits
+    });
+    const out = await client.eodHistory('AAPL', '2024-01-01', '2024-01-05');
+    expect(out[0]).toEqual({ date: '2024-01-03', close: 184.25 });
+    expect(calls.n).toBe(3);
+    expect(waits).toEqual([5000, 15000]);
+  });
+
+  it('gives up after the retry bound (initial + 3 retries) and throws MASSIVE_HTTP_429', async () => {
+    const calls = { n: 0 };
+    const client = buildMassivePriceClient('k', fetchSequence([new Response('', { status: 429 })], calls), {
+      sleep: noSleep,
+    });
+    await expect(client.spxHistory('a', 'b')).rejects.toThrow('MASSIVE_HTTP_429');
+    expect(calls.n).toBe(4);
+  });
+
+  it('honors a Retry-After header over the default backoff', async () => {
+    const calls = { n: 0 };
+    const waits: number[] = [];
+    const fetchImpl = fetchSequence([
+      new Response('', { status: 429, headers: { 'retry-after': '2' } }),
+      new Response(JSON.stringify(aggs), { status: 200 }),
+    ], calls);
+    const client = buildMassivePriceClient('k', fetchImpl, {
+      sleep: async (ms) => { waits.push(ms); },
+    });
+    await client.eodHistory('AAPL', '2024-01-01', '2024-01-05');
+    expect(calls.n).toBe(2);
+    expect(waits).toEqual([2000]);
+  });
+
+  it('does not retry other error statuses', async () => {
+    const calls = { n: 0 };
+    const client = buildMassivePriceClient('k', fetchSequence([new Response('', { status: 500 })], calls), {
+      sleep: noSleep,
+    });
+    await expect(client.eodHistory('AAPL', 'a', 'b')).rejects.toThrow('MASSIVE_HTTP_500');
+    expect(calls.n).toBe(1);
   });
 });

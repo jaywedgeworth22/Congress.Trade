@@ -13,6 +13,7 @@
 import type { Close } from './compute.ts';
 import type { PriceClient } from './fmp.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { with429Retries, type Retry429Options } from './retry429.ts';
 
 /**
  * Parse a Massive/Polygon daily-aggs response into descending [{date, close}].
@@ -37,7 +38,11 @@ export function parseMassiveAggs(json: unknown): Close[] {
 
 const BASE = 'https://api.massive.com/v2/aggs/ticker/';
 
-export function buildMassivePriceClient(apiKey: string, fetchImpl: typeof fetch = fetch): PriceClient {
+export function buildMassivePriceClient(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+  retry: Retry429Options = {},
+): PriceClient {
   async function aggs(symbol: string, from: string, to: string): Promise<Close[]> {
     const url =
       BASE +
@@ -48,9 +53,11 @@ export function buildMassivePriceClient(apiKey: string, fetchImpl: typeof fetch 
       to +
       '?adjusted=true&sort=desc&limit=50000&apiKey=' +
       encodeURIComponent(apiKey);
-    const res = await trackedFetch(url, {
+    // 429s (shared-key per-minute limit) are retried with backoff first — see
+    // ./retry429.ts. A 429 that still persists after the retries throws below.
+    const res = await with429Retries(() => trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
+    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl), retry);
     if (!res.ok) {
       if (res.status === 404) return []; // symbol not found → genuinely no data (safe to negative-cache)
       // Auth/rate/server errors (401/403/429/5xx) fail identically for every

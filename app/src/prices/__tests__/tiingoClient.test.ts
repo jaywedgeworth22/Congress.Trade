@@ -49,7 +49,11 @@ describe('buildTiingoPriceClient', () => {
     // Auth/rate/server failures throw so the caller skips + retries instead of
     // negative-caching priceable tickers during a transient outage.
     await expect(buildTiingoPriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('TIINGO_HTTP_403');
-    await expect(buildTiingoPriceClient('k', fetchWith(429)).spxHistory('a', 'b')).rejects.toThrow('TIINGO_HTTP_429');
+    // 429s retry with backoff first (./retry429.ts); the injected no-op sleep
+    // keeps the test fast while the retries exhaust and it still throws.
+    await expect(
+      buildTiingoPriceClient('k', fetchWith(429), { sleep: async () => {} }).spxHistory('a', 'b'),
+    ).rejects.toThrow('TIINGO_HTTP_429');
     await expect(buildTiingoPriceClient('k', fetchWith(500)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('TIINGO_HTTP_500');
   });
 });
