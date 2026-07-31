@@ -1907,16 +1907,10 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });');
   });
 
-  // ---- 5. Inert "Status" pill ----------------------------------------------
-  it('gives the live-feed pill a real status value + a11y wiring instead of an inert placeholder', () => {
-    // The pill used to always show the literal word "Status" (its own label,
-    // never a value). It's now a genuine status: Connecting… -> Live -> Updated.
-    expect(DASHBOARD_HTML).toContain(
-      '<span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>',
-    );
-    expect(DASHBOARD_HTML).not.toContain('id="livePill">Status<');
-    expect(DASHBOARD_HTML).toContain("function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Live'; }");
-    expect(DASHBOARD_HTML).not.toContain("text || 'Status'");
+  // ---- 5. Live status pill removed per user instruction -------------------
+  it('removes the livePill element from the header', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="livePill"');
+    expect(DASHBOARD_HTML).toContain("function setLivePill(cls, text) { var p = el('livePill'); if (!p) return;");
   });
 
   // ---- 6. "ranked by estimated volume" label vs actual sort order ----------
