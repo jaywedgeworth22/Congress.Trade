@@ -1549,7 +1549,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="40" decoding="async" /></div>
-  <span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -3644,7 +3643,7 @@ function fetchUpdates() {
    never sits inert: "Connecting…" until the stream/poll first starts, "Live"
    once it's actively watching for updates, and a brief "Updated" flash when
    new rows arrive. role=status + aria-live announce those transitions. */
-function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Live'; }
+function setLivePill(cls, text) { var p = el('livePill'); if (!p) return; p.className = 'pill ' + cls; p.textContent = text || 'Live'; }
 
 /* Periodic polling fallback. API HOOK: GET /api/transactions?since=<cursor>. */
 function startPolling() {
