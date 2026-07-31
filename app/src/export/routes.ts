@@ -44,6 +44,7 @@ import {
   PIT_PLACEBOS,
   PIT_SCORE_VERSION,
 } from './pitScores.ts';
+import { buildPriceNeedsExport, parsePriceNeedsQuery } from './priceNeeds.ts';
 
 /** Env augmented with cross-app sharing config (mirrors admin/share routes). */
 type ExportEnv = Env & { INGEST_TOKEN?: string; APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
@@ -165,6 +166,7 @@ async function integrationCapabilities(env: ExportEnv): Promise<Record<string, u
         '/api/admin/securities/import',
         '/api/export/capabilities',
         '/api/export/congress-pit-scores',
+        '/api/export/price-needs',
         '/api/export/bulk-snapshot',
         '/api/export/bulk-snapshot/file',
       ],
@@ -217,6 +219,15 @@ async function integrationCapabilities(env: ExportEnv): Promise<Record<string, u
           maxLimit: 500,
           placebosAvailable: PIT_PLACEBOS,
         },
+        priceNeeds: {
+          method: 'GET',
+          path: '/api/export/price-needs?limit=&cursor=',
+          auth: 'bearer INGEST_TOKEN',
+          purpose:
+            'List congressional tickers whose trades lack price/SPX history for performance-vs-S&P; App B deep-shares those series.',
+          maxLimit: 2000,
+          defaultLimit: 500,
+        },
         bulkSnapshot: {
           method: 'GET',
           path: '/api/export/bulk-snapshot?date=&tables=&format=ndjson',
@@ -236,6 +247,8 @@ async function integrationCapabilities(env: ExportEnv): Promise<Record<string, u
       bootstrap: 'Pull /api/export/bulk-snapshot, persist manifest runId/objectKeys, then stream each downloadPath.',
       incrementalMarketData: 'Use /api/market/* reads as a cache-aside tier before paid providers.',
       congressionalSignals: 'Use /api/export/congress-pit-scores for historical validation and /api/analytics/* for live overlays.',
+      priceNeedsForPerformance:
+        'GET /api/export/price-needs, then POST fullHistory prices+spx for those tickers to /api/admin/securities/import so tx_performance anchors fill.',
       writeBack: 'POST newly fetched refs/prices/spx/enrichment deltas to /api/admin/securities/import with origin set by the sender.',
     },
   };
@@ -277,6 +290,18 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
       });
     }
     return c.json(exportData);
+  });
+
+  // --- GET /price-needs ---------------------------------------------------
+  // Token-gated list of congressional tickers App B should deep-share so App A
+  // can compute performance vs S&P for every dated equity trade.
+  r.get('/price-needs', async (c) => {
+    if (!(await isAuthorized(c.env, c.req.header('authorization')))) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    const query = parsePriceNeedsQuery(c.req.query());
+    const exportData = await buildPriceNeedsExport(c.env, query);
+    return c.json(exportData, 200, { 'cache-control': 'private, max-age=60' });
   });
 
   // --- GET /bulk-snapshot -------------------------------------------------
