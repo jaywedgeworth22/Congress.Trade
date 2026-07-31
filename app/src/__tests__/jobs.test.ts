@@ -67,6 +67,9 @@ vi.mock('../shared/db', async (importOriginal) => ({
 
 import {
   maybeRunDailyJobs,
+  maybeRunDailySnapshotJob,
+  maybeRunDailyFilerJobs,
+  maybeRunDailyRetentionJobs,
   runRetentionSweep,
   RETENTION_POLICIES,
   RETENTION_DELETE_BATCH,
@@ -292,5 +295,94 @@ describe('maybeRunDailyJobs secret resolution', () => {
 
       expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 0 }));
     });
+  });
+});
+
+describe('staggered daily lanes', () => {
+  // Same env shape as fakeEnv(), but with an injectable KV map so tests can
+  // pre-seed per-lane date stamps.
+  function laneEnv(kv: Map<string, string> = new Map()): Env {
+    return {
+      CONFIG_KV: {
+        async get(key: string) {
+          return kv.get(key) ?? null;
+        },
+        async put(key: string, value: string) {
+          kv.set(key, value);
+        },
+      },
+    } as unknown as Env;
+  }
+  const DAY = new Date('2026-07-10T00:00:00Z');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveSecrets.mockResolvedValue({});
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(false);
+    mocks.getDailyUsed.mockResolvedValue(0);
+    mocks.runEnrichment.mockResolvedValue({
+      hasFmpKey: false, dailyCap: null, fmpCalls: 0, errors: [], shareRefs: [], scanned: 0, enriched: 0,
+    });
+    mocks.runPriceRefresh.mockResolvedValue({
+      hasFmpKey: false, fmpCalls: 0, errors: [], sharePrices: [], shareSpx: [],
+    });
+    mocks.hasFmpTierFailure.mockReturnValue(false);
+    mocks.shareWithPeer.mockResolvedValue({ sent: false, reason: 'not configured' });
+    mocks.runFreshnessCheck.mockResolvedValue([]);
+    mocks.runBulkSnapshot.mockResolvedValue({ tables: {} });
+    mocks.runPhotoEnrichment.mockResolvedValue(undefined);
+    mocks.runTickerBackfill.mockResolvedValue(undefined);
+    mocks.dbRun.mockResolvedValue({ meta: { changes: 0 } });
+  });
+
+  it('snapshot lane still runs when only the market-data lane is stamped', async () => {
+    const kv = new Map([['jobs:daily:lastdate:market-data', '2026-07-10']]);
+    const status = await maybeRunDailySnapshotJob(laneEnv(kv), DAY);
+    expect(status).toBe('ran');
+    expect(mocks.runBulkSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('each lane no-ops on its own stamp the same UTC day', async () => {
+    const env = laneEnv();
+    expect(await maybeRunDailyFilerJobs(env, DAY)).toBe('ran');
+    expect(await maybeRunDailyFilerJobs(env, DAY)).toBe('stamped');
+    expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
+  });
+
+  it('filer lane runs photo enrichment and ticker backfill', async () => {
+    await maybeRunDailyFilerJobs(laneEnv(), DAY);
+    expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
+  });
+
+  it('retention lane runs both retention sweeps', async () => {
+    await maybeRunDailyRetentionJobs(laneEnv(), DAY);
+    const sqls = mocks.dbRun.mock.calls.map(([, sql]) => sql as string);
+    for (const policy of RETENTION_POLICIES) {
+      expect(sqls.some((s) => s.includes(`DELETE FROM ${policy.table}`))).toBe(true);
+    }
+  });
+
+  it('a lane stamps the day even when the D1 budget trips, and reports budget', async () => {
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(true);
+    const env = laneEnv();
+    expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('budget');
+    expect(mocks.runBulkSnapshot).not.toHaveBeenCalled();
+    // Stamped → the next cron firing same-day is a cheap no-op, not a re-check.
+    expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('stamped');
+    expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(1);
+  });
+
+  it('combined wrapper runs all four lanes exactly once on a fresh day', async () => {
+    await maybeRunDailyJobs(laneEnv(), DAY);
+    expect(mocks.runEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runBulkSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
+    const sqls = mocks.dbRun.mock.calls.map(([, sql]) => sql as string);
+    for (const policy of RETENTION_POLICIES) {
+      expect(sqls.some((s) => s.includes(`DELETE FROM ${policy.table}`))).toBe(true);
+    }
   });
 });
