@@ -136,7 +136,8 @@ export function registerDailyLaneCrons(
 ): void {
   const inFlight = new Set<string>();
   for (const lane of DAILY_LANE_CRONS) {
-    Deno.cron(`Daily lane: ${lane.name}`, lane.schedule, async () => {
+    // Deno.cron names allow only alphanumerics, whitespace, hyphens, underscores.
+    Deno.cron(`daily-lane ${lane.name}`, lane.schedule, async () => {
       if (inFlight.has(lane.name)) {
         console.warn(`daily lane ${lane.name} skipped: previous run still in flight`);
         return;
