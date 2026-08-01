@@ -78,7 +78,11 @@ describe('hasConfiguredKeyedEnrichmentProvider', () => {
   // Async since the keys resolve through Infisical (env fallback in tests).
   it('detects any configured keyed market-data provider', async () => {
     expect(await hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
-    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
+    // FMP keys are latency-only by policy: the key alone does NOT count unless
+    // FMP_ENRICHMENT_ENABLED is explicitly truthy.
+    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k', FMP_ENRICHMENT_ENABLED: 'false' } as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k', FMP_ENRICHMENT_ENABLED: 'true' } as never)).toBe(true);
     expect(await hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
     // Tiingo is intentionally excluded — its free tier supplies only name+exchange,
     // so it should not enable retry-incomplete mode that would endlessly re-select
