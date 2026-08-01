@@ -58,10 +58,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta name="twitter:description" content="Track U.S. Congress stock trades in near real time: live feed, member and ticker analytics, premium webhooks." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
-<link rel="icon" href="/favicon.ico" sizes="32x32" />
-<link rel="icon" type="image/png" href="/icon-192.png" sizes="192x192" />
-<link rel="icon" type="image/png" href="/icon-512.png" sizes="512x512" />
-<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<link rel="icon" href="/favicon.ico?v=2" sizes="32x32" />
+<link rel="icon" type="image/png" href="/icon-192.png?v=2" sizes="192x192" />
+<link rel="icon" type="image/png" href="/icon-512.png?v=2" sizes="512x512" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
 <link rel="manifest" href="/site.webmanifest" />
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
@@ -1548,7 +1548,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png?v=2" data-src-dark="/assets/brand-logo-dark.png?v=2" data-src-light="/assets/brand-logo-light.png?v=2" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
