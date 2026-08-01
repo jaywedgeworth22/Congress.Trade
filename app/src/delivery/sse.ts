@@ -165,8 +165,7 @@ export function createSseBackpressureStream(
       if (writeInFlight) throw new SseStreamClosedError('concurrent SSE write rejected');
       writeInFlight = true;
       try {
-        const deadlineRemainingMs = deadlineAt - Date.now();
-        if (deadlineRemainingMs <= 0) throw new SseStreamDeadlineError();
+        const deadlineRemainingMs = Math.max(10, deadlineAt - Date.now());
         const budgetMs = Math.min(slowReaderTimeoutMs, deadlineRemainingMs);
         const timeoutError = deadlineRemainingMs <= slowReaderTimeoutMs
           ? new SseStreamDeadlineError()
@@ -192,8 +191,7 @@ export function createSseBackpressureStream(
       if (writeInFlight) throw new SseStreamClosedError('cannot close during an SSE write');
       state = 'closing';
       try {
-        const remainingMs = deadlineAt - Date.now();
-        if (remainingMs <= 0) throw new SseStreamDeadlineError();
+        const remainingMs = Math.max(10, deadlineAt - Date.now());
         await settleWithin(writer.close(), remainingMs, new SseStreamDeadlineError());
         state = 'closed';
       } catch (err) {
