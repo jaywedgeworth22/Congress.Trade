@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { parse } from 'node-html-parser';
 import { DASHBOARD_HTML } from '../dashboardHtml.ts';
 
@@ -2001,5 +2002,132 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(fmtName('Jared Moskowitz')).toBe('Jared Moskowitz');
     expect(fmtName('Richard Dean Dr McCormick')).toBe('Richard Dean McCormick');
     expect(fmtName('Dunn, Neal Patrick MD, FACS')).toBe('Neal Patrick Dunn');
+  });
+});
+
+/**
+ * Regression cover for CT-AUD-P0-4.
+ *
+ * `DASHBOARD_HTML` is one ~8,800-line TypeScript template literal, so every
+ * backslash in the embedded browser JS is consumed by template-literal escape
+ * processing before the browser ever sees it. A regex written `/\.{2}/g` in
+ * this file ships as `/.{2}/g` — "MICROSOFT CORP" rendered as "......." in
+ * production for as long as that line existed.
+ *
+ * `tsc` cannot see this (the literal is just a string) and neither can a test
+ * that greps the SOURCE text — the bug only exists in the GENERATED script.
+ * So there are two guards here:
+ *   1. a lexical guard over the source file, which fails on any new
+ *      single-backslash escape inside the literal, and
+ *   2. behavioural tests that execute the emitted script.
+ */
+describe('embedded client script escaping (CT-AUD-P0-4)', () => {
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+
+  it('has no single-backslash escapes inside the template literal', () => {
+    const source = readFileSync(new URL('../dashboardHtml.ts', import.meta.url) as any, 'utf8') as string;
+    const open = source.indexOf('`', source.indexOf('DASHBOARD_HTML'));
+    expect(open).toBeGreaterThan(0);
+
+    // Inside a template literal only these survive intact: an escaped
+    // backslash, an escaped backtick, an escaped `${`, and a \uXXXX code
+    // point. Everything else silently loses its backslash — which is exactly
+    // how the regexes in fmtCompany shipped broken.
+    const offenders: string[] = [];
+    for (let i = open + 1; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === '`') break;
+      if (ch !== '\\') continue;
+      const next = source[i + 1];
+      const isEscapedBackslash = next === '\\';
+      const isEscapedBacktick = next === '`';
+      const isEscapedInterp = next === '$';
+      const isCodePoint = next === 'u' && /^[0-9a-fA-F]{4}$/.test(source.slice(i + 2, i + 6));
+      if (!(isEscapedBackslash || isEscapedBacktick || isEscapedInterp || isCodePoint)) {
+        const line = source.slice(0, i).split('\n').length;
+        offenders.push(`line ${line}: \\${next} in ${source.split('\n')[line - 1].trim().slice(0, 100)}`);
+      }
+      i++; // consume the escaped character
+    }
+
+    expect(
+      offenders,
+      'Single-backslash escapes lose their backslash in the generated script. ' +
+        'Double them (\\\\s, \\\\b, \\\\d, \\\\.) so the browser receives a real regex.',
+    ).toEqual([]);
+  });
+
+  it('formats company names instead of collapsing them to dots', () => {
+    const src = [
+      extractFn(DASHBOARD_HTML, 'fmtCompany'),
+      DASHBOARD_HTML.slice(
+        DASHBOARD_HTML.indexOf('var COMPANY_BRAND_CASING = ['),
+        DASHBOARD_HTML.indexOf('];', DASHBOARD_HTML.indexOf('var COMPANY_BRAND_CASING = [')) + 2,
+      ),
+      'return fmtCompany;',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const fmtCompany = new Function(src)() as (raw: string) => string;
+
+    // The exact production symptom: every name became a run of periods.
+    expect(fmtCompany('MICROSOFT CORP')).not.toMatch(/^\.+$/);
+
+    expect(fmtCompany('MICROSOFT CORP')).toBe('Microsoft Corp.');
+    expect(fmtCompany('APPLE INC')).toBe('Apple Inc.');
+    expect(fmtCompany('AMAZON COM INC')).toBe('Amazon.com, Inc.');
+    expect(fmtCompany('META PLATFORMS INC')).toBe('Meta Platforms, Inc.');
+    // Interior articles lowercase; the first and last word never do.
+    expect(fmtCompany('BANK OF AMERICA CORP')).toBe('Bank of America Corp.');
+    expect(fmtCompany('THE WALT DISNEY CO')).toBe('The Walt Disney Co.');
+    // Trailing single letters are share classes, not articles.
+    expect(fmtCompany('ALPHABET INC CLASS A')).toBe('Alphabet Inc. Class A');
+    // Internal punctuation survives title casing.
+    expect(fmtCompany('SPDR S&P 500 ETF TRUST')).toBe('SPDR S&P 500 ETF Trust');
+    expect(fmtCompany("O'REILLY AUTOMOTIVE INC")).toBe("O'Reilly Automotive Inc.");
+    expect(fmtCompany('')).toBe('');
+  });
+
+  it('normalizes whitespace in vote keys rather than deleting the letter s', () => {
+    // `/\s+/g` shipped as `/s+/g`, so "MISSISSIPPI POWER" keyed as
+    // "MI I IPPI POWER" and identical rows failed to group.
+    const match = DASHBOARD_HTML.match(/String\(val\)\.trim\(\)\.replace\((\/[^/]+\/g), ' '\)/);
+    expect(match, 'vote-key whitespace normalizer not found').toBeTruthy();
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const normalize = new Function('v', `return String(v).trim().replace(${match![1]}, ' ').toUpperCase();`) as (
+      v: string,
+    ) => string;
+    expect(normalize('  MISSISSIPPI   POWER  ')).toBe('MISSISSIPPI POWER');
+    expect(normalize('Alphabet\tInc')).toBe('ALPHABET INC');
+  });
+
+  it('rebuilds House PTR links from an 8-digit doc id', () => {
+    const src = extractFn(DASHBOARD_HTML, 'reconstructFilingUrl') + '\nreturn reconstructFilingUrl;';
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const reconstructFilingUrl = new Function(src)() as (docId: string) => string;
+    // `/(\d{8})/` shipped as `/(d{8})/` — it matched eight literal "d"s, so
+    // every House PTR link silently returned ''.
+    expect(reconstructFilingUrl('20026543')).toBe(
+      'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026543.pdf',
+    );
+    expect(reconstructFilingUrl('H-2026-0001')).toBe('/api/documents/H-2026-0001/pdf');
+    expect(reconstructFilingUrl('')).toBe('');
   });
 });

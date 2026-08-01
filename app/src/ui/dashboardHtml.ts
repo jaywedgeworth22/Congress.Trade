@@ -2301,21 +2301,23 @@ function fmtCompany(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
   if (s === s.toUpperCase() || s === s.toLowerCase()) {
-    s = s.replace(/\w\S*/g, function(txt) {
+    // Title-case each run of letters independently so internal punctuation is
+    // preserved: "S&P" stays "S&P" rather than collapsing to "S&p".
+    s = s.replace(/[A-Za-z]+/g, function(txt) {
       return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
     });
   }
   if (s.includes('Amazon') || s.includes('AMAZON')) {
-    s = s.replace(/\bAmazon\s+Com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
-    s = s.replace(/\bAmazon\.com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
+    s = s.replace(/\\bAmazon\\s+Com\\s+Inc\\.?\\b/gi, 'Amazon.com, Inc.');
+    s = s.replace(/\\bAmazon\\.com\\s+Inc\\.?\\b/gi, 'Amazon.com, Inc.');
   }
   if (s.includes('Meta') || s.includes('META')) {
-    s = s.replace(/\bMeta\s+Platforms\s+Inc\.?\b/gi, 'Meta Platforms, Inc.');
+    s = s.replace(/\\bMeta\\s+Platforms\\s+Inc\\.?\\b/gi, 'Meta Platforms, Inc.');
   }
-  s = s.replace(/\b(Llc|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
+  s = s.replace(/\\b(Llc|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\\b/gi, function(match) {
     return match.toUpperCase();
   });
-  s = s.replace(/\b(Inc|Corp|Ltd|Co)\b/gi, function(match) {
+  s = s.replace(/\\b(Inc|Corp|Ltd|Co)\\b/gi, function(match) {
     var c = match.toLowerCase();
     if (c === 'inc') return 'Inc.';
     if (c === 'corp') return 'Corp.';
@@ -2323,13 +2325,38 @@ function fmtCompany(raw) {
     if (c === 'co') return 'Co.';
     return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase();
   });
-  s = s.replace(/\b(And|Of|The|In|For|A|An|To|On)\b/gi, function(match) {
+  // Standard title case: articles/prepositions stay lowercase only when they
+  // are interior. Never lowercase the first or last word — the trailing token
+  // is usually a share class ("Alphabet Inc. Class A"), not an article.
+  s = s.replace(/\\b(And|Of|The|In|For|A|An|To|On)\\b/gi, function(match, _g1, offset, whole) {
+    if (offset === 0) return match;
+    if (offset + match.length >= whole.length) return match;
     return match.toLowerCase();
   });
   // deduplicate periods
-  s = s.replace(/\.{2}/g, '.');
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  s = s.replace(/\\.{2,}/g, '.');
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  // Brands whose real casing a generic title-caser cannot infer. Frequently
+  // traded names only — this is a display nicety, not a normalization source.
+  for (var bi = 0; bi < COMPANY_BRAND_CASING.length; bi++) {
+    s = s.replace(COMPANY_BRAND_CASING[bi][0], COMPANY_BRAND_CASING[bi][1]);
+  }
+  return s;
 }
+var COMPANY_BRAND_CASING = [
+  [/\\bAt&t\\b/gi, 'AT&T'],
+  [/\\bJpmorgan\\b/gi, 'JPMorgan'],
+  [/\\bIshares\\b/gi, 'iShares'],
+  [/\\bSpdr\\b/gi, 'SPDR'],
+  [/\\bEbay\\b/gi, 'eBay'],
+  [/\\bPaypal\\b/gi, 'PayPal'],
+  [/\\bYoutube\\b/gi, 'YouTube'],
+  [/\\bTsmc\\b/gi, 'TSMC'],
+  [/\\bIbm\\b/gi, 'IBM'],
+  [/\\bAmd\\b/gi, 'AMD'],
+  [/\\bNvidia\\b/gi, 'NVIDIA'],
+  [/\\b3m\\b/gi, '3M'],
+];
 /* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
 function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
@@ -6691,7 +6718,7 @@ function clientBuildMajorityRows(reads) {
     if (field === 'isOption' || field === 'capGainsOver200') return tx[field] ? '1' : '0';
     if (field === 'txDate') return tx.txDate || '';
     var val = valueFor(tx, field);
-    return (val === null || val === undefined) ? '' : String(val).trim().replace(/\s+/g, ' ').toUpperCase();
+    return (val === null || val === undefined) ? '' : String(val).trim().replace(/\\s+/g, ' ').toUpperCase();
   };
 
   var groups = reads.map(function(read) {
@@ -6772,13 +6799,13 @@ function clientBuildMajorityRows(reads) {
 function computeMatchStats(candRows, gtRows) {
   var getFingerprint = function(tx) {
     return JSON.stringify([
-      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.txDate || '',
-      ((tx.txType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.txType || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.amountMin ?? null,
       tx.amountMax ?? null,
-      ((tx.owner || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
-      ((tx.assetType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.owner || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
+      ((tx.assetType || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
       tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
     ]);
@@ -6823,13 +6850,13 @@ function sameRowSet(rowsA, rowsB) {
   
   var getFingerprint = function(tx) {
     return JSON.stringify([
-      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.txDate || '',
-      ((tx.txType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.txType || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.amountMin ?? null,
       tx.amountMax ?? null,
-      ((tx.owner || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
-      ((tx.assetType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.owner || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
+      ((tx.assetType || '') + '').trim().replace(/\\s+/g, ' ').toUpperCase(),
       tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
       tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
     ]);
@@ -8079,7 +8106,7 @@ function reconstructFilingUrl(docId) {
   if (s.slice(0, 2) === 'S-' || s.slice(0, 2) === 'H-') {
     return '/api/documents/' + encodeURIComponent(s) + '/pdf';
   }
-  var m = /(\d{8})/.exec(s);
+  var m = /(\\d{8})/.exec(s);
   if (m) {
     return 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/' + m[1] + '.pdf';
   }
