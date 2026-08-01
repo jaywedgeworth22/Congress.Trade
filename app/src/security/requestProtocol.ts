@@ -29,8 +29,10 @@ function hostnameOnly(host: string | undefined): string {
   const h = host.trim().toLowerCase();
   // Bracketed IPv6 literal: "[::1]:5000" -> "[::1]"
   if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1);
-  const colon = h.lastIndexOf(':');
-  return colon === -1 ? h : h.slice(0, colon);
+  const colons = h.split(':').length - 1;
+  if (colons > 1) return h; // Unbracketed IPv6 address (e.g. "::1")
+  if (colons === 1) return h.slice(0, h.indexOf(':')); // Host:port
+  return h;
 }
 
 function isLocalHost(host: string | undefined): boolean {
