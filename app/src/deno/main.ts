@@ -57,8 +57,10 @@ await refreshSecrets(secretEnv);
 const tursoUrlRes = await resolveSecret(secretEnv, 'TURSO_DATABASE_URL');
 const tursoTokenRes = await resolveSecret(secretEnv, 'TURSO_AUTH_TOKEN');
 
-const tursoUrl = tursoUrlRes.value || Deno.env.get('TURSO_DATABASE_URL') || '';
-const tursoToken = tursoTokenRes.value || Deno.env.get('TURSO_AUTH_TOKEN') || '';
+const rawTursoUrl = tursoUrlRes.value || Deno.env.get('TURSO_DATABASE_URL') || '';
+const tursoUrl = rawTursoUrl.trim().replace(/^['"]|['"]$/g, '').trim();
+const rawTursoToken = tursoTokenRes.value || Deno.env.get('TURSO_AUTH_TOKEN') || '';
+const tursoToken = rawTursoToken.trim().replace(/^['"]|['"]$/g, '').trim();
 
 if (!tursoUrl || tursoUrl.includes('dummy-url')) {
   console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Deno Deploy.");
