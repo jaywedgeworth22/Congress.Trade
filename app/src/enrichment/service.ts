@@ -36,12 +36,20 @@ export const DEFAULT_DAILY_CAP = 230;
 type EnvX = Env & {
   FMP_API_KEY?: string;
   FMP_DAILY_CALL_CAP?: string;
+  /** Owner policy (2026-08-01): FMP keys are reserved for the disclosure-latency
+   *  race only. FMP joins the enrichment chain ONLY when this is explicitly
+   *  truthy ('true'/'1'/'yes'/'on'); unset or anything else = latency-only. */
+  FMP_ENRICHMENT_ENABLED?: string;
   MASSIVE_API_KEY?: string;
   INTRINIO_API_KEY?: string;
   TWELVEDATA_API_KEY?: string;
   FINNHUB_API_KEY?: string;
   TIINGO_API_KEY?: string;
 };
+
+function fmpEnrichmentEnabled(value?: string): boolean {
+  return ['true', '1', 'yes', 'on'].includes((value || '').trim().toLowerCase());
+}
 
 interface ChainEntry {
   name: string;
@@ -158,13 +166,14 @@ export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvid
 export async function hasConfiguredKeyedEnrichmentProvider(env: Env): Promise<boolean> {
   const keys = await resolveSecrets(env, [
     'FMP_API_KEY',
+    'FMP_ENRICHMENT_ENABLED',
     'MASSIVE_API_KEY',
     'INTRINIO_API_KEY',
     'TWELVEDATA_API_KEY',
     'FINNHUB_API_KEY',
   ]);
   return Boolean(
-    keys.FMP_API_KEY ||
+    (keys.FMP_API_KEY && fmpEnrichmentEnabled(keys.FMP_ENRICHMENT_ENABLED)) ||
       keys.MASSIVE_API_KEY ||
       keys.INTRINIO_API_KEY ||
       keys.TWELVEDATA_API_KEY ||
@@ -181,6 +190,10 @@ export async function hasConfiguredKeyedEnrichmentProvider(env: Env): Promise<bo
  * cap/CIK) sits just above the free baseline as one more freemium name/exchange
  * fallback; SEC EDGAR is the always-on, public-domain (free) baseline.
  * These are NOT mere fallbacks — each fills fields the higher ones lack.
+ *
+ * NOTE: `hasFmp` already encodes the FMP_ENRICHMENT_ENABLED policy gate
+ * (FMP keys are latency-only unless explicitly opted in), so the FMP entry is
+ * normally absent even when FMP_API_KEY is configured.
  */
 function buildEnrichmentChain(env: EnvX, hasFmp: boolean): ChainEntry[] {
   const chain: ChainEntry[] = [];
@@ -295,6 +308,7 @@ export async function runEnrichment(
 ): Promise<EnrichResult> {
   const runtimeSecrets = await resolveSecrets(env, [
     'FMP_API_KEY',
+    'FMP_ENRICHMENT_ENABLED',
     'FMP_DAILY_CALL_CAP',
     'FMP_MAX_PER_MINUTE',
     'EDGAR_MAX_PER_MINUTE',
@@ -307,7 +321,9 @@ export async function runEnrichment(
   const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
   const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
-  const hasFmp = !!envx.FMP_API_KEY;
+  // FMP keys are latency-only by owner policy: the key being present is not
+  // enough — FMP only enriches when FMP_ENRICHMENT_ENABLED is explicitly truthy.
+  const hasFmp = !!envx.FMP_API_KEY && fmpEnrichmentEnabled(envx.FMP_ENRICHMENT_ENABLED);
   const usedBefore = await getDailyUsed(env);
   const fmpBudget = hasFmp ? remainingBudget(cap, usedBefore, opts.max) : 0;
   // With a key, the run is bounded by the FMP budget; without one we still do
