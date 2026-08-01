@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   fetchFiling,
+  shouldRetryFetchStatus,
 } from '../fetcher.ts';
 
 function envForFetch() {
@@ -81,5 +82,31 @@ describe('fetcherRetry', () => {
     // The limit trips while buffering, before R2 is ever touched.
     expect(put).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('shouldRetryFetchStatus (transient 403/404 handling)', () => {
+  const NOW = new Date('2026-08-01T12:00:00Z');
+
+  it('treats 403 as transient (WAF burst response)', () => {
+    expect(shouldRetryFetchStatus(403, null, NOW)).toBe(true);
+    expect(shouldRetryFetchStatus(403, '2026-01-01T00:00:00Z', NOW)).toBe(true);
+  });
+
+  it('treats 404 as transient only within the not-yet-published window', () => {
+    // First seen 2 days ago: House bulk index entries precede the PDF.
+    expect(shouldRetryFetchStatus(404, '2026-07-30T12:00:00Z', NOW)).toBe(true);
+    // Older than the 7-day window: genuinely missing, terminal.
+    expect(shouldRetryFetchStatus(404, '2026-07-20T12:00:00Z', NOW)).toBe(false);
+    // Unknown first_seen: terminal (don't churn on legacy rows).
+    expect(shouldRetryFetchStatus(404, null, NOW)).toBe(false);
+    expect(shouldRetryFetchStatus(404, 'not-a-date', NOW)).toBe(false);
+  });
+
+  it('keeps generic retryable + terminal statuses unchanged', () => {
+    expect(shouldRetryFetchStatus(429, null, NOW)).toBe(true);
+    expect(shouldRetryFetchStatus(503, null, NOW)).toBe(true);
+    expect(shouldRetryFetchStatus(400, null, NOW)).toBe(false);
+    expect(shouldRetryFetchStatus(410, null, NOW)).toBe(false);
   });
 });

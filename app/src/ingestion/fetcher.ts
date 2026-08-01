@@ -31,6 +31,7 @@ interface FilingRow {
   chamber: string | null;
   source_url: string | null;
   ingest_status: string | null;
+  first_seen_at?: string | null;
 }
 
 export const MAX_RAW_FILING_BYTES = 25 * 1024 * 1024;
@@ -47,6 +48,37 @@ export class FilingTooLargeError extends Error {}
 /** HTTP responses that should be retried by the ingest queue. */
 export function isRetryableFilingHttpStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/**
+ * How long a 404-ing filing keeps retrying before going terminal. House bulk
+ * FD index entries are published before the Clerk posts the matching PDF, so
+ * a fresh filing's 404 usually means "not yet published", not "does not
+ * exist" (prod 2026-07-30: 707 filings errored terminally on same-day 404s).
+ */
+export const FETCH_NOT_PUBLISHED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Full transient-fetch classification. Beyond the generic retryable statuses:
+ * - 403: the Clerk/eFD WAF answers request bursts with short-lived 403s
+ *   (observed 2026-08-01 during a backlog drain); a terminal error loses the
+ *   filing, so retry with the standard backoff instead. A genuinely
+ *   permanent block still terminates via the queue's retry budget.
+ * - 404: retry only while the filing is fresh (see window above); an old
+ *   filing's 404 is treated as genuinely missing and stays terminal.
+ */
+export function shouldRetryFetchStatus(
+  status: number,
+  firstSeenAt: string | null | undefined,
+  now: Date,
+): boolean {
+  if (isRetryableFilingHttpStatus(status)) return true;
+  if (status === 403) return true;
+  if (status === 404) {
+    const seen = firstSeenAt ? Date.parse(firstSeenAt) : NaN;
+    if (Number.isFinite(seen) && now.getTime() - seen < FETCH_NOT_PUBLISHED_WINDOW_MS) return true;
+  }
+  return false;
 }
 
 export function retryAfterSeconds(value: string | null, nowMs = Date.now()): number | null {
@@ -171,7 +203,7 @@ export async function fetchFiling(
   await lease?.assertOwned();
   const row = await get<FilingRow>(
     env.DB,
-    `SELECT doc_id, chamber, source_url, ingest_status FROM filings WHERE doc_id = ?`,
+    `SELECT doc_id, chamber, source_url, ingest_status, first_seen_at FROM filings WHERE doc_id = ?`,
     [docId],
   );
   if (!row) {
@@ -210,10 +242,13 @@ export async function fetchFiling(
       signal: lease?.signal,
     }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
     if (!res.ok) {
-      const message = `fetcher: source ${sourceUrl} -> HTTP ${res.status}`;
+      const notYetPublished = res.status === 404 && shouldRetryFetchStatus(res.status, row.first_seen_at, new Date());
+      const message = notYetPublished
+        ? `fetcher: source ${sourceUrl} -> HTTP 404 (not yet published; will retry)`
+        : `fetcher: source ${sourceUrl} -> HTTP ${res.status}`;
       await res.body?.cancel().catch(() => {});
       await markError(env, docId, message, lease);
-      if (isRetryableFilingHttpStatus(res.status)) {
+      if (shouldRetryFetchStatus(res.status, row.first_seen_at, new Date())) {
         throw new IngestRetryError(
           message,
           retryAfterSeconds(res.headers.get('retry-after')) ?? ingestBackoffSeconds(queueAttempt),
