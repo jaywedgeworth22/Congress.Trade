@@ -242,13 +242,19 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
 }
 
 /**
- * Daily lane 1 — market data: FMP/SEC enrichment, price refresh, peer share,
- * usage telemetry, FMP-tier alert, and the cross-app freshness watchdog.
- * Network-heavy by design (provider pacing); runs on its own hourly cron
- * window (see deno/cronLanes.ts) with a multi-minute deadline, NOT inside the
- * 45s 15-minute tick. Own KV date stamp; once per UTC day.
+ * Daily lane 1 — market data: a TIME-SLICED enrichment pass (so a deep
+ * backlog can never starve the rest of the lane), then price refresh, peer
+ * share, usage telemetry, FMP-tier alert, and the cross-app freshness
+ * watchdog. Runs on its own daily cron window (see deno/cronLanes.ts) with a
+ * multi-minute deadline, NOT inside the 45s 15-minute tick. Own KV date
+ * stamp; once per UTC day. The remaining enrichment backlog drains through
+ * the day via the hourly `hourly-enrichment` lane.
  */
-export async function maybeRunDailyMarketDataJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
+export async function maybeRunDailyMarketDataJobs(
+  env: Env,
+  now = new Date(),
+  opts: { signal?: AbortSignal; enrichmentDeadlineMs?: number } = {},
+): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
   if (!(await stampDaily(env, LANE_KEY_PREFIX + 'market-data', day))) return 'stamped';
 
@@ -300,7 +306,16 @@ export async function maybeRunDailyMarketDataJobs(env: Env, now = new Date()): P
   const enrichmentMax = await enrichmentBudgetFloorMax(env, secrets.FMP_API_KEY, secrets.FMP_DAILY_CALL_CAP);
 
   try {
-    const r = await runEnrichment(env, { maxPerMinute, edgarMaxPerMinute, max: enrichmentMax });
+    // Time-sliced: stop picking up new candidates after enrichmentDeadlineMs
+    // (default 4 min) so price refresh + share + freshness ALWAYS run today;
+    // the hourly-enrichment lane keeps draining the backlog afterwards.
+    const r = await runEnrichment(env, {
+      maxPerMinute,
+      edgarMaxPerMinute,
+      max: enrichmentMax,
+      signal: opts.signal,
+      deadlineMs: opts.enrichmentDeadlineMs ?? 4 * 60_000,
+    });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     fmpDailyCap = r.dailyCap;
     enrichmentFmpCalls = r.fmpCalls;
@@ -386,6 +401,87 @@ export async function maybeRunDailyMarketDataJobs(env: Env, now = new Date()): P
     console.warn('freshness check failed:', (err as Error).message);
   }
   return 'ran';
+}
+
+/**
+ * Hourly lane — enrichment drain. Time-sliced FMP/SEC enrichment with NO
+ * daily date stamp: the daily FMP call cap and the un-enriched candidate
+ * predicates self-limit total spend, so firing hourly simply drains the
+ * backlog in ~8-minute slices instead of one midnight marathon that can
+ * starve everything behind it. Once the day's market-data lane has run
+ * (price refresh done), the 20% price-refresh budget floor no longer applies.
+ * Each run's freshly enriched refs are shared to the peer (delta only).
+ */
+export const HOURLY_ENRICHMENT_SLICE_MAX = 1200;
+export const HOURLY_ENRICHMENT_SLICE_DEADLINE_MS = 8 * 60_000;
+
+export interface HourlyEnrichmentResult {
+  scanned: number;
+  enriched: number;
+  fmpCalls: number;
+  budgetRemaining: number;
+  remainingBacklog: boolean;
+}
+
+export async function runHourlyEnrichmentSlice(
+  env: Env,
+  now = new Date(),
+  opts: { signal?: AbortSignal; deadlineMs?: number; max?: number } = {},
+): Promise<HourlyEnrichmentResult> {
+  const day = now.toISOString().slice(0, 10);
+  const secrets = await resolveSecrets(env, [
+    'FMP_MAX_PER_MINUTE',
+    'EDGAR_MAX_PER_MINUTE',
+    'FMP_API_KEY',
+    'FMP_DAILY_CALL_CAP',
+  ]);
+  const maxPerMinute = parseInt(secrets.FMP_MAX_PER_MINUTE || '', 10) || undefined;
+  const edgarMaxPerMinute = parseInt(secrets.EDGAR_MAX_PER_MINUTE || '', 10) || undefined;
+  // The 20% floor protects the daily price refresh only until it has run;
+  // afterwards the full remaining budget is available to the drain.
+  let priceRefreshDone = false;
+  try {
+    priceRefreshDone =
+      (await env.CONFIG_KV.get(LANE_KEY_PREFIX + 'market-data')) === day;
+  } catch {
+    priceRefreshDone = false;
+  }
+  const floorMax = priceRefreshDone
+    ? undefined
+    : await enrichmentBudgetFloorMax(env, secrets.FMP_API_KEY, secrets.FMP_DAILY_CALL_CAP);
+  const max = Math.max(
+    0,
+    Math.min(floorMax ?? Number.MAX_SAFE_INTEGER, opts.max ?? HOURLY_ENRICHMENT_SLICE_MAX),
+  );
+  const empty: HourlyEnrichmentResult = {
+    scanned: 0, enriched: 0, fmpCalls: 0, budgetRemaining: 0, remainingBacklog: false,
+  };
+  if (max <= 0) return empty;
+
+  const r = await runEnrichment(env, {
+    maxPerMinute,
+    edgarMaxPerMinute,
+    max,
+    signal: opts.signal,
+    deadlineMs: opts.deadlineMs ?? HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
+  });
+  // Share this slice's delta (never echoes back what the peer sent us).
+  if (r.shareRefs.length > 0) {
+    try {
+      await shareWithPeer(env, { refs: r.shareRefs });
+    } catch (err) {
+      console.warn('hourly enrichment peer share failed:', (err as Error).message);
+    }
+  }
+  return {
+    scanned: r.scanned,
+    enriched: r.enriched,
+    fmpCalls: r.fmpCalls,
+    budgetRemaining: r.budgetRemaining,
+    // Heuristic for observability: a slice that hit its caps probably left
+    // backlog for the next hourly window.
+    remainingBacklog: r.scanned >= max || r.budgetRemaining <= 0,
+  };
 }
 
 /**

@@ -67,6 +67,9 @@ vi.mock('../shared/db', async (importOriginal) => ({
 
 import {
   maybeRunDailyJobs,
+  runHourlyEnrichmentSlice,
+  HOURLY_ENRICHMENT_SLICE_MAX,
+  HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
   maybeRunDailySnapshotJob,
   maybeRunDailyFilerJobs,
   maybeRunDailyRetentionJobs,
@@ -383,5 +386,92 @@ describe('staggered daily lanes', () => {
     for (const policy of RETENTION_POLICIES) {
       expect(sqls.some((s) => s.includes(`DELETE FROM ${policy.table}`))).toBe(true);
     }
+  });
+});
+
+describe('runHourlyEnrichmentSlice', () => {
+  function sliceEnv(kv: Map<string, string> = new Map()): Env {
+    return {
+      CONFIG_KV: {
+        async get(key: string) {
+          return kv.get(key) ?? null;
+        },
+        async put(key: string, value: string) {
+          kv.set(key, value);
+        },
+      },
+    } as unknown as Env;
+  }
+  const DAY = new Date('2026-08-01T12:47:00Z');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveSecrets.mockResolvedValue({});
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(false);
+    mocks.getDailyUsed.mockResolvedValue(0);
+    mocks.runEnrichment.mockResolvedValue({
+      hasFmpKey: true, dailyCap: 5000, fmpCalls: 10, errors: [], shareRefs: [], scanned: 50, enriched: 40,
+      budgetRemaining: 4000,
+    });
+    mocks.shareWithPeer.mockResolvedValue({ sent: false, reason: 'not configured' });
+  });
+
+  it('has no daily stamp: runs again the same day (daily FMP cap self-limits)', async () => {
+    const env = sliceEnv();
+    await runHourlyEnrichmentSlice(env, DAY);
+    await runHourlyEnrichmentSlice(env, DAY);
+    expect(mocks.runEnrichment).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps each slice at HOURLY_ENRICHMENT_SLICE_MAX and time-boxes it', async () => {
+    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '100000' });
+    await runHourlyEnrichmentSlice(sliceEnv(), DAY);
+    expect(mocks.runEnrichment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ max: HOURLY_ENRICHMENT_SLICE_MAX, deadlineMs: HOURLY_ENRICHMENT_SLICE_DEADLINE_MS }),
+    );
+  });
+
+  it('drops the 20% price-refresh floor once the market-data lane is stamped', async () => {
+    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
+    mocks.getDailyUsed.mockResolvedValue(100);
+    const kv = new Map([['jobs:daily:lastdate:market-data', '2026-08-01']]);
+    await runHourlyEnrichmentSlice(sliceEnv(kv), DAY);
+    // No floor after price refresh ran → full slice cap; the 900-call
+    // remaining budget still bounds spend inside runEnrichment itself.
+    expect(mocks.runEnrichment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ max: HOURLY_ENRICHMENT_SLICE_MAX }),
+    );
+  });
+
+  it('keeps the 20% floor while price refresh has not run yet', async () => {
+    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
+    mocks.getDailyUsed.mockResolvedValue(100);
+    await runHourlyEnrichmentSlice(sliceEnv(), DAY);
+    // remaining=900; floor=200 → max=700.
+    expect(mocks.runEnrichment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ max: 700 }),
+    );
+  });
+
+  it('returns early without calling enrichment when the floor leaves no budget', async () => {
+    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
+    mocks.getDailyUsed.mockResolvedValue(950); // remaining 50 < 200 floor → max 0
+    const r = await runHourlyEnrichmentSlice(sliceEnv(), DAY);
+    expect(mocks.runEnrichment).not.toHaveBeenCalled();
+    expect(r.scanned).toBe(0);
+  });
+
+  it('shares freshly enriched refs to the peer (delta only)', async () => {
+    mocks.runEnrichment.mockResolvedValue({
+      hasFmpKey: true, dailyCap: 5000, fmpCalls: 3, errors: [],
+      shareRefs: [{ ticker: 'AAPL' } as never], scanned: 5, enriched: 1, budgetRemaining: 4990,
+    });
+    const r = await runHourlyEnrichmentSlice(sliceEnv(), DAY);
+    expect(mocks.shareWithPeer).toHaveBeenCalledWith(expect.anything(), { refs: [{ ticker: 'AAPL' }] });
+    expect(r.enriched).toBe(1);
+    expect(r.remainingBacklog).toBe(false);
   });
 });
