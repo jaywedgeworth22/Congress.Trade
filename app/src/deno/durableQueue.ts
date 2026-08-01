@@ -1128,3 +1128,117 @@ export async function drainDurableQueues(
   const delivery = await drainDurableQueue(env, "delivery", handlers, options);
   return { ingest, delivery };
 }
+
+// ---------------------------------------------------------------------------
+// Failed-job requeue (post-incident recovery)
+// ---------------------------------------------------------------------------
+
+export interface RequeueFailedDurableOptions {
+  /** Queue to requeue from; default 'ingest'. */
+  queue?: DurableQueueName;
+  /** Optional payload `$.type` filter (e.g. 'filing.extracted'). */
+  type?: string;
+  /** Max rows to requeue in one call; default 500, hard cap 5000. */
+  limit?: number;
+  /** Count only — no writes. */
+  dryRun?: boolean;
+}
+
+export interface RequeueFailedDurableResult {
+  ok: boolean;
+  queue: DurableQueueName;
+  dryRun: boolean;
+  /** Failed rows matching the filter. */
+  matched: number;
+  /** Rows actually reset to pending (matched minus dedupe conflicts). */
+  requeued: number;
+  /** Matching rows skipped because an active sibling holds the dedupe key. */
+  skippedConflict: number;
+  /** Failed-row counts grouped by payload type (for operator visibility). */
+  byType: Record<string, number>;
+}
+
+/**
+ * Reset terminally-failed durable-queue rows (status='failed') back to
+ * 'pending' after a systemic consumer fix (e.g. the 2026-07 DLQ replay bug
+ * that permanently failed non-filing.new ingest dead letters, or a provider
+ * outage whose root cause is now resolved). This is the deno_runtime_queue
+ * analogue of requeueFailedIngestionOutbox (ingestion_outbox table).
+ *
+ * Rows get a fresh start: attempts/dead-letter cycles zeroed, lease cleared,
+ * immediately available. Rows whose dedupe key is already held by an active
+ * (pending/processing) sibling are SKIPPED — requeuing them would violate
+ * the active-dedupe unique index, and the active row will do the work anyway.
+ * Idempotent: only rows still 'failed' are touched.
+ */
+export async function requeueFailedDurableJobs(
+  env: Env,
+  opts: RequeueFailedDurableOptions = {},
+): Promise<RequeueFailedDurableResult> {
+  const db = env.DB;
+  const queue = opts.queue ?? "ingest";
+  const rawLimit = Number(opts.limit ?? 500);
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 5000) : 500;
+  const nowIso = new Date().toISOString();
+
+  const typeFilter = opts.type ? `AND json_extract(payload, '$.type') = ?` : "";
+  const baseParams: unknown[] = opts.type ? [queue, opts.type] : [queue];
+
+  const byTypeRows = await db
+    .prepare(
+      `SELECT json_extract(payload, '$.type') AS t, COUNT(*) AS n
+         FROM deno_runtime_queue
+        WHERE queue_name = ? AND status = 'failed' ${typeFilter}
+        GROUP BY t`,
+    )
+    .bind(...baseParams)
+    .all<{ t: string | null; n: number }>();
+  const byType: Record<string, number> = {};
+  let matched = 0;
+  for (const row of byTypeRows.results ?? []) {
+    byType[row.t ?? "unknown"] = Number(row.n);
+    matched += Number(row.n);
+  }
+
+  if (opts.dryRun) {
+    return { ok: true, queue, dryRun: true, matched, requeued: 0, skippedConflict: 0, byType };
+  }
+
+  // Subquery alias note: the NOT EXISTS guard only applies when the failed row
+  // HAS a dedupe key; keyless rows always requeue safely.
+  const update = await db
+    .prepare(
+      `UPDATE deno_runtime_queue
+          SET status = 'pending', attempts = 0, last_error = NULL,
+              lease_until = NULL, lease_token = NULL, dead_letter_pending = 0,
+              dead_letter_cycles = 0, available_at = ?, updated_at = ?
+        WHERE id IN (
+          SELECT q.id FROM deno_runtime_queue q
+           WHERE q.queue_name = ? AND q.status = 'failed' ${typeFilter}
+             AND (
+               q.dedupe_key IS NULL
+               OR NOT EXISTS (
+                 SELECT 1 FROM deno_runtime_queue a
+                  WHERE a.queue_name = q.queue_name
+                    AND a.dedupe_key = q.dedupe_key
+                    AND a.status IN ('pending', 'processing')
+               )
+             )
+           ORDER BY q.id
+           LIMIT ?
+        )`,
+    )
+    .bind(nowIso, nowIso, ...baseParams, limit)
+    .run();
+
+  const requeued = Number(update.meta?.changes ?? 0);
+  return {
+    ok: true,
+    queue,
+    dryRun: false,
+    matched,
+    requeued,
+    skippedConflict: Math.max(0, Math.min(matched, limit) - requeued),
+    byType,
+  };
+}

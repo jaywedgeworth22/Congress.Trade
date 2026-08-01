@@ -6,6 +6,7 @@ import {
   DurableQueueAdapter,
   DurableQueueLeaseLostError,
   DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES,
+  requeueFailedDurableJobs,
   type DurableQueueHandlers,
 } from '../durableQueue.ts';
 import { D1DatabaseShim } from '../shims.ts';
@@ -1052,6 +1053,137 @@ describe('Deno durable queue', () => {
       expect((await harness.rows())[0]).toMatchObject({
         status: 'processing',
       });
+    } finally {
+      harness.client.close();
+    }
+  });
+});
+
+describe('requeueFailedDurableJobs', () => {
+  interface SeedRow {
+    queue?: string;
+    dedupe?: string | null;
+    type: string;
+    status?: string;
+    attempts?: number;
+    cycles?: number;
+    error?: string | null;
+    lease?: boolean;
+  }
+
+  async function seed(harness: Awaited<ReturnType<typeof createHarness>>, rows: SeedRow[]) {
+    for (const r of rows) {
+      await harness.db.prepare(`
+        INSERT INTO deno_runtime_queue
+          (queue_name, dedupe_key, payload, status, attempts, dead_letter_cycles,
+           available_at, lease_until, lease_token, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        r.queue ?? 'ingest',
+        r.dedupe ?? null,
+        JSON.stringify({ type: r.type, docId: 'doc-1' }),
+        r.status ?? 'failed',
+        r.attempts ?? 5,
+        r.cycles ?? 2,
+        START.toISOString(),
+        r.lease ? START.toISOString() : null,
+        r.lease ? 'tok' : null,
+        r.error === undefined ? 'boom' : r.error,
+        START.toISOString(),
+        START.toISOString(),
+      ).run();
+    }
+  }
+
+  it('dryRun counts failed rows by type without writing', async () => {
+    const harness = await createHarness();
+    try {
+      await seed(harness, [
+        { type: 'filing.extracted' },
+        { type: 'filing.extracted' },
+        { type: 'filing.new' },
+        { type: 'usage.telemetry', status: 'completed' },
+      ]);
+      const r = await requeueFailedDurableJobs(harness.env, { dryRun: true });
+      expect(r).toMatchObject({
+        ok: true, dryRun: true, matched: 3, requeued: 0,
+        byType: { 'filing.extracted': 2, 'filing.new': 1 },
+      });
+      expect((await harness.rows()).filter((x) => x.status === 'failed')).toHaveLength(3);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('resets failed rows to a fresh pending state', async () => {
+    const harness = await createHarness();
+    try {
+      await seed(harness, [{ type: 'filing.extracted', lease: true }]);
+      const r = await requeueFailedDurableJobs(harness.env, {});
+      expect(r).toMatchObject({ matched: 1, requeued: 1, skippedConflict: 0 });
+      const rows = await harness.rows();
+      expect(rows[0]).toMatchObject({
+        status: 'pending',
+        attempts: 0,
+        last_error: null,
+        lease_until: null,
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('skips rows whose dedupe key is held by an active sibling', async () => {
+    const harness = await createHarness();
+    try {
+      await seed(harness, [
+        { type: 'filing.extracted', dedupe: 'ingest:filing.extracted:doc-1' },
+        { type: 'filing.extracted', dedupe: 'ingest:filing.extracted:doc-1', status: 'pending' },
+        { type: 'filing.extracted', dedupe: 'ingest:filing.extracted:doc-2' },
+      ]);
+      const r = await requeueFailedDurableJobs(harness.env, {});
+      expect(r).toMatchObject({ matched: 2, requeued: 1, skippedConflict: 1 });
+      // The conflicted row stays failed; the uncontended one requeues.
+      const rows = await harness.rows();
+      expect(rows[0]).toMatchObject({ status: 'failed' });
+      expect(rows[2]).toMatchObject({ status: 'pending', attempts: 0 });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('honors the type filter and limit', async () => {
+    const harness = await createHarness();
+    try {
+      await seed(harness, [
+        { type: 'filing.extracted' },
+        { type: 'filing.extracted' },
+        { type: 'filing.new' },
+      ]);
+      const r = await requeueFailedDurableJobs(harness.env, { type: 'filing.extracted', limit: 1 });
+      expect(r).toMatchObject({ matched: 2, requeued: 1 });
+      const pending = (await harness.rows()).filter((x) => x.status === 'pending');
+      expect(pending).toHaveLength(1);
+      // filing.new untouched.
+      const failed = (await harness.rows()).filter((x) => x.status === 'failed');
+      expect(failed).toHaveLength(2);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('scopes to the requested queue', async () => {
+    const harness = await createHarness();
+    try {
+      await seed(harness, [
+        { type: 'filing.extracted', queue: 'ingest' },
+        { type: 'delivery.dispatch', queue: 'delivery' },
+      ]);
+      const r = await requeueFailedDurableJobs(harness.env, { queue: 'delivery' });
+      expect(r).toMatchObject({ queue: 'delivery', matched: 1, requeued: 1 });
+      const rows = await harness.rows();
+      expect(rows[0]).toMatchObject({ status: 'failed' }); // ingest row untouched
+      expect(rows[1]).toMatchObject({ status: 'pending' });
     } finally {
       harness.client.close();
     }
