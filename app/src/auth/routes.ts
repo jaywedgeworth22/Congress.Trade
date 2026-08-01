@@ -126,7 +126,9 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     // Save the initiator's origin so we can redirect back to it on callback
     const clientParam = new URL(c.req.url).searchParams.get('client');
     const referer = c.req.header('Referer');
-    let requestOrigin = new URL(c.req.url).origin;
+    // publicReqOrigin, not the socket URL: behind the proxy the socket origin
+    // is http://congress.trade, which would round-trip the user to plaintext.
+    let requestOrigin = publicReqOrigin;
     if (clientParam === 'ios') {
       requestOrigin = 'congresstrade://auth';
     } else if (referer) {
