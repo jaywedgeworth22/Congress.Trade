@@ -67,16 +67,6 @@ function cacheTtlSeconds(env: Env): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 3600) : DEFAULT_TTL_SECONDS;
 }
 
-const KNOWN_PROJECT_IDS: Record<string, string> = {
-  '***REMOVED***': 'f61a79de-8d77-4f0b-9361-4b7208598290',
-  '***REMOVED***': '18f563a3-9c88-454c-96eb-28fc9678f3ba',
-};
-
-function resolveProjectId(id: string | undefined): string | undefined {
-  if (!id) return undefined;
-  return KNOWN_PROJECT_IDS[id] || id;
-}
-
 function envName(env: Env): string {
   const val = (env.INFISICAL_ENV || DEFAULT_ENV).trim();
   if (val === 'production') return 'prod';
@@ -104,8 +94,14 @@ function kvCacheSecret(env: Env): string | null {
 }
 
 function sourceConfigs(env: Env): SourceConfig[] {
-  const sharedProj = resolveProjectId(env.INFISICAL_SHARED_PROJECT_ID || env.INFISICAL_SHARED_CLIENT_ID) || '18f563a3-9c88-454c-96eb-28fc9678f3ba';
-  const appProj = resolveProjectId(env.INFISICAL_APP_PROJECT_ID || env.INFISICAL_APP_CLIENT_ID) || 'f61a79de-8d77-4f0b-9361-4b7208598290';
+  // The explicit *_PROJECT_ID env wins. When only a machine-identity CLIENT_ID
+  // is present (e.g. image-baked identities without the project-id vars), fall
+  // back to the statically known project for each source — each source's
+  // identity only ever pairs with its own project, so no client-id lookup map
+  // is needed (the old KNOWN_PROJECT_IDS literal map was scrubbed, breaking
+  // the build with duplicate keys).
+  const sharedProj = env.INFISICAL_SHARED_PROJECT_ID || '18f563a3-9c88-454c-96eb-28fc9678f3ba';
+  const appProj = env.INFISICAL_APP_PROJECT_ID || 'f61a79de-8d77-4f0b-9361-4b7208598290';
 
   return [
     {
