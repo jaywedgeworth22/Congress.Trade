@@ -188,8 +188,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 19px; margin-bottom: 32px; }
   .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
-  .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
+  .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
@@ -505,7 +505,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tbars { display:flex; align-items:flex-end; justify-content:center; gap:2px; height:150px; width:100%; }
   .tbars i { display:block; width:max(2px, calc(50% - 1px)); max-width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tchart-head { display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap; }
-  .tchart-controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tchart-controls { display:flex; gap:18px; flex-wrap:wrap; align-items:center; }
+  @media (max-width: 600px) { .tchart-controls { gap: 8px; } }
   /* Stacked metrics under the politician name — frees the side column so
      names are not ellipsized on phones. .member-meta overrides the default
      nowrap/ellipsis on .member-cell > div so the stack can actually wrap. */
@@ -1548,7 +1549,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png?v=2" data-src-dark="/assets/brand-logo-dark.png?v=2" data-src-light="/assets/brand-logo-light.png?v=2" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png?v=3" data-src-dark="/assets/brand-logo-dark.png?v=3" data-src-light="/assets/brand-logo-light.png?v=3" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
