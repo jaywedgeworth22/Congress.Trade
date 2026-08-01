@@ -166,8 +166,10 @@ export function registerDailyLaneCrons(
       inFlight.add(lane.name);
       try {
         const result = await runDailyLane(lane, buildEnv(), new Date(), deadlineMs);
-        if (result.status !== 'stamped') {
-          console.log(`daily lane ${lane.name} ${result.status} in ${result.durationMs}ms`);
+        const status =
+          typeof result.status === 'string' ? result.status : JSON.stringify(result.status);
+        if (status !== 'stamped') {
+          console.log(`daily lane ${lane.name} ${status} in ${result.durationMs}ms`);
         }
       } finally {
         inFlight.delete(lane.name);
