@@ -135,6 +135,7 @@ import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveDenoCostProfile } from '../deno/costProfile.ts';
 import { createRuntimeQueueHandlers } from '../deno/runtimeHandlers.ts';
 import { runScheduledTick } from '../deno/scheduledTick.ts';
+import { requeueFailedDurableJobs } from '../deno/durableQueue.ts';
 import { readTargetCircuits } from '../delivery/targetCircuit.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import { runR2UsageSummary } from '../shared/r2Usage.ts';
@@ -4420,6 +4421,42 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // --- POST /queue-requeue-failed -----------------------------------------
+  // Reset terminally-failed deno_runtime_queue rows (status='failed') back to
+  // 'pending' after a systemic consumer fix — the durable-queue analogue of
+  // /ingest-requeue-failed (which covers the ingestion_outbox table). Used for
+  // incidents like the 2026-07 DLQ replay bug that permanently dead-lettered
+  // non-filing.new ingest messages. Idempotent; rows whose dedupe key is held
+  // by an active sibling are skipped. Body (all optional):
+  //   { queue?: 'ingest'|'delivery' (default 'ingest'), type?: string,
+  //     limit?: number (default 500, max 5000), dryRun?: boolean }
+  r.post('/queue-requeue-failed', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const queueRaw = body.queue === undefined ? undefined : String(body.queue);
+    if (queueRaw !== undefined && queueRaw !== 'ingest' && queueRaw !== 'delivery') {
+      return c.json({ error: "queue must be 'ingest' or 'delivery'" }, 400);
+    }
+    const queue = queueRaw as 'ingest' | 'delivery' | undefined;
+    try {
+      return c.json(
+        await requeueFailedDurableJobs(c.env, {
+          queue,
+          type: typeof body.type === 'string' ? body.type : undefined,
+          limit: typeof body.limit === 'number' ? body.limit : undefined,
+          dryRun: body.dryRun === true,
+        }),
+      );
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
