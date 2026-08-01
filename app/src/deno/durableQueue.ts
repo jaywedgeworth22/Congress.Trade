@@ -1204,8 +1204,14 @@ export async function requeueFailedDurableJobs(
     return { ok: true, queue, dryRun: true, matched, requeued: 0, skippedConflict: 0, byType };
   }
 
-  // Subquery alias note: the NOT EXISTS guard only applies when the failed row
-  // HAS a dedupe key; keyless rows always requeue safely.
+  // Subquery alias notes:
+  // - the NOT EXISTS guard only applies when the failed row HAS a dedupe key;
+  //   keyless rows always requeue safely;
+  // - the MAX(q2.id) self-join keeps only the NEWEST failed row per dedupe
+  //   key: the active-dedupe index tolerates any number of failed duplicates
+  //   but exactly one active row, so requeuing two failed rows that share a
+  //   key would violate it (the IN list is materialized before the update,
+  //   so the active-sibling guard alone cannot see intra-batch duplicates).
   const update = await db
     .prepare(
       `UPDATE deno_runtime_queue
@@ -1217,11 +1223,19 @@ export async function requeueFailedDurableJobs(
            WHERE q.queue_name = ? AND q.status = 'failed' ${typeFilter}
              AND (
                q.dedupe_key IS NULL
-               OR NOT EXISTS (
-                 SELECT 1 FROM deno_runtime_queue a
-                  WHERE a.queue_name = q.queue_name
-                    AND a.dedupe_key = q.dedupe_key
-                    AND a.status IN ('pending', 'processing')
+               OR (
+                 q.id = (
+                   SELECT MAX(q2.id) FROM deno_runtime_queue q2
+                    WHERE q2.queue_name = q.queue_name
+                      AND q2.dedupe_key = q.dedupe_key
+                      AND q2.status = 'failed'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM deno_runtime_queue a
+                    WHERE a.queue_name = q.queue_name
+                      AND a.dedupe_key = q.dedupe_key
+                      AND a.status IN ('pending', 'processing')
+                 )
                )
              )
            ORDER BY q.id

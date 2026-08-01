@@ -1189,3 +1189,34 @@ describe('requeueFailedDurableJobs', () => {
     }
   });
 });
+
+describe('requeueFailedDurableJobs duplicate dedupe keys', () => {
+  it('requeues only the newest failed row per dedupe key (prod incident 2026-08-01)', async () => {
+    const harness = await createHarness();
+    try {
+      // Two failed rows sharing one dedupe key — the active-dedupe index
+      // tolerates failed duplicates but forbids two active rows, so flipping
+      // both to pending violates it (this exact shape broke the first prod
+      // requeue attempt with SQLITE_CONSTRAINT).
+      for (let i = 0; i < 2; i++) {
+        await harness.db.prepare(`
+          INSERT INTO deno_runtime_queue
+            (queue_name, dedupe_key, payload, status, attempts, dead_letter_cycles,
+             available_at, lease_until, lease_token, last_error, created_at, updated_at)
+          VALUES ('ingest', 'ingest:filing.extracted:doc-9', ?, 'failed', 5, 2, ?, NULL, NULL, 'boom', ?, ?)
+        `).bind(
+          JSON.stringify({ type: 'filing.extracted', docId: 'doc-9' }),
+          START.toISOString(), START.toISOString(), START.toISOString(),
+        ).run();
+      }
+      const r = await requeueFailedDurableJobs(harness.env, {});
+      expect(r).toMatchObject({ matched: 2, requeued: 1 });
+      const rows = await harness.rows();
+      // Newest (id 2) requeued, oldest stays failed.
+      expect(rows[0]).toMatchObject({ status: 'failed' });
+      expect(rows[1]).toMatchObject({ status: 'pending', attempts: 0 });
+    } finally {
+      harness.client.close();
+    }
+  });
+});
