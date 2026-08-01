@@ -260,7 +260,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
     // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
     expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
-    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo\.png)"/);
+    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo\.png(?:\?v=\d+)?)"/);
     expect(brandLogoMatch).toBeTruthy();
     // Lockup is the brand — no separate Zilla wordmark span next to it.
     expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
