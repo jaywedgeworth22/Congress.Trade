@@ -8212,18 +8212,7 @@ function closeLogin() {
 function loginGoogle() {
   var msg = el('loginMsg');
   if (msg) msg.textContent = 'Connecting to Google…';
-  fetch('/auth/google/start', { headers: { 'accept': 'application/json' } })
-    .then(function (r) {
-      if (r.status === 503 || r.status === 400 || r.status === 500) {
-        return r.json().then(function (j) {
-          if (msg) msg.textContent = (j && j.error === 'google login not configured')
-            ? 'Google Sign-In is not configured on this environment. Enter your email below for a Magic Link.'
-            : ((j && j.error) || 'Google sign-in unavailable.');
-        });
-      }
-      window.location.href = '/auth/google/start';
-    })
-    .catch(function () { window.location.href = '/auth/google/start'; });
+  window.location.href = '/auth/google/start';
 }
 function sendMagicLink() {
   var email = (el('magicEmail').value || '').trim();
