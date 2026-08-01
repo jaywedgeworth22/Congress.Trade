@@ -45,7 +45,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
   const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
   if (configured) return configured.replace(/\/$/, '');
-  return new URL(c.req.url).origin;
+  const host = c.req.header('X-Forwarded-Host') || c.req.header('Host') || new URL(c.req.url).host;
+  const proto = c.req.header('X-Forwarded-Proto') || new URL(c.req.url).protocol.replace(':', '');
+  return `${proto}://${host}`;
 }
 
 /** Trim the User down to what the browser is allowed to see. */
@@ -106,15 +108,18 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'google login not configured' }, 503);
     }
     const base = await baseUrl(c);
-    const requestUrl = new URL(c.req.url);
+    const reqHost = c.req.header('X-Forwarded-Host') || c.req.header('Host') || new URL(c.req.url).host;
+    const reqProto = c.req.header('X-Forwarded-Proto') || new URL(c.req.url).protocol.replace(':', '');
+    const publicReqOrigin = `${reqProto}://${reqHost}`;
     const callbackBase = new URL(base);
     // State is host-only, so canonicalize the start request before issuing it
     // when a user arrived on a non-apex alias. This keeps the state cookie and
     // the fixed, documented Google callback host aligned.
-    if (requestUrl.origin !== callbackBase.origin) {
-      requestUrl.protocol = callbackBase.protocol;
-      requestUrl.host = callbackBase.host;
-      return c.redirect(requestUrl.toString());
+    if (publicReqOrigin !== callbackBase.origin) {
+      const redirectTarget = new URL(c.req.url);
+      redirectTarget.protocol = callbackBase.protocol;
+      redirectTarget.host = callbackBase.host;
+      return c.redirect(redirectTarget.toString());
     }
     const state = randomToken(16);
 
