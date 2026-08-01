@@ -157,8 +157,14 @@ if (!costProfile.disableInternalCron) {
       return;
     }
     tickInFlight = true;
-    // The 45s deadline now aborts the tick pipeline instead of abandoning it:
+    // The tick deadline aborts the tick pipeline instead of abandoning it:
     // lanes stop at the next boundary and the queue drain stops claiming.
+    // Default 45s (Deno Deploy free-tier heritage); the Oracle container
+    // raises it via CT_TICK_DEADLINE_MS so bigger drain batches fit one tick.
+    const tickDeadlineMs = (() => {
+      const n = Number.parseInt(Deno.env.get('CT_TICK_DEADLINE_MS') || '', 10);
+      return Number.isFinite(n) && n >= 10_000 ? Math.min(n, 14 * 60_000) : 45_000;
+    })();
     const tickAbort = new AbortController();
     try {
       const env = buildEnv();
@@ -174,9 +180,9 @@ if (!costProfile.disableInternalCron) {
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-          tickAbort.abort(new Error('Deno cron tick exceeded 45s deadline'));
-          reject(new Error('Deno cron tick exceeded 45s deadline'));
-        }, 45_000);
+          tickAbort.abort(new Error(`Deno cron tick exceeded ${tickDeadlineMs}ms deadline`));
+          reject(new Error(`Deno cron tick exceeded ${tickDeadlineMs}ms deadline`));
+        }, tickDeadlineMs);
       });
 
       try {
