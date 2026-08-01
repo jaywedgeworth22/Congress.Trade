@@ -3,7 +3,19 @@ import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 
-function makeEnv(docIds: string[], opts: { sendFails?: boolean } = {}) {
+interface ErroredFilingRow {
+  doc_id: string;
+  chamber?: string | null;
+  source_url?: string | null;
+  raw_object_key?: string | null;
+}
+
+function makeEnv(rows: Array<string | ErroredFilingRow>, opts: { sendFails?: boolean } = {}) {
+  const normalized: ErroredFilingRow[] = rows.map((r) =>
+    // Default legacy string shorthand to a fetched row (raw bytes present),
+    // matching the endpoint's original extraction-stage-only scope.
+    typeof r === 'string' ? { doc_id: r, raw_object_key: 'raw/' + r } : r,
+  );
   const queries: { sql: string; params: unknown[] }[] = [];
   const send = vi.fn(async () => {
     if (opts.sendFails) throw new Error('queue unavailable');
@@ -16,7 +28,7 @@ function makeEnv(docIds: string[], opts: { sendFails?: boolean } = {}) {
         bind(...params: unknown[]) { this.params = params; return this; },
         async all<T>() {
           queries.push({ sql, params: this.params });
-          return { results: docIds.map((doc_id) => ({ doc_id })) as T[] };
+          return { results: normalized as T[] };
         },
         async run() { return { success: true, meta: { changes: 0 } }; },
         async first<T>() { return null as T | null; },
@@ -39,8 +51,9 @@ describe('POST /ingest-retry-errored (extraction-stage backlog drain)', () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, matched: 2, enqueued: 2, errors: [] });
-    // The selection is scoped to errored-with-raw, oldest first, chamber-bound.
-    expect(queries[0].sql).toContain("ingest_status = 'error' AND raw_object_key IS NOT NULL");
+    // The selection covers all errored filings, oldest first, chamber-bound;
+    // the per-row stage split (fetched vs fetch-failed) happens at send time.
+    expect(queries[0].sql).toContain("ingest_status = 'error'");
     expect(queries[0].sql).toContain('AND chamber = ?');
     expect(queries[0].sql).toContain('ORDER BY first_seen_at ASC');
     expect(queries[0].params).toEqual(['house', 500]);
@@ -67,6 +80,29 @@ describe('POST /ingest-retry-errored (extraction-stage backlog drain)', () => {
     const body = (await downRes.json()) as { enqueued: number; errors: string[] };
     expect(body.enqueued).toBe(0);
     expect(body.errors).toHaveLength(5); // bails after 5 consecutive failures
+  });
+
+  it('restarts fetch-stage failures (no raw bytes) from filing.new', async () => {
+    const { env, send } = makeEnv([
+      { doc_id: 'doc_fetch_failed', chamber: 'house', source_url: 'https://x/doc.pdf', raw_object_key: null },
+      { doc_id: 'doc_no_url', chamber: 'house', source_url: null, raw_object_key: null },
+      { doc_id: 'doc_extract_failed', chamber: 'senate', source_url: 'https://y/doc', raw_object_key: 'raw/doc_extract_failed' },
+    ]);
+    const res = await app.request(
+      '/ingest-retry-errored',
+      { method: 'POST', headers: AUTH, body: '{}' },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, matched: 3, enqueued: 2, skipped: 1 });
+    expect(send).toHaveBeenCalledWith({
+      type: 'filing.new',
+      docId: 'doc_fetch_failed',
+      chamber: 'house',
+      sourceUrl: 'https://x/doc.pdf',
+    });
+    expect(send).toHaveBeenCalledWith({ type: 'filing.fetched', docId: 'doc_extract_failed' });
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it('rejects bad chambers and stays behind admin auth', async () => {

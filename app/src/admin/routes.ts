@@ -4518,33 +4518,51 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
     if (limit > 2000) limit = 2000;
+    // Cover BOTH error shapes: rows that were fetched (raw bytes in R2) and
+    // failed downstream resume at filing.fetched; rows that failed at the
+    // FETCH stage itself (raw_object_key IS NULL — e.g. the 2026-08-01 House
+    // transient-403 incident) must restart from filing.new with chamber +
+    // sourceUrl, or the fetch stage never re-runs.
     const params: SqlParam[] = [];
-    let where = "ingest_status = 'error' AND raw_object_key IS NOT NULL";
+    let where = "ingest_status = 'error'";
     if (chamber) {
       where += ' AND chamber = ?';
       params.push(chamber);
     }
     params.push(limit);
-    const rows = await all<{ doc_id: string }>(
+    const rows = await all<{ doc_id: string; chamber: string | null; source_url: string | null; raw_object_key: string | null }>(
       c.env.DB,
-      `SELECT doc_id FROM filings WHERE ${where} ORDER BY first_seen_at ASC LIMIT ?`,
+      `SELECT doc_id, chamber, source_url, raw_object_key FROM filings WHERE ${where} ORDER BY first_seen_at ASC LIMIT ?`,
       params,
     );
     if (body.dryRun === true) {
       return c.json({ ok: true, dryRun: true, matched: rows.length });
     }
     let enqueued = 0;
+    let skipped = 0;
     const errors: string[] = [];
-    for (const { doc_id } of rows) {
+    for (const row of rows) {
       try {
-        await c.env.INGEST_QUEUE.send({ type: 'filing.fetched', docId: doc_id });
+        if (row.raw_object_key) {
+          await c.env.INGEST_QUEUE.send({ type: 'filing.fetched', docId: row.doc_id });
+        } else if (row.source_url && row.chamber && ['house', 'senate', 'executive'].includes(row.chamber)) {
+          await c.env.INGEST_QUEUE.send({
+            type: 'filing.new',
+            docId: row.doc_id,
+            chamber: row.chamber as 'house' | 'senate' | 'executive',
+            sourceUrl: row.source_url,
+          });
+        } else {
+          skipped += 1; // no source URL to refetch from — nothing safe to enqueue
+          continue;
+        }
         enqueued += 1;
       } catch (err) {
-        errors.push(`${doc_id}: ${(err as Error).message}`);
+        errors.push(`${row.doc_id}: ${(err as Error).message}`);
         if (errors.length >= 5) break; // queue outage — bail early; re-run is safe
       }
     }
-    return c.json({ ok: true, matched: rows.length, enqueued, errors });
+    return c.json({ ok: true, matched: rows.length, enqueued, skipped, errors });
   });
 
   // --- POST /reprocess ----------------------------------------------------
