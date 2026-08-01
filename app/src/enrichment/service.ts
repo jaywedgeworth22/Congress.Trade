@@ -291,7 +291,7 @@ export interface EnrichResult {
  */
 export async function runEnrichment(
   env: Env,
-  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number; edgarMaxPerMinute?: number } = {},
+  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number; edgarMaxPerMinute?: number; signal?: AbortSignal; deadlineMs?: number } = {},
 ): Promise<EnrichResult> {
   const runtimeSecrets = await resolveSecrets(env, [
     'FMP_API_KEY',
@@ -356,6 +356,12 @@ export async function runEnrichment(
   const runStartedAt = Date.now();
 
   for (const candidate of candidates) {
+    // Time-sliced execution: stop starting new candidates when the caller's
+    // deadline/abort fires. Completed work (refs, usage counters) is already
+    // persisted per candidate, so a partial slice simply resumes next run —
+    // the daily FMP cap and candidate predicates self-limit total spend.
+    if (opts.signal?.aborted) break;
+    if (opts.deadlineMs !== undefined && Date.now() - runStartedAt >= opts.deadlineMs) break;
     // Honor a still-pending transient-retry backoff (see TRANSIENT_RETRY_PREFIX
     // above) without spending a scan/provider call on it this run — it will be
     // reselected once eligible, by the same base predicate (enriched_at stays

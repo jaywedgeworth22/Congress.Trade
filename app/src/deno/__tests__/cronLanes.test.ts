@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   snapshot: vi.fn(async () => 'ran' as const),
   filer: vi.fn(async () => 'ran' as const),
   retention: vi.fn(async () => 'ran' as const),
+  hourlyEnrichment: vi.fn(async () => ({
+    scanned: 0, enriched: 0, fmpCalls: 0, budgetRemaining: 0, remainingBacklog: false,
+  })),
 }));
 
 vi.mock('../../jobs.ts', () => ({
@@ -15,6 +18,8 @@ vi.mock('../../jobs.ts', () => ({
   maybeRunDailySnapshotJob: mocks.snapshot,
   maybeRunDailyFilerJobs: mocks.filer,
   maybeRunDailyRetentionJobs: mocks.retention,
+  runHourlyEnrichmentSlice: mocks.hourlyEnrichment,
+  HOURLY_ENRICHMENT_SLICE_DEADLINE_MS: 480_000,
 }));
 
 import {
@@ -45,10 +50,10 @@ describe('daily lane cron windows', () => {
     vi.clearAllMocks();
   });
 
-  it('has four lanes with unique names, hourly schedules, off-peak minutes, and snapshot after market data', () => {
-    expect(DAILY_LANE_CRONS).toHaveLength(4);
+  it('has five lanes with unique names, hourly schedules, off-peak minutes, and snapshot after market data', () => {
+    expect(DAILY_LANE_CRONS).toHaveLength(5);
     const names = DAILY_LANE_CRONS.map((l) => l.name);
-    expect(new Set(names).size).toBe(4);
+    expect(new Set(names).size).toBe(5);
     const minuteOf = (schedule: string) => Number(schedule.split(' ')[0]);
     const minutes = DAILY_LANE_CRONS.map((l) => minuteOf(l.schedule));
     // Every lane is hourly with a fixed minute.
@@ -61,20 +66,24 @@ describe('daily lane cron windows', () => {
     }
     // Snapshot must fire after the market-data lane it captures.
     expect(minuteOf('22 * * * *')).toBeGreaterThan(minuteOf('7 * * * *'));
-    const order = ['daily-market-data', 'daily-snapshot', 'daily-filer', 'daily-retention'];
+    const order = ['daily-market-data', 'daily-snapshot', 'daily-filer', 'hourly-enrichment', 'daily-retention'];
     expect(names).toEqual(order);
   });
 
-  it('maps each lane to the matching jobs.ts lane function', async () => {
+  it('maps each lane to the matching jobs.ts lane function and threads the abort signal', async () => {
     const { env } = await makeEnv();
     for (const lane of DAILY_LANE_CRONS) {
       const result = await runDailyLane(lane, env, new Date(), 10_000);
-      expect(result.status).toBe('ran');
+      expect(result.status).not.toBe('aborted');
+      expect(result.status).not.toBe('error');
     }
     expect(mocks.marketData).toHaveBeenCalledTimes(1);
+    expect(mocks.marketData.mock.calls[0][2]).toHaveProperty('signal');
     expect(mocks.snapshot).toHaveBeenCalledTimes(1);
     expect(mocks.filer).toHaveBeenCalledTimes(1);
     expect(mocks.retention).toHaveBeenCalledTimes(1);
+    expect(mocks.hourlyEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.hourlyEnrichment.mock.calls[0][2]).toMatchObject({ deadlineMs: 480_000 });
   });
 });
 

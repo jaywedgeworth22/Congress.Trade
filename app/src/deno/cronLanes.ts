@@ -23,25 +23,43 @@ import {
   maybeRunDailySnapshotJob,
   maybeRunDailyFilerJobs,
   maybeRunDailyRetentionJobs,
-  type DailyLaneStatus,
+  runHourlyEnrichmentSlice,
+  HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
 } from '../jobs.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
 
 export interface DailyLaneCron {
   /** Lane identifier; also the singleton-lock key suffix and log tag. */
   name: string;
-  /** Crontab expression (UTC). Hourly; the lane's KV stamp gates once/day. */
+  /** Crontab expression (UTC). Hourly; date-stamped lanes gate once/day. */
   schedule: string;
-  run: (env: Env, now: Date) => Promise<DailyLaneStatus>;
+  run: (env: Env, now: Date, signal?: AbortSignal) => Promise<unknown>;
 }
 
 export const DAILY_LANE_CRONS: readonly DailyLaneCron[] = [
-  // Market data first: enrichment + price refresh write the day's fresh rows.
-  { name: 'daily-market-data', schedule: '7 * * * *', run: maybeRunDailyMarketDataJobs },
+  // Market data first: time-sliced enrichment + price refresh write the day's
+  // fresh rows. The 4-minute enrichment slice inside this lane can never
+  // starve price refresh; the backlog drains via the hourly lane below.
+  {
+    name: 'daily-market-data',
+    schedule: '7 * * * *',
+    run: (env, now, signal) => maybeRunDailyMarketDataJobs(env, now, { signal }),
+  },
   // Snapshot after market data so it captures today's freshest data.
   { name: 'daily-snapshot', schedule: '22 * * * *', run: maybeRunDailySnapshotJob },
   // Filer data (photos/bioguide + ticker backfill).
   { name: 'daily-filer', schedule: '37 * * * *', run: maybeRunDailyFilerJobs },
+  // Hourly enrichment drain: time-sliced, no daily stamp — the daily FMP cap
+  // self-limits spend; empty backlog turns runs into cheap no-ops.
+  {
+    name: 'hourly-enrichment',
+    schedule: '47 * * * *',
+    run: (env, now, signal) =>
+      runHourlyEnrichmentSlice(env, now, {
+        signal,
+        deadlineMs: HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
+      }),
+  },
   // Retention sweeps last, clear of every write-heavy lane.
   { name: 'daily-retention', schedule: '53 * * * *', run: maybeRunDailyRetentionJobs },
 ];
@@ -68,14 +86,17 @@ export function resolveDailyLaneDeadlineMs(
 }
 
 export interface DailyLaneRunResult {
-  status: DailyLaneStatus | 'error' | 'skipped-overlap' | 'aborted';
+  /** Lane's own return value, or a runner outcome marker. */
+  status: unknown;
   durationMs: number;
 }
 
 /**
  * Run one daily lane with overlap guard, DB-backed cross-isolate singleton,
- * and an abort deadline. Exported for tests; the cron closures below delegate
- * here. Fail-open on lock-table errors (a KV problem must not park daily work).
+ * and an abort deadline that is THREADED INTO the lane (lanes check the
+ * signal at slice boundaries and stop starting new work). Exported for
+ * tests; the cron closures below delegate here. Fail-open on lock-table
+ * errors (a KV problem must not park daily work).
  */
 export async function runDailyLane(
   lane: DailyLaneCron,
@@ -100,7 +121,7 @@ export async function runDailyLane(
   const timer = setTimeout(() => abort.abort(new Error(`daily lane ${lane.name} exceeded ${deadlineMs}ms deadline`)), deadlineMs);
   try {
     const status = await Promise.race([
-      lane.run(env, now),
+      lane.run(env, now, abort.signal),
       new Promise<never>((_, reject) => {
         abort.signal.addEventListener('abort', () => reject(abort.signal.reason));
       }),
