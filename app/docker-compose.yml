@@ -1,13 +1,22 @@
 version: '3.8'
 
 services:
+  # NOTE: do NOT add a `build.args` block here.
+  #
+  # Coolify rewrites this file at deploy time — it injects its own ARG
+  # declarations and build arguments. When `build.args` is present, that
+  # rewriting emits an invalid compose file and the deploy dies before it
+  # builds anything:
+  #
+  #   Error: non-string key in services.congress-app.environment: 0
+  #
+  # (`environment:` below is list-style, and the merge treats list index 0 as a
+  # key.) Deployment w2q7lrln9zv8fnia5xqmiotk failed exactly this way on
+  # 2026-08-02. The build SHA for /api/health is taken from the runtime
+  # environment instead — see src/shared/buildInfo.ts, which accepts
+  # CT_BUILD_SHA or Coolify's own SOURCE_COMMIT.
   congress-app:
-    build:
-      context: .
-      args:
-        # Coolify exports SOURCE_COMMIT for the build; surfaced by /api/health
-        # so a deploy can be verified rather than assumed.
-        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+    build: .
     container_name: congress-app
     restart: unless-stopped
     ports:
