@@ -34,7 +34,10 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 
 const CONFIGURED_SECRETS = {
   USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+  // Both tokens configured: the gate must pick the read token and never use
+  // the ingest token (the monitor denies ingest-token reads in production).
   USAGE_MONITOR_INGEST_TOKEN: 'ingest-token-abc',
+  USAGE_MONITOR_READ_TOKEN: 'read-token-xyz',
 };
 
 function budgetStatusBody(providers: Array<Record<string, unknown>>) {
@@ -72,7 +75,21 @@ describe('getProviderThrottleDecision', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://usage.jays.services/api/budget-status');
-    expect((init.headers as Record<string, string>).authorization).toBe('Bearer ingest-token-abc');
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer read-token-xyz');
+  });
+
+  it('fails open without a read token (the ingest token is never used for reads)', async () => {
+    const { getProviderThrottleDecision } = await loadGate({
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'ingest-token-abc',
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const decision = await getProviderThrottleDecision(fakeEnv(), 'openrouter');
+
+    expect(decision.throttle).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('throttles a provider over a configured fraction even before "exceeded"', async () => {
