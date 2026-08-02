@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { persistTransactions } from '../../extraction/normalizer.ts';
 import { checkReadiness } from '../../shared/readiness.ts';
+import { buildAdminRouter } from '../routes.ts';
 import type { Env, Transaction } from '../../shared/types.ts';
 import {
   AUTOPILOT_SCHEMA_STATEMENTS,
@@ -651,5 +652,73 @@ describe('admin migration bootstrap', () => {
     db.exec("INSERT INTO transactions (id, created_at, cursor_seq) VALUES ('fresh', '2026-01-04', NULL)");
     const fresh = db.prepare("SELECT cursor_seq FROM transactions WHERE id = 'fresh'").get() as { cursor_seq: number };
     expect(fresh.cursor_seq).toBeGreaterThan(0);
+  });
+  // ---- prod-mirror parity (CT-AUD-P1-18) ----------------------------------
+  // app/migrations/*.sql drives LOCAL dev; the statement list behind
+  // POST /api/admin/migrate is the source of truth for PRODUCTION schema. They
+  // are maintained by hand in two places, so a migration can silently never
+  // reach production — exactly the 0067 drift the audit found.
+  //
+  // Rather than diffing SQL text (which drifts on formatting alone), this
+  // asserts that every schema OBJECT a migration declares — table, index,
+  // trigger, added column — also exists in the REAL runtime statement list,
+  // collected by driving the actual route. Grepping the source would miss
+  // statements contributed by other modules (e.g. src/benchmark/schema.ts).
+  it('mirrors every object declared by migrations/*.sql into the production migrate list', async () => {
+    const statements: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() { return this; },
+          async run() { statements.push(sql); return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await buildAdminRouter().request(
+      '/migrate',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ skipSchemaVerify: true }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+    );
+    expect(res.status).toBe(200);
+
+    const mirror = statements.join('\n').replace(/\s+/g, ' ').toLowerCase();
+
+    const patterns: Array<[RegExp, 'table' | 'index' | 'trigger' | 'column']> = [
+      [/create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+)/gi, 'index'],
+      [/create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+)/gi, 'table'],
+      [/create\s+trigger\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+)/gi, 'trigger'],
+      [/alter\s+table\s+([a-z0-9_]+)\s+add\s+column\s+([a-z0-9_]+)/gi, 'column'],
+    ];
+
+    // Objects a migration creates and then deliberately retires, so the prod
+    // mirror correctly never carries them.
+    const RETIRED = new Set(['trg_transactions_cursor']);
+
+    const missing: string[] = [];
+    for (const name of migrationFiles()) {
+      const sql = readFileSync(new URL(name, migrationsUrl) as any, 'utf8') as string;
+      for (const [re, kind] of patterns) {
+        for (const m of sql.matchAll(re)) {
+          const object = kind === 'column' ? `${m[1]}.${m[2]}` : m[1];
+          if (RETIRED.has(object.toLowerCase())) continue;
+          const needle = kind === 'column'
+            ? `alter table ${m[1].toLowerCase()} add column ${m[2].toLowerCase()}`
+            : object.toLowerCase();
+          if (!mirror.includes(needle)) missing.push(`${name}: ${kind} ${object}`);
+        }
+      }
+    }
+
+    expect(
+      missing,
+      'These objects exist in app/migrations/*.sql but never reach production, ' +
+        'because POST /api/admin/migrate does not create them. Mirror them into ' +
+        'the statement list in src/admin/routes.ts (see AGENTS.md "Migrations & deploy").',
+    ).toEqual([]);
   });
 });
