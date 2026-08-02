@@ -8,7 +8,7 @@ export const BASE_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_filings_filer ON filings (filer_id)',
   `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, doc_id TEXT, filer_id TEXT, tx_date TEXT, owner TEXT, asset_name TEXT, ticker TEXT, asset_type TEXT, tx_type TEXT, amount_min INTEGER, amount_max INTEGER, is_option INTEGER, cap_gains_over_200 INTEGER, raw_text TEXT, confidence REAL, source TEXT NOT NULL DEFAULT 'primary', created_at TEXT, cursor_seq INTEGER)`,
   `CREATE TABLE IF NOT EXISTS tx_cursor_seq (seq INTEGER PRIMARY KEY AUTOINCREMENT, tx_id TEXT NOT NULL)`,
-  `CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW WHEN NEW.cursor_seq IS NULL BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT seq FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
   'CREATE INDEX IF NOT EXISTS idx_tx_cursor ON transactions (cursor_seq)',
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker ON transactions (ticker)',
   'CREATE INDEX IF NOT EXISTS idx_tx_filer ON transactions (filer_id)',
@@ -697,6 +697,18 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
       AND (asset_name IS NULL OR asset_name = '' OR asset_name = '(unknown)' OR asset_name = ticker OR asset_name LIKE '%..%')`,
 ] as const;
 
+/**
+ * 0068_cursor_seq_integrity.sql — sequence-authoritative cursor trigger +
+ * poisoned-cursor repair.
+ */
+export const CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS = [
+  'DROP TRIGGER IF EXISTS trg_transactions_cursor',
+  `CREATE TRIGGER trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
+  'UPDATE subscriptions SET cursor = COALESCE((SELECT MAX(cursor_seq) FROM transactions WHERE cursor_seq < 1000000000000), 0) WHERE cursor >= 1000000000000',
+  `INSERT INTO tx_cursor_seq (tx_id) SELECT id FROM transactions WHERE cursor_seq >= 1000000000000 AND NOT EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) ORDER BY cursor_seq ASC, created_at ASC, id ASC`,
+  `UPDATE transactions SET cursor_seq = (SELECT MAX(s.seq) FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) WHERE cursor_seq >= 1000000000000 AND EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id)`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -775,4 +787,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS,
   // 0067_clean_ocr_dot_leader_asset_names.sql
   ...CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS,
+  // 0068_cursor_seq_integrity.sql
+  ...CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS,
 ] as const;

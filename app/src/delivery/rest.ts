@@ -33,6 +33,7 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
+  readCursorHighWater,
   resolveMemberFilerId,
   toPublicFiling,
   type FilingRow,
@@ -398,6 +399,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // reconciliation consumer that DOES want a fresh total on every poll can
     // tell "not computed this round" apart from "actually zero".
     const isIncrementalNoOp = params.since !== undefined && transactions.length === 0;
+    let effectiveCursor = maxCursor;
+    if (isIncrementalNoOp) {
+      const hwm = await readCursorHighWater(c.env);
+      if (effectiveCursor > 1_000_000_000_000 || (hwm > 0 && effectiveCursor > hwm)) {
+        effectiveCursor = hwm;
+      }
+    }
     let total: number | undefined;
     let filingsImportedToday: number | undefined;
     if (!isIncrementalNoOp) {
@@ -417,7 +425,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     c.header('Cache-Control', PUBLIC_FEED_CACHE);
     return c.json({
       transactions,
-      cursor: maxCursor,
+      cursor: effectiveCursor,
       count: transactions.length,
       total,
       filingsImportedToday,

@@ -33,8 +33,8 @@ async function main() {
 
     txBatch.push({
       sql: `INSERT OR IGNORE INTO transactions (
-        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type, tx_type, amount_min, amount_max, is_option, cap_gains_over_200, raw_text, source, created_at, cursor_seq
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type, tx_type, amount_min, amount_max, is_option, cap_gains_over_200, raw_text, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         docId,
@@ -51,8 +51,7 @@ async function main() {
         0,
         JSON.stringify(h.raw),
         'competitor_backfill',
-        new Date().toISOString(),
-        Date.now()
+        new Date().toISOString()
       ]
     });
   }
