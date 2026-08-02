@@ -9,6 +9,7 @@ import {
   releaseSseLease,
   SSE_LEASE_MS,
   SseSlowReaderError,
+  SseStreamDeadlineError,
 } from '../sse.ts';
 import type { Subscription } from '../../shared/types.ts';
 
@@ -167,6 +168,36 @@ describe('durable SSE admission', () => {
 
     const reader = stream.readable.getReader();
     await expect(reader.read()).rejects.toBeInstanceOf(SseSlowReaderError);
+  });
+
+  it('closes gracefully when the deadline has already passed (no abort on natural end)', async () => {
+    // Regression: close(deadlineAt) used to throw SseStreamDeadlineError the
+    // moment the deadline elapsed, so every stream reaching its natural
+    // maxStreamMs terminated via abort() — a transport error to the client —
+    // instead of a clean end-of-stream. Past-deadline close now gets a small
+    // bounded grace to flush writer.close().
+    const stream = createSseBackpressureStream(50);
+    const reader = stream.readable.getReader();
+    const readLoop = (async () => {
+      const chunks: unknown[] = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return chunks;
+        chunks.push(value);
+      }
+    })();
+
+    await stream.write('data: last frame\n\n', Date.now() + 1_000);
+    await expect(stream.close(Date.now() - 5)).resolves.toBeUndefined();
+    await expect(readLoop).resolves.toHaveLength(1);
+  });
+
+  it('still bounds a past-deadline write against a reader that never drains', async () => {
+    const stream = createSseBackpressureStream(50);
+    // Nobody reads: writer.ready never resolves, so the clamped 10ms grace
+    // budget must expire and classify the failure as a deadline error.
+    await expect(stream.write('data: frame\n\n', Date.now() - 5))
+      .rejects.toBeInstanceOf(SseStreamDeadlineError);
   });
 
   it('closes and releases the lease when a client never reads', async () => {
