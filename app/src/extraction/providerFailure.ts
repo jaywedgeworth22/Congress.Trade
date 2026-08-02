@@ -150,6 +150,8 @@ export function classifyProviderFailure(
     lower.includes('reached your specified api usage limits')
     || lower.includes('account usage limit')
     || lower.includes('monthly usage limit')
+    || lower.includes('key limit exceeded')
+    || lower.includes('exceeded your monthly')
   ) {
     const retryAt = retryAtFromMessage(message);
     return {
@@ -163,6 +165,8 @@ export function classifyProviderFailure(
 
   if (
     /\b401\b/.test(lower)
+    || /\b403\b/.test(lower)
+    || lower.includes('forbidden')
     || lower.includes('invalid_api_key')
     || lower.includes('invalid api key')
     || lower.includes('authentication_error')
