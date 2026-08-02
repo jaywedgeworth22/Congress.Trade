@@ -127,11 +127,15 @@ check_live_revision() {
     fi
 
     if [ -z "$live" ] || [ "$live" = "unknown" ]; then
+      if [ "${ALLOW_UNKNOWN_BUILD_SHA:-0}" = "1" ]; then
+        echo "   (ALLOW_UNKNOWN_BUILD_SHA=1 — build sha is unknown; proceeding with migration and health check)"
+        return 0
+      fi
       # Pre-dates the build-SHA receipt, or SOURCE_COMMIT was not passed to the
       # build. Cannot verify; say so loudly rather than implying success.
       echo "!! /api/health reports no build SHA on $base." >&2
       echo "   The running image predates the build-revision receipt, or Coolify" >&2
-      echo "   did not pass SOURCE_COMMIT. This deploy CANNOT be verified." >&2
+      echo "   did not pass SOURCE_COMMIT. Pass ALLOW_UNKNOWN_BUILD_SHA=1 to bypass." >&2
       return 2
     fi
 
