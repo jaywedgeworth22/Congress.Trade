@@ -72,7 +72,7 @@ describe('getProviderThrottleDecision', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://usage.jays.services/api/budget-status');
-    expect((init.headers as Record<string, string>).authorization).toBe('Bearer read-token-xyz');
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer ingest-token-abc');
   });
 
   it('throttles a provider over a configured fraction even before "exceeded"', async () => {
