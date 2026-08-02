@@ -7806,18 +7806,36 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const applied: string[] = [];
     const skipped: string[] = [];
     const failed: Array<{ sql: string; error: string }> = [];
+    await run(c.env.DB, 'PRAGMA busy_timeout = 10000').catch(() => {});
     for (const sql of statements) {
-      try {
-        await run(c.env.DB, sql);
-        applied.push(sql);
-      } catch (err) {
-        const msg = (err as Error)?.message || String(err);
-        if (isIdempotentMigrationError(msg)) {
-          skipped.push(sql);
-        } else {
-          console.error(`[MIGRATE ERROR] ${msg} on statement: ${sql}`);
-          failed.push({ sql, error: msg });
+      let attempts = 0;
+      let lastErr: Error | null = null;
+      while (attempts < 3) {
+        attempts++;
+        try {
+          await run(c.env.DB, sql);
+          applied.push(sql);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err as Error;
+          const msg = lastErr.message || String(lastErr);
+          if (isIdempotentMigrationError(msg)) {
+            skipped.push(sql);
+            lastErr = null;
+            break;
+          }
+          if (/\bSQLITE_BUSY\b/i.test(msg) && attempts < 3) {
+            await new Promise((r) => setTimeout(r, attempts * 75));
+            continue;
+          }
+          break;
         }
+      }
+      if (lastErr) {
+        const msg = lastErr.message || String(lastErr);
+        console.error(`[MIGRATE ERROR] ${msg} on statement: ${sql}`);
+        failed.push({ sql, error: msg });
       }
     }
 
