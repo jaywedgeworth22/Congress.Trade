@@ -108,6 +108,7 @@
 		5A1000010000000000000031 /* CongressTrade */ = {
 			isa = PBXGroup;
 			children = (
+				7F8000010000000000000002 /* AppDelegate.swift */,
 				5A1000010000000000000015 /* Assets.xcassets */,
 				5A1000010000000000000012 /* APIClient.swift */,
 				5A1000010000000000000013 /* Models.swift */,
@@ -448,6 +449,8 @@
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CongressTrade/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Congress.Trade";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios;
@@ -472,6 +475,8 @@
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CongressTrade/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Congress.Trade";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios;
