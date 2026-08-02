@@ -2,7 +2,12 @@ version: '3.8'
 
 services:
   congress-app:
-    build: .
+    build:
+      context: .
+      args:
+        # Coolify exports SOURCE_COMMIT for the build; surfaced by /api/health
+        # so a deploy can be verified rather than assumed.
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     container_name: congress-app
     restart: unless-stopped
     ports:

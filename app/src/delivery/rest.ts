@@ -25,6 +25,7 @@ import type { Chamber, Env, Owner, Subscription, TxType } from '../shared/types.
 import { all, first, get } from '../shared/db.ts';
 import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
+import { readBuildInfo } from '../shared/buildInfo.ts';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
@@ -294,8 +295,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const readiness = readinessCache.result;
     const envx = c.env as Env & Record<string, string | undefined>;
     const costProfile = costProfilePublicSummary(resolveDenoCostProfile(envx));
+    // `build` identifies the running revision so a deploy can be *verified*
+    // rather than assumed — ship.sh does not deploy, Coolify does, and that
+    // webhook has silently not fired before. See src/shared/buildInfo.ts.
+    const build = readBuildInfo(envx);
     return c.json(
-      { ...readiness, costProfile, time: new Date().toISOString() },
+      { ...readiness, costProfile, build, time: new Date().toISOString() },
       readiness.ok ? 200 : 503,
     );
   });
