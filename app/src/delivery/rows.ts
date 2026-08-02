@@ -20,7 +20,7 @@ import type {
   TxSource,
   TxType,
 } from '../shared/types.ts';
-import { get, parseJson, toBool } from '../shared/db.ts';
+import { first, get, parseJson, toBool } from '../shared/db.ts';
 import type { StockActStatus } from '../shared/stockAct.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
@@ -435,6 +435,12 @@ const REF_SELECT =
 
 /** SQL expression resolving the chamber, preferring the filers table. */
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
+
+/** O(1) indexed MAX query over transactions.cursor_seq */
+export async function readCursorHighWater(env: Env): Promise<number> {
+  const row = await first<{ hwm: number | null }>(env.DB, 'SELECT MAX(cursor_seq) AS hwm FROM transactions', []);
+  return Number(row?.hwm ?? 0);
+}
 
 /**
  * Build the shared WHERE clauses + bound params for the transactions feed.

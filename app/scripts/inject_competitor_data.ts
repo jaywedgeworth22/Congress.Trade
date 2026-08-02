@@ -163,7 +163,8 @@ async function run() {
       confidence: 100,
       source: 'competitor_backfill',
       createdAt: nowStr,
-      cursorSeq: Date.now(),
+      // cursor_seq is assigned by the DB trigger; persistTransactions() binds NULL.
+      cursorSeq: 0,
       firstSeenAt: nowStr,
       filedDate: date, // Treat filed_date same as tx_date for these purposes
     });

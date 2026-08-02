@@ -5,6 +5,7 @@ import {
   buildTransactionsQuery,
   escapeLikePattern,
   mapSubscription,
+  readCursorHighWater,
 } from '../delivery/rows.ts';
 import type { SubscriptionRow, TxQueryParams } from '../delivery/rows.ts';
 import type {
@@ -91,7 +92,12 @@ export async function readClientTradeList(env: Env, params: TxQueryParams): Prom
   // that reads it on every poll can tell "not computed this round" apart from
   // "actually zero".
   if (params.since !== undefined && items.length === 0) {
-    return { items, cursor: maxCursor, count: 0, limit: built.limit };
+    const hwm = await readCursorHighWater(env);
+    const effectiveCursor =
+      maxCursor > 1_000_000_000_000 || (hwm > 0 && maxCursor > hwm)
+        ? Math.min(maxCursor, hwm)
+        : maxCursor;
+    return { items, cursor: effectiveCursor, count: 0, limit: built.limit };
   }
 
   const countQuery = buildTransactionsCountQuery(params);
