@@ -84,9 +84,17 @@ describe('review queue durable state migration', () => {
       },
     } as unknown as D1Database;
 
+    // This test asserts statement ORDER, not schema readiness. The stub above
+    // implements only prepare().bind().run(), so checkReadiness cannot probe it
+    // and reports db:false — which /migrate now correctly treats as a failure.
+    // Skip the postcondition here; it is covered directly in migrate.test.ts.
     const res = await app.request(
       '/migrate',
-      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ skipSchemaVerify: true }),
+      },
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
 

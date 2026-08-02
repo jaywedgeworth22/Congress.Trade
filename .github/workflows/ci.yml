@@ -55,6 +55,38 @@ jobs:
         working-directory: .
         run: node scripts/check-actions-runner-policy.mjs
 
+      # Static guard for the class of defect behind the sqlite-web finding: a
+      # security-relevant variable given a fail-open default, or a password
+      # literal committed to source. Both existed on main until 2026-08-02 —
+      # `SQLITE_WEB_PASSWORD:-admin` in the production compose file, and 25
+      # tracked scripts POSTing that literal to the live database browser.
+      - name: No fail-open secret defaults or password literals
+        working-directory: .
+        run: |
+          status=0
+
+          # ${VAR:-default} / ${VAR-default} on a PASSWORD/SECRET/TOKEN/KEY var.
+          if git grep -nE '\$\{[A-Z_]*(PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*:?-[^}]' \
+               -- '*.yml' '*.yaml' 'Dockerfile*' '*/Dockerfile*'; then
+            echo "::error::A security-relevant variable has a fail-open default. Use \${VAR} (fails closed) instead."
+            status=1
+          fi
+
+          # Hardcoded credential literals in tracked source.
+          if git grep -nE '"password"[[:space:]]*:[[:space:]]*"[^"]+"' -- '*.py' '*.ts' '*.js'; then
+            echo "::error::Hardcoded password literal in tracked source. Read it from the environment."
+            status=1
+          fi
+
+          # sqlite-web must never be served without authentication.
+          if git grep -n 'sqlite_web' -- 'app/Dockerfile.sqlite-web' 'app/docker-compose.yml' \
+               | grep -v -- '--password'; then
+            echo "::error::A sqlite_web invocation is missing --password."
+            status=1
+          fi
+
+          exit $status
+
       - name: Install dependencies
         run: npm ci
 

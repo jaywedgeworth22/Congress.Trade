@@ -134,6 +134,67 @@ export async function signWebhookPayload(env: Env, body: string, secret?: string
   return toHex(new Uint8Array(sigBuf));
 }
 
+/**
+ * Signature scheme v1: HMAC-SHA256 over `${timestampSec}.${body}`.
+ *
+ * The legacy `X-Signature: sha256=<hmac(body)>` covers the body ALONE, so a
+ * captured request stays valid forever — a recipient cannot distinguish a
+ * replay from a fresh delivery, and cannot bound how long a leaked request is
+ * dangerous. Binding a timestamp into the signed material lets the recipient
+ * reject anything outside an acceptance window, and the `v1=` label lets the
+ * scheme be rotated without breaking existing verifiers.
+ *
+ * Emitted as `X-CT-Signature: t=<unix-seconds>,v1=<hex>` (the widely-used
+ * Stripe-style layout). The legacy header is still sent — see WEBHOOK_HEADERS
+ * at the call site — so existing consumers keep working during migration.
+ */
+export async function signWebhookPayloadV1(
+  env: Env,
+  timestampSec: number,
+  body: string,
+  secret?: string,
+): Promise<string> {
+  return signWebhookPayload(env, `${timestampSec}.${body}`, secret);
+}
+
+/** Default acceptance window recipients should enforce, in seconds. */
+export const WEBHOOK_SIGNATURE_TOLERANCE_SEC = 300;
+
+/**
+ * Reference verifier — the exact check a recipient should perform. Exported so
+ * the contract is executable and testable rather than only described in prose.
+ */
+export async function verifyWebhookSignatureV1(
+  env: Env,
+  header: string,
+  body: string,
+  secret: string | undefined,
+  nowSec: number,
+  toleranceSec = WEBHOOK_SIGNATURE_TOLERANCE_SEC,
+): Promise<boolean> {
+  const parts = new Map<string, string>();
+  for (const piece of header.split(',')) {
+    const idx = piece.indexOf('=');
+    if (idx > 0) parts.set(piece.slice(0, idx).trim(), piece.slice(idx + 1).trim());
+  }
+  const t = Number(parts.get('t'));
+  const v1 = parts.get('v1');
+  if (!v1 || !Number.isFinite(t)) return false;
+  // Reject stale AND far-future timestamps; a clock-skewed future value would
+  // otherwise extend a captured request's usable life.
+  if (Math.abs(nowSec - t) > toleranceSec) return false;
+  const expected = await signWebhookPayloadV1(env, t, body, secret);
+  return timingSafeEqualHex(expected, v1);
+}
+
+/** Constant-time hex compare, so verification cannot be probed byte by byte. */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 function toHex(bytes: Uint8Array): string {
   let hex = '';
   for (const b of bytes) hex += b.toString(16).padStart(2, '0');
@@ -355,6 +416,8 @@ async function deliverToSubscription(
     });
     if (targetUrlError) throw new Error(`unsafe webhook target URL: ${targetUrlError}`);
     const signature = await signWebhookPayload(env, body, sub.secret ?? undefined);
+    const signedAtSec = Math.floor(Date.now() / 1000);
+    const signatureV1 = await signWebhookPayloadV1(env, signedAtSec, body, sub.secret ?? undefined);
     let timedOut = false;
     const controller = new AbortController();
     const timeout = setTimeout(() => {
@@ -372,7 +435,14 @@ async function deliverToSubscription(
           : controller.signal,
         headers: {
           'Content-Type': 'application/json',
+          // Legacy: HMAC over the body alone, so it never expires. Retained
+          // for existing consumers during migration — prefer X-CT-Signature.
           'X-Signature': `sha256=${signature}`,
+          // v1: HMAC over `${t}.${body}`. Verify this one and reject anything
+          // outside your acceptance window (we suggest
+          // WEBHOOK_SIGNATURE_TOLERANCE_SEC) so a captured request expires.
+          'X-CT-Signature': `t=${signedAtSec},v1=${signatureV1}`,
+          'X-CT-Event': 'transaction.created',
           'X-Tx-Id': tx.id,
           'X-Subscription-Id': sub.id,
           'X-Delivery-Attempt': String(attempt),
