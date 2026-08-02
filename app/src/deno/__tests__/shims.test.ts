@@ -1,5 +1,54 @@
 import { describe, expect, it, vi } from 'vitest';
-import { S3BucketShim } from '../shims.ts';
+import { S3BucketShim, KVNamespaceShim, KV_NEVER_MIRROR_PREFIXES } from '../shims.ts';
+
+describe('KVNamespaceShim', () => {
+  it('defines KV_NEVER_MIRROR_PREFIXES with expected sensitive prefixes', () => {
+    expect(KV_NEVER_MIRROR_PREFIXES).toEqual(['sess:', 'magic:', 'infisical_secrets_cache:']);
+  });
+
+  it('excludes sess:, magic:, and infisical_secrets_cache: from mirroring into SQLite DB', async () => {
+    const fakeKv = {
+      get: vi.fn(async () => ({ value: 'secret-in-deno-kv' })),
+      set: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
+    const dbRun = vi.fn(async () => ({ success: true, meta: { changes: 1 } }));
+    const dbShim = {
+      prepare: vi.fn(() => ({
+        bind: vi.fn(() => ({ run: dbRun, first: vi.fn(async () => null) })),
+      })),
+    };
+    const shim = new KVNamespaceShim(fakeKv as never, 'config', () => dbShim as never);
+
+    await shim.put('sess:token123', '{"userId":"u1"}');
+    expect(fakeKv.set).toHaveBeenCalledWith(['config', 'sess:token123'], '{"userId":"u1"}', undefined);
+    expect(dbShim.prepare).not.toHaveBeenCalled();
+
+    await shim.get('sess:token123');
+    expect(fakeKv.get).toHaveBeenCalledWith(['config', 'sess:token123']);
+
+    await shim.put('cache:public_feed', '{"items":[]}');
+    expect(dbShim.prepare).toHaveBeenCalled();
+  });
+
+  it('performs atomic take via Deno KV versionstamp CAS', async () => {
+    const fakeAtomic = {
+      check: vi.fn(() => fakeAtomic),
+      delete: vi.fn(() => fakeAtomic),
+      commit: vi.fn(async () => ({ ok: true })),
+    };
+    const fakeKv = {
+      get: vi.fn(async () => ({ value: 'user@example.com', versionstamp: 'v1' })),
+      atomic: vi.fn(() => fakeAtomic),
+    };
+    const shim = new KVNamespaceShim(fakeKv as never, 'config');
+
+    const result = await shim.take('magic:hash123');
+    expect(result).toBe('user@example.com');
+    expect(fakeAtomic.check).toHaveBeenCalledWith({ key: ['config', 'magic:hash123'], versionstamp: 'v1' });
+    expect(fakeAtomic.delete).toHaveBeenCalledWith(['config', 'magic:hash123']);
+  });
+});
 
 describe('S3BucketShim.get', () => {
   it('preserves object content type for classifier consumers', async () => {

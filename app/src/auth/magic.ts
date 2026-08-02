@@ -22,9 +22,14 @@ export async function issueMagicToken(env: Env, email: string): Promise<string> 
 /** Consume a magic-link token: returns the email if valid+unused, else null. */
 export async function consumeMagicToken(env: Env, token: string): Promise<string | null> {
   const key = MAGIC_PREFIX + (await sha256Hex(token));
-  const email = await env.CONFIG_KV.get(key);
+  const kv = env.CONFIG_KV as KVNamespace & { take?: (k: string) => Promise<string | null> };
+  // Atomic compare-and-delete where the runtime supports it (Deno shim), so
+  // two concurrent /auth/magic/verify hits cannot both mint a session.
+  // Cloudflare KV has no CAS, so keep the get+delete fallback there.
+  if (typeof kv.take === 'function') return (await kv.take(key)) ?? null;
+  const email = await kv.get(key);
   if (!email) return null;
-  await env.CONFIG_KV.delete(key); // single use
+  await kv.delete(key); // single use
   return email;
 }
 
