@@ -697,6 +697,24 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
       AND (asset_name IS NULL OR asset_name = '' OR asset_name = '(unknown)' OR asset_name = ticker OR asset_name LIKE '%..%')`,
 ] as const;
 
+/**
+ * 0069_client_command_secret_claim.sql — one-time claim for command-issued
+ * credentials. Replayed on every POST /api/admin/migrate: the ALTERs are
+ * skipped as "duplicate column" and the backfill's json_extract predicate
+ * stops matching once scrubbed.
+ */
+export const CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS = [
+  'ALTER TABLE client_commands ADD COLUMN result_secret TEXT',
+  'ALTER TABLE client_commands ADD COLUMN result_claimed_at TEXT',
+  `UPDATE client_commands
+      SET result = json_remove(result, '$.subscription.secret', '$.subscription.streamUrl'),
+          result_claimed_at = COALESCE(result_claimed_at, updated_at)
+    WHERE type = 'create_subscription'
+      AND result IS NOT NULL
+      AND json_valid(result)
+      AND json_extract(result, '$.subscription.secret') IS NOT NULL`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -775,4 +793,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS,
   // 0067_clean_ocr_dot_leader_asset_names.sql
   ...CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS,
+  // 0069_client_command_secret_claim.sql
+  ...CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS,
 ] as const;

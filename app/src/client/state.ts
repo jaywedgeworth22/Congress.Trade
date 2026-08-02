@@ -235,7 +235,7 @@ export async function updateCommandStatus(
   userId: string,
   id: string,
   status: ClientCommandStatus,
-  opts: { result?: unknown; error?: string | null } = {},
+  opts: { result?: unknown; error?: string | null; resultSecret?: unknown } = {},
 ): Promise<ClientCommand> {
   const now = new Date().toISOString();
   const finished = status === 'succeeded' || status === 'failed' || status === 'canceled' ? now : null;
@@ -244,6 +244,7 @@ export async function updateCommandStatus(
     `UPDATE client_commands
         SET status = ?,
             result = COALESCE(?, result),
+            result_secret = COALESCE(?, result_secret),
             error = ?,
             updated_at = ?,
             started_at = CASE WHEN started_at IS NULL AND ? = 'running' THEN ? ELSE started_at END,
@@ -252,6 +253,7 @@ export async function updateCommandStatus(
     [
       status,
       opts.result === undefined ? null : JSON.stringify(opts.result),
+      opts.resultSecret === undefined || opts.resultSecret === null ? null : JSON.stringify(opts.resultSecret),
       opts.error ?? null,
       now,
       status,
@@ -278,6 +280,8 @@ export async function reclaimStaleInFlightCommand(
     env.DB,
     `UPDATE client_commands
         SET status = 'running',
+            result_secret = NULL,
+            result_claimed_at = NULL,
             error = NULL,
             updated_at = ?,
             started_at = ?
@@ -291,4 +295,34 @@ export async function reclaimStaleInFlightCommand(
   const command = await getCommand(env, userId, id);
   if (!command) throw new Error('command not found after stale reclaim');
   return command;
+}
+
+/**
+ * Atomically claim the one-time credential half of a succeeded command's
+ * result. The UPDATE is the gate: `WHERE result_secret IS NOT NULL` in a
+ * single statement means exactly one concurrent caller sees changes === 1,
+ * and the same statement destroys the stored value. Losers get null and only
+ * ever see the redacted `result`.
+ */
+export async function claimCommandResultSecret(
+  env: Env,
+  userId: string,
+  id: string,
+): Promise<unknown | null> {
+  const row = await get<{ result_secret: string | null }>(
+    env.DB,
+    'SELECT result_secret FROM client_commands WHERE id = ? AND user_id = ? AND result_secret IS NOT NULL',
+    [id, userId],
+  );
+  if (!row?.result_secret) return null;
+  const res = await run(
+    env.DB,
+    `UPDATE client_commands
+        SET result_secret = NULL,
+            result_claimed_at = ?
+      WHERE id = ? AND user_id = ? AND result_secret IS NOT NULL`,
+    [new Date().toISOString(), id, userId],
+  );
+  if ((res.meta?.changes ?? 0) !== 1) return null;
+  return parseJson<unknown>(row.result_secret, null);
 }

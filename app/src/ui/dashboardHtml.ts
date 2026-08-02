@@ -4809,27 +4809,54 @@ function createSubscription() {
       });
     })
     .then(function (data) {
-      var result = (data && data.command && data.command.result) || data.result || data;
-      var sub = (result && result.subscription) || (data && data.subscription) || null;
-      if (sub && sub.secret) {
-        var stream = sub.streamUrl || '';
-        el('subsMsg').innerHTML =
-          '<div class="secret-panel">' +
-            '<strong>Created. Save this secret now; it will not be shown again.</strong>' +
-            '<div><span class="muted">Secret</span><code class="secret-value">' + esc(sub.secret) + '</code></div>' +
-            (stream ? '<div><span class="muted">SSE URL</span><code class="secret-value">' + esc(stream) + '</code></div>' : '') +
-            '<div class="secret-actions">' +
-              '<button class="btn ghost sm" data-copy="' + esc(sub.secret) + '" onclick="copyFromData(this)">Copy secret</button>' +
-              (stream ? '<button class="btn ghost sm" data-copy="' + esc(stream) + '" onclick="copyFromData(this)">Copy SSE URL</button>' : '') +
-            '</div>' +
-          '</div>';
-      } else if (data && data.command && data.command.status === 'failed') {
-        el('subsMsg').textContent = 'Failed: ' + ((data.command.error) || 'command failed');
-      } else {
-        el('subsMsg').textContent = 'Created.';
+      function renderResult(dataObj) {
+        var result = (dataObj && dataObj.command && dataObj.command.result) || dataObj.result || dataObj;
+        var sub = (result && result.subscription) || (dataObj && dataObj.subscription) || null;
+        if (sub && sub.secret) {
+          var stream = sub.streamUrl || '';
+          el('subsMsg').innerHTML =
+            '<div class="secret-panel">' +
+              '<strong>Created. Save this secret now; it will not be shown again.</strong>' +
+              '<div><span class="muted">Secret</span><code class="secret-value">' + esc(sub.secret) + '</code></div>' +
+              (stream ? '<div><span class="muted">SSE URL</span><code class="secret-value">' + esc(stream) + '</code></div>' : '') +
+              '<div class="secret-actions">' +
+                '<button class="btn ghost sm" data-copy="' + esc(sub.secret) + '" onclick="copyFromData(this)">Copy secret</button>' +
+                (stream ? '<button class="btn ghost sm" data-copy="' + esc(stream) + '" onclick="copyFromData(this)">Copy SSE URL</button>' : '') +
+              '</div>' +
+            '</div>';
+        } else if (dataObj && dataObj.command && dataObj.command.status === 'failed') {
+          el('subsMsg').textContent = 'Failed: ' + ((dataObj.command.error) || 'command failed');
+        } else {
+          el('subsMsg').textContent = 'Created.';
+        }
+        if (el('newTarget')) el('newTarget').value = '';
+        loadSubs();
       }
-      if (el('newTarget')) el('newTarget').value = '';
-      loadSubs();
+
+      if (data && data.command && (data.command.status === 'queued' || data.command.status === 'running')) {
+        var cmdId = data.command.id;
+        var attempts = 0;
+        var maxAttempts = 15;
+        function pollCmd() {
+          attempts++;
+          fetch('/api/client/v1/commands/' + cmdId, { credentials: 'same-origin' })
+            .then(function (res) { return res.json(); })
+            .then(function (polled) {
+              var status = polled && polled.command && polled.command.status;
+              if (status === 'succeeded' || status === 'failed' || attempts >= maxAttempts) {
+                renderResult(polled);
+              } else {
+                setTimeout(pollCmd, 750);
+              }
+            })
+            .catch(function () {
+              renderResult(data);
+            });
+        }
+        setTimeout(pollCmd, 500);
+      } else {
+        renderResult(data);
+      }
     })
     .catch(function (e) {
       if (e && e.status === 402) {
