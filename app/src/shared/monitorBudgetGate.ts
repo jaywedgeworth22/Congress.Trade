@@ -151,6 +151,8 @@ function isMonitorBudgetStatusResponse(value: unknown): value is MonitorBudgetSt
   return obj.ok === true && Array.isArray(obj.providers);
 }
 
+let loggedMonitorError = false;
+
 /**
  * Fetch the monitor's budget-status, bounded by a timeout, never throwing.
  * Returns null on ANY failure (not configured, network error, timeout,
@@ -172,7 +174,14 @@ async function fetchBudgetStatusUncached(env: Env): Promise<MonitorBudgetStatusR
         headers: { authorization: `Bearer ${config.token}` },
         signal: controller.signal,
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        if (!loggedMonitorError && (res.status === 401 || res.status === 403 || res.status === 503)) {
+          console.log(`usage-monitor budget gate failed (status ${res.status}): read token may be invalid or ingest fallback denied`);
+          loggedMonitorError = true;
+        }
+        return null;
+      }
+      loggedMonitorError = false;
       const body: unknown = await res.json().catch(() => null);
       return isMonitorBudgetStatusResponse(body) ? body : null;
     } finally {
