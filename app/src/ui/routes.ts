@@ -31,35 +31,31 @@ import {
   type StaticAsset,
 } from './assets.ts';
 
-const DEFAULT_GA_MEASUREMENT_ID = 'G-B3J0XHK0FX';
-
-function getGaScript(env: Env): string {
-  const gaId = (env as any).GA_MEASUREMENT_ID
-    || (typeof process !== 'undefined' ? process.env?.GA_MEASUREMENT_ID : undefined)
-    || DEFAULT_GA_MEASUREMENT_ID;
-  if (!gaId || !gaId.trim()) return '';
-  const trimmed = gaId.trim();
-  return `<!-- Google Analytics (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=${trimmed}"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', '${trimmed}');
-</script>`;
-}
-
+/**
+ * Analytics injection was removed (CT-AUD-P1-15).
+ *
+ * Every page shipped `<script src="https://www.googletagmanager.com/gtag/js?id=…">`
+ * with a HARDCODED default measurement id, while the CSP has long been
+ * `script-src 'self' 'unsafe-inline'` with `connect-src 'self'`. The browser
+ * blocked both the tag and its collection calls, so it never produced a single
+ * data point — it only cost a request attempt and a CSP violation on every page
+ * load, for every visitor, including anyone self-hosting this code.
+ *
+ * Re-enabling it is a deliberate PRIVACY decision, not a config change: it needs
+ * an owner-chosen measurement id (never a hardcoded default), explicit CSP
+ * entries for googletagmanager.com and google-analytics.com, a consent surface,
+ * and a privacy-policy update. Until those exist, shipping nothing is the
+ * honest behaviour.
+ */
 async function renderDashboard(env: Env): Promise<string> {
   const logoDisplay = await getLogoDisplay(env);
-  const gaScript = getGaScript(env);
   return DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
-    .split('%GA_SCRIPT%').join(gaScript);
+    .split('%GA_SCRIPT%').join('');
 }
 
-function renderLegalHtml(html: string, env: Env): string {
-  const gaScript = getGaScript(env);
-  return html.split('%GA_SCRIPT%').join(gaScript);
+function renderLegalHtml(html: string, _env: Env): string {
+  return html.split('%GA_SCRIPT%').join('');
 }
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
