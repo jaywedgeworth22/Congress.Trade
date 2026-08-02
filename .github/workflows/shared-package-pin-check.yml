@@ -68,10 +68,27 @@ jobs:
             exit 1
           fi
 
+          if [[ ! -d "$VENDOR_SRC" ]]; then
+            echo "::error::Vendored source directory ${VENDOR_SRC} is missing"
+            exit 1
+          fi
+
           ACTUAL="${RUNNER_TEMP}/pin-drift.patch"
+          # `git diff --no-index` exits 0 (identical), 1 (differs), or >1 (error).
+          # A blanket `|| true` swallowed the error case too, so a missing or
+          # renamed source tree produced an empty patch and the check reported
+          # "byte-identical" and PASSED — the exact no-op this gate exists to
+          # prevent. Tolerate 0 and 1 only.
+          set +e
           git --no-pager diff --no-index --no-color --full-index \
             --src-prefix=upstream/ --dst-prefix=vendored/ \
-            -- "$UPSTREAM_SRC" "$VENDOR_SRC" > "$ACTUAL" || true
+            -- "$UPSTREAM_SRC" "$VENDOR_SRC" > "$ACTUAL"
+          DIFF_STATUS=$?
+          set -e
+          if [[ "$DIFF_STATUS" -gt 1 ]]; then
+            echo "::error::git diff failed (exit ${DIFF_STATUS}); cannot verify the pin"
+            exit 1
+          fi
 
           if [[ ! -s "$ACTUAL" ]]; then
             echo "::notice::Vendored source is byte-identical to ${TAG} (${UPSTREAM_SHA})"

@@ -577,4 +577,79 @@ describe('admin migration bootstrap', () => {
       expect(names.slice().sort()).toEqual(grandfatheredPair);
     }
   });
+  // ---- cursor_seq trigger swap must never leave a gap ----------------------
+  // /migrate executes statements as independent round-trips with no enclosing
+  // transaction, so a DROP-then-CREATE on the same trigger name leaves a window
+  // in which INSERTs land with cursor_seq = NULL. Such a row is invisible to
+  // every feed read (`t.cursor_seq > ?` is applied on EVERY /transactions call
+  // because `since` defaults to 0) and cannot be healed by a repair keyed on
+  // `>= 1e12`, because `NULL >= 1e12` is NULL, never TRUE.
+  it('replaces the cursor trigger without ever leaving the table untriggered, and heals NULL rows', async () => {
+    const db = await sqliteDatabase();
+    db.exec(`
+      CREATE TABLE transactions (id TEXT PRIMARY KEY, created_at TEXT, cursor_seq INTEGER);
+      CREATE TABLE tx_cursor_seq (seq INTEGER PRIMARY KEY AUTOINCREMENT, tx_id TEXT NOT NULL);
+      CREATE TABLE subscriptions (id TEXT PRIMARY KEY, cursor INTEGER);
+    `);
+    // The v1 trigger, with the guard that let importers supply their own value.
+    db.exec(`
+      CREATE TRIGGER trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW
+      WHEN NEW.cursor_seq IS NULL
+      BEGIN
+        INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id);
+        UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id;
+      END;
+    `);
+
+    db.exec("INSERT INTO transactions (id, created_at, cursor_seq) VALUES ('normal', '2026-01-01', NULL)");
+    // A Date.now() epoch, written while the v1 guard still allowed it.
+    db.exec("INSERT INTO transactions (id, created_at, cursor_seq) VALUES ('poisoned', '2026-01-02', 1784939101315)");
+    db.exec("INSERT INTO subscriptions (id, cursor) VALUES ('sub-1', 1784939101315)");
+    // A row that landed during a no-trigger window: no sequence row, NULL cursor.
+    db.exec("INSERT INTO transactions (id, created_at, cursor_seq) VALUES ('orphan', '2026-01-03', 1)");
+    db.exec("DELETE FROM tx_cursor_seq WHERE tx_id = 'orphan'");
+    db.exec("UPDATE transactions SET cursor_seq = NULL WHERE id = 'orphan'");
+
+    const sql = readFileSync(new URL('0068_cursor_seq_integrity.sql', migrationsUrl) as any, 'utf8') as string;
+
+    // The statement list must never drop v1 before its replacement exists.
+    const createV2 = sql.indexOf('CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor_v2');
+    const dropV1 = sql.indexOf('DROP TRIGGER IF EXISTS trg_transactions_cursor;');
+    expect(createV2).toBeGreaterThan(-1);
+    expect(dropV1).toBeGreaterThan(-1);
+    expect(createV2).toBeLessThan(dropV1);
+
+    // Replayed on every deploy, so it must be idempotent.
+    db.exec(sql);
+    db.exec(sql);
+
+    const triggers = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+      .all() as Array<{ name: string }>;
+    expect(triggers.map((t) => t.name)).toEqual(['trg_transactions_cursor_v2']);
+
+    const nulls = db.prepare('SELECT COUNT(*) AS n FROM transactions WHERE cursor_seq IS NULL').get() as { n: number };
+    expect(nulls.n, 'a NULL cursor_seq is permanently invisible to the feed').toBe(0);
+
+    const poisoned = db
+      .prepare('SELECT COUNT(*) AS n FROM transactions WHERE cursor_seq >= 1000000000000')
+      .get() as { n: number };
+    expect(poisoned.n).toBe(0);
+
+    const sub = db.prepare("SELECT cursor FROM subscriptions WHERE id = 'sub-1'").get() as { cursor: number };
+    expect(sub.cursor).toBeLessThan(1000000000000);
+
+    // tx_id lookups are correlated everywhere, including in the trigger itself,
+    // which runs on every INSERT — unindexed it full-scans one row per
+    // transaction ever written.
+    const idx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tx_cursor_seq' AND name = 'idx_tx_cursor_seq_tx_id'")
+      .all() as Array<{ name: string }>;
+    expect(idx).toHaveLength(1);
+
+    // And the new trigger still assigns sequences to fresh inserts.
+    db.exec("INSERT INTO transactions (id, created_at, cursor_seq) VALUES ('fresh', '2026-01-04', NULL)");
+    const fresh = db.prepare("SELECT cursor_seq FROM transactions WHERE id = 'fresh'").get() as { cursor_seq: number };
+    expect(fresh.cursor_seq).toBeGreaterThan(0);
+  });
 });

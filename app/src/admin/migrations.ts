@@ -8,7 +8,17 @@ export const BASE_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_filings_filer ON filings (filer_id)',
   `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, doc_id TEXT, filer_id TEXT, tx_date TEXT, owner TEXT, asset_name TEXT, ticker TEXT, asset_type TEXT, tx_type TEXT, amount_min INTEGER, amount_max INTEGER, is_option INTEGER, cap_gains_over_200 INTEGER, raw_text TEXT, confidence REAL, source TEXT NOT NULL DEFAULT 'primary', created_at TEXT, cursor_seq INTEGER)`,
   `CREATE TABLE IF NOT EXISTS tx_cursor_seq (seq INTEGER PRIMARY KEY AUTOINCREMENT, tx_id TEXT NOT NULL)`,
-  `CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
+  // `_v2` carries the sequence-authoritative body (no `WHEN NEW.cursor_seq IS
+  // NULL` guard). It is created under a NEW NAME, and the v1 trigger is dropped
+  // only later in this same list — see CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS.
+  // Replacing v1 in place (DROP then CREATE) leaves a window with NO trigger at
+  // all, and /migrate executes statements as independent round-trips with no
+  // enclosing transaction, so a concurrent INSERT lands with cursor_seq = NULL —
+  // invisible to every feed read forever, and unhealable by a repair keyed on
+  // `>= 1e12` (NULL >= 1e12 is NULL, never TRUE). Create-then-drop has no such
+  // window; both triggers coexisting briefly is harmless (the row simply
+  // consumes two sequence values and keeps the larger).
+  `CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor_v2 AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
   'CREATE INDEX IF NOT EXISTS idx_tx_cursor ON transactions (cursor_seq)',
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker ON transactions (ticker)',
   'CREATE INDEX IF NOT EXISTS idx_tx_filer ON transactions (filer_id)',
@@ -702,11 +712,33 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
  * poisoned-cursor repair.
  */
 export const CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS = [
+  // tx_cursor_seq has only an INTEGER PRIMARY KEY on `seq`; nothing indexes
+  // `tx_id`. Every lookup below — and the trigger's own MAX(seq) subquery,
+  // which runs on EVERY transaction INSERT — is correlated on tx_id, so
+  // without this index each one full-scans a table that already holds one row
+  // per transaction ever written (~76k+). The repair is O(poisoned x 76k) and
+  // ingestion degrades quadratically as the table grows. Create the index
+  // FIRST, before anything that depends on it.
+  'CREATE INDEX IF NOT EXISTS idx_tx_cursor_seq_tx_id ON tx_cursor_seq (tx_id)',
+  // Belt-and-braces: BASE_SCHEMA_STATEMENTS already created _v2 much earlier in
+  // this same run, so this is normally a no-op. Both must exist before the v1
+  // drop below — never drop a trigger you have not already replaced.
+  `CREATE TRIGGER IF NOT EXISTS trg_transactions_cursor_v2 AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
+  // Only now is it safe to retire v1 (which carried the `WHEN NEW.cursor_seq IS
+  // NULL` guard that let importers write Date.now() epochs).
   'DROP TRIGGER IF EXISTS trg_transactions_cursor',
-  `CREATE TRIGGER trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
   'UPDATE subscriptions SET cursor = COALESCE((SELECT MAX(cursor_seq) FROM transactions WHERE cursor_seq < 1000000000000), 0) WHERE cursor >= 1000000000000',
   `INSERT INTO tx_cursor_seq (tx_id) SELECT id FROM transactions WHERE cursor_seq >= 1000000000000 AND NOT EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) ORDER BY cursor_seq ASC, created_at ASC, id ASC`,
   `UPDATE transactions SET cursor_seq = (SELECT MAX(s.seq) FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) WHERE cursor_seq >= 1000000000000 AND EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id)`,
+  // Heal rows that lost their cursor_seq entirely. A NULL cursor_seq is worse
+  // than a poisoned one: `t.cursor_seq > ?` is applied on EVERY /transactions
+  // read (since defaults to 0), plus the SSE backlog drain, so the trade is
+  // invisible to the whole feed and to every alert — permanently and silently.
+  // The `>= 1e12` repair above cannot reach these (NULL >= 1e12 is NULL).
+  // Sources: any INSERT during a historical no-trigger window, or any writer
+  // that ran while the trigger was absent.
+  `INSERT INTO tx_cursor_seq (tx_id) SELECT id FROM transactions WHERE cursor_seq IS NULL AND NOT EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) ORDER BY created_at ASC, id ASC`,
+  `UPDATE transactions SET cursor_seq = (SELECT MAX(s.seq) FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) WHERE cursor_seq IS NULL AND EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id)`,
 ] as const;
 
 /**

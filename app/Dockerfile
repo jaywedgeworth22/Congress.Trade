@@ -12,6 +12,11 @@ COPY . .
 # Cache source files
 RUN deno cache src/deno/main.ts
 
+# Build revision, so /api/health can report which commit is actually running.
+# Coolify supplies SOURCE_COMMIT; any other builder can pass --build-arg.
+ARG SOURCE_COMMIT=""
+ENV CT_BUILD_SHA=$SOURCE_COMMIT
+
 ENV PORT=5000
 EXPOSE 5000
 

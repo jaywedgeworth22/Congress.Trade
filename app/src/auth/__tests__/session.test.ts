@@ -167,6 +167,51 @@ describe('host-only session cookies (CT-AUD-007)', () => {
   });
 });
 
+describe('session cookie Secure flag behind the proxy (CT-AUD-P0-3)', () => {
+  // The existing host-only tests all request an https:// URL, which
+  // short-circuits isSecureRequestParts on the `u.protocol === 'https:'`
+  // branch — so they pass identically against the OLD socket-URL inference and
+  // cannot detect the regression. Production never looks like that: Deno.serve
+  // binds plain :5000 inside the container behind Caddy, so the socket URL is
+  // always http: and the truth is in X-Forwarded-Proto. These two tests pin the
+  // 30-day session cookie — the highest-value credential in the app — to the
+  // real production request shape.
+  function appFor(env: Env) {
+    const app = new Hono<{ Bindings: Env }>();
+    app.get('/login', async (c) => {
+      await setSessionCookie(c, 'tok');
+      return c.json({ ok: true });
+    });
+    return app;
+  }
+
+  it('marks ct_session Secure for a proxied https request over a plaintext socket', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    (env as any).APP_BASE_URL = 'https://congress.trade';
+
+    const res = await appFor(env).request(
+      'http://127.0.0.1:5000/login',
+      { headers: { Host: 'congress.trade', 'X-Forwarded-Proto': 'https' } },
+      env,
+    );
+
+    const cookie = res.headers.getSetCookie().find((v) => v.startsWith('ct_session=tok')) ?? '';
+    expect(cookie, 'no ct_session cookie was emitted').not.toBe('');
+    expect(cookie).toMatch(/;\s*Secure/i);
+  });
+
+  it('still omits Secure for local development over plaintext localhost', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    (env as any).APP_BASE_URL = 'http://localhost:8787';
+
+    const res = await appFor(env).request('http://localhost:8787/login', {}, env);
+
+    const cookie = res.headers.getSetCookie().find((v) => v.startsWith('ct_session=tok')) ?? '';
+    expect(cookie).not.toBe('');
+    expect(cookie).not.toMatch(/;\s*Secure/i);
+  });
+});
+
 describe('getSafeRedirectUrl (exact-origin allowlist)', () => {
   const base = 'https://congress.trade';
 

@@ -45,3 +45,10 @@ app/wrangler.preview.toml
 app/.prod.vars.local
 .prod.vars.local
 .upstream-shared/
+
+# Merge/patch leftovers. app/docker-compose.yml.orig and two .patch files
+# survived the sqlite-web fail-open fix still carrying
+# SQLITE_WEB_PASSWORD:-admin, so applying one would have resurrected the
+# default password for the production DB browser.
+*.orig
+*.rej

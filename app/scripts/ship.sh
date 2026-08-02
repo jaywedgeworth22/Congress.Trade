@@ -97,6 +97,57 @@ check_liveness() {
   curl -fsS -A "$UA" "$base/health" | grep -q '"ok":true'
 }
 
+# Assert the LIVE build is the commit we intend to ship.
+#
+# ship.sh does not deploy — Coolify redeploys on push to main, and that webhook
+# has silently not fired before. Without this check the script health-checks
+# whichever revision happens to be running, migrates it, prints success, and an
+# operator reasonably reports the new code as live. That produced a false
+# "deployed" report on 2026-08-01 for six merged security PRs.
+#
+# Waits for the running build SHA to match, rather than assuming it.
+check_live_revision() {
+  local base="$1"
+  local expected attempts delay body live i
+  expected="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  if [ -z "$expected" ]; then
+    echo "   (not a git checkout — skipping revision assertion)"
+    return 0
+  fi
+  attempts="${DEPLOY_REVISION_ATTEMPTS:-30}"
+  delay="${DEPLOY_REVISION_DELAY_SECONDS:-20}"
+
+  for ((i = 1; i <= attempts; i++)); do
+    body="$(curl -sS -A "$UA" "$base/api/health" || true)"
+    live="$(printf '%s' "$body" | sed -n 's/.*"build":{"sha":"\([^"]*\)".*/\1/p')"
+
+    if [ "$live" = "$expected" ]; then
+      echo "   live build ${live:0:12} matches HEAD — deploy confirmed."
+      return 0
+    fi
+
+    if [ -z "$live" ] || [ "$live" = "unknown" ]; then
+      # Pre-dates the build-SHA receipt, or SOURCE_COMMIT was not passed to the
+      # build. Cannot verify; say so loudly rather than implying success.
+      echo "!! /api/health reports no build SHA on $base." >&2
+      echo "   The running image predates the build-revision receipt, or Coolify" >&2
+      echo "   did not pass SOURCE_COMMIT. This deploy CANNOT be verified." >&2
+      return 2
+    fi
+
+    echo "   waiting for deploy: live ${live:0:12} != HEAD ${expected:0:12} (attempt $i/$attempts)"
+    if [ "$i" -lt "$attempts" ]; then
+      sleep "$delay"
+    fi
+  done
+
+  echo "!! Live build is ${live:0:12} but HEAD is ${expected:0:12}." >&2
+  echo "   Coolify has not deployed this commit. Do NOT report it as shipped." >&2
+  echo "   Trigger it: GET https://host.jays.services/api/v1/deploy?uuid=congress-trade" >&2
+  echo "   (Bearer COOLIFY_AGENTS, browser User-Agent — Cloudflare 403s other UAs.)" >&2
+  return 1
+}
+
 # Post-deploy smoke: fetch the served dashboard HTML (with a browser UA, same
 # Cloudflare-challenge reason as above) and run `node --check` on every inline
 # <script> block. Guards against shipping a dashboard whose embedded JS fails
@@ -159,11 +210,40 @@ if ! check_liveness "$BASE"; then
 fi
 echo
 
+echo "==> Live revision check (is HEAD actually deployed?)"
+check_live_revision "$BASE"
+revision_status=$?
+if [ "$revision_status" -eq 1 ]; then
+  # A confirmed mismatch is fatal: migrating and "verifying" a revision we did
+  # not ship is exactly how a stale production gets reported as deployed.
+  exit 1
+fi
+if [ "$revision_status" -eq 2 ]; then
+  echo "   Continuing WITHOUT revision proof — treat this run as unverified." >&2
+fi
+echo
+
 post() { # $1 = admin path, $2 = json body (optional)
   echo "==> POST /api/admin/$1"
-  curl -fsS -A "$UA" -X POST "$ADMIN_BASE/api/admin/$1" \
+  local body_file code
+  body_file="$(mktemp)"
+  # NOT `curl -f`: on a non-2xx, -f discards the body, which for /migrate is
+  # the entire diagnostic payload (the failed[] statements and their SQL
+  # errors, plus readiness.missing). Capture the body, then decide.
+  code="$(curl -sS -A "$UA" -X POST "$ADMIN_BASE/api/admin/$1" \
     -H "authorization: Bearer $ADMIN_TOKEN" \
-    -H "content-type: application/json" -d "${2:-{}}" && echo
+    -H "content-type: application/json" -d "${2:-{}}" \
+    -o "$body_file" -w '%{http_code}')" || true
+  if [[ "$code" == 2* ]]; then
+    cat "$body_file"; echo
+    rm -f "$body_file"
+    return 0
+  fi
+  echo "!! POST /api/admin/$1 returned HTTP ${code:-curl-error}." >&2
+  echo "   Response body (this is the diagnostic — read the failed[] array):" >&2
+  cat "$body_file" >&2; echo >&2
+  rm -f "$body_file"
+  return 1
 }
 
 if [ "$DEPLOY_ONLY" = true ]; then

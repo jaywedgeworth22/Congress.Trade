@@ -118,4 +118,85 @@ describe('POST /api/admin/migrate error handling', () => {
     expect(body.skipped.length).toBeGreaterThan(0);
     expect(body.failed).toHaveLength(0);
   });
+  // ---- schema-readiness postcondition -------------------------------------
+  // The three tests above all pass skipSchemaVerify:true, so none of them
+  // exercise the postcondition the fail-closed change exists for. These do.
+
+  it('fails closed (HTTP 500) when the schema readiness probe reports missing objects', async () => {
+    const env = {
+      ADMIN_TOKEN: 'admin-secret',
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async run() {
+              return { success: true };
+            },
+            async first() {
+              // `SELECT 1 AS ok` succeeds so the DB is reachable, but every
+              // schema probe comes back empty -> readiness.ok === false.
+              return /SELECT 1 AS ok/i.test(sql) ? { ok: 1 } : null;
+            },
+            async all() {
+              return { results: [] };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+
+    const res = await buildAdminRouter().request(
+      '/migrate',
+      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' } },
+      env,
+    );
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { ok: boolean; readiness: { ok: boolean; missing: string[] } };
+    expect(body.ok).toBe(false);
+    expect(body.readiness.ok).toBe(false);
+    expect(body.readiness.missing.length).toBeGreaterThan(0);
+  });
+
+  it('fails closed (HTTP 500) when the readiness probe cannot reach the database', async () => {
+    // Regression guard: `ok` used to be
+    //   failed.length === 0 && (readiness.ok || !readiness.db)
+    // so an UNREACHABLE database — the single worst outcome, and exactly what
+    // the postcondition exists to catch — reported HTTP 200 and ship.sh called
+    // the deploy good.
+    const env = {
+      ADMIN_TOKEN: 'admin-secret',
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async run() {
+              return { success: true };
+            },
+            async first() {
+              throw new Error('D1_ERROR: database is unreachable');
+            },
+            async all() {
+              throw new Error('D1_ERROR: database is unreachable');
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+
+    const res = await buildAdminRouter().request(
+      '/migrate',
+      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' } },
+      env,
+    );
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { ok: boolean; readiness: { db: boolean } };
+    expect(body.ok).toBe(false);
+    expect(body.readiness.db).toBe(false);
+  });
 });

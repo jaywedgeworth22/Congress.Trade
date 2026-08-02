@@ -7,7 +7,7 @@ import re
 cj = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
 
-login_data = urllib.parse.urlencode({"password": os.environ.get("SQLITE_WEB_PASSWORD", ""), "next": "/query/"}).encode("utf-8")
+login_data = urllib.parse.urlencode({"password": os.environ["SQLITE_WEB_PASSWORD"], "next": "/query/"}).encode("utf-8")
 opener.open("http://100.97.154.2:8080/login/", data=login_data)
 
 sql_stmt = "SELECT provider, filer_name, ticker, filed_date, first_observed_at, provider_published_at FROM trade_provider_observations ORDER BY first_observed_at DESC LIMIT 20"

@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parse } from 'node-html-parser';
 import { DASHBOARD_HTML } from '../dashboardHtml.ts';
+import { browserSecurityHeaders } from '../../security/headers.ts';
 
 function scriptBlocks(html: string): string[] {
   const blocks: string[] = [];
@@ -2129,5 +2130,47 @@ describe('embedded client script escaping (CT-AUD-P0-4)', () => {
     );
     expect(reconstructFilingUrl('H-2026-0001')).toBe('/api/documents/H-2026-0001/pdf');
     expect(reconstructFilingUrl('')).toBe('');
+  });
+});
+
+/**
+ * Guards CT-AUD-P1-15.
+ *
+ * The dashboard shipped a hardcoded Google Analytics tag while the CSP was
+ * `script-src 'self' 'unsafe-inline'` / `connect-src 'self'`, so the browser
+ * blocked it on every page load for every visitor. It never produced a data
+ * point; it only produced CSP violations. The invariant worth keeping is not
+ * "no analytics" but "no script the CSP will block" — reintroducing a
+ * third-party tag must be a deliberate change that also widens the policy.
+ */
+describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () => {
+  it('loads no external script the policy forbids', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const res = await buildUiRouter().request('http://localhost/', {}, { } as never);
+    const html = await res.text();
+
+    const externalSrcs = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)]
+      .map((m) => m[1])
+      .filter((src) => /^https?:\/\//i.test(src));
+
+    const policy = browserSecurityHeaders('https://congress.trade/').get('content-security-policy') ?? '';
+    const scriptSrc = (policy.match(/script-src ([^;]*)/)?.[1] ?? '').trim();
+
+    for (const src of externalSrcs) {
+      const origin = new URL(src).origin;
+      expect(
+        scriptSrc.includes(origin),
+        `<script src="${src}"> is blocked by script-src (${scriptSrc}). ` +
+          'Either drop the script or widen the CSP deliberately.',
+      ).toBe(true);
+    }
+  });
+
+  it('leaves no unsubstituted template placeholder in the served HTML', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const res = await buildUiRouter().request('http://localhost/', {}, { } as never);
+    const html = await res.text();
+    expect(html).not.toContain('%GA_SCRIPT%');
+    expect(html).not.toContain('%LOGO_DISPLAY%');
   });
 });
