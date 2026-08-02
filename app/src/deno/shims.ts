@@ -120,6 +120,19 @@ function d1Meta(result: {
 
 // --- KVNamespace Shim ---
 
+/**
+ * CONFIG_KV key prefixes that must NEVER be mirrored into the primary
+ * application database. That DB is a plain SQLite file
+ * (/data/congress-trade/db.sqlite) browsed by the sqlite-web sidecar and
+ * copied into backups/archives, so a raw session token written there is a
+ * bearer credential at rest. Everything else is refetchable cache and
+ * belongs in SQL so it survives container restarts.
+ * KEEP IN SYNC WITH: SESSION_PREFIX (src/auth/session.ts:22),
+ * MAGIC_PREFIX (src/auth/magic.ts:11), and the Infisical cache key built at
+ * src/secrets/infisical.ts:296/427/448.
+ */
+export const KV_NEVER_MIRROR_PREFIXES = ['sess:', 'magic:', 'infisical_secrets_cache:'] as const;
+
 export class KVNamespaceShim {
   private kv: Deno.Kv;
   private prefix: string;
@@ -135,7 +148,7 @@ export class KVNamespaceShim {
     if (!this.getDb) return null;
     const db = this.getDb();
     if (!db) return null;
-    if (key.startsWith('session_') || key.startsWith('magic_') || key.startsWith('infisical:')) return null;
+    if (KV_NEVER_MIRROR_PREFIXES.some((prefix) => key.startsWith(prefix))) return null;
     return db;
   }
 
@@ -200,6 +213,39 @@ export class KVNamespaceShim {
       return;
     }
     await this.kv.delete([this.prefix, key]);
+  }
+
+  /**
+   * Atomically read-and-delete a key. Returns the value, or null if the key
+   * was absent/expired or another request won the race. Single-use
+   * credentials must use this: get()+delete() lets two concurrent requests
+   * both observe the value before either delete lands.
+   */
+  async take(key: string): Promise<string | null> {
+    const db = this.useTurso(key);
+    if (db) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const res = await db
+        .prepare(
+          'DELETE FROM deno_runtime_kv WHERE namespace = ? AND key = ? ' +
+            'AND (expires_at IS NULL OR expires_at > ?) RETURNING value',
+        )
+        .bind(this.prefix, key, nowSec)
+        .all<{ value: string }>();
+      const row = res.results?.[0];
+      return row ? row.value : null;
+    }
+
+    const entry = await this.kv.get<string>([this.prefix, key]);
+    if (entry.value === null || entry.value === undefined || entry.versionstamp === null) return null;
+    const value = entry.value;
+    const committed = await this.kv
+      .atomic()
+      .check({ key: [this.prefix, key], versionstamp: entry.versionstamp })
+      .delete([this.prefix, key])
+      .commit();
+    if (!committed.ok) return null; // another request consumed it first
+    return typeof value === 'string' ? value : JSON.stringify(value);
   }
 }
 

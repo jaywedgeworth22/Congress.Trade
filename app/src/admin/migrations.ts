@@ -759,6 +759,10 @@ export const CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS = [
       AND json_extract(result, '$.subscription.secret') IS NOT NULL`,
 ] as const;
 
+export const PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS = [
+  `DELETE FROM deno_runtime_kv WHERE namespace = 'config' AND (key LIKE 'sess:%' OR key LIKE 'magic:%')`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -841,4 +845,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS,
   // 0069_client_command_secret_claim.sql
   ...CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS,
+  // 0070_purge_leaked_kv_credentials.sql
+  ...PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS,
 ] as const;
