@@ -4,5 +4,5 @@ RUN pip install sqlite-web
 
 EXPOSE 8080
 
-# The password and db path will be passed via environment variables or command args in docker-compose.yml
-CMD ["sqlite_web", "-x", "-H", "0.0.0.0", "/data/congress-trade/db.sqlite"]
+# Require authentication via SQLITE_WEB_PASSWORD environment variable
+CMD ["sqlite_web", "-x", "--password", "-H", "0.0.0.0", "/data/congress-trade/db.sqlite"]
