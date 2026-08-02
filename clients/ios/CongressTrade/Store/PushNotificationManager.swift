@@ -58,10 +58,10 @@ final class PushNotificationManager: ObservableObject {
         self.lastError = error.localizedDescription
     }
 
-    func syncTokenWithBackend(api: APIClient) async {
+    func syncTokenWithBackend(api: CongressTradeAPIClient) async {
         guard let token = deviceToken, !token.isEmpty else { return }
         do {
-            _ = try await api.registerPushSubscription(apnsToken: token)
+            _ = try await api.createAPNsSubscription(apnsToken: token)
         } catch {
             print("[PushNotificationManager] Failed to register push token with backend:", error.localizedDescription)
         }
