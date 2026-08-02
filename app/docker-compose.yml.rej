@@ -1,9 +1,0 @@
-@@ -18,7 +18,7 @@
-     container_name: congress-sqlite-web
-     restart: unless-stopped
-     ports:
--      - "127.0.0.1:8080:8080"
-+      - "100.97.154.2:8080:8080"
-     volumes:
-       - /data/congress-trade:/data/congress-trade
-     environment:
