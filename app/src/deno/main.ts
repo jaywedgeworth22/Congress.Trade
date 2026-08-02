@@ -10,6 +10,7 @@ import { resolveDenoCostProfile } from './costProfile.ts';
 import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
 import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
+import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -168,7 +169,7 @@ if (!costProfile.disableInternalCron) {
     const tickAbort = new AbortController();
     try {
       const env = buildEnv();
-      const tickPromise = runScheduledTick(
+      const tickPromise = withThirdPartyTelemetry(env, () => runScheduledTick(
         env,
         durableQueueHandlers,
         costProfile,
@@ -176,7 +177,7 @@ if (!costProfile.disableInternalCron) {
         // Daily work moved to dedicated staggered lane crons (cronLanes.ts)
         // with multi-minute deadlines; the 45s tick must not run or starve it.
         { signal: tickAbort.signal, includeDailyJobs: false },
-      );
+      ));
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {

@@ -27,6 +27,8 @@ import {
   HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
 } from '../jobs.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
+import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
+
 
 export interface DailyLaneCron {
   /** Lane identifier; also the singleton-lock key suffix and log tag. */
@@ -121,7 +123,7 @@ export async function runDailyLane(
   const timer = setTimeout(() => abort.abort(new Error(`daily lane ${lane.name} exceeded ${deadlineMs}ms deadline`)), deadlineMs);
   try {
     const status = await Promise.race([
-      lane.run(env, now, abort.signal),
+      withThirdPartyTelemetry(env, () => lane.run(env, now, abort.signal)),
       new Promise<never>((_, reject) => {
         abort.signal.addEventListener('abort', () => reject(abort.signal.reason));
       }),
