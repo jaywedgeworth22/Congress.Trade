@@ -709,6 +709,24 @@ export const CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS = [
   `UPDATE transactions SET cursor_seq = (SELECT MAX(s.seq) FROM tx_cursor_seq s WHERE s.tx_id = transactions.id) WHERE cursor_seq >= 1000000000000 AND EXISTS (SELECT 1 FROM tx_cursor_seq s WHERE s.tx_id = transactions.id)`,
 ] as const;
 
+/**
+ * 0069_client_command_secret_claim.sql — one-time claim for command-issued
+ * credentials. Replayed on every POST /api/admin/migrate: the ALTERs are
+ * skipped as "duplicate column" and the backfill's json_extract predicate
+ * stops matching once scrubbed.
+ */
+export const CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS = [
+  'ALTER TABLE client_commands ADD COLUMN result_secret TEXT',
+  'ALTER TABLE client_commands ADD COLUMN result_claimed_at TEXT',
+  `UPDATE client_commands
+      SET result = json_remove(result, '$.subscription.secret', '$.subscription.streamUrl'),
+          result_claimed_at = COALESCE(result_claimed_at, updated_at)
+    WHERE type = 'create_subscription'
+      AND result IS NOT NULL
+      AND json_valid(result)
+      AND json_extract(result, '$.subscription.secret') IS NOT NULL`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -789,4 +807,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS,
   // 0068_cursor_seq_integrity.sql
   ...CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS,
+  // 0069_client_command_secret_claim.sql
+  ...CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS,
 ] as const;

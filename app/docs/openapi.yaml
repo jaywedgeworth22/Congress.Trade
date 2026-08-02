@@ -1138,7 +1138,7 @@ paths:
   /api/client/v1/commands/{id}:
     get:
       tags: [Client]
-      summary: Command status (poll this; no streaming endpoint exists yet)
+      summary: Command status (poll this; first successful read claims delivery secrets)
       operationId: clientGetCommand
       security: [{ sessionCookie: [] }, { bearerSession: [] }]
       parameters:
@@ -1148,7 +1148,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Command with status, result, error, and timestamps.
+          description: Command with status, result, error, and timestamps. For create_subscription commands, the delivery secret is present on the FIRST successful read only.
           content:
             application/json:
               schema:

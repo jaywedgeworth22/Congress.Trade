@@ -74,6 +74,31 @@ export function persistedCommandResult(type: ClientCommandType, result: unknown)
   };
 }
 
+/** Split an executed command result into the row-safe half and the one-time credential half. */
+export function splitCommandResult(
+  type: ClientCommandType,
+  result: unknown,
+): { persisted: unknown; secret: unknown | null } {
+  const persisted = persistedCommandResult(type, result);
+  if (persisted === result) return { persisted, secret: null };
+  const sub = ((result as { subscription?: Record<string, unknown> }).subscription ?? {});
+  if (sub.secret === undefined && sub.streamUrl === undefined) return { persisted, secret: null };
+  const secret: Record<string, unknown> = {};
+  if (sub.secret !== undefined) secret.secret = sub.secret;
+  if (sub.streamUrl !== undefined) secret.streamUrl = sub.streamUrl;
+  return { persisted, secret: { subscription: secret } };
+}
+
+/** Merge a claimed one-time credential back into the redacted result for the single disclosing response. */
+export function mergeClaimedSecret(result: unknown, claimed: unknown): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  if (!claimed || typeof claimed !== 'object' || Array.isArray(claimed)) return result;
+  const sub = (result as { subscription?: unknown }).subscription;
+  const claimedSub = (claimed as { subscription?: Record<string, unknown> }).subscription;
+  if (!sub || typeof sub !== 'object' || Array.isArray(sub) || !claimedSub) return result;
+  return { ...(result as Record<string, unknown>), subscription: { ...(sub as Record<string, unknown>), ...claimedSub } };
+}
+
 function subscriptionIdForCommand(commandId: string | undefined): string | undefined {
   return commandId?.startsWith('cmd_') ? `sub_${commandId.slice(4)}` : undefined;
 }
@@ -190,11 +215,13 @@ export async function executeQueuedCommand(
   await updateCommandStatus(env, userId, commandId, 'running');
   try {
     const result = await executeCommand(env, user, command.type, command.payload, { commandId });
-    // Persist the full result: with async execution the polled command row is
-    // the only delivery channel, so the one-time create_subscription secret
-    // must survive to the owner-authenticated GET /commands/:id response.
-    // (The secret already lives at rest in the subscriptions table.)
-    await updateCommandStatus(env, userId, commandId, 'succeeded', { result });
+    // The secret half never enters client_commands.result: GET /commands,
+    // GET /commands/:id and idempotency replay all return `result` verbatim,
+    // so a credential stored there is permanently replayable. It goes to
+    // result_secret, which the first owner-authenticated GET /commands/:id
+    // claims and destroys (claimCommandResultSecret).
+    const { persisted, secret } = splitCommandResult(command.type, result);
+    await updateCommandStatus(env, userId, commandId, 'succeeded', { result: persisted, resultSecret: secret });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await updateCommandStatus(env, userId, commandId, 'failed', { error: message });

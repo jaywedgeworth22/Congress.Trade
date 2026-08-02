@@ -90,9 +90,10 @@ function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string }
 }
 
 function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; staleReclaimLostRace?: boolean } = {}) {
+  type StoredCommandRow = CommandRow & { result_secret?: string | null; result_claimed_at?: string | null };
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
-  const commands = new Map<string, CommandRow>();
+  const commands = new Map<string, StoredCommandRow>();
   const preferences = new Map<string, PrefRow>();
   const filers = new Map<string, FilerRow>();
   const securities = new Map<string, SecurityRow>();
@@ -195,6 +196,10 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       }
       if (/FROM user_preferences WHERE user_id = \?/i.test(sql)) {
         return (preferences.get(String(this.params[0])) ?? null) as T | null;
+      }
+      if (/SELECT result_secret FROM client_commands/i.test(sql)) {
+        const row = commands.get(String(this.params[0]));
+        return (row && row.user_id === this.params[1] && row.result_secret != null ? { result_secret: row.result_secret } : null) as T | null;
       }
       if (/FROM client_commands WHERE id = \? AND user_id = \?/i.test(sql)) {
         const row = commands.get(String(this.params[0]));
@@ -337,12 +342,22 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
           return { success: true, meta: { changes: 1 } };
         }
         return { success: true, meta: { changes: 0 } };
+      } else if (/UPDATE client_commands/i.test(sql) && /result_secret = NULL/i.test(sql)) {
+        const [claimedAt, id, userId] = this.params;
+        const row = commands.get(String(id));
+        if (row && row.user_id === userId && row.result_secret != null) {
+          row.result_secret = null;
+          row.result_claimed_at = String(claimedAt);
+          return { success: true, meta: { changes: 1 } };
+        }
+        return { success: true, meta: { changes: 0 } };
       } else if (/UPDATE client_commands/i.test(sql)) {
-        const [status, result, error, updatedAt, runningStatus, startedAt, finishedAt, id, userId] = this.params;
+        const [status, result, resultSecret, error, updatedAt, runningStatus, startedAt, finishedAt, id, userId] = this.params;
         const row = commands.get(String(id));
         if (row && row.user_id === userId) {
           row.status = String(status);
           if (result != null) row.result = String(result);
+          if (resultSecret != null) row.result_secret = String(resultSecret);
           row.error = error == null ? null : String(error);
           row.updated_at = String(updatedAt);
           if (!row.started_at && runningStatus === 'running') row.started_at = String(startedAt);
@@ -972,13 +987,26 @@ describe('client API routes', () => {
     await drainQueuedCommands(env, queuedMessages);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
-    // The polled command row is the credential channel under async execution:
-    // the one-time secret rides the owner-authenticated GET /commands/:id.
+    // The secret is stored separately in result_secret; the persisted result is redacted:
     const persisted = JSON.parse(Array.from(commands.values())[0].result ?? '{}') as {
       subscription: { secret?: string; streamUrl?: string };
     };
-    expect(persisted.subscription.secret).toMatch(/^whsec_/);
-    expect(persisted.subscription.streamUrl).toContain('/api/stream?subscription=');
+    expect(persisted.subscription.secret).toBeUndefined();
+    expect(persisted.subscription.streamUrl).toBeUndefined();
+
+    // First GET /commands/:id claims the one-time secret:
+    const cmdId = accepted.command.id;
+    const firstRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
+    expect(firstRead.status).toBe(200);
+    const firstBody = (await firstRead.json()) as { command: { result: { subscription: { secret?: string; streamUrl?: string } } } };
+    expect(firstBody.command.result.subscription.secret).toMatch(/^whsec_/);
+    expect(firstBody.command.result.subscription.streamUrl).toContain('/api/stream?subscription=');
+
+    // Second GET /commands/:id does NOT disclose the secret again:
+    const secondRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
+    expect(secondRead.status).toBe(200);
+    const secondBody = (await secondRead.json()) as { command: { result: { subscription: { secret?: string } } } };
+    expect(secondBody.command.result.subscription.secret).toBeUndefined();
 
     const replay = await app.request('http://localhost/commands', req, env);
     expect(replay.status).toBe(200);
@@ -988,8 +1016,7 @@ describe('client API routes', () => {
     };
     expect(replayBody.replayed).toBe(true);
     expect(replayBody.command.status).toBe('succeeded');
-    expect(replayBody.command.result.subscription.secret)
-      .toBe(persisted.subscription.secret);
+    expect(replayBody.command.result.subscription.secret).toBeUndefined();
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
     expect(queuedMessages).toHaveLength(0);
@@ -1241,7 +1268,10 @@ describe('client API routes', () => {
       subscription: { id: string; secret?: string; filters: { tickers?: string[] } };
     };
     expect(result.subscription.id).toBe('sub_recover_sub');
-    expect(result.subscription.secret).toBe('whsec_existing');
+    expect(result.subscription.secret).toBeUndefined();
+    const read = await app.request('http://localhost/commands/cmd_recover_sub', { headers: { authorization: await bearer(env) } }, env);
+    const readBody = (await read.json()) as { command: { result: { subscription: { secret?: string } } } };
+    expect(readBody.command.result.subscription.secret).toBe('whsec_existing');
     expect(result.subscription.filters.tickers).toEqual(['AAPL']);
     expect(subscriptions.size).toBe(1);
   });

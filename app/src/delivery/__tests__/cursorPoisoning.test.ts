@@ -32,7 +32,7 @@ async function createInMemoryD1(): Promise<D1Database> {
     }
   }
   db.exec(`
-    CREATE TABLE IF NOT EXISTS securities_ref (ticker TEXT PRIMARY KEY, company_name TEXT, sector TEXT, market_cap REAL, market_cap_bucket TEXT, country TEXT, exchange_short TEXT, asset_class TEXT);
+    CREATE TABLE IF NOT EXISTS securities_ref (ticker TEXT PRIMARY KEY, company_name TEXT, sector TEXT, market_cap REAL, market_cap_bucket TEXT, country TEXT, exchange_short TEXT, asset_class TEXT, enriched_at TEXT);
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE);
     ALTER TABLE filers ADD COLUMN photo_url TEXT;
     ALTER TABLE filers ADD COLUMN resolved_bioguide_id TEXT;

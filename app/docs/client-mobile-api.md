@@ -31,7 +31,7 @@ Client mutations go through a backend command when the route supports it:
 
 - `POST /api/client/v1/commands` with `{ type, payload, idempotencyKey }`.
 - `GET /api/client/v1/commands/:id` for status, validation errors, audit trail,
-  and resulting resource IDs.
+  and resulting resource IDs. Note: for `create_subscription` commands, delivery credentials (`secret`, `streamUrl`) are disclosed on the **FIRST** successful poll only. Clients MUST persist the secret upon receipt; it is claimed and unrecoverable from subsequent API reads.
 - `GET /api/client/v1/commands/stream` is not implemented yet; clients should
   poll `GET /api/client/v1/commands/:id`.
 

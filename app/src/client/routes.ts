@@ -14,6 +14,7 @@ import { entitlementOf } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
 import {
+  claimCommandResultSecret,
   createCommand,
   DuplicateCommandError,
   findCommandByIdempotencyKey,
@@ -49,7 +50,7 @@ import {
   resolveMember,
   tickerSummarySql,
 } from './queries.ts';
-import { commandType, normalizePreferencePatch } from './commands.ts';
+import { commandType, mergeClaimedSecret, normalizePreferencePatch } from './commands.ts';
 import { checkRowBudget, spendRowBudget } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
@@ -267,9 +268,16 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   r.get('/commands/:id', async (c) => {
     try {
       const user = await requireUser(c);
-      const command = await getCommand(c.env, user.id, c.req.param('id'));
+      const id = c.req.param('id');
+      const command = await getCommand(c.env, user.id, id);
       if (!command) return c.json({ error: 'command not found' }, 404);
-      return c.json({ command });
+      // One-time credential disclosure: the first owner-authenticated read of
+      // a succeeded command claims and destroys result_secret. Every later
+      // read (and every list/replay path) sees only the redacted result.
+      if (command.status !== 'succeeded') return c.json({ command });
+      const claimed = await claimCommandResultSecret(c.env, user.id, id);
+      if (!claimed) return c.json({ command });
+      return c.json({ command: { ...command, result: mergeClaimedSecret(command.result, claimed) } });
     } catch (err) {
       const e = err as ClientInputError;
       return c.json({ error: e.message }, errorStatus(e));
