@@ -702,6 +702,14 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
  * poisoned-cursor repair.
  */
 export const CURSOR_SEQ_INTEGRITY_SCHEMA_STATEMENTS = [
+  // tx_cursor_seq has only an INTEGER PRIMARY KEY on `seq`; nothing indexes
+  // `tx_id`. Every lookup below — and the trigger's own MAX(seq) subquery,
+  // which runs on EVERY transaction INSERT — is correlated on tx_id, so
+  // without this index each one full-scans a table that already holds one row
+  // per transaction ever written (~76k+). The repair is O(poisoned x 76k) and
+  // ingestion degrades quadratically as the table grows. Create the index
+  // FIRST, before anything that depends on it.
+  'CREATE INDEX IF NOT EXISTS idx_tx_cursor_seq_tx_id ON tx_cursor_seq (tx_id)',
   'DROP TRIGGER IF EXISTS trg_transactions_cursor',
   `CREATE TRIGGER trg_transactions_cursor AFTER INSERT ON transactions FOR EACH ROW BEGIN INSERT INTO tx_cursor_seq (tx_id) VALUES (NEW.id); UPDATE transactions SET cursor_seq = (SELECT MAX(seq) FROM tx_cursor_seq WHERE tx_id = NEW.id) WHERE id = NEW.id; END`,
   'UPDATE subscriptions SET cursor = COALESCE((SELECT MAX(cursor_seq) FROM transactions WHERE cursor_seq < 1000000000000), 0) WHERE cursor >= 1000000000000',

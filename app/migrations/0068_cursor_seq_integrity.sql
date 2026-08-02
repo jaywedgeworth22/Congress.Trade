@@ -1,3 +1,11 @@
+-- tx_cursor_seq indexes only `seq` (its INTEGER PRIMARY KEY); every lookup
+-- below is correlated on `tx_id`, as is the trigger's own MAX(seq) subquery,
+-- which runs on EVERY transaction INSERT. Without this index each one
+-- full-scans a table holding one row per transaction ever written, making the
+-- repair O(poisoned x rows) and degrading ingestion quadratically. Must come
+-- before the trigger and the repair.
+CREATE INDEX IF NOT EXISTS idx_tx_cursor_seq_tx_id ON tx_cursor_seq (tx_id);
+
 -- Sequence-authoritative cursor: no writer may supply cursor_seq. The old
 -- `WHEN NEW.cursor_seq IS NULL` guard let app/scripts/backfill_holes.ts write
 -- Date.now() epochs, which permanently outranked the real sequence.

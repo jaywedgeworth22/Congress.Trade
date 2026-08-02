@@ -7586,9 +7586,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        )`,
       // 0008_idempotency_keys.sql — at-least-once retry guards.
       'ALTER TABLE transactions ADD COLUMN row_key TEXT',
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_doc_source_rowkey
-         ON transactions (doc_id, source, row_key)
-         WHERE row_key IS NOT NULL`,
+      // NOTE: the strict idx_transactions_doc_source_rowkey that 0008 created
+      // is deliberately NOT replayed here. A later statement in this same list
+      // (REVIEW_AGREEMENT_SUPPRESSION_SCHEMA_STATEMENTS) supersedes it with
+      // idx_transactions_live_doc_source_rowkey — which additionally requires
+      // deprecated_at IS NULL — and then DROPs this one. Recreating it on every
+      // run was dead work that also throws "UNIQUE constraint failed" whenever a
+      // deprecated row shares (doc_id, source, row_key) with a live one, which
+      // is precisely why it was superseded. Harmless while /migrate swallowed
+      // errors; since that route fails closed it would 500 the whole migration
+      // and block the deploy.
       `DELETE FROM deliveries
          WHERE rowid NOT IN (
            SELECT MAX(rowid)
@@ -7819,7 +7826,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const readiness = skipSchemaVerify
       ? { ok: true, db: true, schema: true, missing: ['(schema verification skipped)'] }
       : await checkReadiness(c.env.DB);
-    const ok = failed.length === 0 && (readiness.ok || !readiness.db);
+    // `!readiness.db` must NOT excuse a failure: checkReadiness reports
+    // db:false precisely when it cannot reach the database, which is the
+    // condition this postcondition exists to catch. Treating it as "fine"
+    // failed open on the worst case.
+    const ok = failed.length === 0 && readiness.ok;
     if (!ok) {
       console.error(
         `[MIGRATE FAILED] ${failed.length} statement error(s); missing=${readiness.missing.join(',')}`,

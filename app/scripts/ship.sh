@@ -225,9 +225,25 @@ echo
 
 post() { # $1 = admin path, $2 = json body (optional)
   echo "==> POST /api/admin/$1"
-  curl -fsS -A "$UA" -X POST "$ADMIN_BASE/api/admin/$1" \
+  local body_file code
+  body_file="$(mktemp)"
+  # NOT `curl -f`: on a non-2xx, -f discards the body, which for /migrate is
+  # the entire diagnostic payload (the failed[] statements and their SQL
+  # errors, plus readiness.missing). Capture the body, then decide.
+  code="$(curl -sS -A "$UA" -X POST "$ADMIN_BASE/api/admin/$1" \
     -H "authorization: Bearer $ADMIN_TOKEN" \
-    -H "content-type: application/json" -d "${2:-{}}" && echo
+    -H "content-type: application/json" -d "${2:-{}}" \
+    -o "$body_file" -w '%{http_code}')" || true
+  if [[ "$code" == 2* ]]; then
+    cat "$body_file"; echo
+    rm -f "$body_file"
+    return 0
+  fi
+  echo "!! POST /api/admin/$1 returned HTTP ${code:-curl-error}." >&2
+  echo "   Response body (this is the diagnostic — read the failed[] array):" >&2
+  cat "$body_file" >&2; echo >&2
+  rm -f "$body_file"
+  return 1
 }
 
 if [ "$DEPLOY_ONLY" = true ]; then
