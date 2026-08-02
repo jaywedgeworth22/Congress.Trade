@@ -35,7 +35,7 @@ export function buildPeerPriceClient(
     try {
       const res = await trackedFetch(url, {
         headers,
-      }, { service: 'market-prices', operation: 'fetch-peer-price-history' }, fetchImpl);
+      }, { service: 'market-prices', operation: 'fetch-peer-price-history', dynamicTarget: 'peer-app' }, fetchImpl);
       if (!res.ok) return []; // Missing or error -> allow fallback
       const data = await res.json() as { closes?: Close[] };
       return data.closes ?? [];
@@ -49,7 +49,7 @@ export function buildPeerPriceClient(
     try {
       const res = await trackedFetch(url, {
         headers,
-      }, { service: 'market-prices', operation: 'fetch-peer-spx-history' }, fetchImpl);
+      }, { service: 'market-prices', operation: 'fetch-peer-spx-history', dynamicTarget: 'peer-app' }, fetchImpl);
       if (!res.ok) return [];
       const data = await res.json() as { closes?: Close[] };
       return data.closes ?? [];
