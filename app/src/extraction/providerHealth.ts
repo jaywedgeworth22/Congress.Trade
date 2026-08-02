@@ -80,7 +80,13 @@ export function classifyProviderErrorClass(
     || message.includes('billing hard limit')
   ) return 'billing';
   if (
+    message.includes('key limit exceeded')
+    || message.includes('exceeded your monthly')
+  ) return 'quota';
+  if (
     /\b401\b/.test(message)
+    || /\b403\b/.test(message)
+    || message.includes('forbidden')
     || message.includes('invalid_api_key')
     || message.includes('invalid api key')
     || message.includes('authentication')

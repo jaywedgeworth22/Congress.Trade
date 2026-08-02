@@ -26,6 +26,9 @@ import { all, first, get } from '../shared/db.ts';
 import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import { readBuildInfo } from '../shared/buildInfo.ts';
+import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
+import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
+import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
@@ -100,6 +103,7 @@ type RestContext = Context<{ Bindings: Env }>;
  */
 const READINESS_CACHE_TTL_MS = 60_000;
 let readinessCache: { at: number; result: ReadinessResult } | null = null;
+let pipelineCache: { at: number; result: PipelineHealth } | null = null;
 
 /**
  * Edge-cache policies for public, read-only GETs. These endpoints carry no
@@ -292,7 +296,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     if (!readinessCache || now - readinessCache.at >= READINESS_CACHE_TTL_MS) {
       readinessCache = { at: now, result: await checkReadiness(c.env.DB) };
     }
+    if (!pipelineCache || now - pipelineCache.at >= READINESS_CACHE_TTL_MS) {
+      pipelineCache = { at: now, result: await checkPipelineHealth(c.env) };
+    }
     const readiness = readinessCache.result;
+    const pipeline = pipelineCache.result;
     const envx = c.env as Env & Record<string, string | undefined>;
     const costProfile = costProfilePublicSummary(resolveDenoCostProfile(envx));
     // `build` identifies the running revision so a deploy can be *verified*
@@ -300,8 +308,34 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // webhook has silently not fired before. See src/shared/buildInfo.ts.
     const build = readBuildInfo(envx);
     return c.json(
-      { ...readiness, costProfile, build, time: new Date().toISOString() },
+      {
+        ...readiness,
+        status: readiness.ok ? pipeline.status : 'down',
+        pipeline,
+        costProfile,
+        build,
+        time: new Date().toISOString(),
+      },
       readiness.ok ? 200 : 503,
+    );
+  });
+
+  // --- GET /health/deep ----------------------------------------------------
+  // Deep pipeline diagnostics: probes queue backlogs, provider health counters,
+  // LLM spend ceilings, and autopilot status without caching KV inspect calls.
+  r.get('/health/deep', async (c) => {
+    const pipeline = await checkPipelineHealth(c.env);
+    const providers = await providerHealthDiagnostics(c.env);
+    const spend = await inspectLlmSpend(c.env);
+    return c.json(
+      {
+        status: pipeline.status,
+        pipeline,
+        providers,
+        llmSpend: spend,
+        time: new Date().toISOString(),
+      },
+      pipeline.status === 'stalled' ? 503 : 200,
     );
   });
 
