@@ -53,6 +53,11 @@ jobs:
             console.log('health.db is not true');
             process.exit(1);
           }
+          if (health.status && health.status === 'stalled') {
+            const bad = (health.pipeline?.checks ?? []).filter((c) => c.status !== 'ok');
+            console.log(`pipeline stalled: ${bad.map((c) => `${c.id}=${c.status} (${c.detail})`).join('; ')}`);
+            process.exit(1);
+          }
           console.log('ok');
           NODE
             )"; then
