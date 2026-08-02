@@ -197,8 +197,12 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
   ]),
   [
     'trg_transactions_cursor',
+    // Accept either name. The container is deployed BEFORE /migrate runs, so
+    // pinning this to the new name alone would 503 health — and therefore fail
+    // ship.sh's own liveness gate — in the window between deploy and migrate.
     `SELECT name FROM sqlite_master
-      WHERE type = 'trigger' AND name = 'trg_transactions_cursor'`,
+      WHERE type = 'trigger'
+        AND name IN ('trg_transactions_cursor', 'trg_transactions_cursor_v2')`,
     true,
   ],
   ...[
