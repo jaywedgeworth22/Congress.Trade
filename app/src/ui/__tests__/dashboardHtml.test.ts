@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'node-html-parser';
 import { DASHBOARD_HTML } from '../dashboardHtml.ts';
 import { browserSecurityHeaders } from '../../security/headers.ts';
+import { MAX_PUBLIC_TX_OFFSET } from '../../security/botDefense.ts';
 
 function scriptBlocks(html: string): string[] {
   const blocks: string[] = [];
@@ -294,7 +295,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="speedTableBody"');
     expect(DASHBOARD_HTML).toContain('--rival');
     // The public pager mirrors the server's anti-scrape offset cap.
-    expect(DASHBOARD_HTML).toContain('var MAX_PUBLIC_FEED_OFFSET = 10000');
+    expect(DASHBOARD_HTML).toContain(`var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET}`);
   });
 
   it('requires explicit review type/date and preserves an unknown owner', () => {

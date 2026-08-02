@@ -346,13 +346,14 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     };
     // Anti-scrape guards (src/security/botDefense.ts). The pager stays public
     // for humans; depth + daily row budgets make walking the whole corpus via
-    // offset/since the job of the Premium CSV export / token-gated bulk
-    // snapshot instead. Both checks no-op unless SCRAPE_GUARD_ENABLED.
+    // offset/since the job of the free CSV export / token-gated bulk
+    // snapshot instead. The depth cap is unconditional (it bounds D1 OFFSET cost in
+    // every environment); only the daily row budget no-ops unless SCRAPE_GUARD_ENABLED.
     if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
       return c.json(
         {
           error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
-          hint: 'Use the Premium CSV export for full history.',
+          hint: 'Use GET /api/export/transactions.csv (free) for full history.',
         },
         400,
       );
@@ -361,7 +362,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const budget = await checkRowBudget(c.env, ip);
     if (!budget.ok) {
       return c.json(
-        { error: 'daily feed row budget reached', hint: 'Use the Premium CSV export for bulk access.' },
+        { error: 'daily feed row budget reached', hint: 'Use GET /api/export/transactions.csv (free) for bulk access.' },
         429,
         { 'Retry-After': String(budget.retryAfterSec) },
       );
