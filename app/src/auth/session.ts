@@ -16,6 +16,7 @@ import type { Env, User } from '../shared/types.ts';
 import { getUserById } from './users.ts';
 import { randomToken } from './tokens.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import { isSecureRequest } from '../security/requestProtocol.ts';
 
 export const SESSION_COOKIE = 'ct_session';
 const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
@@ -53,14 +54,6 @@ export async function resolveSession(env: Env, token: string | undefined): Promi
 export async function destroySession(env: Env, token: string | undefined): Promise<void> {
   if (!token) return;
   await env.CONFIG_KV.delete(SESSION_PREFIX + token);
-}
-
-function isHttps(c: Context): boolean {
-  try {
-    return new URL(c.req.url).protocol === 'https:';
-  } catch {
-    return true;
-  }
 }
 
 /**
@@ -126,7 +119,7 @@ export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: str
   if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: isHttps(c),
+    secure: isSecureRequest(c),
     sameSite: 'Lax',
     path: '/',
     maxAge: SESSION_TTL_SEC,

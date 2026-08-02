@@ -41,6 +41,7 @@ import {
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types.ts';
 import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db.ts';
+import { checkReadiness } from '../shared/readiness.ts';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config.ts';
@@ -7509,7 +7510,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // --- POST /migrate ------------------------------------------------------
   // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
-  // as already-applied.
+  // as already-applied. ANY other SQL error is fatal: the route returns 500 with a
+  // structured failed[] list and a checkReadiness() schema postcondition, so
+  // scripts/ship.sh aborts the deploy instead of reporting a green migration.
+  const MIGRATE_IDEMPOTENT_ERROR_PATTERNS: readonly RegExp[] = [
+    /duplicate column name/i,
+    /\b(?:table|index|trigger|view)\s+\S+\s+already exists/i,
+  ];
+
+  function isIdempotentMigrationError(message: string): boolean {
+    return MIGRATE_IDEMPOTENT_ERROR_PATTERNS.some((re) => re.test(message));
+  }
+
   r.post('/migrate', async (c) => {
     const statements = [
       ...BASE_SCHEMA_STATEMENTS,
@@ -7786,21 +7798,34 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
+    const failed: Array<{ sql: string; error: string }> = [];
     for (const sql of statements) {
       try {
         await run(c.env.DB, sql);
         applied.push(sql);
       } catch (err) {
-        const msg = (err as Error).message || String(err);
-        if (/duplicate column|already exists|duplicate key/i.test(msg)) {
+        const msg = (err as Error)?.message || String(err);
+        if (isIdempotentMigrationError(msg)) {
           skipped.push(sql);
         } else {
           console.error(`[MIGRATE ERROR] ${msg} on statement: ${sql}`);
-          skipped.push(`${sql} -- ERROR: ${msg}`);
+          failed.push({ sql, error: msg });
         }
       }
     }
-    return c.json({ applied, skipped });
+
+    const body = await c.req.json<{ skipSchemaVerify?: boolean }>().catch(() => ({} as { skipSchemaVerify?: boolean }));
+    const skipSchemaVerify = 'skipSchemaVerify' in body && body.skipSchemaVerify === true;
+    const readiness = skipSchemaVerify
+      ? { ok: true, db: true, schema: true, missing: ['(schema verification skipped)'] }
+      : await checkReadiness(c.env.DB);
+    const ok = failed.length === 0 && (readiness.ok || !readiness.db);
+    if (!ok) {
+      console.error(
+        `[MIGRATE FAILED] ${failed.length} statement error(s); missing=${readiness.missing.join(',')}`,
+      );
+    }
+    return c.json({ ok, applied, skipped, failed, readiness }, ok ? 200 : 500);
   });
 
   // --- POST /analyze ------------------------------------------------------

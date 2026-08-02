@@ -16,6 +16,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { isSecureRequest } from '../security/requestProtocol.ts';
 import type { Env, User } from '../shared/types.ts';
 import {
   getCurrentUser,
@@ -126,7 +127,9 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     // Save the initiator's origin so we can redirect back to it on callback
     const clientParam = new URL(c.req.url).searchParams.get('client');
     const referer = c.req.header('Referer');
-    let requestOrigin = new URL(c.req.url).origin;
+    // publicReqOrigin, not the socket URL: behind the proxy the socket origin
+    // is http://congress.trade, which would round-trip the user to plaintext.
+    let requestOrigin = publicReqOrigin;
     if (clientParam === 'ios') {
       requestOrigin = 'congresstrade://auth';
     } else if (referer) {
@@ -134,21 +137,24 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
         requestOrigin = new URL(referer).origin;
       } catch {}
     }
+    const isSecure = isSecureRequest(c);
     // Host-only cookies: Domain is deliberately omitted (CT-AUD-007).
     setCookie(c, 'ct_auth_origin', requestOrigin, {
       httpOnly: true,
-      secure: new URL(c.req.url).protocol === 'https:',
+      secure: isSecure,
       sameSite: 'Lax',
       path: '/',
       maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
     });
 
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
-      secure: new URL(c.req.url).protocol === 'https:',
+      secure: isSecure,
       sameSite: 'Lax',
       path: '/',
       maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
     });
     const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
     return c.redirect(url);
@@ -159,10 +165,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const url = new URL(c.req.url);
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
-    const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
+    const cookieState = getCookie(c, OAUTH_STATE_COOKIE, 'host') ?? getCookie(c, OAUTH_STATE_COOKIE);
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', prefix: 'host' });
     deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
 
-    const authOrigin = getCookie(c, 'ct_auth_origin');
+    const authOrigin = getCookie(c, 'ct_auth_origin', 'host') ?? getCookie(c, 'ct_auth_origin');
+    deleteCookie(c, 'ct_auth_origin', { path: '/', prefix: 'host' });
     deleteCookie(c, 'ct_auth_origin', { path: '/' });
 
     const base = await baseUrl(c);

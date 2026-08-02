@@ -21,5 +21,20 @@ describe('/auth/google/start reverse proxy handling', () => {
     const location = res.headers.get('Location');
     expect(location).not.toBe('https://congress.trade/auth/google/start');
     expect(location).toContain('accounts.google.com');
+
+    // Assert Set-Cookie attributes for proxy HTTPS traffic
+    const setCookies = res.headers.getSetCookie();
+    expect(setCookies.length).toBeGreaterThanOrEqual(2);
+
+    const authOriginCookie = setCookies.find((c) => c.includes('ct_auth_origin'));
+    const oauthStateCookie = setCookies.find((c) => c.includes('ct_oauth_state'));
+
+    expect(authOriginCookie).toBeDefined();
+    expect(authOriginCookie).toContain('__Host-ct_auth_origin=https%3A%2F%2Fcongress.trade');
+    expect(authOriginCookie).toContain('Secure');
+
+    expect(oauthStateCookie).toBeDefined();
+    expect(oauthStateCookie).toContain('__Host-ct_oauth_state=');
+    expect(oauthStateCookie).toContain('Secure');
   });
 });

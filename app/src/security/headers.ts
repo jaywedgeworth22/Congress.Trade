@@ -9,6 +9,7 @@
  */
 
 import type { MiddlewareHandler } from 'hono';
+import { isSecureRequest, isSecureRequestParts } from './requestProtocol.ts';
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -31,11 +32,18 @@ const BASE_HEADERS: Readonly<Record<string, string>> = {
   'X-Frame-Options': 'DENY',
 };
 
-export function browserSecurityHeaders(requestUrl: string): Headers {
+/**
+ * @param opts.secure whether the client-facing hop used TLS. Callers with a
+ *   request Context should pass `isSecureRequest(c)` — behind the production
+ *   proxy the socket URL is always `http:`, so inferring it from `requestUrl`
+ *   alone silently drops HSTS. See ./requestProtocol.ts.
+ */
+export function browserSecurityHeaders(requestUrl: string, opts: { secure?: boolean } = {}): Headers {
   const headers = new Headers(BASE_HEADERS);
-  if (new URL(requestUrl).protocol === 'https:') {
+  const secure = opts.secure ?? isSecureRequestParts(undefined, undefined, requestUrl);
+  if (secure) {
     // Deliberately omit includeSubDomains/preload until every sibling hostname
-    // is audited; the Worker still pins HTTPS for its own host for one year.
+    // is audited; the app still pins HTTPS for its own host for one year.
     headers.set('Strict-Transport-Security', 'max-age=31536000');
   }
   return headers;
@@ -43,7 +51,7 @@ export function browserSecurityHeaders(requestUrl: string): Headers {
 
 export const browserSecurityHeadersMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
-  for (const [name, value] of browserSecurityHeaders(c.req.url)) {
+  for (const [name, value] of browserSecurityHeaders(c.req.url, { secure: isSecureRequest(c) })) {
     c.header(name, value);
   }
 };
