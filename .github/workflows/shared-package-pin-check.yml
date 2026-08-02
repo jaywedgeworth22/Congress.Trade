@@ -19,36 +19,72 @@ jobs:
   pin-check:
     name: Verify vendored shared package matches tagged release
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
 
-      - name: Check vendored copy provenance
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Resolve vendored version
+        id: vendored
         shell: bash
         run: |
           set -euo pipefail
-          VENDOR_DIR="app/vendor/congress-trading-shared"
-          UPSTREAM_REPO="jaywedgeworth22/congress-trading-shared"
-
-          VENDOR_VERSION=$(node -e "console.log(require('./${VENDOR_DIR}/package.json').version)")
-          echo "Vendored version: v${VENDOR_VERSION}"
-
-          TAG="v${VENDOR_VERSION}"
-          TAG_SHA=$(curl -sSf \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${UPSTREAM_REPO}/git/ref/tags/${TAG}" \
-            | jq -r '.object.sha // empty')
-
-          if [[ -z "$TAG_SHA" ]]; then
-            echo "::error::Upstream tag ${TAG} not found in ${UPSTREAM_REPO}"
+          VERSION=$(node -p "require('./app/vendor/congress-trading-shared/package.json').version")
+          if [[ -z "$VERSION" || "$VERSION" == "undefined" ]]; then
+            echo "::error::Could not read version from app/vendor/congress-trading-shared/package.json"
             exit 1
           fi
-          echo "Upstream tag ${TAG} → SHA ${TAG_SHA:0:12}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Vendored version: v${VERSION}"
 
-          VENDOR_HASH=$(find "$VENDOR_DIR/src" -type f -name '*.ts' | sort | xargs cat | sha256sum | cut -d' ' -f1)
-          echo "Vendored source hash: ${VENDOR_HASH:0:12}"
+      - name: Check out upstream tagged release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: jaywedgeworth22/congress-trading-shared
+          ref: v${{ steps.vendored.outputs.version }}
+          path: .upstream-shared
+          persist-credentials: false
 
-          echo "::notice::Pin-drift baseline recorded — version ${TAG} exists at ${TAG_SHA:0:12}"
-          echo "Run a full source hash compare by checking out ${UPSTREAM_REPO}#${TAG}"
+      - name: Compare vendored source with tagged release
+        shell: bash
+        env:
+          TAG: v${{ steps.vendored.outputs.version }}
+        run: |
+          set -euo pipefail
+          VENDOR_SRC="app/vendor/congress-trading-shared/src"
+          UPSTREAM_SRC=".upstream-shared/src"
+          APPROVED="app/vendor/congress-trading-shared/APPROVED-DRIFT.patch"
+
+          UPSTREAM_SHA=$(git -C .upstream-shared rev-parse HEAD)
+          echo "Upstream ${TAG} resolves to commit ${UPSTREAM_SHA}"
+
+          if [[ ! -d "$UPSTREAM_SRC" ]]; then
+            echo "::error::Upstream ${TAG} has no src/ directory"
+            exit 1
+          fi
+
+          ACTUAL="${RUNNER_TEMP}/pin-drift.patch"
+          git --no-pager diff --no-index --no-color --full-index \
+            --src-prefix=upstream/ --dst-prefix=vendored/ \
+            -- "$UPSTREAM_SRC" "$VENDOR_SRC" > "$ACTUAL" || true
+
+          if [[ ! -s "$ACTUAL" ]]; then
+            echo "::notice::Vendored source is byte-identical to ${TAG} (${UPSTREAM_SHA})"
+            exit 0
+          fi
+
+          if [[ -f "$APPROVED" ]] && diff -q "$APPROVED" "$ACTUAL" >/dev/null; then
+            echo "::notice::Vendored source differs from ${TAG} only by the reviewed patch in ${APPROVED}"
+            exit 0
+          fi
+
+          echo "::error::Vendored source drifted from upstream ${TAG} (${UPSTREAM_SHA}) beyond the reviewed patch in ${APPROVED}"
+          echo "----- actual diff (upstream -> vendored) -----"
+          cat "$ACTUAL"
+          echo "----------------------------------------------"
+          exit 1
