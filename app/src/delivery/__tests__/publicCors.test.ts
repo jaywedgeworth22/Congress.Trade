@@ -62,3 +62,17 @@ describe('CORS on public read-only GETs', () => {
     expect(create.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 });
+
+describe('Public offset depth cap', () => {
+  const app = buildRestRouter();
+
+  it('allows offset 2000 and rejects offset > 2000 with 400', async () => {
+    const res2000 = await app.request('http://localhost/transactions?offset=2000', {}, makeEnv());
+    expect(res2000.status).toBe(200);
+
+    const res2001 = await app.request('http://localhost/transactions?offset=2001', {}, makeEnv());
+    expect(res2001.status).toBe(400);
+    const body = (await res2001.json()) as { error: string };
+    expect(body.error).toContain('offset beyond 2000');
+  });
+});

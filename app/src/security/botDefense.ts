@@ -46,8 +46,9 @@ const ROW_BUDGET_BUCKET = 'tx-rows';
 
 /**
  * Deepest offset the public transactions pager serves. The dashboard pager
- * (max 250 rows/page, prev/next only) stays far below this; full-history
- * access is the Premium CSV export or the token-gated bulk snapshot.
+ * mirrors this exact value (see MAX_PUBLIC_FEED_OFFSET in src/ui/dashboardHtml.ts,
+ * interpolated from this constant). Full-history access is the free CSV export
+ * or the token-gated bulk snapshot.
  */
 export const MAX_PUBLIC_TX_OFFSET = 2_000;
 
@@ -59,6 +60,15 @@ export const MAX_PUBLIC_TX_OFFSET = 2_000;
  * carries its own per-subscription and per-IP limits in delivery/sse.ts.
  */
 const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos'];
+
+/**
+ * Paths under an EXEMPT_PREFIXES prefix that are NOT token-gated and must
+ * stay inside the guard. /api/export/transactions.csv is anonymous (#558)
+ * and returns up to MAX_EXPORT_ROWS rows per call, so exempting it hands a
+ * scraper the whole corpus in one unauthenticated GET — around the UA
+ * blocklist AND both budgets.
+ */
+const EXEMPT_OVERRIDES = ['/api/export/transactions.csv'];
 
 /**
  * Automation fingerprints refused on public data endpoints. Two families:
@@ -170,7 +180,7 @@ export async function spendRowBudget(env: Env, ip: string, rows: number): Promis
  */
 export const publicApiGuard: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  const exempt = EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+  const exempt = !EXEMPT_OVERRIDES.includes(path) && EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 
   if (!exempt && (await scrapeGuardEnabled(c.env))) {
     const blocked = blockedUserAgent(c.req.header('user-agent') ?? null);

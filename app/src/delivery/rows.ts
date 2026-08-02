@@ -653,15 +653,15 @@ export function buildTransactionsTodayFilingsQuery(
   return { sql, params: [...params, todayIso.slice(0, 10)] };
 }
 
-/** Hard cap on rows in a single CSV export (premium full-history download). */
+/** Hard cap on rows in a single CSV export (full-history download). */
 export const MAX_EXPORT_ROWS = 50000;
 
 /**
- * Build the query backing the premium CSV export. Unlike the paged feed it
+ * Build the query backing the CSV export. Unlike the paged feed it
  * drops the cursor backstop (exports the full matching set), orders newest-first
  * for a readable download, and allows up to `maxRows` (>> MAX_TX_LIMIT). The
  * same ticker/member/type/chamber filters apply; `filedSince` is normally unset
- * for premium callers but is honored if provided.
+ * for callers but is honored if provided.
  */
 export function buildTransactionsExportQuery(
   p: TxQueryParams,
