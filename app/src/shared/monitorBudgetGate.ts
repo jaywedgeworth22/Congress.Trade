@@ -131,6 +131,8 @@ interface ReceiverConfig {
   token: string;
 }
 
+let loggedMissingReadToken = false;
+
 async function resolveReceiverConfig(env: Env): Promise<ReceiverConfig | null> {
   const secrets = await resolveSecrets(env, [
     'USAGE_MONITOR_INGEST_URL',
@@ -138,7 +140,17 @@ async function resolveReceiverConfig(env: Env): Promise<ReceiverConfig | null> {
     'USAGE_MONITOR_READ_TOKEN',
   ]);
   const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
-  const token = secrets.USAGE_MONITOR_READ_TOKEN?.trim() || secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
+  // Never fall back to the ingest token: the monitor denies ingest-token reads
+  // in production (its Wave C / C10 hardening), so the old fallback sent
+  // doomed 401 requests that made the gate look configured while it silently
+  // failed open.
+  const token = secrets.USAGE_MONITOR_READ_TOKEN?.trim();
+  if (!token && secrets.USAGE_MONITOR_INGEST_TOKEN?.trim() && !loggedMissingReadToken) {
+    console.log(
+      'usage-monitor budget gate disabled: USAGE_MONITOR_READ_TOKEN is not configured (the ingest token cannot authorize reads)',
+    );
+    loggedMissingReadToken = true;
+  }
   if (!configuredUrl || !token) return null;
   const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
   if (!baseUrl) return null;
