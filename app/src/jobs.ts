@@ -73,13 +73,62 @@ interface RetentionPolicy {
   /** ISO-8601 timestamp column the age cutoff compares against. */
   column: string;
   days: number;
+  /**
+   * Primary-key column for the bounded `<key> IN (SELECT <key> ... LIMIT n)`
+   * delete. D1/SQLite has no `DELETE ... LIMIT`, and the outbox tables key on
+   * doc_id / tx_id rather than a synthetic `id`. Defaults to 'id'.
+   */
+  key?: string;
+  /**
+   * Extra predicate ANDed with the age cutoff. Restricts queue/outbox pruning
+   * to TERMINAL rows so in-flight work is never deleted. Written to match the
+   * partial-index WHERE clause verbatim: SQLite only uses a partial index when
+   * every term of the index WHERE appears as a conjunct in the query WHERE.
+   */
+  where?: string;
+  /** Key in the returned deleted-rows map. Defaults to `table`; set it when
+   *  two policies target the same table with different statuses/ages. */
+  name?: string;
 }
 
 export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: 'dead_letter_events', column: 'created_at', days: 30 },
   { table: 'ingest_log', column: 'polled_at', days: 90 },
   { table: 'source_attempts', column: 'attempted_at', days: 30 },
+
+  // --- Durable queue / outbox terminal rows -------------------------------
+  // These are audit history only. Retention is asymmetric on purpose:
+  //  * 'completed' rows are never read again by any code path;
+  //  * 'failed' rows ARE the operator recovery surface
+  //    (requeueFailedDurableQueue, durableQueue.ts:1162; and
+  //    requeueFailedIngestionOutbox, ingestion/outbox.ts:181), so they must
+  //    outlive a long weekend plus a deploy cycle.
+  // Deleting a completed deno_runtime_queue row cannot resurrect a duplicate:
+  // idx_deno_runtime_queue_active_dedupe is partial over
+  // status IN ('pending','processing') and already ignores terminal rows.
+  { name: 'deno_runtime_queue_completed', table: 'deno_runtime_queue', column: 'updated_at', days: 7, where: "status = 'completed'" },
+  { name: 'deno_runtime_queue_failed', table: 'deno_runtime_queue', column: 'updated_at', days: 30, where: "status = 'failed'" },
+
+  // ingestion_outbox: 90d, NOT 7d. queueHandlers.ts:161 calls
+  // reconnectDeadLetteredIngestionOutbox with reopenCompleted=true for every
+  // non-'filing.new' ingest DLQ, so a COMPLETED row is still the lever that
+  // restarts a downstream-stage failure. Re-insert is gated on
+  // `filings.ingest_status = 'new'` (outbox.ts:42), so pruning cannot
+  // re-trigger ingestion of an already-ingested filing.
+  { name: 'ingestion_outbox_completed', table: 'ingestion_outbox', key: 'doc_id', column: 'updated_at', days: 90, where: "status = 'completed'" },
+
+  // delivery_outbox: safe at 90d because the duplicate-webhook guard is the
+  // unique idx_deliveries_subscription_tx plus claimDelivery's constraint
+  // retry (delivery/webhook.ts:544-553), NOT the outbox row; and `deliveries`
+  // rows survive until the 5-year filing sweep.
+  { name: 'delivery_outbox_completed', table: 'delivery_outbox', key: 'tx_id', column: 'updated_at', days: 90, where: "status = 'completed'" },
 ];
+
+/** Total rows one daily sweep may delete across ALL policies. Bounds the
+ *  sweep's contribution to the D1 daily write budget no matter how many
+ *  policies are configured, so adding a policy can never silently multiply
+ *  the sweep's write cost. A backlog above this drains over successive days. */
+export const RETENTION_MAX_ROWS_PER_RUN = 40_000;
 
 /** Rows per DELETE statement — small enough to stay comfortably inside D1's
  *  per-query limits even with index maintenance. */
@@ -137,14 +186,25 @@ async function enrichmentBudgetFloorMax(
  */
 export async function runRetentionSweep(env: Env, now = new Date()): Promise<Record<string, number>> {
   const deleted: Record<string, number> = {};
+  for (const policy of RETENTION_POLICIES) deleted[policy.name ?? policy.table] = 0;
+
+  let runTotal = 0;
   for (const policy of RETENTION_POLICIES) {
+    if (runTotal >= RETENTION_MAX_ROWS_PER_RUN) {
+      console.warn('retention sweep hit RETENTION_MAX_ROWS_PER_RUN; remaining policies drain tomorrow');
+      break;
+    }
+    const label = policy.name ?? policy.table;
+    const key = policy.key ?? 'id';
+    const extra = policy.where ? ` AND ${policy.where}` : '';
     const cutoff = new Date(now.getTime() - policy.days * 86_400_000).toISOString();
     let total = 0;
     try {
       for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
+        if (runTotal + total >= RETENTION_MAX_ROWS_PER_RUN) break;
         const res = await run(
           env.DB,
-          `DELETE FROM ${policy.table} WHERE id IN (SELECT id FROM ${policy.table} WHERE ${policy.column} < ? LIMIT ?)`,
+          `DELETE FROM ${policy.table} WHERE ${key} IN (SELECT ${key} FROM ${policy.table} WHERE ${policy.column} < ?${extra} LIMIT ?)`,
           [cutoff, RETENTION_DELETE_BATCH],
         );
         const changes = Number(res.meta?.changes ?? 0);
@@ -152,9 +212,10 @@ export async function runRetentionSweep(env: Env, now = new Date()): Promise<Rec
         if (changes < RETENTION_DELETE_BATCH) break; // backlog drained
       }
     } catch (err) {
-      console.warn(`retention sweep failed for ${policy.table}:`, (err as Error).message);
+      console.warn(`retention sweep failed for ${label}:`, (err as Error).message);
     }
-    deleted[policy.table] = total;
+    deleted[label] = total;
+    runTotal += total;
   }
   return deleted;
 }
@@ -227,6 +288,14 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
         docIds
       );
       
+      // ingestion_outbox keys on doc_id and is NOT reachable from any of the
+      // deletes above; without this it retains a row per pruned filing forever.
+      await run(
+        env.DB,
+        `DELETE FROM ingestion_outbox WHERE doc_id IN (${placeholders})`,
+        docIds
+      );
+
       await run(
         env.DB,
         `DELETE FROM filings WHERE doc_id IN (${placeholders})`,

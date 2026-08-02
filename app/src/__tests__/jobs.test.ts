@@ -77,6 +77,7 @@ import {
   RETENTION_POLICIES,
   RETENTION_DELETE_BATCH,
   RETENTION_MAX_BATCHES_PER_TABLE,
+  RETENTION_MAX_ROWS_PER_RUN,
 } from '../jobs.ts';
 
 function fakeEnv(): Env {
@@ -131,8 +132,8 @@ describe('maybeRunDailyJobs secret resolution', () => {
 
     const sqls = mocks.dbRun.mock.calls.map(([, sql]) => sql as string);
     for (const policy of RETENTION_POLICIES) {
-      const del = sqls.filter((s) => s.includes(`DELETE FROM ${policy.table}`));
-      // changes:0 on the first batch → exactly one bounded DELETE per table.
+      const del = sqls.filter((s) => s.includes(`DELETE FROM ${policy.table}`) && (!policy.where || s.includes(policy.where)));
+      // changes:0 on the first batch → exactly one bounded DELETE per table policy.
       expect(del).toHaveLength(1);
       expect(del[0]).toContain(`${policy.column} < ?`);
       expect(del[0]).toContain('LIMIT ?');
@@ -155,12 +156,11 @@ describe('maybeRunDailyJobs secret resolution', () => {
 
     const deleted = await runRetentionSweep(fakeEnv(), new Date('2026-07-10T00:00:00Z'));
 
-    expect(mocks.dbRun).toHaveBeenCalledTimes(
+    const expectedCalls = Math.min(
       RETENTION_POLICIES.length * RETENTION_MAX_BATCHES_PER_TABLE,
+      Math.ceil(RETENTION_MAX_ROWS_PER_RUN / RETENTION_DELETE_BATCH),
     );
-    for (const policy of RETENTION_POLICIES) {
-      expect(deleted[policy.table]).toBe(RETENTION_DELETE_BATCH * RETENTION_MAX_BATCHES_PER_TABLE);
-    }
+    expect(mocks.dbRun).toHaveBeenCalledTimes(expectedCalls);
   });
 
   it('retention failure on one table does not abort the others or the daily run', async () => {
@@ -171,7 +171,15 @@ describe('maybeRunDailyJobs secret resolution', () => {
 
     const deleted = await runRetentionSweep(fakeEnv(), new Date('2026-07-10T00:00:00Z'));
 
-    expect(deleted).toEqual({ dead_letter_events: 0, ingest_log: 0, source_attempts: 0 });
+    expect(deleted).toEqual({
+      dead_letter_events: 0,
+      ingest_log: 0,
+      source_attempts: 0,
+      deno_runtime_queue_completed: 0,
+      deno_runtime_queue_failed: 0,
+      ingestion_outbox_completed: 0,
+      delivery_outbox_completed: 0,
+    });
   });
 
   it('folds FMP_MAX_PER_MINUTE and EDGAR_MAX_PER_MINUTE into the market-data lane resolveSecrets call alongside the USAGE_MONITOR_* vars', async () => {

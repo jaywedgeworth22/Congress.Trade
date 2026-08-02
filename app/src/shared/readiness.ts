@@ -190,6 +190,8 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_deno_runtime_queue_pending_id',
     'idx_deno_runtime_queue_processing_id',
     'idx_deno_runtime_queue_active_dedupe',
+    'idx_deno_runtime_queue_completed_updated',
+    'idx_deno_runtime_queue_failed_updated',
   ].map((name): [string, string, boolean] => [
     name,
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,

@@ -763,6 +763,11 @@ export const PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS = [
   `DELETE FROM deno_runtime_kv WHERE namespace = 'config' AND (key LIKE 'sess:%' OR key LIKE 'magic:%')`,
 ] as const;
 
+export const QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS = [
+  "CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_completed_updated ON deno_runtime_queue (updated_at) WHERE status = 'completed'",
+  "CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_failed_updated ON deno_runtime_queue (updated_at) WHERE status = 'failed'",
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -847,4 +852,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...CLIENT_COMMAND_SECRET_CLAIM_SCHEMA_STATEMENTS,
   // 0070_purge_leaked_kv_credentials.sql
   ...PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS,
+  // 0071_queue_outbox_retention_indexes.sql
+  ...QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS,
 ] as const;
