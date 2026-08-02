@@ -27,6 +27,7 @@
  */
 
 import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
+import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -3619,13 +3620,15 @@ function restoreFiltersFromUrl() {
 
 function resetFeedPage() { feedPage = 0; syncFilterUrl(); return fetchPage(); }
 function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage(); }
-/* The server rejects public offsets beyond this depth (anti-scrape); deeper
-   history is the Premium CSV export. Mirror it so the pager never 400s. */
-var MAX_PUBLIC_FEED_OFFSET = 10000;
+/* The server rejects public offsets beyond this depth (see
+   MAX_PUBLIC_TX_OFFSET in src/security/botDefense.ts, enforced
+   unconditionally in delivery/rest.ts). Interpolated, not hand-copied, so
+   the pager can never 400. Deeper history is the free CSV export. */
+var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
 function nextFeedPage() {
   if ((feedPage + 1) * feedPageSize >= totalRows) return;
   if ((feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET) {
-    showToast('Deeper history is available via CSV export (Premium).');
+    showToast('Deeper history is available in the free CSV export — use ⤓ Export CSV.');
     return;
   }
   feedPage += 1;
