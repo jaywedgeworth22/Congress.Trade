@@ -218,6 +218,7 @@ final class CongressTradeStore: ObservableObject {
             if let cursor = response.cursor { cursorStore.setCursor(cursor, for: filterKey) }
             if signedIn {
                 await refreshSignedInState()
+                await PushNotificationManager.shared.syncTokenWithBackend(api: api)
             } else {
                 subscriptions = []
                 commands = []
