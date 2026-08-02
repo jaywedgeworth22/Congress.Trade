@@ -134,11 +134,10 @@ interface ReceiverConfig {
 async function resolveReceiverConfig(env: Env): Promise<ReceiverConfig | null> {
   const secrets = await resolveSecrets(env, [
     'USAGE_MONITOR_INGEST_URL',
-    'USAGE_MONITOR_INGEST_TOKEN',
     'USAGE_MONITOR_READ_TOKEN',
   ]);
   const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
-  const token = secrets.USAGE_MONITOR_READ_TOKEN?.trim() || secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
+  const token = secrets.USAGE_MONITOR_READ_TOKEN?.trim();
   if (!configuredUrl || !token) return null;
   const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
   if (!baseUrl) return null;
