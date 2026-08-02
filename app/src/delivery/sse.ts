@@ -55,7 +55,7 @@
 
 import type { Env, Subscription, Transaction } from '../shared/types.ts';
 import { all, get, run } from '../shared/db.ts';
-import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows.ts';
+import { mapSubscription, mapFeedTransaction, readCursorHighWater, type SubscriptionRow, type FeedTransactionRow } from './rows.ts';
 import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
@@ -315,6 +315,13 @@ export async function openSseStream(
   };
 
   const produce = async (): Promise<void> => {
+    // Clamp a resume cursor (?since= / Last-Event-ID) above the real high-water
+    // mark; otherwise the stream never emits again for the life of the client.
+    const hwm = await readCursorHighWater(env);
+    if (cursor > 1_000_000_000_000 || (hwm > 0 && cursor > hwm)) {
+      cursor = Math.min(cursor, hwm);
+    }
+
     // Opening comment + initial cursor so clients know the resume point.
     await send(`: connected\n`);
     await send(`event: cursor\ndata: ${cursor}\n\n`);
