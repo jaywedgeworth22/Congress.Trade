@@ -21,11 +21,15 @@ ADMIN_BASE="$BASE"
 DEPLOY_ONLY=false
 ADMIN_STEPS=()
 
-# congress.trade sits behind a Cloudflare managed challenge that 403s requests
-# with no browser User-Agent (e.g. a CI runner's or script's bare curl). Send a
-# real browser UA on every request to the app — both the health check and the
-# admin POST steps below — so a plain `ADMIN_TOKEN=... bash scripts/ship.sh`
-# doesn't pass health and then 403 on /api/admin/migrate.
+# Cloudflare sits in front of the app and 403s a narrow set of known-bot User-
+# Agents at the edge (verified 2026-08-02: `Python-urllib/*` is blocked on both
+# congress.trade and host.jays.services; `curl/*`, `python-requests/*`, an empty
+# UA and arbitrary strings all pass through to the origin).
+#
+# So bare curl is fine and this UA is not load-bearing for ship.sh — it is kept
+# as belt-and-braces in case the rule widens. The thing to remember is: if a
+# script gets an unexplained 403 with no `via: 1.1 Caddy` on the response, it
+# was blocked at the edge, not by auth — set any User-Agent header.
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 
 usage() {
@@ -144,7 +148,9 @@ check_live_revision() {
   echo "!! Live build is ${live:0:12} but HEAD is ${expected:0:12}." >&2
   echo "   Coolify has not deployed this commit. Do NOT report it as shipped." >&2
   echo "   Trigger it: GET https://host.jays.services/api/v1/deploy?uuid=congress-trade" >&2
-  echo "   (Bearer COOLIFY_AGENTS, browser User-Agent — Cloudflare 403s other UAs.)" >&2
+  echo "   (Bearer COOLIFY_AGENTS. Any User-Agent works EXCEPT Python-urllib," >&2
+  echo "    which Cloudflare 403s at the edge — a 403 with no 'via: 1.1 Caddy'" >&2
+  echo "    header is an edge block, not an auth failure.)" >&2
   return 1
 }
 

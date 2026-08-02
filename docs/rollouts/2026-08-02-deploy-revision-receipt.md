@@ -69,10 +69,25 @@ Gates: `deno check` clean; `src/shared/__tests__/buildInfo.test.ts` 5/5.
 ## Notes
 
 - Coolify's API is reachable at `https://host.jays.services` with the
-  `COOLIFY_AGENTS` bearer token **and a browser User-Agent** — Cloudflare returns
-  403 to non-browser agents on every path, which looks exactly like an auth
-  failure and is not. Manual trigger:
+  `COOLIFY_AGENTS` bearer token. Manual trigger:
   `GET /api/v1/deploy?uuid=congress-trade`.
+- **User-Agent gotcha (corrected 2026-08-02).** Cloudflare 403s a narrow set of
+  known-bot User-Agents at the edge. Measured on both `host.jays.services` and
+  `congress.trade`:
+
+  | User-Agent | result |
+  |---|---|
+  | `Python-urllib/3.13` (Python's default) | **403 at Cloudflare** |
+  | `curl/8.7.1` (curl's default) | reaches origin |
+  | `python-requests/2.32` | reaches origin |
+  | `""` (empty) / `x` / browser string | reaches origin |
+
+  So bare `curl` needs no workaround, and a Python script needs only *some*
+  `User-Agent` header — not a spoofed browser. The reliable tell: an edge block
+  returns 403 with **no `via: 1.1 Caddy`** header, whereas the origin's own auth
+  failure is a 401 that does carry it. An earlier version of this note (and the
+  comment in `ship.sh`) claimed a browser UA was required; that was wrong — the
+  Chrome UA worked, but for the wrong reason.
 - The first `ship.sh` run after this lands takes the "unverified" branch, because
   the running image has no build SHA. Every run after that is enforced.
 
