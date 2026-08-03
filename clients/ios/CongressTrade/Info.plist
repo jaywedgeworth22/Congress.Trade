@@ -41,6 +41,8 @@
 	<array>
 		<string>ZillaSlab-Regular.ttf</string>
 		<string>ZillaSlab-Bold.ttf</string>
+		<string>Fonts/ZillaSlab-Regular.ttf</string>
+		<string>Fonts/ZillaSlab-Bold.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

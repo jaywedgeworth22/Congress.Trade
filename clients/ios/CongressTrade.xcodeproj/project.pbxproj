@@ -15,6 +15,8 @@
 		5A1000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000013 /* Models.swift */; };
 		5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000014 /* KeychainTokenStore.swift */; };
 		5A1000010000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000015 /* Assets.xcassets */; };
+		7F8000010000000000000006 /* ZillaSlab-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000007 /* ZillaSlab-Regular.ttf */; };
+		7F8000010000000000000008 /* ZillaSlab-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000009 /* ZillaSlab-Bold.ttf */; };
 		5A2000010000000000000001 /* CongressTradeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A2000010000000000000011 /* CongressTradeTests.swift */; };
 		82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = A818AF84BA5C2B7444CA9B87 /* Components.swift */; };
 		9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */; };
@@ -47,6 +49,8 @@
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5A1000010000000000000014 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		5A1000010000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7F8000010000000000000007 /* ZillaSlab-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/ZillaSlab-Regular.ttf; sourceTree = "<group>"; };
+		7F8000010000000000000009 /* ZillaSlab-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/ZillaSlab-Bold.ttf; sourceTree = "<group>"; };
 		5A2000010000000000000010 /* CongressTradeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongressTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A2000010000000000000011 /* CongressTradeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongressTradeTests.swift; sourceTree = "<group>"; };
 		8927A2808F29C1F169FB78CD /* DeliveryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DeliveryView.swift; path = Views/Delivery/DeliveryView.swift; sourceTree = "<group>"; };
@@ -110,6 +114,8 @@
 			children = (
 				7F8000010000000000000002 /* AppDelegate.swift */,
 				5A1000010000000000000015 /* Assets.xcassets */,
+				7F8000010000000000000007 /* ZillaSlab-Regular.ttf */,
+				7F8000010000000000000009 /* ZillaSlab-Bold.ttf */,
 				5A1000010000000000000012 /* APIClient.swift */,
 				5A1000010000000000000013 /* Models.swift */,
 				5A1000010000000000000014 /* KeychainTokenStore.swift */,
@@ -268,6 +274,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				5A1000010000000000000005 /* Assets.xcassets in Resources */,
+				7F8000010000000000000006 /* ZillaSlab-Regular.ttf in Resources */,
+				7F8000010000000000000008 /* ZillaSlab-Bold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
