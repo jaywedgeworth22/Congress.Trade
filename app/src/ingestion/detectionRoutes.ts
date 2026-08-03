@@ -22,9 +22,12 @@ import type { Env } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { recordDisclosureLatencyCandidate } from './tradeLatency.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   enqueueFilingNew,
+  houseFilerId,
   insertFilingIfNew,
+  preclassifyDocKind,
   senateFilerId,
   type DiscoveredFiling,
   type InsertFilingResult,
@@ -61,15 +64,33 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
       : null;
     const sourceUrl = typeof body.link === 'string' ? body.link.trim() : '';
 
+    let houseId: string | null = null;
+    if (chamber === 'house') {
+      const first = typeof body.first === 'string' ? body.first.trim() : (typeof body.firstName === 'string' ? body.firstName.trim() : '');
+      const last = typeof body.last === 'string' ? body.last.trim() : (typeof body.lastName === 'string' ? body.lastName.trim() : '');
+      const stateDst = typeof body.stateDst === 'string' ? body.stateDst.trim() : (typeof body.district === 'string' ? body.district.trim() : '');
+
+      let fName = first;
+      let lName = last;
+      if (!fName && !lName && filerName) {
+        if (filerName.includes(',')) {
+          const parts = filerName.split(',');
+          lName = parts[0].trim();
+          fName = parts.slice(1).join(',').trim();
+        } else {
+          fName = filerName;
+        }
+      }
+      houseId = houseFilerId(fName, lName, stateDst);
+    }
+
     const filing: DiscoveredFiling = {
       docId: docKey,
       chamber,
       sourceUrl,
       filedDate: typeof body.filedDate === 'string' ? body.filedDate : null,
       filerName,
-      // Senate indexes carry no district; mint the same synthetic id the live
-      // watcher uses so the filers row + feed attribution stay populated.
-      filerId: chamber === 'senate' ? senateFilerId(filerName) : null,
+      filerId: chamber === 'senate' ? senateFilerId(filerName) : (chamber === 'house' ? houseId : null),
     };
 
     // Default ON when a source URL is present so a residential scout push is
@@ -83,6 +104,38 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
       if (!sourceUrl) {
         return c.json({ error: 'link is required when ingest is enabled' }, 400);
       }
+      try {
+        const headRes = await trackedFetch(
+          sourceUrl,
+          {
+            method: 'HEAD',
+            headers: {
+              'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
+              accept: chamber === 'senate' ? 'text/html,application/pdf,*/*' : 'application/pdf,*/*',
+            },
+          },
+          { service: 'filing-ingestion', operation: 'head-validate-detection' },
+        ).catch(() => null);
+
+        if (
+          headRes &&
+          !headRes.ok &&
+          headRes.status !== 304 &&
+          headRes.status !== 405 &&
+          headRes.status !== 404 &&
+          headRes.status !== 403
+        ) {
+          return c.json({ error: `HEAD validation failed: sourceUrl returned HTTP ${headRes.status}` }, 400);
+        }
+        const contentType = headRes?.headers?.get?.('content-type') ?? '';
+        if (contentType && !/application\/pdf|text\/html|application\/octet-stream/i.test(contentType)) {
+          return c.json({ error: `HEAD validation failed: invalid content-type '${contentType}'` }, 400);
+        }
+        filing.docKind = preclassifyDocKind(sourceUrl, chamber, contentType);
+      } catch (err) {
+        return c.json({ error: `HEAD validation failed: ${(err as Error).message}` }, 400);
+      }
+
       try {
         insert = await insertFilingIfNew(c.env, filing, detectedAt);
       } catch (err) {

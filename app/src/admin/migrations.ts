@@ -768,6 +768,11 @@ export const QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_failed_updated ON deno_runtime_queue (updated_at) WHERE status = 'failed'",
 ] as const;
 
+export const LOCAL_VISION_WORKER_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filings ADD COLUMN local_wait_expires_at TEXT',
+  `CREATE TABLE IF NOT EXISTS local_worker_heartbeat (worker_id TEXT PRIMARY KEY, last_heartbeat_at TEXT NOT NULL, status_json TEXT)`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -854,4 +859,61 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS,
   // 0071_queue_outbox_retention_indexes.sql
   ...QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS,
+  // 0072_local_vision_worker.sql
+  ...LOCAL_VISION_WORKER_SCHEMA_STATEMENTS,
 ] as const;
+
+export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS ingestion_decisions (
+     id TEXT PRIMARY KEY,
+     doc_id TEXT,
+     action TEXT NOT NULL,
+     source TEXT NOT NULL,
+     actor TEXT,
+     reason TEXT,
+     payload TEXT,
+     transaction_ids TEXT NOT NULL DEFAULT '[]',
+     created_at TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_doc ON ingestion_decisions (doc_id, created_at DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
+] as const;
+
+export const INTERMEDIATE_SCHEMA_STATEMENTS = [
+  ...DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
+  ...INGESTION_DECISIONS_SCHEMA_STATEMENTS,
+  `CREATE TABLE IF NOT EXISTS securities_ref (
+     ticker TEXT PRIMARY KEY, company_name TEXT, sector TEXT, industry TEXT,
+     asset_class TEXT, is_etf INTEGER NOT NULL DEFAULT 0, is_adr INTEGER NOT NULL DEFAULT 0,
+     country TEXT, state_hq TEXT, state_of_incorp TEXT, exchange TEXT,
+     exchange_short TEXT, currency TEXT, market_cap INTEGER, market_cap_bucket TEXT,
+     ipo_date TEXT, cik TEXT, sic_code TEXT, sic_description TEXT, source TEXT,
+     enriched_at TEXT, enrichment_error TEXT, current_price REAL, current_price_date TEXT
+   )`,
+  'ALTER TABLE transactions ADD COLUMN row_key TEXT',
+  'ALTER TABLE transactions ADD COLUMN asset_type_name TEXT',
+  'ALTER TABLE transactions ADD COLUMN filing_status TEXT',
+  'ALTER TABLE transactions ADD COLUMN subholding TEXT',
+  'ALTER TABLE transactions ADD COLUMN location TEXT',
+  'ALTER TABLE transactions ADD COLUMN description TEXT',
+  'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
+  'ALTER TABLE transactions ADD COLUMN deprecated_at TEXT',
+  'ALTER TABLE transactions ADD COLUMN deprecated_reason TEXT',
+] as const;
+
+
+
+
+
+
+export async function runMigrations(db: { prepare: (sql: string) => { run: () => Promise<unknown> } }): Promise<void> {
+  const statements = [...BASE_SCHEMA_STATEMENTS, ...INTERMEDIATE_SCHEMA_STATEMENTS, ...POST_0024_SCHEMA_STATEMENTS];
+  for (const sql of statements) {
+    try {
+      await db.prepare(sql).run();
+    } catch {}
+  }
+}
+
+

@@ -72,6 +72,7 @@ const libsqlClient = createClient({
   url: tursoUrl || 'libsql://dummy-url.turso.io', // Provide a valid dummy URL to prevent crash at boot
   authToken: tursoToken,
 });
+await libsqlClient.execute("PRAGMA busy_timeout = 10000;").catch(() => {});
 const dbShim = new D1DatabaseShim(libsqlClient);
 tursoDbShim = dbShim;
 const durableQueueDb = dbShim as unknown as D1Database;

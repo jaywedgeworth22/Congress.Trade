@@ -39,7 +39,7 @@ import {
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
-import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types.ts';
+import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription, DocKind, Chamber, Filing } from '../shared/types.ts';
 import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db.ts';
 import { checkReadiness } from '../shared/readiness.ts';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
@@ -1826,8 +1826,12 @@ async function fillBenchmarkProviderFailure(
   );
 }
 
+export const createAdminApp = buildAdminRouter;
+
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
+
   const r = new Hono<{ Bindings: Env }>();
+
 
   // Auth gate applied to every admin route: full admin (bearer token OR
   // Cloudflare Access), or one of the SCOPED tokens — INGEST_TOKEN for
@@ -4564,6 +4568,127 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
     }
     return c.json({ ok: true, matched: rows.length, enqueued, skipped, errors });
+  });
+
+  // --- GET /scanned-filings/pending ---------------------------------------
+  // Returns pending scanned_pdf filings for local vision worker processing.
+  r.get('/scanned-filings/pending', async (c) => {
+    try {
+      const rows = await all<{
+        doc_id: string;
+        chamber: string | null;
+        filing_type: string | null;
+        filed_date: string | null;
+        source_url: string;
+        raw_object_key: string | null;
+        ingest_status: string;
+        doc_kind: string;
+        local_wait_expires_at: string | null;
+        first_seen_at: string;
+      }>(
+        c.env.DB,
+        `SELECT doc_id, chamber, filing_type, filed_date, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at
+           FROM filings
+          WHERE doc_kind = 'scanned_pdf'
+            AND (ingest_status = 'extraction_pending_local' OR ingest_status = 'classified')
+            AND (local_wait_expires_at IS NULL OR datetime(local_wait_expires_at) > datetime('now'))
+          ORDER BY first_seen_at DESC
+          LIMIT 50`,
+      );
+      return c.json({ ok: true, count: rows.length, filings: rows });
+    } catch (err) {
+      return c.json({ ok: false, error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /local-worker/heartbeat ----------------------------------------
+  // Updates local vision worker heartbeat timestamp.
+  r.post('/local-worker/heartbeat', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const workerId = typeof body.workerId === 'string' && body.workerId.trim() ? body.workerId.trim() : 'local_mac_1';
+    const statusJson = body.statusJson ? JSON.stringify(body.statusJson) : null;
+    const nowIso = new Date().toISOString();
+    try {
+      await run(
+        c.env.DB,
+        `INSERT INTO local_worker_heartbeat (worker_id, last_heartbeat_at, status_json)
+         VALUES (?, ?, ?)
+         ON CONFLICT(worker_id) DO UPDATE SET
+           last_heartbeat_at = excluded.last_heartbeat_at,
+           status_json = excluded.status_json`,
+        [workerId, nowIso, statusJson],
+      );
+      return c.json({ ok: true, workerId, lastHeartbeatAt: nowIso });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /ingest-local-vision ------------------------------------------
+  // Receives extracted transactions from local Mac vision worker (source = 'local_mac'),
+  // normalizes and persists transactions, transitions filing status to 'extracted' or 'needs_review'.
+  r.post('/ingest-local-vision', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const docId = typeof body.docId === 'string' ? body.docId.trim() : undefined;
+    if (!docId) {
+      return c.json({ error: 'docId is required' }, 400);
+    }
+    const parsedTx = Array.isArray(body.transactions) ? (body.transactions as ParsedTx[]) : [];
+    const extractor = typeof body.extractor === 'string' ? body.extractor : 'mac_vision_v1';
+    const workerId = typeof body.workerId === 'string' ? body.workerId : 'local_mac_1';
+
+    try {
+      const filingRow = await loadFilingRow(c.env, docId);
+      if (!filingRow) {
+        return c.json({ error: `Filing ${docId} not found` }, 404);
+      }
+      const filing: Filing = {
+        docId: filingRow.doc_id,
+        chamber: (filingRow.chamber as Chamber) ?? 'house',
+        filerId: filingRow.filer_id,
+        filingType: filingRow.filing_type ?? 'P',
+        filedDate: filingRow.filed_date,
+        sourceUrl: filingRow.source_url ?? '',
+        rawObjectKey: filingRow.raw_object_key,
+        ingestStatus: (filingRow.ingest_status as Filing['ingestStatus']) ?? 'classified',
+        docKind: (filingRow.doc_kind as DocKind) ?? 'unknown',
+        extractor: filingRow.extractor,
+        modelVersion: filingRow.model_version,
+        confidence: filingRow.confidence,
+        firstSeenAt: filingRow.first_seen_at ?? new Date().toISOString(),
+        sourceUpdatedAt: filingRow.source_updated_at,
+        error: filingRow.error,
+      };
+
+      const result = await normalize(c.env, filing, parsedTx, {
+        extractor,
+        modelVersion: workerId,
+        source: 'local_mac',
+      });
+
+      return c.json({
+        ok: true,
+        docId,
+        published: result.published,
+        needsReview: result.needsReview,
+        minConfidence: result.minConfidence,
+        txCount: result.transactions.length,
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
   });
 
   // --- POST /reprocess ----------------------------------------------------

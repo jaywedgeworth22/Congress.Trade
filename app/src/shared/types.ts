@@ -47,6 +47,7 @@ export type IngestStatus =
   | 'new'
   | 'fetched'
   | 'classified'
+  | 'extraction_pending_local'
   | 'extracted'
   | 'persisted'
   | 'needs_review'
@@ -70,7 +71,7 @@ export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 
 /** Provenance of a persisted transaction. 'manual' = hand-entered by an admin in
  *  review when the automated read was wrong / too low-confidence to trust. */
-export type TxSource = 'primary' | 'seed_dataset' | 'manual' | 'competitor_backfill';
+export type TxSource = 'primary' | 'seed_dataset' | 'manual' | 'competitor_backfill' | 'local_mac';
 
 // ---------------------------------------------------------------------------
 // Domain entities (mirror D1 tables; JSON columns are typed as parsed shapes)
@@ -107,6 +108,7 @@ export interface Filing {
   error: string | null;
   /** Self-hosted URL for the raw document PDF (present if we fetched it). */
   pdfUrl?: string;
+  localWaitExpiresAt?: string | null;
 }
 
 export interface Transaction {
@@ -409,6 +411,7 @@ export type QueueMessage =
   | { type: 'filing.new'; docId: string; chamber: Chamber; sourceUrl: string }
   | { type: 'filing.fetched'; docId: string }
   | { type: 'filing.extracted'; docId: string }
+  | { type: 'filing.local_wait_check'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
   | {
       type: 'agreement.check';
@@ -535,6 +538,8 @@ export interface Env {
   XAI_API_KEY?: string;
   /** OpenRouter API key — the unified transport for ALL live LLM extraction. */
   OPENROUTER_API_KEY?: string;
+  /** Secondary OpenRouter API key for budget cap failover. */
+  OPENROUTER_BACKUP_API_KEY?: string;
   /** OpenRouter model override (defaults to 'google/gemini-3.5-flash'). */
   OPENROUTER_MODEL?: string;
   /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */

@@ -160,6 +160,28 @@ export async function classifyFiling(
   const docKind = decideDocKind(bytes, contentType, row.chamber);
 
   await lease?.assertOwned();
+  if (docKind === 'scanned_pdf') {
+    const fresh = await isLocalWorkerHeartbeatFresh(env.DB);
+    if (fresh) {
+      await run(
+        env.DB,
+        `UPDATE filings
+            SET doc_kind = ?,
+                ingest_status = 'extraction_pending_local',
+                local_wait_expires_at = datetime('now', '+15 minutes'),
+                error = NULL
+          WHERE doc_id = ?`,
+        [docKind, docId],
+      );
+      await lease?.assertOwned();
+      await env.INGEST_QUEUE.send(
+        { type: 'filing.local_wait_check', docId },
+        { delaySeconds: 15 * 60 },
+      );
+      return docKind;
+    }
+  }
+
   await run(
     env.DB,
     `UPDATE filings
@@ -174,4 +196,13 @@ export async function classifyFiling(
   await env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
 
   return docKind;
+}
+
+/** Check whether any local worker heartbeat has been received in the last 5 minutes. */
+export async function isLocalWorkerHeartbeatFresh(db: D1Database): Promise<boolean> {
+  const row = await get<{ count: number }>(
+    db,
+    `SELECT COUNT(*) as count FROM local_worker_heartbeat WHERE datetime(last_heartbeat_at) >= datetime('now', '-5 minutes')`,
+  );
+  return (row?.count ?? 0) > 0;
 }

@@ -24,9 +24,7 @@ import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/ass
 import { parseAmountRange } from './amounts.ts';
 import { detectOption } from './senateHtml.ts';
 
-/** Base confidence for a clean tabular text parse. */
-const BASE_CONFIDENCE = 0.9;
-/** Penalty per missing core field (date / amount / type). */
+/** Penalty per missing core field (date / amount / type / asset). */
 const MISSING_FIELD_PENALTY = 0.12;
 
 export class TextPdfExtractor implements Extractor {
@@ -118,13 +116,13 @@ const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
 const AMOUNT_RE = /\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
 // A transaction-type token (P / S / E / S (partial) ...).
 const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
-const TICKER_PATTERN = String.raw`[A-Z][A-Z0-9.^\/-]{0,9}`;
-// A ticker in parentheses, e.g. "(AAPL)".
+const TICKER_PATTERN = String.raw`[A-Z][A-Z0-9.^\/\-]{0,9}`;
+// A ticker in parentheses, e.g. "(AAPL)" or "(JPM^J)" or "(BRK/B)".
 const TICKER_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)`);
 const HOUSE_TABLE_HEADER_RE =
-  /\bID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/i;
+  /\b(?:Filing ID\s*#?\d+\s+)?ID\s+Owner\s+Asset\s+Transaction\s+Type\s+Date\s+Notification\s+Date\s+Amount(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/i;
 const HOUSE_TABLE_HEADER_GLOBAL_RE =
-  /\b(?:Filing ID\s*#?\d+\s+)?ID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/gi;
+  /\b(?:Filing ID\s*#?\d+\s+)?ID\s+Owner\s+Asset\s+Transaction\s+Type\s+Date\s+Notification\s+Date\s+Amount(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/gi;
 const INLINE_RECORD_RE = new RegExp(
   String.raw`\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>${TICKER_PATTERN})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>${TICKER_PATTERN})))?\s*\[(?<assetType>${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)`,
   'gi',
@@ -141,7 +139,8 @@ export function parseHousePtrText(text: string): ParsedTx[] {
     if (inlineRows.length > 0) return inlineRows;
   }
 
-  const lines = cleaned
+  const stripped = stripHouseTableHeaders(cleaned);
+  const lines = stripped
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
@@ -170,6 +169,32 @@ function stripHouseTableHeaders(text: string): string {
     .replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ');
 }
 
+function calculateRowConfidence(row: {
+  owner: Owner | null;
+  assetName: string | null;
+  ticker: string | null;
+  txType: TxType | null;
+  txDate: string | null;
+  amountMin: number | null;
+}): number {
+  const hasOwner = Boolean(row.owner);
+  const hasAsset = Boolean((row.assetName && row.assetName !== '(unknown)') || row.ticker);
+  const hasTxType = Boolean(row.txType);
+  const hasDate = Boolean(row.txDate && /^\d{4}-\d{2}-\d{2}$/.test(row.txDate));
+  const hasAmount = row.amountMin !== null;
+
+  if (hasOwner && hasAsset && hasTxType && hasDate && hasAmount) {
+    return 1.0;
+  }
+
+  let confidence = 0.9;
+  if (!hasDate) confidence -= MISSING_FIELD_PENALTY;
+  if (!hasAmount) confidence -= MISSING_FIELD_PENALTY;
+  if (!hasTxType) confidence -= MISSING_FIELD_PENALTY;
+  if (!hasAsset) confidence -= MISSING_FIELD_PENALTY;
+  return Math.max(0.3, Math.min(0.9, confidence));
+}
+
 function parseInlineRecords(text: string): ParsedTx[] {
   const normalized = stripHouseTableHeaders(text).replace(/\s+/g, ' ').trim();
   const matches: RegExpExecArray[] = [];
@@ -185,18 +210,28 @@ function parseInlineRecords(text: string): ParsedTx[] {
     const next = matches[i + 1];
     const rawText = normalized.slice(m.index, next ? next.index : undefined).trim();
     const groups = m.groups ?? {};
-    const rawAssetName = cleanInlineAssetName(groups.asset ?? '');
     const owner = parseOwner(groups.owner ?? '');
-    const assetName = rawAssetName;
     const ticker = normalizeTicker(groups.parenTicker ?? groups.exchangeTicker ?? null);
     const assetType = groups.assetType?.toUpperCase() ?? null;
     const details = parseHouseRowDetails(rawText);
+    const assetName = cleanAssetNameString(groups.asset ?? '') || ticker || '(unknown)';
     const txType = parseTxType(groups.txType ?? '') ?? 'P';
+    const txDate = toIsoDate(groups.txDate ?? '');
     const { min, max } = parseAmountRange(groups.amount ?? '');
-    rows.push({
-      txDate: toIsoDate(groups.txDate ?? ''),
+
+    const confidence = calculateRowConfidence({
       owner,
-      assetName: assetName || ticker || '(unknown)',
+      assetName,
+      ticker,
+      txType,
+      txDate,
+      amountMin: min,
+    });
+
+    rows.push({
+      txDate,
+      owner,
+      assetName,
       ticker,
       assetType,
       assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
@@ -207,56 +242,89 @@ function parseInlineRecords(text: string): ParsedTx[] {
       capGainsOver200: parseCapGainsOver200(rawText),
       rawText,
       ...details,
-      confidence: BASE_CONFIDENCE,
+      confidence,
     });
   }
   return rows;
 }
 
-function cleanInlineAssetName(value: string): string {
+function cleanAssetNameString(value: string): string {
   return value
     .replace(/^.*(?:\/share|shares)\s+/i, '')
     .replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ')
+    .replace(/^(?:SP|DC|JT|SELF)\b\s*/i, '')
     .replace(/\b(S|P|E|F)\s+S:\s+New\b.*$/i, '')
     .replace(/\b(S|P|E|F)\s+O:\s+.*$/i, '')
     .replace(/\bD:\s+.*$/i, '')
+    .replace(/[\s\-\,]+$|^[\s\-\,]+/, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function normalizeTicker(value: string | null): string | null {
   if (!value) return null;
-  const ticker = value.toUpperCase().replace('/', '.');
-  return ticker === 'N/A' ? null : ticker;
+  const cleaned = value.trim().toUpperCase().replace(/\//g, '.');
+  if (
+    cleaned === 'N/A' ||
+    cleaned === 'NONE' ||
+    cleaned === 'N/A.' ||
+    cleaned === 'NULL' ||
+    /^N\s*\/\s*A$/i.test(cleaned)
+  ) {
+    return null;
+  }
+  return cleaned;
 }
 
-function startsNewHolding(line: string): boolean {
-  const ownerStart = /^(SP|DC|JT|SELF)\b/.test(line);
-  const hasTicker = TICKER_RE.test(line);
-  const hasAssetType = ASSET_TYPE_RE.test(line);
-  return ownerStart || (hasTicker && hasAssetType);
+function blockHasAmount(lines: string[]): boolean {
+  return lines.some((l) => AMOUNT_RE.test(l));
+}
+
+function blockHasDate(lines: string[]): boolean {
+  return lines.some((l) => DATE_RE.test(l));
+}
+
+function startsNewHolding(line: string, completedRow: boolean): boolean {
+  const ownerStart = /^(SP|DC|JT|SELF)\b/i.test(line);
+  if (ownerStart) return true;
+  if (completedRow) {
+    const hasTicker = TICKER_RE.test(line);
+    const hasAssetType = ASSET_TYPE_RE.test(line);
+    if (hasTicker && hasAssetType) return true;
+  }
+  return false;
 }
 
 function groupBlocks(lines: string[]): string[][] {
+  const cleanedLines = lines
+    .map((l) => l.replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
   const blocks: string[][] = [];
   let current: string[] = [];
-  let seenHolding = false;
-  for (const line of lines) {
-    if (startsNewHolding(line)) {
-      if (current.length > 0 && seenHolding) {
+
+  for (const line of cleanedLines) {
+    const completedRow = blockHasAmount(current) && blockHasDate(current);
+    if (startsNewHolding(line, completedRow)) {
+      if (current.length > 0 && blockHasAmount(current)) {
         blocks.push(current);
       }
-      seenHolding = true;
       current = [line];
       continue;
     }
-    if (!seenHolding) {
-      continue;
+    if (current.length > 0) {
+      current.push(line);
+    } else {
+      const hasTicker = TICKER_RE.test(line);
+      const hasAssetType = ASSET_TYPE_RE.test(line);
+      if (/^(SP|DC|JT|SELF)\b/i.test(line) || (hasTicker && hasAssetType)) {
+        current = [line];
+      }
     }
-    current.push(line);
   }
-  if (current.length && seenHolding) blocks.push(current);
-  // Keep only blocks that look like a transaction (must have an amount).
+  if (current.length > 0 && blockHasAmount(current)) {
+    blocks.push(current);
+  }
   return blocks.filter((b) => AMOUNT_RE.test(b.join(' ')));
 }
 
@@ -267,25 +335,27 @@ function blockToParsedTx(block: string[]): ParsedTx | null {
   const ticker = parseTicker(joined);
   const assetType = parseAssetType(joined);
   const details = parseHouseRowDetails(joined);
-  const assetName = parseAssetName(block, ticker);
+  const assetName = parseAssetName(joined, ticker);
   const txType = parseTxType(joined);
   const dates = parseDates(joined);
   const amountText = (joined.match(AMOUNT_RE) ?? [''])[0];
   const { min, max } = parseAmountRange(amountText);
+  const txDate = dates[0] ?? null;
 
   // Reject blocks that are clearly not a trade (no type AND no amount).
   if (!txType && min === null) return null;
 
-  let confidence = BASE_CONFIDENCE;
-  if (dates.length === 0) confidence -= MISSING_FIELD_PENALTY;
-  if (min === null) confidence -= MISSING_FIELD_PENALTY;
-  if (!txType) confidence -= MISSING_FIELD_PENALTY;
-  if (!assetName && !ticker) confidence -= MISSING_FIELD_PENALTY;
-  confidence = clamp(confidence, 0.3, BASE_CONFIDENCE);
+  const confidence = calculateRowConfidence({
+    owner,
+    assetName,
+    ticker,
+    txType,
+    txDate,
+    amountMin: min,
+  });
 
   return {
-    // Prefer the transaction date (first date) over the notification date.
-    txDate: dates[0] ?? null,
+    txDate,
     owner,
     assetName: assetName || ticker || '(unknown)',
     ticker,
@@ -338,7 +408,7 @@ function parseCapGainsOver200(text: string): boolean {
 }
 
 function parseOwner(text: string): Owner | null {
-  const m = text.match(/^(SP|DC|JT|SELF)\b/) ?? text.match(/\b(SP|DC|JT)\b/);
+  const m = text.match(/^(SP|DC|JT|SELF)\b/i) ?? text.match(/\b(SP|DC|JT|SELF)\b/i);
   if (m) return OWNER_CODES[m[1].toUpperCase()] ?? null;
   if (/\bspouse\b/i.test(text)) return 'spouse';
   if (/\bjoint\b/i.test(text)) return 'joint';
@@ -350,8 +420,7 @@ function parseOwner(text: string): Owner | null {
 function parseTicker(text: string): string | null {
   const m = text.match(TICKER_RE);
   if (!m) return null;
-  const t = m[1].toUpperCase();
-  return t === 'N/A' ? null : t;
+  return normalizeTicker(m[1]);
 }
 
 function parseAssetType(text: string): string | null {
@@ -359,17 +428,28 @@ function parseAssetType(text: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
-function parseAssetName(block: string[], ticker: string | null): string {
-  // The asset name is the text before the ticker / asset-type / type marker on
-  // the first line of the block.
-  const first = block[0] ?? '';
-  let name = first
-    .replace(/^(SP|DC|JT|SELF)\b\s*/, '')
-    .replace(ASSET_TYPE_RE, '')
-    .replace(TICKER_RE, '')
-    .trim();
-  // Cut off at a transaction-type / date / amount marker if they share the line.
-  name = name.split(/\s+(?:P|S|E)\s+\d|\s+\d{1,2}\/\d{1,2}\/\d{2,4}|\s+\$[\d,]/)[0].trim();
+function parseAssetName(joined: string, ticker: string | null): string {
+  let name = joined.replace(/^(SP|DC|JT|SELF)\b\s*/i, '');
+
+  const detailIndex = name.search(/\b(?:Filing Status|Subholding Of|Location|Description):|\b(?:F|S O|L|D):/i);
+  if (detailIndex >= 0) {
+    name = name.slice(0, detailIndex);
+  }
+
+  const assetTypeMatch = ASSET_TYPE_RE.exec(name);
+  if (assetTypeMatch) {
+    name = name.slice(0, assetTypeMatch.index);
+  }
+
+  const tickerMatch = TICKER_RE.exec(name);
+  if (tickerMatch) {
+    name = name.slice(0, tickerMatch.index);
+  }
+
+  name = name.split(/\s+(?:P|S|E)\s+\d{1,2}\/\d{1,2}\/\d{2,4}|\s+\d{1,2}\/\d{1,2}\/\d{2,4}|\s+\$[\d,]/i)[0];
+
+  name = cleanAssetNameString(name);
+
   if (!name && ticker) return ticker;
   return name;
 }
