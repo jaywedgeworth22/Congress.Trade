@@ -4636,8 +4636,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /ingest-local-vision ------------------------------------------
-  // Receives extracted transactions from local Mac vision worker (source = 'local_mac'),
-  // normalizes and persists transactions, transitions filing status to 'extracted' or 'needs_review'.
+  // Receives extracted transactions from a local/server vision worker.
+  // source: 'local_mac' (Mac Vision / kimi-cli) or 'server_cpu' (Coolify CPU pipeline).
+  // Normalizes and persists transactions; filing → extracted / needs_review / persisted.
   r.post('/ingest-local-vision', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -4653,6 +4654,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const parsedTx = Array.isArray(body.transactions) ? (body.transactions as ParsedTx[]) : [];
     const extractor = typeof body.extractor === 'string' ? body.extractor : 'mac_vision_v1';
     const workerId = typeof body.workerId === 'string' ? body.workerId : 'local_mac_1';
+    // Mac worker → local_mac; Coolify CPU worker → server_cpu; default local_mac for back-compat.
+    const rawSource = typeof body.source === 'string' ? body.source.trim() : '';
+    const txSource: TxSource =
+      rawSource === 'server_cpu' || extractor.startsWith('server_cpu')
+        ? 'server_cpu'
+        : 'local_mac';
 
     try {
       const filingRow = await loadFilingRow(c.env, docId);
@@ -4680,7 +4687,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const result = await normalize(c.env, filing, parsedTx, {
         extractor,
         modelVersion: workerId,
-        source: 'local_mac',
+        source: txSource,
       });
 
       return c.json({
