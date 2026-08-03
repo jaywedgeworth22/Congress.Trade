@@ -31,7 +31,7 @@
     "@libsql/client": "^0.17.4",
     "cheerio": "^1.2.0",
     "fflate": "^0.8.3",
-    "hono": "^4.12.32",
+    "hono": "^4.12.34",
     "jsonrepair": "^3.15.0",
     "node-html-parser": "^9.0.1",
     "pdf-lib": "^1.17.1",
@@ -50,6 +50,6 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "undici": "^6.27.1"
+    "undici": "^7.29.0"
   }
 }
