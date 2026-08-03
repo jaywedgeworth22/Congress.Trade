@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Filing } from '../../shared/types.ts';
 
 // Mock unpdf so the page-count test doesn't need a real PDF fixture — it only
@@ -15,6 +15,10 @@ vi.mock('unpdf', () => ({
 }));
 
 import { parseHousePtrText, TextPdfExtractor } from '../textPdf.ts';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function textPdfFiling(): Filing {
   return {
@@ -57,6 +61,7 @@ describe('parseHousePtrText', () => {
       txDate: '2026-03-16',
       amountMin: 1001,
       amountMax: 15000,
+      confidence: 1.0,
     });
   });
 
@@ -77,6 +82,7 @@ describe('parseHousePtrText', () => {
       txType: 'P',
       amountMin: 15001,
       amountMax: 50000,
+      confidence: 1.0,
     });
     expect(rows[0].assetName).not.toContain('Clerk');
   });
@@ -99,23 +105,51 @@ describe('parseHousePtrText', () => {
       txDate: '2026-03-16',
       amountMin: 1001,
       amountMax: 15000,
+      confidence: 1.0,
     });
     expect(rows[1]).toMatchObject({
       owner: 'dependent',
       assetName: 'Apple Inc. - Common Stock',
       ticker: 'AAPL',
+      confidence: 1.0,
     });
     expect(rows[0].assetName).not.toContain('Clerk');
   });
 
-  it('preserves caret preferred-share tickers in House text', () => {
+  it('handles multi-line asset descriptions that wrap before [ST]', () => {
+    const rows = parseHousePtrText(`
+      Filer Information
+      ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200?
+      SP Alphabet Inc. - Class C Capital
+      Stock (GOOG) [ST]
+      P 06/14/2026 06/20/2026 $1,001 - $15,000
+      Filing Status: New
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner: 'spouse',
+      assetName: 'Alphabet Inc. - Class C Capital Stock',
+      ticker: 'GOOG',
+      assetType: 'ST',
+      txType: 'P',
+      txDate: '2026-06-14',
+      amountMin: 1001,
+      amountMax: 15000,
+      confidence: 1.0,
+    });
+  });
+
+  it('preserves caret preferred-share tickers and normalizes slash tickers', () => {
     const rows = parseHousePtrText(`
       Periodic Transaction Report
       SP JPMorgan Chase & Co. Depositary Shares, Series GG (JPM^J) [ST]
       P 05/01/2026 05/02/2026 $1,001 - $15,000
+      JT Berkshire Hathaway Inc. (BRK/B) [ST]
+      S 05/03/2026 05/04/2026 $15,001 - $50,000
     `);
 
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
       owner: 'spouse',
       assetName: 'JPMorgan Chase & Co. Depositary Shares, Series GG',
@@ -125,6 +159,18 @@ describe('parseHousePtrText', () => {
       txDate: '2026-05-01',
       amountMin: 1001,
       amountMax: 15000,
+      confidence: 1.0,
+    });
+    expect(rows[1]).toMatchObject({
+      owner: 'joint',
+      assetName: 'Berkshire Hathaway Inc.',
+      ticker: 'BRK.B',
+      assetType: 'ST',
+      txType: 'S',
+      txDate: '2026-05-03',
+      amountMin: 15001,
+      amountMax: 50000,
+      confidence: 1.0,
     });
   });
 
@@ -145,12 +191,13 @@ describe('parseHousePtrText', () => {
       txDate: '2026-06-10',
       amountMin: 1001,
       amountMax: 15000,
+      confidence: 1.0,
     });
     expect(rows[0].assetName).not.toContain('Clerk');
     expect(rows[0].assetName).not.toContain('Transaction Type');
   });
 
-  it('parses Pelosi-style option rows from House PTR text at text confidence', () => {
+  it('parses Pelosi-style option rows from House PTR text at 1.0 deterministic confidence', () => {
     const rows = parseHousePtrText(
       'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
         'SP Intel Corporation - Common Stock (INTC) [OP] P 05/29/2026 05/29/2026 $1,000,001 - $5,000,000 F S: New D: Purchased 200 call options with a strike price of $50 and an expiration date of 3/19/27. ' +
@@ -168,7 +215,7 @@ describe('parseHousePtrText', () => {
       amountMin: 1000001,
       amountMax: 5000000,
       isOption: true,
-      confidence: 0.9,
+      confidence: 1.0,
     });
     expect(rows[1]).toMatchObject({
       assetName: 'Uber Technologies, Inc. Common Stock',
@@ -176,7 +223,7 @@ describe('parseHousePtrText', () => {
       amountMin: 500001,
       amountMax: 1000000,
       isOption: true,
-      confidence: 0.9,
+      confidence: 1.0,
     });
   });
 
@@ -199,15 +246,18 @@ describe('parseHousePtrText', () => {
       txDate: '2026-05-05',
       amountMin: 50001,
       amountMax: 100000,
+      confidence: 1.0,
     });
     expect(rows[2]).toMatchObject({
       assetName: 'East Bay CA Muni Util',
       amountMin: 250001,
       amountMax: 500000,
+      confidence: 1.0,
     });
     expect(rows[3]).toMatchObject({
       assetName: 'EEMA O&M Services Group',
       assetType: 'OL',
+      confidence: 1.0,
     });
     expect(rows[0].assetName).not.toContain('Clerk');
     expect(rows[3].assetName).not.toContain('Kent Street Group');
@@ -231,6 +281,7 @@ describe('parseHousePtrText', () => {
       '529 Prepaid Tuition Plan',
     ]);
     expect(rows.every((row) => row.ticker === null)).toBe(true);
+    expect(rows.every((row) => row.confidence === 1.0)).toBe(true);
   });
 
   it('parses digit-prefixed House asset-type codes in multiline blocks', () => {
@@ -250,6 +301,7 @@ describe('parseHousePtrText', () => {
       txType: 'P',
       amountMin: 1001,
       amountMax: 15000,
+      confidence: 1.0,
     });
   });
 
@@ -280,8 +332,31 @@ describe('parseHousePtrText', () => {
       supplementalText:
         'New | Morgan Stanley - Select UMA Account # 1 | US | Common Stock',
       capGainsOver200: true,
+      confidence: 1.0,
     });
     expect(rows[0].supplementalText).not.toContain('Hon. Josh');
+  });
+
+  it('runs deterministic textPdf extraction with zero LLM calls', async () => {
+    unpdfMocks.getDocumentProxy.mockResolvedValue({ numPages: 1 });
+    unpdfMocks.extractText.mockResolvedValue({
+      text: `
+        Periodic Transaction Report
+        SP Apple Inc. (AAPL) [ST]
+        P 06/14/2026 06/20/2026 $1,001 - $15,000
+      `,
+    });
+
+    const extractor = new TextPdfExtractor();
+    const result = await extractor.extract({
+      filing: textPdfFiling(),
+      bytes: new ArrayBuffer(16),
+    });
+
+    expect(result.confidence).toBe(1.0);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].confidence).toBe(1.0);
+    expect(result.extractor).toBe('textPdf');
   });
 });
 
@@ -299,8 +374,7 @@ describe('TextPdfExtractor page count', () => {
     })) as { pageCount?: number | null };
 
     expect(result.pageCount).toBe(3);
-    // One proxy open, one text extraction call — page count must not trigger a
-    // second parse (that's the "do NOT merge pages just to count" constraint).
+
     expect(unpdfMocks.getDocumentProxy).toHaveBeenCalledTimes(1);
   });
 
@@ -318,11 +392,6 @@ describe('TextPdfExtractor page count', () => {
   });
 
   it('does not detach the caller-supplied ArrayBuffer (regression guard for Sentry CONGRESS-TRADE-2)', async () => {
-    // getDocumentProxy/pdf.js transfers (and detaches) the buffer backing the
-    // Uint8Array view it is handed. Simulate that real behavior here via the
-    // standard structured-clone transfer algorithm, which is exactly what
-    // detachment looks like: the source buffer's byteLength drops to 0 and it
-    // can no longer back a typed array.
     unpdfMocks.getDocumentProxy.mockImplementation(async (view: Uint8Array) => {
       structuredClone(view.buffer, { transfer: [view.buffer] });
       return { numPages: 1 };
@@ -333,10 +402,6 @@ describe('TextPdfExtractor page count', () => {
     const extractor = new TextPdfExtractor();
     await extractor.extract({ filing: textPdfFiling(), bytes });
 
-    // The caller's own ArrayBuffer must survive untouched — pdf.js only ever
-    // detaches the throwaway copy — so the HousePdfExtractor vision fallback
-    // can reuse `bytes` after text extraction without hitting
-    // "Cannot perform Construct on a detached ArrayBuffer".
     expect(bytes.byteLength).toBe(8);
     expect(() => new Uint8Array(bytes)).not.toThrow();
   });

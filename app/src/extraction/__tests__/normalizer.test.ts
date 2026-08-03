@@ -377,7 +377,9 @@ describe('normalize', () => {
   it('snaps a plausible non-canonical amount to the nearest bracket without penalty', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     // 1200–14000 isn't an exact STOCK Act bracket but is a sane range -> snap, no penalty.
-    const result = await normalize(env, filing(), [tx({ amountMin: 1200, amountMax: 14000 })]);
+    const result = await normalize(env, filing(), [
+      tx({ amountMin: 1200, amountMax: 14000, rawText: 'AAPL Apple Inc P $1,200 - $14,000' }),
+    ]);
     expect(result.needsReview).toBe(false);
     expect(result.minConfidence).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
     expect(cap.insertedTx).toHaveLength(1);
@@ -473,5 +475,55 @@ describe('normalize', () => {
     clearResolverCache();
     await normalize(second.env, filing({ docId: 'doc-cold' }), [tx({ ticker: 'AAPL' })]);
     expect(second.cap.masterReads).toBe(1);
+  });
+
+  it('differentiates duplicate trades across split trust accounts (e.g. Harshbarger CHEGG trades) using owner, subholding, description, and rowIndex', () => {
+    const tradeBase = {
+      txDate: '2024-05-15',
+      ticker: 'CHGG',
+      assetName: 'Chegg, Inc.',
+      amountMin: 1001,
+      amountMax: 15000,
+      txType: 'P' as const,
+    };
+
+    const trust1 = tx({ ...tradeBase, owner: 'dependent' as const, subholding: 'Harshbarger Family Trust #1', description: 'Trust 1 Purchase' });
+    const trust2 = tx({ ...tradeBase, owner: 'dependent' as const, subholding: 'Harshbarger Family Trust #2', description: 'Trust 2 Purchase' });
+
+    // Different subholding / description -> different hash
+    const key1 = transactionRowKey('primary', 0, trust1);
+    const key2 = transactionRowKey('primary', 1, trust2);
+    expect(key1).not.toBe(key2);
+
+    // Same details, different rowIndex -> different row key string
+    const key1Row0 = transactionRowKey('primary', 0, trust1);
+    const key1Row1 = transactionRowKey('primary', 1, trust1);
+    expect(key1Row0).not.toBe(key1Row1);
+    expect(key1Row0).toContain('v1:primary:0:');
+    expect(key1Row1).toContain('v1:primary:1:');
+  });
+
+  it('routes contradictory amount ranges or future trade dates to review queue', async () => {
+    // 1. Contradictory amount range: rawText says $1,001 - $15,000 but amountMin/Max set to $50,001 - $100,000
+    const { env: env1, cap: cap1 } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result1 = await normalize(env1, filing(), [
+      tx({
+        rawText: '$1,001 - $15,000',
+        amountMin: 50001,
+        amountMax: 100000,
+      }),
+    ]);
+    expect(result1.needsReview).toBe(true);
+    expect(String(cap1.reviewRows[0][1])).toContain('invalid_amount');
+
+    // 2. Future trade date (txDate > filedDate)
+    const { env: env2, cap: cap2 } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result2 = await normalize(env2, filing({ filedDate: '2024-05-01' }), [
+      tx({
+        txDate: '2024-05-15',
+      }),
+    ]);
+    expect(result2.needsReview).toBe(true);
+    expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
   });
 });

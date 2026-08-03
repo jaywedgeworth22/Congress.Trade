@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.congress.trade.vision-worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jay/Code/Congress.Trade/services/vision-worker/worker.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CONGRESS_TRADE_API_URL</key>
+        <string>http://localhost:8787</string>
+        <key>WORKER_ID</key>
+        <string>local_mac_1</string>
+        <key>POLL_INTERVAL_SEC</key>
+        <string>30</string>
+        <key>HEARTBEAT_INTERVAL_SEC</key>
+        <string>60</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/jay/Library/Logs/com.congress.trade.vision-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jay/Library/Logs/com.congress.trade.vision-worker.err.log</string>
+</dict>
+</plist>

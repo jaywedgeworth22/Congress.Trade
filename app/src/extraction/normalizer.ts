@@ -18,7 +18,7 @@
  * after running buildExtractorPipeline(env).
  */
 
-import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types.ts';
+import type { Env, Filing, Owner, ParsedTx, Transaction, TxType, TxSource } from '../shared/types.ts';
 import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
@@ -34,6 +34,8 @@ import {
 import { cleanAssetString } from './nameNormalizer.ts';
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { deprecatePredecessorFilingTransactions } from './agreement.ts';
+import { parseAmountRange } from './amounts.ts';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -130,7 +132,7 @@ export function transactionRowKey(
 ): string {
   const payload = [
     fields.txDate ?? '',
-    fields.owner ?? '',
+    normalizeText(fields.owner ?? null),
     normalizeText(fields.assetName),
     (fields.ticker ?? '').toUpperCase(),
     normalizeText(fields.assetType),
@@ -166,10 +168,11 @@ export async function recomputeTransactions(
   env: Env,
   filing: Filing,
   parsed: ParsedTx[],
+  sourceOverride?: TxSource,
 ): Promise<FlaggedTx[]> {
   const nowIso = new Date().toISOString();
   const resolver = await loadResolver(env);
-  return parsed.map((p, rowIndex) => buildTransaction(p, filing, resolver, nowIso, rowIndex));
+  return parsed.map((p, rowIndex) => buildTransaction(p, filing, resolver, nowIso, rowIndex, sourceOverride));
 }
 
 /** securities_master row shape. `aliases` is a JSON string array. */
@@ -197,13 +200,14 @@ export async function normalize(
   env: Env,
   filing: Filing,
   parsed: ParsedTx[],
-  meta?: { extractor?: string; modelVersion?: string | null },
+  meta?: { extractor?: string; modelVersion?: string | null; source?: TxSource },
 ): Promise<NormalizeResult> {
   const nowIso = new Date().toISOString();
   const extractorName = meta?.extractor ?? filing.extractor ?? null;
   const modelVersion = meta?.modelVersion ?? filing.modelVersion ?? null;
+  const source = meta?.source ?? 'primary';
 
-  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, parsed);
+  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, parsed, source);
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
@@ -215,6 +219,19 @@ export async function normalize(
 
   const needsReview =
     flagged.length === 0 || minConfidence < CONFIDENCE_THRESHOLD || hasHardFailure || exceedsPublishLimit;
+
+  const isAmendment =
+    /amend|\(2\)|278t\(\d+\)/i.test(filing.docId) ||
+    (filing.filingType && /amend/i.test(filing.filingType)) ||
+    parsed.some((p) => p.filingStatus && /amend/i.test(p.filingStatus));
+
+  if (isAmendment) {
+    for (const f of flagged) {
+      if (!f.tx.filingStatus) {
+        f.tx.filingStatus = 'amended';
+      }
+    }
+  }
 
   const transactions = flagged.map((f) => f.tx);
 
@@ -271,6 +288,16 @@ export async function normalize(
   }
   const insertedIds = persisted.insertedIds;
 
+  if (isAmendment && filing.filerId) {
+    await deprecatePredecessorFilingTransactions(
+      env.DB,
+      filing.docId,
+      filing.filerId,
+      filing.filedDate,
+      nowIso,
+    );
+  }
+
   // Best-effort immediate flush. The durable outbox row was committed in the
   // same D1 batch as each transaction, so a queue outage cannot lose delivery;
   // the scheduled reconciler retries any row left pending.
@@ -294,6 +321,7 @@ function buildTransaction(
   resolve: TickerResolver,
   nowIso: string,
   rowIndex: number,
+  sourceOverride?: TxSource,
 ): FlaggedTx {
   const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
   let rawTicker = p.ticker;
@@ -315,6 +343,7 @@ function buildTransaction(
       amountMax: p.amountMax,
       txType: p.txType,
       txDate: p.txDate,
+      rawText: p.rawText,
     },
     filing.filedDate,
     resolve,
@@ -323,6 +352,8 @@ function buildTransaction(
     isOption: p.isOption,
     assetName: cleanedAssetName,
   });
+
+  const txSource = sourceOverride ?? (p as { source?: TxSource }).source ?? 'primary';
 
   const tx: Transaction = {
     id: uuid(),
@@ -348,8 +379,8 @@ function buildTransaction(
     description: p.description ?? null,
     supplementalText: p.supplementalText ?? null,
     confidence: s.confidence,
-    source: 'primary',
-    rowKey: transactionRowKey('primary', rowIndex, {
+    source: txSource,
+    rowKey: transactionRowKey(txSource, rowIndex, {
       ...p,
       ticker: s.ticker,
       txType: s.txType,
@@ -404,6 +435,7 @@ export function scoreFields(
     amountMax: number | null;
     txType: string | null;
     txDate: string | null;
+    rawText?: string | null;
   },
   filedDate: string | null,
   resolve: TickerResolver,
@@ -445,6 +477,18 @@ export function scoreFields(
   // nearest STOCK Act bracket WITHOUT penalty.
   let amountMin = fields.amountMin;
   let amountMax = fields.amountMax;
+
+  if (fields.rawText && amountMin !== null && amountMin !== undefined) {
+    const parsedRange = parseAmountRange(fields.rawText);
+    const snapped = nearestBracket(amountMin, amountMax ?? amountMin);
+    if (parsedRange.min !== null) {
+      if (parsedRange.exact && (snapped.min !== parsedRange.min || (parsedRange.max !== null && snapped.max !== parsedRange.max))) {
+        flags.push('invalid_amount');
+        confidence *= PENALTY_INVALID_BRACKET;
+      }
+    }
+  }
+
   if (amountMin === null || amountMin === undefined) {
     flags.push('no_amount');
     confidence *= PENALTY_INVALID_BRACKET;
@@ -684,11 +728,12 @@ async function persistNormalizedPublish(
   const insertRowsJson = transactionInsertJson(transactions);
   const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
   const exactLiveSet = `(SELECT COUNT(*) FROM transactions
-      WHERE doc_id = ? AND source IN ('primary', 'manual')
+      WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac')
         AND deprecated_at IS NULL) = ?
     AND (SELECT COUNT(*) FROM transactions
-      WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+      WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?`;
+
 
   const auditPayload = JSON.stringify({
     minConfidence: metadata.confidence,
@@ -751,7 +796,7 @@ async function persistNormalizedPublish(
                 COALESCE((
                   SELECT json_group_array(id) FROM (
                     SELECT id FROM transactions
-                     WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+                     WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
                      ORDER BY id ASC
                   )
                 ), '[]'), ?
@@ -836,7 +881,7 @@ async function persistNormalizedPublish(
                 COALESCE((
                   SELECT json_group_array(id) FROM (
                     SELECT id FROM transactions
-                     WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+                     WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
                      ORDER BY id ASC
                   )
                 ), '[]'), ?

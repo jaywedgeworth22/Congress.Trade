@@ -5,6 +5,7 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -88,8 +89,18 @@ export class D1DatabaseShim {
   ): Promise<{ success: boolean; results: T[]; error?: string; meta: any }[]> {
     try {
       const stmts = statements.map((s) => s.statement);
-      const res = await this.client.batch(stmts, "write");
-      return res.map((r) => ({
+      const firstSql = typeof stmts[0] === "string" ? stmts[0] : (stmts[0] && typeof (stmts[0] as any).sql === "string" ? (stmts[0] as any).sql : "");
+      const isTransactionStarted = firstSql.trim().toUpperCase().startsWith("BEGIN");
+      const batchStmts: InStatement[] = isTransactionStarted
+        ? stmts
+        : [
+            { sql: "BEGIN IMMEDIATE", args: [] },
+            ...stmts,
+            { sql: "COMMIT", args: [] },
+          ];
+      const res = await this.client.batch(batchStmts, "write");
+      const rawResults = isTransactionStarted ? res : res.slice(1, res.length - 1);
+      return rawResults.map((r) => ({
         success: true,
         results: r.rows as unknown as T[],
         meta: d1Meta(r),
@@ -325,6 +336,12 @@ export class S3BucketShim {
       ContentType: options?.httpMetadata?.contentType,
     });
     await this.s3.send(command);
+
+    const headCommand = new HeadObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+    });
+    await this.s3.send(headCommand);
   }
 
   async delete(key: string): Promise<void> {

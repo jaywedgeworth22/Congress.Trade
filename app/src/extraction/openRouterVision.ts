@@ -33,6 +33,7 @@ import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { environmentName } from '../shared/thirdPartyTelemetry.ts';
+import { sendPushover } from '../shared/pushover.ts';
 import {
   openrouterRequestEnrichment,
   type OpenRouterRequestEnrichment,
@@ -521,6 +522,50 @@ export class OpenRouterVisionExtractor implements Extractor {
           }
           if (includeEngine && engine && isEngineOverrideRejection(res.status, detail)) {
             return { rejection: detail, status: res.status };
+          }
+          if (res.status === 402 || res.status === 403) {
+            await sendPushover(this.env, {
+              title: 'OpenRouter Budget Alert',
+              message: `OpenRouter HTTP ${res.status} budget cap reached for model ${model} (doc: ${docId ?? 'unknown'}). Attempting backup key failover.`,
+              priority: 1,
+            }).catch(() => {});
+
+            const backupKey = (await resolveSecret(this.env, 'OPENROUTER_BACKUP_API_KEY')).value;
+            if (backupKey && backupKey !== key) {
+              console.warn(`${this.name}: HTTP ${res.status} budget cap; attempting failover to OPENROUTER_BACKUP_API_KEY`);
+              const backupRes = await fetchWithRetry(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${backupKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://congress.trade',
+                    'X-Title': 'Congress.Trade',
+                  },
+                  body: JSON.stringify({
+                    model,
+                    max_tokens: MAX_TOKENS,
+                    response_format: structured
+                      ? OPENROUTER_EXTRACTION_RESPONSE_FORMAT
+                      : { type: 'json_object' },
+                    usage: { include: true },
+                    ...(Object.keys(provider).length ? { provider } : {}),
+                    plugins,
+                    messages: buildMessages(),
+                    ...classifierEnrichment,
+                  }),
+                  signal: input.signal
+                    ? AbortSignal.any([input.signal, AbortSignal.timeout(600_000)])
+                    : AbortSignal.timeout(600_000),
+                },
+                this.name,
+                { model, spendGuard: { env: this.env, provider: 'openrouter' } }
+              );
+              if (backupRes.ok) {
+                return { payload: (await backupRes.json()) as OpenAIChatPayload };
+              }
+            }
           }
           throw new Error(`${this.name}: OpenRouter API ${res.status} ${res.statusText} ${detail}`);
         }

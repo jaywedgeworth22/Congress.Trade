@@ -8,7 +8,8 @@ export interface ReadinessResult {
 }
 
 const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
-  ['filings', 'SELECT doc_id, first_seen_at, filed_date, page_count, raw_bytes FROM filings LIMIT 0'],
+  ['filings', 'SELECT doc_id, first_seen_at, filed_date, page_count, raw_bytes, local_wait_expires_at FROM filings LIMIT 0'],
+  ['local_worker_heartbeat', 'SELECT worker_id, last_heartbeat_at, status_json FROM local_worker_heartbeat LIMIT 0'],
   [
     'transactions',
     `SELECT row_key, disclosure_available_at, deprecated_at, asset_type_name,

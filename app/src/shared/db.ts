@@ -152,3 +152,16 @@ export function chunkArray<T>(items: readonly T[], size = 90): T[][] {
   }
   return chunks;
 }
+
+/**
+ * Execute PRAGMA busy_timeout = 10000; on a database connection to enforce
+ * write-lock discipline and prevent instant SQLITE_BUSY errors under concurrency.
+ */
+export async function ensureBusyTimeout(db: D1Database): Promise<void> {
+  try {
+    await db.prepare('PRAGMA busy_timeout = 10000;').run();
+  } catch {
+    /* ignore if unsupported in mock environment */
+  }
+}
+

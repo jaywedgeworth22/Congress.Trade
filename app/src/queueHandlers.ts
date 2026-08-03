@@ -1,5 +1,6 @@
 import type { Env, QueueMessage } from './shared/types.ts';
 import type { DurableQueueLeaseContext } from './deno/durableQueue.ts';
+import { get, run } from './shared/db.ts';
 import { fetchFiling } from './ingestion/fetcher.ts';
 import { classifyFiling } from './ingestion/classifier.ts';
 import { extractAndNormalize } from './extraction/orchestrator.ts';
@@ -36,6 +37,10 @@ export async function handleIngestMessage(
     case 'filing.extracted':
       if (lease) await extractAndNormalize(env, msg.docId, lease);
       else await extractAndNormalize(env, msg.docId);
+      return;
+    case 'filing.local_wait_check':
+      if (lease) await handleLocalWaitCheck(env, msg.docId, lease);
+      else await handleLocalWaitCheck(env, msg.docId);
       return;
     case 'tx.persisted':
       await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: msg.txId });
@@ -186,4 +191,34 @@ export async function handleCorruptDeadLetterMessage(
     attempts,
     new Error(`invalid durable queue payload: ${error}`),
   );
+}
+
+export async function handleLocalWaitCheck(
+  env: Env,
+  docId: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
+  const row = await get<{ ingest_status: string; local_wait_expires_at: string | null }>(
+    env.DB,
+    `SELECT ingest_status, local_wait_expires_at FROM filings WHERE doc_id = ?`,
+    [docId],
+  );
+  if (!row) return;
+
+  if (row.ingest_status === 'extraction_pending_local') {
+    const isExpired = !row.local_wait_expires_at || new Date(row.local_wait_expires_at).getTime() <= Date.now();
+    if (isExpired) {
+      await lease?.assertOwned();
+      await run(
+        env.DB,
+        `UPDATE filings
+            SET ingest_status = 'classified'
+          WHERE doc_id = ? AND ingest_status = 'extraction_pending_local'`,
+        [docId],
+      );
+      await lease?.assertOwned();
+      await env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
+    }
+  }
 }

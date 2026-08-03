@@ -103,10 +103,11 @@ describe('fetchFiling senate wall guard', () => {
       await opts?.kv?.put('senate_efd_session', JSON.stringify(session));
       return session;
     });
-    const calls: Array<{ url: string; cookie: string | undefined }> = [];
+    const calls: Array<{ url: string; cookie: string | undefined; method: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = (init?.headers ?? {}) as Record<string, string>;
-      calls.push({ url: String(input), cookie: headers['cookie'] });
+      const method = (init?.method ?? 'GET').toUpperCase();
+      calls.push({ url: String(input), cookie: headers['cookie'], method });
       // Sessionless first hit -> wall; refetch with the fresh cookie -> report.
       const body = headers['cookie']?.includes('sessionid=fresh') ? REPORT_HTML : WALL_HTML;
       return new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
@@ -115,8 +116,9 @@ describe('fetchFiling senate wall guard', () => {
     await fetchFiling(env, 'S-wall-1');
 
     expect(mocks.establishSenateSession).toHaveBeenCalledTimes(1);
-    expect(calls).toHaveLength(2);
-    expect(calls[1].cookie).toContain('sessionid=fresh');
+    const getCalls = calls.filter((c) => c.method === 'GET');
+    expect(getCalls).toHaveLength(2);
+    expect(getCalls[1].cookie).toContain('sessionid=fresh');
     // The REAL report bytes are persisted — never the wall.
     expect(r2Puts).toHaveLength(1);
     expect(new TextDecoder().decode(r2Puts[0].bytes)).toContain('filedReports');

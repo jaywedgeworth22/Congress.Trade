@@ -96,6 +96,29 @@ describe('POST /api/ingest/detection', () => {
     expect(recordDisclosureLatencyCandidate).toHaveBeenCalledTimes(1);
   });
 
+  it('computes houseFilerId for House filings using houseFilerId(first, last, stateDst)', async () => {
+    const res = await post('ingest-secret', {
+      source: 'house',
+      docKey: 'H-2024-20024115',
+      link: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2024/20024115.pdf',
+      filerName: 'Pelosi, Nancy',
+      stateDst: 'CA11',
+      detectedAt: '2026-07-01T00:00:00.000Z',
+    });
+    expect(res.status).toBe(200);
+    expect(insertFilingIfNew).toHaveBeenCalledTimes(1);
+    const filing = insertFilingIfNew.mock.calls[0][1] as {
+      docId: string;
+      chamber: string;
+      filerId: string | null;
+    };
+    expect(filing).toMatchObject({
+      docId: 'H-2024-20024115',
+      chamber: 'house',
+      filerId: 'house-ca11-nancy-pelosi',
+    });
+  });
+
   it('skips pipeline ingest when ingest:false (latency-only measurement)', async () => {
     const res = await post('ingest-secret', {
       source: 'house',

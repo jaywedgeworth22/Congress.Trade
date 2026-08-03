@@ -85,6 +85,36 @@ export interface DiscoveredFiling {
    *  indexes carry neither; those columns are enriched out-of-band). */
   party?: string | null;
   photoUrl?: string | null;
+  docKind?: string | null;
+}
+
+export function preclassifyDocKind(
+  sourceUrl: string,
+  chamber?: Chamber | string | null,
+  contentType?: string | null,
+): string {
+  const url = (sourceUrl || '').toLowerCase();
+  const cType = (contentType || '').toLowerCase();
+
+  if (
+    chamber === 'senate' &&
+    (url.includes('/search/view/') || url.endsWith('.html') || cType.includes('text/html'))
+  ) {
+    return 'senate_html';
+  }
+  if (url.includes('scanned') || url.includes('paper') || cType.includes('scanned')) {
+    return 'scanned_pdf';
+  }
+  if (
+    url.endsWith('.pdf') ||
+    url.includes('/ptr-pdfs/') ||
+    url.includes('pdf') ||
+    cType.includes('application/pdf') ||
+    chamber === 'house'
+  ) {
+    return 'text_pdf';
+  }
+  return 'unknown';
 }
 
 function normalizeFilingDate(raw: string | null | undefined): string | null {
@@ -104,7 +134,7 @@ function slugPart(raw: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-function houseFilerId(first: string, last: string, stateDst: string): string | null {
+export function houseFilerId(first: string, last: string, stateDst: string): string | null {
   const name = slugPart([first, last].filter(Boolean).join(' '));
   if (!name) return null;
   const district = slugPart(stateDst || 'house');
@@ -203,15 +233,16 @@ export async function insertFilingIfNew(
     }
   }
   const filedDate = normalizeFilingDate(f.filedDate);
+  const docKind = f.docKind ?? preclassifyDocKind(f.sourceUrl, f.chamber);
   const [res] = await batch(env.DB, [
     [
       `INSERT OR IGNORE INTO filings
        (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
         raw_object_key, ingest_status, doc_kind, extractor, model_version,
         confidence, first_seen_at, source_updated_at, error)
-     VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
+     VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', ?, NULL, NULL,
              NULL, ?, NULL, NULL)`,
-      [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
+      [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, docKind, nowIso],
     ],
     ingestionOutboxInsertForDoc(f.docId, nowIso),
   ]);

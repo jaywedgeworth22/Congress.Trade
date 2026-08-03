@@ -235,6 +235,31 @@ export async function fetchFiling(
         console.warn('fetcher: failed to load senate session cookies from KV:', err);
       }
     }
+    const headRes = await trackedFetch(
+      sourceUrl,
+      {
+        method: 'HEAD',
+        headers,
+        signal: lease?.signal,
+      },
+      { service: 'filing-ingestion', operation: 'head-validate-fetch', dynamicTarget: 'filing-source' },
+    ).catch(() => null);
+
+    if (headRes && !headRes.ok && headRes.status !== 304 && headRes.status !== 405) {
+      const notYetPublished = headRes.status === 404 && shouldRetryFetchStatus(headRes.status, row.first_seen_at, new Date());
+      const message = notYetPublished
+        ? `fetcher: HEAD source ${sourceUrl} -> HTTP 404 (not yet published; will retry)`
+        : `fetcher: HEAD source ${sourceUrl} -> HTTP ${headRes.status}`;
+      await headRes.body?.cancel().catch(() => {});
+      await markError(env, docId, message, lease);
+      if (shouldRetryFetchStatus(headRes.status, row.first_seen_at, new Date())) {
+        throw new IngestRetryError(
+          message,
+          retryAfterSeconds(headRes.headers.get('retry-after')) ?? ingestBackoffSeconds(queueAttempt),
+        );
+      }
+      return;
+    }
 
     const res = await trackedFetch(sourceUrl, {
       headers,
