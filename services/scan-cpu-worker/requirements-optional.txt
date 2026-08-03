@@ -1,0 +1,4 @@
+# Optional OCR backends (larger; install only if OCR_BACKEND=surya|doctr)
+# Surya: pip may pull torch — pin CPU wheels on the host if needed.
+surya-ocr>=0.8.0
+python-doctr[torch]>=0.8.0

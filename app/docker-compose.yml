@@ -45,6 +45,28 @@ services:
       - SQLITE_WEB_PASSWORD=${SQLITE_WEB_PASSWORD}
     command: sqlite_web -x --password -H 0.0.0.0 /data/congress-trade/db.sqlite
 
+  # Linux/ARM64 CPU scanned-PTR worker (no Mac, no LLM).
+  # Polls /api/admin/scanned-filings/pending and posts source=server_cpu.
+  # Context is repo-relative: Coolify base_directory is /app, so .. is repo root.
+  scan-cpu-worker:
+    build:
+      context: ../services/scan-cpu-worker
+    container_name: congress-scan-cpu-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CONGRESS_TRADE_API_URL=http://congress-app:5000
+      - WORKER_ID=server_cpu_1
+      - OCR_BACKEND=tesseract
+      - CHECKBOX_INK_RATIO=0.10
+      - POLL_INTERVAL_SEC=30
+      - HEARTBEAT_INTERVAL_SEC=60
+      - EXTRACTOR=server_cpu_v1
+      # ADMIN_TOKEN comes from env_file (.env / Coolify secrets)
+    depends_on:
+      - congress-app
+
 networks:
   default:
     name: oracle_internal

@@ -728,10 +728,10 @@ async function persistNormalizedPublish(
   const insertRowsJson = transactionInsertJson(transactions);
   const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
   const exactLiveSet = `(SELECT COUNT(*) FROM transactions
-      WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac')
+      WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac', 'server_cpu')
         AND deprecated_at IS NULL) = ?
     AND (SELECT COUNT(*) FROM transactions
-      WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
+      WHERE doc_id = ? AND source IN ('primary', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?`;
 
 
@@ -796,7 +796,7 @@ async function persistNormalizedPublish(
                 COALESCE((
                   SELECT json_group_array(id) FROM (
                     SELECT id FROM transactions
-                     WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
+                     WHERE doc_id = ? AND source IN ('primary', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
                      ORDER BY id ASC
                   )
                 ), '[]'), ?
@@ -881,7 +881,7 @@ async function persistNormalizedPublish(
                 COALESCE((
                   SELECT json_group_array(id) FROM (
                     SELECT id FROM transactions
-                     WHERE doc_id = ? AND source IN ('primary', 'local_mac') AND deprecated_at IS NULL
+                     WHERE doc_id = ? AND source IN ('primary', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
                      ORDER BY id ASC
                   )
                 ), '[]'), ?
@@ -935,7 +935,7 @@ async function persistNormalizedPublish(
   const liveRows = await all<{ id: string }>(
     env.DB,
     `SELECT id FROM transactions
-      WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+      WHERE doc_id = ? AND source IN ('primary', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))`,
     [docId, rowKeysJson],
   );

@@ -25,3 +25,10 @@ launchctl list | grep vision-worker
 ## Logs
 - Standard output: `~/Library/Logs/com.congress.trade.vision-worker.log`
 - Error output: `~/Library/Logs/com.congress.trade.vision-worker.err.log`
+
+## Server alternative (no Mac)
+
+For Coolify/Linux ARM64 without a Mac host, use **`services/scan-cpu-worker/`**:
+Tesseract (or Surya/docTR) + deterministic checkbox ink-ratio. Same admin API;
+posts `source=server_cpu`. See that service's README and
+`docs/rollouts/2026-08-03-server-cpu-scan-worker.md`.
