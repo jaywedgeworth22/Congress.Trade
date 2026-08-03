@@ -113,35 +113,18 @@ export function normalizeCompanyName(raw: string | null | undefined, ticker?: st
       return ticker.toUpperCase();
     }
 
-    // If word is entirely uppercase
-    if (word.toUpperCase() === word && /[A-Z]/.test(word)) {
-      if (word.length <= 4 && !/[AEIOUY]/.test(word)) {
-        return word; // e.g. "LPL", "BWXT" - keep upper
-      }
-      if (KEEP_UPPER.has(word)) return word;
+    const upper = word.toUpperCase();
+    if (KEEP_UPPER.has(upper)) return upper;
 
-      // Small words that shouldn't be capitalized in standard title case (unless first word)
-      if (["THE", "AND", "FOR", "OF", "IN", "ON", "AT", "TO"].includes(word)) {
-        return wordIndex === 1
-          ? word.charAt(0).toUpperCase() + word.substring(1).toLowerCase()
-          : word.toLowerCase();
-      }
-
-      // Title case it
-      return word.charAt(0).toUpperCase() + word.substring(1).toLowerCase();
+    // Small words that shouldn't be capitalized in standard title case (unless first word)
+    if (["THE", "AND", "FOR", "OF", "IN", "ON", "AT", "TO"].includes(upper)) {
+      return wordIndex === 1
+        ? upper.charAt(0) + upper.slice(1).toLowerCase()
+        : upper.toLowerCase();
     }
 
-    // If word is entirely lowercase and > 1 char
-    if (word.toLowerCase() === word && word.length > 1 && /[a-z]/.test(word)) {
-      if (["the", "and", "for", "of", "in", "on", "at", "to"].includes(word)) {
-        return wordIndex === 1
-          ? word.charAt(0).toUpperCase() + word.substring(1).toLowerCase()
-          : word;
-      }
-      return word.charAt(0).toUpperCase() + word.substring(1);
-    }
-
-    return word;
+    // Title case EVERY word
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
   });
 
   // 5. Entity normalizations (case-insensitive)

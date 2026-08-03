@@ -690,46 +690,51 @@ extension String {
         // 3. Remove Common Stock / Class A / etc. trailing noise if raw
         text = text.replacingOccurrences(of: #"(?i)\s*(?:-)?\s*Common Stock\b"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Check if string is ALL CAPS
-        let hasLetters = text.contains(where: { $0.isLetter })
-        let isAllCaps = hasLetters && text.uppercased() == text
+        let tokenMap: [String: String] = [
+            "inc": "Inc.", "inc.": "Inc.",
+            "corp": "Corp.", "corp.": "Corp.",
+            "co": "Co.", "co.": "Co.",
+            "llc": "LLC", "llc.": "LLC",
+            "ltd": "Ltd.", "ltd.": "Ltd.",
+            "plc": "PLC", "plc.": "PLC",
+            "lp": "LP", "lp.": "LP",
+            "nv": "NV", "nv.": "NV",
+            "ag": "AG", "ag.": "AG",
+            "sa": "SA", "sa.": "SA",
+            "bv": "BV", "bv.": "BV",
+            "cbs": "CBS", "ibm": "IBM", "att": "AT&T", "amd": "AMD",
+            "bp": "BP", "kkr": "KKR", "msci": "MSCI", "nrg": "NRG",
+            "pnc": "PNC", "ubs": "UBS", "etf": "ETF", "reit": "REIT",
+            "usa": "USA", "sec": "SEC", "nyse": "NYSE", "nasdaq": "NASDAQ",
+            "s&p": "S&P"
+        ]
 
-        if isAllCaps {
-            let tokenMap: [String: String] = [
-                "inc": "Inc.", "inc.": "Inc.",
-                "corp": "Corp.", "corp.": "Corp.",
-                "co": "Co.", "co.": "Co.",
-                "llc": "LLC", "llc.": "LLC",
-                "ltd": "Ltd.", "ltd.": "Ltd.",
-                "plc": "PLC", "plc.": "PLC",
-                "lp": "LP", "lp.": "LP",
-                "nv": "NV", "nv.": "NV",
-                "ag": "AG", "ag.": "AG",
-                "sa": "SA", "sa.": "SA",
-                "bv": "BV", "bv.": "BV",
-                "cbs": "CBS", "ibm": "IBM", "att": "AT&T", "amd": "AMD",
-                "bp": "BP", "kkr": "KKR", "msci": "MSCI", "nrg": "NRG",
-                "pnc": "PNC", "ubs": "UBS", "etf": "ETF", "reit": "REIT",
-                "usa": "USA", "sec": "SEC", "nyse": "NYSE", "nasdaq": "NASDAQ"
-            ]
+        let keepUpper: Set<String> = [
+            "IBM", "GE", "CDW", "AT&T", "HP", "AMD", "LPL", "ST", "BEP", "BWXT", "LUV", "TPR", "SCI", "WRB", "ABT", "FLEX", "TSCO", "NVDA", "MSFT", "AAPL", "HUBB", "ECL", "GOOGL", "BSX", "SPGI", "HD"
+        ]
 
-            let words = text.components(separatedBy: " ")
-            let formattedWords = words.enumerated().map { (idx, word) -> String in
-                let lower = word.lowercased()
-                let cleanKey = lower.trimmingCharacters(in: .punctuationCharacters)
-                if let mapped = tokenMap[cleanKey] {
-                    if lower.hasSuffix(".") && !mapped.hasSuffix(".") {
-                        return mapped + "."
-                    }
-                    return mapped
-                }
-                if ["the", "and", "for", "of", "in", "on", "at", "to"].contains(lower) && idx > 0 {
-                    return lower
-                }
-                return word.capitalized
+        let words = text.components(separatedBy: " ")
+        let formattedWords = words.enumerated().map { (idx, rawWord) -> String in
+            let lower = rawWord.lowercased()
+            let cleanKey = lower.trimmingCharacters(in: .punctuationCharacters)
+            let upper = rawWord.uppercased()
+
+            if keepUpper.contains(upper) {
+                return upper
             }
-            text = formattedWords.joined(separator: " ")
+            if let mapped = tokenMap[cleanKey] {
+                if rawWord.hasSuffix(".") && !mapped.hasSuffix(".") {
+                    return mapped + "."
+                }
+                return mapped
+            }
+            if ["the", "and", "for", "of", "in", "on", "at", "to"].contains(lower) && idx > 0 {
+                return lower
+            }
+            // Force Title Case on EVERY word
+            return rawWord.lowercased().capitalized
         }
+        text = formattedWords.joined(separator: " ")
 
         // Clean double punctuation / double spaces
         text = text.replacingOccurrences(of: #"\s+([.,])"#, with: "$1", options: .regularExpression)
