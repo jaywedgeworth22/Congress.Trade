@@ -39,7 +39,10 @@ describe('R3: Pipeline Robustification', () => {
       expect(runFn).toHaveBeenCalled();
     });
 
-    it('wraps D1DatabaseShim.batch statements in BEGIN IMMEDIATE and COMMIT', async () => {
+    it('delegates D1DatabaseShim.batch to libsql write-mode without nested BEGIN', async () => {
+      // libsql batch(stmts, "write") already opens a transaction; an extra
+      // BEGIN IMMEDIATE inside it causes SQLITE_ERROR nested-transaction failures
+      // in production (review confirm/reject, watcher, cron lanes).
       const mockClient = {
         batch: vi.fn(async (stmts: unknown[]) => {
           return stmts.map(() => ({ rows: [], rowsAffected: 1 }));
@@ -53,11 +56,15 @@ describe('R3: Pipeline Robustification', () => {
 
       expect(results).toHaveLength(2);
       expect(mockClient.batch).toHaveBeenCalledTimes(1);
-      const calledStmts = mockClient.batch.mock.calls[0][0] as Array<{ sql: string }>;
-      expect(calledStmts[0].sql).toBe('BEGIN IMMEDIATE');
-      expect(calledStmts[1].sql).toBe('INSERT INTO test VALUES (1)');
-      expect(calledStmts[2].sql).toBe('UPDATE test SET val = 2');
-      expect(calledStmts[3].sql).toBe('COMMIT');
+      const [calledStmts, mode] = mockClient.batch.mock.calls[0] as [Array<{ sql: string }>, string];
+      expect(mode).toBe('write');
+      expect(calledStmts.map((s) => s.sql)).toEqual([
+        'INSERT INTO test VALUES (1)',
+        'UPDATE test SET val = 2',
+      ]);
+      // Must NOT wrap with BEGIN/COMMIT — that nests inside libsql's write txn.
+      expect(calledStmts.some((s) => /^BEGIN/i.test(s.sql))).toBe(false);
+      expect(calledStmts.some((s) => /^COMMIT/i.test(s.sql))).toBe(false);
     });
   });
 

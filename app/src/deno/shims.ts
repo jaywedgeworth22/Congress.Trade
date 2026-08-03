@@ -89,18 +89,14 @@ export class D1DatabaseShim {
   ): Promise<{ success: boolean; results: T[]; error?: string; meta: any }[]> {
     try {
       const stmts = statements.map((s) => s.statement);
-      const firstSql = typeof stmts[0] === "string" ? stmts[0] : (stmts[0] && typeof (stmts[0] as any).sql === "string" ? (stmts[0] as any).sql : "");
-      const isTransactionStarted = firstSql.trim().toUpperCase().startsWith("BEGIN");
-      const batchStmts: InStatement[] = isTransactionStarted
-        ? stmts
-        : [
-            { sql: "BEGIN IMMEDIATE", args: [] },
-            ...stmts,
-            { sql: "COMMIT", args: [] },
-          ];
-      const res = await this.client.batch(batchStmts, "write");
-      const rawResults = isTransactionStarted ? res : res.slice(1, res.length - 1);
-      return rawResults.map((r) => ({
+      // libsql `batch(stmts, "write")` already runs the batch inside a single
+      // write transaction. Wrapping with explicit BEGIN IMMEDIATE/COMMIT made
+      // every multi-statement write fail with:
+      //   SQLITE_ERROR: cannot start a transaction within a transaction
+      // which broke review confirm/reject, watcher inserts, and cron lanes.
+      // Let libsql own BEGIN/COMMIT via the write-mode batch.
+      const res = await this.client.batch(stmts, "write");
+      return res.map((r) => ({
         success: true,
         results: r.rows as unknown as T[],
         meta: d1Meta(r),
