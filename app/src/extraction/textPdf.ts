@@ -183,8 +183,11 @@ function calculateRowConfidence(row: {
   const hasDate = Boolean(row.txDate && /^\d{4}-\d{2}-\d{2}$/.test(row.txDate));
   const hasAmount = row.amountMin !== null;
 
-  if (hasOwner && hasAsset && hasTxType && hasDate && hasAmount) {
-    return 1.0;
+  // Complete rows auto-publish: CONFIDENCE_THRESHOLD is 0.95. Cap below that
+  // forced every clean textPdf extract into review forever.
+  if (hasAsset && hasTxType && hasDate && hasAmount) {
+    // Owner is often implicit (self) on House digital forms; do not require it.
+    return hasOwner ? 1.0 : 0.97;
   }
 
   let confidence = 0.9;
@@ -192,7 +195,8 @@ function calculateRowConfidence(row: {
   if (!hasAmount) confidence -= MISSING_FIELD_PENALTY;
   if (!hasTxType) confidence -= MISSING_FIELD_PENALTY;
   if (!hasAsset) confidence -= MISSING_FIELD_PENALTY;
-  return Math.max(0.3, Math.min(0.9, confidence));
+  // Incomplete rows stay below the auto-publish threshold.
+  return Math.max(0.3, Math.min(0.94, confidence));
 }
 
 function parseInlineRecords(text: string): ParsedTx[] {
