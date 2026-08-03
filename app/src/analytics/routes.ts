@@ -22,6 +22,7 @@ import type { Env } from '../shared/types.ts';
 import { all, first, get, parseJson } from '../shared/db.ts';
 import { cached, cacheKey } from '../shared/kvCache.ts';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes.ts';
+import { normalizeCompanyName } from '../shared/companyName.ts';
 import {
   asChambers,
   asPartyBucket,
@@ -238,7 +239,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const sellCount = num(row.sell_count);
         return {
           ticker: str(row.ticker),
-          name: str(row.name),
+          name: normalizeCompanyName(str(row.name), str(row.ticker)) ?? str(row.name),
           tradeCount: num(row.trade_count),
           buyCount,
           sellCount,
