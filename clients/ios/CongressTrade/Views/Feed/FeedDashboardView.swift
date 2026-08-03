@@ -67,22 +67,6 @@ struct FeedDashboardView: View {
                         Task { await store.setSearch(nil) }
                     })
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(ChamberFilter.allCases) { chamber in
-                                FilterChip(
-                                    title: chamber.shortLabel,
-                                    isSelected: store.selectedChambers.contains(chamber)
-                                ) {
-                                    toggleChamber(chamber)
-                                }
-                                // The chip glyph is a bare "H"/"S"/"P" — give
-                                // VoiceOver the full chamber name.
-                                .accessibilityLabel(chamber.label)
-                            }
-                        }
-                    }
-
                     if let notice = store.feedNotice, store.isOffline || !notice.isEmpty {
                         FeedFreshnessView(
                             isOffline: store.isOffline,
@@ -245,8 +229,20 @@ struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        HStack(spacing: 10) {
-            Spacer()
+        HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(ChamberFilter.allCases) { chamber in
+                    FilterChip(
+                        title: chamber.shortLabel,
+                        isSelected: store.selectedChambers.contains(chamber)
+                    ) {
+                        toggleChamber(chamber)
+                    }
+                    .accessibilityLabel(chamber.label)
+                }
+            }
+
+            Spacer(minLength: 4)
 
             MetricTile(
                 title: "Trades",
@@ -254,11 +250,21 @@ struct FeedControlBar: View {
                     ? store.tradeTotal.formatted(.number.grouping(.automatic))
                     : "—"
             )
-            .frame(width: 96)
+            .frame(width: 88)
 
             MetricTile(title: "Plan", value: store.entitlementLabel)
-                .frame(width: 84)
+                .frame(width: 78)
         }
+    }
+
+    private func toggleChamber(_ chamber: ChamberFilter) {
+        var next = store.selectedChambers
+        if next.contains(chamber) {
+            next.remove(chamber)
+        } else {
+            next.insert(chamber)
+        }
+        Task { await store.setChamberSelection(next) }
     }
 }
 

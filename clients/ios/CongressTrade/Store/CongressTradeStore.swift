@@ -46,7 +46,7 @@ final class CongressTradeStore: ObservableObject {
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     /// Empty set = no chamber filter (all branches). Mirrors the website HSP chips
     /// where nothing selected means all. Non-empty = filter to that subset.
-    @Published private(set) var selectedChambers: Set<ChamberFilter> = []
+    @Published private(set) var selectedChambers: Set<ChamberFilter> = Set(ChamberFilter.allCases)
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
 

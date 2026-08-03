@@ -39,12 +39,32 @@ final class ClientTrade: Decodable, Identifiable {
     @Attribute(.unique) var id: String
     var cursor: Int?
     var docId: String?
-    var member: Member
-    var asset: Asset
-    var transaction: Transaction
-    var filing: Filing
+    var storedMember: Member?
+    var storedAsset: Asset?
+    var storedTransaction: Transaction?
+    var storedFiling: Filing?
     var confidence: Double?
     var source: Source?
+
+    var member: Member {
+        get { storedMember ?? Member() }
+        set { storedMember = newValue }
+    }
+
+    var asset: Asset {
+        get { storedAsset ?? Asset() }
+        set { storedAsset = newValue }
+    }
+
+    var transaction: Transaction {
+        get { storedTransaction ?? Transaction(type: "P") }
+        set { storedTransaction = newValue }
+    }
+
+    var filing: Filing {
+        get { storedFiling ?? Filing() }
+        set { storedFiling = newValue }
+    }
 
     enum Source: String, Codable {
         case primary
@@ -79,7 +99,7 @@ final class ClientTrade: Decodable, Identifiable {
                 return ticker
             }
             if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
-                return name
+                return name.formattedCompanyName
             }
             if let type = type?.trimmingCharacters(in: .whitespacesAndNewlines), !type.isEmpty {
                 return type.capitalized
@@ -107,10 +127,10 @@ final class ClientTrade: Decodable, Identifiable {
         self.id = id
         self.cursor = cursor
         self.docId = docId
-        self.member = member
-        self.asset = asset
-        self.transaction = transaction
-        self.filing = filing
+        self.storedMember = member
+        self.storedAsset = asset
+        self.storedTransaction = transaction
+        self.storedFiling = filing
         self.confidence = confidence
         self.source = source
     }
@@ -120,16 +140,21 @@ final class ClientTrade: Decodable, Identifiable {
         self.id = try container.decode(String.self, forKey: .id)
         self.cursor = try container.decodeIfPresent(Int.self, forKey: .cursor)
         self.docId = try container.decodeIfPresent(String.self, forKey: .docId) ?? ""
-        self.member = try container.decodeIfPresent(Member.self, forKey: .member) ?? Member()
-        self.asset = try container.decodeIfPresent(Asset.self, forKey: .asset) ?? Asset()
-        self.transaction = try container.decodeIfPresent(Transaction.self, forKey: .transaction) ?? Transaction(type: "P")
-        self.filing = try container.decodeIfPresent(Filing.self, forKey: .filing) ?? Filing()
+        self.storedMember = try container.decodeIfPresent(Member.self, forKey: .storedMember) ?? Member()
+        self.storedAsset = try container.decodeIfPresent(Asset.self, forKey: .storedAsset) ?? Asset()
+        self.storedTransaction = try container.decodeIfPresent(Transaction.self, forKey: .storedTransaction) ?? Transaction(type: "P")
+        self.storedFiling = try container.decodeIfPresent(Filing.self, forKey: .storedFiling) ?? Filing()
         self.confidence = try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 1.0
         self.source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .primary
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, cursor, docId, member, asset, transaction, filing, confidence, source
+        case id, cursor, docId
+        case storedMember = "member"
+        case storedAsset = "asset"
+        case storedTransaction = "transaction"
+        case storedFiling = "filing"
+        case confidence, source
     }
 
     /// Copies a freshly decoded snapshot over this cached row (upsert path in
@@ -138,10 +163,10 @@ final class ClientTrade: Decodable, Identifiable {
     func apply(_ item: ClientTrade) {
         cursor = item.cursor
         docId = item.docId
-        member = item.member
-        asset = item.asset
-        transaction = item.transaction
-        filing = item.filing
+        storedMember = item.storedMember
+        storedAsset = item.storedAsset
+        storedTransaction = item.storedTransaction
+        storedFiling = item.storedFiling
         confidence = item.confidence
         source = item.source
     }
@@ -548,6 +573,10 @@ struct TickerLeaderboardItem: Decodable, Identifiable {
     let memberCount: Int?
     let estVolumeUsd: Double?
     let estNetFlowUsd: Double?
+
+    var formattedName: String? {
+        name?.formattedCompanyName
+    }
 }
 
 struct VolumeOverTimeResponse: Decodable {
@@ -616,4 +645,95 @@ struct ClusterBuyItem: Decodable, Identifiable {
     let estVolumeUsd: Double?
     let firstSeen: String?
     let lastSeen: String?
+
+    var formattedName: String? {
+        name?.formattedCompanyName
+    }
+}
+
+// MARK: - Company Name Normalization Helper
+
+extension String {
+    /// Formats raw company/asset names into clean Title Case while stripping
+    /// state-of-incorporation suffixes (e.g. "/DE/", "/CA/"), trailing stock exchange/common stock noise,
+    /// and preserving acronyms (e.g. "AT&T", "IBM", "LLC", "INC", "S&P").
+    var formattedCompanyName: String {
+        let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return trimmed }
+
+        // 1. Remove trailing exchange descriptors: e.g. "(NYSE)", "(NASDAQ: AAPL)"
+        var text = trimmed.replacingOccurrences(
+            of: #"\s*\([A-Z]+(?:\s*:\s*[A-Z]+)?\)\s*$"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // 2. Strip state of incorporation suffix (e.g. "/DE/", "/DE", "/MD/", "/PA/", " /DE/")
+        let states: Set<String> = [
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+        ]
+
+        for state in states {
+            text = text.replacingOccurrences(of: "/\(state)/", with: " ", options: .caseInsensitive)
+            if text.lowercased().hasSuffix("/\(state.lowercased())") {
+                text = String(text.dropLast(state.count + 1))
+            }
+        }
+
+        text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+        text = text.replacingOccurrences(of: #"/\s*$"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 3. Remove Common Stock / Class A / etc. trailing noise if raw
+        text = text.replacingOccurrences(of: #"(?i)\s*(?:-)?\s*Common Stock\b"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check if string is ALL CAPS
+        let hasLetters = text.contains(where: { $0.isLetter })
+        let isAllCaps = hasLetters && text.uppercased() == text
+
+        if isAllCaps {
+            let tokenMap: [String: String] = [
+                "inc": "Inc.", "inc.": "Inc.",
+                "corp": "Corp.", "corp.": "Corp.",
+                "co": "Co.", "co.": "Co.",
+                "llc": "LLC", "llc.": "LLC",
+                "ltd": "Ltd.", "ltd.": "Ltd.",
+                "plc": "PLC", "plc.": "PLC",
+                "lp": "LP", "lp.": "LP",
+                "nv": "NV", "nv.": "NV",
+                "ag": "AG", "ag.": "AG",
+                "sa": "SA", "sa.": "SA",
+                "bv": "BV", "bv.": "BV",
+                "cbs": "CBS", "ibm": "IBM", "att": "AT&T", "amd": "AMD",
+                "bp": "BP", "kkr": "KKR", "msci": "MSCI", "nrg": "NRG",
+                "pnc": "PNC", "ubs": "UBS", "etf": "ETF", "reit": "REIT",
+                "usa": "USA", "sec": "SEC", "nyse": "NYSE", "nasdaq": "NASDAQ"
+            ]
+
+            let words = text.components(separatedBy: " ")
+            let formattedWords = words.enumerated().map { (idx, word) -> String in
+                let lower = word.lowercased()
+                let cleanKey = lower.trimmingCharacters(in: .punctuationCharacters)
+                if let mapped = tokenMap[cleanKey] {
+                    if lower.hasSuffix(".") && !mapped.hasSuffix(".") {
+                        return mapped + "."
+                    }
+                    return mapped
+                }
+                if ["the", "and", "for", "of", "in", "on", "at", "to"].contains(lower) && idx > 0 {
+                    return lower
+                }
+                return word.capitalized
+            }
+            text = formattedWords.joined(separator: " ")
+        }
+
+        // Clean double punctuation / double spaces
+        text = text.replacingOccurrences(of: #"\s+([.,])"#, with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
