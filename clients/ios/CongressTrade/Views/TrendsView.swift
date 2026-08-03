@@ -179,7 +179,7 @@ struct TrendsView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.ticker)
                                 .font(.subheadline.weight(.bold))
-                            Text(item.name ?? "—")
+                            Text(item.formattedName ?? "—")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -217,7 +217,7 @@ struct TrendsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.ticker)
                                 .font(.subheadline.weight(.bold))
-                            Text(c.name ?? "")
+                            Text(c.formattedName ?? "")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
