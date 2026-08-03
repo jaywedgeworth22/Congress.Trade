@@ -270,5 +270,57 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
 
       expect(filingRow?.ingest_status).toBe('persisted');
     });
+
+    it('POST /api/admin/ingest-local-vision accepts source=server_cpu from Coolify CPU worker', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('doc-server-cpu-1', 'house', 'P', '2026-08-01', 'https://example.com/scan.pdf', 'extraction_pending_local', 'scanned_pdf', nowIso).run();
+
+      const res = await app.request('/ingest-local-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'doc-server-cpu-1',
+          // Same shape as the local_mac fixture — only source/extractor differ.
+          transactions: [
+            {
+              ticker: 'NVDA',
+              assetName: 'NVIDIA Corporation',
+              txType: 'P',
+              txDate: '2026-07-25',
+              amountMin: 1001,
+              amountMax: 15000,
+              confidence: 0.95,
+              rawText: 'NVIDIA Corporation [NVDA] P 07/25/2026 $1,001 - $15,000',
+            },
+          ],
+          workerId: 'server_cpu_1',
+          extractor: 'server_cpu_v1',
+          source: 'server_cpu',
+        }),
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        ok: boolean;
+        published: boolean;
+        needsReview: boolean;
+        txCount: number;
+      };
+      expect(json.ok).toBe(true);
+      expect(json.published).toBe(true);
+      expect(json.needsReview).toBe(false);
+      expect(json.txCount).toBe(1);
+
+      const txRow = await d1.prepare(
+        `SELECT ticker, source FROM transactions WHERE doc_id = ?`
+      ).bind('doc-server-cpu-1').first<{ ticker: string; source: string }>();
+      expect(txRow?.ticker).toBe('NVDA');
+      expect(txRow?.source).toBe('server_cpu');
+    });
   });
 });

@@ -71,7 +71,7 @@ export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 
 /** Provenance of a persisted transaction. 'manual' = hand-entered by an admin in
  *  review when the automated read was wrong / too low-confidence to trust. */
-export type TxSource = 'primary' | 'seed_dataset' | 'manual' | 'competitor_backfill' | 'local_mac';
+export type TxSource = 'primary' | 'seed_dataset' | 'manual' | 'competitor_backfill' | 'local_mac' | 'server_cpu';
 
 // ---------------------------------------------------------------------------
 // Domain entities (mirror D1 tables; JSON columns are typed as parsed shapes)
