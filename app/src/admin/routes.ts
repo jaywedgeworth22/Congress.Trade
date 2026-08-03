@@ -4592,6 +4592,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           WHERE doc_kind = 'scanned_pdf'
             AND (ingest_status = 'extraction_pending_local' OR ingest_status = 'classified')
             AND (local_wait_expires_at IS NULL OR datetime(local_wait_expires_at) > datetime('now'))
+            -- already handled: resolved review or live rows (e.g. a refetch
+            -- flipped a completed filing back to 'classified') — re-serving
+            -- them would burn the worker's local compute on no-ops forever
+            AND NOT EXISTS (SELECT 1 FROM review_queue rq WHERE rq.doc_id = filings.doc_id AND rq.resolved = 1)
+            AND NOT EXISTS (SELECT 1 FROM transactions tx WHERE tx.doc_id = filings.doc_id AND tx.deprecated_at IS NULL)
           ORDER BY first_seen_at DESC
           LIMIT 50`,
       );
