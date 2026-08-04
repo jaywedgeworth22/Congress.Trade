@@ -2120,7 +2120,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
     <div class="speed-head">
       <div>
-        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 48 hours. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions." title="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 48 hours. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.">ⓘ</span></h3>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 7 days. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions." title="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 7 days. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
@@ -2137,7 +2137,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 48 hours &mdash; so multi-day backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 7 days &mdash; so multi-week backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
@@ -7119,7 +7119,7 @@ function loadTrends() {
    Deliberately NOT part of loadTrends(): the data is filter-independent and
    memoized to the server's ~5-minute cache.
    Honesty rules: lead/win timing uses concurrent races only (both first-seen
-   in window, |delta| ≤ 48h); strongMatched is the broader coverage overlap;
+   in window, |delta| ≤ 7d); strongMatched is the broader coverage overlap;
    provider-only rows remain visible; no "Ahead" until coverage gates pass. */
 var LATENCY = { data: null, at: 0, promise: null };
 var SPEED_LANE_MIN_MATCHED = 2;   /* full scorecard stats (concurrent races) */

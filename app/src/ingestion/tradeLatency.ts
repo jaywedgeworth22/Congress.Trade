@@ -267,11 +267,14 @@ export const LATENCY_MIN_PRELIMINARY_MATCHED = 2;
 export const LATENCY_MIN_COVERAGE_PCT = 80;
 /**
  * Lead/win timing only counts races where BOTH sides first-seen stamps fall
- * inside the score window AND |delta| is at most this many hours. Larger
- * gaps are almost always reverse-seed / backfill alignment artifacts, not
- * live races (providers publish days earlier; we mint a candidate later).
+ * inside the score window AND |delta| is at most this many hours. Kept equal
+ * to one week so genuine multi-day monitor lag (CT ingested days after a
+ * provider) still counts, while multi-week reverse-seed clamps do not.
+ * Was 48h — that hid nearly all real provider-ahead races after bulk heals.
  */
-export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 48;
+export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 168;
+/** Allow trade dates to differ by this many days for near-miss fuzzy match. */
+export const LATENCY_FUZZY_DATE_SLACK_DAYS = 2;
 
 const PROVIDERS: ProviderDefinition[] = [
   {
@@ -706,6 +709,14 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
   });
 }
 
+/** Absolute day distance between two YYYY-MM-DD strings, or null if unparsable. */
+export function tradeDateDayDistance(a: string, b: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return null;
+  const ms = Date.parse(`${a}T00:00:00.000Z`) - Date.parse(`${b}T00:00:00.000Z`);
+  if (!Number.isFinite(ms)) return null;
+  return Math.round(Math.abs(ms) / 86_400_000);
+}
+
 export function matchDisclosureCandidate(
   candidate: Pick<CandidateRow, 'trade_hash'>,
   row: DisclosureProviderRow,
@@ -723,10 +734,21 @@ export function matchDisclosureCandidate(
   const eitherTickerMissing = !c.ticker || !r.ticker;
   const sameDate = Boolean(c.date && r.date && c.date === r.date);
   const eitherDateMissing = !c.date || !r.date;
+  const nearDate =
+    !!c.date &&
+    !!r.date &&
+    !sameDate &&
+    (tradeDateDayDistance(c.date, r.date) ?? 99) <= LATENCY_FUZZY_DATE_SLACK_DAYS;
 
   // Same politician + ticker + side; date equal or missing on one side.
   if (sameTicker && (sameDate || eitherDateMissing)) {
     return { providerKey: row.providerKey, matchMethod: 'fuzzy-missing-date' };
+  }
+
+  // Same politician + ticker + side; trade dates within slack (providers
+  // sometimes use filed/settlement vs transaction date).
+  if (sameTicker && nearDate) {
+    return { providerKey: row.providerKey, matchMethod: 'fuzzy-near-date' };
   }
 
   // Same politician + date + side; ticker missing on one side (provider
@@ -1294,7 +1316,7 @@ async function seedCandidatesFromRecentObservations(
   const seen = new Set<string>();
   let examined = 0;
   for (const row of obs) {
-    if (examined >= 80) break;
+    if (examined >= 200) break;
     const parts = parseTradeHash(row.trade_hash);
     if (!parts.lastName || !parts.date) continue;
     examined++;
@@ -1437,19 +1459,25 @@ async function matchAndUpdateCandidates(
     let match: ProviderObservationRow | null = null;
     let method: string | null = null;
 
-    // 1) Exact trade-hash hit — no payload required.
-    const exact = (byHash.get(candidate.trade_hash) ?? []).find(
-      (row) => row.chamber === candidate.chamber,
-    );
+    // 1) Exact trade-hash hit — no payload required. Chamber is NOT required:
+    // providers often mis-tag house/senate while the trade identity is the same.
+    const exactList = byHash.get(candidate.trade_hash) ?? [];
+    const exact =
+      exactList.find((row) => row.chamber === candidate.chamber) ?? exactList[0] ?? null;
     if (exact) {
       match = exact;
       method = 'trade-hash';
     }
 
     // 2) Fuzzy fallbacks still need a payload to re-parse the provider row.
+    // Prefer same-chamber rows, then any chamber (same trade-hash family).
     if (!match) {
-      for (const providerRow of providerRows) {
-        if (providerRow.chamber !== candidate.chamber || !providerRow.payload) continue;
+      const ordered = [
+        ...providerRows.filter((r) => r.chamber === candidate.chamber),
+        ...providerRows.filter((r) => r.chamber !== candidate.chamber),
+      ];
+      for (const providerRow of ordered) {
+        if (!providerRow.payload) continue;
         let payload: Record<string, unknown>;
         try {
           payload = JSON.parse(providerRow.payload) as Record<string, unknown>;
@@ -1528,14 +1556,15 @@ async function matchAndUpdateCandidates(
 
 /**
  * SQL join: every pending candidate that already has an exact trade_hash
- * observation for the same provider+chamber. This is the only path that can
- * clear a large pending backlog — the previous "newest 100 pending only"
- * scan never reached exact matches buried under historical backfill rows.
+ * observation for the same provider. Chamber is intentionally not required —
+ * UW/QQ often mislabel chamber while the hash identity is correct. Prefer
+ * same-chamber rows via ORDER BY, then fall back to any chamber.
+ * Dedupes to one observation per trade_hash (earliest first_observed_at).
  */
 async function loadExactPendingHashMatches(
   env: Env,
   provider: ProviderId,
-  limit = 500,
+  limit = 800,
 ): Promise<Array<CandidateRow & {
   obs_provider_key: string;
   obs_first_observed_at: string;
@@ -1554,12 +1583,12 @@ async function loadExactPendingHashMatches(
        JOIN trade_provider_observations o
          ON o.provider = c.provider
         AND o.trade_hash = c.trade_hash
-        AND o.chamber = c.chamber
       WHERE c.provider = ?
         AND c.status = 'pending'
         AND c.trade_hash IS NOT NULL
         AND c.trade_hash != ''
-      ORDER BY o.first_observed_at DESC
+      ORDER BY CASE WHEN o.chamber = c.chamber THEN 0 ELSE 1 END,
+               o.first_observed_at ASC
       LIMIT ?`,
     [provider, limit],
   );
@@ -1576,8 +1605,13 @@ async function applyExactHashMatches(
   const updates: Array<[string, SqlParam[]]> = [];
   const matchedTradeHashes: string[] = [];
   const alerts: Array<() => Promise<void>> = [];
+  const seenHash = new Set<string>();
 
   for (const row of rows) {
+    // JOIN can return multiple obs per hash (chamber variants); take first
+    // after ORDER BY (same-chamber preferred, earliest obs).
+    if (seenHash.has(row.trade_hash)) continue;
+    seenHash.add(row.trade_hash);
     updates.push([
       `UPDATE trade_latency_candidates
           SET status = 'matched',
@@ -1662,7 +1696,7 @@ async function matchPendingCandidates(
         AND status = 'pending'
         AND congress_first_seen_at >= ?
       ORDER BY congress_first_seen_at DESC
-      LIMIT 250`,
+      LIMIT 500`,
     [provider.id, scoreCutoff],
   );
   const providerRows = await loadProviderRows(env, provider.id, now);
@@ -1678,6 +1712,147 @@ async function matchPendingCandidates(
     matched: matchedTradeHashes.length,
     examinedTradeHashes: examined,
     matchedTradeHashes,
+  };
+}
+
+/**
+ * Pull the earliest trustworthy CT first-seen for a doc from filings +
+ * transactions, then write it onto matched/pending candidates when it is
+ * earlier than the stored stamp. Bulk reverse-seed / backfill often stamps
+ * congress_first_seen_at = now, which invents multi-day "provider ahead"
+ * deltas even when CT actually ingested the filing days earlier.
+ *
+ * Never rewrites a stamp forward; never writes a stamp older than the score
+ * window floor (keeps bulk historical re-imports out of the live race).
+ */
+export async function healLatencyCandidateFirstSeen(
+  env: Env,
+  opts: { limit?: number } = {},
+): Promise<{ examined: number; healed: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 2000, 1), 10_000);
+  const nowIso = new Date().toISOString();
+  const scoreCutoff = new Date(Date.now() - LATENCY_SCORE_WINDOW_HOURS * 3600_000).toISOString();
+
+  const rows = await all<{
+    trade_hash: string;
+    provider: string;
+    doc_id: string;
+    congress_first_seen_at: string;
+  }>(
+    env.DB,
+    `SELECT trade_hash, provider, doc_id, congress_first_seen_at
+       FROM trade_latency_candidates
+      WHERE doc_id IS NOT NULL AND doc_id != ''
+      ORDER BY updated_at DESC
+      LIMIT ?`,
+    [limit],
+  ).catch((err) => {
+    if (storageMissing(err)) return [];
+    throw err;
+  });
+  if (!rows.length) return { examined: 0, healed: 0 };
+
+  const docIds = Array.from(new Set(rows.map((r) => r.doc_id)));
+  const earliestByDoc = new Map<string, string>();
+  for (let i = 0; i < docIds.length; i += SQL_IN_CHUNK) {
+    const chunk = docIds.slice(i, i + SQL_IN_CHUNK);
+    const ph = chunk.map(() => '?').join(', ');
+    const filingRows = await all<{ doc_id: string; seen: string | null }>(
+      env.DB,
+      `SELECT doc_id, first_seen_at AS seen FROM filings WHERE doc_id IN (${ph})`,
+      chunk,
+    ).catch(() => [] as Array<{ doc_id: string; seen: string | null }>);
+    for (const f of filingRows) {
+      if (f.seen) {
+        const prev = earliestByDoc.get(f.doc_id);
+        if (!prev || f.seen < prev) earliestByDoc.set(f.doc_id, f.seen);
+      }
+    }
+    const txRows = await all<{ doc_id: string; seen: string | null }>(
+      env.DB,
+      `SELECT doc_id, MIN(COALESCE(first_seen_at, created_at)) AS seen
+         FROM transactions
+        WHERE doc_id IN (${ph}) AND deprecated_at IS NULL
+        GROUP BY doc_id`,
+      chunk,
+    ).catch(() => [] as Array<{ doc_id: string; seen: string | null }>);
+    for (const t of txRows) {
+      if (t.seen) {
+        const prev = earliestByDoc.get(t.doc_id);
+        if (!prev || t.seen < prev) earliestByDoc.set(t.doc_id, t.seen);
+      }
+    }
+  }
+
+  const updates: Array<[string, SqlParam[]]> = [];
+  let healed = 0;
+  for (const row of rows) {
+    const raw = earliestByDoc.get(row.doc_id);
+    if (!raw) continue;
+    // Clamp into the score window: older real stamps become scoreCutoff so
+    // the row can still participate as an in-window observation without
+    // inventing multi-year CT leads.
+    const healedAt = raw < scoreCutoff ? scoreCutoff : raw;
+    if (healedAt >= row.congress_first_seen_at) continue;
+    updates.push([
+      `UPDATE trade_latency_candidates
+          SET congress_first_seen_at = ?, updated_at = ?
+        WHERE trade_hash = ? AND provider = ?
+          AND congress_first_seen_at > ?`,
+      [healedAt, nowIso, row.trade_hash, row.provider, healedAt],
+    ]);
+    healed++;
+  }
+  if (updates.length) {
+    try {
+      await batch(env.DB, updates);
+    } catch (err) {
+      if (!storageMissing(err)) throw err;
+      return { examined: rows.length, healed: 0 };
+    }
+  }
+  return { examined: rows.length, healed };
+}
+
+/**
+ * One-shot density pass: heal first-seen stamps, rematch every provider's
+ * pending backlog (exact + fuzzy), and reverse-seed from recent observations.
+ * Safe to call from admin after matching repairs land.
+ */
+export async function rematchAndHealLatencyRaces(
+  env: Env,
+  now: Date = new Date(),
+): Promise<{
+  healed: number;
+  matched: number;
+  seeded: number;
+  providers: Array<{ provider: ProviderId; matched: number; seeded: number }>;
+}> {
+  const nowIso = now.toISOString();
+  const heal = await healLatencyCandidateFirstSeen(env, { limit: 5000 });
+  let matched = 0;
+  let seeded = 0;
+  const providers: Array<{ provider: ProviderId; matched: number; seeded: number }> = [];
+  for (const provider of PROVIDERS.filter((p) => p.supportsDirectLatest)) {
+    const errors: string[] = [];
+    const m = await matchPendingCandidates(env, provider, now, nowIso, errors);
+    const s = await seedCandidatesFromRecentObservations(env, provider.id, now, nowIso).catch(() => ({
+      seeded: 0,
+    }));
+    // Second match pass after seed.
+    const m2 = await matchPendingCandidates(env, provider, now, nowIso, errors);
+    const pMatched = m.matched + m2.matched;
+    matched += pMatched;
+    seeded += s.seeded;
+    providers.push({ provider: provider.id, matched: pMatched, seeded: s.seeded });
+  }
+  // Final heal so newly matched reverse-seeds pick up real filing stamps.
+  const heal2 = await healLatencyCandidateFirstSeen(env, { limit: 5000 });
+  return {
+    healed: heal.healed + heal2.healed,
+    matched,
+    seeded,
+    providers,
   };
 }
 
@@ -1982,6 +2157,12 @@ async function runProviderProbe(
   }
 
   try {
+    // Repair bulk-seed first_seen stamps before matching so concurrent races
+    // use the real CT ingest time when available.
+    await healLatencyCandidateFirstSeen(env, { limit: 1500 }).catch((err) => {
+      if (!storageMissing(err)) errors.push(`heal-first-seen: ${(err as Error).message}`);
+    });
+
     // Pull CT rows that overlap recent provider observations into the race
     // table so reverse-direction coverage can grow (provider saw it first).
     await seedCandidatesFromRecentObservations(env, provider.id, now, nowIso).catch((err) => {
@@ -2181,13 +2362,18 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // (still same filer + side); pure free-text/name fallbacks stay excluded.
     // Only rows whose congress_first_seen_at is inside the score window are
     // eligible for timing — otherwise bulk backfill invents multi-day leads.
+    const strongMethods = new Set([
+      'trade-hash',
+      'fuzzy-no-ticker',
+      'fuzzy-missing-date',
+      'fuzzy-near-date',
+    ]);
     const strongMatches = mine.filter(
       (row) =>
         row.status === 'matched' &&
         row.congress_first_seen_at >= scoreCutoff &&
-        (row.match_method === 'trade-hash' ||
-          row.match_method === 'fuzzy-no-ticker' ||
-          row.match_method === 'fuzzy-missing-date'),
+        !!row.match_method &&
+        strongMethods.has(row.match_method),
     );
     // Timing requires BOTH sides observed inside the score window. Backfilled
     // candidates (first_seen clamped to created_at today) matched to provider
@@ -2231,9 +2417,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     const matchedMaturedCandidates = maturedCandidates.filter(
       (row) =>
         row.status === 'matched' &&
-        (row.match_method === 'trade-hash' ||
-          row.match_method === 'fuzzy-no-ticker' ||
-          row.match_method === 'fuzzy-missing-date'),
+        !!row.match_method &&
+        strongMethods.has(row.match_method),
     ).length;
     const ctCoveragePct = maturedProviderObserved
       ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10

@@ -154,7 +154,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     };
     expect(body.windowHours).toBe(336);
     expect(body.windowDays).toBe(14);
-    expect(body.maxConcurrentDeltaHours).toBe(48);
+    expect(body.maxConcurrentDeltaHours).toBe(168);
     expect(body.totals.racedDisclosures).toBe(3);
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');
@@ -204,10 +204,11 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     });
   });
 
-  it('excludes multi-day stamp alignments from concurrent timing while keeping strongMatched', async () => {
+  it('excludes multi-week stamp alignments from concurrent timing while keeping strongMatched', async () => {
     const now = Date.now();
     const ctSeen = new Date(now - 1 * 60 * 60 * 1000).toISOString(); // 1h ago
-    const providerSeen = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5d ago
+    // 10d ago: still inside 14d score window (counts as strong) but |delta| > 7d concurrent cap
+    const providerSeen = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString();
     const env = {
       DB: {
         prepare(sql: string) {

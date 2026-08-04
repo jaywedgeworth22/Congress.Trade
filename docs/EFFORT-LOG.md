@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-04 — GROK — In Progress — Latency match density.** Find more real CT↔provider overlaps: cross-chamber exact hash, ±2d fuzzy date, first_seen heal, rematch-all admin; align client minMatched=2 with server so times display once concurrent≥2.
 - **2026-08-04 — GROK — COMPLETED — Latency scoreboard thoroughness (#1311).** Concurrent filter live + v3 API: windowHours=168, strongMatched exposed. Live: UW concurrent 4 / strong 37 / med +198s CT lead; QQ concurrent 1 / strong 86; FMP 0. Reverse-seed in-window only; immediate match on mint; web/iOS concurrent-race copy. Density grows with live agreement publishes + probes.
 - **2026-08-04 — GROK — COMPLETED — Latency scoreboard thoroughness.** Concurrent filter deploy + expose strongMatched/window metadata; reverse-seed only in-window races; immediate match on mint; web/iOS methodology copy. denser real concurrent races.
 - **2026-08-04 — GROK — In Progress — Concurrent-race timing filter (PR #1306).** Only score lead/win when both CT and provider stamps fall in the 7d window and |delta|≤48h.

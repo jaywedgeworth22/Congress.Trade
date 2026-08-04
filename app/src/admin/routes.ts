@@ -131,6 +131,7 @@ import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets,
 import {
   backfillTradeLatencyCandidates,
   getDisclosureLatencySummary,
+  rematchAndHealLatencyRaces,
   runDisclosureLatencyProbe,
 } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
@@ -3309,6 +3310,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const limit = typeof body.limit === 'number' ? body.limit : undefined;
     const days = typeof body.days === 'number' ? body.days : undefined;
     const result = await backfillTradeLatencyCandidates(c.env, { limit, days });
+    return c.json({ ok: true, ...result });
+  });
+
+  // --- POST /disclosure-latency/rematch -----------------------------------
+  // Heal bulk first_seen stamps, reverse-seed from provider observations,
+  // and rematch the pending backlog (cross-chamber exact hash + fuzzy).
+  // Use after matching/heal fixes land so concurrent race density recovers
+  // without waiting for organic probe cadence.
+  r.post('/disclosure-latency/rematch', async (c) => {
+    const result = await rematchAndHealLatencyRaces(c.env, new Date());
     return c.json({ ok: true, ...result });
   });
 

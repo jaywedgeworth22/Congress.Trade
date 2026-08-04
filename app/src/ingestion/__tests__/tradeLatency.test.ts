@@ -6,6 +6,7 @@ import {
   matchDisclosureCandidate,
   parseTradeHash,
   raceFirstSeenAt,
+  tradeDateDayDistance,
   LATENCY_MAX_CONCURRENT_DELTA_HOURS,
   LATENCY_SCORE_WINDOW_HOURS,
 } from '../tradeLatency.ts';
@@ -67,6 +68,24 @@ describe('tradeLatency', () => {
         },
       );
       expect(m).toEqual({ providerKey: 'k1', matchMethod: 'trade-hash' });
+    });
+
+    it('fuzzy-matches near trade dates (±2 days) for same filer/ticker/side', () => {
+      const m = matchDisclosureCandidate(
+        { trade_hash: 'delaney_BWXT_2026-07-24_buy' },
+        {
+          provider: 'quiver',
+          chamber: 'house',
+          providerKey: 'k-near',
+          tradeHash: 'delaney_BWXT_2026-07-26_buy',
+          payload: {},
+          sourceUrl: null,
+          filedDate: null,
+          filerName: 'April McClain Delaney',
+          providerPublishedAt: null,
+        },
+      );
+      expect(m?.matchMethod).toBe('fuzzy-near-date');
     });
 
     it('fuzzy-matches when provider date is empty but filer/ticker/side agree', () => {
@@ -131,9 +150,17 @@ describe('tradeLatency', () => {
   });
 
   describe('scoreboard constants', () => {
-    it('keeps a 7-day window and 48h concurrent-race cap', () => {
+    it('keeps a 14-day window and 7-day concurrent-race cap', () => {
       expect(LATENCY_SCORE_WINDOW_HOURS).toBe(336);
-      expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(48);
+      expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(168);
+    });
+  });
+
+  describe('tradeDateDayDistance', () => {
+    it('returns absolute day gaps', () => {
+      expect(tradeDateDayDistance('2026-07-24', '2026-07-26')).toBe(2);
+      expect(tradeDateDayDistance('2026-07-24', '2026-07-24')).toBe(0);
+      expect(tradeDateDayDistance('bad', '2026-07-24')).toBeNull();
     });
   });
 });
