@@ -750,7 +750,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .plan .price { font-size:23px; font-weight:800; }
   .plan .per { font-size:12px; color:var(--text-dim); }
   .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
-  .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:700; color:#06231a; background:var(--good); padding:2px 7px; border-radius:999px; }
+  .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:800; color:#ffffff; background:#15803d; padding:2px 7px; border-radius:999px; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
   .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
   .toast.show { display:block; }
@@ -8337,14 +8337,14 @@ function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
     box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
-      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Premium</button>' : '');
+      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
     return;
   }
   var ent = ME.entitlement || {};
   var badge = ent.premium
     ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
-    : '<span class="badge">Free</span>';
-  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
+    : '';
+  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
   var label = ME.user.name || ME.user.email || 'Account';
   box.innerHTML = badge + upgrade +
     '<div class="menu">' +
@@ -8359,7 +8359,7 @@ function renderAccount() {
         '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
         (hasBillingAccount() && portalConfigured()
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
-          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Premium</button>' : '')) +
+          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
         '<button onclick="logout()">Sign Out</button>' +
       '</div>' +
     '</div>';
