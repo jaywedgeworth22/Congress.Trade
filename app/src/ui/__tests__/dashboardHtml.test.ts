@@ -263,7 +263,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
     // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
     expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
-    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo\.png(?:\?v=\d+)?)"/);
+    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo(?:-light)?\.png(?:\?v=\d+)?)"/);
     expect(brandLogoMatch).toBeTruthy();
     // Lockup is the brand — no separate Zilla wordmark span next to it.
     expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
@@ -413,11 +413,24 @@ describe('DASHBOARD_HTML', () => {
   it('keeps account sign-out discoverable from the account menu', () => {
     expect(DASHBOARD_HTML).toContain('id="acctMenuBtn"');
     expect(DASHBOARD_HTML).toContain('<span class="acct-label">Account</span>');
-    expect(DASHBOARD_HTML).toContain('themeMenuLabel');
     expect(DASHBOARD_HTML).not.toContain('id="themeToggle"');
     expect(DASHBOARD_HTML).toContain('white-space:nowrap; overflow:hidden; text-overflow:ellipsis;');
     expect(DASHBOARD_HTML).toContain('Sign Out');
     expect(DASHBOARD_HTML).toContain('function logout()');
+  });
+
+  it('defaults theme to light and offers Light/Dark/System controls like Socratic.Trade', () => {
+    expect(DASHBOARD_HTML).toContain("var pref = 'light'");
+    expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
+    expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref)');
+    expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
+    expect(DASHBOARD_HTML).toContain('class="theme-seg"');
+    expect(DASHBOARD_HTML).toContain('data-theme-opt');
+    expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
+    expect(DASHBOARD_HTML).toContain('theme-row-label');
+    expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
+    expect(DASHBOARD_HTML).toContain('content="#eff3f8"');
+    expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
