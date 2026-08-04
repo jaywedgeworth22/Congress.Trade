@@ -9,8 +9,16 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-04 — GROK — COMPLETED + DEPLOYED — Member drawer dual performance vs S&P (PR #1302, `1d435a3a`).** Politician detail now shows (1) trade-date buy skill and (2) filing-date copy-trade with annualized excess matching Top Performers basis. Buys only; sells excluded. Live verified McCormick: tradeDate avgExcess +0.4%, filingDate ann +51.7% (window=all). Coolify deploy forced after merge (auto-webhook lag). Gates: typecheck + CI green; prod HTML `memberPerfHtml` live.
+
+
+- **[2026-08-04][GROK] R2 Class A hygiene (loader batch + litestream 5m + storage cleanup) — COMPLETED.**
+  - Root cause of free-tier Class A pace ~162%: Litestream L0 PutObject per SQLite commit under `load_prices_st` bulk load.
+  - **(2) Loader**: `analysis/massive-bulk-load/load_prices_st.py` + `load_prices.py` now batch with `--commit-every 50` (fetch outside write lock; multi-ticker single commit). Host loader restarted root: `/tmp/load_prices_st.py --commit-every 50` state `/tmp/st_load_state.json`.
+  - **(3) Litestream**: host `/etc/litestream/congress.yml` `sync-interval: 5m` (was 30s); service restarted; log shows `sync-interval=5m0s`.
+  - **(4) R2 cleanup** on `congress-trade-bucket`: bulk/ kept last 3 dates only (−0.93 GiB), competitors/ deleted (−0.80 GiB), `_ops/usage-telemetry/` deleted (3759 objs). Tracked storage ~5.9 → ~3.8 GiB.
+  - No app code/deploy required for this ops unit.
 - **2026-08-04 — GROK — In Progress — Latency thorough fix (agreement candidate mint + preliminary scoreboard + reverse seed).** Agreement publish never wrote trade_latency_candidates (primary path since cascade) — root of Jul 27 stall. Branch `grok/latency-thorough-fix`: record candidates on agreement publish; raceFirstSeenAt clamp; parseTradeHash + empty-ticker fuzzy match; seed candidates from provider obs; 7d score window; comparisonStatus=preliminary; web/iOS show soft timing; cache key v2.
-- **2026-08-04 — GROK — COMPLETED (code) — Member drawer dual performance vs S&P.** Wire politician detail to show (1) approx skill from trade date and (2) copy-trade from filing date, buys only; keep sells out of skill score. Branch `grok/member-dual-performance`. Files: analytics/compute.ts, builders.ts, routes.ts, dashboardHtml.ts + tests.
 
 - **2026-08-04 — GROK — In Progress — Latency probe/scoreboard diagnosis + matching fix.** Prod `/api/analytics/latency-summary` timing out; local latency DB shows 5238 candidates all pending (0 matched) vs 326 observations (only 2 exact hash overlaps still pending — backlog starvation: match only scanned newest 100 pending). FMP observations absent. iOS decode fragile on null coveragePct and fails whole Trends on latency error. Fix branch `grok/fix-latency-matching`: SQL exact-hash join, score-window pending scan, indexes, iOS optional/fail-soft.
 - **[2026-08-03][AG] Clean Dark Logo Wordmark & Artifact Removal — MERGED PR #1291.** Re-generated the dark mode brand logo asset (`BRAND_LOGO_DARK_PNG_B64` in `app/src/ui/assets.ts`) to make all letters in `CONGRESS` and `TRADE` pure white with smooth anti-aliased transparency while preserving the exact eagle emblem colors and removing the white square block artifact around the right wing. Updated cache-buster version to `v=6` in `app/src/ui/dashboardHtml.ts`. Verified clean via `typecheck` (0 errors) and Vitest suite (192/192 test files, 2085/2085 tests passed).
