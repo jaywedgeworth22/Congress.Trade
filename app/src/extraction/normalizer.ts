@@ -745,20 +745,23 @@ async function persistNormalizedPublish(
   let transitionIndex: number;
   if (review) {
     const revision = review.review_revision;
+    // NOTE: do NOT require agreement_suppressed_at IS NULL here.
+    // agreement_suppressed_at only gates the multi-model agreement cascade
+    // (no OpenRouter / budget ops). Local Grok / server_cpu vision must still
+    // be able to publish once rows clear CONFIDENCE_THRESHOLD — otherwise
+    // "requeue for local_mac" becomes a permanent dead-end.
     statements = [
       [
         `${CONDITIONAL_BULK_INSERT_TX_SQL}
           WHERE EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-              AND agreement_suppressed_at IS NULL)`,
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
         [insertRowsJson, docId, revision],
       ],
       [
         `INSERT INTO review_queue (doc_id)
           SELECT ?
            WHERE EXISTS (SELECT 1 FROM review_queue
-             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-               AND agreement_suppressed_at IS NULL)
+             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
              AND NOT (${exactLiveSet})`,
         [
           docId, docId, revision,
@@ -769,8 +772,7 @@ async function persistNormalizedPublish(
       [
         `${BULK_DELIVERY_OUTBOX_SQL}
           AND EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-              AND agreement_suppressed_at IS NULL)`,
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
         [nowIso, nowIso, nowIso, insertRowsJson, docId, revision],
       ],
       [
@@ -779,8 +781,7 @@ async function persistNormalizedPublish(
                 confidence = ?, extractor = ?, model_version = ?
           WHERE doc_id = ?
             AND EXISTS (SELECT 1 FROM review_queue
-              WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-                AND agreement_suppressed_at IS NULL)
+              WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
             AND ${exactLiveSet}`,
         [
           metadata.confidence, metadata.extractor, metadata.modelVersion,
@@ -801,8 +802,7 @@ async function persistNormalizedPublish(
                   )
                 ), '[]'), ?
           WHERE EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-              AND agreement_suppressed_at IS NULL)
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
             AND ${exactLiveSet}`,
         [
           `decision:auto_published:${docId}`, docId, auditPayload, docId, nowIso,
@@ -821,7 +821,6 @@ async function persistNormalizedPublish(
                 agreement_suppression_reason = NULL,
                 review_revision = review_revision + 1
           WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-            AND agreement_suppressed_at IS NULL
             AND ${exactLiveSet}`,
         [
           docId, revision,
