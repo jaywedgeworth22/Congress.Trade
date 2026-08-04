@@ -491,7 +491,10 @@ struct LatencyProvider: Decodable, Identifiable {
     let id: String
     let label: String
     let candidates: Int
+    /// Concurrent races only (both first-seen in window, |delta| ≤ 48h).
     let matched: Int
+    /// High-confidence overlaps in the window (coverage density); optional for older servers.
+    let strongMatched: Int?
     /// CT coverage of matured provider-observed rows; null when the cohort is empty.
     let coveragePct: Double?
     let ctCoveragePct: Double?
@@ -509,6 +512,11 @@ struct LatencyProvider: Decodable, Identifiable {
 
 struct LatencySummary: Decodable {
     let generatedAt: String
+    /// Scoreboard window (hours); optional for older servers.
+    let windowHours: Int?
+    let windowDays: Int?
+    /// Max |delta| hours for concurrent-race timing; optional for older servers.
+    let maxConcurrentDeltaHours: Int?
     let totals: LatencyTotals
     let providers: [LatencyProvider]
     

@@ -2120,7 +2120,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
     <div class="speed-head">
       <div>
-        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Timing is calculated only for filings observed by both feeds. Provider-observed rows that do not match Congress.Trade remain in the coverage denominator, and no overall speed claim is shown when coverage is limited." title="Timing is calculated only for filings observed by both feeds. Provider-observed rows that do not match Congress.Trade remain in the coverage denominator, and no overall speed claim is shown when coverage is limited.">ⓘ</span></h3>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 48 hours. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions." title="Lead and win stats use concurrent races only: both feeds first-seen the same trade inside the score window, and the gap is at most 48 hours. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
@@ -2137,11 +2137,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. Timing is reported only for the high-confidence overlap with our feed; provider-observed rows that remain unmatched after a 24-hour grace period are shown separately instead of being treated as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 48 hours &mdash; so multi-day backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Matched /<br>CT rows</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="speedTableBody"></tbody>
       </table></div>
     </details>
@@ -7118,11 +7118,11 @@ function loadTrends() {
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
    Deliberately NOT part of loadTrends(): the data is filter-independent and
    memoized to the server's ~5-minute cache.
-   Honesty rules: timing is only for jointly observed filings; provider-only
-   rows remain visible, and no provider is called "Ahead" until both
-   directional coverage gates pass. */
+   Honesty rules: lead/win timing uses concurrent races only (both first-seen
+   in window, |delta| ≤ 48h); strongMatched is the broader coverage overlap;
+   provider-only rows remain visible; no "Ahead" until coverage gates pass. */
 var LATENCY = { data: null, at: 0, promise: null };
-var SPEED_LANE_MIN_MATCHED = 5;   /* full scorecard stats */
+var SPEED_LANE_MIN_MATCHED = 5;   /* full scorecard stats (concurrent races) */
 var SPEED_BOAST_MIN_MATCHED = 10; /* compact strip + pricing proof line */
 var SPEED_MIN_COVERAGE_PCT = 80;
 
@@ -7211,15 +7211,19 @@ function spCardHtml(p) {
   var leadHtml = '';
   if (!hasTiming) {
     var need = SPEED_LANE_MIN_MATCHED - p.matched;
+    var strongNote = (p.strongMatched != null && p.strongMatched > p.matched)
+      ? ' <strong>' + p.strongMatched + '</strong> strong overlaps total (timing needs concurrent races).'
+      : '';
     leadHtml = '<div class="sp-gathering">' +
       (p.matched > 0
-        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " Congress.Trade filings so far — " + need + " more needed for timing estimates."
-        : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
+        ? "We've timed <strong>" + p.matched + "</strong> concurrent races so far — " + need + " more needed for timing estimates."
+        : "Probes haven't found concurrent races yet. Sample builds as live filings land.") +
+      strongNote +
       (p.unmatchedProvider > 0 ? " <strong>" + p.unmatchedProvider + "</strong> provider-observed rows are not matched to our feed yet." : '') +
       '</div>';
   } else if (!hasStats && !usable) {
     leadHtml = '<div class="sp-gathering">' +
-      "We've matched <strong>" + p.matched + "</strong> overlapping filings, but coverage is too limited for a reliable speed claim. " +
+      "We've timed <strong>" + p.matched + "</strong> concurrent races, but coverage is too limited for a reliable speed claim. " +
       (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
       '</div>';
   } else {
@@ -7229,8 +7233,8 @@ function spCardHtml(p) {
     var sign = isPos ? '+' : '';
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
     var labelNote = preliminary
-      ? 'preliminary matched-cohort timing (coverage still building)'
-      : 'matched-cohort timing vs. their feed';
+      ? 'preliminary concurrent-race median (coverage still building)'
+      : 'concurrent-race median vs. their feed';
     leadHtml = '<div class="sp-lead">' +
       '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
       '<div class="sp-lead-label">' + labelNote + p90Txt + '</div>' +
@@ -7245,8 +7249,10 @@ function spCardHtml(p) {
       '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + (p.providerFirstCount || 0) + '</span><span class="sp-wlt-key">Losses</span></div>' +
       '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + (p.tieCount || 0) + '</span><span class="sp-wlt-key">Ties</span></div>' +
       '</div>';
-  } else if (p.matched > 0 || p.providerObserved > 0) {
-    wlt = '<div class="sp-sample">n = ' + p.matched + ' matched · ' + (p.maturedProviderObserved || 0) + ' rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
+  } else if (p.matched > 0 || p.strongMatched > 0 || p.providerObserved > 0) {
+    wlt = '<div class="sp-sample">n = ' + p.matched + ' concurrent · ' +
+      (p.strongMatched != null ? p.strongMatched + ' strong · ' : '') +
+      (p.maturedProviderObserved || 0) + ' provider rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
   }
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
@@ -7265,7 +7271,8 @@ function renderSpeedProof() {
     var tb = el('speedTableBody');
     if (tb) tb.innerHTML = provs.map(function (p) {
       function td(v) { return '<td>' + v + '</td>'; }
-      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) +
+      var strong = p.strongMatched != null ? p.strongMatched : p.matched;
+      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
         td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
         td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
         td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
@@ -7302,7 +7309,7 @@ function setPricingProof() {
   var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
   n.textContent = best
     ? 'Right now: filings land here a median ' + fmtLead(best.medianLeadSec) + ' before ' + best.label +
-      ' — measured live over the last ' + best.matched + ' matched filings.'
+      ' — measured live over the last ' + best.matched + ' concurrent races.'
     : '';
 }
 

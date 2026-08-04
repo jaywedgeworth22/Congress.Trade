@@ -122,7 +122,13 @@ export interface DisclosureLatencyProviderMetrics {
   provider: ProviderId;
   label: string;
   candidates: number;
+  /**
+   * Concurrent races only (both first-seen in window, |delta| ≤ max concurrent
+   * hours). Drives lead/win stats and preliminary/usable gates.
+   */
   matched: number;
+  /** High-confidence overlap matches in the score window (coverage density). */
+  strongMatched: number;
   pending: number;
   errored: number;
   /** Rows observed by the provider during the active monitor window. */
@@ -172,11 +178,17 @@ export interface DisclosureLatencyTotals {
 
 export interface DisclosureLatencySummary {
   generatedAt: string;
+  /** Scoreboard observation window in hours (currently 168 = 7 days). */
+  windowHours: number;
+  /** Max |delta| hours for a race to count toward lead/win timing. */
+  maxConcurrentDeltaHours: number;
   totals: DisclosureLatencyTotals;
   providers: DisclosureLatencyProviderMetrics[];
   providerStatuses: DisclosureLatencyProviderStatus[];
   publicSummary: {
     generatedAt: string;
+    windowHours: number;
+    maxConcurrentDeltaHours: number;
     totals: DisclosureLatencyTotals;
     providers: DisclosureLatencyProviderMetrics[];
   };
@@ -250,9 +262,16 @@ const RECENT_PROVIDER_HOURS = LATENCY_SCORE_WINDOW_HOURS;
 export const LATENCY_MATURITY_GRACE_HOURS = 24;
 /** Full "usable" claim requires this many matured provider-observed rows. */
 export const LATENCY_MIN_MATURED_ROWS = 15;
-/** Preliminary timing shown from this many in-window strong matches. */
+/** Preliminary timing shown from this many concurrent in-window races. */
 export const LATENCY_MIN_PRELIMINARY_MATCHED = 5;
 export const LATENCY_MIN_COVERAGE_PCT = 80;
+/**
+ * Lead/win timing only counts races where BOTH sides first-seen stamps fall
+ * inside the score window AND |delta| is at most this many hours. Larger
+ * gaps are almost always reverse-seed / backfill alignment artifacts, not
+ * live races (providers publish days earlier; we mint a candidate later).
+ */
+export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 48;
 
 const PROVIDERS: ProviderDefinition[] = [
   {
@@ -967,6 +986,7 @@ export async function recordTradeLatencyCandidates(
   }
 
   const updates: Array<[string, SqlParam[]]> = [];
+  const mintedHashes = new Set<string>();
   for (const provider of DIRECT_PROVIDER_IDS) {
     for (const tx of transactions) {
       const ctx = contexts.get(tx.id);
@@ -976,6 +996,7 @@ export async function recordTradeLatencyCandidates(
       const trade_hash = generateTradeHash(filerName, tx.ticker || ctx?.ticker || null, tx.txDate || ctx?.tx_date || null, tx.txType || ctx?.tx_type || null);
       if (!extractLastName(filerName)) continue;
       const firstSeen = raceFirstSeenAt(tx.firstSeenAt || ctx?.first_seen_at, nowIso);
+      mintedHashes.add(trade_hash);
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
@@ -1021,7 +1042,69 @@ export async function recordTradeLatencyCandidates(
       await batch(env.DB, updates);
     } catch (err) {
       if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
+      return;
     }
+    // Immediate match against already-stored provider observations so a live
+    // publish that a provider already listed becomes a concurrent race now,
+    // rather than waiting for the next cron probe.
+    try {
+      await matchJustMintedCandidates(env, Array.from(mintedHashes), nowIso);
+    } catch (err) {
+      if (!storageMissing(err)) {
+        console.warn('trade latency immediate match failed:', (err as Error).message);
+      }
+    }
+  }
+}
+
+/**
+ * After minting candidates from a live publish, try to match each new
+ * trade_hash against stored provider observations. Bounded and best-effort —
+ * probe still owns the full pending scan.
+ */
+async function matchJustMintedCandidates(
+  env: Env,
+  hashes: string[],
+  nowIso: string,
+): Promise<void> {
+  if (!hashes.length) return;
+
+  for (const provider of PROVIDERS.filter((p) => p.supportsDirectLatest)) {
+    const obs: ProviderObservationRow[] = [];
+    for (let i = 0; i < hashes.length; i += SQL_IN_CHUNK) {
+      const chunk = hashes.slice(i, i + SQL_IN_CHUNK);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await all<ProviderObservationRow>(
+        env.DB,
+        `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
+                provider_published_at, source_url, filed_date, filer_name, payload
+           FROM trade_provider_observations
+          WHERE provider = ? AND trade_hash IN (${placeholders})`,
+        [provider.id, ...chunk],
+      ).catch((err) => {
+        if (storageMissing(err)) return [] as ProviderObservationRow[];
+        throw err;
+      });
+      obs.push(...rows);
+    }
+    if (!obs.length) continue;
+
+    const candidates = await all<CandidateRow>(
+      env.DB,
+      `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
+              congress_first_seen_at, attempts
+         FROM trade_latency_candidates
+        WHERE provider = ? AND status = 'pending'
+          AND trade_hash IN (${hashes.map(() => '?').join(', ')})`,
+      [provider.id, ...hashes],
+    ).catch((err) => {
+      if (storageMissing(err)) return [] as CandidateRow[];
+      throw err;
+    });
+    if (!candidates.length) continue;
+
+    const errors: string[] = [];
+    await matchAndUpdateCandidates(env, provider, candidates, obs, nowIso, errors);
   }
 }
 
@@ -1190,6 +1273,12 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
  * For recent provider observations that have no race candidate yet, find
  * matching CT transactions (by last name + date + optional ticker) and seed
  * candidates so the next match pass can score them. Caps work per probe run.
+ *
+ * Only seeds when the CT transaction's real first_seen is already inside the
+ * score window. Historical backfill rows (first_seen months/years ago) would
+ * only produce multi-day "provider ahead" artifacts after raceFirstSeenAt
+ * clamps them to now — useful for coverage density but harmful for timing
+ * honesty. Coverage still grows from live agreement mints + probes.
  */
 async function seedCandidatesFromRecentObservations(
   env: Env,
@@ -1199,6 +1288,7 @@ async function seedCandidatesFromRecentObservations(
 ): Promise<{ seeded: number }> {
   const obs = await loadProviderRows(env, provider, now);
   if (!obs.length) return { seeded: 0 };
+  const scoreCutoffMs = now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 3600_000;
 
   const txs: Transaction[] = [];
   const seen = new Set<string>();
@@ -1271,8 +1361,14 @@ async function seedCandidatesFromRecentObservations(
         const side = normalizeTradeSide(r.tx_type);
         if (side !== parts.side) continue;
       }
+      const rawSeen = r.first_seen_at || r.created_at;
+      const rawMs = rawSeen ? Date.parse(rawSeen) : NaN;
+      // Skip historical CT rows outside the live race window — reverse-seeding
+      // them only manufactures multi-day provider-ahead artifacts.
+      if (!Number.isFinite(rawMs) || rawMs < scoreCutoffMs) continue;
       seen.add(r.id);
-      const firstSeen = raceFirstSeenAt(r.first_seen_at || r.created_at, nowIso);
+      // Keep the real first_seen (already in-window); do not clamp to now.
+      const firstSeen = raceFirstSeenAt(rawSeen, nowIso);
       txs.push({
         id: r.id,
         docId: r.doc_id,
@@ -2098,14 +2194,15 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // rows from last week produce multi-day "provider ahead" artifacts that
     // are not live races — exclude those from lead/win stats while still
     // counting them toward coverage matchedKeys below.
+    const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
     const timingMatches = strongMatches.filter(
       (row) =>
         !!row.provider_first_seen_at &&
         row.provider_first_seen_at >= scoreCutoff &&
-        // Drop absurd deltas (>2 days) even inside the window — usually a
-        // stamp-alignment bug rather than a real race.
+        // Drop absurd deltas even inside the window — usually a stamp-alignment
+        // bug / reverse-seed artifact rather than a real concurrent race.
         Math.abs(deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at) ?? 1e12) <=
-          48 * 3600,
+          maxDeltaSec,
     );
     const monitorDeltas = timingMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -2114,6 +2211,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
       .filter((v): v is number => v != null);
     const timingMatched = timingMatches.length;
+    const strongMatched = strongMatches.length;
     const matchedKeys = new Set(
       strongMatches
         .filter((row) => row.provider_key)
@@ -2173,6 +2271,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       candidates: mine.length,
       // Concurrent races only — drives lead/win stats and preliminary gates.
       matched: timingN,
+      // All high-confidence overlaps in the window (coverage density).
+      strongMatched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
       providerObserved: observations.length,
@@ -2208,12 +2308,17 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
   };
   const generatedAt = now.toISOString();
+  const meta = {
+    windowHours: LATENCY_SCORE_WINDOW_HOURS,
+    maxConcurrentDeltaHours: LATENCY_MAX_CONCURRENT_DELTA_HOURS,
+  };
   return {
     generatedAt,
+    ...meta,
     totals,
     providers,
     providerStatuses: statuses,
-    publicSummary: { generatedAt, totals, providers },
+    publicSummary: { generatedAt, ...meta, totals, providers },
   };
 }
 

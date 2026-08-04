@@ -329,7 +329,7 @@ struct LatencyComparisonView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Speed vs. Data Providers")
                 .font(.headline)
-            Text("How quickly we see filings relative to other providers.")
+            Text("Concurrent races only: both feeds first-seen the same trade inside the score window (gap ≤ 48h). Multi-day backfill alignments are excluded from lead stats.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -388,7 +388,7 @@ struct ProviderScorecard: View {
                     Text(formatLead(provider.medianLeadSec))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(ahead ? .green : (tied ? .primary : .red))
-                    Text(preliminary ? "prelim. median" : "median lead")
+                    Text(preliminary ? "prelim. concurrent median" : "concurrent median")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -398,11 +398,20 @@ struct ProviderScorecard: View {
                 }
             } else {
                 let unmatched = provider.unmatchedProvider ?? 0
+                let strong = provider.strongMatched
+                let strongNote: String = {
+                    if let s = strong, s > provider.matched {
+                        return " \(s) strong overlaps total."
+                    }
+                    return ""
+                }()
                 Text(
                     provider.matched > 0
-                        ? "Matched \(provider.matched) of \(provider.candidates) filings so far."
+                        ? "Timed \(provider.matched) concurrent races of \(provider.candidates) CT filings so far."
+                            + strongNote
                             + (unmatched > 0 ? " \(unmatched) provider-only rows still unmatched." : "")
-                        : "Probes haven't found overlapping disclosures yet."
+                        : "Probes haven't found concurrent races yet."
+                            + strongNote
                 )
                     .font(.caption)
                     .foregroundStyle(.secondary)
