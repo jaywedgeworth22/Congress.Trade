@@ -743,9 +743,9 @@ describe('DASHBOARD_HTML', () => {
     expect(save![0]).toContain("outcomes.push('C/D/E not saved: ' + lineupError.message)");
     // Client-side pre-checks stay, phrased for the A–E panel.
     expect(DASHBOARD_HTML).toContain('Choose a model for every slot (A–E).');
-    expect(DASHBOARD_HTML).toContain('A (primary) and B (failover) must use different providers');
+    expect(DASHBOARD_HTML).toContain('A (primary) and B (failover) must be different models.');
     expect(DASHBOARD_HTML).toContain('C, D, and E must be three different models.');
-    expect(DASHBOARD_HTML).toContain('C, D, and E must use three different providers');
+    // Provider distinctness is no longer a hard client-side gate.
     // Non-blocking provider-overlap advisory (a warning line, not an error).
     expect(DASHBOARD_HTML).toContain('tier-1 agreement shares a provider with the primary extractor — votes are less independent');
     expect(DASHBOARD_HTML).toContain('function updateBenchmarkSlotWarnings(');
@@ -801,7 +801,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('avg / p50 / p95');
     expect(DASHBOARD_HTML).toContain('Cost coverage');
     expect(DASHBOARD_HTML).toContain('Save as ');
-    expect(DASHBOARD_HTML).toContain('three different providers');
+    expect(DASHBOARD_HTML).toContain('three different models');
     expect(DASHBOARD_HTML).not.toContain('var MODEL_COSTS');
     expect(DASHBOARD_HTML).not.toContain('Based on model list pricing');
   });

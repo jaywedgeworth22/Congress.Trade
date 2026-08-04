@@ -95,7 +95,6 @@ import { computeDisclosureLagDays, computeStockActStatus } from '../shared/stock
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
-import { getUnderlyingProvider } from '../benchmark/settings.ts';
 import { recordProviderHealth } from './providerHealth.ts';
 
 export interface AgreementModels {
@@ -344,26 +343,17 @@ function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean):
 }
 
 /**
- * Reject a lineup that would let one provider corroborate itself.
+ * Reject a lineup that would let the same model corroborate itself.
  *
- * Provider distinctness is measured over the UNDERLYING vendor
- * (getUnderlyingProvider), NOT the literal `provider` field. Every
- * OpenRouter-transported model shares provider==='openrouter', so comparing the
- * raw field wrongly rejects any trio with 2+ OpenRouter models as
- * `duplicate_provider_lineup` and fails the cascade closed — which is why
- * all-OpenRouter trios never publish. getUnderlyingProvider maps e.g.
- * openrouter:google/gemini-3.5-flash → gemini, openrouter:x-ai/grok-4.5 → xai,
- * openrouter:openai/gpt-5.6-terra → openai, and passes direct providers (and
- * llamaparse) through unchanged. The model-label distinctness check
- * (duplicate_model_lineup) is unaffected. Canonical copy of getUnderlyingProvider
- * lives in benchmark/settings.ts, where validateBenchmarkLineup enforces the
- * identical rule for the admin-configured trio.
+ * Only model-label distinctness is required (`duplicate_model_lineup`). Same
+ * underlying vendor (or the same OpenRouter transport with different model
+ * IDs) is allowed so agreement cascades can run entirely through OpenRouter
+ * with model diversity rather than provider diversity.
  */
 export function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
   const ids = models.map((m) => label(m).trim().toLowerCase());
   if (new Set(ids).size !== ids.length) return 'duplicate_model_lineup';
-  const providers = models.map((m) => getUnderlyingProvider(m).trim().toLowerCase());
-  return new Set(providers).size === providers.length ? null : 'duplicate_provider_lineup';
+  return null;
 }
 
 /** Hard cap for source_url re-fetch when object storage is unavailable (25 MiB). */
