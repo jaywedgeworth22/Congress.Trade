@@ -7,7 +7,16 @@ const app = buildAnalyticsRouter();
  * Fake D1 returning two matched fmp candidates and nothing for the other
  * providers, mirroring the production race-monitor tables.
  */
+function recentIso(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+}
+
 function fakeDb() {
+  const t0 = recentIso(6);
+  const t1 = recentIso(4.5);
+  const t2 = recentIso(10);
+  const t3 = recentIso(9.5);
+  const t4 = recentIso(5);
   return {
     prepare(sql: string) {
       return {
@@ -23,26 +32,38 @@ function fakeDb() {
                 {
                   provider: 'fmp',
                   status: 'matched',
-                  congress_first_seen_at: '2026-06-29T14:00:00.000Z',
-                  provider_first_seen_at: '2026-06-29T15:30:00.000Z',
+                  chamber: 'house',
+                  provider_key: 'k1',
+                  congress_first_seen_at: t0,
+                  provider_first_seen_at: t1,
                   provider_published_at: null,
                   match_method: 'trade-hash',
+                  created_at: t0,
+                  updated_at: t1,
                 },
                 {
                   provider: 'fmp',
                   status: 'matched',
-                  congress_first_seen_at: '2026-06-29T10:00:00.000Z',
-                  provider_first_seen_at: '2026-06-29T10:30:00.000Z',
+                  chamber: 'house',
+                  provider_key: 'k2',
+                  congress_first_seen_at: t2,
+                  provider_first_seen_at: t3,
                   provider_published_at: null,
                   match_method: 'fuzzy-no-ticker',
+                  created_at: t2,
+                  updated_at: t3,
                 },
                 {
                   provider: 'unusual_whales',
                   status: 'pending',
-                  congress_first_seen_at: '2026-06-29T14:00:00.000Z',
+                  chamber: 'house',
+                  provider_key: null,
+                  congress_first_seen_at: t4,
                   provider_first_seen_at: null,
                   provider_published_at: null,
                   match_method: null,
+                  created_at: t4,
+                  updated_at: t4,
                 },
               ] as T[],
             };
