@@ -15,6 +15,12 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var sectorFlow: [SectorFlowItem] = []
     @Published private(set) var memberLeaderboard: [MemberLeaderboardItem] = []
     @Published private(set) var clusterBuys: [ClusterBuyItem] = []
+    @Published private(set) var trendingAssets: [TrendingItem] = []
+    @Published private(set) var topPerformers: [TopPerformerItem] = []
+    @Published private(set) var marketCapBuckets: [MarketCapItem] = []
+    @Published private(set) var partySplit: PartySplitResponse?
+    @Published private(set) var filingLag: FilingLagResponse?
+    @Published private(set) var selectedParty: PartyFilter? = nil
     @Published private(set) var isLoadingTrends = false
     @Published private(set) var trendsNotice: String?
     @Published private(set) var subscriptions: [Subscription] = []
@@ -240,6 +246,11 @@ final class CongressTradeStore: ObservableObject {
         scheduleAutoRefresh()
     }
 
+    func setPartyFilter(_ party: PartyFilter?) async {
+        selectedParty = party
+        await refreshTrends()
+    }
+
     func refreshTrends() async {
         isLoadingTrends = true
         trendsNotice = nil
@@ -247,13 +258,23 @@ final class CongressTradeStore: ObservableObject {
         // All-time analytics is expensive and some endpoints expect a window;
         // map "all" to a long window for scoreboard parity.
         let analyticsWindow = selectedTimeRange == .all ? "1825d" : window
+        let partyParam = selectedParty?.rawValue
+        let chamberParam = selectedChambers.count == ChamberFilter.allCases.count
+            ? nil
+            : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
+
         do {
-            async let summaryTask = api.analyticsSummary(window: analyticsWindow)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, rankBy: "volume")
-            async let volumeTask = api.volumeOverTime(window: analyticsWindow)
-            async let sectorsTask = api.sectorFlow(window: analyticsWindow)
-            async let membersTask = api.memberLeaderboard(window: analyticsWindow)
-            async let clustersTask = api.clusterBuys(window: analyticsWindow)
+            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, rankBy: "volume")
+            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam)
+            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam)
             // Latency is independent of trends filters; load it fail-soft so a
             // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
@@ -264,6 +285,11 @@ final class CongressTradeStore: ObservableObject {
             sectorFlow = try await sectorsTask.sectors
             memberLeaderboard = try await membersTask.members
             clusterBuys = try await clustersTask.clusters
+            trendingAssets = (try? await trendingTask)?.trending ?? []
+            topPerformers = (try? await topPerformersTask)?.members ?? []
+            marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
+            partySplit = try? await partySplitTask
+            filingLag = try? await filingLagTask
             do {
                 latencySummary = try await latencyTask
             } catch {

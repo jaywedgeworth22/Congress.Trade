@@ -145,7 +145,7 @@ struct PoliticianDetailView: View {
     @ViewBuilder
     private func performanceLegBlock(
         title: String,
-        leg: MemberDetailResponse.PerformanceLeg,
+        leg: ClientMemberResponse.PerformanceLeg,
         showAnnualized: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {

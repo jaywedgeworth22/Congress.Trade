@@ -318,6 +318,30 @@ struct ClientTickerResponse: Decodable {
 /// Canonical chamber chip selection. One set drives both the visible chips
 /// and the `chamber=` request parameter (CT-AUD-010) — there is no separate
 /// "what the UI shows" vs "what was requested" state.
+enum PartyFilter: String, CaseIterable, Identifiable {
+    case democrat = "D"
+    case republican = "R"
+    case other = "O"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .democrat: return "Democrat"
+        case .republican: return "Republican"
+        case .other: return "Other"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .democrat: return "🫏"
+        case .republican: return "🐘"
+        case .other: return "🦅"
+        }
+    }
+}
+
 enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
     case house
     case senate
@@ -683,6 +707,102 @@ struct ClusterBuyItem: Decodable, Identifiable {
     var formattedName: String? {
         name?.formattedCompanyName
     }
+}
+
+struct TrendingResponse: Decodable {
+    let trending: [TrendingItem]
+    let count: Int?
+}
+
+struct TrendingItem: Decodable, Identifiable {
+    var id: String { ticker }
+    let ticker: String
+    let name: String?
+    let recentCount: Int
+    let priorCount: Int
+    let deltaCount: Int?
+    let changePct: Double?
+    let recentMembers: Int?
+    let estRecentVolumeUsd: Double?
+    let estRecentNetFlowUsd: Double?
+
+    var formattedName: String? {
+        name?.formattedCompanyName
+    }
+}
+
+struct TopPerformersResponse: Decodable {
+    let members: [TopPerformerItem]
+    let count: Int?
+    let note: String?
+}
+
+struct TopPerformerItem: Decodable, Identifiable {
+    var id: String { filerId }
+    let filerId: String
+    let fullName: String?
+    let party: String?
+    let partyBucket: String?
+    let photoUrl: String?
+    let tradeCount: Int
+    let avgAnnualizedExcessReturn: Double?
+    let winRate: Double?
+    let estVolumeUsd: Double?
+}
+
+struct MarketCapResponse: Decodable {
+    let buckets: [MarketCapItem]
+    let count: Int?
+}
+
+struct MarketCapItem: Decodable, Identifiable {
+    var id: String { bucket }
+    let bucket: String
+    let tradeCount: Int
+    let buyCount: Int?
+    let sellCount: Int?
+    let estVolumeUsd: Double?
+    let estNetFlowUsd: Double?
+    let uniqueMembers: Int?
+    let uniqueTickers: Int?
+}
+
+struct PartySplitResponse: Decodable {
+    let overall: [String: PartySplitSummary]?
+}
+
+struct PartySplitSummary: Decodable {
+    let buys: Int
+    let sells: Int
+    let estVolumeUsd: Double?
+    let estNetFlowUsd: Double?
+    let members: Int?
+}
+
+struct FilingLagResponse: Decodable {
+    let summary: FilingLagSummary?
+    let topLateFilers: [SlowFilerItem]?
+}
+
+struct FilingLagSummary: Decodable {
+    let avgLagDays: Double?
+    let medianLagDays: Double?
+    let maxLagDays: Double?
+    let lateCount: Int?
+    let totalTrades: Int?
+}
+
+struct SlowFilerItem: Decodable, Identifiable {
+    var id: String { filerId }
+    let filerId: String
+    let fullName: String?
+    let partyBucket: String?
+    let chamber: String?
+    let photoUrl: String?
+    let avgLagDays: Double?
+    let maxLagDays: Double?
+    let lateCount: Int?
+    let tradeCount: Int?
 }
 
 // MARK: - Company Name Normalization Helper
