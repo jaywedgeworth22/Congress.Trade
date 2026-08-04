@@ -3381,11 +3381,12 @@ function clearSearch() {
 
 /* Friendly, human-readable label for a transaction's provenance. The raw value
    ('seed_dataset' | 'primary') rides along as a tooltip via sourceTitle. */
-var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Primary' };
+var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Primary', manual: 'Manual' };
 function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
 function sourceTitle(src) {
   if (src === 'primary') return 'Parsed from an official filing by the Congress.Trade ingestion pipeline.';
   if (src === 'seed_dataset') return 'Imported from a historical seed dataset.';
+  if (src === 'manual') return 'Hand-keyed by an admin during manual review.';
   return src || 'Unknown source';
 }
 
@@ -7978,8 +7979,9 @@ function openAsset(ticker) {
       var member = t.filerId
         ? '<span class="member-cell clickable" data-member="' + esc(t.filerId) + '">' + pdot(t.partyBucket) + esc(name) + '</span>'
         : pdot(t.partyBucket) + esc(name);
+      var actionCell = actionBadge(t.txType) + (t.source === 'manual' ? '<span class="badge sm ghost" style="margin-left:4px" title="Manual Entry">M</span>' : '');
       return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
-        '<td>' + actionBadge(t.txType) + '</td>' +
+        '<td>' + actionCell + '</td>' +
         '<td>' + member + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
@@ -8035,8 +8037,9 @@ function openMember(filerId) {
       var assetCell = t.ticker
         ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
+      var actionCell = actionBadge(t.txType) + (t.source === 'manual' ? '<span class="badge sm ghost" style="margin-left:4px" title="Manual Entry">M</span>' : '');
       return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateOnlyHtml(t) + '</td>' +
-        '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
+        '<td>' + actionCell + '</td><td>' + assetCell + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
@@ -8151,6 +8154,7 @@ function openTrade(row) {
       kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
       kvRow('Asset Type', assetTypeDetailHtml(row)) +
       kvRow('Imported', esc(dateTimeText(row.imported))) +
+      (row.source === 'manual' ? kvRow('Source', 'Manual Entry') : '') +
       (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
