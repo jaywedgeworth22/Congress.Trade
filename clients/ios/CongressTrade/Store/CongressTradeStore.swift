@@ -254,6 +254,8 @@ final class CongressTradeStore: ObservableObject {
             async let sectorsTask = api.sectorFlow(window: analyticsWindow)
             async let membersTask = api.memberLeaderboard(window: analyticsWindow)
             async let clustersTask = api.clusterBuys(window: analyticsWindow)
+            // Latency is independent of trends filters; load it fail-soft so a
+            // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
 
             analyticsSummary = try await summaryTask
@@ -262,7 +264,11 @@ final class CongressTradeStore: ObservableObject {
             sectorFlow = try await sectorsTask.sectors
             memberLeaderboard = try await membersTask.members
             clusterBuys = try await clustersTask.clusters
-            latencySummary = try await latencyTask
+            do {
+                latencySummary = try await latencyTask
+            } catch {
+                latencySummary = nil
+            }
         } catch {
             trendsNotice = error.localizedDescription
         }

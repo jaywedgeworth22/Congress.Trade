@@ -474,13 +474,19 @@ struct LatencyProvider: Decodable, Identifiable {
     let label: String
     let candidates: Int
     let matched: Int
-    let coveragePct: Double
+    /// CT coverage of matured provider-observed rows; null when the cohort is empty.
+    let coveragePct: Double?
+    let ctCoveragePct: Double?
+    let providerCoveragePct: Double?
+    let comparisonStatus: String?
     let usFirstCount: Int
     let providerFirstCount: Int
     let tieCount: Int
     let medianLeadSec: Int?
     let avgLeadSec: Int?
     let p90LeadSec: Int?
+    let unmatchedProvider: Int?
+    let providerObserved: Int?
 }
 
 struct LatencySummary: Decodable {
@@ -493,6 +499,8 @@ struct LatencySummary: Decodable {
         let matched: Int
         let pending: Int
         let comparableProviders: Int
+        let providerObserved: Int?
+        let unmatchedProvider: Int?
     }
 }
 
