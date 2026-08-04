@@ -53,16 +53,49 @@ describe('buildTransactionsExportQuery', () => {
   });
 });
 
-/** Fake env: anonymous (no session cookie) => getCurrentUser resolves to null. */
-function fakeEnv(): Env {
+/**
+ * Fake env for export gating.
+ * - No Authorization / cookie => getCurrentUserFromRequest → null
+ * - Bearer free-token / premium-token => session KV → user row with plan
+ */
+function fakeEnv(opts: { plan?: 'premium' | 'free' } = {}): Env {
   return {
-    CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    CONFIG_KV: {
+      get: async (key: string) => {
+        if (key === 'sess:free-token') return JSON.stringify({ userId: 'user_free' });
+        if (key === 'sess:premium-token') return JSON.stringify({ userId: 'user_premium' });
+        return null;
+      },
+      put: async () => {},
+      delete: async () => {},
+    },
     DB: {
-      prepare: () => ({
-        bind() {
+      prepare: (sql: string) => ({
+        params: [] as unknown[],
+        bind(...params: unknown[]) {
+          this.params = params;
           return this;
         },
         async first() {
+          if (/SELECT \* FROM users WHERE id = \?/i.test(sql)) {
+            const id = String(this.params[0] ?? '');
+            const isPremium =
+              id === 'user_premium' || (opts.plan === 'premium' && id !== 'user_free');
+            const isFree = id === 'user_free' || opts.plan === 'free';
+            if (!isPremium && !isFree) return null;
+            return {
+              id,
+              email: `${id}@example.com`,
+              name: 'User',
+              picture: null,
+              google_sub: null,
+              email_verified: 1,
+              created_at: '2026-01-01T00:00:00.000Z',
+              last_login_at: null,
+              subscription_status: isPremium ? 'active' : 'canceled',
+              plan: isPremium ? 'monthly' : null,
+            };
+          }
           return { total: 0 };
         },
         async all() {
@@ -97,5 +130,33 @@ describe('GET /export/transactions.csv', () => {
     const body = (await res.json()) as { error?: string; upgradeRequired?: boolean; feature?: string };
     expect(body.upgradeRequired).toBe(true);
     expect(body.feature).toBe('export');
+  });
+
+  it('returns 402 for signed-in free users', async () => {
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/export/transactions.csv',
+      { headers: { authorization: 'Bearer free-token' } },
+      fakeEnv(),
+    );
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { error?: string; upgradeRequired?: boolean; feature?: string };
+    expect(body.upgradeRequired).toBe(true);
+    expect(body.feature).toBe('export');
+    expect(body.error).toMatch(/Premium/i);
+  });
+
+  it('returns 200 text/csv for Premium users', async () => {
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/export/transactions.csv',
+      { headers: { authorization: 'Bearer premium-token' } },
+      fakeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    const csv = await res.text();
+    expect(csv).toContain('filed_at');
+    expect(csv).toContain('ticker');
   });
 });

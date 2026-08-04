@@ -380,8 +380,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     };
     // Anti-scrape guards (src/security/botDefense.ts). The pager stays public
     // for humans; depth + daily row budgets make walking the whole corpus via
-    // offset/since the job of the free CSV export / token-gated bulk
-    // snapshot instead. The depth cap is unconditional (it bounds D1 OFFSET cost in
+    // offset/since the job of Premium CSV export (authenticated) instead.
+    // The depth cap is unconditional (it bounds D1 OFFSET cost in
     // every environment); only the daily row budget no-ops unless SCRAPE_GUARD_ENABLED.
     if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
       return c.json(
