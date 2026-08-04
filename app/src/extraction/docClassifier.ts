@@ -34,7 +34,8 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { keyFor } from './bakeoff.ts';
 import { looksLikePdf } from '../ingestion/classifier.ts';
-import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { openrouterRequestEnrichment } from '@jaywedgeworth22/congress-trading-shared';
+import { environmentName, trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export type DocClass = 'typed' | 'clean_scan' | 'hard_scan' | 'empty' | 'corrupt';
 
@@ -214,6 +215,14 @@ export async function classifyDocClassWithModel(
     signal?.throwIfAborted();
     const key = await keyFor(env, 'openrouter');
     if (!key) return null;
+    const classifierEnrichment = openrouterRequestEnrichment({
+      sourceApp: 'congress-trade',
+      environment: environmentName(env),
+      service: 'doc-classifier',
+      feature: 'pdf-doc-class',
+      keyRef: 'OPENROUTER_API_KEY',
+    });
+
     const res = await trackedFetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -226,6 +235,7 @@ export async function classifyDocClassWithModel(
         model: knobs.model,
         max_tokens: 32,
         plugins: [{ id: 'file-parser', pdf: { engine: knobs.parseEngine } }],
+        ...classifierEnrichment,
         response_format: {
           type: 'json_schema',
           json_schema: {

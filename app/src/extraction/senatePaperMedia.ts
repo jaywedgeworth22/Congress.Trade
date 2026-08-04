@@ -13,6 +13,8 @@
 
 import type { Env, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import { openrouterRequestEnrichment } from '@jaywedgeworth22/congress-trading-shared';
+import { environmentName } from '../shared/thirdPartyTelemetry.ts';
 import { parseAmountRange } from './amounts.ts';
 import { parseTruncationAwareJson, fetchWithRetry } from './visionLlm.ts';
 
@@ -104,7 +106,7 @@ export interface PaperMediaExtractResult {
 export async function extractFromSenatePaperMedia(
   env: Env,
   mediaUrls: string[],
-  opts: { signal?: AbortSignal; model?: string } = {},
+  opts: { signal?: AbortSignal; model?: string; docId?: string } = {},
 ): Promise<PaperMediaExtractResult> {
   if (mediaUrls.length === 0) {
     return { transactions: [], confidence: 0.2, modelVersion: '', mediaCount: 0 };
@@ -126,12 +128,22 @@ export async function extractFromSenatePaperMedia(
     content.push({ type: 'image_url', image_url: { url } });
   }
 
+  const classifierEnrichment = openrouterRequestEnrichment({
+    sourceApp: 'congress-trade',
+    environment: environmentName(env),
+    service: 'senate-paper-media',
+    feature: 'senate-paper-media-ocr',
+    keyRef: 'OPENROUTER_API_KEY',
+    user: opts.docId || undefined,
+  });
+
   const body = {
     model,
     messages: [{ role: 'user', content }],
     temperature: 0,
     max_tokens: 8000,
     usage: { include: true },
+    ...classifierEnrichment,
   };
 
   const res = await fetchWithRetry(

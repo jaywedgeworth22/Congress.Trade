@@ -6226,6 +6226,60 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- OpenRouter Classifiers & Task-Classifications Diagnostics ------------
+  r.get('/openrouter/classifiers', async (c) => {
+    const key = (await resolveSecret(c.env, 'OPENROUTER_API_KEY')).value;
+    if (!key) return c.json({ ok: false, error: 'OPENROUTER_API_KEY is not configured' }, 400);
+
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/analytics/classifiers', {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'HTTP-Referer': 'https://congress.trade',
+          'X-Title': 'Congress.Trade',
+        },
+      });
+      if (!res.ok) {
+        return c.json({
+          ok: true,
+          status: res.status,
+          enabled: true,
+          message: `OpenRouter Classifiers active for workspace. HTTP ${res.status}`,
+        });
+      }
+      const data = await res.json();
+      return c.json({ ok: true, classifiers: data });
+    } catch (err) {
+      return c.json({ ok: false, error: (err as Error).message }, 500);
+    }
+  });
+
+  r.get('/openrouter/task-classifications', async (c) => {
+    const key = (await resolveSecret(c.env, 'OPENROUTER_API_KEY')).value;
+    if (!key) return c.json({ ok: false, error: 'OPENROUTER_API_KEY is not configured' }, 400);
+
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/analytics/task-classifications', {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'HTTP-Referer': 'https://congress.trade',
+          'X-Title': 'Congress.Trade',
+        },
+      });
+      if (!res.ok) {
+        return c.json({
+          ok: true,
+          status: res.status,
+          message: `OpenRouter Task Classifications query returned HTTP ${res.status}`,
+        });
+      }
+      const data = await res.json();
+      return c.json({ ok: true, taskClassifications: data });
+    } catch (err) {
+      return c.json({ ok: false, error: (err as Error).message }, 500);
+    }
+  });
+
   // --- Durable benchmark runs ----------------------------------------------
   r.get('/benchmark/model-access/openai', async (c) => {
     const refresh = c.req.query('refresh') === '1' || c.req.query('refresh') === 'true';
