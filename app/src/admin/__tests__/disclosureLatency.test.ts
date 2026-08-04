@@ -3,7 +3,15 @@ import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 
+function recentIso(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+}
+
 function fakeDb() {
+  // Keep deltas deterministic (210s monitor, 120s published) inside the 72h window.
+  const congressFirst = recentIso(6);
+  const providerPublished = new Date(Date.parse(congressFirst) + 120_000).toISOString();
+  const providerFirst = new Date(Date.parse(congressFirst) + 210_000).toISOString();
   return {
     prepare(sql: string) {
       return {
@@ -22,19 +30,19 @@ function fakeDb() {
                   provider: 'fmp',
                   chamber: 'house',
                   source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20012345.pdf',
-                  filed_date: '2026-06-29',
+                  filed_date: congressFirst.slice(0, 10),
                   filer_name: 'Jane Smith',
-                  congress_first_seen_at: '2026-06-29T14:00:00.000Z',
+                  congress_first_seen_at: congressFirst,
                   provider_key: '20012345',
-                  provider_first_seen_at: '2026-06-29T14:03:30.000Z',
-                  provider_published_at: '2026-06-29T14:02:00.000Z',
+                  provider_first_seen_at: providerFirst,
+                  provider_published_at: providerPublished,
                   match_method: 'trade-hash',
                   status: 'matched',
                   attempts: 2,
-                  last_checked_at: '2026-06-29T14:03:30.000Z',
+                  last_checked_at: providerFirst,
                   error: null,
-                  created_at: '2026-06-29T14:00:00.000Z',
-                  updated_at: '2026-06-29T14:03:30.000Z',
+                  created_at: congressFirst,
+                  updated_at: providerFirst,
                 },
               ] as T[],
             };
