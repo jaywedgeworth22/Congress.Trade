@@ -1789,17 +1789,17 @@ export async function healLatencyCandidateFirstSeen(
   for (const row of rows) {
     const raw = earliestByDoc.get(row.doc_id);
     if (!raw) continue;
-    // Clamp into the score window: older real stamps become scoreCutoff so
-    // the row can still participate as an in-window observation without
-    // inventing multi-year CT leads.
-    const healedAt = raw < scoreCutoff ? scoreCutoff : raw;
-    if (healedAt >= row.congress_first_seen_at) continue;
+    // Only rewrite with a real stamp that is already inside the score window.
+    // Clamping pre-window stamps up to scoreCutoff invents fake multi-day
+    // "CT ahead" leads (provider obs mid-window vs floor stamp).
+    if (raw < scoreCutoff) continue;
+    if (raw >= row.congress_first_seen_at) continue;
     updates.push([
       `UPDATE trade_latency_candidates
           SET congress_first_seen_at = ?, updated_at = ?
         WHERE trade_hash = ? AND provider = ?
           AND congress_first_seen_at > ?`,
-      [healedAt, nowIso, row.trade_hash, row.provider, healedAt],
+      [raw, nowIso, row.trade_hash, row.provider, raw],
     ]);
     healed++;
   }
