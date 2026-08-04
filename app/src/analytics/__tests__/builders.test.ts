@@ -290,11 +290,16 @@ describe('politician deep-dive builders', () => {
     expect(q.sql).toContain('NULLIF(t.asset_name');
     expect(q.params).toEqual(['P000197']);
   });
-  it('performance query joins tx_performance + securities_ref and filters by filer', () => {
+  it('performance query joins both anchors + elapsed filing days and filters by filer', () => {
     const q = buildMemberPerformanceQuery('P000197', { window: 'all' });
     expect(q.sql).toContain('LEFT JOIN tx_performance txp ON txp.tx_id = t.id');
     expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
     expect(q.sql).toContain('txp.price_at_trade AS price_at_trade');
+    expect(q.sql).toContain('txp.price_at_filing AS price_at_filing');
+    expect(q.sql).toContain('txp.spx_at_filing AS spx_at_filing');
+    expect(q.sql).toContain('t.tx_type AS tx_type');
+    expect(q.sql).toContain('elapsed_days_since_filing');
+    expect(q.sql).toContain('COALESCE(f.filed_date, f.first_seen_at, t.tx_date)');
     expect(q.sql).toContain('sr.current_price AS current_price');
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual(['P000197']);

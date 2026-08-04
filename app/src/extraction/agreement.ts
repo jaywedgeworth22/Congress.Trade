@@ -913,6 +913,23 @@ async function finalizePublish(
     // The committed generic outbox rows remain pending for the reconciler.
     console.error('agreement publish: delivery outbox flush failed', docId, (err as Error).message);
   });
+
+  // Race-monitor candidates: agreement is the primary publish path. Without
+  // this, only the non-agreement persistTransactions helper wrote candidates
+  // and the scoreboard starved after Jul 2026 when cascade became dominant.
+  try {
+    const { recordTradeLatencyCandidates } = await import('../ingestion/tradeLatency.ts');
+    const nowIso = new Date().toISOString();
+    // Prefer newly inserted ids; fall back to all published txs so retries
+    // still ensure race rows exist (ON CONFLICT keeps earliest first_seen).
+    const raced = insertedIds.length
+      ? txs.filter((tx) => insertedIds.includes(tx.id))
+      : txs;
+    if (raced.length) await recordTradeLatencyCandidates(env, raced, nowIso);
+  } catch (err) {
+    console.warn('agreement publish: trade latency candidate write failed', docId, (err as Error).message);
+  }
+
   return { docId, outcome: 'published', tier: audit.tier, inserted: insertedIds.length };
 }
 

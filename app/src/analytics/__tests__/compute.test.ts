@@ -6,7 +6,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  aggregateMemberDualPerformance,
   aggregateMemberPerformance,
+  annualizeExcess,
   aggregateTickerBacktest,
   computeConvictionScore,
   convictionDirection,
@@ -183,6 +185,89 @@ describe('aggregateMemberPerformance', () => {
     expect(out.medianReturn).toBeCloseTo(0.2, 5);
     expect(out.winRate).toBeNull();
     expect(out.medianExcess).toBeNull();
+  });
+
+  it('buysOnly skips sells; filing anchor uses priceAtFiling', () => {
+    const rows: MemberPerfRow[] = [
+      row({
+        txType: 'P',
+        priceAtTrade: 100,
+        currentPrice: 120,
+        spxAtTrade: 100,
+        priceAtFiling: 110,
+        spxAtFiling: 100,
+        elapsedDaysSinceFiling: 365.25,
+      }),
+      row({
+        txType: 'S',
+        priceAtTrade: 50,
+        currentPrice: 200,
+        spxAtTrade: 100,
+        priceAtFiling: 50,
+        spxAtFiling: 100,
+        elapsedDaysSinceFiling: 365.25,
+      }),
+    ];
+    const trade = aggregateMemberPerformance(rows, 100, { anchor: 'trade', buysOnly: true });
+    expect(trade.tradeCount).toBe(1);
+    expect(trade.scoredCount).toBe(1);
+    expect(trade.avgReturn).toBeCloseTo(0.2, 5); // 100→120, sell ignored
+
+    const filing = aggregateMemberPerformance(rows, 100, {
+      anchor: 'filing',
+      buysOnly: true,
+      annualize: true,
+    });
+    expect(filing.scoredCount).toBe(1);
+    // filing 110→120 = ~9.09% excess (SPX flat)
+    expect(filing.avgExcess).toBeCloseTo(120 / 110 - 1, 4);
+    // full year → annualized ≈ cumulative
+    expect(filing.avgAnnualizedExcess).toBeCloseTo(120 / 110 - 1, 4);
+  });
+});
+
+describe('annualizeExcess', () => {
+  it('uses max(30, elapsed) day floor like the leaderboard SQL', () => {
+    expect(annualizeExcess(0.1, 365.25)).toBeCloseTo(0.1, 6);
+    expect(annualizeExcess(0.1, 10)).toBeCloseTo(0.1 * (365.25 / 30), 6);
+    expect(annualizeExcess(0.1, null)).toBeNull();
+    expect(annualizeExcess(0.1, 0)).toBeNull();
+  });
+});
+
+describe('aggregateMemberDualPerformance', () => {
+  it('returns separate trade-date and filing-date buy legs', () => {
+    const dual = aggregateMemberDualPerformance(
+      [
+        {
+          isOption: false,
+          txType: 'P',
+          priceAtTrade: 100,
+          spxAtTrade: 100,
+          priceAtFiling: 105,
+          spxAtFiling: 100,
+          currentPrice: 120,
+          elapsedDaysSinceFiling: 182.625, // half year → annualize * 2
+        },
+        {
+          isOption: false,
+          txType: 'S',
+          priceAtTrade: 100,
+          spxAtTrade: 100,
+          priceAtFiling: 100,
+          spxAtFiling: 100,
+          currentPrice: 50,
+          elapsedDaysSinceFiling: 100,
+        },
+      ],
+      100,
+    );
+    expect(dual.side).toBe('buys');
+    expect(dual.buyCount).toBe(1);
+    expect(dual.tradeDate.avgReturn).toBeCloseTo(0.2, 5);
+    expect(dual.filingDate.avgReturn).toBeCloseTo(120 / 105 - 1, 4);
+    // excess ≈ 0.1429 cumulative; half year → ~0.2857 annualized
+    expect(dual.filingDate.avgAnnualizedExcess).toBeCloseTo((120 / 105 - 1) * 2, 3);
   });
 });
 
