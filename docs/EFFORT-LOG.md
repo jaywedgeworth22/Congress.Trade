@@ -10,6 +10,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-04 — GROK — COMPLETED (sub-lane) — Premium CSV UI.** Branch `grok/ux-wave2-csv-ui` from `origin/grok/ux-wave2-premium-csv` (`5d2a201b`). exportCsv auth+Premium gate, from/to filters, pricingCopy('export'), updateGateRow Premium CTA; tests assert Premium not free. Gates: freemiumGating + dashboardHtml 126/126. Not shipped; parent wave2 still owns land.
 - **2026-08-04 — AG — COMPLETED — Fix SAVE badge contrast & top-right CTA button text.** Branch `antigravity/fix-badge-contrast-and-header-ctas`: Fixed low contrast on green "SAVE ~17%" badge (#ffffff text on #15803d green). Replaced redundant "Free" badge next to "Premium" button in header with a clean "Upgrade" CTA to prevent confusing "Free Premium" side-by-side text.
 - **2026-08-04 — GROK — COMPLETED — UX P0 review fixes (web+iOS). PR #1329 merged. Gates: typecheck+test+gitleaks green; iOS simulator build ok. Next: ship.sh.** Branch `grok/ux-p0-review-fixes`: trade deep-link by id, CSV export filters + Premium CSV copy, legal short redirects + footer, PERF_GATE fix, iOS memberName search + auth host, delivery command result. Owner /approve-all on full UX review.
 
