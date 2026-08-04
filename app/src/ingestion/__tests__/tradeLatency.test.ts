@@ -4,6 +4,8 @@ import {
   extractLastName,
   normalizeTradeSide,
   matchDisclosureCandidate,
+  parseTradeHash,
+  raceFirstSeenAt,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -81,6 +83,48 @@ describe('tradeLatency', () => {
         },
       );
       expect(m?.matchMethod).toBe('fuzzy-missing-date');
+    });
+
+    it('fuzzy-matches when provider ticker is empty but filer/date/side agree', () => {
+      const m = matchDisclosureCandidate(
+        { trade_hash: 'beyer_AAPL_2026-07-27_buy' },
+        {
+          provider: 'unusual_whales',
+          chamber: 'house',
+          providerKey: 'k3',
+          tradeHash: 'beyer__2026-07-27_buy',
+          payload: {},
+          sourceUrl: null,
+          filedDate: null,
+          filerName: 'Don Beyer',
+          providerPublishedAt: null,
+        },
+      );
+      expect(m?.matchMethod).toBe('fuzzy-no-ticker');
+    });
+  });
+
+  describe('parseTradeHash', () => {
+    it('parses normal and empty-ticker hashes', () => {
+      expect(parseTradeHash('himes_BAC_2026-07-20_sell')).toEqual({
+        lastName: 'himes',
+        ticker: 'BAC',
+        date: '2026-07-20',
+        side: 'sell',
+      });
+      expect(parseTradeHash('beyer__2026-07-27_buy')).toMatchObject({
+        lastName: 'beyer',
+        date: '2026-07-27',
+        side: 'buy',
+      });
+    });
+  });
+
+  describe('raceFirstSeenAt', () => {
+    it('uses now when first_seen is outside the score window', () => {
+      const now = '2026-08-04T12:00:00.000Z';
+      expect(raceFirstSeenAt('2024-01-01T00:00:00.000Z', now, 168)).toBe(now);
+      expect(raceFirstSeenAt('2026-08-03T12:00:00.000Z', now, 168)).toBe('2026-08-03T12:00:00.000Z');
     });
   });
 });
