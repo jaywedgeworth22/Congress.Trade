@@ -146,11 +146,12 @@ export function mapTransaction(row: TransactionRow): Transaction {
     assetTypeCategoryLabel: assetType.categoryLabel,
     // Honest passthrough: a filing row with no disclosed side (row.tx_type
     // NULL — malformed/partial source text) is surfaced as null, never
-    // silently defaulted to 'P' (Purchase). Downstream aggregates already
+    // silently defaulted to 'P' (Buy). Downstream aggregates already
     // treat a non-matching tx_type as "not counted" (see tickerSummarySql/
     // memberSummarySql's `tx_type = 'P'`/'S'/'E' CASE expressions and
     // subscriptions.ts's `sides` filter), so a null side is naturally
     // excluded from buy/sell/exchange counts rather than misreported as a buy.
+    // Product labels: Buy/Sell/Exchange; storage stays P|S|E (B = Buy alias).
     txType: row.tx_type as TxType,
     amountMin: row.amount_min,
     amountMax: row.amount_max,

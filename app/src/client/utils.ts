@@ -70,6 +70,8 @@ export function asChambers(v: string | undefined): Chamber[] | undefined {
 }
 
 export function asTxType(v: string | undefined): TxType | undefined {
+  // Accept product short letter B (= Buy) as an alias of storage code P.
+  if (v === 'B' || v === 'b') return 'P';
   return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
 }
 

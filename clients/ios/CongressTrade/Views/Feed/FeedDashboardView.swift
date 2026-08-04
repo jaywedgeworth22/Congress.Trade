@@ -391,7 +391,7 @@ struct TradeCard: View {
 
     private var shortTypeLabel: String {
         switch trade.transaction.type {
-        case "P": return "Buy"
+        case "P", "B": return "Buy"
         case "S": return "Sell"
         case "E": return "Exch"
         default: return trade.transaction.type

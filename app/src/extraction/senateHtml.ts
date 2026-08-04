@@ -289,11 +289,12 @@ function rowToParsedTx(cells: string[], map: ColumnMap, confidence: number): Par
 // Field normalizers (exported for unit tests)
 // ---------------------------------------------------------------------------
 
-/** Map a Purchase/Sale/Exchange label to the canonical TxType code. */
+/** Map a Buy/Sell/Exchange (Purchase/Sale) label to the storage TxType code P|S|E. */
 export function normalizeTxType(raw: string): TxType | null {
   const s = (raw || '').toLowerCase().trim();
   if (!s) return null;
-  if (s.includes('purchase') || s.includes('buy') || s === 'p') return 'P';
+  // Product short letter B (= Buy) aliases storage P.
+  if (s.includes('purchase') || s.includes('buy') || s === 'p' || s === 'b') return 'P';
   if (s.includes('exchange') || s === 'e') return 'E';
   if (s.includes('sale') || s.includes('sold') || s.includes('sell') || s === 's') return 'S';
   if (s.includes('partial') || s.includes('full')) return 'S';

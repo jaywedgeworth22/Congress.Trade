@@ -104,13 +104,15 @@ shared type set but still return `501`.
     client can fall back to a monogram.
 - Each feed item's `transaction.type` (`P`/`S`/`E`) can be `null` for a filing
   row whose disclosed side didn't parse (malformed/partial source text). This
-  is an honest passthrough, not a silent default to `P` (Purchase): a
-  transaction with no confirmed side must not be misreported as a buy. Ticker
-  and member summary aggregates (`buyCount`/`sellCount`/`exchangeCount`,
-  `estimatedNetFlowUsd`) already exclude a non-matching/`null` `tx_type` from
-  every bucket rather than counting it as one; alert-subscription `sides`
-  filters behave the same way. Clients should render a `null` type as
-  "unknown"/omit the buy-sell badge rather than assuming Purchase.
+  is an honest passthrough, not a silent default to `P` (Buy): a
+  transaction with no confirmed side must not be misreported as a buy. Product
+  labels are **Buy / Sell / Exchange** (`P` stores Buy; input also accepts `B`
+  as a Buy alias). Ticker and member summary aggregates
+  (`buyCount`/`sellCount`/`exchangeCount`, `estimatedNetFlowUsd`) already
+  exclude a non-matching/`null` `tx_type` from every bucket rather than counting
+  it as one; alert-subscription `sides` filters behave the same way. Clients
+  should render a `null` type as "unknown"/omit the buy-sell badge rather than
+  assuming Buy.
 - Command idempotency is race-safe end to end: a concurrent duplicate
   `POST /api/client/v1/commands` with the same `idempotencyKey` never 500s —
   it replays the winning row (`replayed: true`, `200`) or, in the rare case the

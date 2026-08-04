@@ -932,9 +932,11 @@ function validateReviewEdits(
       return { error: `edits[${index}] must be an object` };
     }
     const e = raw as EditedTx;
-    const txType = typeof e.txType === 'string' ? e.txType.toUpperCase() : '';
+    // Accept product buy letter B as alias of storage P.
+    let txType = typeof e.txType === 'string' ? e.txType.toUpperCase() : '';
+    if (txType === 'B') txType = 'P';
     if (txType !== 'P' && txType !== 'S' && txType !== 'E') {
-      return { error: `edits[${index}].txType must be explicitly P, S, or E` };
+      return { error: `edits[${index}].txType must be explicitly P (Buy), S (Sell), or E (Exchange); B is accepted as Buy` };
     }
     const ownerRaw = typeof e.owner === 'string' ? e.owner.trim().toLowerCase() : '';
     const owner = ownerRaw === '' ? null : ownerRaw;
@@ -1190,6 +1192,8 @@ function normalizeStoredOwner(value: string | null): 'self' | 'spouse' | 'joint'
 }
 
 function normalizeStoredTxType(value: string | null): TxType {
+  // Product buy letter B aliases storage P.
+  if (value === 'B') return 'P';
   return value === 'P' || value === 'S' || value === 'E' ? value : 'P';
 }
 
