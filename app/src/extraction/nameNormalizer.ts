@@ -1,3 +1,5 @@
+import { applyMemberNameAlias } from '../shared/memberIdentity.ts';
+
 export function isJunkAssetString(s: string | null | undefined): boolean {
   if (!s) return true;
   const str = String(s).trim();
@@ -132,6 +134,10 @@ export function cleanFilerName(name: string | null | undefined): string {
   // Clean up any trailing commas, spaces, or stray periods
   str = str.replace(/[,\s.]+$/, '');
   str = str.replace(/\s{2,}/g, ' ');
+
+  // Curated legal → preferred renames (e.g. Rohit Khanna → Ro Khanna).
+  // Applied last so "Khanna, Rohit" is already flipped to "Rohit Khanna".
+  str = applyMemberNameAlias(str.trim());
 
   return str.trim();
 }

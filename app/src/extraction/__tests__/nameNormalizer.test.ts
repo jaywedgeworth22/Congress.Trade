@@ -14,6 +14,11 @@ describe('cleanFilerName', () => {
     expect(cleanFilerName('Drake')).toBe('Drake');
     expect(cleanFilerName('Senatorial')).toBe('Senatorial');
   });
+
+  it('maps curated legal names onto preferred public names', () => {
+    expect(cleanFilerName('Rohit Khanna')).toBe('Ro Khanna');
+    expect(cleanFilerName('Khanna, Rohit')).toBe('Ro Khanna');
+  });
 });
 
 describe('isJunkAssetString & cleanAssetString', () => {

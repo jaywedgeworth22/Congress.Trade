@@ -135,7 +135,10 @@ function slugPart(raw: string): string {
 }
 
 export function houseFilerId(first: string, last: string, stateDst: string): string | null {
-  const name = slugPart([first, last].filter(Boolean).join(' '));
+  // Run through cleanFilerName so curated aliases (Rohit→Ro Khanna) mint the
+  // durable house slug (house-ca17-ro-khanna) instead of a legal-name fork.
+  const cleaned = cleanFilerName([first, last].filter(Boolean).join(' '));
+  const name = slugPart(cleaned || [first, last].filter(Boolean).join(' '));
   if (!name) return null;
   const district = slugPart(stateDst || 'house');
   return `house-${district}-${name}`;
@@ -154,7 +157,8 @@ export function houseFilerId(first: string, last: string, stateDst: string): str
  * attribution in the feed/API/SSE/exports.
  */
 export function senateFilerId(fullName: string | null): string | null {
-  const name = slugPart(fullName ?? '');
+  // Same alias pass as house so legal-name variants collapse to one slug.
+  const name = slugPart(cleanFilerName(fullName ?? '') || fullName || '');
   return name ? `senate-${name}` : null;
 }
 
