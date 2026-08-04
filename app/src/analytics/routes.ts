@@ -1134,6 +1134,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         currentPrice: row.current_price == null ? null : num(row.current_price),
         elapsedDaysSinceFiling:
           row.elapsed_days_since_filing == null ? null : num(row.elapsed_days_since_filing),
+        estVolume: row.est_volume == null ? null : num(row.est_volume),
       }));
       const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
       return meta(f, {

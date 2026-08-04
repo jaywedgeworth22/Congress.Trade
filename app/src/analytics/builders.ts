@@ -495,8 +495,8 @@ export function buildMemberPerformanceLeaderboardQuery(
     'SELECT t.filer_id AS filer_id, MAX(fl.full_name) AS full_name, MAX(fl.party) AS party, ' +
     'MAX(fl.photo_url) AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
-    `AVG(${ANNUALIZED_EXCESS}) AS avg_annualized_excess, ` +
-    `AVG(${EXCESS}) AS avg_excess, ` +
+    `SUM((${ANNUALIZED_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_annualized_excess, ` +
+    `SUM((${EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_excess, ` +
     `SUM(CASE WHEN ${ANNUALIZED_EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
     `SUM(${MID}) AS est_volume ` +
     'FROM transactions t ' +
@@ -757,7 +757,8 @@ export function buildMemberPerformanceQuery(filerId: string, p: CommonFilters): 
     'txp.price_at_trade AS price_at_trade, txp.spx_at_trade AS spx_at_trade, ' +
     'txp.price_at_filing AS price_at_filing, txp.spx_at_filing AS spx_at_filing, ' +
     'sr.current_price AS current_price, ' +
-    `(julianday('now') - julianday(${ANCHOR_DATE})) AS elapsed_days_since_filing ` +
+    `(julianday('now') - julianday(${ANCHOR_DATE})) AS elapsed_days_since_filing, ` +
+    `${MID} AS est_volume ` +
     ANALYTICS_FROM_JOINS +
     'LEFT JOIN tx_performance txp ON txp.tx_id = t.id ' +
     'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
