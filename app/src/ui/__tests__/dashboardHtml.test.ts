@@ -489,7 +489,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="memberPerf"');
     expect(DASHBOARD_HTML).toContain('Their timing (approx.)');
     expect(DASHBOARD_HTML).toContain('If you bought at filing');
-    expect(DASHBOARD_HTML).toContain('avgAnnualizedExcess');
+    expect(DASHBOARD_HTML).toContain('avgExcessReturn');
     // Must not hardcode the misleading API-key gate on the politician drawer.
     expect(DASHBOARD_HTML).not.toContain(
       "Performance vs S&amp;P 500</h3>' + PERF_GATE",
