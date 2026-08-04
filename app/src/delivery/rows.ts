@@ -460,6 +460,12 @@ function buildTxFilters(
   // Synthetic provider-discovered placeholder rows without an official filing stay off the main feed.
   where.push("SUBSTR(t.doc_id, 1, 17) != 'provider-missing-'");
   where.push('t.filer_id IS NOT NULL');
+  // Competitor-only executive injects (COMPETITOR-* doc ids on EXEC-* filers)
+  // have no OGE PDF / hosted filing. Keep them in the DB for coverage forensics,
+  // but do not present them as first-class feed rows until a real E- filing exists.
+  where.push(
+    "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
+  );
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;

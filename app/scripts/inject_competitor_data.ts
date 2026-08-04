@@ -6,6 +6,10 @@ import { persistTransactions } from "../src/extraction/normalizer.ts";
 import type { Env, Transaction } from "../src/shared/types.ts";
 import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 import { resolveSecret } from "../src/secrets/infisical.ts";
+import {
+  assetNameFromCompetitorPayload,
+  resolveExecutiveFilerIdFromName,
+} from "../src/shared/executiveIdentity.ts";
 
 const dataDir = new URL("../../data/hoarded", import.meta.url).pathname;
 
@@ -136,15 +140,16 @@ async function run() {
     const tradeHash = generateTradeHash(rawName, tk, date, type);
     const docId = `COMPETITOR-${tradeHash}`;
 
-    // Reconstruct a transaction
-    const filerId = lastName.toUpperCase() === 'TRUMP' ? 'EXEC-DJT' : `MANUAL-${lastName.toUpperCase()}`;
+    // Full-name executive match only — never bare last-name → EXEC-*.
+    const filerId = resolveExecutiveFilerIdFromName(rawName) ?? `MANUAL-${lastName.toUpperCase()}`;
+    const assetName = assetNameFromCompetitorPayload(rawObj, tk);
     novelTrades.push({
       id: `${docId}-${tradeHash}`,
       docId,
       filerId,
       txDate: date,
       owner: null,
-      assetName: tk, // We don't have good asset names for all
+      assetName,
       ticker: tk,
       assetType: 'stock', // Fallback
       txType: type === 'buy' ? 'P' : type === 'sell' ? 'S' : 'E',
@@ -176,9 +181,11 @@ async function run() {
 
   function processTradeWithFiler(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any) {
     const lastName = extractLastName(rawName);
-    const filerId = lastName.toUpperCase() === 'TRUMP' ? 'EXEC-DJT' : `MANUAL-${lastName.toUpperCase()}`;
-    filersToAdd.set(filerId, { id: filerId, name: rawName, chamber });
-    processTrade(provider, rawName, chamber, ticker, date, typeStr, rawObj);
+    const execId = resolveExecutiveFilerIdFromName(rawName);
+    const filerId = execId ?? `MANUAL-${lastName.toUpperCase()}`;
+    const resolvedChamber = execId ? 'executive' : chamber;
+    filersToAdd.set(filerId, { id: filerId, name: rawName, chamber: resolvedChamber });
+    processTrade(provider, rawName, resolvedChamber as 'house' | 'senate' | 'executive', ticker, date, typeStr, rawObj);
   }
 
   // unusual whales

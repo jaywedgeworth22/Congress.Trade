@@ -17,7 +17,7 @@ const FIXTURE = `
 describe('parseOgeIndex', () => {
   const filings = parseOgeIndex(FIXTURE);
 
-  it('extracts all 278-T reports including dynamic filers (no annuals, deduped)', () => {
+  it('extracts all 278-T reports including curated PAS cabinet filers (no annuals, deduped)', () => {
     expect(filings).toHaveLength(5);
     expect(filings.every((f) => f.chamber === 'executive')).toBe(true);
 
@@ -27,9 +27,9 @@ describe('parseOgeIndex', () => {
 
     const lutnickFiling = filings.find((f) => f.filerName === 'Howard Lutnick');
     expect(lutnickFiling).toBeDefined();
-    expect(lutnickFiling?.filerId).toBe('EXEC-HOWARD-LUTNICK');
-    expect(lutnickFiling?.party).toBeNull();
-    expect(lutnickFiling?.photoUrl).toBeNull();
+    // Curated PAS cabinet slot (stable id), not dynamic EXEC-HOWARD-LUTNICK.
+    expect(lutnickFiling?.filerId).toBe('EXEC-LUTNICK');
+    expect(lutnickFiling?.party).toBe('R');
     expect(lutnickFiling?.filedDate).toBe('2025-06-17');
 
     const raw = JSON.stringify(filings);
@@ -122,7 +122,8 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     // 2h since last success >= the configured 1h -> polls (the old code sat on
     // the 6h default whenever no value resolved and would have returned null).
     expect(out).toEqual([]);
-    expect(calls).toHaveLength(1);
+    // Default OGE indexes: President/VP + PAS cabinet collection.
+    expect(calls).toHaveLength(2);
   });
 
   it('stays on the 6h fallback when no interval is configured', async () => {
@@ -164,7 +165,7 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     const out = await pollOgeExecutive(env, NOW, fetchImpl);
 
     expect(out).toEqual([]);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(kv.get('last_attempt:oge')).toBe(NOW.toISOString());
   });
 
@@ -181,7 +182,7 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     const out = await pollOgeExecutive(env, NOW, fetchImpl);
 
     expect(out).toEqual([]);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 
   it('force bypasses both the interval gate and the failure backoff', async () => {
@@ -197,6 +198,6 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     const out = await pollOgeExecutive(env, NOW, fetchImpl, { force: true });
 
     expect(out).toEqual([]);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 });
