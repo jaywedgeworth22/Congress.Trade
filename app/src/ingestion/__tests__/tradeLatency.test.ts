@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { generateTradeHash, extractLastName, normalizeTradeSide } from '../tradeLatency.ts';
+import {
+  generateTradeHash,
+  extractLastName,
+  normalizeTradeSide,
+  matchDisclosureCandidate,
+} from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
   describe('extractLastName', () => {
@@ -37,6 +42,45 @@ describe('tradeLatency', () => {
       expect(generateTradeHash('Kevin Hern', 'DVN', '2024-06-28', 'S')).toBe(
         generateTradeHash('Hern, Kevin', 'DVN', '2024-06-28', 'Sale'),
       );
+    });
+  });
+
+  describe('matchDisclosureCandidate', () => {
+    it('matches exact trade hashes as trade-hash', () => {
+      const hash = generateTradeHash('Debbie Dingell', 'HONAV', '2026-06-29', 'exchange');
+      const m = matchDisclosureCandidate(
+        { trade_hash: hash },
+        {
+          provider: 'unusual_whales',
+          chamber: 'house',
+          providerKey: 'k1',
+          tradeHash: hash,
+          payload: {},
+          sourceUrl: null,
+          filedDate: null,
+          filerName: 'Debbie Dingell',
+          providerPublishedAt: null,
+        },
+      );
+      expect(m).toEqual({ providerKey: 'k1', matchMethod: 'trade-hash' });
+    });
+
+    it('fuzzy-matches when provider date is empty but filer/ticker/side agree', () => {
+      const m = matchDisclosureCandidate(
+        { trade_hash: 'sessions_ARCC_2026-07-24_sell' },
+        {
+          provider: 'unusual_whales',
+          chamber: 'house',
+          providerKey: 'k2',
+          tradeHash: 'sessions_ARCC__sell',
+          payload: {},
+          sourceUrl: null,
+          filedDate: null,
+          filerName: 'Pete Sessions',
+          providerPublishedAt: null,
+        },
+      );
+      expect(m?.matchMethod).toBe('fuzzy-missing-date');
     });
   });
 });
