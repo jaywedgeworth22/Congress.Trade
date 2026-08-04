@@ -206,7 +206,17 @@ def validate_rows(rows) -> list:
         if amin is not None and amax is not None and isinstance(amin, (int, float)) and isinstance(amax, (int, float)) and amin > amax:
             continue
         note = o.get("note") or o.get("description")
-        raw = f"{asset} | {tx_type} | {o.get('txDate') or o.get('tx_date')} | {amin}-{amax}" + (f" | {note}" if note else "")
+        amin_i = int(amin) if isinstance(amin, (int, float)) else None
+        amax_i = int(amax) if isinstance(amax, (int, float)) else None
+        # Keep rawText free of bare "min-max" digits so normalizer's
+        # parseAmountRange(rawText) does not fight the already-snapped bracket
+        # and flag invalid_amount. Prefer ticker/asset prose only.
+        raw = f"{asset}"
+        if o.get("ticker"):
+            raw += f" ({o.get('ticker')})"
+        raw += f" | {tx_type} | {o.get('txDate') or o.get('tx_date') or ''}"
+        if note:
+            raw += f" | {note}"
         out.append({
             "txDate": o.get("txDate") or o.get("tx_date"),
             "owner": o.get("owner") if o.get("owner") in ("self", "spouse", "joint", "dependent") else None,
@@ -214,10 +224,14 @@ def validate_rows(rows) -> list:
             "ticker": (o.get("ticker") or None),
             "assetType": None,
             "txType": tx_type,
-            "amountMin": int(amin) if isinstance(amin, (int, float)) else None,
-            "amountMax": int(amax) if isinstance(amax, (int, float)) else None,
+            "amountMin": amin_i,
+            "amountMax": amax_i,
             "isOption": bool(re.search(r"\b(put|call|option)\b", asset, re.I)),
             "capGainsOver200": False,
+            # Grok vision base confidence — high enough that clean rows clear
+            # CONFIDENCE_THRESHOLD (0.95) after mild penalties; missing amounts
+            # still get penalized into review.
+            "confidence": 0.97,
             "rawText": raw[:800],
             "description": note,
         })
