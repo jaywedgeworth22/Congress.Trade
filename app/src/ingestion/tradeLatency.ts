@@ -2093,13 +2093,27 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
           row.match_method === 'fuzzy-no-ticker' ||
           row.match_method === 'fuzzy-missing-date'),
     );
-    const monitorDeltas = strongMatches
+    // Timing requires BOTH sides observed inside the score window. Backfilled
+    // candidates (first_seen clamped to created_at today) matched to provider
+    // rows from last week produce multi-day "provider ahead" artifacts that
+    // are not live races — exclude those from lead/win stats while still
+    // counting them toward coverage matchedKeys below.
+    const timingMatches = strongMatches.filter(
+      (row) =>
+        !!row.provider_first_seen_at &&
+        row.provider_first_seen_at >= scoreCutoff &&
+        // Drop absurd deltas (>2 days) even inside the window — usually a
+        // stamp-alignment bug rather than a real race.
+        Math.abs(deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at) ?? 1e12) <=
+          48 * 3600,
+    );
+    const monitorDeltas = timingMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
       .filter((v): v is number => v != null);
-    const publishedDeltas = strongMatches
+    const publishedDeltas = timingMatches
       .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
       .filter((v): v is number => v != null);
-    const matched = strongMatches.length;
+    const timingMatched = timingMatches.length;
     const matchedKeys = new Set(
       strongMatches
         .filter((row) => row.provider_key)
@@ -2137,20 +2151,28 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     const sampleOk =
       maturedProviderObserved >= LATENCY_MIN_MATURED_ROWS &&
       maturedCandidates.length >= LATENCY_MIN_MATURED_ROWS;
+    // Timing gates use concurrent races (timingMatched); coverage still uses
+    // strongMatches so reverse-seeded density can grow the board.
+    const timingN = timingMatched;
     const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] = !sampleOk
-      ? matched >= LATENCY_MIN_PRELIMINARY_MATCHED
+      ? timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
         ? 'preliminary'
-        : 'insufficient'
-      : coverageOk
+        : strongMatches.length > 0
+          ? 'limited'
+          : 'insufficient'
+      : coverageOk && timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
         ? 'usable'
-        : matched >= LATENCY_MIN_PRELIMINARY_MATCHED
+        : timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
           ? 'preliminary'
-          : 'limited';
+          : strongMatches.length > 0
+            ? 'limited'
+            : 'insufficient';
     return {
       provider: provider.id,
       label: provider.label,
       candidates: mine.length,
-      matched,
+      // Concurrent races only — drives lead/win stats and preliminary gates.
+      matched: timingN,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
       providerObserved: observations.length,
