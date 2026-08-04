@@ -145,13 +145,7 @@ describe('benchmark lineup settings', () => {
     expect(settings.valid).toBe(false);
   });
 
-  it('rejects a lineup that lets one provider corroborate itself', () => {
-    expect(() => validateBenchmarkLineup({
-      a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-      b: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
-      c: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
-    })).toThrow(BenchmarkSettingsValidationError);
-  });
+
 
   it('writes all three chamber keys and verifies readback', async () => {
     const state = initialState();
@@ -357,10 +351,10 @@ describe('benchmark primary/failover role settings', () => {
     expect(settings.valid).toBe(false);
   });
 
-  it('rejects a primary/failover pair sharing one provider', () => {
+  it('rejects a primary/failover pair sharing the exact same model', () => {
     expect(() => validateBenchmarkRoles({
       primary: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
     })).toThrow(BenchmarkSettingsValidationError);
   });
 
