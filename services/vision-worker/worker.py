@@ -208,15 +208,11 @@ def validate_rows(rows) -> list:
         note = o.get("note") or o.get("description")
         amin_i = int(amin) if isinstance(amin, (int, float)) else None
         amax_i = int(amax) if isinstance(amax, (int, float)) else None
-        # Keep rawText free of bare "min-max" digits so normalizer's
-        # parseAmountRange(rawText) does not fight the already-snapped bracket
-        # and flag invalid_amount. Prefer ticker/asset prose only.
-        raw = f"{asset}"
-        if o.get("ticker"):
-            raw += f" ({o.get('ticker')})"
-        raw += f" | {tx_type} | {o.get('txDate') or o.get('tx_date') or ''}"
-        if note:
-            raw += f" | {note}"
+        # rawText is fed to normalizer parseAmountRange(). Hyphenated dates
+        # ("2022-01-26") and bare "1001-15000" digits get misread as amount
+        # ranges and force invalid_amount (0.97 * 0.6 = 0.582 < publish bar).
+        # Keep audit text to asset prose only; structured fields carry the rest.
+        raw = asset[:500]
         out.append({
             "txDate": o.get("txDate") or o.get("tx_date"),
             "owner": o.get("owner") if o.get("owner") in ("self", "spouse", "joint", "dependent") else None,
