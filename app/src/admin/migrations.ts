@@ -578,6 +578,11 @@ export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_status
      ON trade_latency_candidates (provider, status, created_at DESC)`,
+  // Scoreboard + pending match pass filter by congress_first_seen_at / updated_at.
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_seen
+     ON trade_latency_candidates (provider, status, congress_first_seen_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_updated
+     ON trade_latency_candidates (updated_at DESC)`,
   `CREATE TABLE IF NOT EXISTS trade_provider_observations (
      provider TEXT NOT NULL,
      chamber TEXT NOT NULL,
@@ -594,6 +599,11 @@ export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_trade_provider_seen
      ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
+  // Exact trade-hash join for pending→observation matching.
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_hash
+     ON trade_provider_observations (provider, trade_hash, chamber)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_last_obs
+     ON trade_provider_observations (last_observed_at DESC)`,
   `DROP TABLE IF EXISTS disclosure_latency_candidates`,
   `DROP TABLE IF EXISTS disclosure_provider_observations`,
 ] as const;
@@ -605,6 +615,15 @@ export const TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS = [
   'ALTER TABLE trade_latency_candidates ADD COLUMN source_url TEXT',
   'ALTER TABLE trade_latency_candidates ADD COLUMN provider_published_at TEXT',
   'ALTER TABLE trade_provider_observations ADD COLUMN provider_published_at TEXT',
+  // Indexes for scoreboard + exact-hash match (safe on already-created tables).
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_seen
+     ON trade_latency_candidates (provider, status, congress_first_seen_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_updated
+     ON trade_latency_candidates (updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_hash
+     ON trade_provider_observations (provider, trade_hash, chamber)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_last_obs
+     ON trade_provider_observations (last_observed_at DESC)`,
 ] as const;
 
 export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [

@@ -347,7 +347,9 @@ struct ProviderScorecard: View {
     let minMatched: Int
 
     var body: some View {
-        let hasStats = provider.matched >= minMatched
+        // Mirror web honesty gates: need enough matches AND usable coverage.
+        let usable = (provider.comparisonStatus ?? "usable") == "usable"
+        let hasStats = provider.matched >= minMatched && usable
         let wins = provider.usFirstCount
         let losses = provider.providerFirstCount
         let ahead = hasStats && wins > losses
@@ -366,6 +368,8 @@ struct ProviderScorecard: View {
                     } else {
                         Text("Behind").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.red.opacity(0.2)).foregroundStyle(.red).clipShape(Capsule())
                     }
+                } else if provider.matched >= minMatched && !usable {
+                    Text("Coverage limited").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.orange.opacity(0.15)).foregroundStyle(.orange).clipShape(Capsule())
                 } else {
                     Text("Gathering").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.gray.opacity(0.2)).foregroundStyle(.secondary).clipShape(Capsule())
                 }
@@ -386,7 +390,13 @@ struct ProviderScorecard: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Matched \(provider.matched) of \(provider.candidates) filings so far.")
+                let unmatched = provider.unmatchedProvider ?? 0
+                Text(
+                    provider.matched > 0
+                        ? "Matched \(provider.matched) of \(provider.candidates) filings so far."
+                            + (unmatched > 0 ? " \(unmatched) provider-only rows still unmatched." : "")
+                        : "Probes haven't found overlapping disclosures yet."
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

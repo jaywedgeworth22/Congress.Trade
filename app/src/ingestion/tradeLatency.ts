@@ -1135,28 +1135,57 @@ async function matchAndUpdateCandidates(
   const updates: Array<[string, SqlParam[]]> = [];
   const alerts: Array<() => Promise<void>> = [];
 
+  // Index observations by trade_hash for O(1) exact hits. Historical bulk
+  // candidate backfills used to starve exact matches when we only scanned the
+  // newest 100 pending rows against a linear observation list.
+  const byHash = new Map<string, ProviderObservationRow[]>();
+  for (const row of providerRows) {
+    if (!row.trade_hash) continue;
+    const list = byHash.get(row.trade_hash) ?? [];
+    list.push(row);
+    byHash.set(row.trade_hash, list);
+  }
+
   for (const candidate of candidates) {
     let match: ProviderObservationRow | null = null;
     let method: string | null = null;
-    for (const providerRow of providerRows) {
-      if (providerRow.chamber !== candidate.chamber || !providerRow.payload) continue;
-      const payload = JSON.parse(providerRow.payload) as Record<string, unknown>;
-      const parsed: DisclosureProviderRow = {
-        provider: providerRow.provider,
-        chamber: providerRow.chamber,
-        providerKey: providerRow.provider_key,
-        tradeHash: providerRow.trade_hash,
-        payload,
-        sourceUrl: providerRow.source_url,
-        filedDate: providerRow.filed_date,
-        filerName: providerRow.filer_name,
-        providerPublishedAt: providerRow.provider_published_at,
-      };
-      const m = matchDisclosureCandidate(candidate, parsed);
-      if (m) {
-        match = providerRow;
-        method = m.matchMethod;
-        break;
+
+    // 1) Exact trade-hash hit — no payload required.
+    const exact = (byHash.get(candidate.trade_hash) ?? []).find(
+      (row) => row.chamber === candidate.chamber,
+    );
+    if (exact) {
+      match = exact;
+      method = 'trade-hash';
+    }
+
+    // 2) Fuzzy fallbacks still need a payload to re-parse the provider row.
+    if (!match) {
+      for (const providerRow of providerRows) {
+        if (providerRow.chamber !== candidate.chamber || !providerRow.payload) continue;
+        let payload: Record<string, unknown>;
+        try {
+          payload = JSON.parse(providerRow.payload) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const parsed: DisclosureProviderRow = {
+          provider: providerRow.provider,
+          chamber: providerRow.chamber,
+          providerKey: providerRow.provider_key,
+          tradeHash: providerRow.trade_hash,
+          payload,
+          sourceUrl: providerRow.source_url,
+          filedDate: providerRow.filed_date,
+          filerName: providerRow.filer_name,
+          providerPublishedAt: providerRow.provider_published_at,
+        };
+        const m = matchDisclosureCandidate(candidate, parsed);
+        if (m) {
+          match = providerRow;
+          method = m.matchMethod;
+          break;
+        }
       }
     }
 
@@ -1173,7 +1202,7 @@ async function matchAndUpdateCandidates(
                 last_checked_at = ?,
                 error = NULL,
                 updated_at = ?
-          WHERE trade_hash = ? AND provider = ?`,
+          WHERE trade_hash = ? AND provider = ? AND status = 'pending'`,
         [
           match.provider_key,
           match.first_observed_at,
@@ -1210,6 +1239,118 @@ async function matchAndUpdateCandidates(
   return { pending: candidates.length, matched, matchedTradeHashes };
 }
 
+/**
+ * SQL join: every pending candidate that already has an exact trade_hash
+ * observation for the same provider+chamber. This is the only path that can
+ * clear a large pending backlog — the previous "newest 100 pending only"
+ * scan never reached exact matches buried under historical backfill rows.
+ */
+async function loadExactPendingHashMatches(
+  env: Env,
+  provider: ProviderId,
+  limit = 500,
+): Promise<Array<CandidateRow & {
+  obs_provider_key: string;
+  obs_first_observed_at: string;
+  obs_provider_published_at: string | null;
+  obs_payload: string | null;
+}>> {
+  return all(
+    env.DB,
+    `SELECT c.trade_hash, c.doc_id, c.provider, c.chamber, c.source_url, c.filed_date,
+            c.filer_name, c.ticker, c.tx_date, c.tx_type, c.congress_first_seen_at, c.attempts,
+            o.provider_key AS obs_provider_key,
+            o.first_observed_at AS obs_first_observed_at,
+            o.provider_published_at AS obs_provider_published_at,
+            o.payload AS obs_payload
+       FROM trade_latency_candidates c
+       JOIN trade_provider_observations o
+         ON o.provider = c.provider
+        AND o.trade_hash = c.trade_hash
+        AND o.chamber = c.chamber
+      WHERE c.provider = ?
+        AND c.status = 'pending'
+        AND c.trade_hash IS NOT NULL
+        AND c.trade_hash != ''
+      ORDER BY o.first_observed_at DESC
+      LIMIT ?`,
+    [provider, limit],
+  );
+}
+
+async function applyExactHashMatches(
+  env: Env,
+  provider: ProviderDefinition,
+  nowIso: string,
+): Promise<{ matched: number; matchedTradeHashes: string[] }> {
+  const rows = await loadExactPendingHashMatches(env, provider.id);
+  if (!rows.length) return { matched: 0, matchedTradeHashes: [] };
+
+  const updates: Array<[string, SqlParam[]]> = [];
+  const matchedTradeHashes: string[] = [];
+  const alerts: Array<() => Promise<void>> = [];
+
+  for (const row of rows) {
+    updates.push([
+      `UPDATE trade_latency_candidates
+          SET status = 'matched',
+              provider_key = ?,
+              provider_first_seen_at = ?,
+              provider_published_at = ?,
+              match_method = 'trade-hash',
+              payload = ?,
+              attempts = attempts + 1,
+              last_checked_at = ?,
+              error = NULL,
+              updated_at = ?
+        WHERE trade_hash = ? AND provider = ? AND status = 'pending'`,
+      [
+        row.obs_provider_key,
+        row.obs_first_observed_at,
+        row.obs_provider_published_at,
+        row.obs_payload,
+        nowIso,
+        nowIso,
+        row.trade_hash,
+        provider.id,
+      ],
+    ]);
+    matchedTradeHashes.push(row.trade_hash);
+    const candidate: CandidateRow = {
+      trade_hash: row.trade_hash,
+      doc_id: row.doc_id,
+      provider: row.provider,
+      chamber: row.chamber,
+      source_url: row.source_url,
+      filed_date: row.filed_date,
+      filer_name: row.filer_name,
+      ticker: row.ticker,
+      tx_date: row.tx_date,
+      tx_type: row.tx_type,
+      congress_first_seen_at: row.congress_first_seen_at,
+      attempts: row.attempts,
+    };
+    const obs: ProviderObservationRow = {
+      provider: provider.id,
+      chamber: row.chamber,
+      provider_key: row.obs_provider_key,
+      trade_hash: row.trade_hash,
+      first_observed_at: row.obs_first_observed_at,
+      last_observed_at: row.obs_first_observed_at,
+      provider_published_at: row.obs_provider_published_at,
+      source_url: row.source_url,
+      filed_date: row.filed_date,
+      filer_name: row.filer_name,
+      payload: row.obs_payload,
+    };
+    alerts.push(() => alertMatch(env, provider, candidate, obs));
+  }
+
+  if (updates.length) await batch(env.DB, updates);
+  for (const fn of alerts) await fn();
+  return { matched: matchedTradeHashes.length, matchedTradeHashes };
+}
+
 async function matchPendingCandidates(
   env: Env,
   provider: ProviderDefinition,
@@ -1217,19 +1358,40 @@ async function matchPendingCandidates(
   nowIso: string,
   errors: string[],
 ): Promise<{ pending: number; matched: number; examinedTradeHashes: string[]; matchedTradeHashes: string[] }> {
+  // Pass A: exact trade-hash SQL join — clears backlog matches that the
+  // newest-N scan would never reach.
+  const exact = await applyExactHashMatches(env, provider, nowIso);
+
+  // Pass B: fuzzy match on recent pending candidates only (score window).
+  // Historical bulk-backfilled pendings are intentionally excluded so they
+  // cannot starve live timing comparisons.
+  const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const candidates = await all<CandidateRow>(
     env.DB,
     `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, attempts
        FROM trade_latency_candidates
-      WHERE provider = ? AND status = 'pending'
-      ORDER BY created_at DESC
-      LIMIT 100`,
-    [provider.id],
+      WHERE provider = ?
+        AND status = 'pending'
+        AND congress_first_seen_at >= ?
+      ORDER BY congress_first_seen_at DESC
+      LIMIT 250`,
+    [provider.id, scoreCutoff],
   );
   const providerRows = await loadProviderRows(env, provider.id, now);
-  const result = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
-  return { ...result, examinedTradeHashes: candidates.map((c) => c.doc_id) };
+  const fuzzy = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
+
+  const matchedTradeHashes = Array.from(new Set([...exact.matchedTradeHashes, ...fuzzy.matchedTradeHashes]));
+  const examined = Array.from(new Set([
+    ...exact.matchedTradeHashes,
+    ...candidates.map((c) => c.trade_hash),
+  ]));
+  return {
+    pending: examined.length,
+    matched: matchedTradeHashes.length,
+    examinedTradeHashes: examined,
+    matchedTradeHashes,
+  };
 }
 
 /**
@@ -1283,7 +1445,7 @@ async function loadObservationRowsByKeys(
     out.push(
       ...(await all<ProviderObservationRow>(
         env.DB,
-        `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
+        `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at, provider_published_at,
                 source_url, filed_date, filer_name, payload
            FROM trade_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
@@ -1712,11 +1874,15 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   const providers = PROVIDERS.filter((p) => p.supportsDirectLatest).map((provider) => {
     const mine = rows.filter((row) => row.provider === provider.id);
     const observations = providerRows.filter((row) => row.provider === provider.id);
-    // Date/name fallback matches can be ambiguous when a member has multiple
-    // filings on the same day. Only exact document-token or exact filer/date
-    // matches are eligible for a public timing comparison.
+    // Exact trade-hash is the durable public comparison key. Also accept the
+    // two structured fuzzy methods when ticker or date is missing on one side
+    // (still same filer + side); pure free-text/name fallbacks stay excluded.
     const strongMatches = mine.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
+      (row) =>
+        row.status === 'matched' &&
+        (row.match_method === 'trade-hash' ||
+          row.match_method === 'fuzzy-no-ticker' ||
+          row.match_method === 'fuzzy-missing-date'),
     );
     const monitorDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -1742,7 +1908,11 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     ).length;
 
     const matchedMaturedCandidates = maturedCandidates.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
+      (row) =>
+        row.status === 'matched' &&
+        (row.match_method === 'trade-hash' ||
+          row.match_method === 'fuzzy-no-ticker' ||
+          row.match_method === 'fuzzy-missing-date'),
     ).length;
     const ctCoveragePct = maturedProviderObserved
       ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
