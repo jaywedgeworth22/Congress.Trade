@@ -143,7 +143,10 @@ export interface DisclosureLatencyProviderMetrics {
   providerCoveragePct: number | null;
   /** Jaccard overlap of the two matured observed cohorts. */
   overlapPct: number | null;
-  comparisonStatus: 'insufficient' | 'limited' | 'usable';
+  /** insufficient = too few matured rows; limited = coverage too low for a
+   *  full claim; preliminary = enough matched timing for a soft claim;
+   *  usable = coverage + sample gates pass for a full Ahead/Behind claim. */
+  comparisonStatus: 'insufficient' | 'limited' | 'preliminary' | 'usable';
   comparisonBasis: 'matched-overlap-only';
   ctAheadMonitorCount: number;
   providerAheadMonitorCount: number;
@@ -196,7 +199,6 @@ interface ProviderDefinition {
 }
 
 const DEFAULT_LIMIT = 100;
-const RECENT_PROVIDER_HOURS = 72;
 const PAYLOAD_LIMIT = 20_000;
 /**
  * Unusual Whales' recent-trades page only holds ~200 rows, so a pending
@@ -241,9 +243,15 @@ const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 // indexes. Keep the scoreboard scoped to observations active in this window,
 // then allow a full day for our watcher to catch up before calling a row
 // unmatched. These are intentionally conservative public-comparison gates.
-export const LATENCY_SCORE_WINDOW_HOURS = 72;
+/** Active race window for scoreboard + pending match (7 days — denser sample). */
+export const LATENCY_SCORE_WINDOW_HOURS = 168;
+/** Keep observation match window aligned with the scoreboard window. */
+const RECENT_PROVIDER_HOURS = LATENCY_SCORE_WINDOW_HOURS;
 export const LATENCY_MATURITY_GRACE_HOURS = 24;
-export const LATENCY_MIN_MATURED_ROWS = 20;
+/** Full "usable" claim requires this many matured provider-observed rows. */
+export const LATENCY_MIN_MATURED_ROWS = 15;
+/** Preliminary timing shown from this many in-window strong matches. */
+export const LATENCY_MIN_PRELIMINARY_MATCHED = 5;
 export const LATENCY_MIN_COVERAGE_PCT = 80;
 
 const PROVIDERS: ProviderDefinition[] = [
@@ -498,9 +506,61 @@ export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'se
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
   const tk = (ticker || '').toUpperCase().trim().replace(/[\.\/]/g, '-');
-  const dt = (date || '').slice(0, 10);
+  const dt = normalizeDate(date) || '';
   const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
+}
+
+/** Parse `lastName_ticker_YYYY-MM-DD_side` (ticker/date may be empty). */
+export function parseTradeHash(hash: string | null | undefined): {
+  lastName: string;
+  ticker: string;
+  date: string;
+  side: string;
+} {
+  const raw = String(hash ?? '');
+  const m = /^([^_]+)_([^_]*)_(\d{4}-\d{2}-\d{2})?_?(buy|sell|exchange)?$/i.exec(raw);
+  if (m) {
+    return {
+      lastName: (m[1] || '').toLowerCase(),
+      ticker: (m[2] || '').toUpperCase(),
+      date: m[3] || '',
+      side: (m[4] || '').toLowerCase(),
+    };
+  }
+  // Fallback: lastName_ticker_date_side with date always YYYY-MM-DD when present.
+  const parts = raw.split('_');
+  if (parts.length >= 4) {
+    const side = parts[parts.length - 1].toLowerCase();
+    const date = parts[parts.length - 2];
+    const lastName = (parts[0] || '').toLowerCase();
+    const ticker = parts.slice(1, -2).join('_').toUpperCase();
+    return {
+      lastName,
+      ticker: /^\d{4}-\d{2}-\d{2}$/.test(date) ? ticker : parts.slice(1, -1).join('_').toUpperCase(),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
+      side: ['buy', 'sell', 'exchange'].includes(side) ? side : '',
+    };
+  }
+  return { lastName: '', ticker: '', date: '', side: '' };
+}
+
+/**
+ * Prefer a real first-seen stamp when it is still inside the active score
+ * window; otherwise use now. Prevents multi-year filing stamps from entering
+ * the race as fake "CT was first by months" leads.
+ */
+export function raceFirstSeenAt(
+  txFirstSeen: string | null | undefined,
+  nowIso: string,
+  windowHours = LATENCY_SCORE_WINDOW_HOURS,
+): string {
+  if (!txFirstSeen) return nowIso;
+  const t = Date.parse(txFirstSeen);
+  const n = Date.parse(nowIso);
+  if (!Number.isFinite(t) || !Number.isFinite(n)) return nowIso;
+  if (n - t > windowHours * 3600_000) return nowIso;
+  return txFirstSeen;
 }
 
 function chamberFromDocId(docId: string | null | undefined, fallback: Chamber = 'house'): Chamber {
@@ -631,28 +691,29 @@ export function matchDisclosureCandidate(
   candidate: Pick<CandidateRow, 'trade_hash'>,
   row: DisclosureProviderRow,
 ): CandidateMatch | null {
-  if (candidate.trade_hash === row.tradeHash) {
+  if (candidate.trade_hash && row.tradeHash && candidate.trade_hash === row.tradeHash) {
     return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
   }
 
-  const cParts = candidate.trade_hash.split('_');
-  const rParts = row.tradeHash.split('_');
-  // Hash format: lastName_ticker_txDate_type
-  if (cParts.length >= 4 && rParts.length >= 4) {
-    const sameFiler = cParts[0] && rParts[0] && cParts[0] === rParts[0];
-    const sameTicker = cParts[1] && rParts[1] && cParts[1] === rParts[1];
-    const sameDate = cParts[2] === rParts[2] || !cParts[2] || !rParts[2];
-    const sameType = cParts[3] === rParts[3];
+  const c = parseTradeHash(candidate.trade_hash);
+  const r = parseTradeHash(row.tradeHash);
+  if (!c.lastName || !r.lastName || c.lastName !== r.lastName) return null;
+  if (!c.side || !r.side || c.side !== r.side) return null;
 
-    // Case 1: Same politician, ticker, and trade side (even if tx date is unparsed on provider side)
-    if (sameFiler && sameTicker && sameDate && sameType) {
-      return { providerKey: row.providerKey, matchMethod: 'fuzzy-missing-date' };
-    }
+  const sameTicker = Boolean(c.ticker && r.ticker && c.ticker === r.ticker);
+  const eitherTickerMissing = !c.ticker || !r.ticker;
+  const sameDate = Boolean(c.date && r.date && c.date === r.date);
+  const eitherDateMissing = !c.date || !r.date;
 
-    // Case 2: Same politician, tx date, and trade side (even if ticker is unparsed on candidate side)
-    if (sameFiler && cParts[2] && rParts[2] && cParts[2] === rParts[2] && sameType) {
-      return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
-    }
+  // Same politician + ticker + side; date equal or missing on one side.
+  if (sameTicker && (sameDate || eitherDateMissing)) {
+    return { providerKey: row.providerKey, matchMethod: 'fuzzy-missing-date' };
+  }
+
+  // Same politician + date + side; ticker missing on one side (provider
+  // option/trust lines often omit the equity ticker).
+  if (sameDate && eitherTickerMissing) {
+    return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
   }
 
   return null;
@@ -913,7 +974,8 @@ export async function recordTradeLatencyCandidates(
       if (!filerName) continue;
       const chamber = normalizeChamber(ctx?.chamber ?? null, chamberFromDocId(tx.docId));
       const trade_hash = generateTradeHash(filerName, tx.ticker || ctx?.ticker || null, tx.txDate || ctx?.tx_date || null, tx.txType || ctx?.tx_type || null);
-      if (!trade_hash.split('_')[0]) continue;
+      if (!extractLastName(filerName)) continue;
+      const firstSeen = raceFirstSeenAt(tx.firstSeenAt || ctx?.first_seen_at, nowIso);
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
@@ -947,7 +1009,7 @@ export async function recordTradeLatencyCandidates(
           tx.ticker || ctx?.ticker || null,
           tx.txDate || ctx?.tx_date || null,
           tx.txType || ctx?.tx_type || null,
-          tx.firstSeenAt || ctx?.first_seen_at || nowIso,
+          firstSeen,
           nowIso,
           nowIso,
         ],
@@ -1122,6 +1184,124 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
       LIMIT 1000`,
     [provider, cutoff],
   );
+}
+
+/**
+ * For recent provider observations that have no race candidate yet, find
+ * matching CT transactions (by last name + date + optional ticker) and seed
+ * candidates so the next match pass can score them. Caps work per probe run.
+ */
+async function seedCandidatesFromRecentObservations(
+  env: Env,
+  provider: ProviderId,
+  now: Date,
+  nowIso: string,
+): Promise<{ seeded: number }> {
+  const obs = await loadProviderRows(env, provider, now);
+  if (!obs.length) return { seeded: 0 };
+
+  const txs: Transaction[] = [];
+  const seen = new Set<string>();
+  let examined = 0;
+  for (const row of obs) {
+    if (examined >= 80) break;
+    const parts = parseTradeHash(row.trade_hash);
+    if (!parts.lastName || !parts.date) continue;
+    examined++;
+
+    // Skip when a candidate already exists for this hash+provider.
+    const existing = await get<{ trade_hash: string }>(
+      env.DB,
+      `SELECT trade_hash FROM trade_latency_candidates
+        WHERE provider = ? AND trade_hash = ? LIMIT 1`,
+      [provider, row.trade_hash],
+    ).catch(() => null);
+    if (existing) continue;
+
+    const like = `%${parts.lastName}%`;
+    const ticker = parts.ticker || null;
+    const rows = await all<{
+      id: string;
+      doc_id: string;
+      ticker: string | null;
+      tx_date: string | null;
+      tx_type: string | null;
+      created_at: string | null;
+      first_seen_at: string | null;
+      full_name: string | null;
+      source_url: string | null;
+      chamber: string | null;
+      filed_date: string | null;
+    }>(
+      env.DB,
+      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.created_at,
+              COALESCE(t.first_seen_at, f.first_seen_at, t.created_at) AS first_seen_at,
+              fil.full_name AS full_name, f.source_url AS source_url,
+              f.chamber AS chamber, f.filed_date AS filed_date
+         FROM transactions t
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
+         LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+        WHERE t.deprecated_at IS NULL
+          AND t.tx_date = ?
+          AND fil.full_name IS NOT NULL
+          AND lower(fil.full_name) LIKE ?
+          AND (? IS NULL OR upper(replace(COALESCE(t.ticker,''), '.', '-')) = ?)
+        ORDER BY t.created_at DESC
+        LIMIT 3`,
+      [parts.date, like, ticker, ticker],
+    ).catch(() => [] as Array<{
+      id: string;
+      doc_id: string;
+      ticker: string | null;
+      tx_date: string | null;
+      tx_type: string | null;
+      created_at: string | null;
+      first_seen_at: string | null;
+      full_name: string | null;
+      source_url: string | null;
+      chamber: string | null;
+      filed_date: string | null;
+    }>);
+
+    for (const r of rows) {
+      if (seen.has(r.id)) continue;
+      // Confirm last-name extract matches (LIKE can over-match "Scott").
+      if (extractLastName(r.full_name) !== parts.lastName) continue;
+      if (parts.side) {
+        const side = normalizeTradeSide(r.tx_type);
+        if (side !== parts.side) continue;
+      }
+      seen.add(r.id);
+      const firstSeen = raceFirstSeenAt(r.first_seen_at || r.created_at, nowIso);
+      txs.push({
+        id: r.id,
+        docId: r.doc_id,
+        filerId: null,
+        txDate: r.tx_date,
+        owner: null,
+        assetName: '',
+        ticker: r.ticker,
+        assetType: null,
+        txType: (r.tx_type as Transaction['txType']) || 'E',
+        amountMin: null,
+        amountMax: null,
+        isOption: false,
+        capGainsOver200: false,
+        rawText: '',
+        confidence: 1,
+        source: 'primary',
+        createdAt: nowIso,
+        cursorSeq: 0,
+        fullName: r.full_name,
+        filedDate: r.filed_date,
+        firstSeenAt: firstSeen,
+        sourceUrl: r.source_url,
+      });
+    }
+  }
+
+  if (txs.length) await recordTradeLatencyCandidates(env, txs, nowIso);
+  return { seeded: txs.length };
 }
 
 /**
@@ -1706,6 +1886,12 @@ async function runProviderProbe(
   }
 
   try {
+    // Pull CT rows that overlap recent provider observations into the race
+    // table so reverse-direction coverage can grow (provider saw it first).
+    await seedCandidatesFromRecentObservations(env, provider.id, now, nowIso).catch((err) => {
+      if (!storageMissing(err)) errors.push(`seed-from-obs: ${(err as Error).message}`);
+    });
+
     const matched = await matchPendingCandidates(env, provider, now, nowIso, errors);
     let totalFetchedRows = fetchedRows;
     let totalPending = matched.pending;
@@ -1945,12 +2131,21 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       : null;
     const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
     const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
-    const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] =
-      maturedProviderObserved < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
-        ? 'insufficient'
-        : (ctCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT || (providerCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT
-          ? 'limited'
-          : 'usable';
+    const coverageOk =
+      (ctCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT &&
+      (providerCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT;
+    const sampleOk =
+      maturedProviderObserved >= LATENCY_MIN_MATURED_ROWS &&
+      maturedCandidates.length >= LATENCY_MIN_MATURED_ROWS;
+    const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] = !sampleOk
+      ? matched >= LATENCY_MIN_PRELIMINARY_MATCHED
+        ? 'preliminary'
+        : 'insufficient'
+      : coverageOk
+        ? 'usable'
+        : matched >= LATENCY_MIN_PRELIMINARY_MATCHED
+          ? 'preliminary'
+          : 'limited';
     return {
       provider: provider.id,
       label: provider.label,
