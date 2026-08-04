@@ -78,7 +78,12 @@ type EnvX = Env & {
   APP_B_IMPORT_URL?: string;
   /** Bearer token for the peer's (App B's) bearer-gated read endpoints. */
   APP_B_INGEST_TOKEN?: string;
-  /** Which provider supplies price history: 'fmp' (default), 'massive', or 'tiingo'. */
+  /**
+   * Which provider supplies price history:
+   *   - 'peer' | 'socratic' | 'app_b' — Socratic.Trade / App B only (preferred;
+   *     owner 2026-08-03: CT does not buy Massive history)
+   *   - 'fmp' (legacy default when no peer config), 'massive', or 'tiingo'
+   */
   PRICE_PROVIDER?: string;
 };
 
@@ -88,16 +93,42 @@ interface PricePlan {
   fmpBudgeted: boolean;
 }
 
+/** True when PRICE_PROVIDER selects Socratic.Trade / App B as the sole source. */
+function isPeerOnlyProvider(provider: string): boolean {
+  return provider === 'peer' || provider === 'socratic' || provider === 'app_b' || provider === 'app-b';
+}
+
 /**
- * Pick the price client from PRICE_PROVIDER (default 'fmp'), gated by configured
- * keys. 'massive' uses Polygon aggregates (unlimited on the paid plan, so it is
- * NOT metered against the FMP daily budget); 'tiingo' is the same shape — an
- * explicitly-selectable, unmetered fallback. Falls back to whichever key exists,
- * in FMP -> Massive -> Tiingo order, when PRICE_PROVIDER is unset/doesn't match
- * a configured key.
+ * Pick the price client from PRICE_PROVIDER, gated by configured keys.
+ *
+ * Preferred (owner 2026-08-03): PRICE_PROVIDER=peer with APP_B_IMPORT_URL +
+ * APP_B_INGEST_TOKEN — all EOD history comes from Socratic.Trade. No Massive
+ * key is required or used in that mode.
+ *
+ * Legacy: 'massive' / 'tiingo' / 'fmp' pick a paid provider. When APP_B_IMPORT_URL
+ * is also set, the peer is still tried first (soft) and the paid provider is the
+ * empty/error fallback — useful during migration, not the steady state.
  */
 function pricePlan(env: EnvX): PricePlan | null {
-  const provider = (env.PRICE_PROVIDER || 'fmp').trim().toLowerCase();
+  const rawProvider = (env.PRICE_PROVIDER || '').trim().toLowerCase();
+  // Explicit peer / socratic / app_b — sole source, never Massive/FMP.
+  if (isPeerOnlyProvider(rawProvider)) {
+    if (!env.APP_B_IMPORT_URL) return null;
+    return {
+      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
+      fmpBudgeted: false,
+    };
+  }
+
+  // Unset PRICE_PROVIDER + App B configured → peer-only (owner: CT prices from ST).
+  if (!rawProvider && env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN) {
+    return {
+      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
+      fmpBudgeted: false,
+    };
+  }
+
+  const provider = rawProvider || 'fmp';
   let baseClient: PriceClient | null = null;
   let budgeted = false;
 
@@ -105,6 +136,9 @@ function pricePlan(env: EnvX): PricePlan | null {
     baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
   } else if (provider === 'tiingo' && env.TIINGO_API_KEY) {
     baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
+  } else if (provider === 'fmp' && env.FMP_API_KEY) {
+    baseClient = buildFmpPriceClient(env.FMP_API_KEY);
+    budgeted = true;
   } else if (env.FMP_API_KEY) {
     baseClient = buildFmpPriceClient(env.FMP_API_KEY);
     budgeted = true;
@@ -112,11 +146,18 @@ function pricePlan(env: EnvX): PricePlan | null {
     baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
   } else if (env.TIINGO_API_KEY) {
     baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
+  } else if (env.APP_B_IMPORT_URL) {
+    // Last resort: peer-only when no paid keys exist.
+    return {
+      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
+      fmpBudgeted: false,
+    };
   }
 
   if (!baseClient) return null;
 
   if (env.APP_B_IMPORT_URL) {
+    // Soft peer-first: empty/soft-fail peer → paid secondary (migration only).
     const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN);
     baseClient = buildFallbackPriceClient(peerClient, baseClient);
   }
