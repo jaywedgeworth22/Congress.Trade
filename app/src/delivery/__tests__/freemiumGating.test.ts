@@ -90,10 +90,12 @@ describe('GET /transactions is public (ungated)', () => {
 });
 
 describe('GET /export/transactions.csv', () => {
-  it('returns 200 text/csv for anyone (un-gated)', async () => {
+  it('returns 401 for anonymous visitors (Premium-gated)', async () => {
     const app = buildRestRouter();
     const res = await app.request('http://localhost/export/transactions.csv', {}, fakeEnv());
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error?: string; upgradeRequired?: boolean; feature?: string };
+    expect(body.upgradeRequired).toBe(true);
+    expect(body.feature).toBe('export');
   });
 });

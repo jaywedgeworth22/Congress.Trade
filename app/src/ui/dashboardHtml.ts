@@ -1558,6 +1558,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
+    <button data-view="people" data-mobile="People" data-icon="◎" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">People</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs" data-mobile="Delivery" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
     <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
@@ -1596,7 +1597,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
       <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
-      <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV</button>
+      <label class="lbl" for="qFrom">From</label>
+      <input id="qFrom" type="date" aria-label="Trade date from" onchange="resetFeedPage()" />
+      <label class="lbl" for="qTo">To</label>
+      <input id="qTo" type="date" aria-label="Trade date to" onchange="resetFeedPage()" />
+      <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV (Premium)">⤓ Export CSV <span class="premium-mark" title="Premium">Pro</span></button>
       <label class="lbl" for="pageSize">Rows</label>
       <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
         <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
@@ -1643,9 +1648,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn ghost sm" id="nextPageBtn" onclick="nextFeedPage()" title="Next page">&gt;</button>
       </div>
     </div>
-    <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
-      <span class="gate-note">CSV export is free (full history). Premium pushes new filings to you via webhook or live stream.
-        <button class="btn sm" onclick="openPricing('alerts')">Premium Delivery</button></span>
+    <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center" data-premium-cue="export">
+      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr
+        <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
     </div>
 
   </section>
@@ -1839,8 +1844,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <!-- Disclosure timeliness -->
-    <div class="section">
-      <h3 class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
+    <details class="section trends-fold" open>
+      <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
       <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -1854,11 +1859,41 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div class="late-filers-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
         </div>
       </div>
+    </details>
+
+    <!-- Committee conflicts (journalistic accountability lens) -->
+    <details class="section trends-fold" open>
+      <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
+      <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map). Observational — not evidence of impropriety.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
+        <tbody id="trConflicts"><tr><td colspan="6" class="state">Loading…</td></tr></tbody>
+      </table></div>
+    </details>
+
+  </section>
+
+  <!-- ================= PEOPLE (politician directory) ================= -->
+  <section class="view" id="view-people" role="tabpanel" aria-labelledby="tab-people" aria-hidden="true">
+    <div class="section">
+      <h3>Politician Directory</h3>
+      <p class="sub">Look up members of Congress and executive filers in our corpus. Click a name for their profile and trades.</p>
+      <div class="toolbar" style="margin-bottom:12px">
+        <input id="peopleQ" placeholder="Search name, state, or party…" aria-label="Search politicians" style="min-width:220px;flex:1" oninput="filterPeopleDirectory()" />
+        <select id="peopleChamber" onchange="loadPeopleDirectory()" aria-label="Chamber filter">
+          <option value="">All branches</option>
+          <option value="house">House</option>
+          <option value="senate">Senate</option>
+          <option value="executive">Executive</option>
+        </select>
+        <button class="btn ghost sm" onclick="loadPeopleDirectory()">Refresh</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Politician</th><th>Branch</th><th>Party</th><th>State</th><th>Trades</th></tr></thead>
+        <tbody id="peopleBody"><tr><td colspan="5" class="state">Loading directory…</td></tr></tbody>
+      </table></div>
+      <p class="note" id="peopleCount"></p>
     </div>
-
-
-
-
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -1907,7 +1942,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <p class="note">If webhooks are us calling you, the stream is you leaving the line open.</p>
         </div>
       </div>
-      <p class="note" style="text-align:center">Trends, Trades, and analytics stay free. Delivery (webhook / SSE) is the Premium part. Past speed doesn&rsquo;t guarantee future speed.</p>
+      <p class="note" style="text-align:center">Trends, Trades, People, and analytics stay free. Premium unlocks delivery (webhook / SSE) and full-history CSV export. Past speed doesn&rsquo;t guarantee future speed.</p>
     </div>
     <div class="section" id="subsManage">
       <h3>Delivery</h3>
@@ -1921,12 +1956,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <tr class="row"><td colspan="5" class="state">Sign in to see your deliveries.</td></tr>
         </tbody>
       </table>
-      <div class="row-flex" id="subsCreateRow" style="margin-top:14px">
+      <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
         <select id="newDelivery" disabled>
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
         <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" disabled />
-        <input id="newTickers" placeholder="tickers (CSV, optional)" style="width:170px" disabled />
+        <input id="newTickers" placeholder="tickers (CSV, optional)" style="width:140px" disabled />
+        <input id="newMembers" placeholder="members (names/ids, optional)" style="width:180px" disabled title="Comma-separated filer ids or names" />
         <select id="newChambers" disabled>
           <option value="">all chambers</option>
           <option value="house">House only</option>
@@ -1934,11 +1970,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="house,senate">House + Senate</option>
           <option value="executive">Executive only</option>
         </select>
+        <select id="newSides" disabled title="Trade side filter">
+          <option value="">all sides</option>
+          <option value="P">Purchases only</option>
+          <option value="S">Sales only</option>
+        </select>
+        <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
         <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
+        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>

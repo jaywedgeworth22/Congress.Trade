@@ -387,7 +387,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       return c.json(
         {
           error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
-          hint: 'Use GET /api/export/transactions.csv (free) for full history.',
+          hint: 'Premium CSV export: GET /api/export/transactions.csv (authenticated Premium session).',
         },
         400,
       );
@@ -396,7 +396,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const budget = await checkRowBudget(c.env, ip);
     if (!budget.ok) {
       return c.json(
-        { error: 'daily feed row budget reached', hint: 'Use GET /api/export/transactions.csv (free) for bulk access.' },
+        { error: 'daily feed row budget reached', hint: 'Premium CSV export available at GET /api/export/transactions.csv.' },
         429,
         { 'Retry-After': String(budget.retryAfterSec) },
       );
@@ -475,14 +475,24 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /export/transactions.csv ---------------------------------------
-  // Public/free full-history CSV download. Honors the same ticker/member/
-  // type/chamber filters as the feed.
+  // Premium full-history CSV download. Honors the same ticker/member/
+  // type/chamber/date filters as the feed. getCurrentUserFromRequest accepts
+  // session cookie and bearer so web + native clients share one gate.
   r.get('/export/transactions.csv', async (c) => {
-    // No premium/auth gate here (see #558 — "remove all column gating and CSV
-    // export premium limits"; the old gate used cookie-only getCurrentUser(),
-    // which would have wrongly rejected bearer-only native clients had it
-    // stayed). A full-history CSV is still a heavy D1 scan regardless of who's
-    // asking; cap per IP so it can't be scripted into unbounded read/CPU cost.
+    const user = await getCurrentUserFromRequest(c);
+    if (!user) {
+      return c.json(
+        { error: 'authentication required for CSV export', upgradeRequired: true, feature: 'export' },
+        401,
+      );
+    }
+    if (!isPremiumUser(user)) {
+      return c.json(
+        { error: 'CSV export requires a Premium account', upgradeRequired: true, feature: 'export' },
+        402,
+      );
+    }
+    // Cap per IP so a premium account can't be scripted into unbounded read/CPU cost.
     // Fails open if KV down.
     const exRl = await rateLimit(c.env, 'export-ip', clientIp(c.req.raw), 30, 600);
     if (!exRl.ok) {
