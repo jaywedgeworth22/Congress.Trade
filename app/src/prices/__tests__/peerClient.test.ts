@@ -45,9 +45,21 @@ describe('buildPeerPriceClient — bearer auth', () => {
     }
   });
 
-  it('still returns [] on error responses (fallback preserved) with a token set', async () => {
+  it('still returns [] on error responses (soft mode / fallback preserved) with a token set', async () => {
     const unauthorized = (async () => new Response('', { status: 401 })) as unknown as typeof fetch;
     const client = buildPeerPriceClient('https://peer.example', unauthorized, DUMMY_TOKEN);
     expect(await client.eodHistory('AAPL', '2024-01-01', '2024-02-01')).toEqual([]);
+  });
+
+  it('throws PEER_HTTP_401 in strict mode so peer-only runs fail closed on auth', async () => {
+    const unauthorized = (async () => new Response('', { status: 401 })) as unknown as typeof fetch;
+    const client = buildPeerPriceClient('https://peer.example', unauthorized, DUMMY_TOKEN, { strict: true });
+    await expect(client.eodHistory('AAPL', '2024-01-01', '2024-02-01')).rejects.toThrow(/PEER_HTTP_401/);
+  });
+
+  it('returns [] on 404 even in strict mode (ticker simply missing on peer)', async () => {
+    const notFound = (async () => new Response('', { status: 404 })) as unknown as typeof fetch;
+    const client = buildPeerPriceClient('https://peer.example', notFound, DUMMY_TOKEN, { strict: true });
+    expect(await client.eodHistory('ZZZZ', '2024-01-01', '2024-02-01')).toEqual([]);
   });
 });

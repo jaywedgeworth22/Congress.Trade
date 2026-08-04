@@ -83,6 +83,12 @@ import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import {
+  MEMBER_FILER_MERGES,
+  MEMBER_NAME_ALIASES,
+  type MemberFilerMerge,
+} from '../shared/memberIdentity.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import {
@@ -1198,6 +1204,196 @@ function normalizeStoredTxType(value: string | null): TxType {
  * slugs and cannot join Bioguide-keyed external datasets; the resolved column
  * can. COALESCE-preserve here too, so a manually corrected value wins.
  */
+/**
+ * Merge curated member filer forks onto their preferred identity.
+ * For each {@link MEMBER_FILER_MERGES} group:
+ *   1. Ensure the canonical filer row exists with the preferred name / bioguide
+ *   2. Rewrite transactions + filings from every alias id onto the canonical id
+ *   3. Copy useful metadata (photo, party, bioguide) from aliases onto canonical
+ *   4. Delete the alias filer rows
+ *   5. Rename any remaining filer still carrying an alias full_name
+ * Idempotent and safe to re-run.
+ */
+export async function repairMemberIdentityMerges(
+  env: Env,
+): Promise<{
+  groups: number;
+  filersEnsured: number;
+  transactionsMoved: number;
+  filingsMoved: number;
+  aliasesDeleted: number;
+  namesRenamed: number;
+  details: Array<{
+    canonicalId: string;
+    aliases: string[];
+    transactionsMoved: number;
+    filingsMoved: number;
+    deleted: string[];
+  }>;
+}> {
+  let filersEnsured = 0;
+  let transactionsMoved = 0;
+  let filingsMoved = 0;
+  let aliasesDeleted = 0;
+  let namesRenamed = 0;
+  const details: Array<{
+    canonicalId: string;
+    aliases: string[];
+    transactionsMoved: number;
+    filingsMoved: number;
+    deleted: string[];
+  }> = [];
+
+  for (const group of MEMBER_FILER_MERGES) {
+    const groupDetail = await applyMemberFilerMerge(env, group);
+    filersEnsured += groupDetail.ensured ? 1 : 0;
+    transactionsMoved += groupDetail.transactionsMoved;
+    filingsMoved += groupDetail.filingsMoved;
+    aliasesDeleted += groupDetail.deleted.length;
+    details.push({
+      canonicalId: group.canonicalId,
+      aliases: [...group.aliasIds],
+      transactionsMoved: groupDetail.transactionsMoved,
+      filingsMoved: groupDetail.filingsMoved,
+      deleted: groupDetail.deleted,
+    });
+  }
+
+  // Rename any leftover filer still carrying a known legal-name alias.
+  // Aliases are stored normalized ("rohit khanna"); match case-insensitively.
+  for (const nameAlias of MEMBER_NAME_ALIASES) {
+    for (const alias of nameAlias.aliases) {
+      const res = await run(
+        env.DB,
+        `UPDATE filers
+            SET full_name = ?
+          WHERE full_name IS NOT NULL
+            AND lower(trim(full_name)) = ?
+            AND full_name != ?`,
+        [nameAlias.canonicalName, alias, nameAlias.canonicalName],
+      );
+      namesRenamed += res.meta?.changes ?? 0;
+    }
+  }
+
+  return {
+    groups: MEMBER_FILER_MERGES.length,
+    filersEnsured,
+    transactionsMoved,
+    filingsMoved,
+    aliasesDeleted,
+    namesRenamed,
+    details,
+  };
+}
+
+async function applyMemberFilerMerge(
+  env: Env,
+  group: MemberFilerMerge,
+): Promise<{
+  ensured: boolean;
+  transactionsMoved: number;
+  filingsMoved: number;
+  deleted: string[];
+}> {
+  // Pull metadata from any existing alias/canonical rows so we do not lose
+  // photo_url / resolved_bioguide_id that photo enrichment already filled.
+  const ids = [group.canonicalId, ...group.aliasIds];
+  const placeholders = ids.map(() => '?').join(',');
+  const existing = await all<{
+    bioguide_id: string;
+    full_name: string | null;
+    party: string | null;
+    state: string | null;
+    district: string | null;
+    photo_url: string | null;
+    resolved_bioguide_id: string | null;
+    chamber: string | null;
+  }>(
+    env.DB,
+    `SELECT bioguide_id, full_name, party, state, district, photo_url,
+            resolved_bioguide_id, chamber
+       FROM filers
+      WHERE bioguide_id IN (${placeholders})`,
+    ids,
+  );
+
+  const byId = new Map(existing.map((r) => [r.bioguide_id, r]));
+  const pick = <K extends keyof (typeof existing)[0]>(key: K): (typeof existing)[0][K] | null => {
+    if (byId.get(group.canonicalId)?.[key]) return byId.get(group.canonicalId)![key];
+    for (const alias of group.aliasIds) {
+      const v = byId.get(alias)?.[key];
+      if (v) return v;
+    }
+    return null;
+  };
+
+  const photoUrl = pick('photo_url');
+  const party = pick('party');
+  const state = pick('state') ?? group.state ?? null;
+  const district = pick('district') ?? group.district ?? null;
+  const resolvedBioguide =
+    pick('resolved_bioguide_id') ?? group.resolvedBioguideId ?? null;
+  const chamber = pick('chamber') ?? group.chamber;
+
+  await run(
+    env.DB,
+    `INSERT INTO filers (
+       bioguide_id, chamber, full_name, party, state, district, committees, photo_url, resolved_bioguide_id
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+     ON CONFLICT(bioguide_id) DO UPDATE SET
+       full_name = excluded.full_name,
+       party = COALESCE(excluded.party, filers.party),
+       state = COALESCE(excluded.state, filers.state),
+       district = COALESCE(excluded.district, filers.district),
+       photo_url = COALESCE(excluded.photo_url, filers.photo_url),
+       resolved_bioguide_id = COALESCE(excluded.resolved_bioguide_id, filers.resolved_bioguide_id)`,
+    [
+      group.canonicalId,
+      chamber,
+      group.canonicalName,
+      party,
+      state,
+      district,
+      photoUrl,
+      resolvedBioguide,
+    ],
+  );
+
+  let transactionsMoved = 0;
+  let filingsMoved = 0;
+  const deleted: string[] = [];
+
+  for (const aliasId of group.aliasIds) {
+    if (aliasId === group.canonicalId) continue;
+    const txRes = await run(
+      env.DB,
+      `UPDATE transactions SET filer_id = ? WHERE filer_id = ?`,
+      [group.canonicalId, aliasId],
+    );
+    transactionsMoved += txRes.meta?.changes ?? 0;
+
+    const filRes = await run(
+      env.DB,
+      `UPDATE filings SET filer_id = ? WHERE filer_id = ?`,
+      [group.canonicalId, aliasId],
+    );
+    filingsMoved += filRes.meta?.changes ?? 0;
+
+    if (byId.has(aliasId)) {
+      await run(env.DB, `DELETE FROM filers WHERE bioguide_id = ?`, [aliasId]);
+      deleted.push(aliasId);
+    }
+  }
+
+  return {
+    ensured: !byId.has(group.canonicalId),
+    transactionsMoved,
+    filingsMoved,
+    deleted,
+  };
+}
+
 export async function runPhotoEnrichment(
   env: Env,
 ): Promise<{ filers: number; matched: number; unmatched: number }> {
@@ -1209,7 +1405,12 @@ export async function runPhotoEnrichment(
   const updates: D1PreparedStatement[] = [];
   let matched = 0;
   for (const f of filers) {
-    const match = map.get(normName(f.full_name));
+    // Prefer cleaned/alias-normalized name so "Rohit Khanna" matches "Ro Khanna"
+    // in congress-legislators (official_full / nickname keys).
+    const cleaned = cleanFilerName(f.full_name);
+    const match =
+      map.get(normName(cleaned || f.full_name)) ??
+      map.get(normName(f.full_name));
     if (!match) continue;
     matched++;
     updates.push(
@@ -4323,6 +4524,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         ? String((err as { stage: unknown }).stage)
         : 'unknown';
       return c.json({ ok: false, error: 'RAW_FILES storage verification failed', stage }, 503);
+    }
+  });
+
+  // --- POST /repair-member-identity -----------------------------------------
+  // Merge curated legal-name / competitor filer forks onto the preferred
+  // official identity (e.g. house-ca17-rohit-khanna + MANUAL-KHANNA →
+  // house-ca17-ro-khanna / "Ro Khanna"). Idempotent; safe to re-run.
+  r.post('/repair-member-identity', async (c) => {
+    try {
+      const result = await repairMemberIdentityMerges(c.env);
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
