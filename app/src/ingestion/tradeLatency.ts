@@ -2038,7 +2038,7 @@ const PROBE_POLL_SOURCE = 'fmp-disclosure-latency';
  * for the other FMP consumers, while still resolving "who was first" to
  * within a few minutes.
  */
-const MIN_PROBE_INTERVAL_SEC = 300;
+const MIN_PROBE_INTERVAL_SEC = 60;
 
 export async function runDisclosureLatencyProbe(
   env: Env,
