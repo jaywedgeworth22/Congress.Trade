@@ -145,12 +145,14 @@ describe('benchmark lineup settings', () => {
     expect(settings.valid).toBe(false);
   });
 
-  it('rejects a lineup that lets one provider corroborate itself', () => {
-    expect(() => validateBenchmarkLineup({
+  it('allows a lineup of distinct models from the same transport/vendor', () => {
+    const lineup = validateBenchmarkLineup({
       a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
       b: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
       c: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
-    })).toThrow(BenchmarkSettingsValidationError);
+    });
+    expect(lineup.a.model).toBe('openai/gpt-5.6-terra');
+    expect(lineup.b.model).toBe('openai/gpt-5.6-luna');
   });
 
   it('writes all three chamber keys and verifies readback', async () => {
@@ -357,11 +359,19 @@ describe('benchmark primary/failover role settings', () => {
     expect(settings.valid).toBe(false);
   });
 
-  it('rejects a primary/failover pair sharing one provider', () => {
+  it('rejects a primary/failover pair sharing the exact same model', () => {
     expect(() => validateBenchmarkRoles({
       primary: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
     })).toThrow(BenchmarkSettingsValidationError);
+  });
+
+  it('allows primary/failover on the same transport with different models', () => {
+    const roles = validateBenchmarkRoles({
+      primary: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+    });
+    expect(roles.failover.model).toBe('openai/gpt-5.6-luna');
   });
 
   it('writes both chamber role keys and verifies readback', async () => {

@@ -6496,17 +6496,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch (error) {
       return c.json({ error: (error as Error).message }, 400);
     }
-    // Cross-vendor independence, enforced up front (processAgreementDoc would
-    // otherwise skip every doc): openrouter (and llamaparse) lineups are
-    // accepted, but OpenRouter slugs count as their UNDERLYING vendor — e.g.
-    // openrouter:openai/gpt-5.6-terra + openrouter:openai/gpt-5.6-luna is one
-    // vendor twice and is rejected.
+    // Model-label distinctness only — same underlying vendor is allowed so
+    // all-OpenRouter cascades can still form agreement votes.
     const lineupError = duplicateLineupReason([mA, mB, ...(mC ? [mC] : [])]);
     if (lineupError) {
       return c.json({
-        error: lineupError === 'duplicate_provider_lineup'
-          ? 'models must use distinct underlying vendors (an openrouter model counts as its underlying vendor)'
-          : 'models must be distinct',
+        error: 'models must be distinct',
         code: lineupError,
       }, 400);
     }
@@ -7369,9 +7364,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       if (new Set(lineup.map((model) => `${model.provider}:${model.model}`)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must be distinct' }, 400);
-      }
-      if (new Set(lineup.map(getUnderlyingProvider)).size !== lineup.length) {
-        return c.json({ error: 'agreement benchmark models must use distinct providers' }, 400);
       }
       const filing = await get<{ raw_object_key: string | null }>(
         c.env.DB,
