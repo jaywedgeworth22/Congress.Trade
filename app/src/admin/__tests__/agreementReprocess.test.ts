@@ -202,7 +202,7 @@ describe('agreement-reprocess', () => {
     expect(insertedTx).toHaveLength(1);
   });
 
-  it('rejects two openrouter-transported models that share the same underlying vendor', async () => {
+  it('rejects two identical model labels (model distinctness only)', async () => {
     const { env } = makeEnv();
     const res = await app.request('/agreement-reprocess', {
       method: 'POST',
@@ -211,13 +211,13 @@ describe('agreement-reprocess', () => {
         docIds: ['H-1'],
         models: [
           { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-          { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+          { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
         ],
       }),
     }, env);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; code: string };
-    expect(body.code).toBe('duplicate_provider_lineup');
-    expect(body.error).toContain('distinct underlying vendors');
+    expect(body.code).toBe('duplicate_model_lineup');
+    expect(body.error).toContain('distinct');
   });
 });

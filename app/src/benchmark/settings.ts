@@ -306,9 +306,9 @@ export function validateBenchmarkLineup(input: {
       'openrouter/auto cannot be part of a 3-model lineup because its routing is unpredictable',
     );
   }
-  if (new Set(models.map(getUnderlyingProvider)).size !== 3) {
-    throw new BenchmarkSettingsValidationError('a, b, and c must use three distinct providers');
-  }
+  // Distinct model IDs only — same underlying vendor (e.g. two OpenRouter-routed
+  // OpenAI models, or two different Anthropic models) is allowed so all-OpenRouter
+  // cascades can still form independent agreement votes by model diversity.
   return lineup;
 }
 
@@ -340,8 +340,8 @@ export function validateBenchmarkRoles(input: {
       'openrouter/auto cannot be selected as primary or failover because its routing is unpredictable',
     );
   }
-  if (getUnderlyingProvider(roles.primary) === getUnderlyingProvider(roles.failover)) {
-    throw new BenchmarkSettingsValidationError('primary and failover must use different providers');
+  if (serializeBenchmarkModelRef(roles.primary) === serializeBenchmarkModelRef(roles.failover)) {
+    throw new BenchmarkSettingsValidationError('primary and failover must be different models');
   }
   return roles;
 }

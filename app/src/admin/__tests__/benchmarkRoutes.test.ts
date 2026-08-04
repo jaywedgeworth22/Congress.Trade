@@ -1395,10 +1395,10 @@ describe('durable benchmark admin routes', () => {
     });
   });
 
-  it('rejects an OpenRouter agreement lineup where two models share the same underlying vendor', async () => {
+  it('rejects an agreement lineup with identical model labels', async () => {
     const lineup = {
       a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-      b: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+      b: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
     };
     const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
       method: 'POST', headers: AUTH, body: JSON.stringify({ models: lineup }),
@@ -1406,11 +1406,11 @@ describe('durable benchmark admin routes', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
-      error: 'agreement benchmark models must use distinct providers',
+      error: 'agreement benchmark models must be distinct',
     });
   });
 
-  it('rejects the catalog-form OpenRouter auto route before provider distinctness checks', async () => {
+  it('rejects the catalog-form OpenRouter auto route before model distinctness checks', async () => {
     const lineup = {
       a: { provider: 'openrouter', model: 'openrouter/auto' },
       b: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
@@ -1727,7 +1727,7 @@ describe('durable benchmark admin routes', () => {
     expect(JSON.stringify(body)).not.toContain('openai-key');
   });
 
-  it('rejects a same-provider primary/failover pair before any write', async () => {
+  it('rejects an identical primary/failover model pair before any write', async () => {
     const initial = await buildAdminRouter().request(
       '/benchmark/roles/house',
       { headers: AUTH },
@@ -1740,13 +1740,13 @@ describe('durable benchmark admin routes', () => {
       headers: AUTH,
       body: JSON.stringify({
         primary: { provider: 'openai', model: 'gpt-5.6-terra' },
-        failover: { provider: 'openai', model: 'gpt-5.6-luna' },
+        failover: { provider: 'openai', model: 'gpt-5.6-terra' },
         expectedVersion: initialBody.version,
       }),
     }, env());
     expect(rejected.status).toBe(400);
     expect(await rejected.json()).toMatchObject({
-      error: 'primary and failover must use different providers',
+      error: 'primary and failover must be different models',
     });
   });
 
