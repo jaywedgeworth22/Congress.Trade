@@ -206,34 +206,59 @@ final class CongressTradeAPIClient {
         try await analyticsGet("latency-summary")
     }
 
-    func analyticsSummary(window: String) async throws -> AnalyticsSummary {
-        try await analyticsGet("summary", query: [URLQueryItem(name: "window", value: window)])
+    private func makeQueryItems(window: String, party: String? = nil, chamber: String? = nil, extra: [URLQueryItem] = []) -> [URLQueryItem] {
+        var items = [URLQueryItem(name: "window", value: window)]
+        if let party = party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let chamber = chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        items.append(contentsOf: extra)
+        return items
     }
 
-    func tickerLeaderboard(window: String, rankBy: String = "volume") async throws -> TickerLeaderboardResponse {
+    func analyticsSummary(window: String, party: String? = nil, chamber: String? = nil) async throws -> AnalyticsSummary {
+        try await analyticsGet("summary", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
+    func tickerLeaderboard(window: String, party: String? = nil, chamber: String? = nil, rankBy: String = "volume") async throws -> TickerLeaderboardResponse {
         try await analyticsGet(
             "ticker-leaderboard",
-            query: [
-                URLQueryItem(name: "window", value: window),
-                URLQueryItem(name: "rankBy", value: rankBy),
-            ]
+            query: makeQueryItems(window: window, party: party, chamber: chamber, extra: [URLQueryItem(name: "rankBy", value: rankBy)])
         )
     }
 
-    func volumeOverTime(window: String) async throws -> VolumeOverTimeResponse {
-        try await analyticsGet("volume-over-time", query: [URLQueryItem(name: "window", value: window)])
+    func volumeOverTime(window: String, party: String? = nil, chamber: String? = nil) async throws -> VolumeOverTimeResponse {
+        try await analyticsGet("volume-over-time", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
-    func sectorFlow(window: String) async throws -> SectorFlowResponse {
-        try await analyticsGet("sector-flow", query: [URLQueryItem(name: "window", value: window)])
+    func sectorFlow(window: String, party: String? = nil, chamber: String? = nil) async throws -> SectorFlowResponse {
+        try await analyticsGet("sector-flow", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
-    func memberLeaderboard(window: String) async throws -> MemberLeaderboardResponse {
-        try await analyticsGet("member-leaderboard", query: [URLQueryItem(name: "window", value: window)])
+    func memberLeaderboard(window: String, party: String? = nil, chamber: String? = nil) async throws -> MemberLeaderboardResponse {
+        try await analyticsGet("member-leaderboard", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
-    func clusterBuys(window: String) async throws -> ClusterBuysResponse {
-        try await analyticsGet("cluster-buys", query: [URLQueryItem(name: "window", value: window)])
+    func clusterBuys(window: String, party: String? = nil, chamber: String? = nil) async throws -> ClusterBuysResponse {
+        try await analyticsGet("cluster-buys", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
+    func trending(window: String, party: String? = nil, chamber: String? = nil) async throws -> TrendingResponse {
+        try await analyticsGet("trending", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
+    func topPerformers(window: String, party: String? = nil, chamber: String? = nil) async throws -> TopPerformersResponse {
+        try await analyticsGet("member-performance", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
+    func marketCapBreakdown(window: String, party: String? = nil, chamber: String? = nil) async throws -> MarketCapResponse {
+        try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
+    func partySplit(window: String, chamber: String? = nil) async throws -> PartySplitResponse {
+        try await analyticsGet("party-split", query: makeQueryItems(window: window, chamber: chamber))
+    }
+
+    func filingLag(window: String, party: String? = nil, chamber: String? = nil) async throws -> FilingLagResponse {
+        try await analyticsGet("filing-lag", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
     private func analyticsGet<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {

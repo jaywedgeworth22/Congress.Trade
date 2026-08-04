@@ -2,12 +2,17 @@ import SwiftUI
 
 struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @State private var showDisclaimerDetails = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
+                    disclaimerHeader
+
                     trendsWindowPicker
+
+                    trendsPartyPicker
 
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
@@ -28,16 +33,26 @@ struct TrendsView: View {
                             tickerSection
                         }
 
+                        if !store.trendingAssets.isEmpty {
+                            trendingSection
+                        }
+
                         if !store.clusterBuys.isEmpty {
                             clusterSection
                         }
 
-                        if !store.sectorFlow.isEmpty {
-                            sectorSection
+                        sectorAndCapSection
+
+                        if !store.topPerformers.isEmpty {
+                            performersSection
                         }
 
                         if !store.memberLeaderboard.isEmpty {
                             memberSection
+                        }
+
+                        if let lag = store.filingLag {
+                            timelinessSection(lag: lag)
                         }
 
                         if let summary = store.latencySummary {
@@ -83,17 +98,74 @@ struct TrendsView: View {
         }
     }
 
+    private var disclaimerHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showDisclaimerDetails.toggle()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.blue)
+                    Text("For Educational Use, Not Investment Advice")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: showDisclaimerDetails ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if showDisclaimerDetails {
+                Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(12)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private var trendsWindowPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach([TimeRange.thirtyDays, .ninetyDays, .oneYear, .all], id: \.rawValue) { range in
                     FilterChip(
-                        title: range == .all ? "All" : range.label.replacingOccurrences(of: "Past ", with: ""),
+                        title: range == .all ? "All Time" : range.label,
                         isSelected: store.selectedTimeRange == range
                     ) {
                         Task {
                             await store.setTimeRange(range)
                             await store.refreshTrends()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var trendsPartyPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                FilterChip(
+                    title: "All Parties",
+                    isSelected: store.selectedParty == nil
+                ) {
+                    Task {
+                        await store.setPartyFilter(nil)
+                    }
+                }
+
+                ForEach(PartyFilter.allCases) { party in
+                    FilterChip(
+                        title: "\(party.emoji) \(party.label)",
+                        isSelected: store.selectedParty == party
+                    ) {
+                        Task {
+                            await store.setPartyFilter(party)
                         }
                     }
                 }
@@ -123,9 +195,9 @@ struct TrendsView: View {
 
     private var volumeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Buys vs Sells")
+            Text("Buys vs Sells Over Time")
                 .font(.headline)
-            Text("Trade counts over the selected window.")
+            Text("Trade counts bucketed by period over selected window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -166,10 +238,10 @@ struct TrendsView: View {
 
     private var tickerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Most-Traded Assets")
+            Text("What Congress Is Trading")
                 .font(.headline)
             VStack(spacing: 0) {
-                ForEach(Array(store.tickerLeaderboard.prefix(12).enumerated()), id: \.element.id) { idx, item in
+                ForEach(Array(store.tickerLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, item in
                     HStack(spacing: 10) {
                         Text("\(idx + 1)")
                             .font(.caption.weight(.bold))
@@ -194,7 +266,51 @@ struct TrendsView: View {
                         }
                     }
                     .padding(.vertical, 8)
-                    if idx < min(11, store.tickerLeaderboard.count - 1) {
+                    if idx < min(9, store.tickerLeaderboard.count - 1) {
+                        Divider()
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private var trendingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Rising Activity")
+                .font(.headline)
+            Text("Assets whose trade count rose most vs prior equal period.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ForEach(Array(store.trendingAssets.prefix(8).enumerated()), id: \.element.id) { idx, item in
+                    HStack(spacing: 10) {
+                        AssetMark(symbol: item.ticker, isTicker: true, size: 26)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.ticker)
+                                .font(.subheadline.weight(.bold))
+                            Text("\(item.recentMembers ?? 0) politicians")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(item.priorCount) → \(item.recentCount) trades")
+                                .font(.caption.weight(.medium))
+                            if let pct = item.changePct {
+                                Text("+\(Int(round(pct * 100)))%")
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.15))
+                                    .foregroundStyle(.green)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    if idx < min(7, store.trendingAssets.count - 1) {
                         Divider()
                     }
                 }
@@ -239,23 +355,93 @@ struct TrendsView: View {
         }
     }
 
-    private var sectorSection: some View {
+    private var sectorAndCapSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if !store.sectorFlow.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Net Flow by Sector")
+                        .font(.headline)
+                    VStack(spacing: 0) {
+                        ForEach(Array(store.sectorFlow.prefix(8).enumerated()), id: \.element.id) { idx, s in
+                            HStack {
+                                Text(s.sector)
+                                    .font(.subheadline.weight(.medium))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(CompactFormat.usd(s.estNetFlowUsd))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle((s.estNetFlowUsd ?? 0) >= 0 ? .green : .red)
+                            }
+                            .padding(.vertical, 8)
+                            if idx < min(7, store.sectorFlow.count - 1) {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+
+            if !store.marketCapBuckets.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("By Market Cap")
+                        .font(.headline)
+                    VStack(spacing: 0) {
+                        ForEach(Array(store.marketCapBuckets.enumerated()), id: \.element.id) { idx, cap in
+                            HStack {
+                                Text(cap.bucket.capitalized)
+                                    .font(.subheadline.weight(.medium))
+                                Spacer()
+                                Text("\(cap.tradeCount) trades")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(CompactFormat.usd(cap.estNetFlowUsd))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle((cap.estNetFlowUsd ?? 0) >= 0 ? .green : .red)
+                                    .frame(width: 80, alignment: .trailing)
+                            }
+                            .padding(.vertical, 8)
+                            if idx < store.marketCapBuckets.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+    }
+
+    private var performersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Net Flow by Sector")
+            Text("Top Performers (vs S&P 500)")
                 .font(.headline)
+            Text("Politicians whose disclosed buys beat the S&P 500 post-filing date.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             VStack(spacing: 0) {
-                ForEach(Array(store.sectorFlow.prefix(10).enumerated()), id: \.element.id) { idx, s in
+                ForEach(Array(store.topPerformers.prefix(8).enumerated()), id: \.element.id) { idx, p in
                     HStack {
-                        Text(s.sector)
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.fullName ?? p.filerId)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                            Text("\(p.tradeCount) buys")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
-                        Text(CompactFormat.usd(s.estNetFlowUsd))
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle((s.estNetFlowUsd ?? 0) >= 0 ? .green : .red)
+                        if let ret = p.avgAnnualizedExcessReturn {
+                            Text(String(format: "%+.1f%% vs SPX", ret * 100))
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(ret >= 0 ? .green : .red)
+                        }
                     }
                     .padding(.vertical, 8)
-                    if idx < min(9, store.sectorFlow.count - 1) {
+                    if idx < min(7, store.topPerformers.count - 1) {
                         Divider()
                     }
                 }
@@ -297,6 +483,54 @@ struct TrendsView: View {
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         }
     }
+
+    private func timelinessSection(lag: FilingLagResponse) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Disclosure Timeliness")
+                .font(.headline)
+            Text("Days from trade to official filing date (45-day STOCK Act limit).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let s = lag.summary {
+                HStack(spacing: 12) {
+                    TrendKPI(title: "Avg Delay", value: "\(Int(round(s.avgLagDays ?? 0))) days")
+                    TrendKPI(title: "Median Delay", value: "\(Int(round(s.medianLagDays ?? 0))) days")
+                    TrendKPI(title: "Late Filings", value: CompactFormat.count(s.lateCount), tint: (s.lateCount ?? 0) > 0 ? .orange : .green)
+                }
+            }
+
+            if let late = lag.topLateFilers, !late.isEmpty {
+                Text("Slowest Filers (Avg Delay)")
+                    .font(.subheadline.weight(.bold))
+                    .padding(.top, 6)
+                VStack(spacing: 0) {
+                    ForEach(Array(late.prefix(6).enumerated()), id: \.element.id) { idx, f in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(f.fullName ?? f.filerId)
+                                    .font(.subheadline.weight(.medium))
+                                    .lineLimit(1)
+                                Text("\(f.tradeCount ?? 0) trades")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text("\(Int(round(f.avgLagDays ?? 0)))d avg")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(.vertical, 6)
+                        if idx < min(5, late.count - 1) {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
 }
 
 struct TrendKPI: View {
@@ -329,7 +563,7 @@ struct LatencyComparisonView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Speed vs. Data Providers")
                 .font(.headline)
-            Text("Concurrent races only: both feeds first-seen the same trade inside the score window (gap ≤ 7 days). Multi-week backfill alignments are excluded from lead stats.")
+            Text("Concurrent races only: both feeds first-seen the same trade inside the score window (gap ≤ 14 days). Multi-week backfill alignments are excluded from lead stats.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
