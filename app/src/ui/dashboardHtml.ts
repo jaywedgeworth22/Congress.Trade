@@ -117,7 +117,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   [hidden] { display: none !important; }
   /* ---- theme toggle ---- */
   /* ---- resizable feed columns ---- */
-  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); scrollbar-width: thin; scrollbar-color: var(--border) var(--panel-2); }
+  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); scrollbar-width: thin; scrollbar-color: var(--border) var(--panel-2); padding-right: 60px; box-sizing: border-box; }
   .table-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
   .table-wrap::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 4px; }
   .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid var(--panel-2); }
@@ -750,7 +750,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .plan .price { font-size:23px; font-weight:800; }
   .plan .per { font-size:12px; color:var(--text-dim); }
   .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
-  .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:700; color:#06231a; background:var(--good); padding:2px 7px; border-radius:999px; }
+  .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:800; color:#ffffff; background:#15803d; padding:2px 7px; border-radius:999px; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
   .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
   .toast.show { display:block; }
@@ -3002,7 +3002,8 @@ function syncFeedTableWidth() {
     total += w;
   }
   var wrap = table.closest ? table.closest('.table-wrap') : null;
-  var min = wrap ? wrap.clientWidth : 0;
+  // Subtract the 60px padding-right so the table doesn't bleed into the padding space.
+  var min = wrap ? (wrap.clientWidth - 60) : 0;
   table.style.width = Math.max(total, min) + 'px';
 }
 
@@ -8134,16 +8135,17 @@ function memberPerfHtml(d) {
   if ((!trade || !trade.scoredCount) && (!filing || !filing.scoredCount)) {
     return '<div class="note">No priced equity buys to score yet — this fills in as the price cache backfills. Sells are not scored as skill (no cost basis).</div>';
   }
-  function legBlock(title, tip, leg, showAnnualized) {
+  function legBlock(title, tip, leg, isDeemphasized) {
     if (!leg || !leg.scoredCount) {
-      return '<div style="margin-bottom:12px"><div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
+      return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.7; transform: scale(0.95); transform-origin: left top;' : '') + '"><div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
         '<div class="note">Not enough priced buys for this anchor.</div></div>';
     }
     var win = leg.winRate == null ? '—' : Math.round(leg.winRate * 100) + '% win';
     var n = leg.scoredCount + ' of ' + leg.tradeCount + ' buys';
-    return '<div style="margin-bottom:12px">' +
+    var sizeStyles = isDeemphasized ? 'font-size: 14px; opacity: 0.8;' : '';
+    return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.85;' : '') + '">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
-      '<div class="perf-line net">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400">avg excess vs S&amp;P</span></div>' +
+      '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess vs S&amp;P</span></div>' +
       '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
         ' · Avg return ' + pctSigned(leg.avgReturn) +
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
@@ -8151,14 +8153,15 @@ function memberPerfHtml(d) {
   }
   return legBlock(
       'Their timing (approx.)',
-      'Equal-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
+      'Size-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
       trade,
-      false
+      true
     ) +
     legBlock(
       'If you bought at filing',
-      'Copy-trade: equal-weighted excess from the public disclosure date (when a follower could have traded). Matches Top Performers.',
-      filing
+      'Copy-trade: size-weighted excess from the public disclosure date (when a follower could have traded). Matches Top Performers.',
+      filing,
+      false
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
       (buyCount != null ? ' · ' + buyCount + ' disclosed buys in window' : '') +
@@ -8337,14 +8340,14 @@ function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
     box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
-      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Premium</button>' : '');
+      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
     return;
   }
   var ent = ME.entitlement || {};
   var badge = ent.premium
     ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
-    : '<span class="badge">Free</span>';
-  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
+    : '';
+  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
   var label = ME.user.name || ME.user.email || 'Account';
   box.innerHTML = badge + upgrade +
     '<div class="menu">' +
@@ -8359,7 +8362,7 @@ function renderAccount() {
         '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
         (hasBillingAccount() && portalConfigured()
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
-          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Premium</button>' : '')) +
+          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
         '<button onclick="logout()">Sign Out</button>' +
       '</div>' +
     '</div>';

@@ -162,6 +162,8 @@ export interface MemberPerfRow {
    * (365.25 / max(30, elapsedDays)).
    */
   elapsedDaysSinceFiling?: number | null;
+  /** Estimated trade volume in USD for size weighting. */
+  estVolume?: number | null;
 }
 
 /**
@@ -256,6 +258,7 @@ export function aggregateMemberPerformance(
   const returns: number[] = [];
   const excesses: number[] = [];
   const annualized: number[] = [];
+  const weights: number[] = [];
 
   for (const r of considered) {
     if (r.isOption) continue;
@@ -264,6 +267,11 @@ export function aggregateMemberPerformance(
     const perf = computePerformance(priceAt, r.currentPrice, spxAt, currentSpx);
     if (perf.assetReturn == null) continue;
     returns.push(perf.assetReturn);
+    
+    // Default weight is 1 if estVolume is not provided or 0 to avoid completely ignoring row.
+    const weight = r.estVolume && r.estVolume > 0 ? r.estVolume : 1;
+    weights.push(weight);
+    
     if (perf.excessReturn != null) {
       excesses.push(perf.excessReturn);
       if (doAnnualize) {
@@ -273,6 +281,19 @@ export function aggregateMemberPerformance(
     }
   }
   const wins = excesses.filter((x) => x > 0).length;
+  
+  // Helper for weighted mean
+  const weightedMean = (nums: number[], wts: number[]): number | null => {
+    if (!nums.length || nums.length !== wts.length) return null;
+    let sumWeight = 0;
+    let sumValue = 0;
+    for (let i = 0; i < nums.length; i++) {
+      sumWeight += wts[i];
+      sumValue += nums[i] * wts[i];
+    }
+    return sumWeight > 0 ? round(sumValue / sumWeight, 4) : null;
+  };
+
   const med = (nums: number[]): number | null => {
     const m = median(nums);
     return m == null ? null : round(m, 4);
@@ -283,9 +304,9 @@ export function aggregateMemberPerformance(
     winRate: excesses.length ? round(wins / excesses.length, 4) : null,
     medianReturn: med(returns),
     medianExcess: med(excesses),
-    avgReturn: mean(returns),
-    avgExcess: mean(excesses),
-    avgAnnualizedExcess: doAnnualize ? mean(annualized) : null,
+    avgReturn: weightedMean(returns, weights),
+    avgExcess: weightedMean(excesses, weights),
+    avgAnnualizedExcess: doAnnualize ? weightedMean(annualized, weights) : null,
   };
 }
 

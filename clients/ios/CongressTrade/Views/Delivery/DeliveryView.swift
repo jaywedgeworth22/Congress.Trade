@@ -15,8 +15,14 @@ struct DeliveryView: View {
             Form {
                 Section("Create Delivery") {
                     if !store.signedIn {
-                        Text("Sign in to create delivery alerts.")
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Delivery alerts push new filings to your devices the moment Congress.Trade sees them. Supports Webhook integration and Server-Sent Events (SSE) streaming.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("Sign in to create delivery alerts.")
+                                .foregroundStyle(.primary)
+                        }
+                        .padding(.vertical, 4)
                     } else if !store.isPremium {
                         // Delivery creation is Premium-gated server-side; show
                         // the paywall up front instead of letting free users
@@ -30,7 +36,7 @@ struct DeliveryView: View {
                                 .foregroundStyle(.secondary)
                             if let url = store.api.upgradeURL {
                                 Link(destination: url) {
-                                    Label("Upgrade on congress.trade", systemImage: "safari")
+                                    Label("Subscribe on Congress.Trade", systemImage: "safari")
                                         .font(.subheadline.weight(.semibold))
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
@@ -112,6 +118,20 @@ struct DeliveryView: View {
                     }
                 }
 
+                Section("Existing Subscriptions") {
+                    if store.subscriptions.isEmpty {
+                        Text(store.signedIn ? "No delivery subscriptions yet." : "Sign in to manage delivery subscriptions.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.subscriptions) { subscription in
+                            SubscriptionRow(subscription: subscription) {
+                                Task { await store.toggleSubscription(subscription) }
+                            }
+                            .disabled(store.subscriptionIDsInFlight.contains(subscription.id))
+                        }
+                    }
+                }
+
                 Section {
                     if !store.signedIn {
                         Text("Sign in to manage your watchlist.")
@@ -167,20 +187,6 @@ struct DeliveryView: View {
                     Text("Watchlist")
                 } footer: {
                     Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
-                }
-
-                Section("Existing Subscriptions") {
-                    if store.subscriptions.isEmpty {
-                        Text(store.signedIn ? "No delivery subscriptions yet." : "Sign in to manage delivery subscriptions.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(store.subscriptions) { subscription in
-                            SubscriptionRow(subscription: subscription) {
-                                Task { await store.toggleSubscription(subscription) }
-                            }
-                            .disabled(store.subscriptionIDsInFlight.contains(subscription.id))
-                        }
-                    }
                 }
             }
             .scrollContentBackground(.hidden)
