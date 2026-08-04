@@ -7175,7 +7175,9 @@ function refreshSpeedUpdated() {
 function spCardHtml(p) {
   var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED;
   var usable = p.comparisonStatus === 'usable';
-  var hasStats = hasTiming && usable;
+  var preliminary = p.comparisonStatus === 'preliminary';
+  /* Show timing for usable OR preliminary (soft claim with clear badge). */
+  var hasStats = hasTiming && (usable || preliminary);
   var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0;
   var ahead = hasStats && wins > losses;
   var tied = hasStats && !ahead && wins === losses;
@@ -7185,6 +7187,8 @@ function spCardHtml(p) {
   var badgeCls, badgeTxt;
   if (!hasStats && !hasTiming) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
+  } else if (preliminary) {
+    badgeCls = 'sp-badge gathering'; badgeTxt = ahead ? 'Preliminary lead' : (tied ? 'Preliminary tie' : 'Preliminary');
   } else if (!usable) {
     badgeCls = 'sp-badge gathering'; badgeTxt = p.comparisonStatus === 'limited' ? 'Coverage limited' : 'Insufficient coverage';
   } else if (ahead) {
@@ -7218,7 +7222,7 @@ function spCardHtml(p) {
         : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
       (p.unmatchedProvider > 0 ? " <strong>" + p.unmatchedProvider + "</strong> provider-observed rows are not matched to our feed yet." : '') +
       '</div>';
-  } else if (!usable) {
+  } else if (!hasStats && !usable) {
     leadHtml = '<div class="sp-gathering">' +
       "We've matched <strong>" + p.matched + "</strong> overlapping filings, but coverage is too limited for a reliable speed claim. " +
       (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
@@ -7229,9 +7233,12 @@ function spCardHtml(p) {
     var numCls = 'sp-lead-num' + (isPos ? '' : (med < 0 ? ' negative' : ' neutral'));
     var sign = isPos ? '+' : '';
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
+    var labelNote = preliminary
+      ? 'preliminary matched-cohort timing (coverage still building)'
+      : 'matched-cohort timing vs. their feed';
     leadHtml = '<div class="sp-lead">' +
       '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
-      '<div class="sp-lead-label">matched-cohort timing vs. their feed' + p90Txt + '</div>' +
+      '<div class="sp-lead-label">' + labelNote + p90Txt + '</div>' +
       '</div>';
   }
 
@@ -8038,13 +8045,66 @@ function openMember(filerId) {
 	        kvRow('Distinct Assets', st.uniqueAssets || st.uniqueTickers || 0) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
-      '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
+      '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3><div id="memberPerf"><div class="note">Loading performance…</div></div></div>' +
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>' +
       '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>'
     );
+    // Lazy-load dual-anchor buy skill (trade-date approx + filing-date copy-trade).
+    aGet('member/' + encodeURIComponent(filerId) + '/performance?window=all').then(function (perf) {
+      var pEl = el('memberPerf'); if (pEl) pEl.innerHTML = memberPerfHtml(perf);
+    }).catch(function () {
+      var pEl = el('memberPerf');
+      if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
+    });
   }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>'); });
+}
+
+/* Dual-anchor politician skill: trade-date (their timing) + filing-date (copy-trade). Buys only. */
+function memberPerfHtml(d) {
+  if (!d) return '<div class="note">Performance unavailable.</div>';
+  var trade = d.tradeDate || d.performance || null;
+  var filing = d.filingDate || null;
+  var buyCount = d.buyCount != null ? d.buyCount : (trade && trade.tradeCount);
+  if ((!trade || !trade.scoredCount) && (!filing || !filing.scoredCount)) {
+    return '<div class="note">No priced equity buys to score yet — this fills in as the price cache backfills. Sells are not scored as skill (no cost basis).</div>';
+  }
+  function legBlock(title, tip, leg, showAnnualized) {
+    if (!leg || !leg.scoredCount) {
+      return '<div style="margin-bottom:12px"><div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
+        '<div class="note">Not enough priced buys for this anchor.</div></div>';
+    }
+    var win = leg.winRate == null ? '—' : Math.round(leg.winRate * 100) + '% win';
+    var n = leg.scoredCount + ' of ' + leg.tradeCount + ' buys';
+    var ann = (showAnnualized && leg.avgAnnualizedExcess != null)
+      ? '<div class="chip" title="Same annualized excess metric as Top Performers; 0% means matched the S&amp;P.">Annualized ' +
+          pctSigned(leg.avgAnnualizedExcess) + ' vs S&amp;P</div>'
+      : '';
+    return '<div style="margin-bottom:12px">' +
+      '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
+      '<div class="perf-line net">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400">avg excess vs S&amp;P</span></div>' +
+      '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
+        ' · Avg return ' + pctSigned(leg.avgReturn) +
+        ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
+      ann +
+      '</div>';
+  }
+  return legBlock(
+      'Their timing (approx.)',
+      'Equal-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
+      trade,
+      false
+    ) +
+    legBlock(
+      'If you bought at filing',
+      'Copy-trade: equal-weighted excess from the public disclosure date (when a follower could have traded). Annualized line matches Top Performers.',
+      filing,
+      true
+    ) +
+    '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
+      (buyCount != null ? ' · ' + buyCount + ' disclosed buys in window' : '') +
+      '</div>';
 }
 
 /* ---- trade drawer (from the in-memory feed row + lazy source link) ---- */

@@ -9,6 +9,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-04 — GROK — COMPLETED (code) — Member drawer dual performance vs S&P.** Wire politician detail to show (1) approx skill from trade date and (2) copy-trade from filing date, buys only; keep sells out of skill score. Branch `grok/member-dual-performance`. Files: analytics/compute.ts, builders.ts, routes.ts, dashboardHtml.ts + tests.
+
 - **2026-08-04 — GROK — In Progress — Latency probe/scoreboard diagnosis + matching fix.** Prod `/api/analytics/latency-summary` timing out; local latency DB shows 5238 candidates all pending (0 matched) vs 326 observations (only 2 exact hash overlaps still pending — backlog starvation: match only scanned newest 100 pending). FMP observations absent. iOS decode fragile on null coveragePct and fails whole Trends on latency error. Fix branch `grok/fix-latency-matching`: SQL exact-hash join, score-window pending scan, indexes, iOS optional/fail-soft.
 - **[2026-08-03][AG] Clean Dark Logo Wordmark & Artifact Removal — MERGED PR #1291.** Re-generated the dark mode brand logo asset (`BRAND_LOGO_DARK_PNG_B64` in `app/src/ui/assets.ts`) to make all letters in `CONGRESS` and `TRADE` pure white with smooth anti-aliased transparency while preserving the exact eagle emblem colors and removing the white square block artifact around the right wing. Updated cache-buster version to `v=6` in `app/src/ui/dashboardHtml.ts`. Verified clean via `typecheck` (0 errors) and Vitest suite (192/192 test files, 2085/2085 tests passed).
 

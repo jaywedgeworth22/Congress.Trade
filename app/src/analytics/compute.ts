@@ -151,6 +151,17 @@ export interface MemberPerfRow {
   priceAtTrade: number | null;
   currentPrice: number | null;
   spxAtTrade: number | null;
+  /** 'P' buy / 'S' sell / other. Dual aggregate scores buys only. */
+  txType?: string | null;
+  /** Close on/before the public filing (disclosure) date. */
+  priceAtFiling?: number | null;
+  spxAtFiling?: number | null;
+  /**
+   * Calendar days from the filing (or fallback) anchor to now. Used to
+   * annualize filing-date excess the same way as the Top Performers board
+   * (365.25 / max(30, elapsedDays)).
+   */
+  elapsedDaysSinceFiling?: number | null;
 }
 
 /**
@@ -162,32 +173,104 @@ export interface MemberPerfRow {
  * /performance), not cost-basis P&L — for buys it reads as "did the pick go up,
  * and did it beat the market." Options and unpriced tickers are excluded from
  * the scored set so they don't dilute the stats.
+ *
+ * Prefer {@link aggregateMemberDualPerformance} for product surfaces: buys only,
+ * trade-date skill and filing-date copy-trade as separate legs.
  */
 export interface MemberPerfSummary {
-  tradeCount: number; // total trades in the window
+  tradeCount: number; // rows considered for this leg (usually buy count)
   scoredCount: number; // trades with usable price anchors
   winRate: number | null; // share with positive excess return (0..1)
   medianReturn: number | null;
   medianExcess: number | null;
   avgReturn: number | null;
   avgExcess: number | null;
+  /**
+   * Equal-weighted average of annualized excess returns. Present on the
+   * filing-date leg so it matches Top Performers' ranking metric; null when
+   * no scored excess or when this leg does not annualize.
+   */
+  avgAnnualizedExcess?: number | null;
+}
+
+/** Dual-anchor buy skill: trade-date (their timing) vs filing-date (copy-trade). */
+export interface MemberDualPerformance {
+  side: 'buys';
+  buyCount: number;
+  /** Approx skill: stock move since their trade date vs S&P. Buys only. */
+  tradeDate: MemberPerfSummary;
+  /**
+   * Copy-trade: if you bought when the disclosure went public. Buys only.
+   * Includes avgAnnualizedExcess aligned with Top Performers.
+   */
+  filingDate: MemberPerfSummary;
 }
 
 const mean = (nums: number[]): number | null =>
   nums.length ? round(nums.reduce((a, b) => a + b, 0) / nums.length, 4) : null;
 
+/** Annualize a cumulative excess return the same way as the member-performance leaderboard. */
+export function annualizeExcess(excess: number, elapsedDays: number | null | undefined): number | null {
+  if (!Number.isFinite(excess) || elapsedDays == null || !Number.isFinite(elapsedDays) || elapsedDays <= 0) {
+    return null;
+  }
+  const denom = Math.max(30, elapsedDays);
+  return excess * (365.25 / denom);
+}
+
+type PerfAnchor = 'trade' | 'filing';
+
+function isBuyRow(r: MemberPerfRow): boolean {
+  const t = (r.txType || '').toUpperCase();
+  return t === 'P' || t === 'PURCHASE' || t === 'BUY';
+}
+
+function rowAnchors(
+  r: MemberPerfRow,
+  anchor: PerfAnchor,
+): { priceAt: number | null; spxAt: number | null } {
+  if (anchor === 'filing') {
+    return {
+      priceAt: r.priceAtFiling ?? null,
+      spxAt: r.spxAtFiling ?? null,
+    };
+  }
+  return { priceAt: r.priceAtTrade, spxAt: r.spxAtTrade };
+}
+
+/**
+ * Realized-performance aggregate. By default scores every non-option row with a
+ * trade-date price (legacy). Pass `buysOnly` / `anchor: 'filing'` for the dual
+ * product legs.
+ */
 export function aggregateMemberPerformance(
   rows: MemberPerfRow[],
   currentSpx: number | null,
+  opts: { anchor?: PerfAnchor; buysOnly?: boolean; annualize?: boolean } = {},
 ): MemberPerfSummary {
+  const anchor = opts.anchor ?? 'trade';
+  const buysOnly = opts.buysOnly === true;
+  const doAnnualize = opts.annualize === true && anchor === 'filing';
+
+  const considered = buysOnly ? rows.filter(isBuyRow) : rows;
   const returns: number[] = [];
   const excesses: number[] = [];
-  for (const r of rows) {
-    if (r.isOption || r.priceAtTrade == null || r.currentPrice == null) continue;
-    const perf = computePerformance(r.priceAtTrade, r.currentPrice, r.spxAtTrade, currentSpx);
+  const annualized: number[] = [];
+
+  for (const r of considered) {
+    if (r.isOption) continue;
+    const { priceAt, spxAt } = rowAnchors(r, anchor);
+    if (priceAt == null || r.currentPrice == null) continue;
+    const perf = computePerformance(priceAt, r.currentPrice, spxAt, currentSpx);
     if (perf.assetReturn == null) continue;
     returns.push(perf.assetReturn);
-    if (perf.excessReturn != null) excesses.push(perf.excessReturn);
+    if (perf.excessReturn != null) {
+      excesses.push(perf.excessReturn);
+      if (doAnnualize) {
+        const ann = annualizeExcess(perf.excessReturn, r.elapsedDaysSinceFiling);
+        if (ann != null) annualized.push(ann);
+      }
+    }
   }
   const wins = excesses.filter((x) => x > 0).length;
   const med = (nums: number[]): number | null => {
@@ -195,13 +278,39 @@ export function aggregateMemberPerformance(
     return m == null ? null : round(m, 4);
   };
   return {
-    tradeCount: rows.length,
+    tradeCount: considered.length,
     scoredCount: returns.length,
     winRate: excesses.length ? round(wins / excesses.length, 4) : null,
     medianReturn: med(returns),
     medianExcess: med(excesses),
     avgReturn: mean(returns),
     avgExcess: mean(excesses),
+    avgAnnualizedExcess: doAnnualize ? mean(annualized) : null,
+  };
+}
+
+/**
+ * Buys-only dual performance for one politician:
+ * - tradeDate: approx skill from their trade date
+ * - filingDate: copy-trade from public disclosure date (+ annualized excess)
+ *
+ * Sells/exchanges/options are not mixed into either skill score (exit timing is
+ * a different product story and needs cost basis we don't have).
+ */
+export function aggregateMemberDualPerformance(
+  rows: MemberPerfRow[],
+  currentSpx: number | null,
+): MemberDualPerformance {
+  const buyCount = rows.filter(isBuyRow).length;
+  return {
+    side: 'buys',
+    buyCount,
+    tradeDate: aggregateMemberPerformance(rows, currentSpx, { anchor: 'trade', buysOnly: true }),
+    filingDate: aggregateMemberPerformance(rows, currentSpx, {
+      anchor: 'filing',
+      buysOnly: true,
+      annualize: true,
+    }),
   };
 }
 

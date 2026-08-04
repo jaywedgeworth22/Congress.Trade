@@ -191,6 +191,7 @@ struct ClientMemberResponse: Decodable {
         let performance: MemberPerformance?
     }
     
+    /// Trade-date buy skill (flat fields) plus optional dual anchors for newer backends.
     struct MemberPerformance: Decodable {
         let tradeCount: Int
         let scoredCount: Int
@@ -199,6 +200,23 @@ struct ClientMemberResponse: Decodable {
         let medianExcess: Double?
         let avgReturn: Double?
         let avgExcess: Double?
+        let avgAnnualizedExcess: Double?
+        let side: String?
+        let buyCount: Int?
+        let tradeDate: PerformanceLeg?
+        let filingDate: PerformanceLeg?
+    }
+
+    /// One anchor leg: trade-date (approx skill) or filing-date (copy-trade).
+    struct PerformanceLeg: Decodable {
+        let tradeCount: Int
+        let scoredCount: Int
+        let winRate: Double?
+        let medianReturn: Double?
+        let medianExcess: Double?
+        let avgReturn: Double?
+        let avgExcess: Double?
+        let avgAnnualizedExcess: Double?
     }
 }
 
