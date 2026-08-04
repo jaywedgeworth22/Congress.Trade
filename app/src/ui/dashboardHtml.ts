@@ -2067,7 +2067,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="latencyResetMsg" class="note"></span>
       </div>
       <table>
-        <thead><tr><th>Source</th><th>Status</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
+        <thead><tr><th>Source</th><th>Status</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
       <div id="sourceTimelineSection" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
@@ -2314,7 +2314,7 @@ function fmtName(raw) {
 function fmtCompany(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
-  s = s.replace(/\s*\([^)]+\)\s*$/g, '').trim();
+  s = s.replace(/\\s*\\([^)]+\\)\\s*$/g, '').trim();
   if (s === s.toUpperCase() || s === s.toLowerCase()) {
     // Title-case each run of letters independently so internal punctuation is
     // preserved: "S&P" stays "S&P" rather than collapsing to "S&p".
@@ -2933,7 +2933,7 @@ var FEED_COLS = [
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
-  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
@@ -3455,7 +3455,7 @@ function rememberTradeRow(row) {
   return row;
 }
 
-/* Per-row ingestion latency: "Released→Seen (approx) · Seen→Imported (precise)".
+/* Per-row ingestion latency: Detection time and extraction latency.
    Only meaningful for live-pipeline (primary) rows. */
 function diffSec(aIso, bIso) {
   var a = Date.parse(aIso), b = Date.parse(bIso);
@@ -3464,14 +3464,22 @@ function diffSec(aIso, bIso) {
 }
 function rowLatencyHtml(r) {
   if (r.source !== 'primary') return '<span class="muted">—</span>';
-  var rts = null, sti = null, d;
-  if (r.filedDate && r.firstSeenAt) { d = diffSec(r.firstSeenAt, r.filedDate); if (d != null && d >= 0) rts = d; }
+  var sti = null, d;
   if (r.firstSeenAt && r.imported) { d = diffSec(r.imported, r.firstSeenAt); if (d != null && d >= 0) sti = d; }
   var parts = [];
-  if (rts != null) parts.push('seen ≈' + fmtDuration(rts) + ' after release');
-  if (sti != null) parts.push('imported ' + fmtDuration(sti) + ' after seen');
+  if (r.firstSeenAt) {
+    var dt = new Date(Date.parse(r.firstSeenAt));
+    if (!isNaN(dt)) {
+      var h = dt.getHours(), m = dt.getMinutes();
+      var ampm = h >= 12 ? 'pm' : 'am';
+      h = h % 12; if (h === 0) h = 12;
+      var hm = h + ':' + (m < 10 ? '0' + m : m) + ampm;
+      parts.push('detected ' + hm);
+    }
+  }
+  if (sti != null) parts.push('imported ' + fmtDuration(sti) + ' later');
   if (!parts.length) return '<span class="muted" title="Latency unavailable for this primary row">Unavailable</span>';
-  return '<span class="muted" style="display:block; line-height:1.4;" title="Released to seen is approximate; seen to imported is measured by Congress.Trade.">' + parts.map(function(p) { return esc(p); }).join('<br>') + '</span>';
+  return '<span class="muted" style="display:block; line-height:1.4;" title="First detected time and extraction latency for primary rows.">' + parts.map(function(p) { return esc(p); }).join('<br>') + '</span>';
 }
 
 function currentPageSize() {
@@ -5123,7 +5131,6 @@ function loadHealth() {
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
           '<td class="muted">' + esc(s.totalNew != null ? s.totalNew : '—') + '</td>' +
           '<td class="latency">' + esc(avg) + '</td>' +
-          '<td class="latency">' + esc(rts) + '</td>' +
           '<td class="latency">' + esc(sti) + '</td>' +
         '</tr>';
       }).join('');
