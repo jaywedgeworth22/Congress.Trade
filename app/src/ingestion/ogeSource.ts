@@ -28,9 +28,23 @@ import { resolveSecret } from '../secrets/infisical.ts';
 import { getLastAttemptAt, getLastPollAt, setLastAttemptAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { CURATED_EXECUTIVES } from '../shared/executiveIdentity.ts';
 
-export const OGE_DEFAULT_INDEX_URL =
+/** President/VP index (small) — always polled. */
+export const OGE_PRESIDENT_INDEX_URL =
   'https://extapps2.oge.gov/201/Presiden.nsf/President%20and%20Vice%20President%20Index?OpenView&ExpandView&Count=500';
+
+/**
+ * Broader PAS (Presidentially Appointed, Senate-confirmed) 278-T collection —
+ * cabinet secretaries and other PAS officials (Bessent, McMahon, Lutnick, …).
+ * Without this index only President/VP PDFs land; competitor injects filled the
+ * gap with orphan Unknown rows and no hosted filings.
+ */
+export const OGE_PAS_INDEX_URL =
+  'https://extapps2.oge.gov/201/Presiden.nsf/PAS+Index?OpenView&ExpandView&Count=2000';
+
+/** Default multi-index poll list (comma-separated for Infisical overrides). */
+export const OGE_DEFAULT_INDEX_URL = `${OGE_PRESIDENT_INDEX_URL},${OGE_PAS_INDEX_URL}`;
 
 const OGE_ORIGIN = 'https://extapps2.oge.gov';
 const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h fallback when no interval is configured
@@ -40,49 +54,25 @@ const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h fallback when no interval is con
 export const OGE_FAILURE_BACKOFF_SEC = 600;
 const POLL_SOURCE = 'oge';
 
-/** Known executive filers we ingest. Matching is against the PDF filename.
- *  party/photoUrl are curated here (the OGE index carries neither) so the feed
- *  renders executive filers with the same party chip + portrait treatment as
- *  members of Congress. Portraits are official White House portraits hosted on
- *  Wikimedia Commons (public domain, 17 U.S.C. §105), pinned to the 500px
- *  thumbnail — one of the fixed widths Commons' thumbnail CDN serves. */
+/** Known executive filers we pin to stable EXEC-* ids (filename match).
+ *  party/photoUrl are curated (the OGE index carries neither). */
 interface ExecutiveFiler {
   pattern: RegExp;
   filerId: string;
   fullName: string;
-  party: 'R' | 'D';
-  photoUrl: string;
+  party: 'R' | 'D' | null;
+  photoUrl: string | null;
 }
 const COMMONS_THUMB = 'https://upload.wikimedia.org/wikipedia/commons/thumb';
 const EXECUTIVE_FILERS: ExecutiveFiler[] = [
-  {
-    pattern: /trump/i,
-    filerId: 'EXEC-DJT',
-    fullName: 'Donald J. Trump',
-    party: 'R',
-    photoUrl: `${COMMONS_THUMB}/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/500px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg`,
-  },
-  {
-    pattern: /vance/i,
-    filerId: 'EXEC-JDV',
-    fullName: 'J.D. Vance',
-    party: 'R',
-    photoUrl: `${COMMONS_THUMB}/f/f3/January_2025_Official_Vice_Presidential_Portrait_of_JD_Vance.jpg/500px-January_2025_Official_Vice_Presidential_Portrait_of_JD_Vance.jpg`,
-  },
-  {
-    pattern: /biden/i,
-    filerId: 'EXEC-JRB',
-    fullName: 'Joseph R. Biden',
-    party: 'D',
-    photoUrl: `${COMMONS_THUMB}/6/68/Joe_Biden_presidential_portrait.jpg/500px-Joe_Biden_presidential_portrait.jpg`,
-  },
-  {
-    pattern: /harris/i,
-    filerId: 'EXEC-KDH',
-    fullName: 'Kamala D. Harris',
-    party: 'D',
-    photoUrl: `${COMMONS_THUMB}/4/41/Kamala_Harris_Vice_Presidential_Portrait.jpg/500px-Kamala_Harris_Vice_Presidential_Portrait.jpg`,
-  },
+  ...CURATED_EXECUTIVES.map((e) => ({
+    pattern: e.filenamePattern,
+    filerId: e.filerId,
+    fullName: e.fullName,
+    party: e.party,
+    photoUrl: e.photoUrl,
+  })),
+  // Historical presidents/VPs not in the PAS-focused curated list.
   {
     pattern: /pence/i,
     filerId: 'EXEC-MRP',

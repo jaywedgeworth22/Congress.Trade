@@ -64,10 +64,11 @@ describe('GET /transactions memberName handling', () => {
     expect(res.status).toBe(200);
     const feedSql = captured.sql.find((s) => /FROM transactions/i.test(s)) ?? '';
     expect(captured.filerLookups).toBe(1);
-    // Indexed equality filter, not the full-corpus LIKE.
+    // Indexed equality filter, not the full-corpus name LIKE.
     expect(feedSql).toContain('t.filer_id = ?');
-    expect(feedSql).not.toContain('LIKE');
+    expect(feedSql).not.toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE");
     // Nested keyset+LIMIT before the enrichment joins (the fast path).
+    // (May still contain fixed-pattern LIKEs for COMPETITOR/EXEC orphan filtering.)
     expect(feedSql).toMatch(/FROM \(SELECT t\.\* FROM transactions t/);
   });
 
