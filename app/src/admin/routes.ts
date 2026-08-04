@@ -4326,9 +4326,131 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // --- POST /repair-competitor-executive ------------------------------------
+  // One-shot hygiene for competitor_backfill rows on EXEC-* filers:
+  //   1) promote raw_text.notes → asset_name when asset is Unknown
+  //   2) reassign last-name-collided rows (e.g. Rich McCormick → MANUAL-*)
+  //   3) canonicalize sale_full/purchase/buy/exchange → S/P/E
+  // Does NOT delete rows. Safe to re-run.
+  r.post('/repair-competitor-executive', async (c) => {
+    const { canonicalizeTxType } = await import('../shared/txType.ts');
+    const {
+      assetNameFromCompetitorPayload,
+      resolveExecutiveFilerIdFromName,
+    } = await import('../shared/executiveIdentity.ts');
+    const toTx = canonicalizeTxType;
+
+    const rows = await all<{
+      id: string;
+      filer_id: string | null;
+      asset_name: string | null;
+      ticker: string | null;
+      tx_type: string | null;
+      raw_text: string | null;
+    }>(
+      c.env.DB,
+      `SELECT id, filer_id, asset_name, ticker, tx_type, raw_text
+         FROM transactions
+        WHERE source = 'competitor_backfill'
+          AND deprecated_at IS NULL
+          AND (filer_id LIKE 'EXEC-%' OR tx_type NOT IN ('P','S','E')
+               OR lower(COALESCE(asset_name,'')) IN ('unknown',''))
+        LIMIT 20000`,
+    );
+
+    let notesPromoted = 0;
+    let filerReassigned = 0;
+    let typesFixed = 0;
+    const filersEnsured = new Set<string>();
+
+    for (const row of rows) {
+      let assetName = row.asset_name;
+      let filerId = row.filer_id;
+      let txType = row.tx_type;
+      let changed = false;
+
+      // 1) notes → asset_name
+      if (!assetName || /^unknown$/i.test(assetName)) {
+        const promoted = assetNameFromCompetitorPayload(row.raw_text, row.ticker);
+        if (promoted && !/^unknown$/i.test(promoted) && promoted !== assetName) {
+          assetName = promoted;
+          notesPromoted += 1;
+          changed = true;
+        }
+      }
+
+      // 2) mis-attribution: EXEC-* only when full name matches curated alias
+      if (filerId && filerId.startsWith('EXEC-')) {
+        let payloadName = '';
+        try {
+          const o = row.raw_text ? JSON.parse(row.raw_text) as Record<string, unknown> : null;
+          payloadName = String(o?.name ?? o?.Representative ?? o?.politician ?? o?.reporter ?? '');
+        } catch {
+          payloadName = '';
+        }
+        if (payloadName) {
+          const correct = resolveExecutiveFilerIdFromName(payloadName);
+          if (correct !== filerId) {
+            if (correct) {
+              filerId = correct;
+            } else {
+              // Demote to MANUAL-{LAST} (House/other) — never keep wrong EXEC slot.
+              const last = payloadName
+                .replace(/,/g, ' ')
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)
+                .pop()
+                ?.toUpperCase()
+                .replace(/[^A-Z]/g, '') || 'UNKNOWN';
+              filerId = `MANUAL-${last}`;
+              if (!filersEnsured.has(filerId)) {
+                await run(
+                  c.env.DB,
+                  `INSERT OR IGNORE INTO filers (bioguide_id, full_name, chamber)
+                   VALUES (?, ?, 'house')`,
+                  [filerId, payloadName],
+                );
+                filersEnsured.add(filerId);
+              }
+            }
+            filerReassigned += 1;
+            changed = true;
+          }
+        }
+      }
+
+      // 3) tx_type aliases
+      const canon = toTx(txType);
+      if (canon && canon !== txType) {
+        txType = canon;
+        typesFixed += 1;
+        changed = true;
+      }
+
+      if (changed) {
+        await run(
+          c.env.DB,
+          `UPDATE transactions
+              SET asset_name = ?, filer_id = ?, tx_type = ?
+            WHERE id = ?`,
+          [assetName, filerId, txType, row.id],
+        );
+      }
+    }
+
+    return c.json({
+      ok: true,
+      scanned: rows.length,
+      notesPromoted,
+      filerReassigned,
+      typesFixed,
+    });
+  });
+
   // --- POST /oge-backfill ---------------------------------------------------
-  // Force-poll the OGE President/VP index and enqueue any new executive 278-T
-  // filings through the normal pipeline (same filing.new message the cron
+  // Force-poll the OGE President/VP + PAS indexes and enqueue any new executive
+  // 278-T filings through the normal pipeline (same filing.new message the cron
   // watcher emits). Idempotent: INSERT OR IGNORE means re-runs only pick up
   // genuinely-new filings.
   r.post('/oge-backfill', async (c) => {

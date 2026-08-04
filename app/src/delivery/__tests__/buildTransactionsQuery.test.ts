@@ -34,6 +34,15 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toMatch(/\) t LEFT JOIN filers/);
   });
 
+  it('hides competitor-only executive orphans (no official OGE doc) from the public feed', () => {
+    const q = buildTransactionsQuery({});
+    expect(q.sql).toContain("t.source = 'competitor_backfill'");
+    expect(q.sql).toContain("t.filer_id LIKE 'EXEC-%'");
+    expect(q.sql).toContain("t.doc_id LIKE 'COMPETITOR%'");
+    const count = buildTransactionsCountQuery({});
+    expect(count.sql).toContain("t.source = 'competitor_backfill'");
+  });
+
   it('uses the supplied since cursor as the first bound param', () => {
     const q = buildTransactionsQuery({ since: 1234 });
     expect(q.params[0]).toBe(1234);

@@ -1,32 +1,52 @@
 import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 import { createClient } from "npm:@libsql/client";
+import {
+  assetNameFromCompetitorPayload,
+  resolveExecutiveFilerIdFromName,
+} from "../src/shared/executiveIdentity.ts";
+
+function mapTxType(raw: string | undefined): "P" | "S" | "E" {
+  const t = (raw ?? "").toLowerCase();
+  if (t.includes("exchange")) return "E";
+  if (t.includes("sale") || t.includes("sell")) return "S";
+  return "P";
+}
+
+function filerIdForHole(h: { lastName?: string; name?: string; fullName?: string; raw?: { name?: string } }): string {
+  const full =
+    h.fullName ||
+    h.name ||
+    (h.raw && typeof h.raw === "object" ? (h.raw as { name?: string }).name : "") ||
+    "";
+  const exec = resolveExecutiveFilerIdFromName(full);
+  if (exec) return exec;
+  // Never map bare last name → EXEC-*. House members sharing a last name
+  // (e.g. Rich McCormick) stay on MANUAL-*.
+  const last = (h.lastName || full.split(/\s+/).pop() || "UNKNOWN").toUpperCase().replace(/[^A-Z]/g, "");
+  return `MANUAL-${last || "UNKNOWN"}`;
+}
 
 async function main() {
   const env = await load({ envPath: "/Users/jay/Code/Congress.Trade/app/.prod.vars" });
   const client = createClient({
-    url: env.TURSO_DATABASE_URL || env.TURSO_URL || "", 
-    authToken: env.TURSO_AUTH_TOKEN || ""
+    url: env.TURSO_DATABASE_URL || env.TURSO_URL || "",
+    authToken: env.TURSO_AUTH_TOKEN || "",
   });
 
-  const holesJson = await Deno.readTextFile("/Users/jay/.gemini/antigravity/brain/46787371-bd2d-4703-a05d-cf01380534f5/data_holes.json");
+  const holesJson = await Deno.readTextFile(
+    "/Users/jay/.gemini/antigravity/brain/46787371-bd2d-4703-a05d-cf01380534f5/data_holes.json",
+  );
   const holes = JSON.parse(holesJson);
 
   console.log(`Loaded ${holes.length} missing trades.`);
 
   const txBatch = [];
-  
-  for (const h of holes) {
-    let filerId = `MANUAL-${h.lastName.toUpperCase()}`;
-    if (h.lastName.toLowerCase() === 'trump') filerId = 'EXEC-DJT';
-    if (h.lastName.toLowerCase() === 'wright') filerId = 'EXEC-CWRIGHT';
-    if (h.lastName.toLowerCase() === 'mccormick') filerId = 'EXEC-MCCORMICK';
-    if (h.lastName.toLowerCase() === 'mcmahon') filerId = 'EXEC-MCMAHON';
-    if (h.lastName.toLowerCase() === 'bessent') filerId = 'EXEC-BESSENT';
 
-    let txType = 'buy';
-    if (h.type === 'buy') txType = 'purchase';
-    if (h.type === 'sell') txType = 'sale_full';
-    if (h.type === 'exchange') txType = 'exchange';
+  for (const h of holes) {
+    const filerId = filerIdForHole(h);
+    const txType = mapTxType(h.type);
+    const assetName = assetNameFromCompetitorPayload(h.raw ?? h, h.ticker);
+    const ticker = h.ticker && String(h.ticker).toUpperCase() !== "UNKNOWN" ? h.ticker : null;
 
     const docId = `COMPETITOR-${h.provider}-${crypto.randomUUID()}`;
     const id = crypto.randomUUID();
@@ -40,25 +60,24 @@ async function main() {
         docId,
         filerId,
         h.date,
-        'unknown',
-        h.ticker || 'unknown',
-        h.ticker || null,
-        'stock',
+        "unknown",
+        assetName,
+        ticker,
+        "stock",
         txType,
         1001,
         15000,
         0,
         0,
-        JSON.stringify(h.raw),
-        'competitor_backfill',
-        new Date().toISOString()
-      ]
+        JSON.stringify(h.raw ?? h),
+        "competitor_backfill",
+        new Date().toISOString(),
+      ],
     });
   }
 
   console.log(`Executing ${txBatch.length} insertions...`);
-  
-  // Turso batch is limited to some number of statements (often 100 or 1000). Let's chunk to 100
+
   let successCount = 0;
   for (let i = 0; i < txBatch.length; i += 100) {
     const chunk = txBatch.slice(i, i + 100);
@@ -66,7 +85,7 @@ async function main() {
     successCount += chunk.length;
     console.log(`Inserted ${successCount} / ${txBatch.length}`);
   }
-  
+
   console.log("Backfill complete.");
 }
 
