@@ -6,6 +6,8 @@ import {
   matchDisclosureCandidate,
   parseTradeHash,
   raceFirstSeenAt,
+  LATENCY_MAX_CONCURRENT_DELTA_HOURS,
+  LATENCY_SCORE_WINDOW_HOURS,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -125,6 +127,13 @@ describe('tradeLatency', () => {
       const now = '2026-08-04T12:00:00.000Z';
       expect(raceFirstSeenAt('2024-01-01T00:00:00.000Z', now, 168)).toBe(now);
       expect(raceFirstSeenAt('2026-08-03T12:00:00.000Z', now, 168)).toBe('2026-08-03T12:00:00.000Z');
+    });
+  });
+
+  describe('scoreboard constants', () => {
+    it('keeps a 7-day window and 48h concurrent-race cap', () => {
+      expect(LATENCY_SCORE_WINDOW_HOURS).toBe(168);
+      expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(48);
     });
   });
 });

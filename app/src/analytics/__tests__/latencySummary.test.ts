@@ -146,9 +146,15 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
     const body = (await res.json()) as {
       generatedAt: string;
+      windowHours: number;
+      windowDays: number;
+      maxConcurrentDeltaHours: number;
       totals: { racedDisclosures: number; matched: number; comparableProviders: number };
       providers: Array<Record<string, unknown>>;
     };
+    expect(body.windowHours).toBe(168);
+    expect(body.windowDays).toBe(7);
+    expect(body.maxConcurrentDeltaHours).toBe(48);
     expect(body.totals.racedDisclosures).toBe(3);
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');
@@ -156,6 +162,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       label: 'Financial Modeling Prep',
       candidates: 2,
       matched: 2,
+      strongMatched: 2,
       usFirstCount: 2,
       providerFirstCount: 0,
       // deltas: +5400s and +1800s -> median/avg 3600s
@@ -163,7 +170,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       avgLeadSec: 3600,
     });
     const uw = body.providers.find((p) => p.id === 'unusual_whales');
-    expect(uw).toMatchObject({ matched: 0, medianLeadSec: null });
+    expect(uw).toMatchObject({ matched: 0, strongMatched: 0, medianLeadSec: null });
   });
 
   it('never leaks per-filing or member detail', async () => {
@@ -190,10 +197,79 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       unmatchedProvider: 10,
       ctCoveragePct: 50,
       providerCoveragePct: 50,
-      // 10 matched + incomplete coverage → preliminary soft claim, not full usable.
+      strongMatched: 10,
+      // 10 concurrent races + incomplete coverage → preliminary soft claim, not full usable.
       comparisonStatus: 'preliminary',
       comparisonBasis: 'matched-overlap-only',
     });
+  });
+
+  it('excludes multi-day stamp alignments from concurrent timing while keeping strongMatched', async () => {
+    const now = Date.now();
+    const ctSeen = new Date(now - 1 * 60 * 60 * 1000).toISOString(); // 1h ago
+    const providerSeen = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5d ago
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async all<T>() {
+              if (/FROM trade_latency_candidates/i.test(sql)) {
+                return {
+                  results: [
+                    {
+                      provider: 'quiver',
+                      status: 'matched',
+                      chamber: 'senate',
+                      provider_key: 'q1',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ctSeen,
+                      provider_first_seen_at: providerSeen,
+                      provider_published_at: null,
+                      created_at: ctSeen,
+                      updated_at: ctSeen,
+                    },
+                    // Concurrent race: CT first at 1.5h ago, provider 1h ago → CT ahead ~30 min
+                    {
+                      provider: 'quiver',
+                      status: 'matched',
+                      chamber: 'senate',
+                      provider_key: 'q2',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: new Date(now - 1.5 * 60 * 60 * 1000).toISOString(),
+                      provider_first_seen_at: ctSeen,
+                      provider_published_at: null,
+                      created_at: ctSeen,
+                      updated_at: ctSeen,
+                    },
+                  ] as T[],
+                };
+              }
+              return { results: [] as T[] };
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+      CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    } as never;
+    const res = await app.request('http://localhost/latency-summary', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { providers: Array<Record<string, unknown>> };
+    const qq = body.providers.find((p) => p.id === 'quiver');
+    expect(qq).toMatchObject({
+      strongMatched: 2,
+      matched: 1, // only the concurrent race
+    });
+    // CT ahead by ~30 min on the concurrent race → positive lead
+    expect(Number(qq?.medianLeadSec)).toBeGreaterThan(0);
   });
 
   it('degrades to an empty envelope when the latency tables are missing', async () => {

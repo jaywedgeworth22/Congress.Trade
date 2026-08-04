@@ -279,12 +279,13 @@ describe('DASHBOARD_HTML', () => {
     // Filter-independent: not stamped with the Trends window chip and not in loadTrends.
     expect(DASHBOARD_HTML).not.toMatch(/Speed vs\. Data Providers[^<]*<\/h3[^>]*class="tf-h"/);
     expect(DASHBOARD_HTML).toContain('function renderSpeedProof(');
-    // Honesty guard rails: lane threshold, empty-state copy,
+    // Honesty guard rails: lane threshold, concurrent-race empty-state copy,
     // losses always displayed, sample sizes visible, trademark fine print.
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
-    expect(DASHBOARD_HTML).toContain("Probes haven't found overlapping disclosures yet.");
+    expect(DASHBOARD_HTML).toContain("Probes haven't found concurrent races yet.");
+    expect(DASHBOARD_HTML).toContain('concurrent races only');
     expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');
-    expect(DASHBOARD_HTML).toContain('matched · ');
+    expect(DASHBOARD_HTML).toContain('concurrent · ');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
     // Every comparable provider rides the same honesty rails — no name-based
