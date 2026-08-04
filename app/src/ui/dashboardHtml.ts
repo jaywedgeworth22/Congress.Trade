@@ -3553,6 +3553,8 @@ function feedQueryParams() {
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
+  var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   return p;
 }
 function setFeedKpis() {
@@ -3689,12 +3691,12 @@ function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage();
 /* The server rejects public offsets beyond this depth (see
    MAX_PUBLIC_TX_OFFSET in src/security/botDefense.ts, enforced
    unconditionally in delivery/rest.ts). Interpolated, not hand-copied, so
-   the pager can never 400. Deeper history is the free CSV export. */
+   the pager can never 400. Deeper history is the Premium CSV export. */
 var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
 function nextFeedPage() {
   if ((feedPage + 1) * feedPageSize >= totalRows) return;
   if ((feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET) {
-    showToast('Deeper history is available in the free CSV export — use ⤓ Export CSV.');
+    showToast('Deeper history is available with Premium CSV export — use ⤓ Export CSV.');
     return;
   }
   feedPage += 1;
@@ -8367,6 +8369,7 @@ function loadMe() {
       renderAccount();
       applyAdminVisibility();
       updatePremiumCues();
+      updateGateRow();
       updateDeliveryGate();
       hiddenCols = hiddenCols.filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
@@ -8375,7 +8378,7 @@ function loadMe() {
       renderColChooser();
       renderFeed();
     })
-    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateDeliveryGate(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
 }
 
 function renderAccount() {
@@ -8473,10 +8476,20 @@ function pricingCopy(intent) {
       'Live SSE stream of every new filing — no polling',
     ],
   };
+  if (intent === 'export') return {
+    title: 'Export Full History',
+    sub: 'Premium unlocks full-history CSV downloads of every congressional trade, plus instant delivery via webhook or SSE.',
+    features: [
+      'Full-history CSV export with ticker, member, type, chamber, and date filters',
+      'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
+      'Live SSE stream of every new filing — no polling',
+    ],
+  };
   return {
     title: 'Premium',
-    sub: 'The public dashboard stays free. Premium gets you the filing the moment we see it.',
+    sub: 'The public dashboard stays free. Premium gets full-history CSV export and the filing the moment we see it.',
     features: [
+      'Full-history CSV export of the filtered trade feed',
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
     ],
@@ -8560,19 +8573,36 @@ function manageBilling() {
     .catch(function () { showToast('Network error — try again.', true); });
 }
 
-/* ---- CSV export (free; same filters as the live feed toolbar) ---- */
+/* ---- CSV export (Premium; same filters as the live feed toolbar) ---- */
 function exportCsv() {
+  if (!ME.user) {
+    openLogin();
+    showToast('Sign in to export CSV — Premium required for full-history downloads.');
+    return;
+  }
+  if (!isPremium()) {
+    openPricing('export');
+    return;
+  }
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
+  var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   var qs = p.toString();
+  // Cookie session is sent automatically with same-origin navigation.
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
 
-/* ---- gated feed CTA + post-redirect toasts ---- */
-function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated && checkoutConfigured() ? '' : 'none'; }
+/* ---- Premium CSV / delivery CTA under the feed pager ---- */
+function updateGateRow() {
+  var g = el('gateRow');
+  if (!g) return;
+  // Show export Premium CTA when not premium and checkout is configured.
+  g.style.display = (!isPremium() && checkoutConfigured()) ? '' : 'none';
+}
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
   var t = el('toast'); if (!t) return;

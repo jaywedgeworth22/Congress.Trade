@@ -127,7 +127,7 @@ describe('DASHBOARD_HTML', () => {
     const main = document.querySelector('main');
     expect(main).not.toBeNull();
 
-    const viewIds = ['view-feed', 'view-trends', 'view-review', 'view-subs', 'view-admin'];
+    const viewIds = ['view-feed', 'view-trends', 'view-people', 'view-review', 'view-subs', 'view-admin'];
     expect(document.querySelectorAll('section.view').map((view) => view.id)).toEqual(viewIds);
 
     for (const id of viewIds) {
@@ -370,18 +370,19 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
-    // Columns and CSV export are never Premium-gated: Premium is
-    // delivery (webhooks/SSE) only.
+    // Public feed + columns stay free. Premium is delivery + full-history CSV
+    // (subtle Pro badge / gateRow CTA — not a paywalled feed).
     expect(DASHBOARD_HTML).not.toContain('data-premium-col');
     expect(DASHBOARD_HTML).not.toContain('Premium enrichment');
     expect(DASHBOARD_HTML).not.toContain("tier: 'premium'");
     expect(DASHBOARD_HTML).not.toContain('Premium Enrichment Columns');
-    expect(DASHBOARD_HTML).not.toContain('CSV Export Requires Premium');
-    expect(DASHBOARD_HTML).not.toContain('CSV export is Premium');
-    expect(DASHBOARD_HTML).not.toContain('Full-history CSV exports');
     expect(DASHBOARD_HTML).not.toContain('Free view shows the last 30 days');
     expect(DASHBOARD_HTML).not.toContain('soon) real-time alerts');
     expect(DASHBOARD_HTML).not.toContain('Go Premium');
+    // Export is Premium but cued subtly (Pro badge + pricing intent), not a hard feed wall.
+    expect(DASHBOARD_HTML).toContain('data-premium-cue="export"');
+    expect(DASHBOARD_HTML).toContain('Export CSV');
+    expect(DASHBOARD_HTML).toContain('premium-mark');
   });
 
   it('gates Premium checkout copy and actions on server billing availability', () => {
@@ -1937,7 +1938,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
 
   // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
   it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
-    expect(DASHBOARD_HTML).toContain('Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr');
     expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
     expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
     expect(DASHBOARD_HTML).not.toContain('$15/mo');
@@ -2200,11 +2202,18 @@ describe('UX P0 review fixes (web)', () => {
     expect(DASHBOARD_HTML).not.toContain('Trades only resolve against loaded rows');
   });
 
-  it('exports CSV with the politician filter and free-export copy', () => {
+  it('gates CSV export as Premium with memberName+from filters and export pricing intent', () => {
     expect(DASHBOARD_HTML).toContain("if (m) p.set('memberName', m)");
+    expect(DASHBOARD_HTML).toContain("if (from) p.set('from', from)");
+    expect(DASHBOARD_HTML).toContain("if (to) p.set('to', to)");
     expect(DASHBOARD_HTML).toContain("window.location.href = '/api/export/transactions.csv'");
-    expect(DASHBOARD_HTML).toContain('CSV export is free (full history)');
-    expect(DASHBOARD_HTML).not.toContain('Premium adds full-history CSV export');
+    expect(DASHBOARD_HTML).toContain("openPricing('export')");
+    expect(DASHBOARD_HTML).toContain("intent === 'export'");
+    expect(DASHBOARD_HTML).toContain('Full-history CSV export');
+    expect(DASHBOARD_HTML).toContain('Sign in to export CSV');
+    expect(DASHBOARD_HTML).not.toContain('CSV export is free (full history)');
+    expect(DASHBOARD_HTML).not.toContain('free CSV export');
+    expect(DASHBOARD_HTML).toContain("!isPremium() && checkoutConfigured()");
   });
 
   it('lazy-loads asset drawer backtest instead of a hard PERF_GATE', () => {
