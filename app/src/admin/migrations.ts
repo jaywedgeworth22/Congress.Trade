@@ -607,6 +607,18 @@ export const TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS = [
   'ALTER TABLE trade_provider_observations ADD COLUMN provider_published_at TEXT',
 ] as const;
 
+/** Scoreboard + exact-hash match indexes (idempotent CREATE INDEX). */
+export const TRADE_LATENCY_SCOREBOARD_INDEX_SCHEMA_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_seen
+     ON trade_latency_candidates (provider, status, congress_first_seen_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_updated
+     ON trade_latency_candidates (updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_hash
+     ON trade_provider_observations (provider, trade_hash, chamber)`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_last_obs
+     ON trade_provider_observations (last_observed_at DESC)`,
+] as const;
+
 export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS deno_runtime_kv (
     namespace TEXT NOT NULL,
@@ -835,6 +847,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   // Idempotent ALTERs for trade-latency tables created before source_url /
   // provider_published_at were present (CREATE IF NOT EXISTS does not alter).
   ...TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS,
+  // 0073_latency_scoreboard_indexes.sql
+  ...TRADE_LATENCY_SCOREBOARD_INDEX_SCHEMA_STATEMENTS,
   // 0060_deno_runtime_kv.sql
   ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
   // 0061_clean_placeholder_tickers.sql
