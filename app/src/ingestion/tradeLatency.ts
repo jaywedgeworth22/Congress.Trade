@@ -1788,34 +1788,31 @@ export async function healLatencyCandidateFirstSeen(
 
   const updates: Array<[string, SqlParam[]]> = [];
   let healed = 0;
-  const floorMs = Date.parse(scoreCutoff);
   for (const row of rows) {
     const raw = earliestByDoc.get(row.doc_id);
     let next: string | null = null;
     if (raw && raw >= scoreCutoff && raw < row.congress_first_seen_at) {
       // Real in-window stamp earlier than bulk reverse-seed "now".
       next = raw;
-    } else if (
-      row.provider_first_seen_at &&
-      row.congress_first_seen_at &&
+    } else if (row.provider_first_seen_at && row.congress_first_seen_at) {
       // Prior bug clamped pre-window stamps to the window floor, inventing
-      // multi-day CT-ahead leads. Detect floor-ish CT stamps with provider
-      // much later and snap CT forward to candidate created_at (bulk seed time).
-      Number.isFinite(floorMs) &&
-      Math.abs(Date.parse(row.congress_first_seen_at) - floorMs) < 6 * 3600_000 &&
-      Date.parse(row.provider_first_seen_at) - Date.parse(row.congress_first_seen_at) > 48 * 3600_000
-    ) {
-      const created = row.created_at && row.created_at >= scoreCutoff ? row.created_at : nowIso;
-      if (created > row.congress_first_seen_at) next = created;
-    }
-    if (!next || next >= row.congress_first_seen_at && next === raw) {
-      // fall through only when we have a strict rewrite target
+      // multi-day CT-ahead leads (provider mid-window, CT at floor). Detect any
+      // matched row where CT is "ahead" by >24h but the real filing/tx stamp is
+      // pre-window (or missing) and snap CT forward to candidate created_at /
+      // now so concurrent timing is not dominated by floor artifacts.
+      const ctMs = Date.parse(row.congress_first_seen_at);
+      const pMs = Date.parse(row.provider_first_seen_at);
+      const ctAheadSec = Number.isFinite(pMs) && Number.isFinite(ctMs) ? (pMs - ctMs) / 1000 : 0;
+      const realIsPreWindow = !raw || raw < scoreCutoff;
+      if (ctAheadSec > 24 * 3600 && realIsPreWindow) {
+        const created =
+          row.created_at && Date.parse(row.created_at) >= Date.parse(scoreCutoff)
+            ? row.created_at
+            : nowIso;
+        if (Date.parse(created) > ctMs) next = created;
+      }
     }
     if (!next || next === row.congress_first_seen_at) continue;
-    // For floor-repair we move stamp forward; for normal heal we only go earlier.
-    const goingEarlier = next < row.congress_first_seen_at;
-    const goingLaterFloorRepair = next > row.congress_first_seen_at;
-    if (!goingEarlier && !goingLaterFloorRepair) continue;
     updates.push([
       `UPDATE trade_latency_candidates
           SET congress_first_seen_at = ?, updated_at = ?
