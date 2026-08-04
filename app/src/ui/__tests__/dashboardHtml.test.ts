@@ -390,7 +390,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }");
     expect(DASHBOARD_HTML).toContain('Premium checkout is not available yet.');
     expect(DASHBOARD_HTML).toContain("el('subscribeBtn').disabled = !available");
-    expect(DASHBOARD_HTML).toContain('checkoutConfigured() ? \'<button class="btn sm" onclick="openPricing()">Premium</button>\' : \'\'');
+    expect(DASHBOARD_HTML).toContain('checkoutConfigured() ? \'<button class="btn sm" onclick="openPricing()">Upgrade</button>\' : \'\'');
     expect(DASHBOARD_HTML).not.toContain('function billingConfigured()');
   });
 
