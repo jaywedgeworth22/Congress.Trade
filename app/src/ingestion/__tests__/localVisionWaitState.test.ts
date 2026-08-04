@@ -216,6 +216,36 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(json.filings[0].doc_id).toBe('scanned-pending-1');
     });
 
+    it('GET /api/admin/scanned-filings/pending includes expired waits and extract_empty review scans', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      const past = new Date(Date.now() - 600_000).toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-expired-1', 'house', 'https://example.com/expired.pdf', 'extraction_pending_local', 'scanned_pdf', past, nowIso).run();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind('exec-empty-1', 'executive', 'https://example.com/oge.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('exec-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const res = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as { ok: boolean; count: number; filings: Array<{ doc_id: string }> };
+      expect(json.ok).toBe(true);
+      const ids = json.filings.map((f) => f.doc_id).sort();
+      expect(ids).toContain('scanned-expired-1');
+      expect(ids).toContain('exec-empty-1');
+    });
+
     it('POST /api/admin/ingest-local-vision normalizes and persists transactions with source=local_mac', async () => {
       const app = createAdminApp();
       const env = makeEnv();

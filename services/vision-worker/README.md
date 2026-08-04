@@ -1,34 +1,61 @@
-# macOS Vision Worker Service (`com.congress.trade.vision-worker`)
+# macOS Vision Worker (`com.congress.trade.vision-worker`)
 
-The local vision worker is a macOS launchd daemon that processes paper-scanned PTR filings using native macOS `Vision.framework` OCR and checkbox grid projection analysis.
+Local vision worker for paper-scanned PTR / OGE filings. Polls the production
+admin API, runs **Grok vision via OpenRouter** (`x-ai/grok-4.5` by default),
+and posts structured rows to `POST /api/admin/ingest-local-vision`.
+
+## Why Grok (not Kimi)
+
+The earlier `kimi -p` engine hit a hard provider billing 403 (usage limit for
+the billing cycle) and will not recover for this seat. The worker now uses the
+same Grok vision path the server bake-off already trusts (`openrouter:x-ai/grok-4.5`).
 
 ## Features
-- Periodically sends heartbeats to `POST /api/admin/local-worker/heartbeat`.
-- Polls `GET /api/admin/scanned-filings/pending` for `scanned_pdf` filings.
-- Extracts transaction tables locally at **$0 marginal cost** (no LLM API spend).
-- Submits structured transactions to `POST /api/admin/ingest-local-vision` (`source = 'local_mac'`).
 
-## Installation via launchd
-To install and start the service on macOS:
+- Heartbeats → `POST /api/admin/local-worker/heartbeat` (`engine=openrouter-grok-vision`)
+- Polls → `GET /api/admin/scanned-filings/pending` (pending local + extract_empty review scans)
+- Transcribes PDFs with Grok vision (native PDF file attachment)
+- Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`, `extractor=local_grok_vision_v1`)
+
+## Env
+
+| Var | Default | Notes |
+| --- | --- | --- |
+| `CONGRESS_TRADE_API_URL` | `http://localhost:8787` | Use `https://congress.trade` in launchd |
+| `ADMIN_TOKEN` | — | `CT_ADMIN_TOKEN` from `~/.secrets/` |
+| `OPENROUTER_API_KEY` | — | Required. From `CT_OPENROUTER_API_KEY` |
+| `OPENROUTER_MODEL` | `x-ai/grok-4.5` | OpenRouter Grok vision slug |
+| `WORKER_ID` | `local_mac_1` | Heartbeat id |
+| `POLL_INTERVAL_SEC` | `30` | |
+| `MAX_DOCS_PER_POLL` | `3` | Pace OpenRouter spend |
+| `GROK_TIMEOUT_SEC` | `600` | Per-doc hard cap |
+
+## Installation (launchd)
 
 ```bash
-# 1. Copy plist to user LaunchAgents
+# Install tree
+mkdir -p ~/vision-worker
+cp services/vision-worker/worker.py ~/vision-worker/
+cp services/vision-worker/run-vision-worker.sh ~/vision-worker/
+chmod +x ~/vision-worker/run-vision-worker.sh ~/vision-worker/worker.py
+
+# LaunchAgent
 cp services/vision-worker/com.congress.trade.vision-worker.plist ~/Library/LaunchAgents/
-
-# 2. Load and start launchd daemon
+launchctl unload ~/Library/LaunchAgents/com.congress.trade.vision-worker.plist 2>/dev/null || true
 launchctl load ~/Library/LaunchAgents/com.congress.trade.vision-worker.plist
-
-# 3. Check daemon status
 launchctl list | grep vision-worker
 ```
 
+`run-vision-worker.sh` loads `CT_ADMIN_TOKEN` + `CT_OPENROUTER_API_KEY` from
+`~/.secrets/global-api-keys` (or `.env` sibling) without printing them.
+
 ## Logs
-- Standard output: `~/Library/Logs/com.congress.trade.vision-worker.log`
-- Error output: `~/Library/Logs/com.congress.trade.vision-worker.err.log`
+
+- stdout: `~/Library/Logs/com.congress.trade.vision-worker.log`
+- stderr: `~/Library/Logs/com.congress.trade.vision-worker.err.log`
 
 ## Server alternative (no Mac)
 
-For Coolify/Linux ARM64 without a Mac host, use **`services/scan-cpu-worker/`**:
-Tesseract (or Surya/docTR) + deterministic checkbox ink-ratio. Same admin API;
-posts `source=server_cpu`. See that service's README and
-`docs/rollouts/2026-08-03-server-cpu-scan-worker.md`.
+`services/scan-cpu-worker/` — Tesseract/Surya on Coolify. Use for free OCR only;
+empty extract_empty executive scans need this Grok worker (or server
+`configuredVision` reprocess), not more Tesseract.

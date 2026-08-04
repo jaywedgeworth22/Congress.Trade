@@ -4908,6 +4908,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /scanned-filings/pending ---------------------------------------
   // Returns pending scanned_pdf filings for local vision worker processing.
+  // Includes:
+  //   • extraction_pending_local / classified (wait window no longer gates —
+  //     expired waits used to hide the whole backlog once kimi/local workers
+  //     stalled)
+  //   • needs_review extract_empty scanned PDFs (server_cpu/Tesseract empty
+  //     reads that need Grok vision re-transcription)
+  // Skips resolved-review and live-transaction docs so workers don't burn
+  // spend on no-ops.
   r.get('/scanned-filings/pending', async (c) => {
     try {
       const rows = await all<{
@@ -4923,17 +4931,41 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         first_seen_at: string;
       }>(
         c.env.DB,
-        `SELECT doc_id, chamber, filing_type, filed_date, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at
-           FROM filings
-          WHERE doc_kind = 'scanned_pdf'
-            AND (ingest_status = 'extraction_pending_local' OR ingest_status = 'classified')
-            AND (local_wait_expires_at IS NULL OR datetime(local_wait_expires_at) > datetime('now'))
-            -- already handled: resolved review or live rows (e.g. a refetch
-            -- flipped a completed filing back to 'classified') — re-serving
-            -- them would burn the worker's local compute on no-ops forever
-            AND NOT EXISTS (SELECT 1 FROM review_queue rq WHERE rq.doc_id = filings.doc_id AND rq.resolved = 1)
-            AND NOT EXISTS (SELECT 1 FROM transactions tx WHERE tx.doc_id = filings.doc_id AND tx.deprecated_at IS NULL)
-          ORDER BY first_seen_at DESC
+        `SELECT f.doc_id, f.chamber, f.filing_type, f.filed_date, f.source_url, f.raw_object_key,
+                f.ingest_status, f.doc_kind, f.local_wait_expires_at, f.first_seen_at
+           FROM filings f
+          WHERE f.doc_kind = 'scanned_pdf'
+            AND f.source_url IS NOT NULL
+            AND (
+              f.ingest_status IN ('extraction_pending_local', 'classified')
+              OR (
+                f.ingest_status = 'needs_review'
+                AND EXISTS (
+                  SELECT 1 FROM review_queue rq
+                   WHERE rq.doc_id = f.doc_id
+                     AND rq.resolved = 0
+                     AND (
+                       rq.reason LIKE '%extract_empty%'
+                       OR rq.reason LIKE '%no_transactions_extracted%'
+                     )
+                )
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM review_queue rq
+               WHERE rq.doc_id = f.doc_id AND rq.resolved = 1
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM transactions tx
+               WHERE tx.doc_id = f.doc_id AND tx.deprecated_at IS NULL
+            )
+          ORDER BY
+            CASE f.ingest_status
+              WHEN 'extraction_pending_local' THEN 0
+              WHEN 'classified' THEN 1
+              ELSE 2
+            END,
+            f.first_seen_at DESC
           LIMIT 50`,
       );
       return c.json({ ok: true, count: rows.length, filings: rows });
