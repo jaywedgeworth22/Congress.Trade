@@ -117,7 +117,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   [hidden] { display: none !important; }
   /* ---- theme toggle ---- */
   /* ---- resizable feed columns ---- */
-  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
+  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); scrollbar-width: thin; scrollbar-color: var(--border) var(--panel-2); }
+  .table-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
+  .table-wrap::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 4px; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid var(--panel-2); }
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
   #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #feedTable.resizable th.c-latency, #feedTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
@@ -311,11 +315,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
   .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
   .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
-  .tag.P::after { content: " ↗"; }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
-  .tag.S::after { content: " ↘"; }
   .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }
-  .tag.E::after { content: " ↔"; }
   .conf { font-family: var(--mono); font-size: 12px; }
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
@@ -1811,8 +1812,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
-      <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>average</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
@@ -2263,7 +2264,7 @@ function fmtBracketAmount(n) {
   return sign + '$' + Math.round(abs);
 }
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
-var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
+var typeName = { P: 'Buy', S: 'Sale', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 /* Format a politician name so a generational suffix sits after a single comma
@@ -2313,6 +2314,7 @@ function fmtName(raw) {
 function fmtCompany(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  s = s.replace(/\s*\([^)]+\)\s*$/g, '').trim();
   if (s === s.toUpperCase() || s === s.toLowerCase()) {
     // Title-case each run of letters independently so internal punctuation is
     // preserved: "S&P" stays "S&P" rather than collapsing to "S&p".
@@ -7412,7 +7414,7 @@ function loadTrPerformers() {
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + r.tradeCount + ' buys</span><span>' + Math.round(100 * (r.winRate || 0)) + '% win</span></div>' +
           '</div></div></td>' +
-        '<td title="Annualized relative performance vs S&amp;P 500; 0% means matched the S&amp;P, +3% means about 3 percentage points better per year.">' + pctSigned(r.avgAnnualizedExcessReturn != null ? r.avgAnnualizedExcessReturn : r.avgExcessReturn) + '</td></tr>';
+        '<td title="Average relative performance vs S&amp;P 500 since filing date; 0% means matched the S&amp;P, +3% means it beat the S&amp;P by 3%.">' + pctSigned(r.avgExcessReturn) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
 }
@@ -7790,8 +7792,7 @@ function perfLineHtml(d, txType) {
 function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
 function actionBadge(type) {
   var label = typeName[type] || type || 'Unknown';
-  var arrow = type === 'P' ? ' ↗' : type === 'S' ? ' ↘' : type === 'E' ? ' ↔' : '';
-  return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + arrow + '</span>';
+  return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
 }
 function amountText(min, max) {
   if (min == null && max == null) return '—';
@@ -8133,17 +8134,12 @@ function memberPerfHtml(d) {
     }
     var win = leg.winRate == null ? '—' : Math.round(leg.winRate * 100) + '% win';
     var n = leg.scoredCount + ' of ' + leg.tradeCount + ' buys';
-    var ann = (showAnnualized && leg.avgAnnualizedExcess != null)
-      ? '<div class="chip" title="Same annualized excess metric as Top Performers; 0% means matched the S&amp;P.">Annualized ' +
-          pctSigned(leg.avgAnnualizedExcess) + ' vs S&amp;P</div>'
-      : '';
     return '<div style="margin-bottom:12px">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
       '<div class="perf-line net">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400">avg excess vs S&amp;P</span></div>' +
       '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
         ' · Avg return ' + pctSigned(leg.avgReturn) +
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
-      ann +
       '</div>';
   }
   return legBlock(
@@ -8154,9 +8150,8 @@ function memberPerfHtml(d) {
     ) +
     legBlock(
       'If you bought at filing',
-      'Copy-trade: equal-weighted excess from the public disclosure date (when a follower could have traded). Annualized line matches Top Performers.',
-      filing,
-      true
+      'Copy-trade: equal-weighted excess from the public disclosure date (when a follower could have traded). Matches Top Performers.',
+      filing
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
       (buyCount != null ? ' · ' + buyCount + ' disclosed buys in window' : '') +
