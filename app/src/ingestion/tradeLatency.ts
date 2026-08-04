@@ -1738,9 +1738,11 @@ export async function healLatencyCandidateFirstSeen(
     provider: string;
     doc_id: string;
     congress_first_seen_at: string;
+    provider_first_seen_at: string | null;
+    created_at: string | null;
   }>(
     env.DB,
-    `SELECT trade_hash, provider, doc_id, congress_first_seen_at
+    `SELECT trade_hash, provider, doc_id, congress_first_seen_at, provider_first_seen_at, created_at
        FROM trade_latency_candidates
       WHERE doc_id IS NOT NULL AND doc_id != ''
       ORDER BY updated_at DESC
@@ -1786,20 +1788,39 @@ export async function healLatencyCandidateFirstSeen(
 
   const updates: Array<[string, SqlParam[]]> = [];
   let healed = 0;
+  const floorMs = Date.parse(scoreCutoff);
   for (const row of rows) {
     const raw = earliestByDoc.get(row.doc_id);
-    if (!raw) continue;
-    // Only rewrite with a real stamp that is already inside the score window.
-    // Clamping pre-window stamps up to scoreCutoff invents fake multi-day
-    // "CT ahead" leads (provider obs mid-window vs floor stamp).
-    if (raw < scoreCutoff) continue;
-    if (raw >= row.congress_first_seen_at) continue;
+    let next: string | null = null;
+    if (raw && raw >= scoreCutoff && raw < row.congress_first_seen_at) {
+      // Real in-window stamp earlier than bulk reverse-seed "now".
+      next = raw;
+    } else if (
+      row.provider_first_seen_at &&
+      row.congress_first_seen_at &&
+      // Prior bug clamped pre-window stamps to the window floor, inventing
+      // multi-day CT-ahead leads. Detect floor-ish CT stamps with provider
+      // much later and snap CT forward to candidate created_at (bulk seed time).
+      Number.isFinite(floorMs) &&
+      Math.abs(Date.parse(row.congress_first_seen_at) - floorMs) < 6 * 3600_000 &&
+      Date.parse(row.provider_first_seen_at) - Date.parse(row.congress_first_seen_at) > 48 * 3600_000
+    ) {
+      const created = row.created_at && row.created_at >= scoreCutoff ? row.created_at : nowIso;
+      if (created > row.congress_first_seen_at) next = created;
+    }
+    if (!next || next >= row.congress_first_seen_at && next === raw) {
+      // fall through only when we have a strict rewrite target
+    }
+    if (!next || next === row.congress_first_seen_at) continue;
+    // For floor-repair we move stamp forward; for normal heal we only go earlier.
+    const goingEarlier = next < row.congress_first_seen_at;
+    const goingLaterFloorRepair = next > row.congress_first_seen_at;
+    if (!goingEarlier && !goingLaterFloorRepair) continue;
     updates.push([
       `UPDATE trade_latency_candidates
           SET congress_first_seen_at = ?, updated_at = ?
-        WHERE trade_hash = ? AND provider = ?
-          AND congress_first_seen_at > ?`,
-      [raw, nowIso, row.trade_hash, row.provider, raw],
+        WHERE trade_hash = ? AND provider = ?`,
+      [next, nowIso, row.trade_hash, row.provider],
     ]);
     healed++;
   }
