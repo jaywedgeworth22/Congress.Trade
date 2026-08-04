@@ -19,6 +19,9 @@ function normalizeParty(party: string | null): string | null {
 // These are the groups identified in filers_analysis.md
 const duplicateGroups = [
 
+  // Legal-name fork (House PTR) + competitor MANUAL inject → preferred Ro Khanna
+  ["house-ca17-ro-khanna", "house-ca17-rohit-khanna", "MANUAL-KHANNA"],
+
   ["senate-a-mitchell-jr-mcconnell", "senate-mcconnell-a-mitchell-jr-senator"],
   ["senate-bernardo-moreno", "senate-moreno-bernardo-senator"],
   ["senate-david-h-mccormick", "senate-mccormick-david-h-senator"],
