@@ -94,6 +94,11 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   // Static legal pages (required for Stripe Checkout: ToS + Privacy URLs).
   r.get('/terms-of-service', (c) => c.html(renderLegalHtml(TOS_HTML, c.env)));
   r.get('/privacy-policy', (c) => c.html(renderLegalHtml(PRIVACY_HTML, c.env)));
+  // Short aliases users and external listings commonly try first.
+  r.get('/privacy', (c) => c.redirect('/privacy-policy', 301));
+  r.get('/terms', (c) => c.redirect('/terms-of-service', 301));
+  // Shareable pricing entry — dashboard opens the Premium modal via ?pricing=1.
+  r.get('/pricing', (c) => c.redirect('/?pricing=1&view=subs', 302));
 
   // robots.txt — allow search engines, block AI/LLM crawlers and scrapers.
   // Follows the same policy as capitoltrades.com/robots.txt.

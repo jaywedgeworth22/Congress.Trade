@@ -372,6 +372,38 @@ struct ClientCommandResponse<ResultPayload: Decodable>: Decodable {
     let result: ResultPayload?
     let replayed: Bool?
     let error: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case command, result, replayed, error
+    }
+
+    private enum CommandResultKeys: String, CodingKey {
+        case result
+    }
+
+    init(command: ClientCommand, result: ResultPayload?, replayed: Bool?, error: String?) {
+        self.command = command
+        self.result = result
+        self.replayed = replayed
+        self.error = error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        command = try container.decode(ClientCommand.self, forKey: .command)
+        replayed = try container.decodeIfPresent(Bool.self, forKey: .replayed)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        // POST may eventually surface a top-level `result`. GET /commands/:id
+        // claims the one-time secret onto `command.result` — accept either.
+        if let topLevel = try container.decodeIfPresent(ResultPayload.self, forKey: .result) {
+            result = topLevel
+        } else if container.contains(.command) {
+            let nested = try container.nestedContainer(keyedBy: CommandResultKeys.self, forKey: .command)
+            result = try nested.decodeIfPresent(ResultPayload.self, forKey: .result)
+        } else {
+            result = nil
+        }
+    }
 }
 
 struct ClientCommand: Decodable, Identifiable {

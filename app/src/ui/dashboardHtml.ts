@@ -710,7 +710,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
   }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
-  footer { text-align:center; color: var(--text-dim); font-size:11px; padding:30px 35px; }
+  footer, footer.site-footer { text-align:center; color: var(--text-dim); font-size:11px; padding:30px 35px; display:flex; flex-direction:column; gap:10px; align-items:center; }
+  footer .footer-links { display:inline-flex; flex-wrap:wrap; gap:12px 16px; justify-content:center; }
+  footer .footer-links a { color: var(--text-dim); text-decoration:none; }
+  footer .footer-links a:hover { color: var(--accent); }
   /* ---- account control + auth/billing modals ---- */
   .acct { display:flex; align-items:center; gap:8px; }
   .acct .email { font-size:12px; color:var(--text-dim); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1640,8 +1643,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
-      <span class="gate-note">Premium adds full-history CSV export.
-        <button class="btn sm" onclick="openPricing()">Premium</button></span>
+      <span class="gate-note">CSV export is free (full history). Premium pushes new filings to you via webhook or live stream.
+        <button class="btn sm" onclick="openPricing('alerts')">Premium Delivery</button></span>
     </div>
 
   </section>
@@ -1676,9 +1679,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
         <div class="party-chips" id="trPartyGroup" style="position:relative;">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat">🫏</button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican">🐘</button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other">🦅</button>
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> D</button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> R</button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> O</button>
           <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
           <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
             <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
@@ -2148,7 +2151,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
   </div>
 
-  <footer>Congress.Trade • an educational tool for exploring public STOCK Act (2012) disclosures • informational only • not financial advice • not trading signals • $ estimated from disclosed brackets</footer>
+  <footer class="site-footer">
+    <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
+    <span class="footer-links">
+      <a href="/privacy-policy">Privacy</a>
+      <a href="/terms-of-service">Terms</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/api/feed.xml" rel="alternate" type="application/rss+xml">RSS</a>
+      <a href="mailto:congress.trade@jays.services">Support</a>
+    </span>
+  </footer>
 </main>
 
 <div class="drawer" id="detailDrawer">
@@ -2205,7 +2217,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 /* ============================ STATE ============================ */
@@ -7993,14 +8005,53 @@ function openAsset(ticker) {
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
-      '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
+      '<div class="drawer-section"><h3>Performance After Buys</h3><div id="assetPerf"><div class="note">Loading performance…</div></div></div>' +
       '<div class="drawer-stack-grid"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
         '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>' +
       '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>'
     );
+    // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
+    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?window=' + encodeURIComponent(tickerWindow)).then(function (bt) {
+      var pEl = el('assetPerf'); if (pEl) pEl.innerHTML = tickerBacktestHtml(bt);
+    }).catch(function () {
+      var pEl = el('assetPerf');
+      if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
+    });
   }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
+}
+
+/* Purchase-cohort backtest summary for the asset drawer. */
+function tickerBacktestHtml(d) {
+  if (!d) return '<div class="note">Performance unavailable.</div>';
+  var horizons = d.horizons || [];
+  var total = d.totalBuyEvents != null ? d.totalBuyEvents : 0;
+  if (!horizons.length || !total) {
+    return '<div class="note">No priced equity buys to score yet — this fills in as the price cache backfills. Options are excluded.</div>';
+  }
+  function hzLabel(days) {
+    if (days === 21) return '~1 mo';
+    if (days === 63) return '~3 mo';
+    if (days === 126) return '~6 mo';
+    if (days === 252) return '~1 yr';
+    return days + 'd';
+  }
+  var rows = horizons.map(function (h) {
+    var n = h.n != null ? h.n : 0;
+    var excess = h.avgExcess;
+    var ret = h.avgReturn;
+    var cell = excess == null
+      ? '<span class="muted">n&lt;' + (h.minN || 5) + '</span>'
+      : '<span class="net ' + (excess > 0 ? 'pos' : excess < 0 ? 'neg' : '') + '">' +
+          (excess > 0 ? '+' : '') + (excess * 100).toFixed(1) + '% vs S&amp;P</span>' +
+          (ret != null ? ' <span class="muted">(' + (ret > 0 ? '+' : '') + (ret * 100).toFixed(1) + '% asset)</span>' : '');
+    return '<div class="hbar" style="margin:6px 0"><div class="hlabel" style="width:72px">' + esc(hzLabel(h.horizonDays || h.days || h.horizon)) +
+      '</div><div class="hval" style="width:auto;flex:1;text-align:left">' + cell +
+      ' <span class="muted">· n=' + n + '</span></div></div>';
+  }).join('');
+  return '<p class="note" style="margin:0 0 8px">After disclosed <strong>buys</strong> (not sells), equal-weighted forward return vs the S&amp;P. Observational — not a forecast. Cohort: ' +
+    total + ' buy event' + (total === 1 ? '' : 's') + '.</p>' + rows;
 }
 
 /* ---- politician drawer (/api/analytics/member/:filerId) ---- */
@@ -8462,10 +8513,11 @@ function manageBilling() {
     .catch(function () { showToast('Network error — try again.', true); });
 }
 
-/* ---- CSV export (premium) ---- */
+/* ---- CSV export (free; same filters as the live feed toolbar) ---- */
 function exportCsv() {
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
+  var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var qs = p.toString();
@@ -8763,15 +8815,86 @@ initPartyChips();
 })();
 
 /* Feed rows open the trade drawer; the asset chip and politician open their drawers. */
+/* Map a /api/client/v1 trade envelope item into the feed-row shape openTrade expects. */
+function clientTradeToRow(item) {
+  if (!item) return null;
+  var m = item.member || {};
+  var a = item.asset || {};
+  var t = item.transaction || {};
+  var f = item.filing || {};
+  return {
+    filed: toISODate(f.filedDate) || '',
+    member: m.name || m.id || 'Unknown',
+    photoUrl: m.photoUrl || '',
+    st: m.state || '',
+    chamber: m.chamber || '',
+    asset: cleanAsset(a.name || ''),
+    ticker: a.ticker || '',
+    assetType: a.type || '',
+    assetTypeName: '',
+    type: t.type || 'P',
+    min: t.amountMin, max: t.amountMax,
+    txdate: toISODate(t.date) || '',
+    owner: t.owner || '',
+    conf: typeof item.confidence === 'number' ? item.confidence : 1,
+    source: item.source || 'primary',
+    filedDate: f.filedDate || '',
+    firstSeenAt: f.firstSeenAt || '',
+    imported: '',
+    cursorSeq: item.cursor || 0,
+    disclosureLagDays: null,
+    stockActStatus: '',
+    id: item.id || '',
+    docId: item.docId || '',
+    filerId: m.id || '',
+    isOption: !!t.isOption,
+    rawText: '',
+    refSector: a.sector || '',
+    refMarketCap: null,
+    refMarketCapBucket: a.marketCapBucket || '',
+    refCountry: '',
+    refExchangeShort: '',
+    refAssetClass: '',
+    refCompanyName: a.name || '',
+    cleaningNote: '',
+    pdfUrl: '',
+    sourceUrl: f.sourceUrl || ''
+  };
+}
 function openTradeById(id) {
+  if (!id) return;
   if (TRADE_BY_ID[id]) { openTrade(TRADE_BY_ID[id]); return; }
   for (var i = 0; i < TRADES.length; i++) {
     if (TRADES[i].id === id) { openTrade(TRADES[i]); return; }
   }
+  // Deep links and drawer rows outside the current feed page: resolve by id.
+  openDrawer('<div class="note">Loading trade…</div>');
+  fetch('/api/client/v1/trade/' + encodeURIComponent(id), { headers: { accept: 'application/json' } })
+    .then(function (r) {
+      if (r.status === 404) throw new Error('not_found');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      var item = (d && d.item) || (d && d.items && d.items[0]) || null;
+      var row = clientTradeToRow(item);
+      if (!row || !row.id) {
+        openDrawer('<div class="note">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>');
+        return;
+      }
+      rememberTradeRow(row);
+      openTrade(row);
+    })
+    .catch(function (e) {
+      if (e && e.message === 'not_found') {
+        openDrawer('<div class="note">That trade was not found. It may have been retracted or the share link is outdated.</div>');
+      } else {
+        openDrawer('<div class="note">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>');
+      }
+    });
 }
-/* Restore a shared deep link (?ticker= / ?member= / ?trade=) once the first
-   feed page is in memory. Trades only resolve against loaded rows — there is
-   no by-id endpoint — so an unknown id gets an explanatory drawer instead. */
+/* Restore a shared deep link (?ticker= / ?member= / ?trade=). Trade ids resolve
+   via GET /api/client/v1/trade/:id when they are not already in the loaded feed. */
 function openDeepLink() {
   try {
     var sp = new URLSearchParams(window.location.search);
@@ -8779,18 +8902,20 @@ function openDeepLink() {
     var member = sp.get('member');
     var trade = sp.get('trade');
     var authError = sp.get('auth_error');
+    var pricing = sp.get('pricing');
     if (authError === 'google_not_configured') {
       openLogin();
       var msg = el('loginMsg');
       if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
       return;
     }
+    if (pricing === '1' || pricing === 'true' || pricing === 'alerts') {
+      openPricing(pricing === 'alerts' ? 'alerts' : 'default');
+      return;
+    }
     if (ticker) { openAsset(ticker); return; }
     if (member) { openMember(member); return; }
-    if (trade) {
-      if (TRADE_BY_ID[trade] || TRADES.some(function (t) { return t.id === trade; })) openTradeById(trade);
-      else openDrawer('<div class="note">That trade is not in the currently loaded feed window. Load more rows in the Trades tab, or check the link.</div>');
-    }
+    if (trade) openTradeById(trade);
   } catch (e) {}
 }
 function handleFeedOpenEvent(e) {

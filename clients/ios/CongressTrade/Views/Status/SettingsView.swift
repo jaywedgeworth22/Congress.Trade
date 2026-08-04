@@ -53,9 +53,10 @@ struct SettingsView: View {
                         }
                     }
 
+                    #if DEBUG
                     if let token = pushManager.deviceToken {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("APNs Device Token")
+                            Text("APNs Device Token (debug)")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Text(token)
@@ -65,6 +66,7 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 2)
                     }
+                    #endif
 
                     if let error = pushManager.lastError {
                         Text(error)
@@ -198,6 +200,13 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section("About") {
+                    Link("Privacy Policy", destination: URL(string: "https://congress.trade/privacy-policy")!)
+                    Link("Terms of Service", destination: URL(string: "https://congress.trade/terms-of-service")!)
+                    Link("Pricing", destination: URL(string: "https://congress.trade/pricing")!)
+                    Link("Support", destination: URL(string: "mailto:congress.trade@jays.services")!)
                 }
             }
             .scrollContentBackground(.hidden)

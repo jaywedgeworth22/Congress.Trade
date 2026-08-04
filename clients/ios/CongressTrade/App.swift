@@ -71,6 +71,11 @@ struct MainTabView: View {
         // e.g. tapping a magic link in Mail — while
         // ASWebAuthenticationSession intercepts it for in-app OAuth.
         .onOpenURL { url in
+            // Only accept session handoff on congresstrade://auth?token=…
+            // (never any arbitrary deep link that happens to carry ?token=).
+            guard url.scheme?.lowercased() == "congresstrade" else { return }
+            let host = (url.host ?? "").lowercased()
+            guard host == "auth" || host.isEmpty && url.path.contains("auth") else { return }
             guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                   let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
                   !token.isEmpty else { return }

@@ -2190,3 +2190,42 @@ describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () =>
     expect(html).not.toContain('%LOGO_DISPLAY%');
   });
 });
+
+describe('UX P0 review fixes (web)', () => {
+  it('resolves trade deep links by id and maps client trade envelopes', () => {
+    expect(DASHBOARD_HTML).toContain('function clientTradeToRow(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/client/v1/trade/'");
+    expect(DASHBOARD_HTML).toContain('function openTradeById(id)');
+    // No longer stuck on "only loaded feed window" messaging as the only path.
+    expect(DASHBOARD_HTML).not.toContain('Trades only resolve against loaded rows');
+  });
+
+  it('exports CSV with the politician filter and free-export copy', () => {
+    expect(DASHBOARD_HTML).toContain("if (m) p.set('memberName', m)");
+    expect(DASHBOARD_HTML).toContain("window.location.href = '/api/export/transactions.csv'");
+    expect(DASHBOARD_HTML).toContain('CSV export is free (full history)');
+    expect(DASHBOARD_HTML).not.toContain('Premium adds full-history CSV export');
+  });
+
+  it('lazy-loads asset drawer backtest instead of a hard PERF_GATE', () => {
+    expect(DASHBOARD_HTML).toContain('function tickerBacktestHtml(');
+    expect(DASHBOARD_HTML).toContain("aGet('ticker/' + encodeURIComponent(ticker) + '/backtest");
+    expect(DASHBOARD_HTML).toContain('id="assetPerf"');
+    expect(DASHBOARD_HTML).not.toContain(
+      "'<div class=\"drawer-section\"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>'",
+    );
+  });
+
+  it('exposes footer legal/RSS links and toast aria-live', () => {
+    expect(DASHBOARD_HTML).toContain('href="/privacy-policy"');
+    expect(DASHBOARD_HTML).toContain('href="/terms-of-service"');
+    expect(DASHBOARD_HTML).toContain('href="/pricing"');
+    expect(DASHBOARD_HTML).toContain('href="/api/feed.xml"');
+    expect(DASHBOARD_HTML).toContain('id="toast" role="status" aria-live="polite"');
+  });
+
+  it('opens pricing from ?pricing= deep links', () => {
+    expect(DASHBOARD_HTML).toContain("pricing === '1'");
+    expect(DASHBOARD_HTML).toContain("openPricing(pricing === 'alerts' ? 'alerts' : 'default')");
+  });
+});
