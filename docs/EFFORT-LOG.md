@@ -9,6 +9,13 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+
+- **[2026-08-04][GROK] R2 Class A hygiene (loader batch + litestream 5m + storage cleanup) — COMPLETED.**
+  - Root cause of free-tier Class A pace ~162%: Litestream L0 PutObject per SQLite commit under `load_prices_st` bulk load.
+  - **(2) Loader**: `analysis/massive-bulk-load/load_prices_st.py` + `load_prices.py` now batch with `--commit-every 50` (fetch outside write lock; multi-ticker single commit). Host loader restarted root: `/tmp/load_prices_st.py --commit-every 50` state `/tmp/st_load_state.json`.
+  - **(3) Litestream**: host `/etc/litestream/congress.yml` `sync-interval: 5m` (was 30s); service restarted; log shows `sync-interval=5m0s`.
+  - **(4) R2 cleanup** on `congress-trade-bucket`: bulk/ kept last 3 dates only (−0.93 GiB), competitors/ deleted (−0.80 GiB), `_ops/usage-telemetry/` deleted (3759 objs). Tracked storage ~5.9 → ~3.8 GiB.
+  - No app code/deploy required for this ops unit.
 - **2026-08-04 — GROK — In Progress — Latency thorough fix (agreement candidate mint + preliminary scoreboard + reverse seed).** Agreement publish never wrote trade_latency_candidates (primary path since cascade) — root of Jul 27 stall. Branch `grok/latency-thorough-fix`: record candidates on agreement publish; raceFirstSeenAt clamp; parseTradeHash + empty-ticker fuzzy match; seed candidates from provider obs; 7d score window; comparisonStatus=preliminary; web/iOS show soft timing; cache key v2.
 - **2026-08-04 — GROK — COMPLETED (code) — Member drawer dual performance vs S&P.** Wire politician detail to show (1) approx skill from trade date and (2) copy-trade from filing date, buys only; keep sells out of skill score. Branch `grok/member-dual-performance`. Files: analytics/compute.ts, builders.ts, routes.ts, dashboardHtml.ts + tests.
 
