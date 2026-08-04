@@ -979,6 +979,7 @@ export async function backfillTradeLatencyCandidates(
     tx_type: string | null;
     filed_date: string | null;
     first_seen_at: string | null;
+    created_at: string | null;
     full_name: string | null;
     source_url: string | null;
     chamber: string | null;
@@ -986,7 +987,8 @@ export async function backfillTradeLatencyCandidates(
     env.DB,
     `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
             f.filed_date AS filed_date,
-            COALESCE(f.first_seen_at, t.created_at) AS first_seen_at,
+            COALESCE(t.first_seen_at, f.first_seen_at, t.created_at) AS first_seen_at,
+            t.created_at AS created_at,
             fil.full_name AS full_name,
             f.source_url AS source_url,
             f.chamber AS chamber
@@ -997,35 +999,44 @@ export async function backfillTradeLatencyCandidates(
         AND t.tx_date IS NOT NULL
         AND fil.full_name IS NOT NULL
         AND COALESCE(t.created_at, f.first_seen_at) >= ?
+        AND (t.deprecated_at IS NULL)
       ORDER BY COALESCE(t.created_at, f.first_seen_at) DESC
       LIMIT ?`,
     [cutoff, limit],
   );
   const nowIso = new Date().toISOString();
-  const asTx: Transaction[] = rows.map((row) => ({
-    id: row.id,
-    docId: row.doc_id,
-    filerId: null,
-    txDate: row.tx_date,
-    owner: null,
-    assetName: '',
-    ticker: row.ticker,
-    assetType: null,
-    txType: (row.tx_type as Transaction['txType']) || 'E',
-    amountMin: null,
-    amountMax: null,
-    isOption: false,
-    capGainsOver200: false,
-    rawText: '',
-    confidence: 1,
-    source: 'primary',
-    createdAt: nowIso,
-    cursorSeq: 0,
-    fullName: row.full_name,
-    filedDate: row.filed_date,
-    firstSeenAt: row.first_seen_at,
-    sourceUrl: row.source_url,
-  }));
+  const asTx: Transaction[] = rows.map((row) => {
+    // Prefer the earliest trustworthy CT-seen stamp, but never older than the
+    // row's created_at for scoreboard honesty (avoids multi-year first_seen
+    // from re-imported filings looking like a "speed win").
+    const seen = row.first_seen_at || row.created_at || nowIso;
+    const created = row.created_at || nowIso;
+    const firstSeenAt = seen > created ? seen : created;
+    return {
+      id: row.id,
+      docId: row.doc_id,
+      filerId: null,
+      txDate: row.tx_date,
+      owner: null,
+      assetName: '',
+      ticker: row.ticker,
+      assetType: null,
+      txType: (row.tx_type as Transaction['txType']) || 'E',
+      amountMin: null,
+      amountMax: null,
+      isOption: false,
+      capGainsOver200: false,
+      rawText: '',
+      confidence: 1,
+      source: 'primary',
+      createdAt: nowIso,
+      cursorSeq: 0,
+      fullName: row.full_name,
+      filedDate: row.filed_date,
+      firstSeenAt,
+      sourceUrl: row.source_url,
+    };
+  });
   await recordTradeLatencyCandidates(env, asTx, nowIso);
   return { scanned: rows.length, recorded: asTx.length };
 }
@@ -1840,13 +1851,22 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     updated_at: string;
   }>(
     env.DB,
+    // Prefer matched rows in the active window. Ordering by created_at alone
+    // buried trade-hash matches under bulk-backfill pendings (LIMIT 5000), so
+    // the public scoreboard reported matched=0 even when matches existed.
+    // Timing uses only congress_first_seen_at inside the score window so a
+    // backfill that rewrites status/updated_at cannot invent a multi-day "CT
+    // lead" from a historical first_seen stamp.
     `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
             provider_first_seen_at, provider_published_at, created_at, updated_at
        FROM trade_latency_candidates
-      WHERE updated_at >= ? OR congress_first_seen_at >= ?
-      ORDER BY created_at DESC
-      LIMIT 5000`,
-    [scoreCutoff, scoreCutoff],
+      WHERE congress_first_seen_at >= ?
+         OR (status = 'matched' AND updated_at >= ? AND congress_first_seen_at >= ?)
+         OR (status = 'pending' AND updated_at >= ?)
+      ORDER BY CASE WHEN status = 'matched' THEN 0 ELSE 1 END,
+               updated_at DESC
+      LIMIT 8000`,
+    [scoreCutoff, scoreCutoff, scoreCutoff, scoreCutoff],
   ).catch((err) => {
     if (storageMissing(err)) return [];
     throw err;
@@ -1877,9 +1897,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // Exact trade-hash is the durable public comparison key. Also accept the
     // two structured fuzzy methods when ticker or date is missing on one side
     // (still same filer + side); pure free-text/name fallbacks stay excluded.
+    // Only rows whose congress_first_seen_at is inside the score window are
+    // eligible for timing — otherwise bulk backfill invents multi-day leads.
     const strongMatches = mine.filter(
       (row) =>
         row.status === 'matched' &&
+        row.congress_first_seen_at >= scoreCutoff &&
         (row.match_method === 'trade-hash' ||
           row.match_method === 'fuzzy-no-ticker' ||
           row.match_method === 'fuzzy-missing-date'),
