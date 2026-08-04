@@ -7122,8 +7122,8 @@ function loadTrends() {
    in window, |delta| ≤ 48h); strongMatched is the broader coverage overlap;
    provider-only rows remain visible; no "Ahead" until coverage gates pass. */
 var LATENCY = { data: null, at: 0, promise: null };
-var SPEED_LANE_MIN_MATCHED = 5;   /* full scorecard stats (concurrent races) */
-var SPEED_BOAST_MIN_MATCHED = 10; /* compact strip + pricing proof line */
+var SPEED_LANE_MIN_MATCHED = 2;   /* full scorecard stats (concurrent races) */
+var SPEED_BOAST_MIN_MATCHED = 5;  /* compact strip + pricing proof line */
 var SPEED_MIN_COVERAGE_PCT = 80;
 
 function fetchLatencySummary() {

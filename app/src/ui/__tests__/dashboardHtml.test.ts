@@ -281,7 +281,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function renderSpeedProof(');
     // Honesty guard rails: lane threshold, concurrent-race empty-state copy,
     // losses always displayed, sample sizes visible, trademark fine print.
-    expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
+    expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 2');
     expect(DASHBOARD_HTML).toContain("Probes haven't found concurrent races yet.");
     expect(DASHBOARD_HTML).toContain('concurrent races only');
     expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');

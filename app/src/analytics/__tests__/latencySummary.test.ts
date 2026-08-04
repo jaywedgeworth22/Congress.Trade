@@ -152,8 +152,8 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       totals: { racedDisclosures: number; matched: number; comparableProviders: number };
       providers: Array<Record<string, unknown>>;
     };
-    expect(body.windowHours).toBe(168);
-    expect(body.windowDays).toBe(7);
+    expect(body.windowHours).toBe(336);
+    expect(body.windowDays).toBe(14);
     expect(body.maxConcurrentDeltaHours).toBe(48);
     expect(body.totals.racedDisclosures).toBe(3);
     expect(body.totals.matched).toBe(2);

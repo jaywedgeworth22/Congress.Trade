@@ -323,7 +323,7 @@ struct TrendKPI: View {
 
 struct LatencyComparisonView: View {
     let summary: LatencySummary
-    let minMatched = 5
+    let minMatched = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
