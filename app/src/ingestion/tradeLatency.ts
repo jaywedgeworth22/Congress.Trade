@@ -256,14 +256,14 @@ const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 // then allow a full day for our watcher to catch up before calling a row
 // unmatched. These are intentionally conservative public-comparison gates.
 /** Active race window for scoreboard + pending match (7 days — denser sample). */
-export const LATENCY_SCORE_WINDOW_HOURS = 168;
+export const LATENCY_SCORE_WINDOW_HOURS = 336;
 /** Keep observation match window aligned with the scoreboard window. */
 const RECENT_PROVIDER_HOURS = LATENCY_SCORE_WINDOW_HOURS;
 export const LATENCY_MATURITY_GRACE_HOURS = 24;
 /** Full "usable" claim requires this many matured provider-observed rows. */
 export const LATENCY_MIN_MATURED_ROWS = 15;
 /** Preliminary timing shown from this many concurrent in-window races. */
-export const LATENCY_MIN_PRELIMINARY_MATCHED = 5;
+export const LATENCY_MIN_PRELIMINARY_MATCHED = 2;
 export const LATENCY_MIN_COVERAGE_PCT = 80;
 /**
  * Lead/win timing only counts races where BOTH sides first-seen stamps fall

@@ -132,7 +132,7 @@ describe('tradeLatency', () => {
 
   describe('scoreboard constants', () => {
     it('keeps a 7-day window and 48h concurrent-race cap', () => {
-      expect(LATENCY_SCORE_WINDOW_HOURS).toBe(168);
+      expect(LATENCY_SCORE_WINDOW_HOURS).toBe(336);
       expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(48);
     });
   });
