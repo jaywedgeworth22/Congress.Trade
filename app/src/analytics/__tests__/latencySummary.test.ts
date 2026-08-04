@@ -190,7 +190,8 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       unmatchedProvider: 10,
       ctCoveragePct: 50,
       providerCoveragePct: 50,
-      comparisonStatus: 'limited',
+      // 10 matched + incomplete coverage → preliminary soft claim, not full usable.
+      comparisonStatus: 'preliminary',
       comparisonBasis: 'matched-overlap-only',
     });
   });

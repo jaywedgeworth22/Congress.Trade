@@ -66,7 +66,7 @@ import {
   buildVolumeOverTimeQuery,
 } from './builders.ts';
 import {
-  aggregateMemberPerformance,
+  aggregateMemberDualPerformance,
   aggregateTickerBacktest,
   computeConvictionScore,
   convictionDirection,
@@ -1103,11 +1103,14 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /member/:filerId/performance (realized "skill" aggregate) ------
-  // Aggregates the politician's trades' realized return + alpha vs S&P from the
-  // cached price anchors (tx_performance + securities_ref.current_price). All
-  // returns are fractions (0.18 = +18%); winRate is the share (0..1) beating
-  // the market. Lights up as filer_id resolves and prices populate; until then
-  // scoredCount stays low. Defaults to full history (window=all).
+  // Dual-anchor buy skill vs S&P from cached price anchors:
+  //   tradeDate  — approx politician timing from the trade date
+  //   filingDate — copy-trade if you bought when the disclosure went public
+  //                (includes avgAnnualizedExcess, same basis as Top Performers)
+  // Buys only; options/sells excluded from scored skill. Returns are fractions
+  // (0.18 = +18%). Lights up as prices populate; scoredCount stays low until
+  // then. Defaults to full history (window=all).
+  // `performance` is a legacy alias of tradeDate for older clients.
   r.get('/member/:filerId/performance', async (c) => {
     const q = c.req.query();
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
@@ -1115,18 +1118,37 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
       return c.json({ error: 'invalid member id' }, 400);
     }
-    const key = cacheKey(`member-perf:${filerId}`, f as never);
+    // Cache key v2: dual-anchor shape (bust old single-leg cache entries).
+    const key = cacheKey(`member-perf-v2:${filerId}`, f as never);
     const data = await cached(c.env, key, 600, async () => {
       const built = buildMemberPerformanceQuery(filerId, f);
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const currentSpx = await latestSpxClose(c.env);
       const perfRows = rows.map((row) => ({
         isOption: num(row.is_option) === 1,
+        txType: str(row.tx_type),
         priceAtTrade: row.price_at_trade == null ? null : num(row.price_at_trade),
         spxAtTrade: row.spx_at_trade == null ? null : num(row.spx_at_trade),
+        priceAtFiling: row.price_at_filing == null ? null : num(row.price_at_filing),
+        spxAtFiling: row.spx_at_filing == null ? null : num(row.spx_at_filing),
         currentPrice: row.current_price == null ? null : num(row.current_price),
+        elapsedDaysSinceFiling:
+          row.elapsed_days_since_filing == null ? null : num(row.elapsed_days_since_filing),
       }));
-      return meta(f, { filerId, performance: aggregateMemberPerformance(perfRows, currentSpx) });
+      const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
+      return meta(f, {
+        filerId,
+        side: dual.side,
+        buyCount: dual.buyCount,
+        tradeDate: dual.tradeDate,
+        filingDate: dual.filingDate,
+        // Legacy single-leg field = trade-date buy skill.
+        performance: dual.tradeDate,
+        note:
+          'Buys only. tradeDate = stock move since their trade vs S&P (approx skill). ' +
+          'filingDate = if you bought when the trade became public (copy-trade); ' +
+          'avgAnnualizedExcess matches Top Performers. Not portfolio P&L.',
+      });
     });
     return c.json(data);
   });
@@ -1177,7 +1199,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // matched-overlap measurement; provider-observed and unmatched rows stay in
   // the public denominator so a Congress.Trade miss cannot become a speed win.
   r.get('/latency-summary', async (c) => {
-    const data = await cached(c.env, 'analytics:latency-summary', 900, async () => {
+    // v2: 7-day window + preliminary status — bump key so old empty caches die.
+    const data = await cached(c.env, 'analytics:latency-summary:v2', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       return {
         generatedAt: publicSummary.generatedAt,

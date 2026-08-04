@@ -481,6 +481,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function companySectionHtml(');
   });
 
+  it('wires politician dual performance (trade-date skill + filing-date copy-trade)', () => {
+    expect(DASHBOARD_HTML).toContain('function memberPerfHtml(');
+    expect(DASHBOARD_HTML).toContain("aGet('member/'");
+    expect(DASHBOARD_HTML).toContain("/performance?window=all'");
+    expect(DASHBOARD_HTML).toContain('id="memberPerf"');
+    expect(DASHBOARD_HTML).toContain('Their timing (approx.)');
+    expect(DASHBOARD_HTML).toContain('If you bought at filing');
+    expect(DASHBOARD_HTML).toContain('avgAnnualizedExcess');
+    // Must not hardcode the misleading API-key gate on the politician drawer.
+    expect(DASHBOARD_HTML).not.toContain(
+      "Performance vs S&amp;P 500</h3>' + PERF_GATE",
+    );
+  });
+
   it('renders plain-English filing notes and clickable drawer entities', () => {
     expect(DASHBOARD_HTML).toContain('function filingNotesHtml(');
     expect(DASHBOARD_HTML).toContain('function looksLikeRawExtractionPayload(');

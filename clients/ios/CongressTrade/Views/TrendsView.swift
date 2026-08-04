@@ -347,9 +347,11 @@ struct ProviderScorecard: View {
     let minMatched: Int
 
     var body: some View {
-        // Mirror web honesty gates: need enough matches AND usable coverage.
-        let usable = (provider.comparisonStatus ?? "usable") == "usable"
-        let hasStats = provider.matched >= minMatched && usable
+        // Mirror web honesty gates: usable = full claim; preliminary = soft timing.
+        let status = provider.comparisonStatus ?? "insufficient"
+        let usable = status == "usable"
+        let preliminary = status == "preliminary"
+        let hasStats = provider.matched >= minMatched && (usable || preliminary)
         let wins = provider.usFirstCount
         let losses = provider.providerFirstCount
         let ahead = hasStats && wins > losses
@@ -361,7 +363,12 @@ struct ProviderScorecard: View {
                     .font(.subheadline.weight(.bold))
                 Spacer()
                 if hasStats {
-                    if ahead {
+                    if preliminary {
+                        Text(ahead ? "Preliminary lead" : (tied ? "Preliminary tie" : "Preliminary"))
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.15)).foregroundStyle(.orange).clipShape(Capsule())
+                    } else if ahead {
                         Text("Ahead").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.green.opacity(0.2)).foregroundStyle(.green).clipShape(Capsule())
                     } else if tied {
                         Text("Tied").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.gray.opacity(0.2)).foregroundStyle(.secondary).clipShape(Capsule())
@@ -381,7 +388,7 @@ struct ProviderScorecard: View {
                     Text(formatLead(provider.medianLeadSec))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(ahead ? .green : (tied ? .primary : .red))
-                    Text("median lead")
+                    Text(preliminary ? "prelim. median" : "median lead")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()

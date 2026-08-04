@@ -61,17 +61,37 @@ struct PoliticianDetailView: View {
                         }
                         .padding(.top, 16)
                         
-                        // Performance
+                        // Performance: dual anchors when backend provides them
                         if let perf = summary?.performance {
                             DetailSection("Performance vs S&P 500") {
-                                HStack(spacing: 12) {
-                                    MetricTile(title: "Win Rate", value: perf.winRate != nil ? String(format: "%.0f%%", perf.winRate! * 100) : "N/A")
-                                    MetricTile(title: "Avg Excess", value: perf.avgExcess != nil ? String(format: "%+.1f%%", perf.avgExcess! * 100) : "N/A")
-                                    MetricTile(title: "Median Return", value: perf.medianReturn != nil ? String(format: "%+.1f%%", perf.medianReturn! * 100) : "N/A")
+                                if let trade = perf.tradeDate, trade.scoredCount > 0 {
+                                    performanceLegBlock(
+                                        title: "Their timing (approx.)",
+                                        leg: trade,
+                                        showAnnualized: false
+                                    )
+                                } else if perf.scoredCount > 0 {
+                                    // Legacy flat trade-date payload
+                                    HStack(spacing: 12) {
+                                        MetricTile(title: "Win Rate", value: perf.winRate != nil ? String(format: "%.0f%%", perf.winRate! * 100) : "N/A")
+                                        MetricTile(title: "Avg Excess", value: perf.avgExcess != nil ? String(format: "%+.1f%%", perf.avgExcess! * 100) : "N/A")
+                                        MetricTile(title: "Median Return", value: perf.medianReturn != nil ? String(format: "%+.1f%%", perf.medianReturn! * 100) : "N/A")
+                                    }
+                                    Text("Based on \(perf.scoredCount) scored buys out of \(perf.tradeCount).")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                                
-                                Text("Based on \(perf.scoredCount) scored trades out of \(perf.tradeCount) total.")
-                                    .font(.caption)
+
+                                if let filing = perf.filingDate, filing.scoredCount > 0 {
+                                    performanceLegBlock(
+                                        title: "If you bought at filing",
+                                        leg: filing,
+                                        showAnnualized: true
+                                    )
+                                }
+
+                                Text("Buys only · observational, not portfolio P&L or a forecast.")
+                                    .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -122,6 +142,41 @@ struct PoliticianDetailView: View {
         }
     }
     
+    @ViewBuilder
+    private func performanceLegBlock(
+        title: String,
+        leg: MemberDetailResponse.PerformanceLeg,
+        showAnnualized: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 12) {
+                MetricTile(
+                    title: "Avg Excess",
+                    value: leg.avgExcess != nil ? String(format: "%+.1f%%", leg.avgExcess! * 100) : "N/A"
+                )
+                MetricTile(
+                    title: "Win Rate",
+                    value: leg.winRate != nil ? String(format: "%.0f%%", leg.winRate! * 100) : "N/A"
+                )
+                MetricTile(
+                    title: "Median Excess",
+                    value: leg.medianExcess != nil ? String(format: "%+.1f%%", leg.medianExcess! * 100) : "N/A"
+                )
+            }
+            if showAnnualized, let ann = leg.avgAnnualizedExcess {
+                Text("Annualized \(String(format: "%+.1f%%", ann * 100)) vs S&P (matches Top Performers)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(leg.scoredCount) of \(leg.tradeCount) buys scored")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
     private func loadProfile() async {
         isLoading = true
         error = nil

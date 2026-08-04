@@ -742,16 +742,22 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
 
 /**
  * Per-trade performance anchors for one politician's trades, backing the realized
- * "skill" aggregate (see aggregateMemberPerformance). Joins the cached
- * tx_performance anchor (price + S&P at the trade date) and the security's
- * current price. Returns every windowed trade; the aggregator excludes options
- * and unpriced rows so callers can report tradeCount vs scoredCount.
+ * dual skill aggregate (see aggregateMemberDualPerformance). Joins cached
+ * tx_performance anchors at both trade date and filing date, the security's
+ * current price, and elapsed days since the public filing (for annualization
+ * matching the Top Performers leaderboard). Returns every windowed trade; the
+ * aggregator scores buys only and excludes options/unpriced rows.
  */
 export function buildMemberPerformanceQuery(filerId: string, p: CommonFilters): BuiltQuery {
   const { where, params } = memberFilters(filerId, p);
+  // Same filing anchor as the member-performance leaderboard.
+  const ANCHOR_DATE = 'COALESCE(f.filed_date, f.first_seen_at, t.tx_date)';
   const sql =
-    'SELECT t.is_option AS is_option, txp.price_at_trade AS price_at_trade, ' +
-    'txp.spx_at_trade AS spx_at_trade, sr.current_price AS current_price ' +
+    'SELECT t.is_option AS is_option, t.tx_type AS tx_type, ' +
+    'txp.price_at_trade AS price_at_trade, txp.spx_at_trade AS spx_at_trade, ' +
+    'txp.price_at_filing AS price_at_filing, txp.spx_at_filing AS spx_at_filing, ' +
+    'sr.current_price AS current_price, ' +
+    `(julianday('now') - julianday(${ANCHOR_DATE})) AS elapsed_days_since_filing ` +
     ANALYTICS_FROM_JOINS +
     'LEFT JOIN tx_performance txp ON txp.tx_id = t.id ' +
     'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +

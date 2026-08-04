@@ -35,6 +35,7 @@ import {
   detailLimit,
   asOrder,
   num,
+  str,
   baseSummary,
   securityRef,
   memberProfile,
@@ -55,7 +56,7 @@ import { checkRowBudget, spendRowBudget } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
 import { buildMemberPerformanceQuery } from '../analytics/builders.ts';
-import { aggregateMemberPerformance } from '../analytics/compute.ts';
+import { aggregateMemberDualPerformance } from '../analytics/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
 import type { TradeSummaryRow } from './types.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
@@ -205,11 +206,25 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
     const perfRows = perfRowsRaw.map((row) => ({
       isOption: num(row.is_option) === 1,
+      txType: str(row.tx_type),
       priceAtTrade: row.price_at_trade == null ? null : num(row.price_at_trade),
       spxAtTrade: row.spx_at_trade == null ? null : num(row.spx_at_trade),
+      priceAtFiling: row.price_at_filing == null ? null : num(row.price_at_filing),
+      spxAtFiling: row.spx_at_filing == null ? null : num(row.spx_at_filing),
       currentPrice: row.current_price == null ? null : num(row.current_price),
+      elapsedDaysSinceFiling:
+        row.elapsed_days_since_filing == null ? null : num(row.elapsed_days_since_filing),
     }));
-    const performance = aggregateMemberPerformance(perfRows, currentSpx);
+    const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
+    // Flat `performance` stays trade-date buy skill for older iOS decoders;
+    // nested legs expose both anchors for new clients.
+    const performance = {
+      ...dual.tradeDate,
+      side: dual.side,
+      buyCount: dual.buyCount,
+      tradeDate: dual.tradeDate,
+      filingDate: dual.filingDate,
+    };
 
     return c.json({
       member: memberProfile(resolved.profile, resolved.id),
