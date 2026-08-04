@@ -426,10 +426,14 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
-    private static func response(for request: URLRequest, json: String) -> (HTTPURLResponse, Data) {
+    private static func response(
+        for request: URLRequest,
+        status: Int = 200,
+        json: String
+    ) -> (HTTPURLResponse, Data) {
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 200,
+            statusCode: status,
             httpVersion: nil,
             headerFields: ["content-type": "application/json"]
         )!
@@ -475,3 +479,121 @@ private final class MockURLProtocol: URLProtocol {
 
     override func stopLoading() {}
 }
+
+    // MARK: - UX P0: memberName search + async command result claim
+
+    func testFeedQueryEmitsMemberNameNotMemberForFreeText() {
+        let query = FeedQuery(limit: 50, memberName: "Pelosi", sort: "tx_date", order: "desc")
+        let items = query.queryItems
+        XCTAssertEqual(items.first(where: { $0.name == "memberName" })?.value, "Pelosi")
+        XCTAssertNil(items.first(where: { $0.name == "member" }))
+    }
+
+    func testCommandResponseDecodesResultNestedOnCommand() throws {
+        // GET /commands/:id claims secret onto command.result, not top-level result.
+        let json = """
+        {
+          "command": {
+            "id": "cmd_1", "userId": "user_1", "type": "create_subscription",
+            "status": "succeeded", "idempotencyKey": "k1", "error": null,
+            "createdAt": "2026-07-11T00:00:00Z", "updatedAt": "2026-07-11T00:00:01Z",
+            "startedAt": "2026-07-11T00:00:00Z", "finishedAt": "2026-07-11T00:00:01Z",
+            "result": {
+              "subscription": {
+                "id": "sub_1", "delivery": "sse", "targetUrl": null,
+                "filters": {}, "cursor": 0, "active": true,
+                "createdAt": "2026-07-11T00:00:00Z", "hasSecret": true,
+                "secret": "once-only-secret", "streamUrl": "/api/stream?subscription=sub_1&token=once-only-secret"
+              }
+            }
+          }
+        }
+        """
+        let decoded = try JSONDecoder().decode(
+            ClientCommandResponse<SubscriptionCommandResult>.self,
+            from: Data(json.utf8)
+        )
+        XCTAssertEqual(decoded.command.status, .succeeded)
+        XCTAssertEqual(decoded.result?.subscription.secret, "once-only-secret")
+        XCTAssertEqual(decoded.result?.subscription.id, "sub_1")
+    }
+
+    func testPostCommandPollsUntilSucceededAndClaimsSecret() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        var postHits = 0
+        var getHits = 0
+        MockURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "POST", path.hasSuffix("/commands") {
+                postHits += 1
+                return Self.response(
+                    for: request,
+                    status: 202,
+                    json: """
+                    {
+                      "command": {
+                        "id": "cmd_poll", "userId": "user_1", "type": "create_subscription",
+                        "status": "queued", "idempotencyKey": "poll-1", "error": null,
+                        "createdAt": "2026-07-11T00:00:00Z", "updatedAt": "2026-07-11T00:00:00Z",
+                        "startedAt": null, "finishedAt": null
+                      }
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/commands/cmd_poll") {
+                getHits += 1
+                if getHits < 2 {
+                    return Self.response(
+                        for: request,
+                        json: """
+                        {
+                          "command": {
+                            "id": "cmd_poll", "userId": "user_1", "type": "create_subscription",
+                            "status": "running", "idempotencyKey": "poll-1", "error": null,
+                            "createdAt": "2026-07-11T00:00:00Z", "updatedAt": "2026-07-11T00:00:01Z",
+                            "startedAt": "2026-07-11T00:00:00Z", "finishedAt": null
+                          }
+                        }
+                        """
+                    )
+                }
+                return Self.response(
+                    for: request,
+                    json: """
+                    {
+                      "command": {
+                        "id": "cmd_poll", "userId": "user_1", "type": "create_subscription",
+                        "status": "succeeded", "idempotencyKey": "poll-1", "error": null,
+                        "createdAt": "2026-07-11T00:00:00Z", "updatedAt": "2026-07-11T00:00:02Z",
+                        "startedAt": "2026-07-11T00:00:00Z", "finishedAt": "2026-07-11T00:00:02Z",
+                        "result": {
+                          "subscription": {
+                            "id": "sub_poll", "delivery": "sse", "targetUrl": null,
+                            "filters": {}, "cursor": 0, "active": true,
+                            "createdAt": "2026-07-11T00:00:00Z", "hasSecret": true,
+                            "secret": "claimed-secret", "streamUrl": "/api/stream?x=1"
+                          }
+                        }
+                      }
+                    }
+                    """
+                )
+            }
+            return Self.response(for: request, status: 404, json: #"{"error":"unexpected"}"#)
+        }
+
+        let result = try await client.createSSESubscription(
+            filters: SubscriptionFilters(),
+            idempotencyKey: "poll-1"
+        )
+        XCTAssertEqual(postHits, 1)
+        XCTAssertGreaterThanOrEqual(getHits, 2)
+        XCTAssertEqual(result.command.status, .succeeded)
+        XCTAssertEqual(result.result?.subscription.secret, "claimed-secret")
+    }

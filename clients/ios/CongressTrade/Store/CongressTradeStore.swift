@@ -52,7 +52,8 @@ final class CongressTradeStore: ObservableObject {
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     /// Empty set = no chamber filter (all branches). Mirrors the website HSP chips
     /// where nothing selected means all. Non-empty = filter to that subset.
-    @Published private(set) var selectedChambers: Set<ChamberFilter> = Set(ChamberFilter.allCases)
+    /// Empty = all branches (website HSP: no chips selected). Non-empty filters to that subset.
+    @Published private(set) var selectedChambers: Set<ChamberFilter> = []
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
 
@@ -154,7 +155,8 @@ final class CongressTradeStore: ObservableObject {
     }
 
     /// Short all-caps tokens are treated as ticker symbols (`ticker=`);
-    /// anything longer or with spaces goes to the member filter (`member=`).
+    /// anything longer or with spaces goes to free-text politician search
+    /// (`memberName=`).
     private static func looksLikeTicker(_ term: String) -> Bool {
         term.range(of: #"^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$"#, options: .regularExpression) != nil
     }
@@ -206,7 +208,10 @@ final class CongressTradeStore: ObservableObject {
                     limit: pageLimit,
                     since: nil,
                     ticker: search.flatMap { Self.looksLikeTicker($0) ? $0.uppercased() : nil },
-                    member: search.flatMap { Self.looksLikeTicker($0) ? nil : $0 },
+                    // Free-text politician search must use memberName= (LIKE),
+                    // not member= (exact filer/bioguide id). CT UX P0.
+                    member: nil,
+                    memberName: search.flatMap { Self.looksLikeTicker($0) ? nil : $0 },
                     chamber: chamberParam,
                     from: from,
                     sort: "tx_date",

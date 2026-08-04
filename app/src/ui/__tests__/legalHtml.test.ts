@@ -24,3 +24,21 @@ describe('legalHtml pricing copy', () => {
     expect(PRIVACY_HTML).not.toContain('$140.00');
   });
 });
+
+describe('short legal and pricing routes', () => {
+  it('redirects /privacy, /terms, and /pricing to canonical destinations', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+    const privacy = await app.request('http://localhost/privacy', {}, {} as never);
+    expect(privacy.status).toBe(301);
+    expect(privacy.headers.get('location')).toBe('/privacy-policy');
+
+    const terms = await app.request('http://localhost/terms', {}, {} as never);
+    expect(terms.status).toBe(301);
+    expect(terms.headers.get('location')).toBe('/terms-of-service');
+
+    const pricing = await app.request('http://localhost/pricing', {}, {} as never);
+    expect(pricing.status).toBe(302);
+    expect(pricing.headers.get('location')).toContain('pricing=1');
+  });
+});

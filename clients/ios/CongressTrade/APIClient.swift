@@ -40,7 +40,10 @@ struct FeedQuery: Equatable {
     var limit: Int = 30
     var since: Int?
     var ticker: String?
+    /// Exact bioguide / filer id (`member=`). Prefer `memberName` for free-text search.
     var member: String?
+    /// Free-text politician name (`memberName=` LIKE path). Used for typed search.
+    var memberName: String?
     var chamber: String?
     var type: String?
     var from: String?
@@ -56,6 +59,7 @@ struct FeedQuery: Equatable {
         if let since { items.append(URLQueryItem(name: "since", value: String(since))) }
         if let ticker, !ticker.isEmpty { items.append(URLQueryItem(name: "ticker", value: ticker)) }
         if let member, !member.isEmpty { items.append(URLQueryItem(name: "member", value: member)) }
+        if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
         if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
@@ -434,11 +438,48 @@ final class CongressTradeAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-        let response: ClientCommandResponse<T> = try await send(request)
+        var response: ClientCommandResponse<T> = try await send(request)
         if response.command.status == .failed {
             throw APIError.server(status: 400, message: response.command.error ?? "Command failed", retryAfterSeconds: nil)
         }
+        // POST /commands is async (202 + queued). Poll GET /commands/:id until
+        // terminal — that first succeeded read also claims one-time secrets.
+        if response.command.status == .queued || response.command.status == .running {
+            response = try await awaitCommandResult(id: response.command.id)
+        }
+        if response.command.status == .failed {
+            throw APIError.server(status: 400, message: response.command.error ?? "Command failed", retryAfterSeconds: nil)
+        }
+        if response.command.status == .canceled {
+            throw APIError.server(status: 400, message: "Command was canceled", retryAfterSeconds: nil)
+        }
         return response
+    }
+
+    /// Poll `GET /commands/:id` until the command leaves queued/running.
+    /// The first authenticated succeeded read claims and returns `result_secret`.
+    private func awaitCommandResult<T: Decodable>(id: String) async throws -> ClientCommandResponse<T> {
+        let maxAttempts = 40
+        for attempt in 0..<maxAttempts {
+            if attempt > 0 {
+                let delayNs: UInt64 = attempt < 5 ? 250_000_000 : 500_000_000
+                try await Task.sleep(nanoseconds: delayNs)
+            }
+            let polled: ClientCommandResponse<T> = try await get(
+                "commands/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+            )
+            switch polled.command.status {
+            case .succeeded, .failed, .canceled:
+                return polled
+            case .queued, .running:
+                continue
+            }
+        }
+        throw APIError.server(
+            status: 504,
+            message: "Command is still running. Check Recent Activity in Settings, then retry if needed.",
+            retryAfterSeconds: 2
+        )
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {

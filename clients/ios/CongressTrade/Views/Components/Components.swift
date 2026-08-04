@@ -85,8 +85,9 @@ struct AssetMark: View {
     let symbol: String
     var isTicker: Bool = true
     var size: CGFloat = 48
+    @Environment(\.colorScheme) private var colorScheme
 
-    private var logoURL: URL? {
+    private var themedLogoURL: URL? {
         guard isTicker else { return nil }
         guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return nil
@@ -102,13 +103,13 @@ struct AssetMark: View {
         components.path = "/api/logos/ticker"
         components.queryItems = [
             URLQueryItem(name: "symbol", value: encodedSymbol),
-            URLQueryItem(name: "theme", value: "light")
+            URLQueryItem(name: "theme", value: colorScheme == .dark ? "dark" : "light")
         ]
         return components.url
     }
 
     var body: some View {
-        if let url = logoURL {
+        if let url = themedLogoURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
@@ -117,7 +118,12 @@ struct AssetMark: View {
                         .aspectRatio(contentMode: .fit)
                         .padding(size * 0.12)
                         .frame(width: size, height: size)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: size * 0.22))
+                        .background(
+                            colorScheme == .dark
+                                ? Color(uiColor: .secondarySystemBackground)
+                                : Color.white,
+                            in: RoundedRectangle(cornerRadius: size * 0.22)
+                        )
                         .overlay(
                             RoundedRectangle(cornerRadius: size * 0.22)
                                 .stroke(AppTheme.borderColor, lineWidth: 1)
