@@ -6232,13 +6232,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (!key) return c.json({ ok: false, error: 'OPENROUTER_API_KEY is not configured' }, 400);
 
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/analytics/classifiers', {
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'HTTP-Referer': 'https://congress.trade',
-          'X-Title': 'Congress.Trade',
+      const res = await trackedFetch(
+        'https://openrouter.ai/api/v1/analytics/classifiers',
+        {
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'HTTP-Referer': 'https://congress.trade',
+            'X-Title': 'Congress.Trade',
+          },
         },
-      });
+        { service: 'llm', operation: 'openrouter.classifiers' },
+      );
       if (!res.ok) {
         return c.json({
           ok: true,
@@ -6259,13 +6263,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (!key) return c.json({ ok: false, error: 'OPENROUTER_API_KEY is not configured' }, 400);
 
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/analytics/task-classifications', {
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'HTTP-Referer': 'https://congress.trade',
-          'X-Title': 'Congress.Trade',
+      const res = await trackedFetch(
+        'https://openrouter.ai/api/v1/analytics/task-classifications',
+        {
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'HTTP-Referer': 'https://congress.trade',
+            'X-Title': 'Congress.Trade',
+          },
         },
-      });
+        { service: 'llm', operation: 'openrouter.taskClassifications' },
+      );
       if (!res.ok) {
         return c.json({
           ok: true,
