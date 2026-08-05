@@ -12,14 +12,13 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-05 — GROK — IN PROGRESS — Land remaining open PRs #1407/#1409/#1410.** Delivery UI (#1039), iOS brand lockup, effort-log closeout. #1406/#1408 already on main.
 - **2026-08-05 — GROK — IN PR — #1040 extract dashboard assets** PR #1406; #1039 delivery UI PR #1407; DLQ clear in progress.
-- **2026-08-05 — GROK — IN PROGRESS — FMP free keys latency-only.** Branch `grok/fmp-latency-keys-only`. Dual-key 235/day ET-spaced probes; FMP_LATENCY_API_KEY (+ secondary); enrichment hard-off; prices never FMP.
-- **2026-08-05 — GROK — IN PROGRESS — Housekeeping + query index (#1049/#1043 remainder).** Branch `grok/query-opts`.
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
-- **2026-08-05 — AG — IN PROGRESS — Lower delivery subscription quota to 2 per user.** PR #1373 `antigravity/lower-subscription-quota` open.
 
 ## Recently completed (2026-08-02 closeout)
+- **2026-08-05 — GROK — COMPLETED — Straightforward planned effort closeout (board hygiene).** Removed shipped rows from Planned/Active so Issues mirror stays closed: #1030–#1045 batch, #1049, #155, #205, #1380; merged #1406 assets + #1408 DLQ wait-check. Open PRs: #1407 delivery UI, #1409 iOS brand, #1410 docs. Remaining planned: #1044 cron, #1046 push, #1047 interop, #1048 iOS release, #156 deferred, #159 go-live, #203/#204 audit.
 - **COMPLETED (already on main; board hygiene 2026-08-05 GROK):** **Web: OG/Twitter/meta tags + favicon/manifest (unassigned, S).**
 - **COMPLETED (already on main; board hygiene 2026-08-05 GROK):** **Web: deep links (?trade/?ticker/?member) + copy-link buttons (unassigned, M).**
 - **COMPLETED (already on main; board hygiene 2026-08-05 GROK):** **Owner decision: CSV export gate vs copy contradiction (unassigned, S).**
@@ -1145,34 +1144,23 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
   [AG -> AG].
 ## Planned / Reserved
 - **[Congress.Trade][CLAUDE] Monitor-informed budget throttle: `GET /api/budget-status` self-throttle feedback loop (2026-07-19) — PR OPENED, branch `claude/ct-budget-throttle`.** New `app/src/shared/monitorBudgetGate.ts`: a bounded (default 5s, hard-capped 15s), isolate-memory-cached (default 2min TTL) reader for the API Usage Monitor's cross-app `GET /api/budget-status`, bearer-auth via `USAGE_MONITOR_READ_TOKEN` (falls back to `USAGE_MONITOR_INGEST_TOKEN`, mirroring the monitor's own read/ingest-token convention). Wired as an early, non-blocking advisory-defer check into `handleAutopilotTick` (`app/src/extraction/autopilot.ts`) — the backlog-autopilot *discretionary* drain only, never the real-time per-filing ingestion path — deferring a doc (existing `skipReasons`/`outcomes` pattern) only when EVERY provider in its resolved model trio is reported at/over budget. Composes strictly UNDER PR #620's hard LLM-USD governor once that lands; does not touch `bakeoff.ts`/`configuredVision.ts`/`openRouterVision.ts`. **FAILS OPEN on any error, timeout, non-2xx, malformed body, or missing config — never throttles when it can't get a clean answer** (explicitly tested: unreachable, timeout, 401, malformed JSON, unconfigured provider, disabled switch). New env knobs (`app/src/shared/types.ts` + `app/docs/config-registry.md`): `USAGE_MONITOR_READ_TOKEN`, `USAGE_MONITOR_BUDGET_THROTTLE_ENABLED` (default on), `USAGE_MONITOR_BUDGET_THROTTLE_THRESHOLD` (default 1.0 = monitor's "exceeded"), `USAGE_MONITOR_BUDGET_STATUS_CACHE_TTL_MS` (default 120000), `USAGE_MONITOR_BUDGET_STATUS_TIMEOUT_MS` (default 5000, capped 15000). Gates: 17/17 new `monitorBudgetGate.test.ts` cases green, 18/18 existing `autopilot.test.ts` green, `npm run typecheck` clean (after `npm ci` refreshed a stale `node_modules` — installed `@jaywedgeworth22/congress-trading-shared` was v1.8.3 vs the v1.10.0 commit pinned in package.json, the exact stale-install symptom flagged fleet-wide in #agent-sync today; unrelated to this change). No KEEPOUT collision found in #agent-sync history on `monitorBudgetGate.ts`/`autopilot.ts`/`shared/types.ts`. Not merging — leaving PR green/ready for owner review per branch-protection.
-- **iOS: register `congresstrade://` URL scheme — sign-in callback broken (unassigned, S).**
   Google OAuth redirects to `congresstrade://auth?token=` (app/src/auth/routes.ts:176-178, SettingsView.swift:130) but the Xcode project has no CFBundleURLTypes (project.pbxproj:444-452), so ASWebAuthenticationSession cannot deliver the callback. Add the scheme + a contract test for the auth round trip.
-- **Backend: SSE live-tail cross-region fallback (unassigned, S).**
   delivery/sse.ts:311-386 relies on BroadcastChannel, which does not span Deno Deploy regions; Premium subscribers in the wrong region get no trades until the 25-min reconnect with no error. Add a periodic drainSseBacklog (30-60s) inside the keep-alive loop.
-- **Backend: coalesce lease.assertOwned round trips on queue hot path (unassigned, M).**
   Every proxied statement in deno/durableQueue.ts:571-657 awaits a lease-assert DB query, doubling Turso round trips (~60 for a 30-statement handler). Cache ownership within a freshness window / assert at handler boundaries.
   dashboardHtml.ts:31-46 has zero OG/Twitter/description tags, no favicon, no manifest — every shared link unfurls blank. Add meta set, static 1200x630 image (docs/brand/assets/ exists), and serve the orphaned icon set from clients/pwa/out/.
   Only ?view= is parsed (dashboardHtml.ts:8483); openTradeById silently no-ops for unknown IDs (:8370-8375). Handle entity params on boot (data endpoints exist) and add Copy-link per drawer. Prerequisite for iOS universal links.
   UI copy says CSV export is Premium (dashboardHtml.ts:1651, :3514) but GET /api/export/transactions.csv was deliberately ungated in #558 (delivery/rest.ts:335-347). Decide, then align copy or restore the entitlement gate.
-- **iOS: premium gating + upgrade path on Alerts tab (unassigned, M).**
   DeliveryView.swift:38 only checks signedIn; free users hit a raw server error with no CTA. Entitlement is already decoded (Models.swift:22-26). Add Premium explainer + checkout path mirroring the web pricing modal.
-- **iOS: watchlist editor UI (or decouple from delivery filter) (unassigned, M).**
   saveWatchlist/updatePreferences exist (CongressTradeStore.swift:311-334) but no WatchlistView is in the target; createDelivery silently uses the invisible watchlist as the ticker filter (:341,353,364).
-- **iOS: ticker detail screen + filing PDF viewer (unassigned, M).**
   Backend GET /client/v1/ticker/:ticker exists (client/routes.ts:139-170) but APIClient has no ticker() and tapping tickers does nothing; docId is in models but only external sourceUrl is offered. Add TickerDetailView + /api/client/v1/documents/:docId/pdf viewing.
 - **Web: delivery pause/resume/delete + filter editing (unassigned, M).**
   dashboardHtml.ts:4605-4634 hardcodes filters:{} at creation and renders a "paused" state users can never produce; PATCH /api/subscriptions/:id exists (delivery/rest.ts:825). Add filter form + per-row actions.
-- **Web: extract base64 assets from the 833KB dashboardHtml.ts (unassigned, M).**
   Single-file SPA (8,706 lines) inlines font + 2 PNGs as data URIs (:127,:1557,:1561), re-downloaded per request, defeating cache/compression/CSP. Extract to hashed static assets; target <100KB compressed HTML.
-- **iOS: replaceCache -> transactional upsert (unassigned, S).**
   CongressTradeStore.swift:232-243 deletes all + re-inserts on every refresh (non-transactional, main-actor). Upsert by id in one context.save() on a background ModelActor.
-- **Both clients: server-side search wiring (unassigned, M).**
   iOS searches only the local <=200-row cache while FeedQuery already supports server-side ticker/member/type (APIClient.swift:42-46); web "Search All"/min/max-$ only filters the current page (dashboardHtml.ts:3061-3068). Route both through server params.
-- **Backend: query optimizations batch (unassigned, M).**
   memberName filter forces un-indexed full-corpus path (delivery/rows.ts:409-467) — add lowercase name column+index or resolve to filer_id first; COUNT queries join securities_ref needlessly (:554-577); add index on filings.filed_date for the retention sweep (jobs.ts:148-153, mirror in admin/migrations.ts).
 - **Backend: consolidate cron orchestrations + AbortSignal + async commands (unassigned, M).**
   Two divergent tick pipelines (index.ts:499-613 vs deno/scheduledTick.ts:119-229, already drifted once); 45s cron race abandons ticks without cancellation (deno/main.ts:130-148); POST /api/client/v1/commands executes synchronously in-request (client/routes.ts:345-355) — enqueue + return 202.
-- **Web UX batch: splash persistence, visibility-aware polling, URL-synced filters, a11y (unassigned, M).**
   Eagle splash replays every session (sessionStorage, dashboardHtml.ts:8584); no visibilitychange handler so hidden tabs poll forever (:3563-3584); filter state not in URL (:8483-8496); placeholder-only labels, missing aria-sort/alt (:1579-1580,:1738-1742,:1561).
 - **Push notifications end-to-end (unassigned, XL).**
   The "Alerts" tab has no push: no APNs entitlement, no backend device-registration endpoint, no alert-rules UI. This is the Premium promise ("the filing the moment we see it"). Needs backend route + entitlement + client UI; decide free-vs-Premium policy first (owner question in the analysis doc).
@@ -1180,13 +1168,10 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
   Third-party consumption is blocked by design: UA blocklist 403s conventional HTTP clients (botDefense.ts:71-81), auth requires human OAuth, zero CORS, no spec for public routes (deno_openapi.json is Deno Deploy's API — rename it). Add per-user API keys (Bearer ct_...) keeping row budgets, openapi.yaml, CORS on read-only GETs, and GET /feed.xml over the existing query builder. Owner decision needed: is blocking third parties deliberate policy?
 - **iOS release-readiness: universal links, ShareLink, Sign in with Apple, magic link, widgets (unassigned, L).**
   No onOpenURL/ShareLink/AppIntents anywhere; Sign in with Apple is an App Review requirement alongside Google; magic link is supported backend-side (?client=ios) but not in the app. Sequence after web deep links land (shared URL contract).
-- **Housekeeping sweep (unassigned, S).**
   Delete app/src/admin/routes.ts.orig (merge artifact), ~20 root/app scratch fix_*.py/test_*.ts files, stale clients/pwa/.next (179MB, app deleted from git), duplicate runOgeBackfill (dashboardHtml.ts:4850 vs :4889), iOS dead code (DateChip, refreshLatencySummary, unused FeedQuery params), and decide: wire Firebase Crashlytics or remove the unused Firebase dependency (privacy-manifest liability).
 - **Post-Codex Activation: PWA/iOS deploy targets, billing config, ingestion and queue drain (AG, XL) — 2026-07-11.** Take over execution from Codex, define production hosting for PWA/iOS, configure billing portal, and execute backlog ingestion/backfill.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
-- **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
-- **Sentry CI failure reporter (CLAUDE, S)** — copy the additive `sentry-ci-report.yml` fleet
   standard from Socratic.Trade per AGENT-SYNC.md observability rules. **MONET (Claude seat) claimed
   2026-07-05 → see In Progress; implemented + verified locally on `monet/sentry-ci-report`, awaiting
   owner push/PR.**
