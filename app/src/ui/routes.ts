@@ -65,9 +65,9 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   r.get('/', async (c) => c.html(await renderDashboard(c.env)));
   r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
 
-  // Binary assets extracted from the HTML document (fonts, brand images,
-  // icons, social card). Content is version-pinned to the deploy, so cache
-  // aggressively; the HTML revalidates and picks up new bytes on each deploy.
+  // Binary assets live under app/public/ (loaded by assets.ts) and are served
+  // here with long cache headers. HTML references these URL paths — never
+  // inline base64 — so documents stay small and assets are CSP-safe (`'self'`).
   const serveAsset = (a: StaticAsset, cacheControl: string) => (c: any) =>
     c.body(a.bytes, 200, {
       'content-type': a.contentType,
