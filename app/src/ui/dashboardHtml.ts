@@ -2014,7 +2014,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="section" id="subsManage">
       <h3>Delivery</h3>
-      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
+      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>. Pause stops events without removing the delivery; Delete removes it permanently. Edit filters anytime (Premium).</p>
       <div id="subsGate" class="note" role="status" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid var(--border, #ddd);border-radius:8px">
         Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
       </div>
@@ -2038,10 +2038,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="house,senate">House + Senate</option>
           <option value="executive">Executive only</option>
         </select>
-        <select id="newSides" disabled title="Trade side filter">
+        <select id="newSides" disabled title="Trade side filter (B buy / S sell / E exchange)">
           <option value="">all sides</option>
           <option value="B">Buys only</option>
           <option value="S">Sales only</option>
+          <option value="E">Exchange only</option>
+          <option value="B,S">Buys + Sales</option>
+          <option value="B,S,E">Buy + Sell + Exchange</option>
         </select>
         <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
         <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
@@ -4972,11 +4975,13 @@ function renderSubs(subs) {
   if (!body) return;
   if (subs.length === 0) {
     body.innerHTML = stateRow(5, isPremium()
-      ? 'No deliveries yet. Create one below.'
+      ? 'No deliveries yet. Create one below — optional filters (tickers, members, chambers, sides) narrow what you receive.'
       : 'No deliveries on this account yet. Upgrade to Premium to create webhook/SSE deliveries.');
     return;
   }
-  body.innerHTML = subs.map(function (s) {
+  var pausedCount = 0;
+  var rows = subs.map(function (s) {
+    if (!s.active) pausedCount += 1;
     var f = s.filters || {};
     var parts = [];
     if (f.chambers && f.chambers.length) parts.push(f.chambers.join('+')); else parts.push('all chambers');
@@ -4984,18 +4989,30 @@ function renderSubs(subs) {
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
     if (f.members && f.members.length) parts.push(f.members.length + ' member' + (f.members.length === 1 ? '' : 's'));
+    if (parts.length === 1 && parts[0] === 'all chambers') parts.push('all events');
     var canEdit = isPremium();
+    var statusLabel = s.active ? 'active' : 'paused';
+    var statusHint = s.active
+      ? 'Receiving matching filings'
+      : 'Paused — no events until you Resume (or Delete to remove)';
     return '<tr class="row" data-sub-id="' + esc(s.id) + '">' +
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
-      '<td><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + (s.active ? 'active' : 'paused') + '</span></td>' +
+      '<td title="' + esc(statusHint) + '"><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + statusLabel + '</span></td>' +
       '<td class="row-flex" style="gap:6px;flex-wrap:wrap">' +
         (canEdit ? '<button class="btn ghost sm" data-sub-edit="' + esc(s.id) + '">Edit</button>' : '') +
         '<button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button>' +
+        '<button class="btn ghost sm" data-sub-delete="' + esc(s.id) + '" title="Permanently remove this delivery">Delete</button>' +
       '</td>' +
     '</tr>';
   }).join('');
+  if (pausedCount > 0 && pausedCount === subs.length) {
+    rows += '<tr class="row"><td colspan="5" class="note">All deliveries are paused. Resume one to receive events again, or Delete to free a slot.</td></tr>';
+  } else if (pausedCount > 0) {
+    rows += '<tr class="row"><td colspan="5" class="note">' + pausedCount + ' paused — those targets receive nothing until Resume.</td></tr>';
+  }
+  body.innerHTML = rows;
 }
 function clearDeliveryForm() {
   EDITING_SUB_ID = null;
@@ -5025,7 +5042,16 @@ function beginEditSubscription(id) {
   if (el('newTickers')) el('newTickers').value = (f.tickers || []).join(', ');
   if (el('newMembers')) el('newMembers').value = (f.members || []).join(', ');
   if (el('newChambers')) el('newChambers').value = (f.chambers || []).join(',');
-  if (el('newSides')) el('newSides').value = (f.sides && f.sides[0]) || '';
+  if (el('newSides')) {
+    var sidesJoined = (f.sides || []).join(',');
+    var sidesSel = el('newSides');
+    // Prefer an exact option match (incl. multi-side presets); fall back to first side.
+    var hasExact = false;
+    for (var i = 0; i < sidesSel.options.length; i++) {
+      if (sidesSel.options[i].value === sidesJoined) { hasExact = true; break; }
+    }
+    sidesSel.value = hasExact ? sidesJoined : ((f.sides && f.sides[0]) || '');
+  }
   if (el('newMinAmt')) el('newMinAmt').value = f.minAmount != null ? String(f.minAmount) : '';
   if (el('subsCreateBtn')) el('subsCreateBtn').textContent = 'Save changes';
   var cancel = el('subsEditCancel');
@@ -5071,19 +5097,53 @@ function saveSubscriptionEdits() {
     })
     .catch(function (err) { el('subsMsg').textContent = 'Save failed: ' + err.message; });
 }
-/* Pause/Resume a delivery through the session-based update_subscription command.
-   (There is no delete endpoint anywhere in the API — deactivation is the
-   supported lifecycle, and it frees the account's active-quota slot.) */
+/* Pause/Resume via update_subscription (active flag). Delete via delete_subscription
+   (hard-removes the row; distinct from pause, which only frees the active slot). */
 document.addEventListener('click', function (e) {
   var editBtn = e.target && e.target.closest ? e.target.closest('[data-sub-edit]') : null;
   if (editBtn) {
     beginEditSubscription(editBtn.getAttribute('data-sub-edit'));
     return;
   }
+  var delBtn = e.target && e.target.closest ? e.target.closest('[data-sub-delete]') : null;
+  if (delBtn) {
+    var delId = delBtn.getAttribute('data-sub-delete');
+    if (!delId) return;
+    if (!window.confirm('Delete this delivery permanently? You can create a new one later (Premium). Paused deliveries can be Resumed instead.')) return;
+    delBtn.disabled = true;
+    var delIdem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-del-' + Date.now());
+    fetch('/api/client/v1/commands', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'Idempotency-Key': delIdem },
+      body: JSON.stringify({
+        type: 'delete_subscription',
+        idempotencyKey: delIdem,
+        payload: { id: delId }
+      })
+    })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j; }); })
+      .then(function () {
+        showToast('Delivery deleted.');
+        if (EDITING_SUB_ID === delId) {
+          clearDeliveryForm();
+          if (el('newDelivery')) el('newDelivery').disabled = false;
+          updateDeliveryGate();
+        }
+        loadSubs();
+      })
+      .catch(function (err) { delBtn.disabled = false; showToast('Delete failed: ' + err.message, true); });
+    return;
+  }
   var b = e.target && e.target.closest ? e.target.closest('[data-sub-toggle]') : null;
   if (!b) return;
   var id = b.getAttribute('data-sub-toggle');
   var nextActive = b.getAttribute('data-sub-active') !== '1';
+  if (nextActive && !isPremium()) {
+    showToast('Premium required to resume a delivery.', true);
+    openPricing('alerts');
+    return;
+  }
   b.disabled = true;
   var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-upd-' + Date.now());
   fetch('/api/client/v1/commands', {
@@ -5146,9 +5206,10 @@ function createSubscription() {
       function renderResult(dataObj) {
         var result = (dataObj && dataObj.command && dataObj.command.result) || dataObj.result || dataObj;
         var sub = (result && result.subscription) || (dataObj && dataObj.subscription) || null;
+        var secretHtml = '';
         if (sub && sub.secret) {
           var stream = sub.streamUrl || '';
-          el('subsMsg').innerHTML =
+          secretHtml =
             '<div class="secret-panel">' +
               '<strong>Created. Save this secret now; it will not be shown again.</strong>' +
               '<div><span class="muted">Secret</span><code class="secret-value">' + esc(sub.secret) + '</code></div>' +
@@ -5158,12 +5219,22 @@ function createSubscription() {
                 (stream ? '<button class="btn ghost sm" data-copy="' + esc(stream) + '" onclick="copyFromData(this)">Copy SSE URL</button>' : '') +
               '</div>' +
             '</div>';
+          el('subsMsg').innerHTML = secretHtml;
         } else if (dataObj && dataObj.command && dataObj.command.status === 'failed') {
           el('subsMsg').textContent = 'Failed: ' + ((dataObj.command.error) || 'command failed');
         } else {
           el('subsMsg').textContent = 'Created.';
         }
-        if (el('newTarget')) el('newTarget').value = '';
+        // Reset filter form for the next create, but keep the one-time secret panel visible.
+        if (!(dataObj && dataObj.command && dataObj.command.status === 'failed')) {
+          if (el('newTarget')) el('newTarget').value = '';
+          if (el('newTickers')) el('newTickers').value = '';
+          if (el('newMembers')) el('newMembers').value = '';
+          if (el('newChambers')) el('newChambers').value = '';
+          if (el('newSides')) el('newSides').value = '';
+          if (el('newMinAmt')) el('newMinAmt').value = '';
+          if (el('newDelivery')) el('newDelivery').value = 'sse';
+        }
         loadSubs();
       }
 

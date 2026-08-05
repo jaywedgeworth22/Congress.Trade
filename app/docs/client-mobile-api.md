@@ -46,8 +46,8 @@ Use the shared statuses:
 Command writes must validate account ownership and entitlement before queueing,
 be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
-The current router implements `update_preferences`, `create_subscription`, and
-`update_subscription`; `start_checkout` and `request_export` are defined in the
+The current router implements `update_preferences`, `create_subscription`,
+`update_subscription`, and `delete_subscription`; `start_checkout` and `request_export` are defined in the
 shared type set but still return `501`.
 
 ## Initial Surface

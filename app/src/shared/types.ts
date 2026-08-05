@@ -302,6 +302,7 @@ export type ClientCommandType =
   | 'update_preferences'
   | 'create_subscription'
   | 'update_subscription'
+  | 'delete_subscription'
   | 'start_checkout'
   | 'request_export';
 
