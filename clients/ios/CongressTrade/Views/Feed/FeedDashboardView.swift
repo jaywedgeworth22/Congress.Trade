@@ -130,26 +130,6 @@ struct FeedDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        ForEach(TimeRange.allCases) { range in
-                            Button {
-                                Task {
-                                    await store.setTimeRange(range)
-                                }
-                            } label: {
-                                HStack {
-                                    Text(range.label)
-                                    if store.selectedTimeRange == range {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(store.selectedTimeRange.label, systemImage: "calendar")
-                    }
-                }
             }
             .refreshable { await store.refresh() }
             .overlay {
@@ -232,10 +212,12 @@ struct BrandTitle: View {
 
 struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
+    var showMetrics: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
+                // Chamber Filter Chips (H, S, P)
                 HStack(spacing: 6) {
                     ForEach(ChamberFilter.allCases) { chamber in
                         FilterChip(
@@ -248,32 +230,90 @@ struct FeedControlBar: View {
                     }
                 }
 
-                Spacer(minLength: 4)
+                // Calendar button placed down right after 'P' in filters
+                Menu {
+                    ForEach(TimeRange.allCases) { range in
+                        Button {
+                            Task {
+                                await store.setTimeRange(range)
+                            }
+                        } label: {
+                            HStack {
+                                Text(range.label)
+                                if store.selectedTimeRange == range {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "calendar")
+                            .font(.caption.weight(.bold))
+                        Text(store.selectedTimeRange.label)
+                            .font(.caption.weight(.semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(.primary)
+                    .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                    .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+                }
+                .accessibilityLabel("Select Time Window (\(store.selectedTimeRange.label))")
 
-                MetricTile(
-                    title: "Trades",
-                    value: store.tradeTotal > 0
-                        ? store.tradeTotal.formatted(.number.grouping(.automatic))
-                        : "—"
-                )
-                .frame(width: 88)
+                if showMetrics {
+                    Spacer(minLength: 4)
 
-                MetricTile(title: "Plan", value: store.entitlementLabel)
-                    .frame(width: 78)
+                    MetricTile(
+                        title: "Trades",
+                        value: store.tradeTotal > 0
+                            ? store.tradeTotal.formatted(.number.grouping(.automatic))
+                            : "—"
+                    )
+                    .frame(width: 88)
+
+                    MetricTile(title: "Plan", value: store.entitlementLabel)
+                        .frame(width: 78)
+                } else {
+                    Spacer(minLength: 0)
+                }
             }
 
-            // Buy / Sell / All — server `type=` + local cache filter.
-            HStack(spacing: 6) {
-                ForEach(TradeTypeFilter.allCases) { type in
+            // Party & Side Filter Chips
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    // Party filter chips
                     FilterChip(
-                        title: type.label,
-                        isSelected: store.selectedTradeType == type
+                        title: "All Parties",
+                        isSelected: store.selectedParty == nil
                     ) {
-                        Task { await store.setTradeType(type) }
+                        Task { await store.setPartyFilter(nil) }
                     }
-                    .accessibilityLabel("\(type.label) trades")
+
+                    ForEach(PartyFilter.allCases) { party in
+                        FilterChip(
+                            title: "\(party.emoji) \(party.label)",
+                            isSelected: store.selectedParty == party
+                        ) {
+                            Task { await store.setPartyFilter(party) }
+                        }
+                    }
+
+                    Divider()
+                        .frame(height: 16)
+                        .padding(.horizontal, 2)
+
+                    // Side filter chips (All / Buy / Sell)
+                    ForEach(TradeTypeFilter.allCases) { type in
+                        FilterChip(
+                            title: type.label,
+                            isSelected: store.selectedTradeType == type
+                        ) {
+                            Task { await store.setTradeType(type) }
+                        }
+                        .accessibilityLabel("\(type.label) trades")
+                    }
                 }
-                Spacer(minLength: 0)
             }
         }
     }
