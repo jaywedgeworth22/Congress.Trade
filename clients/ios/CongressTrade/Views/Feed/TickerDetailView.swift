@@ -36,12 +36,46 @@ struct TickerDetailView: View {
                                     .font(.title2.weight(.bold))
                                     .multilineTextAlignment(.center)
 
-                                Text([ticker.uppercased(), asset?.exchangeShort, asset?.sector].compactMap { $0 }.joined(separator: " · "))
+                                Text(headerMetaLine)
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+
+                            if let price = asset?.currentPrice {
+                                Text(String(format: "$%.2f", price))
+                                    .font(.title3.weight(.semibold))
+                                    .foregroundStyle(.primary)
                             }
                         }
                         .padding(.top, 16)
+
+                        // Identity / enrichment (when present in model)
+                        if assetHasIdentityRows {
+                            DetailSection("Security") {
+                                if let industry = asset?.industry, !industry.isEmpty {
+                                    DetailRow("Industry", industry)
+                                }
+                                if let sector = asset?.sector, !sector.isEmpty {
+                                    DetailRow("Sector", sector)
+                                }
+                                if let bucket = asset?.marketCapBucket, !bucket.isEmpty {
+                                    DetailRow("Market Cap", bucket.capitalized)
+                                }
+                                if let marketCap = asset?.marketCap, marketCap > 0 {
+                                    DetailRow("Market Cap ($)", CompactFormat.usd(marketCap))
+                                }
+                                if let exchange = asset?.exchangeShort, !exchange.isEmpty {
+                                    DetailRow("Exchange", exchange)
+                                }
+                                if let assetClass = asset?.assetClass, !assetClass.isEmpty {
+                                    DetailRow("Asset Class", assetClass)
+                                }
+                                if let currency = asset?.currency, !currency.isEmpty {
+                                    DetailRow("Currency", currency)
+                                }
+                            }
+                        }
 
                         // Summary
                         if let summary {
@@ -55,6 +89,9 @@ struct TickerDetailView: View {
                                     MetricTile(title: "Members", value: CompactFormat.count(summary.memberCount))
                                     MetricTile(title: "Est. Volume", value: CompactFormat.usd(summary.estimatedVolumeUsd))
                                     MetricTile(title: "Net Flow", value: CompactFormat.usd(summary.estimatedNetFlowUsd))
+                                }
+                                if let exchangeCount = summary.exchangeCount, exchangeCount > 0 {
+                                    DetailRow("Exchanges", CompactFormat.count(exchangeCount))
                                 }
                                 DetailRow("First Trade", summary.firstTrade.shortDate)
                                 DetailRow("Last Trade", summary.lastTrade.shortDate)
@@ -88,6 +125,16 @@ struct TickerDetailView: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    if let shareURL = store.api.shareURL(
+                        queryItem: URLQueryItem(name: "ticker", value: ticker.uppercased())
+                    ) {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share ticker")
+                    }
+                }
+                ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     Button("Done") {
                         dismiss()
                     }
@@ -97,6 +144,31 @@ struct TickerDetailView: View {
                 await loadTicker()
             }
         }
+    }
+
+    private var headerMetaLine: String {
+        [
+            ticker.uppercased(),
+            asset?.exchangeShort,
+            asset?.sector,
+            asset?.industry
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: " · ")
+    }
+
+    private var assetHasIdentityRows: Bool {
+        guard let asset else { return false }
+        return [
+            asset.industry,
+            asset.sector,
+            asset.marketCapBucket,
+            asset.exchangeShort,
+            asset.assetClass,
+            asset.currency
+        ].contains(where: { ($0 ?? "").isEmpty == false })
+            || (asset.marketCap ?? 0) > 0
     }
 
     private func loadTicker() async {

@@ -367,6 +367,80 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
     }
 }
 
+/// Feed side filter: All / Buy (`type=P`) / Sell (`type=S`). Matches
+/// `FeedQuery.type` and local cache filtering.
+enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
+    case all
+    case buy = "P"
+    case sell = "S"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .buy: return "Buy"
+        case .sell: return "Sell"
+        }
+    }
+
+    /// Server `type=` value; `nil` omits the param (all sides).
+    var queryValue: String? {
+        switch self {
+        case .all: return nil
+        case .buy, .sell: return rawValue
+        }
+    }
+
+    /// Whether a cached trade's `transaction.type` matches this filter.
+    func matches(txType: String?) -> Bool {
+        switch self {
+        case .all: return true
+        case .buy, .sell:
+            return (txType ?? "").uppercased() == rawValue
+        }
+    }
+}
+
+/// `GET /api/analytics/performance/:txId` — asset return, S&P return, excess.
+struct TradePerformanceResponse: Decodable {
+    let available: Bool
+    let isOption: Bool?
+    let txType: String?
+    let ticker: String?
+    let txDate: String?
+    let filedDate: String?
+    let priceAtTrade: Double?
+    let currentPrice: Double?
+    let currentPriceDate: String?
+    let assetReturn: Double?
+    let spxReturn: Double?
+    let excessReturn: Double?
+    let tradeDatePerformance: PerformanceSlice?
+    let filingDatePerformance: PerformanceSlice?
+
+    struct PerformanceSlice: Decodable {
+        let priceAt: Double?
+        let spxAt: Double?
+        let assetReturn: Double?
+        let spxReturn: Double?
+        let excessReturn: Double?
+    }
+
+    /// Prefer nested trade-date slice; fall back to flat top-level fields.
+    var tradeLeg: PerformanceSlice? {
+        if let tradeDatePerformance { return tradeDatePerformance }
+        guard available else { return nil }
+        return PerformanceSlice(
+            priceAt: priceAtTrade,
+            spxAt: nil,
+            assetReturn: assetReturn,
+            spxReturn: spxReturn,
+            excessReturn: excessReturn
+        )
+    }
+}
+
 struct ClientCommandResponse<ResultPayload: Decodable>: Decodable {
     let command: ClientCommand
     let result: ResultPayload?
