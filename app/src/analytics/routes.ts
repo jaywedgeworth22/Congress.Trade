@@ -1240,12 +1240,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           overlapPct: p.overlapPct,
           comparisonStatus: p.comparisonStatus,
           comparisonBasis: p.comparisonBasis,
-          usFirstCount: p.ctAheadMonitorCount,
-          providerFirstCount: p.providerAheadMonitorCount,
-          tieCount: p.tieMonitorCount,
-          medianLeadSec: p.medianMonitorDeltaSec,
-          avgLeadSec: p.avgMonitorDeltaSec,
-          p90LeadSec: p.p90MonitorDeltaSec,
+          usFirstCount: p.timestampKind === 'provider' ? p.ctAheadPublishedCount : p.ctAheadMonitorCount,
+          providerFirstCount: p.timestampKind === 'provider' ? p.providerAheadPublishedCount : p.providerAheadMonitorCount,
+          tieCount: p.timestampKind === 'provider' ? p.tiePublishedCount : p.tieMonitorCount,
+          medianLeadSec: p.timestampKind === 'provider' ? p.medianProviderPublishedDeltaSec : p.medianMonitorDeltaSec,
+          avgLeadSec: p.timestampKind === 'provider' ? p.avgProviderPublishedDeltaSec : p.avgMonitorDeltaSec,
+          p90LeadSec: p.timestampKind === 'provider' ? null : p.p90MonitorDeltaSec, // p90 for published isn't calculated right now, could fall back to null
         })),
       };
     });
