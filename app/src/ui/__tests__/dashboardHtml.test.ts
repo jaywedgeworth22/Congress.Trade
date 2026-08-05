@@ -1961,6 +1961,18 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain("type: 'update_subscription'");
   });
 
+  it('supports pause/resume/delete delivery controls end-to-end in the SPA', () => {
+    expect(DASHBOARD_HTML).toContain('data-sub-toggle');
+    expect(DASHBOARD_HTML).toContain('data-sub-delete');
+    expect(DASHBOARD_HTML).toContain("type: 'delete_subscription'");
+    expect(DASHBOARD_HTML).toContain("payload: { id: id, active: nextActive }");
+    expect(DASHBOARD_HTML).toContain('Delivery paused.');
+    expect(DASHBOARD_HTML).toContain('Delivery resumed.');
+    expect(DASHBOARD_HTML).toContain('Delivery deleted.');
+    expect(DASHBOARD_HTML).toContain('Delete this delivery permanently?');
+    expect(DASHBOARD_HTML).toContain('All deliveries are paused.');
+  });
+
   // ---- 8a. Keyboard-focusable + Enter-activatable drill-down rows ----------
   it('makes Consensus Moves (cluster) cards keyboard-focusable and Enter-activatable', () => {
     expect(DASHBOARD_HTML).toContain(
@@ -2278,6 +2290,12 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('id="newMembers"');
     expect(DASHBOARD_HTML).toContain('id="newSides"');
     expect(DASHBOARD_HTML).toContain('id="newMinAmt"');
+    expect(DASHBOARD_HTML).toContain('id="newTickers"');
+    expect(DASHBOARD_HTML).toContain('id="newChambers"');
+    // Create path posts real filters (not a hard-coded empty object literal alone).
+    expect(DASHBOARD_HTML).toContain('payload: { delivery: delivery, targetUrl: targetUrl || null, filters: filters }');
+    expect(DASHBOARD_HTML).toContain('<option value="E">Exchange only</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sales</option>');
   });
 
   it('styles trends-fold summaries like section headers and keeps mobile bottom nav', () => {

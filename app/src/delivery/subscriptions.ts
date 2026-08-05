@@ -109,12 +109,12 @@ async function runSubscriptionWrite(
  * Durable D1-backed quota preflight; migration triggers are the race-safe
  * backstop (see trg_subscriptions_total_quota in migrations/0047_subscription_quota_active_only.sql).
  *
- * `total` deliberately counts ACTIVE rows only, not every lifetime row. There
- * is no hard-delete path for a subscription (only deactivate), so counting
- * deactivated rows here would permanently lock an account out of creating new
- * subscriptions once it accumulated 20 lifetime rows — the "lifetime
- * subscription lockout" bug. Deactivating an old subscription now reliably
- * frees its slot.
+ * `total` deliberately counts ACTIVE rows only, not every lifetime row.
+ * Pause/deactivate leaves the row (so Resume works) without consuming a
+ * create/active slot. Hard delete (`deleteSubscription`) removes the row
+ * entirely. Counting deactivated rows here would permanently lock an account
+ * out of creating new subscriptions once it accumulated lifetime pauses —
+ * the "lifetime subscription lockout" bug.
  */
 export async function assertSubscriptionQuota(
   env: Env,
@@ -360,6 +360,24 @@ export async function rotateSubscriptionSecret(
  */
 export async function deactivateSubscription(env: Env, id: string): Promise<Subscription> {
   return updateSubscription(env, id, { active: false });
+}
+
+/**
+ * Permanently remove a subscription row. Distinct from {@link deactivateSubscription}
+ * (pause): delete frees the row entirely so it no longer appears in the owner's
+ * list. Delivery history rows (`deliveries.subscription_id`) are left in place
+ * for audit (no FK); SSE leases for the id are cleaned best-effort.
+ */
+export async function deleteSubscription(env: Env, id: string): Promise<boolean> {
+  const existing = await getSubscription(env, id);
+  if (!existing) return false;
+  await runSubscriptionWrite(env, 'DELETE FROM subscriptions WHERE id = ?', [id]);
+  try {
+    await run(env.DB, 'DELETE FROM sse_leases WHERE subscription_id = ?', [id]);
+  } catch {
+    // sse_leases may be absent in older local DBs / lightweight test envs
+  }
+  return true;
 }
 
 /**

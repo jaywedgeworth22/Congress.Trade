@@ -1077,7 +1077,7 @@ paths:
         A duplicate submission replays the winning row (`replayed: true`,
         200); a stale in-flight row (owner presumed dead, >2 min) is reclaimed
         and re-run. Implemented types: `update_preferences`,
-        `create_subscription`, `update_subscription`. `start_checkout` and
+        `create_subscription`, `update_subscription`, `delete_subscription`. `start_checkout` and
         `request_export` are defined but currently return 501.
       operationId: clientSubmitCommand
       security: [{ sessionCookie: [] }, { bearerSession: [] }]
@@ -1095,7 +1095,7 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [update_preferences, create_subscription, update_subscription, start_checkout, request_export]
+                  enum: [update_preferences, create_subscription, update_subscription, delete_subscription, start_checkout, request_export]
                 payload: { type: object }
                 idempotencyKey: { type: string }
       responses:
@@ -1532,7 +1532,7 @@ components:
         userId: { type: string }
         type:
           type: string
-          enum: [update_preferences, create_subscription, update_subscription, start_checkout, request_export]
+          enum: [update_preferences, create_subscription, update_subscription, delete_subscription, start_checkout, request_export]
         status:
           type: string
           enum: [queued, running, succeeded, failed, canceled]
