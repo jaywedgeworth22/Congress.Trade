@@ -141,3 +141,12 @@ export function cleanFilerName(name: string | null | undefined): string {
 
   return str.trim();
 }
+
+export function simplifyCompanyName(name: string): string {
+  if (!name) return '';
+  return name.toLowerCase()
+    .replace(/[^\w\s]/g, '') // remove punctuation
+    .replace(/\b(inc|corp|corporation|llc|plc|ltd|company|co)\b/g, '') // remove common suffixes
+    .replace(/\s+/g, ' ')
+    .trim();
+}
