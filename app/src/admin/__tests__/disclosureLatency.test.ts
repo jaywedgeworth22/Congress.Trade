@@ -61,7 +61,7 @@ function fakeDb() {
 }
 
 describe('admin disclosure latency API', () => {
-  it('lists Congress.Trade-vs-FMP observations with computed provider delta', async () => {
+  it('lists congress.trade-vs-FMP observations with computed provider delta', async () => {
     const res = await app.request(
       '/disclosure-latency',
       { headers: { Authorization: 'Bearer admin-secret' } },

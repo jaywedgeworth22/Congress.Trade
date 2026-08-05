@@ -404,7 +404,7 @@ export async function loadDocBytes(
       sourceUrl,
       {
         redirect: 'follow',
-        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' },
+        headers: { 'User-Agent': 'congress.trade/1.0 (+https://congress.trade)' },
         signal: signal
           ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
           : AbortSignal.timeout(30_000),

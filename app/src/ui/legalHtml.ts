@@ -4,12 +4,12 @@
  *
  * These satisfy Stripe's requirement that a publicly accessible Terms of Service
  * and Privacy Policy be linkable from Checkout (Public/Checkout settings). They
- * are good-faith templates tailored to Congress.Trade — have counsel review
+ * are good-faith templates tailored to congress.trade — have counsel review
  * before relying on them. Update EFFECTIVE_DATE when the text changes.
  */
 
 const EFFECTIVE_DATE = 'June 22, 2026';
-const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
+const ENTITY = 'Jay Wedgeworth, LLC d/b/a congress.trade';
 const CONTACT = 'congress.trade@jays.services';
 
 /** Wrap page body in the shared dark-theme shell. */
@@ -20,7 +20,7 @@ function shell(title: string, body: string): string {
 %GA_SCRIPT%
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${title} · Congress.Trade</title>
+<title>${title} · congress.trade</title>
 <style>
   :root{--bg:#0b1120;--bg2:#111a2e;--panel:#15203a;--border:#243154;--text:#e6edf6;--dim:#8da2c0;--accent:#4f8cff;--warn:#f59e0b;}
   *{box-sizing:border-box}
@@ -47,9 +47,9 @@ function shell(title: string, body: string): string {
 <header><a class="brand" href="/">Congress<span class="dot">.</span>Trade</a></header>
 <main>
 ${body}
-<p style="margin-top:36px"><a href="/">&larr; Back to Congress.Trade</a></p>
+<p style="margin-top:36px"><a href="/">&larr; Back to congress.trade</a></p>
 </main>
-<footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
+<footer>congress.trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
 </body>
 </html>`;
 }
@@ -60,13 +60,13 @@ export const TOS_HTML = shell(
 <h1>Terms of Service</h1>
 <p class="eff">Effective ${EFFECTIVE_DATE}</p>
 
-<p>These Terms of Service ("Terms") are a binding agreement between you and ${ENTITY} ("Congress.Trade," "we," "us"), governing your access to and use of the Congress.Trade website, API, data feeds, and related services (the "Service"). By creating an account, subscribing, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.</p>
+<p>These Terms of Service ("Terms") are a binding agreement between you and ${ENTITY} ("congress.trade," "we," "us"), governing your access to and use of the congress.trade website, API, data feeds, and related services (the "Service"). By creating an account, subscribing, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.</p>
 
 <h2>1. What the Service is</h2>
-<p>Congress.Trade aggregates and presents <strong>public financial-disclosure data</strong> filed by politicians serving in the U.S. Congress under the STOCK Act (2012), and provides tools to explore, analyze, and receive that data (including webhook and SSE delivery). It is an <strong>informational and educational</strong> product.</p>
+<p>congress.trade aggregates and presents <strong>public financial-disclosure data</strong> filed by politicians serving in the U.S. Congress under the STOCK Act (2012), and provides tools to explore, analyze, and receive that data (including webhook and SSE delivery). It is an <strong>informational and educational</strong> product.</p>
 
 <div class="callout">
-<strong>Not financial advice.</strong> The Service is for informational and educational purposes only. Nothing on Congress.Trade is investment, financial, legal, or tax advice, a recommendation, an offer or solicitation to buy or sell any security, or a "trading signal." We are not a broker-dealer, investment adviser, or fiduciary, and no advisory relationship is created by your use of the Service. Disclosure data is sourced from third parties and public filings, may be delayed, incomplete, or inaccurate, and <strong>dollar amounts are estimates derived from the disclosed value brackets</strong>. Always do your own research and consult a licensed professional before making any financial decision. You are solely responsible for your decisions and any resulting gains or losses.
+<strong>Not financial advice.</strong> The Service is for informational and educational purposes only. Nothing on congress.trade is investment, financial, legal, or tax advice, a recommendation, an offer or solicitation to buy or sell any security, or a "trading signal." We are not a broker-dealer, investment adviser, or fiduciary, and no advisory relationship is created by your use of the Service. Disclosure data is sourced from third parties and public filings, may be delayed, incomplete, or inaccurate, and <strong>dollar amounts are estimates derived from the disclosed value brackets</strong>. Always do your own research and consult a licensed professional before making any financial decision. You are solely responsible for your decisions and any resulting gains or losses.
 </div>
 
 <h2>2. Eligibility &amp; accounts</h2>
@@ -78,8 +78,8 @@ export const TOS_HTML = shell(
 
 <h2>3. Subscriptions, billing &amp; trials</h2>
 <ul>
-<li>Premium is offered as an auto-renewing subscription: <strong>$9.00 / month</strong> or <strong>$90.00 / year</strong> (USD), plus any applicable taxes.</li>
-<li>New subscriptions may include a free trial (currently 7 days). If you do not cancel before the trial ends, the subscription renews and your payment method is charged.</li>
+<li>Premium is offered as an auto-renewing subscription: <strong>$5.00 / month</strong> or <strong>$50.00 / year</strong> (USD), plus any applicable taxes.</li>
+<li>New subscriptions may include a free trial (currently 30 days / 1 month). If you do not cancel before the trial ends, the subscription renews and your payment method is charged.</li>
 <li>Subscriptions <strong>automatically renew</strong> at the end of each billing period until canceled. You authorize recurring charges to your payment method.</li>
 <li>We may change prices or plan features; changes apply to the next billing period after reasonable notice. Continued use after a price change constitutes acceptance.</li>
 </ul>
@@ -132,7 +132,7 @@ export const PRIVACY_HTML = shell(
 <h1>Privacy Policy</h1>
 <p class="eff">Effective ${EFFECTIVE_DATE}</p>
 
-<p>This Privacy Policy explains how ${ENTITY} ("Congress.Trade," "we," "us") collects, uses, and shares personal information when you use the Congress.Trade website and services (the "Service").</p>
+<p>This Privacy Policy explains how ${ENTITY} ("congress.trade," "we," "us") collects, uses, and shares personal information when you use the congress.trade website and services (the "Service").</p>
 
 <h2>1. Information we collect</h2>
 <ul>

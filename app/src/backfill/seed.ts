@@ -227,13 +227,13 @@ function parseSeedAssetDescription(raw: string | undefined): {
   };
 }
 
-/** Normalize a raw transaction-type string to the TxType union P|S|E (Buy/Sell/Exchange). */
+/** Normalize a raw transaction-type string to the TxType union B|S|E (Buy/Sell/Exchange). */
 export function mapTxType(raw: string | undefined): TxType {
   const t = (raw ?? '').toLowerCase().trim();
   if (t.includes('exchange') || t === 'e') return 'E';
   if (t.includes('sale') || t.includes('sell') || t === 's') return 'S';
   // "purchase", "buy", "p", product letter "b", or unrecognized → Buy (P).
-  return 'P';
+  return 'B';
 }
 
 function isUnknownSeedTxType(raw: string | undefined): boolean {

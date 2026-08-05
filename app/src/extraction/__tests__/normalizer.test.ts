@@ -155,7 +155,7 @@ const tx = (over: Partial<ParsedTx> = {}): ParsedTx => ({
   assetName: 'Apple Inc.',
   ticker: 'AAPL',
   assetType: 'Stock',
-  txType: 'P',
+  txType: 'B',
   amountMin: 1001,
   amountMax: 15000,
   isOption: false,
@@ -484,7 +484,7 @@ describe('normalize', () => {
       assetName: 'Chegg, Inc.',
       amountMin: 1001,
       amountMax: 15000,
-      txType: 'P' as const,
+      txType: 'B' as const,
     };
 
     const trust1 = tx({ ...tradeBase, owner: 'dependent' as const, subholding: 'Harshbarger Family Trust #1', description: 'Trust 1 Purchase' });

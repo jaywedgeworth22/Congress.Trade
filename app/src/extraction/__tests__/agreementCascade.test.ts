@@ -257,7 +257,7 @@ describe('agreement cascade — tier 1', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('tier-1 unanimous publishes (regression)', async () => {
-    stub(asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]));
+    stub(asJson([row('AAPL', 'B', AB)]), asJson([row('AAPL', 'B', AB)]));
     const { env, cap } = makeEnv();
     await handleAgreementCheck(env, 'H-1', 'raw/H-1'); // no tier → tier 1
     expect(cap.inserted).toHaveLength(1);
@@ -266,7 +266,7 @@ describe('agreement cascade — tier 1', () => {
   });
 
   it('tier-1 disagreement enqueues an escalationTier:2 check (under the cap)', async () => {
-    stub(asJson([row('AAPL', 'P', AB)]), asJson([row('MSFT', 'S', AB)]));
+    stub(asJson([row('AAPL', 'B', AB)]), asJson([row('MSFT', 'S', AB)]));
     const { env, cap } = makeEnv();
     await handleAgreementCheck(env, 'H-2', 'raw/H-2');
     expect(cap.inserted).toHaveLength(0);
@@ -279,7 +279,7 @@ describe('agreement cascade — tier 1', () => {
   });
 
   it('stops escalating and flags human review once AGREEMENT_MAX_ATTEMPTS is reached', async () => {
-    stub(asJson([row('AAPL', 'P', AB)]), asJson([row('MSFT', 'S', AB)]));
+    stub(asJson([row('AAPL', 'B', AB)]), asJson([row('MSFT', 'S', AB)]));
     const { env, cap } = makeEnv({ maxAttempts: '1' }); // first attempt already at the cap
     await handleAgreementCheck(env, 'H-3', 'raw/H-3');
     expect(cap.sent).toHaveLength(0); // no escalation
@@ -310,7 +310,7 @@ describe('agreement cascade — tier 1', () => {
   });
 
   it('a big doc (page_count over threshold) starts directly at tier 2', async () => {
-    const seen = stub(asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]));
+    const seen = stub(asJson([row('AAPL', 'B', AB)]), asJson([row('AAPL', 'B', AB)]), asJson([row('AAPL', 'B', AB)]));
     const { env, cap } = makeEnv({ pageCount: 20 });
     await handleAgreementCheck(env, 'H-4', 'raw/H-4'); // fresh, but big → tier 2
     expect(seen).toContain('mistral'); // the third model was consulted
@@ -322,7 +322,7 @@ describe('agreement cascade — tier 2 / tier 3', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('3-way unanimous publishes (tier 2)', async () => {
-    stub(asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]));
+    stub(asJson([row('AAPL', 'B', AB)]), asJson([row('AAPL', 'B', AB)]), asJson([row('AAPL', 'B', AB)]));
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-5', 'raw/H-5', false);
     expect(res).toMatchObject({ outcome: 'published', tier: 2 });
@@ -335,9 +335,9 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     // Same row identity in all reads; C disagrees on owner, so exact tier-2
     // unanimity fails and tier 3 resolves the 2-of-3 material-field majority.
     stub(
-      asJson([row('AAPL', 'P', AB, { owner: 'self' })]),
-      asJson([row('AAPL', 'P', AB, { owner: 'self' })]),
-      asJson([row('AAPL', 'P', AB, { owner: 'spouse' })]),
+      asJson([row('AAPL', 'B', AB, { owner: 'self' })]),
+      asJson([row('AAPL', 'B', AB, { owner: 'self' })]),
+      asJson([row('AAPL', 'B', AB, { owner: 'spouse' })]),
     );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-6', 'raw/H-6', false);
@@ -350,9 +350,9 @@ describe('agreement cascade — tier 2 / tier 3', () => {
 
   it('does not drop a minority-only extra row', async () => {
     stub(
-      asJson([row('AAPL', 'P', AB)]),
-      asJson([row('AAPL', 'P', AB)]),
-      asJson([row('AAPL', 'P', AB), row('MSFT', 'P', AB)]),
+      asJson([row('AAPL', 'B', AB)]),
+      asJson([row('AAPL', 'B', AB)]),
+      asJson([row('AAPL', 'B', AB), row('MSFT', 'B', AB)]),
     );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-minority-extra', 'raw/x', false);
@@ -364,9 +364,9 @@ describe('agreement cascade — tier 2 / tier 3', () => {
   it('a majority row WITHOUT an amount-bracket majority does NOT publish (tier 3)', async () => {
     // All three read AAPL but each a different amount.
     stub(
-      asJson([row('AAPL', 'P', AB)]),
-      asJson([row('AAPL', 'P', AB2)]),
-      asJson([row('AAPL', 'P', AB3)]),
+      asJson([row('AAPL', 'B', AB)]),
+      asJson([row('AAPL', 'B', AB2)]),
+      asJson([row('AAPL', 'B', AB3)]),
     );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-7', 'raw/H-7', false);
@@ -385,9 +385,9 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     // excludes amount, so the second AAPL lot would silently vanish; the guard
     // must leave the whole doc in review instead of publishing an incomplete set.
     stub(
-      asJson([row('AAPL', 'P', AB), row('AAPL', 'P', AB3), row('TSLA', 'P', AB)]),
-      asJson([row('AAPL', 'P', AB), row('AAPL', 'P', AB3)]),
-      asJson([row('AAPL', 'P', AB), row('AAPL', 'P', AB3)]),
+      asJson([row('AAPL', 'B', AB), row('AAPL', 'B', AB3), row('TSLA', 'B', AB)]),
+      asJson([row('AAPL', 'B', AB), row('AAPL', 'B', AB3)]),
+      asJson([row('AAPL', 'B', AB), row('AAPL', 'B', AB3)]),
     );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-9', 'raw/H-9', false);
@@ -399,7 +399,7 @@ describe('agreement cascade — tier 2 / tier 3', () => {
 
   it('a hard-fail flag on the majority set blocks the publish (tier 3)', async () => {
     // A+B agree on a NULL amount (→ no_amount hard-fail); C has a valid bracket.
-    stub(asJson([row('AAPL', 'P', null)]), asJson([row('AAPL', 'P', null)]), asJson([row('AAPL', 'P', AB)]));
+    stub(asJson([row('AAPL', 'B', null)]), asJson([row('AAPL', 'B', null)]), asJson([row('AAPL', 'B', AB)]));
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-8', 'raw/H-8', false);
     expect(res.outcome).toBe('review_flagged');
@@ -435,8 +435,8 @@ describe('agreement cascade — text-field normalization', () => {
     // so it round-trips unchanged through the persist-time re-clean and stays
     // distinguishable from what "always A" would have produced.
     stub(
-      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', ticker: null, confidence: 0.3 })]),
-      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', ticker: null, confidence: 0.55 })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'FIRST DATA CORP', ticker: null, confidence: 0.3 })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'First Data, Corp.', ticker: null, confidence: 0.55 })]),
     );
     const { env, cap } = makeEnv();
     await handleAgreementCheck(env, 'H-text-tier1', 'raw/H-text-tier1');
@@ -458,9 +458,9 @@ describe('agreement cascade — text-field normalization', () => {
     // absent — an orthogonal, pre-existing row-identity concern, not the
     // per-field text-comparator behavior this test targets.
     stub(
-      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', confidence: 0.3 })]),
-      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', confidence: 0.55 })]),
-      asJson([row('AAPL', 'P', AB, { assetName: 'First Data LLC', confidence: 0.5 })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'FIRST DATA CORP', confidence: 0.3 })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'First Data, Corp.', confidence: 0.55 })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'First Data LLC', confidence: 0.5 })]),
     );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-text-tier3', 'raw/x', false);
@@ -472,8 +472,8 @@ describe('agreement cascade — text-field normalization', () => {
 
   it('kill switch (AGREEMENT_TEXT_NORMALIZATION=false) restores byte-strict comparison: the SAME near-miss pair that agrees by default now disagrees', async () => {
     stub(
-      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', ticker: null })]),
-      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', ticker: null })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'FIRST DATA CORP', ticker: null })]),
+      asJson([row('AAPL', 'B', AB, { assetName: 'First Data, Corp.', ticker: null })]),
     );
     const { env, cap } = makeEnv({ env: { AGREEMENT_TEXT_NORMALIZATION: 'false' } });
     await handleAgreementCheck(env, 'H-text-killswitch', 'raw/H-text-killswitch');

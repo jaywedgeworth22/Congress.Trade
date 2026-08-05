@@ -1209,8 +1209,8 @@ components:
     txType:
       name: type
       in: query
-      schema: { type: string, enum: [P, S, E] }
-      description: "Buy / Sell / Exchange (codes P|S|E; B accepted as Buy alias of P)."
+      schema: { type: string, enum: [B, S, E] }
+      description: "Buy / Sell / Exchange (codes B|S|E). Legacy P accepted and treated as Buy."
     from:
       name: from
       in: query
@@ -1343,7 +1343,7 @@ components:
         photoUrl: { type: string, nullable: true }
         ticker: { type: string, nullable: true }
         assetName: { type: string, nullable: true }
-        txType: { type: string, enum: [P, S, E], nullable: true, description: "null = disclosed side did not parse; render as unknown." }
+        txType: { type: string, enum: [B, S, E], nullable: true, description: "B=Buy S=Sell E=Exchange. null = disclosed side did not parse; render as unknown. Legacy P coerced to B." }
         txDate: { type: string, format: date, nullable: true }
         amountMin: { type: number, nullable: true }
         amountMax: { type: number, nullable: true }
@@ -1390,7 +1390,7 @@ components:
         maxAmount: { type: number, minimum: 0 }
         sides:
           type: array
-          items: { type: string, enum: [P, S, E] }
+          items: { type: string, enum: [B, S, E] }
         sectors:
           type: array
           items: { type: string }
@@ -1474,7 +1474,7 @@ components:
         transaction:
           type: object
           properties:
-            type: { type: string, enum: [P, S, E], nullable: true, description: "Storage codes P=Buy, S=Sell, E=Exchange. null = unknown side; do not render as Buy. Input may accept B as Buy alias of P." }
+            type: { type: string, enum: [B, S, E], nullable: true, description: "Storage codes B=Buy, S=Sell, E=Exchange. null = unknown side. Legacy P is coerced to B on read/write." }
             date: { type: string, format: date, nullable: true }
             amountMin: { type: number, nullable: true }
             amountMax: { type: number, nullable: true }

@@ -51,7 +51,7 @@ describe('FMP Senate recovery identity', () => {
     expect(buy?.transaction).toMatchObject({
       filerId: 'senate-jane-smith',
       source: 'seed_dataset',
-      txType: 'P',
+      txType: 'B',
       firstSeenAt: '2026-07-15T00:00:00.000Z',
       filedDate: '2026-07-15',
     });

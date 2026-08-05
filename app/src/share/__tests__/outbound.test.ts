@@ -59,7 +59,7 @@ describe('shareWithPeer', () => {
           sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf',
           filerName: 'Nancy Pelosi',
           ticker: 'NVDA',
-          txType: 'P',
+          txType: 'B',
           transactionDate: '2026-07-15',
           transactionTimestamp: '2026-07-15T00:00:00Z',
           disclosureDate: '2026-07-22',

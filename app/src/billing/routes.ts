@@ -40,8 +40,15 @@ import {
   markStripeWebhookEventProcessed,
   releaseStripeWebhookEvent,
 } from './webhookEvents.ts';
+import {
+  appleTransactionIsActive,
+  assertAppleJwsShape,
+  planFromAppleProductId,
+} from './apple.ts';
+import { run } from '../shared/db.ts';
 
-const DEFAULT_TRIAL_DAYS = 7;
+/** Default free trial when STRIPE_TRIAL_DAYS is unset: one calendar month. */
+const DEFAULT_TRIAL_DAYS = 30;
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function requestIdForStripe(c: Context): { id: string } | { error: string } {
@@ -148,6 +155,68 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
       console.error('checkout failed:', (err as Error).message);
       return c.json({ error: 'could not start checkout' }, 502);
     }
+  });
+
+  // --- POST /billing/apple/confirm ----------------------------------------
+  // StoreKit 2: client sends transaction.jwsRepresentation after purchase.
+  r.post('/apple/confirm', async (c) => {
+    const user = await getCurrentUser(c);
+    if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
+    let body: { signedTransaction?: unknown; jwsRepresentation?: unknown };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const jws =
+      (typeof body.signedTransaction === 'string' && body.signedTransaction) ||
+      (typeof body.jwsRepresentation === 'string' && body.jwsRepresentation) ||
+      '';
+    if (!jws) return c.json({ error: 'signedTransaction required' }, 400);
+    let payload;
+    try {
+      payload = assertAppleJwsShape(jws);
+    } catch (err) {
+      return c.json({ error: (err as Error).message || 'invalid Apple transaction' }, 400);
+    }
+    const expectedBundle = (await resolveSecret(c.env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
+    if (payload.bundleId && payload.bundleId !== expectedBundle) {
+      return c.json({ error: 'bundleId mismatch' }, 400);
+    }
+    const plan = planFromAppleProductId(payload.productId);
+    if (!plan) return c.json({ error: 'unknown productId' }, 400);
+    if (!appleTransactionIsActive(payload)) {
+      return c.json({ error: 'transaction is not an active subscription' }, 400);
+    }
+    const originalId = payload.originalTransactionId || payload.transactionId;
+    if (!originalId) return c.json({ error: 'missing transaction id' }, 400);
+    const expiresIso =
+      payload.expiresDate != null
+        ? new Date(Number(payload.expiresDate)).toISOString()
+        : new Date(Date.now() + 30 * 86400000).toISOString();
+    // Store Apple original transaction id in stripe_subscription_id with a
+    // distinctive prefix so Stripe webhooks never clobber it without intent.
+    const appleSubId = `apple:${originalId}`;
+    await run(
+      c.env.DB,
+      `UPDATE users
+          SET subscription_status = 'active',
+              plan = ?,
+              stripe_subscription_id = ?,
+              current_period_end = ?,
+              trial_end = NULL,
+              cancel_at_period_end = 0
+        WHERE id = ?`,
+      [plan, appleSubId, expiresIso, user.id],
+    );
+    const refreshed = await getUserById(c.env, user.id);
+    return c.json({
+      ok: true,
+      entitlement: entitlementOf(refreshed),
+      plan,
+      expiresAt: expiresIso,
+      originalTransactionId: originalId,
+    });
   });
 
   // --- POST /billing/portal -----------------------------------------------

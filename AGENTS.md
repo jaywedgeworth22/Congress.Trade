@@ -294,3 +294,12 @@ Client apps (peer clients of the backend, not separate products):
 ## Production Deployment Urgency
 - **NO HOLDING OFF PRODUCTION**: Do not hold completed or near-completed work on preview servers or locally unless actively testing something known to be unsafe or broken in production. If the code is ready, merge and deploy it to production immediately.
 - **DEPLOYMENT DISCIPLINE**: Automatic production deployment is triggered via Coolify auto-deploy on push to main. Maintain test coverage and build checks before merging to main.
+
+## iOS native ship (TestFlight, no Xcode UI)
+
+```bash
+bash scripts/ios-ship-testflight.sh
+```
+
+Fleet: `/Users/jay/apps/ios-fleet/README.md`. Bundle `trade.congress.ios`, team `CC8UTF7ATG`.
+Secrets only via `~/.secrets/appstore-connect.env` (never print).

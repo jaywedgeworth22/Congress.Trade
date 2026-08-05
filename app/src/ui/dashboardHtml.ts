@@ -38,24 +38,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>
-<meta name="description" content="Track U.S. Congress stock trades in near real time. Congress.Trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
+<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>
+<meta name="description" content="Track U.S. Congress stock trades in near real time. congress.trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
 <link rel="canonical" href="https://congress.trade/" />
 <meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
-<meta property="og:site_name" content="Congress.Trade" />
-<meta property="og:title" content="Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate" />
+<meta property="og:site_name" content="congress.trade" />
+<meta property="og:title" content="congress.trade — Live STOCK Act disclosures from the House &amp; Senate" />
 <meta property="og:description" content="Track U.S. Congress stock trades in near real time: a live, filterable feed parsed from House &amp; Senate disclosures, with member and ticker analytics." />
 <meta property="og:url" content="https://congress.trade/" />
 <meta property="og:image" content="https://congress.trade/og-image.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Congress.Trade eagle logo on a dark background" />
+<meta property="og:image:alt" content="congress.trade eagle logo on a dark background" />
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Congress.Trade — Live STOCK Act disclosures" />
+<meta name="twitter:title" content="congress.trade — Live STOCK Act disclosures" />
 <meta name="twitter:description" content="Track U.S. Congress stock trades in near real time: live feed, member and ticker analytics, premium webhooks." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
@@ -67,9 +67,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default light; stored pref may be light|dark|system.
+  // Theme before first paint: default system; stored pref may be light|dark|system.
   (function () {
-    var pref = 'light';
+    var pref = 'system';
     try {
       var s = localStorage.getItem('ui-theme');
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
@@ -80,6 +80,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme-pref', pref);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -326,7 +328,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
   .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
-  .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
+  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
   .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }
   .conf { font-family: var(--mono); font-size: 12px; }
@@ -600,7 +602,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .ccard .faces { display:flex; margin-top:9px; }
   .ccard .faces .avatar { margin-right:-7px; box-shadow:0 0 0 2px var(--panel-2); }
   .dirpill { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; letter-spacing:.4px; }
-  .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
+  .dirpill.B, .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
   .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:19px 24px; margin-bottom:26px; }
@@ -1617,8 +1619,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 
 <header class="top">
-  <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="Congress.Trade" height="40" decoding="async" /></div>
+  <div class="brand" aria-label="congress.trade">
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="congress.trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -1639,7 +1641,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="P">Buy</option>
+        <option value="">All Types</option><option value="B">Buy</option>
         <option value="S">Sell</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
@@ -1713,7 +1715,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center" data-premium-cue="export">
-      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr
+      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
         <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
     </div>
 
@@ -1749,9 +1751,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
         <div class="party-chips" id="trPartyGroup" style="position:relative;">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> D</button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> R</button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> O</button>
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> Dem</button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> Rep</button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> Other</button>
           <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
           <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
             <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
@@ -1765,7 +1767,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
       <div class="disclaimer-body" id="trDisclaimerBody">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
+      <strong>For education, not investment advice.</strong> congress.trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
       </div>
     </div>
 
@@ -2036,15 +2038,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
         <select id="newSides" disabled title="Trade side filter">
           <option value="">all sides</option>
-          <option value="P">Purchases only</option>
+          <option value="B">Buys only</option>
           <option value="S">Sales only</option>
         </select>
         <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
         <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
+        <button class="btn ghost sm" id="subsEditCancel" type="button" hidden onclick="clearDeliveryForm(); if(el('newDelivery')) el('newDelivery').disabled=false; updateDeliveryGate();">Cancel edit</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
+        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 1-month free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
@@ -2247,7 +2250,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 7 days &mdash; so multi-week backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 7 days &mdash; so multi-week backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as congress.trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
@@ -2259,7 +2262,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </div>
 
   <footer class="site-footer">
-    <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
+    <span>congress.trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
     <span class="footer-links">
       <a href="/privacy-policy">Privacy</a>
       <a href="/terms-of-service">Terms</a>
@@ -2279,7 +2282,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <div class="overlay" id="loginOverlay" onclick="if(event.target===this)closeLogin()">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Sign In">
     <button class="close" onclick="closeLogin()" aria-label="Close">×</button>
-    <h2>Sign In to Congress.Trade</h2>
+    <h2>Sign In to congress.trade</h2>
     <p class="sub">Sign in to manage your account and use Premium research tools.</p>
     <button class="gbtn" onclick="loginGoogle()">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
@@ -2310,15 +2313,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
-        <div class="price">$9<span class="per">/mo</span></div>
+        <div class="price">$5<span class="per">/mo</span></div>
       </div>
       <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
         <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
-        <div class="price">$90<span class="per">/yr</span></div>
+        <div class="price">$50<span class="per">/yr</span></div>
       </div>
     </div>
-    <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
+    <p class="trial-note" id="pricingTrialNote">1-month free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -2371,7 +2374,7 @@ function fmtBracketAmount(n) {
 }
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
 /* Product labels: Buy / Sell / Exchange. Storage/API codes stay P|S|E (B accepted as buy alias on input). */
-var typeName = { P: 'Buy', B: 'Buy', S: 'Sell', E: 'Exchange' };
+var typeName = { B: 'Buy', P: 'Buy', S: 'Sell', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 /* Format a politician name so a generational suffix sits after a single comma
@@ -2787,14 +2790,14 @@ function fmtMs(ms) {
   return fmtDuration(Math.round(ms / 1000));
 }
 
-/* ---- light / dark / system theme (per-visitor preference; default light) ---- */
+/* ---- light / dark / system theme (per-visitor preference; default system) ---- */
 /* Mirrors Socratic.Trade console: Light | Dark | System segmented control. */
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
     if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
-  return 'light';
+  return 'system';
 }
 function resolveTheme(pref) {
   if (pref === 'dark' || pref === 'light') return pref;
@@ -2851,7 +2854,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -3118,10 +3121,10 @@ var FEED_COLS = [
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When congress.trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When congress.trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When congress.trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
@@ -3585,7 +3588,7 @@ function clearSearch() {
 var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Primary', manual: 'Manual' };
 function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
 function sourceTitle(src) {
-  if (src === 'primary') return 'Parsed from an official filing by the Congress.Trade ingestion pipeline.';
+  if (src === 'primary') return 'Parsed from an official filing by the congress.trade ingestion pipeline.';
   if (src === 'seed_dataset') return 'Imported from a historical seed dataset.';
   if (src === 'manual') return 'Hand-keyed by an admin during manual review.';
   return src || 'Unknown source';
@@ -3608,7 +3611,7 @@ function txToRow(tx) {
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
     assetTypeName: tx.assetTypeName || '',
-    type: tx.txType || 'P',
+    type: (tx.txType === 'P' ? 'B' : tx.txType) || 'B',
     min: tx.amountMin, max: tx.amountMax,
     txdate: toISODate(tx.txDate) || '',
     owner: tx.owner || '',
@@ -4127,8 +4130,8 @@ function normalizeReviewEdit(t, sourceLabel) {
   var ticker = cleanAsset(t.ticker || '').toUpperCase();
   var asset = cleanAsset(t.assetName || t.asset || '');
   var type = String(t.txType || t.type || '').toUpperCase();
-  if (type === 'B') type = 'P'; // product Buy letter → storage P
-  if (type !== 'P' && type !== 'S' && type !== 'E') type = null;
+  if (type === 'P') type = 'B'; // legacy Purchase letter → storage B
+  if (type !== 'B' && type !== 'S' && type !== 'E') type = null;
   var owner = String(t.owner || '').toLowerCase();
   if (['self', 'spouse', 'joint', 'dependent'].indexOf(owner) < 0) owner = null;
   function n(v) {
@@ -4660,7 +4663,7 @@ function meRowHtml(tx, chamber) {
   }
   return '<div class="me-row' + (isLow ? ' me-row-low-conf' : '') + '">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
-    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
+    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="B"' + selectedOption('B', (tx.txType === 'P' ? 'B' : tx.txType)) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
     amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value=""' + selectedOption('', tx.owner || '') + '>Owner unknown</option><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
@@ -4926,29 +4929,34 @@ function updateDeliveryGate() {
   }
   if (!premium) {
     gate.style.display = '';
-    gate.innerHTML = 'You are signed in, but Delivery stays deactivated until Premium is active. Trends and analytics remain free. '
+    gate.innerHTML = 'You are signed in. Premium is required to create or edit Delivery targets (1-month free trial · $5/mo or $50/yr). Existing deliveries still appear below. '
       + (checkoutConfigured()
         ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
         : '<span class="muted">Billing is not configured yet.</span>');
-    if (body) body.innerHTML = stateRow(5, 'Premium required to create Delivery targets.');
     return;
   }
   gate.style.display = 'none';
   gate.textContent = '';
 }
 
+/** In-memory list of the signed-in user's deliveries (for edit form prefill). */
+var USER_SUBS = [];
+var EDITING_SUB_ID = null;
+
 function loadSubs() {
   updateDeliveryGate();
   if (!(ME.user && ME.user.id)) return Promise.resolve();
-  if (!isPremium()) return Promise.resolve();
-  // Account-owned list: GET /api/client/v1/subscriptions (session cookie).
+  // Always list account deliveries when signed in (Premium gates create/edit only).
   return fetch('/api/client/v1/subscriptions', { headers: { accept: 'application/json' }, credentials: 'same-origin' })
     .then(function (r) {
       if (r.status === 401) throw new Error('Sign in required.');
       if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || ('HTTP ' + r.status)); });
       return r.json();
     })
-    .then(function (data) { renderSubs(data.subscriptions || []); })
+    .then(function (data) {
+      USER_SUBS = data.subscriptions || [];
+      renderSubs(USER_SUBS);
+    })
     .catch(function (e) {
       el('subsBody').innerHTML = stateRow(5, 'Could not load deliveries: ' + e.message);
     });
@@ -4956,7 +4964,12 @@ function loadSubs() {
 function renderSubs(subs) {
   var body = el('subsBody');
   if (!body) return;
-  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No deliveries yet. Create one below.'); return; }
+  if (subs.length === 0) {
+    body.innerHTML = stateRow(5, isPremium()
+      ? 'No deliveries yet. Create one below.'
+      : 'No deliveries on this account yet. Upgrade to Premium to create webhook/SSE deliveries.');
+    return;
+  }
   body.innerHTML = subs.map(function (s) {
     var f = s.filters || {};
     var parts = [];
@@ -4965,19 +4978,102 @@ function renderSubs(subs) {
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
     if (f.members && f.members.length) parts.push(f.members.length + ' member' + (f.members.length === 1 ? '' : 's'));
-    return '<tr class="row">' +
+    var canEdit = isPremium();
+    return '<tr class="row" data-sub-id="' + esc(s.id) + '">' +
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
       '<td><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + (s.active ? 'active' : 'paused') + '</span></td>' +
-      '<td><button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button></td>' +
+      '<td class="row-flex" style="gap:6px;flex-wrap:wrap">' +
+        (canEdit ? '<button class="btn ghost sm" data-sub-edit="' + esc(s.id) + '">Edit</button>' : '') +
+        '<button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button>' +
+      '</td>' +
     '</tr>';
   }).join('');
+}
+function clearDeliveryForm() {
+  EDITING_SUB_ID = null;
+  if (el('newDelivery')) el('newDelivery').value = 'sse';
+  if (el('newTarget')) el('newTarget').value = '';
+  if (el('newTickers')) el('newTickers').value = '';
+  if (el('newMembers')) el('newMembers').value = '';
+  if (el('newChambers')) el('newChambers').value = '';
+  if (el('newSides')) el('newSides').value = '';
+  if (el('newMinAmt')) el('newMinAmt').value = '';
+  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = '+ New delivery';
+  if (el('subsMsg')) el('subsMsg').textContent = '';
+  var cancel = el('subsEditCancel');
+  if (cancel) cancel.hidden = true;
+}
+function beginEditSubscription(id) {
+  var s = USER_SUBS.find(function (x) { return x.id === id; });
+  if (!s) { showToast('Delivery not found.', true); return; }
+  if (!isPremium()) { openPricing('alerts'); return; }
+  EDITING_SUB_ID = id;
+  var f = s.filters || {};
+  if (el('newDelivery')) {
+    el('newDelivery').value = s.delivery === 'webhook' ? 'webhook' : 'sse';
+    el('newDelivery').disabled = true; // delivery mode is immutable after create
+  }
+  if (el('newTarget')) el('newTarget').value = s.targetUrl || '';
+  if (el('newTickers')) el('newTickers').value = (f.tickers || []).join(', ');
+  if (el('newMembers')) el('newMembers').value = (f.members || []).join(', ');
+  if (el('newChambers')) el('newChambers').value = (f.chambers || []).join(',');
+  if (el('newSides')) el('newSides').value = (f.sides && f.sides[0]) || '';
+  if (el('newMinAmt')) el('newMinAmt').value = f.minAmount != null ? String(f.minAmount) : '';
+  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = 'Save changes';
+  var cancel = el('subsEditCancel');
+  if (cancel) cancel.hidden = false;
+  if (el('subsMsg')) el('subsMsg').textContent = 'Editing ' + id + ' — update filters/target and save.';
+  try { el('subsCreateRow').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+}
+function saveSubscriptionEdits() {
+  if (!EDITING_SUB_ID) return createSubscription();
+  if (!isPremium()) { el('subsMsg').textContent = 'Premium required to edit Delivery.'; openPricing('alerts'); return; }
+  var delivery = el('newDelivery').value;
+  var targetUrl = el('newTarget').value.trim();
+  if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
+  var filters = {};
+  var tickersRaw = (el('newTickers') && el('newTickers').value || '').split(',').map(function (t) { return t.trim().toUpperCase(); }).filter(Boolean);
+  if (tickersRaw.length) filters.tickers = tickersRaw;
+  var membersRaw = (el('newMembers') && el('newMembers').value || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+  if (membersRaw.length) filters.members = membersRaw;
+  var chambersRaw = el('newChambers') ? el('newChambers').value : '';
+  if (chambersRaw) filters.chambers = chambersRaw.split(',').filter(Boolean);
+  var sidesRaw = el('newSides') ? el('newSides').value : '';
+  if (sidesRaw) filters.sides = sidesRaw.split(',').filter(Boolean);
+  var minAmtRaw = el('newMinAmt') ? el('newMinAmt').value : '';
+  var minAmt = minAmtRaw === '' || minAmtRaw == null ? NaN : Number(minAmtRaw);
+  if (Number.isFinite(minAmt) && minAmt > 0) filters.minAmount = minAmt;
+  el('subsMsg').textContent = 'Saving…';
+  var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-edit-' + Date.now());
+  var payload = { id: EDITING_SUB_ID, filters: filters };
+  if (delivery === 'webhook') payload.targetUrl = targetUrl;
+  fetch('/api/client/v1/commands', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'Idempotency-Key': idem },
+    body: JSON.stringify({ type: 'update_subscription', idempotencyKey: idem, payload: payload })
+  })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j; }); })
+    .then(function () {
+      showToast('Delivery updated.');
+      clearDeliveryForm();
+      if (el('newDelivery')) el('newDelivery').disabled = false;
+      updateDeliveryGate();
+      loadSubs();
+    })
+    .catch(function (err) { el('subsMsg').textContent = 'Save failed: ' + err.message; });
 }
 /* Pause/Resume a delivery through the session-based update_subscription command.
    (There is no delete endpoint anywhere in the API — deactivation is the
    supported lifecycle, and it frees the account's active-quota slot.) */
 document.addEventListener('click', function (e) {
+  var editBtn = e.target && e.target.closest ? e.target.closest('[data-sub-edit]') : null;
+  if (editBtn) {
+    beginEditSubscription(editBtn.getAttribute('data-sub-edit'));
+    return;
+  }
   var b = e.target && e.target.closest ? e.target.closest('[data-sub-toggle]') : null;
   if (!b) return;
   var id = b.getAttribute('data-sub-toggle');
@@ -4999,6 +5095,7 @@ document.addEventListener('click', function (e) {
     .catch(function (err) { b.disabled = false; showToast('Update failed: ' + err.message, true); });
 });
 function createSubscription() {
+  if (EDITING_SUB_ID) { saveSubscriptionEdits(); return; }
   updateDeliveryGate();
   if (!(ME.user && ME.user.id)) { el('subsMsg').textContent = 'Sign in required.'; return; }
   if (!isPremium()) { el('subsMsg').textContent = 'Premium required to create Delivery.'; openPricing('alerts'); return; }
@@ -7161,7 +7258,7 @@ function trParams() {
   }
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Section headers display the
@@ -7864,7 +7961,7 @@ function loadTrClusters() {
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
-      var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
+      var dir = c.txType === 'B' || c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
       // minDate can be absent on malformed/partial rows; drop the leading
@@ -8304,7 +8401,7 @@ function analyticsTradeRow(t, ctx) {
     ticker: t.ticker || ctx.ticker || '',
     assetType: t.assetType || '',
     assetTypeName: t.assetTypeName || '',
-    type: t.txType || 'P',
+    type: (t.txType === 'P' ? 'B' : t.txType) || 'B',
     min: t.amountMin == null ? null : t.amountMin,
     max: t.amountMax == null ? null : t.amountMax,
     txdate: toISODate(t.txDate) || '',
@@ -8333,7 +8430,7 @@ function openAsset(ticker) {
   // Follow the Trends window if it's on the page; fall back to all-time when the
   // drawer is opened from a context without the window selector (feed, search).
   var tickerWindow = document.querySelector('.tr-window-select') ? getTrWindow() : 'all';
-  var tickerWindowLabel = tickerWindow === 'all' ? 'All Time' : windowLabel(tickerWindow);
+  var tickerWindowLabel = tickerWindow === 'all' ? 'All' : windowLabel(tickerWindow);
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
     : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
@@ -8534,7 +8631,7 @@ function openTrade(row) {
   var memberVal = row.filerId
     ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(fmtName(row.member)) + '</span>'
     : esc(fmtName(row.member));
-  var sideWord = row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
+  var sideWord = row.type === 'B' || row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
   var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
   var displayAsset = cleanAsset(row.asset || '');
   // A trade drawer leads with the TRANSACTION (kicker + amount), not the company —
@@ -9227,7 +9324,7 @@ function clientTradeToRow(item) {
     ticker: a.ticker || '',
     assetType: a.type || '',
     assetTypeName: '',
-    type: t.type || 'P',
+    type: (t.type === 'P' ? 'B' : t.type) || 'B',
     min: t.amountMin, max: t.amountMax,
     txdate: toISODate(t.date) || '',
     owner: t.owner || '',
@@ -9399,7 +9496,7 @@ renderFeedHeader();
 
 window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
 
-// Apply resolved theme (default light; respects light|dark|system pref).
+// Apply resolved theme (default system; respects light|dark|system pref).
 applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.

@@ -57,7 +57,7 @@ final class ClientTrade: Decodable, Identifiable {
     }
 
     var transaction: Transaction {
-        get { storedTransaction ?? Transaction(type: "P") }
+        get { storedTransaction ?? Transaction(type: "B") }
         set { storedTransaction = newValue }
     }
 
@@ -142,7 +142,7 @@ final class ClientTrade: Decodable, Identifiable {
         self.docId = try container.decodeIfPresent(String.self, forKey: .docId) ?? ""
         self.storedMember = try container.decodeIfPresent(Member.self, forKey: .storedMember) ?? Member()
         self.storedAsset = try container.decodeIfPresent(Asset.self, forKey: .storedAsset) ?? Asset()
-        self.storedTransaction = try container.decodeIfPresent(Transaction.self, forKey: .storedTransaction) ?? Transaction(type: "P")
+        self.storedTransaction = try container.decodeIfPresent(Transaction.self, forKey: .storedTransaction) ?? Transaction(type: "B")
         self.storedFiling = try container.decodeIfPresent(Filing.self, forKey: .storedFiling) ?? Filing()
         self.confidence = try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 1.0
         self.source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .primary
@@ -527,6 +527,34 @@ struct DeliveryCredential: Identifiable, Equatable {
     let delivery: String
     let streamURL: String?
     let secret: String?
+}
+
+struct AppleConfirmResponse: Decodable {
+    let ok: Bool?
+    let plan: String?
+    let expiresAt: String?
+    let originalTransactionId: String?
+    let entitlement: EntitlementSnapshot?
+
+    struct EntitlementSnapshot: Decodable {
+        let premium: Bool?
+        let status: String?
+        let plan: String?
+        let trialing: Bool?
+    }
+}
+
+/// App Store product identifiers (configure matching subscriptions in App Store Connect).
+enum AppleIAPProduct: String, CaseIterable, Identifiable {
+    case monthly = "trade.congress.premium.monthly"
+    case annual = "trade.congress.premium.annual"
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .monthly: return "Premium Monthly"
+        case .annual: return "Premium Annual"
+        }
+    }
 }
 
 enum JSONValue: Codable, Hashable {

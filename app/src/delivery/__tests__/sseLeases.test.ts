@@ -57,7 +57,7 @@ describe('durable SSE admission', () => {
   it('bounds catch-up work per tick and resumes monotonically beyond the cap', async () => {
     const rows = Array.from({ length: 1_201 }, (_, index) => ({
       id: `tx_${index + 1}`, doc_id: 'doc_1', filer_id: null, tx_date: '2026-01-01',
-      owner: 'self', asset_name: 'Asset', ticker: null, asset_type: 'stock', tx_type: 'P',
+      owner: 'self', asset_name: 'Asset', ticker: null, asset_type: 'stock', tx_type: 'B',
       amount_min: 1001, amount_max: 15000, is_option: 0, cap_gains_over_200: 0,
       raw_text: '', confidence: 1, source: 'primary', created_at: '2026-01-01T00:00:00Z',
       cursor_seq: index + 1,
@@ -122,7 +122,7 @@ describe('durable SSE admission', () => {
   it('does not resolve a backlog high-water cursor before its frame is accepted', async () => {
     const row = {
       id: 'tx_1', doc_id: 'doc_1', filer_id: null, tx_date: '2026-01-01',
-      owner: 'self', asset_name: 'Asset', ticker: null, asset_type: 'stock', tx_type: 'P',
+      owner: 'self', asset_name: 'Asset', ticker: null, asset_type: 'stock', tx_type: 'B',
       amount_min: 1001, amount_max: 15000, is_option: 0, cap_gains_over_200: 0,
       raw_text: '', confidence: 1, source: 'primary', created_at: '2026-01-01T00:00:00Z',
       cursor_seq: 1,

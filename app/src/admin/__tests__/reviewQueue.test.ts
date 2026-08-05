@@ -352,7 +352,7 @@ describe('review queue admin API', () => {
       },
     } as unknown as D1Database;
     const base = {
-      ticker: 'AAPL', assetName: 'Apple Inc.', txType: 'P', txDate: '2026-06-19',
+      ticker: 'AAPL', assetName: 'Apple Inc.', txType: 'B', txDate: '2026-06-19',
       owner: null, isOption: false, capGainsOver200: false,
     };
     const invalid = [
@@ -426,7 +426,7 @@ describe('review queue admin API', () => {
             assetType: 'ST',
             assetTypeName: 'Stocks',
             owner: 'self',
-            txType: 'P',
+            txType: 'B',
             amountMin: 1001,
             amountMax: 15000,
             txDate: '2026-06-01',
@@ -465,7 +465,7 @@ describe('review queue admin API', () => {
       ticker: 'AAPL',
       assetType: 'ST',
       assetTypeName: 'Stocks',
-      txType: 'P',
+      txType: 'B',
       amountMin: 1001,
       amountMax: 15000,
       isOption: false,

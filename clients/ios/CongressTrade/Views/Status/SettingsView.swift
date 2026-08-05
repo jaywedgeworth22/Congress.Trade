@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @State private var isAuthenticating = false
     @State private var magicEmail = ""
+    @State private var showSubscribe = false
 
     var body: some View {
         NavigationStack {
@@ -166,6 +167,22 @@ struct SettingsView: View {
                     Text("Sign in to manage delivery alerts and a saved watchlist. Preferences sync to the Congress.Trade backend — this app never holds provider keys or admin tokens.")
                 }
 
+                if store.signedIn && !store.isPremium {
+                    Section("Premium") {
+                        Text("1-month free trial, then $5/month or $50/year.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            showSubscribe = true
+                        } label: {
+                            Label("Subscribe with Apple", systemImage: "apple.logo")
+                        }
+                        if let url = store.api.upgradeURL {
+                            Link("Subscribe on congress.trade", destination: url)
+                        }
+                    }
+                }
+
                 if store.signedIn {
                     Section("Recent Activity") {
                         if store.commands.isEmpty {
@@ -212,6 +229,10 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
             .navigationTitle("Settings")
+            .sheet(isPresented: $showSubscribe) {
+                SubscribeView()
+                    .environmentObject(store)
+            }
         }
     }
 

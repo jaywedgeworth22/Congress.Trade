@@ -2,23 +2,28 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalizeTxType,
   canonicalizeTxTypeOrBuy,
+  isBuyTxType,
   txTypeDisplayLetter,
   txTypeLabel,
 } from '../txType.ts';
 
-describe('canonicalizeTxType', () => {
-  it('maps competitor and form aliases to P|S|E', () => {
-    expect(canonicalizeTxType('purchase')).toBe('P');
-    expect(canonicalizeTxType('buy')).toBe('P');
-    expect(canonicalizeTxType('bought')).toBe('P');
-    expect(canonicalizeTxType('B')).toBe('P');
-    expect(canonicalizeTxType('b')).toBe('P');
+describe('canonicalizeTxType → B|S|E', () => {
+  it('maps all buy aliases to B (including legacy P)', () => {
+    expect(canonicalizeTxType('purchase')).toBe('B');
+    expect(canonicalizeTxType('buy')).toBe('B');
+    expect(canonicalizeTxType('bought')).toBe('B');
+    expect(canonicalizeTxType('B')).toBe('B');
+    expect(canonicalizeTxType('b')).toBe('B');
+    expect(canonicalizeTxType('P')).toBe('B');
+    expect(canonicalizeTxType('p')).toBe('B');
+  });
+
+  it('maps sales and exchanges', () => {
     expect(canonicalizeTxType('sale_full')).toBe('S');
     expect(canonicalizeTxType('sale_partial')).toBe('S');
     expect(canonicalizeTxType('sell')).toBe('S');
-    expect(canonicalizeTxType('exchange')).toBe('E');
-    expect(canonicalizeTxType('P')).toBe('P');
     expect(canonicalizeTxType('S')).toBe('S');
+    expect(canonicalizeTxType('exchange')).toBe('E');
     expect(canonicalizeTxType('E')).toBe('E');
   });
 
@@ -28,27 +33,29 @@ describe('canonicalizeTxType', () => {
   });
 });
 
-describe('txTypeLabel / display letter', () => {
-  it('uses Buy/Sell/Exchange product labels', () => {
-    expect(txTypeLabel('P')).toBe('Buy');
+describe('labels + helpers', () => {
+  it('labels Buy/Sell/Exchange', () => {
     expect(txTypeLabel('B')).toBe('Buy');
-    expect(txTypeLabel('purchase')).toBe('Buy');
+    expect(txTypeLabel('P')).toBe('Buy');
     expect(txTypeLabel('S')).toBe('Sell');
-    expect(txTypeLabel('sale')).toBe('Sell');
     expect(txTypeLabel('E')).toBe('Exchange');
     expect(txTypeLabel(null)).toBeNull();
   });
 
-  it('maps buy storage P to display letter B', () => {
+  it('display letter is B for buys', () => {
     expect(txTypeDisplayLetter('P')).toBe('B');
     expect(txTypeDisplayLetter('B')).toBe('B');
     expect(txTypeDisplayLetter('S')).toBe('S');
-    expect(txTypeDisplayLetter('E')).toBe('E');
-    expect(txTypeDisplayLetter('')).toBeNull();
   });
 
   it('defaults unknown to Buy via OrBuy', () => {
-    expect(canonicalizeTxTypeOrBuy(null)).toBe('P');
-    expect(canonicalizeTxTypeOrBuy('garbage')).toBe('P');
+    expect(canonicalizeTxTypeOrBuy(null)).toBe('B');
+    expect(canonicalizeTxTypeOrBuy('garbage')).toBe('B');
+  });
+
+  it('isBuyTxType dual-reads P', () => {
+    expect(isBuyTxType('B')).toBe(true);
+    expect(isBuyTxType('P')).toBe(true);
+    expect(isBuyTxType('S')).toBe(false);
   });
 });

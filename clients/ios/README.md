@@ -82,3 +82,18 @@ http://127.0.0.1:8787/api/client/v1
 The app keeps at most 500 recent trades on-device for offline viewing. The
 current client API supports fetching newer rows with `since`; it does not yet
 expose an older-page cursor, so historical paging remains a backend follow-up.
+
+## TestFlight ship (no Xcode UI)
+
+```bash
+# From repo root (agent worktree)
+bash scripts/ios-ship-testflight.sh
+
+# IPA only
+bash scripts/ios-ship-testflight.sh --export-only
+```
+
+Fleet driver (all three apps): `/Users/jay/apps/ios-fleet/README.md`.
+
+Bundle ID: `trade.congress.ios`. Team: `CC8UTF7ATG`. Requires App Store Connect
+app record + Xcode session or `~/.secrets/appstore-connect.env`.

@@ -278,8 +278,8 @@ struct TrendsView: View {
                         }
                         Spacer()
                         StatusPill(
-                            text: (c.txType == "P" || c.txType == "B") ? "Buy" : (c.txType == "S" ? "Sell" : (c.txType == "E" ? "Exchange" : c.txType)),
-                            color: (c.txType == "P" || c.txType == "B") ? .green : (c.txType == "S" ? .red : .blue),
+                            text: (c.txType == "B" || c.txType == "P") ? "Buy" : (c.txType == "S" ? "Sell" : (c.txType == "E" ? "Exchange" : c.txType)),
+                            color: (c.txType == "B" || c.txType == "P") ? .green : (c.txType == "S" ? .red : .blue),
                             compact: true
                         )
                         Text("\(c.memberCount) pols")

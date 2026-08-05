@@ -778,6 +778,13 @@ export const PURGE_LEAKED_KV_CREDENTIALS_SCHEMA_STATEMENTS = [
 export const QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_completed_updated ON deno_runtime_queue (updated_at) WHERE status = 'completed'",
   "CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_failed_updated ON deno_runtime_queue (updated_at) WHERE status = 'failed'",
+
+  // Canonical tx_type codes: B=Buy, S=Sell, E=Exchange. Migrate legacy STOCK Act
+  // form letter P (Purchase) → B. Idempotent. Future writes already emit B via
+  // canonicalizeTxType / normalizers.
+  `UPDATE transactions SET tx_type = 'B' WHERE tx_type = 'P'`,
+  // Competitor / latency observations that stored side as free text stay as-is;
+  // only the transactions table is the product API source of truth for txType.
 ] as const;
 
 export const LOCAL_VISION_WORKER_SCHEMA_STATEMENTS = [

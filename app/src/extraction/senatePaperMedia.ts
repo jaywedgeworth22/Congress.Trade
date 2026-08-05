@@ -24,7 +24,7 @@ const PAPER_OCR_PROMPT = `This is page image(s) of a Senate paper PERIODIC DISCL
 Amount columns are checkbox bands left-to-right:
 $1,001 - $15,000 | $15,001 - $50,000 | $50,001 - $100,000 | $100,001 - $250,000 | $250,001 - $500,000 | $500,001 - $1,000,000 | Over $1,000,000 | ...
 Only emit a transaction when Purchase/Sale/Exchange (Buy/Sell/Exchange) has an X AND one amount band has an X.
-txType: P=Buy (Purchase), S=Sell (Sale), E=Exchange. B also means Buy.
+txType: B=Buy (Purchase/P), S=Sell (Sale), E=Exchange. Always emit B for buys.
 owner: self if no prefix, spouse if (S), joint if (J), dependent if (DC).
 Include parent fund/header as subholding when the row is nested under a fund name.
 Skip blank rows, cover letters, and header-only fund labels without a date.
@@ -142,7 +142,7 @@ export async function extractFromSenatePaperMedia(
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://congress.trade',
-        'X-Title': 'Congress.Trade senate paper media',
+        'X-Title': 'congress.trade senate paper media',
       },
       body: JSON.stringify(body),
       signal: opts.signal,
@@ -227,7 +227,7 @@ function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
 function normalizeTxType(raw: unknown): TxType | null {
   const s = String(raw ?? '').trim().toUpperCase();
   // Storage P|S|E; product buy letter B aliases P.
-  if (s === 'P' || s === 'B' || s.startsWith('PURCH') || s === 'BUY') return 'P';
+  if (s === 'P' || s === 'B' || s.startsWith('PURCH') || s === 'BUY') return 'B';
   if (s === 'S' || s.startsWith('SALE') || s.startsWith('SELL')) return 'S';
   if (s === 'E' || s.startsWith('EXCH')) return 'E';
   return null;

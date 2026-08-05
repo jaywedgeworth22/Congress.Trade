@@ -77,7 +77,7 @@ describe('SenateHtmlExtractor', () => {
     expect(r1.assetName).toContain('Apple');
     expect(r1.assetType).toBe('Stock');
     expect(r1.assetTypeName).toBe('Stock');
-    expect(r1.txType).toBe('P');
+    expect(r1.txType).toBe('B');
     expect(r1.amountMin).toBe(1001);
     expect(r1.amountMax).toBe(15000);
     expect(r1.isOption).toBe(false);
@@ -100,10 +100,10 @@ describe('SenateHtmlExtractor', () => {
 
 describe('field normalizers', () => {
   it('maps tx-type labels to P/S/E', () => {
-    expect(normalizeTxType('Purchase')).toBe('P');
+    expect(normalizeTxType('Purchase')).toBe('B');
     expect(normalizeTxType('Sale (Partial)')).toBe('S');
     expect(normalizeTxType('Exchange')).toBe('E');
-    expect(normalizeTxType('P')).toBe('P');
+    expect(normalizeTxType('P')).toBe('B');
     expect(normalizeTxType('')).toBeNull();
   });
 

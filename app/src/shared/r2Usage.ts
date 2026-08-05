@@ -364,7 +364,7 @@ export async function runR2UsageSummary(
     const dateLabel = now.toISOString().slice(0, 10);
 
     const delivered = await sendPushover(env, {
-      title: `Congress.Trade R2 usage — ${dateLabel}`,
+      title: `congress.trade R2 usage — ${dateLabel}`,
       message,
     }, {
       appToken: secrets.PUSHOVER_APP_TOKEN,

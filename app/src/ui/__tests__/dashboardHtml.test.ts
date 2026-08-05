@@ -88,7 +88,7 @@ function loadBenchmarkPresentationHelpers() {
 describe('DASHBOARD_HTML', () => {
   it('uses the descriptive product name as the document title', () => {
     expect(DASHBOARD_HTML).toContain(
-      '<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
+      '<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
     expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
@@ -420,8 +420,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
-  it('defaults theme to light and offers Light/Dark/System controls like Socratic.Trade', () => {
-    expect(DASHBOARD_HTML).toContain("var pref = 'light'");
+  it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
+    expect(DASHBOARD_HTML).toContain("var pref = 'system'");
+    expect(DASHBOARD_HTML).toContain("return 'system'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
     expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref)');
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
@@ -430,7 +431,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
-    expect(DASHBOARD_HTML).toContain('content="#eff3f8"');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
@@ -1260,7 +1260,7 @@ describe('DASHBOARD_HTML', () => {
   it('does not use imported/published time as disclosure lag', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
-    expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
+    expect(DASHBOARD_HTML).not.toContain('using congress.trade import date');
   });
 
   it('explains disclosure timeliness metrics and keeps slowest filers scrollable', () => {
@@ -1559,7 +1559,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
 
   // Every model agrees on every field.
   const unanimousRow = {
-    rowKey: 'AAPL|2024-01-05|P',
+    rowKey: 'AAPL|2024-01-05|B',
     presentIn: MODELS,
     missingFrom: [],
     rowConsensus: 'unanimous',
@@ -1592,7 +1592,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
   // "amount" is a 1-1 tie between the two present models -> no majority ->
   // contested (winner value null, every present value listed as a dissenter).
   const contestedRow = {
-    rowKey: 'TSLA|2024-03-10|P',
+    rowKey: 'TSLA|2024-03-10|B',
     presentIn: ['anthropic:claude-sonnet-5', 'gemini:gemini-3.5-flash'],
     missingFrom: ['openai:gpt-4o'],
     rowConsensus: 'contested',
@@ -1659,7 +1659,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
   // (minority presence), yet every field's local electorate is that single
   // model, so votes*2 > total is trivially true for each field.
   const minorityRow = {
-    rowKey: 'NVDA|2024-04-01|P',
+    rowKey: 'NVDA|2024-04-01|B',
     presentIn: ['openai:gpt-4o'],
     missingFrom: ['anthropic:claude-sonnet-5', 'gemini:gemini-3.5-flash'],
     rowConsensus: 'contested',
@@ -1690,7 +1690,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     sandbox.setReviewItem({ docId: 'doc-2', chamber: 'house', payload: null });
     sandbox.setQueued([
       { ticker: 'MSFT', txType: 'S', txDate: '2024-02-01', owner: 'spouse', assetName: 'Microsoft (queued)', amountMin: 1, amountMax: 2 },
-      { ticker: 'TSLA', txType: 'P', txDate: '2024-03-10', owner: 'spouse', assetName: 'Tesla Inc (queued)', amountMin: 999, amountMax: 1000 },
+      { ticker: 'TSLA', txType: 'B', txDate: '2024-03-10', owner: 'spouse', assetName: 'Tesla Inc (queued)', amountMin: 999, amountMax: 1000 },
     ]);
 
     sandbox.useConsensusRows('doc-2');
@@ -1727,7 +1727,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     // Queued payload for the same row key, with values that differ from the lone
     // model's reading so a leak would be visible.
     sandbox.setQueued([
-      { ticker: 'NVDA', txType: 'P', txDate: '2024-04-01', owner: 'spouse', assetName: 'Nvidia (queued)', amountMin: 1, amountMax: 2 },
+      { ticker: 'NVDA', txType: 'B', txDate: '2024-04-01', owner: 'spouse', assetName: 'Nvidia (queued)', amountMin: 1, amountMax: 2 },
     ]);
 
     sandbox.useConsensusRows('doc-4');
@@ -1754,7 +1754,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     sandbox.setReviewItem({ docId: 'doc-5', chamber: 'house', payload: null });
     sandbox.setQueued([
       {
-        ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', owner: 'self',
+        ticker: 'AAPL', txType: 'B', txDate: '2024-01-05', owner: 'self',
         assetName: 'Apple queued', amountMin: 1001, amountMax: 15000,
         assetType: 'OP', assetTypeName: 'Stock Option', isOption: true,
         capGainsOver200: true, rawText: 'verbatim queued row', confidence: 0.42,
@@ -1797,7 +1797,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     });
     sandbox.setReviewItem({ docId: 'doc-key-drift', chamber: 'house', payload: null });
     sandbox.setQueued([{
-      ticker: null, assetName: 'Apple Inc.', txType: 'P', txDate: '2024-01-05',
+      ticker: null, assetName: 'Apple Inc.', txType: 'B', txDate: '2024-01-05',
       owner: 'self', amountMin: 1, amountMax: 2, rawText: 'queued unresolved ticker',
     }]);
 
@@ -1812,12 +1812,12 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     const sandbox = loadConsensusSandbox();
     const lot1 = {
       ...unanimousRow,
-      rowKey: 'AAPL|2024-01-05|P#1', baseRowKey: 'AAPL|2024-01-05|P', occurrence: 1,
+      rowKey: 'AAPL|2024-01-05|B#1', baseRowKey: 'AAPL|2024-01-05|B', occurrence: 1,
       fields: { ...unanimousRow.fields, amount: fieldConsensus({ amountMin: 1001, amountMax: 15000 }, 3, 3, [], true) },
     };
     const lot2 = {
       ...unanimousRow,
-      rowKey: 'AAPL|2024-01-05|P#2', baseRowKey: 'AAPL|2024-01-05|P', occurrence: 2,
+      rowKey: 'AAPL|2024-01-05|B#2', baseRowKey: 'AAPL|2024-01-05|B', occurrence: 2,
       fields: { ...unanimousRow.fields, amount: fieldConsensus({ amountMin: 15001, amountMax: 50000 }, 3, 3, [], true) },
     };
     sandbox.setConsensus('doc-6', {
@@ -1826,8 +1826,8 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     });
     sandbox.setReviewItem({ docId: 'doc-6', chamber: 'house', payload: null });
     sandbox.setQueued([
-      { ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', assetName: 'Lot 1', amountMin: 1, amountMax: 2, rawText: 'lot one' },
-      { ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', assetName: 'Lot 2', amountMin: 3, amountMax: 4, rawText: 'lot two' },
+      { ticker: 'AAPL', txType: 'B', txDate: '2024-01-05', assetName: 'Lot 1', amountMin: 1, amountMax: 2, rawText: 'lot one' },
+      { ticker: 'AAPL', txType: 'B', txDate: '2024-01-05', assetName: 'Lot 2', amountMin: 3, amountMax: 4, rawText: 'lot two' },
     ]);
 
     sandbox.useConsensusRows('doc-6');
@@ -1949,14 +1949,24 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   // (covered above alongside the sector canonicalization fix, since both land
   // in the same loadTrSectorFlow() change.)
 
-  // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
-  it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
-    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
-    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr');
-    expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
-    expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
+  // ---- 7. Canonical Premium pricing = $5/mo · $50/yr · 1-month trial -------
+  it('shows $5/mo and $50/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
+    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 1-month free trial');
+    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial');
+    expect(DASHBOARD_HTML).toContain('$5<span class="per">/mo</span>');
+    expect(DASHBOARD_HTML).toContain('$50<span class="per">/yr</span>');
+    expect(DASHBOARD_HTML).toContain('1-month free trial');
+    expect(DASHBOARD_HTML).not.toContain('$9<span class="per">/mo</span>');
+    expect(DASHBOARD_HTML).not.toContain('$90<span class="per">/yr</span>');
     expect(DASHBOARD_HTML).not.toContain('$15/mo');
     expect(DASHBOARD_HTML).not.toContain('$140/yr');
+  });
+
+  it('supports editing existing deliveries (edit button + save path)', () => {
+    expect(DASHBOARD_HTML).toContain('data-sub-edit');
+    expect(DASHBOARD_HTML).toContain('function beginEditSubscription(');
+    expect(DASHBOARD_HTML).toContain('function saveSubscriptionEdits(');
+    expect(DASHBOARD_HTML).toContain("type: 'update_subscription'");
   });
 
   // ---- 8a. Keyboard-focusable + Enter-activatable drill-down rows ----------

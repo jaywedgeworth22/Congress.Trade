@@ -58,7 +58,7 @@ export type DocKind = 'senate_html' | 'text_pdf' | 'scanned_pdf' | 'unknown';
 
 /** Beneficial owner of a transaction. */
 
-/** Transaction type storage codes: P (Buy) | S (Sell) | E (Exchange). Product labels use Buy/Sell/Exchange; input also accepts B for Buy. */
+/** Transaction type storage codes: B (Buy) | S (Sell) | E (Exchange). Legacy P (Purchase) is dual-read and coerced to B on write. */
 
 /** Delivery transport for a subscription. */
 export type DeliveryChannel = 'webhook' | 'sse';
@@ -237,7 +237,7 @@ export interface SubscriptionFilters {
   minAmount?: number;
   /** Maximum transaction amount_min (bracket floor); pairs with minAmount for a range. */
   maxAmount?: number;
-  /** Transaction sides to include, e.g. ['P'] for buys only (empty/undefined => all). Product label for P is Buy; B is accepted as a Buy alias on some input paths. */
+  /** Transaction sides to include, e.g. ['B'] for buys only (empty/undefined => all). Legacy 'P' is accepted and treated as Buy. */
   sides?: TxType[];
   /** GICS sectors to include (securities_ref.sector); empty/undefined => all. */
   sectors?: string[];
@@ -637,7 +637,7 @@ export interface Env {
   OGE_MAX_VISION_BYTES?: string;
   /** Model override for the secondary (arbitration) vision extractor. */
   ARBITRATION_MODEL?: string;
-  /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */
+  /** Enables the congress.trade-vs-provider congressional disclosure latency monitor. */
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
   /** Enables the public-API anti-scraping guard (UA blocklist + per-IP budgets). Unset = off. */
   SCRAPE_GUARD_ENABLED?: string;
@@ -651,7 +651,7 @@ export interface Env {
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */
   DISCLOSURE_LATENCY_WATCH_LIMIT?: string;
-  /** Enables the legacy Congress.Trade-vs-FMP monitor switch; kept for backward compatibility. */
+  /** Enables the legacy congress.trade-vs-FMP monitor switch; kept for backward compatibility. */
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
   /** Legacy FMP-specific latest-row limit; DISCLOSURE_LATENCY_WATCH_LIMIT takes precedence. */
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
@@ -802,6 +802,8 @@ export interface Env {
   STRIPE_PRICE_ANNUAL?: string;
   /** Free-trial length in days for new subscriptions (default 7). */
   STRIPE_TRIAL_DAYS?: string;
+  /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
+  APPLE_BUNDLE_ID?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */

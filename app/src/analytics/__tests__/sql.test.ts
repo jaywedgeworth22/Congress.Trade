@@ -135,11 +135,11 @@ describe('buildCommonFilters', () => {
       't.deprecated_at IS NULL',
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
-      `${PARTY_BUCKET_SQL} = ?`,
-      't.source = ?',
+      "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' ELSE NULL END) = ?",
+      "t.source IN ('primary', 'manual')",
       't.confidence >= ?',
     ]);
-    expect(params).toEqual(['-90 days', 'senate', 'D', 'primary', 0.7]);
+    expect(params).toEqual(['-90 days', 'senate', 'D', 0.7]);
   });
 
   it('source="all" applies no source clause', () => {
@@ -151,11 +151,12 @@ describe('buildCommonFilters', () => {
     const { where, params } = buildCommonFilters({
       window: 'all',
       tickerNotNull: true,
-      txTypes: ['P', 'S'],
+      txTypes: ['B', 'S'],
     });
     expect(where).toContain("(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))");
-    expect(where.some((w) => w.includes('t.tx_type IN (?, ?)'))).toBe(true);
-    expect(params).toEqual(['P', 'S']);
+    // Buy dual-read expands B → B,P so three binds with S
+    expect(where.some((w) => w.includes('t.tx_type IN (?, ?, ?)'))).toBe(true);
+    expect(params).toEqual(['B', 'P', 'S']);
   });
 
   it('tickers expands to an IN-list with one bind per ticker', () => {

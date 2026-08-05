@@ -192,25 +192,25 @@ describe('parseMistralOcrResponse', () => {
   it('maps a structured document_annotation (JSON string) to ParsedTx[]', () => {
     const annotation = JSON.stringify({
       transactions: [
-        { txDate: '2026-05-05', owner: 'self', assetName: 'Apple Inc.', ticker: 'AAPL', assetType: 'ST', txType: 'P', amountRange: '$1,001 - $15,000', isOption: false },
+        { txDate: '2026-05-05', owner: 'self', assetName: 'Apple Inc.', ticker: 'AAPL', assetType: 'ST', txType: 'B', amountRange: '$1,001 - $15,000', isOption: false },
         { txDate: '2026-05-06', owner: 'spouse', assetName: 'Intel Corp', ticker: 'INTC', assetType: 'ST', txType: 'S', amountRange: '$15,001 - $50,000', isOption: false },
       ],
     });
     const rows = parseMistralOcrResponse({ document_annotation: annotation, pages: [] });
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
+    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'B', amountMin: 1001, amountMax: 15000 });
     expect(rows[1]).toMatchObject({ ticker: 'INTC', txType: 'S' });
   });
 
   it('accepts a document_annotation already parsed into an object', () => {
     const rows = parseMistralOcrResponse({
-      document_annotation: { transactions: [{ assetName: 'Microsoft', ticker: 'MSFT', txType: 'P', amountRange: '$1,001 - $15,000' }] },
+      document_annotation: { transactions: [{ assetName: 'Microsoft', ticker: 'MSFT', txType: 'B', amountRange: '$1,001 - $15,000' }] },
     });
     expect(rows[0].ticker).toBe('MSFT');
   });
 
   it('falls back to a fenced JSON block in the OCR markdown', () => {
-    const md = 'Some OCR text\n```json\n{"transactions":[{"assetName":"Tesla","ticker":"TSLA","txType":"P","amountRange":"$1,001 - $15,000"}]}\n```\n';
+    const md = 'Some OCR text\n```json\n{"transactions":[{"assetName":"Tesla","ticker":"TSLA","txType": "B","amountRange":"$1,001 - $15,000"}]}\n```\n';
     const rows = parseMistralOcrResponse({ pages: [{ markdown: md }] });
     expect(rows[0].ticker).toBe('TSLA');
   });
@@ -221,13 +221,13 @@ describe('parseMistralOcrResponse', () => {
 });
 
 describe('parseLlamaParseMarkdown', () => {
-  const txJson = '[{"assetName":"Apple Inc.","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000","txDate":"2026-05-05","owner":"self","assetType":"ST","isOption":false}]';
+  const txJson = '[{"assetName":"Apple Inc.","ticker":"AAPL","txType": "B","amountRange":"$1,001 - $15,000","txDate":"2026-05-05","owner":"self","assetType":"ST","isOption":false}]';
 
   it('extracts a fenced ```json block', () => {
     const md = `Some OCR preamble.\n\`\`\`json\n${txJson}\n\`\`\`\n`;
     const rows = parseLlamaParseMarkdown(md);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
+    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'B', amountMin: 1001, amountMax: 15000 });
   });
 
   it('extracts a fenced ``` block without the json tag', () => {
@@ -241,7 +241,7 @@ describe('parseLlamaParseMarkdown', () => {
   });
 
   it('parses multiple transactions', () => {
-    const multi = '[{"assetName":"AAPL","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000"},{"assetName":"MSFT","ticker":"MSFT","txType":"S","amountRange":"$15,001 - $50,000"}]';
+    const multi = '[{"assetName":"AAPL","ticker":"AAPL","txType": "B","amountRange":"$1,001 - $15,000"},{"assetName":"MSFT","ticker":"MSFT","txType":"S","amountRange":"$15,001 - $50,000"}]';
     const rows = parseLlamaParseMarkdown(`\`\`\`json\n${multi}\n\`\`\``);
     expect(rows).toHaveLength(2);
     expect(rows[1].ticker).toBe('MSFT');
@@ -280,7 +280,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
   const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
   const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-5.6-terra' };
   const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
-  const okContent = '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}';
+  const okContent = '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"}]}';
 
   afterEach(() => vi.unstubAllGlobals());
 
@@ -480,7 +480,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
             service_tier: 'default',
             status: 'incomplete',
             incomplete_details: { reason: 'max_output_tokens' },
-            output: [{ content: [{ text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro' }] }],
+            output: [{ content: [{ text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro' }] }],
             usage: {
               input_tokens: 900,
               output_tokens: 8_000,
@@ -697,7 +697,7 @@ describe('runCandidateOnDoc: provider billing metadata', () => {
       {
         ticker: 'AAPL',
         assetName: 'Apple Inc.',
-        txType: 'P',
+        txType: 'B',
         amountRange: '$1,001 - $15,000',
       },
     ],
@@ -888,7 +888,7 @@ describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
         stop_reason: 'end_turn',
         content: [{
           type: 'text',
-          text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]',
+          text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"}]',
         }],
         usage: {
           input_tokens: 500,
@@ -937,7 +937,7 @@ describe('runCandidateOnDoc extraction cache', () => {
     assetName: 'Apple Inc.',
     ticker: 'AAPL',
     assetType: 'stock',
-    txType: 'P',
+    txType: 'B',
     amountMin: 1_001,
     amountMax: 15_000,
     isOption: false,
@@ -964,7 +964,7 @@ describe('runCandidateOnDoc extraction cache', () => {
       cached: true,
       latencyMs: 0,
       rowCount: 1,
-      rowKeys: ['AAPL|2026-07-14|P'],
+      rowKeys: ['AAPL|2026-07-14|B'],
       avgConfidence: 0.9,
       rows: [cachedRow],
     });
@@ -1112,7 +1112,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
       content: [{
         type: 'text',
         // Cut off mid-second-row.
-        text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro',
+        text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro',
       }],
       usage: { input_tokens: 400, output_tokens: 8000 },
       ...extra,
@@ -1131,7 +1131,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
           stop_reason: 'end_turn',
           content: [{
             type: 'text',
-            text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$15,001 - $50,000"}]',
+            text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$15,001 - $50,000"}]',
           }],
           usage: { input_tokens: 400, output_tokens: 150 },
         }),
@@ -1187,7 +1187,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
         id: 'msg_ok',
         model: 'claude-sonnet-5',
         stop_reason: 'end_turn',
-        content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]' }],
+        content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"}]' }],
         usage: { input_tokens: 400, output_tokens: 50 },
       }),
     } as unknown as Response);
@@ -1237,7 +1237,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF repair retry (2026-07-15 re
       stop_reason: 'end_turn',
       content: [{
         type: 'text',
-        text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]',
+        text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType": "B","amountRange":"$1,001 - $15,000"}]',
       }],
       usage: { input_tokens: 400, output_tokens: 50 },
     }),

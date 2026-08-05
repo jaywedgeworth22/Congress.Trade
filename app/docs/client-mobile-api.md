@@ -102,12 +102,13 @@ shared type set but still return `501`.
     render `<img>` against this URL directly; the proxy handles the logo
     provider key and edge caching server-side and 404s on a true miss so the
     client can fall back to a monogram.
-- Each feed item's `transaction.type` (`P`/`S`/`E`) can be `null` for a filing
+- Each feed item's `transaction.type` (`B`/`S`/`E`) can be `null` for a filing
   row whose disclosed side didn't parse (malformed/partial source text). This
-  is an honest passthrough, not a silent default to `P` (Buy): a
-  transaction with no confirmed side must not be misreported as a buy. Product
-  labels are **Buy / Sell / Exchange** (`P` stores Buy; input also accepts `B`
-  as a Buy alias). Ticker and member summary aggregates
+  is an honest passthrough, not a silent default to Buy: a transaction with no
+  confirmed side must not be misreported as a buy. Product labels are
+  **Buy / Sell / Exchange** (storage `B`/`S`/`E`). Form text "Purchase" and
+  legacy letter `P` are automatically translated to `B` on every ingest and
+  API read path. Ticker and member summary aggregates
   (`buyCount`/`sellCount`/`exchangeCount`, `estimatedNetFlowUsd`) already
   exclude a non-matching/`null` `tx_type` from every bucket rather than counting
   it as one; alert-subscription `sides` filters behave the same way. Clients

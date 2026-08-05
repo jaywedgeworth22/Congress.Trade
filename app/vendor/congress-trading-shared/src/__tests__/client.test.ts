@@ -391,7 +391,7 @@ describe("CongressTradeClient", () => {
     it("preserves required read provenance and additive transaction fields", async () => {
       const transaction = {
         id: "tx-1", docId: "doc-1", filerId: null, txDate: "2026-01-01", owner: "self",
-        assetName: "Apple", ticker: "AAPL", assetType: "stock", txType: "P",
+        assetName: "Apple", ticker: "AAPL", assetType: "stock", txType: "B",
         amountMin: 1001, amountMax: 15000, estValue: 8000, isOption: false,
         capGainsOver200: false, rawText: "Apple", confidence: 0.9, source: "primary",
         createdAt: "2026-01-02T00:00:00Z", cursorSeq: 42,
@@ -503,7 +503,7 @@ describe("CongressTradeClient", () => {
     it("getTickerBacktest returns backtest with horizons", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ ticker: "AAPL", filerId: "123", txType: "P", totalBuyEvents: 5, pricedDays: 30, horizons: [{ days: 30, tradeCount: 5, n: 5, medianReturn: 2.5, avgReturn: 3.0, winRate: 0.8, medianExcess: 1.5, avgExcess: 2.0 }] }),
+        json: async () => ({ ticker: "AAPL", filerId: "123", txType: "B", totalBuyEvents: 5, pricedDays: 30, horizons: [{ days: 30, tradeCount: 5, n: 5, medianReturn: 2.5, avgReturn: 3.0, winRate: 0.8, medianExcess: 1.5, avgExcess: 2.0 }] }),
       });
       const client = mockClient(mockFetch);
       const result = await client.getTickerBacktest("AAPL", { window: "90d", horizons: "30,60", filerId: "123" });
@@ -515,7 +515,7 @@ describe("CongressTradeClient", () => {
     it("getTickerBacktest returns null for empty horizons", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ ticker: "AAPL", txType: "P", totalBuyEvents: 0, pricedDays: 0, horizons: [] }),
+        json: async () => ({ ticker: "AAPL", txType: "B", totalBuyEvents: 0, pricedDays: 0, horizons: [] }),
       });
       const client = mockClient(mockFetch);
       const result = await client.getTickerBacktest("AAPL");
@@ -525,7 +525,7 @@ describe("CongressTradeClient", () => {
     it("getConflicts returns conflicts array", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ conflicts: [{ id: "c1", ticker: "AAPL", sector: "Tech", txType: "P", txDate: "2026-01-01", filerId: "123", memberName: "Jane Doe", chamber: "senate", partyBucket: "D", viaCommittees: ["Banking"], estAmountUsd: 50000 }] }),
+        json: async () => ({ conflicts: [{ id: "c1", ticker: "AAPL", sector: "Tech", txType: "B", txDate: "2026-01-01", filerId: "123", memberName: "Jane Doe", chamber: "senate", partyBucket: "D", viaCommittees: ["Banking"], estAmountUsd: 50000 }] }),
       });
       const client = mockClient(mockFetch);
       const result = await client.getConflicts({ chamber: "senate", party: "D" });

@@ -932,11 +932,11 @@ function validateReviewEdits(
       return { error: `edits[${index}] must be an object` };
     }
     const e = raw as EditedTx;
-    // Accept product buy letter B as alias of storage P.
+    // Canonical B|S|E; legacy form letter P (Purchase) → B.
     let txType = typeof e.txType === 'string' ? e.txType.toUpperCase() : '';
-    if (txType === 'B') txType = 'P';
-    if (txType !== 'P' && txType !== 'S' && txType !== 'E') {
-      return { error: `edits[${index}].txType must be explicitly P (Buy), S (Sell), or E (Exchange); B is accepted as Buy` };
+    if (txType === 'P') txType = 'B';
+    if (txType !== 'B' && txType !== 'S' && txType !== 'E') {
+      return { error: `edits[${index}].txType must be explicitly B (Buy), S (Sell), or E (Exchange); P is accepted as Buy` };
     }
     const ownerRaw = typeof e.owner === 'string' ? e.owner.trim().toLowerCase() : '';
     const owner = ownerRaw === '' ? null : ownerRaw;
@@ -1192,9 +1192,9 @@ function normalizeStoredOwner(value: string | null): 'self' | 'spouse' | 'joint'
 }
 
 function normalizeStoredTxType(value: string | null): TxType {
-  // Product buy letter B aliases storage P.
-  if (value === 'B') return 'P';
-  return value === 'P' || value === 'S' || value === 'E' ? value : 'P';
+  // Canonical B|S|E; legacy P → B on read so API never serves Purchase letter.
+  if (value === 'P' || value === 'B') return 'B';
+  return value === 'S' || value === 'E' ? value : 'B';
 }
 
 /**
@@ -3210,8 +3210,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /disclosure-latency -------------------------------------------
-  // Congress.Trade-vs-provider race monitor. `providerDeltaSec` is provider
-  // monitor first-observed minus Congress.Trade first_seen_at: positive means we
+  // congress.trade-vs-provider race monitor. `providerDeltaSec` is provider
+  // monitor first-observed minus congress.trade first_seen_at: positive means we
   // observed first; negative means the provider was already observed first.
   r.get('/disclosure-latency', async (c) => {
     const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10) || 50, 1), 200);
@@ -3833,7 +3833,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       (appBReceived?.imported_refs ?? 0) + (appBReceived?.fundamentals_rows ?? 0) + (appBReceived?.analyst_rows ?? 0);
     connections.push({
       id: 'app-b:receive',
-      label: 'App B → Congress.Trade Import',
+      label: 'App B → congress.trade Import',
       status: connectionStatus(!!runtimeSecrets.INGEST_TOKEN, 0, appBReceived?.latest_import_at ?? null),
       configured: !!runtimeSecrets.INGEST_TOKEN,
       lastUsedAt: appBReceived?.latest_import_at ?? null,
@@ -3849,7 +3849,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const appBPushConfigured = !!(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN);
     connections.push({
       id: 'app-b:send',
-      label: 'Congress.Trade → App B Push',
+      label: 'congress.trade → App B Push',
       status: appBPushConfigured ? 'ok' : 'warn',
       configured: appBPushConfigured,
       lastUsedAt: null,
@@ -4582,7 +4582,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          FROM transactions
         WHERE source = 'competitor_backfill'
           AND deprecated_at IS NULL
-          AND (filer_id LIKE 'EXEC-%' OR tx_type NOT IN ('P','S','E')
+          AND (filer_id LIKE 'EXEC-%' OR tx_type NOT IN ('B','P','S','E')
                OR lower(COALESCE(asset_name,'')) IN ('unknown',''))
         LIMIT 20000`,
     );
@@ -8222,7 +8222,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
       // 0020_disclosure_available_generated.sql — generated column for disclosure availability.
       ...DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
-      // 0021_disclosure_latency_watch.sql — Congress.Trade-vs-FMP disclosure race monitor.
+      // 0021_disclosure_latency_watch.sql — congress.trade-vs-FMP disclosure race monitor.
       `CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
          doc_id TEXT NOT NULL,
          provider TEXT NOT NULL DEFAULT 'fmp',
@@ -9241,6 +9241,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ...(generated && subscription.delivery === 'sse' && subscription.secret
         ? { streamUrl: `/api/stream?subscription=${encodeURIComponent(subscription.id)}&token=${encodeURIComponent(subscription.secret)}` }
         : {}),
+    });
+  });
+
+  // --- POST /users/grant-premium ------------------------------------------
+  // Operator grant: set trialing/active Premium for an email so they can
+  // create/edit Delivery. User must have signed in once (row exists).
+  r.post('/users/grant-premium', async (c) => {
+    let body: {
+      email?: unknown;
+      plan?: unknown;
+      trialDays?: unknown;
+      status?: unknown;
+      seedDelivery?: unknown;
+    };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!email || !email.includes('@')) return c.json({ error: 'email required' }, 400);
+    const plan = body.plan === 'annual' ? 'annual' : 'monthly';
+    const trialDaysRaw = Number(body.trialDays);
+    const trialDays = Number.isFinite(trialDaysRaw) && trialDaysRaw >= 0 ? Math.min(trialDaysRaw, 365) : 30;
+    const status = body.status === 'active' ? 'active' : 'trialing';
+    const { getUserByEmail, getUserById } = await import('../auth/users.ts');
+    const user = await getUserByEmail(c.env, email);
+    if (!user) {
+      return c.json({
+        error: 'user not found — have them sign in once (Google or magic link) first',
+        email,
+      }, 404);
+    }
+    const now = new Date();
+    const trialEnd = new Date(now.getTime() + trialDays * 86400000).toISOString();
+    const periodEnd = trialEnd;
+    await run(
+      c.env.DB,
+      `UPDATE users
+          SET subscription_status = ?,
+              plan = ?,
+              trial_end = ?,
+              current_period_end = ?,
+              cancel_at_period_end = 0
+        WHERE id = ?`,
+      [status, plan, status === 'trialing' ? trialEnd : null, periodEnd, user.id],
+    );
+    const refreshed = await getUserById(c.env, user.id);
+    let seed: { subscriptionId?: string; secret?: string; streamUrl?: string } | null = null;
+    if (body.seedDelivery === true || body.seedDelivery === 'sse') {
+      try {
+        const clientId = `user:${user.id}`;
+        const sub = await createSubscription(c.env, {
+          clientId,
+          delivery: 'sse',
+          targetUrl: null,
+          secret: null,
+          filters: {},
+        });
+        seed = {
+          subscriptionId: sub.id,
+          secret: sub.secret,
+          streamUrl: `/api/stream?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(sub.secret)}`,
+        };
+      } catch (err) {
+        return c.json({
+          ok: true,
+          user: refreshed
+            ? {
+                id: refreshed.id,
+                email: refreshed.email,
+                subscriptionStatus: refreshed.subscriptionStatus,
+                plan: refreshed.plan,
+                trialEnd: refreshed.trialEnd,
+              }
+            : null,
+          seedError: (err as Error).message,
+        });
+      }
+    }
+    return c.json({
+      ok: true,
+      user: refreshed
+        ? {
+            id: refreshed.id,
+            email: refreshed.email,
+            subscriptionStatus: refreshed.subscriptionStatus,
+            plan: refreshed.plan,
+            trialEnd: refreshed.trialEnd,
+            currentPeriodEnd: refreshed.currentPeriodEnd,
+          }
+        : null,
+      seed,
+      note: seed?.secret
+        ? 'Save the seed delivery secret now — it will not be shown again.'
+        : undefined,
     });
   });
 

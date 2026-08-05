@@ -228,7 +228,7 @@ describe('GET /review-queue pagination', () => {
         createdAt: tsAt(i),
         payload: JSON.stringify({
           minConfidence: 0.4,
-          transactions: [{ ticker: 'AAPL', assetName: 'Apple Inc.', txType: 'P', rawText: pad }],
+          transactions: [{ ticker: 'AAPL', assetName: 'Apple Inc.', txType: 'B', rawText: pad }],
         }),
         models: [{ provider: 'anthropic', model: 'claude-sonnet-5', ok: true, rowCount: 1, avgConfidence: 0.75 }],
       });
