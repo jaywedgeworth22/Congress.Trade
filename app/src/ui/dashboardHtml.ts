@@ -2311,6 +2311,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <ul class="feature-list" id="pricingFeatures">
       <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
       <li>Live SSE stream of every new filing — no polling</li>
+      <li>Mobile push notifications and full database CSV exports</li>
+      <li>Direct access to source PDF files from Congress</li>
+      <li style="opacity:0.8; font-size:0.9em; margin-top:0.5rem">Note: Users can add up to 2 delivery methods (webhooks or SSE streams).</li>
     </ul>
 
     <div class="plan-grid" id="pricingPlans">
