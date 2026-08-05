@@ -12,8 +12,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
-
-- **2026-08-05 — GROK — IN PROGRESS — #1039 Web delivery pause/resume/delete + filter editing.** Branch `grok/delivery-ui-controls`. Create/edit/pause already on main; adding `delete_subscription` + UI Delete, Exchange side options, empty/paused messaging polish, tests.
+- **2026-08-05 — GROK — IN PR — #1040 assets PR #1406; #1039 delivery PR #1407; DLQ clear in progress.**
+- **2026-08-05 — GROK — IN PROGRESS — FMP free keys latency-only.** Branch `grok/fmp-latency-keys-only`. Dual-key 235/day ET-spaced probes; FMP_LATENCY_API_KEY (+ secondary); enrichment hard-off; prices never FMP.
 - **2026-08-05 — GROK — IN PROGRESS — Housekeeping + query index (#1049/#1043 remainder).** Branch `grok/query-opts`.
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
@@ -1160,8 +1160,8 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
   saveWatchlist/updatePreferences exist (CongressTradeStore.swift:311-334) but no WatchlistView is in the target; createDelivery silently uses the invisible watchlist as the ticker filter (:341,353,364).
 - **iOS: ticker detail screen + filing PDF viewer (unassigned, M).**
   Backend GET /client/v1/ticker/:ticker exists (client/routes.ts:139-170) but APIClient has no ticker() and tapping tickers does nothing; docId is in models but only external sourceUrl is offered. Add TickerDetailView + /api/client/v1/documents/:docId/pdf viewing.
-- **Web: delivery pause/resume/delete + filter editing — IN PROGRESS GROK `grok/delivery-ui-controls` (#1039).**
-  dashboardHtml.ts create/edit/pause already present; shipping delete command + UI polish.
+- **Web: delivery pause/resume/delete + filter editing (unassigned, M).**
+  dashboardHtml.ts:4605-4634 hardcodes filters:{} at creation and renders a "paused" state users can never produce; PATCH /api/subscriptions/:id exists (delivery/rest.ts:825). Add filter form + per-row actions.
 - **Web: extract base64 assets from the 833KB dashboardHtml.ts (unassigned, M).**
   Single-file SPA (8,706 lines) inlines font + 2 PNGs as data URIs (:127,:1557,:1561), re-downloaded per request, defeating cache/compression/CSP. Extract to hashed static assets; target <100KB compressed HTML.
 - **iOS: replaceCache -> transactional upsert (unassigned, S).**

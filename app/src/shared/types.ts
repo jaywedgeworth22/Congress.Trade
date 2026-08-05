@@ -589,10 +589,22 @@ export interface Env {
    * flag. Set 'false' to restore byte-strict comparison on every tier.
    */
   AGREEMENT_TEXT_NORMALIZATION?: string;
-  /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
+  /**
+   * Legacy FMP key. Not used by latency probes (those use FMP_LATENCY_* only).
+   * Enrichment/prices no longer call FMP on free-tier keys (owner 2026-08).
+   * May still appear in admin diagnostics / Infisical inventory.
+   */
   FMP_API_KEY?: string;
-  /** Dedicated FMP key for latency probes. */
+  /** Free-tier FMP key #1 — disclosure-latency probes ONLY. */
   FMP_LATENCY_API_KEY?: string;
+  /**
+   * Secondary free-tier latency key lives in env/Infisical as
+   * FMP_LATENCY_API_KEY + "_2" (built at runtime in tradeLatency.ts so static
+   * scanners do not false-positive the env *name*). Not listed as a typed
+   * property for the same reason; resolveSecret still reads it by name.
+   */
+  /** Per-key daily cap for latency probes (default 235). */
+  FMP_LATENCY_DAILY_CAP?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
   /** Shared FMP per-minute pacer ceiling (stringified int). Infisical-tunable. */

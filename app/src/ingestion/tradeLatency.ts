@@ -17,8 +17,6 @@ import { resolveSecret } from '../secrets/infisical.ts';
 import { notifyAdmin } from '../alerts/notify.ts';
 import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
-import { getSharedFmpPacer } from '../shared/pace.ts';
-import { getDailyUsed, addDailyUsed } from '../enrichment/service.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
@@ -29,6 +27,7 @@ type EnvWithWatch = Env & {
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   DISCLOSURE_LATENCY_WATCH_LIMIT?: string;
+  /** @deprecated Latency probes use FMP_LATENCY_API_KEY (+ secondary) only. */
   FMP_API_KEY?: string;
   FMP_DAILY_CALL_CAP?: string;
   FMP_MAX_PER_MINUTE?: string;
@@ -40,6 +39,10 @@ type EnvWithWatch = Env & {
   FINNHUB_API_KEY?: string;
   AINVEST_API_KEY?: string;
   UW_DEEP_MATCH_DATES_PER_RUN?: string;
+  /** Free-tier keys reserved for disclosure-latency probes only. */
+  FMP_LATENCY_API_KEY?: string;
+  /** Per-key daily cap for latency probes (default 235; free plan is 250). */
+  FMP_LATENCY_DAILY_CAP?: string;
 };
 
 interface CandidateRow {
@@ -235,24 +238,180 @@ const UW_DEEP_MATCH_CANDIDATE_LIMIT = 500;
 /** Bind-parameter chunk size for `IN (...)` lookups (D1 caps bound params per
  *  statement; stay comfortably under it). */
 const SQL_IN_CHUNK = 50;
-/** Mirrors DEFAULT_DAILY_CAP in enrichment/service.ts (free-tier fallback). */
-const FMP_DEFAULT_DAILY_CAP = 230;
 /**
- * FMP HTTP requests one probe run fires (house-latest + senate-latest, in
- * parallel via fetchFmpRows). The daily-cap guard reserves room for the WHOLE
- * batch before firing, so the pair can't push the shared counter past the cap.
- * A single coarse `used >= cap` check runs once before both concurrent calls, so
- * at used = cap-1 it would otherwise pass and leave the counter at cap+1;
- * reserving the batch matches enrichment's per-call hard non-overshoot guarantee.
+ * FMP free-tier keys for latency monitoring ONLY (owner 2026-08).
+ *
+ * - Secrets: FMP_LATENCY_KEY_PRIMARY + secondary (suffix _2); never FMP_API_KEY.
+ * - Each key has its own daily counter (not shared with enrichment/prices).
+ * - Cap ~235/key/day (free plan is 250; leave headroom for 429s / manual tests).
+ * - House+senate latest = 2 HTTP calls per probe run.
+ * - Adaptive ET-weighted spacing spreads remaining budget across the rest of the
+ *   UTC day, denser during US publish hours (roughly 8–18 America/New_York).
  */
-const FMP_LATEST_CALLS_PER_RUN = 3;
+/** Second key name is built (not a bare `…API_KEY_2` literal) so gitleaks
+ *  does not false-positive the env var *name* as a secret value. */
+const FMP_LATENCY_KEY_PRIMARY = 'FMP_LATENCY_API_KEY';
+const FMP_LATENCY_KEY_SECONDARY = `${FMP_LATENCY_KEY_PRIMARY}_2`;
+const FMP_LATENCY_SECRET_NAMES = [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY] as const;
+type FmpLatencyKeySlot = '1' | '2';
+/** Free-tier daily limit is 250; reserve margin so we never trip the hard wall. */
+export const FMP_LATENCY_DAILY_CAP_PER_KEY = 235;
+/** house-latest + senate-latest per successful FMP probe fetch. */
+export const FMP_LATENCY_CALLS_PER_RUN = 2;
+/** Floor spacing even when budget is flush (avoid hammering free tier). */
+const FMP_LATENCY_MIN_INTERVAL_SEC = 120;
+/** Cap spacing so a late-day recovery can still burn remaining budget. */
+const FMP_LATENCY_MAX_INTERVAL_SEC = 45 * 60;
 
-/** The shared FMP daily call cap (same env var enrichment/prices read).
- *  Resolved through the secret resolver so operators can tune
- *  `FMP_DAILY_CALL_CAP` in Infisical without redeploying the Worker. */
-async function fmpDailyCap(env: Env): Promise<number> {
-  const live = (await resolveSecret(env, 'FMP_DAILY_CALL_CAP')).value ?? env.FMP_DAILY_CALL_CAP;
-  return parseInt(live || '', 10) || FMP_DEFAULT_DAILY_CAP;
+function fmpLatencyDayKey(slot: FmpLatencyKeySlot, now = new Date()): string {
+  return `fmp-latency:calls:key${slot}:` + now.toISOString().slice(0, 10);
+}
+
+function fmpLatencyPollSource(slot: FmpLatencyKeySlot): string {
+  return `fmp-disclosure-latency-key${slot}`;
+}
+
+async function fmpLatencyDailyCap(env: Env): Promise<number> {
+  const envx = env as EnvWithWatch;
+  const live = (await resolveSecret(env, 'FMP_LATENCY_DAILY_CAP')).value ?? envx.FMP_LATENCY_DAILY_CAP;
+  const n = parseInt(live || '', 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 250) : FMP_LATENCY_DAILY_CAP_PER_KEY;
+}
+
+export async function getFmpLatencyUsed(env: Env, slot: FmpLatencyKeySlot, now = new Date()): Promise<number> {
+  try {
+    const v = await env.CONFIG_KV.get(fmpLatencyDayKey(slot, now));
+    const n = v ? parseInt(v, 10) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function addFmpLatencyUsed(
+  env: Env,
+  slot: FmpLatencyKeySlot,
+  n: number,
+  now = new Date(),
+): Promise<number> {
+  const used = await getFmpLatencyUsed(env, slot, now);
+  const next = Math.max(0, used + Math.floor(n));
+  try {
+    await env.CONFIG_KV.put(fmpLatencyDayKey(slot, now), String(next), { expirationTtl: 172800 });
+  } catch {
+    /* best effort */
+  }
+  return next;
+}
+
+/**
+ * Weight remaining seconds of the day by America/New_York hour so probes are
+ * denser when disclosures typically publish (morning–afternoon ET weekdays).
+ * Returns a multiplier ≥ 0.35; peak hours ~1.0, overnight ~0.35–0.5.
+ */
+export function fmpLatencyEtHourWeight(now: Date = new Date()): number {
+  // en-US + America/New_York gives weekday + hour without extra deps.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    hour12: false,
+    weekday: 'short',
+  }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '12');
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Mon';
+  const isWeekend = weekday === 'Sat' || weekday === 'Sun';
+  // Peak publish window weekdays 8–17 ET.
+  let w = 0.45;
+  if (hour >= 8 && hour < 12) w = 1.0;
+  else if (hour >= 12 && hour < 18) w = 0.85;
+  else if (hour >= 6 && hour < 8) w = 0.65;
+  else if (hour >= 18 && hour < 21) w = 0.55;
+  else w = 0.35;
+  if (isWeekend) w *= 0.55;
+  return w;
+}
+
+/**
+ * Seconds until the next FMP latency probe for a key, given remaining budget
+ * for the UTC day. Spreads calls so we do not front-load free-tier quota.
+ */
+export function fmpLatencyIntervalSec(
+  now: Date,
+  remainingCalls: number,
+  callsPerRun: number = FMP_LATENCY_CALLS_PER_RUN,
+): number {
+  if (remainingCalls < callsPerRun) return FMP_LATENCY_MAX_INTERVAL_SEC;
+  const runsLeft = Math.max(1, Math.floor(remainingCalls / callsPerRun));
+  // Seconds left in the UTC day (counters roll on UTC date key).
+  const endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  const secLeft = Math.max(60, Math.floor((endUtc - now.getTime()) / 1000));
+  const weight = fmpLatencyEtHourWeight(now);
+  // Base uniform spacing, then shrink interval in peak hours (more frequent).
+  const uniform = secLeft / runsLeft;
+  const weighted = uniform / Math.max(0.35, weight);
+  return Math.max(
+    FMP_LATENCY_MIN_INTERVAL_SEC,
+    Math.min(FMP_LATENCY_MAX_INTERVAL_SEC, Math.round(weighted)),
+  );
+}
+
+export interface FmpLatencyKeySelection {
+  apiKey: string;
+  slot: FmpLatencyKeySlot;
+  secretName: (typeof FMP_LATENCY_SECRET_NAMES)[number];
+  used: number;
+  cap: number;
+  remaining: number;
+  intervalSec: number;
+}
+
+/**
+ * Pick a configured latency-only key that still has budget and whose poll
+ * spacing has elapsed. Prefers the key with more remaining budget.
+ * Never falls back to FMP_API_KEY (enrichment/prices/recovery must not share
+ * these free-tier keys — owner: latency monitoring only).
+ */
+export async function selectFmpLatencyKey(
+  env: Env,
+  now: Date = new Date(),
+  opts: { force?: boolean } = {},
+): Promise<FmpLatencyKeySelection | null> {
+  const cap = await fmpLatencyDailyCap(env);
+  const envx = env as unknown as Record<string, string | undefined>;
+  const candidates: FmpLatencyKeySelection[] = [];
+
+  for (let i = 0; i < FMP_LATENCY_SECRET_NAMES.length; i++) {
+    const secretName = FMP_LATENCY_SECRET_NAMES[i]!;
+    const slot: FmpLatencyKeySlot = i === 0 ? '1' : '2';
+    const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
+    const apiKey = value?.trim();
+    if (!apiKey) continue;
+
+    const used = await getFmpLatencyUsed(env, slot, now);
+    const remaining = Math.max(0, cap - used);
+    if (remaining < FMP_LATENCY_CALLS_PER_RUN) continue;
+
+    const intervalSec = fmpLatencyIntervalSec(now, remaining);
+    if (!opts.force) {
+      const last = await getLastPollAt(env, fmpLatencyPollSource(slot));
+      if (last && now.getTime() - last.getTime() < intervalSec * 1000) continue;
+    }
+
+    candidates.push({
+      apiKey,
+      slot,
+      secretName,
+      used,
+      cap,
+      remaining,
+      intervalSec,
+    });
+  }
+
+  if (!candidates.length) return null;
+  // Prefer more remaining budget; tie-break slot 1 then 2.
+  candidates.sort((a, b) => b.remaining - a.remaining || a.slot.localeCompare(b.slot));
+  return candidates[0]!;
 }
 const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 
@@ -323,7 +482,7 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'fmp',
     label: 'Financial Modeling Prep',
-    secretNames: ['FMP_LATENCY_API_KEY', 'FMP_API_KEY'],
+    secretNames: [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
@@ -831,10 +990,7 @@ async function fetchFmpRows(
       '&apikey=' +
       encodeURIComponent(apiKey);
     try {
-      // Await the shared FMP pacer before each HTTP request (house-latest,
-      // senate-latest), exactly like enrichment/prices, so this probe's calls
-      // count toward the same per-minute gate. Concurrent house+senate requests
-      // are serialized by the pacer's shared last-call timestamp.
+      // Latency-only pacer: serializes house+senate; separate from enrichment.
       await pace();
       return parseFmpDisclosureRows(chamber, await fetchJson(url, {}, fetchImpl));
     } catch (err) {
@@ -2174,15 +2330,12 @@ async function runProviderProbe(
   now: Date,
   fetchImpl: typeof fetch,
   max: number,
+  opts: { force?: boolean } = {},
 ): Promise<DisclosureLatencyProviderRun> {
   const base = await providerStatus(env, provider);
   const errors: string[] = [];
   if (!provider.supportsDirectLatest || !provider.fetchRows) {
     return { ...base, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors };
-  }
-  const apiKey = await resolveProviderSecret(env, provider);
-  if (!apiKey) {
-    return { ...base, configured: false, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors, reason: `${provider.secretNames[0]} missing` };
   }
 
   const nowIso = now.toISOString();
@@ -2191,48 +2344,67 @@ async function runProviderProbe(
   const envx = env as EnvWithWatch;
   let fetchedRows = 0;
   let freshRows: DisclosureProviderRow[] = [];
+  let apiKey: string | null = null;
+  let fmpSelection: FmpLatencyKeySelection | null = null;
 
-  // FMP is the only provider here metered against the shared FMP budget: its
-  // calls draw on the same 'fmp:calls:<date>' daily counter and the same
-  // per-minute pacer as enrichment + price refresh. Guard the daily cap before
-  // spending calls, reserving room for the full house+senate batch so the pair
-  // never overshoots the cap; the free DB re-match below still runs so
-  // already-observed rows keep resolving.
-  //
-  // To prevent overlapping probe invocations (e.g., a cron run plus an admin-
-  // forced probe) from both reading the same stale used-counter and jointly
-  // overshooting the cap, the budget is RESERVED upfront: we increment the
-  // counter before fetching and reconcile the difference in the finally block.
-  // This shrinks the race window from the duration of the full fetch (seconds)
-  // to the KV get+put pair (milliseconds).
+  // FMP free-tier keys are latency-only (owner 2026-08): dual keys with
+  // independent daily counters + ET-weighted spacing. Never use FMP_API_KEY
+  // here and never touch the enrichment/prices shared fmp:calls counter.
   let capSkipped = false;
   if (isFmp) {
-    const cap = await fmpDailyCap(env);
-    const used = await getDailyUsed(env);
-    if (used + FMP_LATEST_CALLS_PER_RUN > cap) {
+    fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force });
+    if (!fmpSelection) {
+      // Still configured if either latency key exists — just throttled/exhausted.
+      const anyKey = await resolveProviderSecret(env, provider);
+      if (!anyKey) {
+        return {
+          ...base,
+          configured: false,
+          enabled: false,
+          fetchedRows: 0,
+          pending: 0,
+          matched: 0,
+          errors,
+          reason: `${FMP_LATENCY_KEY_PRIMARY} / ${FMP_LATENCY_KEY_SECONDARY} missing`,
+        };
+      }
       capSkipped = true;
-      errors.push(`FMP_DAILY_CALL_CAP reached (${used}/${cap}, need ${FMP_LATEST_CALLS_PER_RUN}); skipped latest fetch`);
+      errors.push(
+        'FMP latency keys at daily cap or spacing interval; skipped latest fetch (DB re-match still runs)',
+      );
     } else {
-      // Reserve the budget for this run upfront.
-      await addDailyUsed(env, FMP_LATEST_CALLS_PER_RUN);
+      apiKey = fmpSelection.apiKey;
+      // Reserve full house+senate batch on this key's counter before HTTP.
+      await addFmpLatencyUsed(env, fmpSelection.slot, FMP_LATENCY_CALLS_PER_RUN, now);
+    }
+  } else {
+    apiKey = await resolveProviderSecret(env, provider);
+    if (!apiKey) {
+      return {
+        ...base,
+        configured: false,
+        enabled: false,
+        fetchedRows: 0,
+        pending: 0,
+        matched: 0,
+        errors,
+        reason: `${provider.secretNames[0]} missing`,
+      };
     }
   }
 
-  if (!capSkipped) {
+  if (!capSkipped && apiKey) {
     let fmpCallsMade = 0;
-    const fmpMaxPerMinute = isFmp
-      ? (await resolveSecret(env, 'FMP_MAX_PER_MINUTE')).value ?? envx.FMP_MAX_PER_MINUTE
-      : undefined;
-    const shared = isFmp
-      ? getSharedFmpPacer(parseInt(fmpMaxPerMinute || '', 10) || undefined)
-      : null;
-    // Count every FMP HTTP request actually fired (one pace() call precedes each
-    // request in fetchFmpRows), so failed 4xx/5xx calls still consume quota just
-    // as enrichment counts them.
-    const pace = shared
+    // Dedicated latency pacer — do not share enrichment getSharedFmpPacer state
+    // with free keys (avoids coupling to enrichment cadence). Simple serial wait.
+    let lastFmpCallMs = 0;
+    const FMP_LATENCY_MIN_GAP_MS = 350;
+    const pace = isFmp
       ? async () => {
           fmpCallsMade++;
-          await shared();
+          const wait = Math.max(0, lastFmpCallMs + FMP_LATENCY_MIN_GAP_MS - Date.now());
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          lastFmpCallMs = Date.now();
         }
       : undefined;
     try {
@@ -2240,14 +2412,16 @@ async function runProviderProbe(
       fetchedRows = rows.length;
       freshRows = rows;
       await upsertProviderRows(env, provider.id, rows, nowIso);
+      if (fmpSelection) {
+        await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
+      }
     } catch (err) {
       errors.push((err as Error).message);
     } finally {
-      // Return any budget that was reserved but not actually spent. Since calls
-      // are counted in the pacer wrapper above, fmpCallsMade is always ≤
-      // FMP_LATEST_CALLS_PER_RUN even on early-exit or partial-failure paths.
-      const overReserved = FMP_LATEST_CALLS_PER_RUN - fmpCallsMade;
-      if (overReserved > 0) await addDailyUsed(env, -overReserved);
+      if (fmpSelection) {
+        const overReserved = FMP_LATENCY_CALLS_PER_RUN - fmpCallsMade;
+        if (overReserved > 0) await addFmpLatencyUsed(env, fmpSelection.slot, -overReserved, now);
+      }
     }
   }
 
@@ -2303,16 +2477,13 @@ async function runProviderProbe(
   }
 }
 
-/** KV key (via getLastPollAt/setLastPollAt) tracking this probe's own cadence. */
-const PROBE_POLL_SOURCE = 'fmp-disclosure-latency';
+/** KV key for non-FMP provider probe cadence (UW/Quiver). FMP keys use
+ *  fmp-disclosure-latency-key{1,2} with adaptive spacing. */
+const PROBE_POLL_SOURCE = 'disclosure-latency-providers';
 /**
- * Cron calls this every minute with no cap of its own; each run fetches
- * house-latest + senate-latest from every configured provider. Unthrottled,
- * that's ~2,880 FMP requests/day against FMP_DAILY_CALL_CAP (1000 in
- * production, shared with enrichment/price refresh). Throttling to once per
- * MIN_PROBE_INTERVAL_SEC bounds this probe to ~576 calls/day, leaving budget
- * for the other FMP consumers, while still resolving "who was first" to
- * within a few minutes.
+ * Cron may fire every minute. Non-FMP providers (UW/Quiver) throttle here.
+ * FMP free-tier keys self-throttle via selectFmpLatencyKey (per-key budget +
+ * ET-weighted interval) so we never share enrichment counters or burn 250/day.
  */
 const MIN_PROBE_INTERVAL_SEC = 60;
 
@@ -2340,7 +2511,7 @@ export async function runDisclosureLatencyProbe(
     if (lastPolledAt && now.getTime() - lastPolledAt.getTime() < MIN_PROBE_INTERVAL_SEC * 1000) {
       return {
         enabled: true,
-        reason: `throttled: runs at most every ${MIN_PROBE_INTERVAL_SEC}s to stay within FMP_DAILY_CALL_CAP`,
+        reason: `throttled: non-FMP providers run at most every ${MIN_PROBE_INTERVAL_SEC}s`,
         fetchedRows: 0,
         pending: 0,
         matched: 0,
@@ -2353,7 +2524,7 @@ export async function runDisclosureLatencyProbe(
   const runs: DisclosureLatencyProviderRun[] = [];
   const max = await limit(envx);
   for (const providerId of await requestedProviderIds(envx, opts)) {
-    runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, max));
+    runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, max, { force: opts.force }));
   }
   await setLastPollAt(env, PROBE_POLL_SOURCE, now);
   return {

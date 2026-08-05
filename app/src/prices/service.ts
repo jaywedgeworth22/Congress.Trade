@@ -15,7 +15,7 @@ import { all, batchPrepared, get, run } from '../shared/db.ts';
 import { remainingBudget } from '../enrichment/compute.ts';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service.ts';
 import { getSharedFmpPacer } from '../shared/pace.ts';
-import { buildFmpPriceClient, type PriceClient } from './fmp.ts';
+import type { PriceClient } from './fmp.ts';
 import { buildMassivePriceClient } from './massive.ts';
 import { buildTiingoPriceClient } from './tiingo.ts';
 import { buildPeerPriceClient } from './peer.ts';
@@ -105,8 +105,9 @@ function isPeerOnlyProvider(provider: string): boolean {
  * APP_B_INGEST_TOKEN — all EOD history comes from Socratic.Trade. No Massive
  * key is required or used in that mode.
  *
- * Legacy: 'massive' / 'tiingo' / 'fmp' pick a paid provider. When APP_B_IMPORT_URL
- * is also set, the peer is still tried first (soft) and the paid provider is the
+ * Legacy: 'massive' / 'tiingo' pick a paid provider. FMP is never used for
+ * prices (free keys are latency-monitoring only). When APP_B_IMPORT_URL is also
+ * set, the peer is still tried first (soft) and the paid provider is the
  * empty/error fallback — useful during migration, not the steady state.
  */
 function pricePlan(env: EnvX): PricePlan | null {
@@ -128,30 +129,33 @@ function pricePlan(env: EnvX): PricePlan | null {
     };
   }
 
-  const provider = rawProvider || 'fmp';
+  // Owner 2026-08: FMP free keys are latency-monitoring only. Prices never
+  // call financialmodelingprep — use peer (Socratic.Trade), Massive, or Tiingo.
+  const provider = rawProvider || 'massive';
   let baseClient: PriceClient | null = null;
   let budgeted = false;
 
-  if (provider === 'massive' && env.MASSIVE_API_KEY) {
+  if (provider === 'fmp') {
+    // Explicit fmp is refused so misconfigured PRICE_PROVIDER=fmp cannot burn
+    // free latency keys. Fall through to peer/massive/tiingo if available.
+  } else if (provider === 'massive' && env.MASSIVE_API_KEY) {
     baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
   } else if (provider === 'tiingo' && env.TIINGO_API_KEY) {
     baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
-  } else if (provider === 'fmp' && env.FMP_API_KEY) {
-    baseClient = buildFmpPriceClient(env.FMP_API_KEY);
-    budgeted = true;
-  } else if (env.FMP_API_KEY) {
-    baseClient = buildFmpPriceClient(env.FMP_API_KEY);
-    budgeted = true;
-  } else if (env.MASSIVE_API_KEY) {
-    baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
-  } else if (env.TIINGO_API_KEY) {
-    baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
-  } else if (env.APP_B_IMPORT_URL) {
-    // Last resort: peer-only when no paid keys exist.
-    return {
-      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
-      fmpBudgeted: false,
-    };
+  }
+
+  if (!baseClient) {
+    if (env.MASSIVE_API_KEY) {
+      baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
+    } else if (env.TIINGO_API_KEY) {
+      baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
+    } else if (env.APP_B_IMPORT_URL) {
+      // Last resort: peer-only when no paid keys exist.
+      return {
+        client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
+        fmpBudgeted: false,
+      };
+    }
   }
 
   if (!baseClient) return null;
