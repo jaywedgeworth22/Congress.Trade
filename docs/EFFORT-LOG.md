@@ -1,3 +1,5 @@
+- **[2026-08-04][GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PROGRESS.** `scripts/ios-ship-testflight.sh` + fleet `/Users/jay/apps/ios-fleet/`. Bundle `trade.congress.ios`. Branch `grok/ios-testflight-ship`.
+
 # Congress.Trade Effort Log — cross-agent board
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
 - **2026-08-04 — GROK — IN PROGRESS — UX wave2 integrate.** Merging web (`883cc886`) + API CSV tests (`3d3b8044`) + iOS (`87810c6b`). Premium CSV + People/conflicts + iOS performance/type filter.
