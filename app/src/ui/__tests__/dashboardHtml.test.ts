@@ -101,6 +101,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'Zilla Slab'");
   });
 
+  it('references icons/logos via cacheable URL paths (not inline base64 data URIs)', () => {
+    // Issue #1040 — heavy brand/icon assets must not ship inside the HTML document.
+    expect(DASHBOARD_HTML).not.toMatch(/data:image\/png;base64,/);
+    expect(DASHBOARD_HTML).not.toMatch(/data:image\/jpeg;base64,/);
+    expect(DASHBOARD_HTML).not.toMatch(/data:image\/webp;base64,/);
+    expect(DASHBOARD_HTML).toContain('href="/favicon.ico');
+    expect(DASHBOARD_HTML).toContain('href="/icon-192.png');
+    expect(DASHBOARD_HTML).toContain('href="/icon-512.png');
+    expect(DASHBOARD_HTML).toContain('href="/apple-touch-icon.png');
+    expect(DASHBOARD_HTML).toContain('src="/assets/brand-logo-light.png');
+    expect(DASHBOARD_HTML).toContain('data-src-dark="/assets/brand-logo-dark.png');
+    expect(DASHBOARD_HTML).toContain('data-src-light="/assets/brand-logo-light.png');
+    expect(DASHBOARD_HTML).toContain('content="https://congress.trade/og-image.png"');
+  });
+
   it('contains at least the boot + main script blocks', () => {
     expect(scriptBlocks(DASHBOARD_HTML).length).toBeGreaterThanOrEqual(2);
   });
@@ -2307,5 +2322,62 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('padding-bottom: calc(86px + env(safe-area-inset-bottom))');
     expect(DASHBOARD_HTML).toContain('data-view="people"');
     expect(DASHBOARD_HTML).toContain('data-mobile="People"');
+  });
+});
+
+/**
+ * Issue #1040 — binary brand/icon/font assets live under app/public/ and are
+ * served by ui/routes.ts. assets.ts must stay a thin loader (no multi-MB base64).
+ */
+describe('static UI assets (issue #1040)', () => {
+  it('keeps assets.ts free of embedded base64 blobs', () => {
+    const source = readFileSync(new URL('../assets.ts', import.meta.url) as any, 'utf8') as string;
+    expect(source.length).toBeLessThan(8_000);
+    expect(source).not.toMatch(/iVBORw0KGgo/); // PNG magic in base64
+    expect(source).not.toMatch(/const\s+\w+_B64\s*=/);
+    expect(source).toContain('readFileSync');
+    expect(source).toContain('../../public');
+  });
+
+  it('loads binary files from app/public and serves them with cache headers', async () => {
+    const {
+      ICON_192_PNG,
+      BRAND_LOGO_LIGHT_PNG,
+      ZILLA_SLAB_WOFF2,
+      FAVICON_PNG,
+    } = await import('../assets.ts');
+
+    expect(ICON_192_PNG.bytes.byteLength).toBeGreaterThan(1_000);
+    expect(ICON_192_PNG.contentType).toBe('image/png');
+    expect(BRAND_LOGO_LIGHT_PNG.bytes.byteLength).toBeGreaterThan(1_000);
+    expect(ZILLA_SLAB_WOFF2.contentType).toBe('font/woff2');
+    expect(ZILLA_SLAB_WOFF2.bytes.byteLength).toBeGreaterThan(1_000);
+    expect(FAVICON_PNG.bytes.byteLength).toBeGreaterThan(100);
+
+    // PNG signature
+    expect(Array.from(ICON_192_PNG.bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    // wOFF magic
+    expect(String.fromCharCode(...ZILLA_SLAB_WOFF2.bytes.slice(0, 4))).toBe('wOF2');
+
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+
+    const cases: Array<{ path: string; typePrefix: string; minBytes: number; cache: string }> = [
+      { path: '/icon-192.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/favicon.ico', typePrefix: 'image/png', minBytes: 100, cache: 'public, max-age=86400' },
+      { path: '/assets/brand-logo-light.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/zilla-slab-700.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/og-image.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/apple-touch-icon.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+    ];
+
+    for (const c of cases) {
+      const res = await app.request(`http://localhost${c.path}`, {}, { } as never);
+      expect(res.status, c.path).toBe(200);
+      expect(res.headers.get('content-type') ?? '', c.path).toContain(c.typePrefix);
+      expect(res.headers.get('cache-control') ?? '', c.path).toContain(c.cache);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      expect(buf.byteLength, c.path).toBeGreaterThan(c.minBytes);
+    }
   });
 });

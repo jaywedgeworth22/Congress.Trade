@@ -905,6 +905,24 @@ describe('Deno durable queue', () => {
     }
   });
 
+  it('accepts filing.local_wait_check producer messages (scanned_pdf local vision wait)', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.local_wait_check', docId: 'scan-wait-1' });
+      await expect(
+        harness.ingest.send({ type: 'filing.local_wait_check' } as QueueMessage),
+      ).rejects.toThrow('docId is required');
+      const rows = await harness.rows();
+      expect(rows).toHaveLength(1);
+      expect(JSON.parse(rows[0].payload as string)).toEqual({
+        type: 'filing.local_wait_check',
+        docId: 'scan-wait-1',
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
   it('durably receipts and terminalizes corrupt legacy messages', async () => {
     const harness = await createHarness();
     try {
