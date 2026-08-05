@@ -88,7 +88,7 @@ struct DeliveryView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             if let url = store.api.upgradeURL {
                                 Link(destination: url) {
-                                    Label("Or subscribe on congress.trade", systemImage: "safari")
+                                    Label("Or subscribe on Congress.Trade", systemImage: "safari")
                                         .font(.subheadline.weight(.semibold))
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 8)
