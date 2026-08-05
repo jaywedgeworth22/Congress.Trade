@@ -18,7 +18,7 @@ struct SubscribeView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("1-month free trial, then $5/month or $50/year. Users can add up to 2 delivery methods (SSE streams, webhooks), mobile push notifications, and get full database CSV export.")
+                    Text("1-month free trial, then $5/month or $50/year. Users get direct access to source PDF files from Congress, can add up to 2 delivery methods (SSE streams, webhooks), push notifications, and full database CSV exports.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
