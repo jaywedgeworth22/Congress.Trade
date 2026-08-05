@@ -205,6 +205,8 @@ function asChambers(v: string | undefined): Chamber[] | undefined {
 }
 
 function asTxType(v: string | undefined): TxType | undefined {
+  // Product short letter B (= Buy) is an accepted alias of storage code P.
+  if (v === 'B' || v === 'b') return 'P';
   return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
 }
 

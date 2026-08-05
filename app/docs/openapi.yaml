@@ -1210,7 +1210,7 @@ components:
       name: type
       in: query
       schema: { type: string, enum: [P, S, E] }
-      description: Purchase / Sale / Exchange.
+      description: "Buy / Sell / Exchange (codes P|S|E; B accepted as Buy alias of P)."
     from:
       name: from
       in: query
@@ -1474,7 +1474,7 @@ components:
         transaction:
           type: object
           properties:
-            type: { type: string, enum: [P, S, E], nullable: true, description: "null = unknown side; do not render as Purchase." }
+            type: { type: string, enum: [P, S, E], nullable: true, description: "Storage codes P=Buy, S=Sell, E=Exchange. null = unknown side; do not render as Buy. Input may accept B as Buy alias of P." }
             date: { type: string, format: date, nullable: true }
             amountMin: { type: number, nullable: true }
             amountMax: { type: number, nullable: true }

@@ -41,7 +41,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>
 <meta name="description" content="Track U.S. Congress stock trades in near real time. Congress.Trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
 <link rel="canonical" href="https://congress.trade/" />
-<meta name="theme-color" content="#08111f" />
+<meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Congress.Trade" />
@@ -67,8 +67,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Apply the persisted theme before first paint to avoid a flash.
-  try { if (localStorage.getItem('ui-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) {}
+  // Theme before first paint: default light; stored pref may be light|dark|system.
+  (function () {
+    var pref = 'light';
+    try {
+      var s = localStorage.getItem('ui-theme');
+      if (s === 'light' || s === 'dark' || s === 'system') pref = s;
+    } catch (e) {}
+    var effective = pref;
+    if (pref === 'system') {
+      effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme-pref', pref);
+  })();
 </script>
 <style>
   :root {
@@ -730,6 +742,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu-pop button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:8px 10px; border-radius:7px; cursor:pointer; font-size:13px; font-family:var(--sans); }
   .menu-pop button:hover { background:var(--panel-2); }
   .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .menu-pop .theme-row {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    margin:4px 2px 6px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;
+  }
+  .menu-pop .theme-row-label { font-size:12px; color:var(--text-dim); flex:0 0 auto; }
+  .theme-seg {
+    display:inline-flex; align-items:center; gap:2px; padding:2px;
+    border:1px solid var(--border); border-radius:9px; background:var(--bg);
+  }
+  .theme-seg-btn {
+    display:inline-flex !important; align-items:center; gap:5px; width:auto !important;
+    border:1px solid transparent !important; background:transparent !important;
+    color:var(--text-dim) !important; padding:5px 9px !important; border-radius:7px !important;
+    cursor:pointer; font-size:11px !important; font-family:var(--sans); font-weight:500;
+    line-height:1.1; white-space:nowrap;
+  }
+  .theme-seg-btn:hover { color:var(--text) !important; background:transparent !important; }
+  .theme-seg-btn.active {
+    color:var(--text) !important; font-weight:600;
+    border-color:var(--border) !important; background:var(--panel) !important;
+    box-shadow:0 1px 2px rgba(0,0,0,.12);
+  }
+  .theme-seg-btn svg { width:13px; height:13px; flex:0 0 auto; }
+  /* Guest header theme control (signed-out) */
+  .theme-guest { display:inline-flex; align-items:center; }
+  .theme-guest .theme-seg { background:var(--panel-2); }
+  html[data-theme="dark"] { color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
   .overlay.open { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:430px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
@@ -1578,7 +1618,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -1599,8 +1639,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="P">Purchase</option>
-        <option value="S">Sale</option><option value="E">Exchange</option>
+        <option value="">All Types</option><option value="P">Buy</option>
+        <option value="S">Sell</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
         <div class="branch-seg">
@@ -2330,7 +2370,8 @@ function fmtBracketAmount(n) {
   return sign + '$' + Math.round(abs);
 }
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
-var typeName = { P: 'Buy', S: 'Sale', E: 'Exchange' };
+/* Product labels: Buy / Sell / Exchange. Storage/API codes stay P|S|E (B accepted as buy alias on input). */
+var typeName = { P: 'Buy', B: 'Buy', S: 'Sell', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 /* Format a politician name so a generational suffix sits after a single comma
@@ -2746,23 +2787,102 @@ function fmtMs(ms) {
   return fmtDuration(Math.round(ms / 1000));
 }
 
-/* ---- light / dark theme (per-visitor preference) ---- */
-function applyTheme(t) {
-  if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
-  else document.documentElement.removeAttribute('data-theme');
+/* ---- light / dark / system theme (per-visitor preference; default light) ---- */
+/* Mirrors Socratic.Trade console: Light | Dark | System segmented control. */
+function readThemePref() {
+  try {
+    var s = localStorage.getItem('ui-theme');
+    if (s === 'light' || s === 'dark' || s === 'system') return s;
+  } catch (e) {}
+  return 'light';
+}
+function resolveTheme(pref) {
+  if (pref === 'dark' || pref === 'light') return pref;
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch (e) {}
+  return 'light';
+}
+function themeIconSvg(kind) {
+  /* Inline 13px lucide-style icons: sun / moon / monitor */
+  if (kind === 'dark') {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+  }
+  if (kind === 'system') {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+}
+function themeSegHtml(pref) {
+  pref = pref || readThemePref();
+  var opts = [
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'system', label: 'System' }
+  ];
+  var btns = opts.map(function (o) {
+    var active = pref === o.id ? ' active' : '';
+    return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
+      themeIconSvg(o.id) + o.label + '</button>';
+  }).join('');
+  return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
+}
+function themeRowHtml(pref) {
+  return '<div class="theme-row"><span class="theme-row-label">Theme</span>' + themeSegHtml(pref) + '</div>';
+}
+function applyTheme(effective) {
+  effective = effective === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', effective);
   var logo = document.getElementById('brandLogo');
   if (logo) {
-    var next = t === 'light' ? logo.getAttribute('data-src-light') : logo.getAttribute('data-src-dark');
+    var next = effective === 'light' ? logo.getAttribute('data-src-light') : logo.getAttribute('data-src-dark');
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
-  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', effective === 'light' ? '#eff3f8' : '#08111f');
+  syncThemeSegUI();
 }
+function syncThemeSegUI() {
+  var pref = readThemePref();
+  document.querySelectorAll('.theme-seg-btn[data-theme-opt]').forEach(function (btn) {
+    var on = btn.getAttribute('data-theme-opt') === pref;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function setThemePref(pref) {
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
+  try {
+    localStorage.setItem('ui-theme', pref);
+  } catch (e) {}
+  document.documentElement.setAttribute('data-theme-pref', pref);
+  applyTheme(resolveTheme(pref));
+}
+/* Keep applyTheme(t) usable for callers that pass effective light|dark. */
 function toggleTheme() {
-  var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-  var next = cur === 'light' ? 'dark' : 'light';
-  try { localStorage.setItem('ui-theme', next); } catch (e) {}
-  applyTheme(next);
+  /* legacy: cycle light → dark → system → light */
+  var pref = readThemePref();
+  var next = pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
+  setThemePref(next);
 }
+(function bindSystemThemeListener() {
+  try {
+    if (!window.matchMedia) return;
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onChange = function () {
+      if (readThemePref() === 'system') applyTheme(resolveTheme('system'));
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  } catch (e) {}
+})();
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  var btn = t && t.closest ? t.closest('.theme-seg-btn[data-theme-opt]') : null;
+  if (!btn) return;
+  var pref = btn.getAttribute('data-theme-opt');
+  if (pref) setThemePref(pref);
+});
 
 /* ---- ticker logos (ported from socratictrade.com) ---- */
 /* logoDisplay is a SITE-WIDE setting the admin controls; the value is injected
@@ -4007,6 +4127,7 @@ function normalizeReviewEdit(t, sourceLabel) {
   var ticker = cleanAsset(t.ticker || '').toUpperCase();
   var asset = cleanAsset(t.assetName || t.asset || '');
   var type = String(t.txType || t.type || '').toUpperCase();
+  if (type === 'B') type = 'P'; // product Buy letter → storage P
   if (type !== 'P' && type !== 'S' && type !== 'E') type = null;
   var owner = String(t.owner || '').toLowerCase();
   if (['self', 'spouse', 'joint', 'dependent'].indexOf(owner) < 0) owner = null;
@@ -4539,7 +4660,7 @@ function meRowHtml(tx, chamber) {
   }
   return '<div class="me-row' + (isLow ? ' me-row-low-conf' : '') + '">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
-    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Purchase</option><option value="S"' + selectedOption('S', tx.txType) + '>Sale</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
+    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
     amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value=""' + selectedOption('', tx.owner || '') + '>Owner unknown</option><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
@@ -8245,7 +8366,7 @@ function openAsset(ticker) {
   }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
 }
 
-/* Purchase-cohort backtest summary for the asset drawer. */
+/* Buy-cohort backtest summary for the asset drawer. */
 function tickerBacktestHtml(d) {
   if (!d) return '<div class="note">Performance unavailable.</div>';
   var horizons = d.horizons || [];
@@ -8428,7 +8549,7 @@ function openTrade(row) {
       (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
-  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sale' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
   var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
   var notesBody = row.rawText ? filingNotesHtml(row.rawText) : '';
@@ -8554,7 +8675,8 @@ function loadMe() {
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
-    box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
+    box.innerHTML = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' +
+      '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
       (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
     return;
   }
@@ -8574,7 +8696,7 @@ function renderAccount() {
       '</button>' +
       '<div class="menu-pop" id="acctMenu">' +
         '<div class="who">' + esc(ME.user.email || '') + '</div>' +
-        '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
+        themeRowHtml() +
         (hasBillingAccount() && portalConfigured()
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
           : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
@@ -9252,8 +9374,8 @@ renderFeedHeader();
 
 window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
 
-// Reflect the persisted theme in the account menu.
-applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+// Apply resolved theme (default light; respects light|dark|system pref).
+applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.
 el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');

@@ -372,7 +372,7 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - ticker: the stock ticker symbol in UPPERCASE. Look VERY CAREFULLY in the asset description column, often in parentheses like (AAPL) or a standalone column. Do not miss the ticker if it is visible. null only if it is truly missing.
 - assetType: short asset-type code/label if shown (e.g. "ST","OP","Stock","Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Sale (Full)", "Sale (Partial)" or "S (partial)" to "S". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
+- txType: one of "P" (Buy/Purchase), "S" (Sell/Sale), "E" (Exchange). Map "Sale (Full)", "Sale (Partial)" or "S (partial)" to "S". "B" or "Buy" also map to "P". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$50,000,001 +".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: true only if a ">$200" capital-gains box/flag is checked.
@@ -393,7 +393,7 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - ticker: the stock ticker symbol in UPPERCASE. Look VERY CAREFULLY in the asset description column, often in parentheses like (AAPL) or a standalone column. Do not miss the ticker if it is visible. null only if it is truly missing.
 - assetType: short asset-type code/label if shown (e.g. "Stock", "Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" or "Sale (Partial)" to "S", "Exchange" to "E". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
+- txType: one of "P" (Buy/Purchase), "S" (Sell/Sale), "E" (Exchange). Map "Purchase"/"Buy"/"B" to "P", "Sale"/"Sell"/"Sale (Partial)" to "S", "Exchange" to "E". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$15,001 - $50,000".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: false (rarely applicable on OGE forms).
@@ -918,10 +918,11 @@ function normalizeOwner(raw: string | null | undefined): Owner | null {
 }
 
 function normalizeTxType(raw: string | null | undefined): TxType {
-  const s = (raw ?? '').toUpperCase();
-  if (s === 'P') return 'P';
-  if (s === 'S') return 'S';
-  if (s === 'E') return 'E';
+  const s = (raw ?? '').toUpperCase().trim();
+  // Storage codes P|S|E; product buy letter B aliases P.
+  if (s === 'P' || s === 'B' || s === 'BUY' || s === 'PURCHASE') return 'P';
+  if (s === 'S' || s === 'SELL' || s === 'SALE') return 'S';
+  if (s === 'E' || s === 'EXCHANGE') return 'E';
   // ParsedTx historically narrows this field to TxType, but the shared
   // normalizer must see an invalid value so it can hard-flag unreadable rows.
   return '' as TxType;

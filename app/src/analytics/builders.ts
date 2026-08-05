@@ -602,7 +602,7 @@ export function buildTickerSummaryQuery(ticker: string, p: CommonFilters): Built
 }
 
 /**
- * Purchase-cohort trade dates for a ticker backtest: BUYS only, options and
+ * Buy-cohort trade dates for a ticker backtest: BUYS only, options and
  * null/empty trade dates excluded, honoring the shared window/chamber/party/
  * source/minConf filters (+ optional single politician). The route computes forward
  * returns in-memory from the price series (see aggregateTickerBacktest), so this
