@@ -785,6 +785,10 @@ export const QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS = [
   `UPDATE transactions SET tx_type = 'B' WHERE tx_type = 'P'`,
   // Competitor / latency observations that stored side as free text stay as-is;
   // only the transactions table is the product API source of truth for txType.
+
+  // Speeds resolveMemberFilerId (memberName → filer_id) used by the public feed
+  // before the indexed transactions.filer_id keyset path.
+  'CREATE INDEX IF NOT EXISTS idx_filers_full_name_lower ON filers (LOWER(full_name))',
 ] as const;
 
 export const LOCAL_VISION_WORKER_SCHEMA_STATEMENTS = [

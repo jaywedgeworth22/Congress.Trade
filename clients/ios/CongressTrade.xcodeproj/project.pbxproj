@@ -258,7 +258,6 @@
 			);
 			mainGroup = 5A1000010000000000000030;
 			packageReferences = (
-				BBC99AAE85FFA9F74D741A1E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 100;
 			productRefGroup = 5A1000010000000000000032 /* Products */;
