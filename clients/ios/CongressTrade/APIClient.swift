@@ -253,6 +253,13 @@ final class CongressTradeAPIClient {
         try await analyticsGet("member-performance", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
+    /// Per-trade performance vs S&P (`GET /api/analytics/performance/:txId`).
+    /// Returns `{ available: false }` when prices are missing or the row is an option.
+    func tradePerformance(txId: String) async throws -> TradePerformanceResponse {
+        let encoded = txId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? txId
+        return try await analyticsGet("performance/\(encoded)")
+    }
+
     func marketCapBreakdown(window: String, party: String? = nil, chamber: String? = nil) async throws -> MarketCapResponse {
         try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }

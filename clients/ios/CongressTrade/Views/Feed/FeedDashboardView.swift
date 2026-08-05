@@ -32,6 +32,7 @@ struct FeedDashboardView: View {
         let chambers = store.selectedChambers
         let filteringChambers = !chambers.isEmpty
         let fromISO = store.selectedTimeRange.fromDateISO
+        let typeFilter = store.selectedTradeType
 
         return sortedCached.filter { trade in
             if let fromISO {
@@ -46,6 +47,10 @@ struct FeedDashboardView: View {
                     // Unresolved chamber drops out only when a filter is active.
                     return false
                 }
+            }
+
+            if !typeFilter.matches(txType: trade.transaction.type) {
+                return false
             }
 
             if !needle.isEmpty {
@@ -229,31 +234,47 @@ struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            HStack(spacing: 6) {
-                ForEach(ChamberFilter.allCases) { chamber in
-                    FilterChip(
-                        title: chamber.shortLabel,
-                        isSelected: store.selectedChambers.contains(chamber)
-                    ) {
-                        toggleChamber(chamber)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                HStack(spacing: 6) {
+                    ForEach(ChamberFilter.allCases) { chamber in
+                        FilterChip(
+                            title: chamber.shortLabel,
+                            isSelected: store.selectedChambers.contains(chamber)
+                        ) {
+                            toggleChamber(chamber)
+                        }
+                        .accessibilityLabel(chamber.label)
                     }
-                    .accessibilityLabel(chamber.label)
                 }
+
+                Spacer(minLength: 4)
+
+                MetricTile(
+                    title: "Trades",
+                    value: store.tradeTotal > 0
+                        ? store.tradeTotal.formatted(.number.grouping(.automatic))
+                        : "—"
+                )
+                .frame(width: 88)
+
+                MetricTile(title: "Plan", value: store.entitlementLabel)
+                    .frame(width: 78)
             }
 
-            Spacer(minLength: 4)
-
-            MetricTile(
-                title: "Trades",
-                value: store.tradeTotal > 0
-                    ? store.tradeTotal.formatted(.number.grouping(.automatic))
-                    : "—"
-            )
-            .frame(width: 88)
-
-            MetricTile(title: "Plan", value: store.entitlementLabel)
-                .frame(width: 78)
+            // Buy / Sell / All — server `type=` + local cache filter.
+            HStack(spacing: 6) {
+                ForEach(TradeTypeFilter.allCases) { type in
+                    FilterChip(
+                        title: type.label,
+                        isSelected: store.selectedTradeType == type
+                    ) {
+                        Task { await store.setTradeType(type) }
+                    }
+                    .accessibilityLabel("\(type.label) trades")
+                }
+                Spacer(minLength: 0)
+            }
         }
     }
 

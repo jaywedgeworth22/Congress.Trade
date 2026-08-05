@@ -56,6 +56,8 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
+    /// Buy / Sell / All side filter (`type=` on feed + local cache filter).
+    @Published private(set) var selectedTradeType: TradeTypeFilter = .all
 
     @Published var isLoadingMore = false
 
@@ -144,6 +146,12 @@ final class CongressTradeStore: ObservableObject {
         await refresh()
     }
 
+    func setTradeType(_ type: TradeTypeFilter) async {
+        guard type != selectedTradeType else { return }
+        selectedTradeType = type
+        await refresh()
+    }
+
     /// Applies a server-side search filter (submit path; typing alone keeps
     /// using the local debounced cache filter). `nil`/empty clears it.
     func setSearch(_ term: String?) async {
@@ -198,6 +206,7 @@ final class CongressTradeStore: ObservableObject {
         let chamberParam = Self.chamberQueryValue(for: chambers)
         let from = selectedTimeRange.fromDateISO
         let search = searchTerm
+        let typeParam = selectedTradeType.queryValue
         do {
             async let bootstrapTask = api.bootstrap()
             // Single newest-first snapshot for the visible window — not a
@@ -213,6 +222,7 @@ final class CongressTradeStore: ObservableObject {
                     member: nil,
                     memberName: search.flatMap { Self.looksLikeTicker($0) ? nil : $0 },
                     chamber: chamberParam,
+                    type: typeParam,
                     from: from,
                     sort: "tx_date",
                     order: "desc"
@@ -225,7 +235,11 @@ final class CongressTradeStore: ObservableObject {
             lastSuccessfulRefresh = Date()
             isOffline = false
             // Forward watermark only (for optional background catch-up of brand-new rows).
-            let filterKey = Self.syncFilterKey(chambers: chambers, range: selectedTimeRange)
+            let filterKey = Self.syncFilterKey(
+                chambers: chambers,
+                range: selectedTimeRange,
+                tradeType: selectedTradeType
+            )
             if let cursor = response.cursor { cursorStore.setCursor(cursor, for: filterKey) }
             if signedIn {
                 await refreshSignedInState()
@@ -366,12 +380,16 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    private static func syncFilterKey(chambers: Set<ChamberFilter>, range: TimeRange) -> String {
+    private static func syncFilterKey(
+        chambers: Set<ChamberFilter>,
+        range: TimeRange,
+        tradeType: TradeTypeFilter = .all
+    ) -> String {
         let chamberKey = (chambers.isEmpty ? initialChambers : chambers)
             .map(\.rawValue)
             .sorted()
             .joined(separator: ",")
-        return "\(chamberKey)|\(range.rawValue)"
+        return "\(chamberKey)|\(range.rawValue)|\(tradeType.rawValue)"
     }
 
     /// The `chamber=` query value for a selection, or `nil` to omit the
