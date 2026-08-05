@@ -420,8 +420,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
-  it('defaults theme to light and offers Light/Dark/System controls like Socratic.Trade', () => {
-    expect(DASHBOARD_HTML).toContain("var pref = 'light'");
+  it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
+    expect(DASHBOARD_HTML).toContain("var pref = 'system'");
+    expect(DASHBOARD_HTML).toContain("return 'system'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
     expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref)');
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
@@ -430,7 +431,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
-    expect(DASHBOARD_HTML).toContain('content="#eff3f8"');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
