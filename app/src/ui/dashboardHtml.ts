@@ -1621,8 +1621,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/icon-192.png?v=5" alt="Eagle icon" style="height: 32px; width: 32px; margin-right: 8px; border-radius: 4px;" decoding="async" />
-    <span class="brand-text" style="font-family: 'Zilla Slab', Courier, monospace; font-size: 1.5rem; font-weight: 700; color: var(--text);">Congress<span class="dot" style="color: var(--accent);">.</span>Trade</span></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
