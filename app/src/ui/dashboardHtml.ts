@@ -1614,8 +1614,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="P">Purchase</option>
-        <option value="S">Sale</option><option value="E">Exchange</option>
+        <option value="">All Types</option><option value="P">Buy</option>
+        <option value="S">Sell</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
         <div class="branch-seg">
@@ -2304,7 +2304,8 @@ function fmtBracketAmount(n) {
   return sign + '$' + Math.round(abs);
 }
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
-var typeName = { P: 'Buy', S: 'Sale', E: 'Exchange' };
+/* Product labels: Buy / Sell / Exchange. Storage/API codes stay P|S|E (B accepted as buy alias on input). */
+var typeName = { P: 'Buy', B: 'Buy', S: 'Sell', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 /* Format a politician name so a generational suffix sits after a single comma
@@ -4058,6 +4059,7 @@ function normalizeReviewEdit(t, sourceLabel) {
   var ticker = cleanAsset(t.ticker || '').toUpperCase();
   var asset = cleanAsset(t.assetName || t.asset || '');
   var type = String(t.txType || t.type || '').toUpperCase();
+  if (type === 'B') type = 'P'; // product Buy letter → storage P
   if (type !== 'P' && type !== 'S' && type !== 'E') type = null;
   var owner = String(t.owner || '').toLowerCase();
   if (['self', 'spouse', 'joint', 'dependent'].indexOf(owner) < 0) owner = null;
@@ -4590,7 +4592,7 @@ function meRowHtml(tx, chamber) {
   }
   return '<div class="me-row' + (isLow ? ' me-row-low-conf' : '') + '">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
-    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Purchase</option><option value="S"' + selectedOption('S', tx.txType) + '>Sale</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
+    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
     amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value=""' + selectedOption('', tx.owner || '') + '>Owner unknown</option><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
@@ -8150,7 +8152,7 @@ function openAsset(ticker) {
   }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
 }
 
-/* Purchase-cohort backtest summary for the asset drawer. */
+/* Buy-cohort backtest summary for the asset drawer. */
 function tickerBacktestHtml(d) {
   if (!d) return '<div class="note">Performance unavailable.</div>';
   var horizons = d.horizons || [];
@@ -8333,7 +8335,7 @@ function openTrade(row) {
       (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
-  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sale' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
   var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
   var notesBody = row.rawText ? filingNotesHtml(row.rawText) : '';

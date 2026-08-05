@@ -340,10 +340,11 @@ extension ClientTrade {
 }
 
 extension String {
+    /// Product labels: Buy / Sell / Exchange. Storage codes remain P|S|E; B is a buy alias.
     var label: String {
         switch self {
-        case "S": return "Sale"
-        case "P": return "Purchase"
+        case "S": return "Sell"
+        case "P", "B": return "Buy"
         case "E": return "Exchange"
         default: return self
         }
@@ -352,7 +353,7 @@ extension String {
     var tint: Color {
         switch self {
         case "S": return .red
-        case "P": return .green
+        case "P", "B": return .green
         default: return .blue
         }
     }

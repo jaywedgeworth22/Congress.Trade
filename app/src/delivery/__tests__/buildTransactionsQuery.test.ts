@@ -412,7 +412,7 @@ describe('mapFeedTransaction', () => {
     expect(tx.photoUrl).toBeNull();
   });
 
-  it('surfaces a NULL tx_type honestly as null, never silently defaulted to P (Purchase)', () => {
+  it('surfaces a NULL tx_type honestly as null, never silently defaulted to P (Buy)', () => {
     const tx = mapFeedTransaction(feedRow({ tx_type: null }));
     expect(tx.txType).toBeNull();
   });
