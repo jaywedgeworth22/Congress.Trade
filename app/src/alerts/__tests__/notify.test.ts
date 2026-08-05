@@ -22,7 +22,7 @@ function fakeEnv(over: Record<string, unknown> = {}): { env: Env; kv: Map<string
 const configured = {
   ALERT_EMAIL: 'admin@congress.trade',
   RESEND_API_KEY: 're_x',
-  EMAIL_FROM: 'Congress.Trade <login@congress.trade>',
+  EMAIL_FROM: 'congress.trade <login@congress.trade>',
 };
 
 const alert = { subject: 'S', text: 'T', dedupeKey: 'fmp-tier-failure' };

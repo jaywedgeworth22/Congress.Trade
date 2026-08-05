@@ -135,11 +135,11 @@ describe('buildCommonFilters', () => {
       't.deprecated_at IS NULL',
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
-      `${PARTY_BUCKET_SQL} = ?`,
-      't.source = ?',
+      "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' ELSE NULL END) = ?",
+      "t.source IN ('primary', 'manual')",
       't.confidence >= ?',
     ]);
-    expect(params).toEqual(['-90 days', 'senate', 'D', 'primary', 0.7]);
+    expect(params).toEqual(['-90 days', 'senate', 'D', 0.7]);
   });
 
   it('source="all" applies no source clause', () => {

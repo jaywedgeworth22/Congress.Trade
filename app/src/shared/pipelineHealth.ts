@@ -1,6 +1,6 @@
 /**
  * src/shared/pipelineHealth.ts
- * Deep health and data freshness inspection for Congress.Trade pipeline components.
+ * Deep health and data freshness inspection for congress.trade pipeline components.
  * Evaluates queue backlog age, provider failure rates, review queue accumulation,
  * autopilot halts, and transaction data freshness.
  */

@@ -637,7 +637,7 @@ export interface Env {
   OGE_MAX_VISION_BYTES?: string;
   /** Model override for the secondary (arbitration) vision extractor. */
   ARBITRATION_MODEL?: string;
-  /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */
+  /** Enables the congress.trade-vs-provider congressional disclosure latency monitor. */
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
   /** Enables the public-API anti-scraping guard (UA blocklist + per-IP budgets). Unset = off. */
   SCRAPE_GUARD_ENABLED?: string;
@@ -651,7 +651,7 @@ export interface Env {
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */
   DISCLOSURE_LATENCY_WATCH_LIMIT?: string;
-  /** Enables the legacy Congress.Trade-vs-FMP monitor switch; kept for backward compatibility. */
+  /** Enables the legacy congress.trade-vs-FMP monitor switch; kept for backward compatibility. */
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
   /** Legacy FMP-specific latest-row limit; DISCLOSURE_LATENCY_WATCH_LIMIT takes precedence. */
   FMP_DISCLOSURE_WATCH_LIMIT?: string;

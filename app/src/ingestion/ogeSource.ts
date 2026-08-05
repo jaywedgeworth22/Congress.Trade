@@ -18,7 +18,7 @@
  *  - Filings land WEEKS after the trades (the STOCK Act 45-day clock, often
  *    exceeded with late fees), so this source polls on a slow cadence and is
  *    entirely fail-soft: an OGE outage must never affect House/Senate polling.
- *  - EIGA §105(c) restricts certain uses of these reports; Congress.Trade
+ *  - EIGA §105(c) restricts certain uses of these reports; congress.trade
  *    disseminates them to the general public in the site's existing
  *    educational framing, mirroring its House/Senate STOCK Act posture.
  */

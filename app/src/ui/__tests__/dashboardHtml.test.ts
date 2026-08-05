@@ -88,7 +88,7 @@ function loadBenchmarkPresentationHelpers() {
 describe('DASHBOARD_HTML', () => {
   it('uses the descriptive product name as the document title', () => {
     expect(DASHBOARD_HTML).toContain(
-      '<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
+      '<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
     expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
@@ -1260,7 +1260,7 @@ describe('DASHBOARD_HTML', () => {
   it('does not use imported/published time as disclosure lag', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
-    expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
+    expect(DASHBOARD_HTML).not.toContain('using congress.trade import date');
   });
 
   it('explains disclosure timeliness metrics and keeps slowest filers scrollable', () => {

@@ -602,7 +602,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
       + '<rss version="2.0">\n  <channel>\n'
-      + '    <title>Congress.Trade — Recent Congressional Trades</title>\n'
+      + '    <title>congress.trade — Recent Congressional Trades</title>\n'
       + `    <link>${xmlEscape(origin)}</link>\n`
       + '    <description>The most recent U.S. congressional stock trades.</description>\n'
       + items.join('\n')

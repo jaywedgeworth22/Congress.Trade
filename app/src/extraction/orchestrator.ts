@@ -240,7 +240,7 @@ export async function extractParsed(
     if (filing.sourceUrl) {
       console.warn(`orchestrator: R2 object not found, falling back to source_url: ${filing.sourceUrl}`);
       const res = await trackedFetch(filing.sourceUrl, {
-        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' }
+        headers: { 'User-Agent': 'congress.trade/1.0 (+https://congress.trade)' }
       }, {
         service: 'disclosure-source',
         operation: 'loaddocbytes.source_url_fallback',

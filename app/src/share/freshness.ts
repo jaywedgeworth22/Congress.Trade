@@ -120,7 +120,7 @@ export async function runFreshnessCheck(env: Env, now = new Date()): Promise<Sta
     .join('\n');
   await notifyAdmin(env, {
     dedupeKey: 'data-freshness',
-    subject: 'Congress.Trade ⚠️ shared market data is going stale',
+    subject: 'congress.trade ⚠️ shared market data is going stale',
     text:
       'A market-data stream that should be kept current has gone stale. The\n' +
       "sibling app's nightly push may have stopped, or our own price/enrichment\n" +
