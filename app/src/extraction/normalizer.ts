@@ -31,7 +31,7 @@ import {
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
 } from './tickerNormalize.ts';
-import { cleanAssetString } from './nameNormalizer.ts';
+import { cleanFilerName, isJunkAssetString, cleanAssetString, simplifyCompanyName } from './nameNormalizer.ts';
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { deprecatePredecessorFilingTransactions } from './agreement.ts';
@@ -583,15 +583,28 @@ function buildResolver(rows: SecRow[]): TickerResolver {
   const byTicker = new Map<string, string>();
   const byAlias = new Map<string, string>();
   const byName = new Map<string, string>();
+  const bySimplifiedName = new Map<string, string>();
 
   for (const r of rows) {
     const canonical = (r.ticker || '').toUpperCase();
     if (!canonical) continue;
     byTicker.set(canonical, canonical);
-    if (r.name) byName.set(r.name.trim().toLowerCase(), canonical);
+    if (r.name) {
+      byName.set(r.name.trim().toLowerCase(), canonical);
+      const simplified = simplifyCompanyName(r.name);
+      if (simplified && !bySimplifiedName.has(simplified)) {
+        bySimplifiedName.set(simplified, canonical);
+      }
+    }
     const aliases = parseJson<string[]>(r.aliases, []);
     for (const a of aliases) {
-      if (typeof a === 'string' && a.trim()) byAlias.set(a.trim().toLowerCase(), canonical);
+      if (typeof a === 'string' && a.trim()) {
+        byAlias.set(a.trim().toLowerCase(), canonical);
+        const simplifiedAlias = simplifyCompanyName(a);
+        if (simplifiedAlias && !bySimplifiedName.has(simplifiedAlias)) {
+          bySimplifiedName.set(simplifiedAlias, canonical);
+        }
+      }
     }
   }
 
@@ -610,50 +623,8 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     if (continuous !== t && byTicker.has(continuous)) return byTicker.get(continuous)!;
     if (t && byTicker.has(t)) return byTicker.get(t)!;
     const name = (assetName || '').trim().toLowerCase();
-    const COMMON_ASSET_NAMES: Record<string, string> = {
-      'microsoft': 'MSFT',
-      'microsoft corp': 'MSFT',
-      'microsoft corp.': 'MSFT',
-      'microsoft corporation': 'MSFT',
-      'apple': 'AAPL',
-      'apple inc': 'AAPL',
-      'apple inc.': 'AAPL',
-      'adobe': 'ADBE',
-      'adobe inc': 'ADBE',
-      'adobe inc.': 'ADBE',
-      'adobe systems': 'ADBE',
-      'meta': 'META',
-      'meta platforms': 'META',
-      'meta platforms inc': 'META',
-      'meta platforms, inc.': 'META',
-      'facebook': 'META',
-      'alphabet': 'GOOGL',
-      'alphabet inc': 'GOOGL',
-      'alphabet inc.': 'GOOGL',
-      'google': 'GOOGL',
-      'amazon': 'AMZN',
-      'amazon.com': 'AMZN',
-      'amazon.com inc': 'AMZN',
-      'amazon.com, inc.': 'AMZN',
-      'netflix': 'NFLX',
-      'netflix inc': 'NFLX',
-      'netflix, inc.': 'NFLX',
-      'tesla': 'TSLA',
-      'tesla inc': 'TSLA',
-      'tesla, inc.': 'TSLA',
-      'tesla motors': 'TSLA',
-      'nvidia': 'NVDA',
-      'nvidia corp': 'NVDA',
-      'nvidia corp.': 'NVDA',
-      'nvidia corporation': 'NVDA',
-      'paypal': 'PYPL',
-      'paypal holdings': 'PYPL',
-      'salesforce': 'CRM',
-      'salesforce.com': 'CRM',
-      'salesforce inc': 'CRM',
-      'salesforce, inc.': 'CRM',
-    };
-    if (name && COMMON_ASSET_NAMES[name]) return COMMON_ASSET_NAMES[name]!;
+    const simplifiedName = simplifyCompanyName(assetName || '');
+    if (simplifiedName && bySimplifiedName.has(simplifiedName)) return bySimplifiedName.get(simplifiedName)!;
     if (name && byAlias.has(name)) return byAlias.get(name)!;
     if (name && byName.has(name)) return byName.get(name)!;
     // Also try the raw ticker as an alias (sometimes asset name lands in ticker).
