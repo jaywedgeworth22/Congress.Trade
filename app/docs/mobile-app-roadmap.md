@@ -148,7 +148,7 @@ Minimum command fields:
 Initial command types:
 
 - Implemented: `update_preferences`, `create_subscription`,
-  `update_subscription`.
+  `update_subscription`, `delete_subscription`.
 - Defined in shared types but not yet routed through the client API:
   `start_checkout`, `request_export`.
 - Next: `alert.create`, `alert.update`, `alert.pause`,

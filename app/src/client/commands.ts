@@ -3,6 +3,7 @@ import { isPremiumUser } from '../billing/entitlement.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
+  deleteSubscription,
   SubscriptionQuotaError,
   updateSubscription,
   webhookTargetLengthError,
@@ -27,6 +28,7 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'update_preferences' ||
     type === 'create_subscription' ||
     type === 'update_subscription' ||
+    type === 'delete_subscription' ||
     type === 'start_checkout' ||
     type === 'request_export'
   ) {
@@ -186,6 +188,16 @@ export async function executeCommand(
       if (err instanceof SubscriptionQuotaError) throw new ClientInputError(err.message, 409);
       throw err;
     }
+  }
+  if (type === 'delete_subscription') {
+    const id = typeof input.id === 'string' ? input.id : '';
+    if (!id) throw new ClientInputError('id is required');
+    // Ownership check (404 if missing / not owned). Delete is allowed for
+    // signed-in owners even without Premium so cancelled accounts can clean up.
+    await getOwnedSubscription(env, user, id);
+    const deleted = await deleteSubscription(env, id);
+    if (!deleted) throw new ClientInputError('subscription not found', 404);
+    return { deleted: true, id };
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

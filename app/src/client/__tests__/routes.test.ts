@@ -383,6 +383,45 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
         if (opts.quotaRace) throw new Error('D1_ERROR: subscription active quota exceeded');
         const row = subscriptions.get(String(this.params[1]));
         if (row) row.active = this.params[0] ? 1 : 0;
+      } else if (/UPDATE subscriptions SET /i.test(sql)) {
+        // Dynamic filter/target/secret patches from updateSubscription.
+        const id = String(this.params[this.params.length - 1]);
+        const row = subscriptions.get(id);
+        if (row) {
+          if (/filters = \?/i.test(sql)) {
+            const idx = sql.split('?').length - 2; // last ? is id; filters is earlier
+            // Prefer positional: filters usually first when present.
+            const filtersIdx = /SET filters = \?/i.test(sql) ? 0 : -1;
+            if (filtersIdx >= 0) row.filters = String(this.params[filtersIdx] ?? row.filters);
+          }
+          if (/target_url = \?/i.test(sql)) {
+            // Find param index of target_url among SET clauses.
+            const setClause = sql.match(/SET (.+) WHERE/i)?.[1] ?? '';
+            const parts = setClause.split(',').map((p) => p.trim());
+            let pi = 0;
+            for (const part of parts) {
+              if (/^target_url = \?$/i.test(part)) {
+                row.target_url = this.params[pi] == null ? null : String(this.params[pi]);
+              }
+              if (/^filters = \?$/i.test(part)) {
+                row.filters = String(this.params[pi] ?? row.filters);
+              }
+              if (/^secret = \?$/i.test(part)) {
+                row.secret = this.params[pi] == null ? null : String(this.params[pi]);
+              }
+              if (/^active = \?$/i.test(part)) {
+                row.active = this.params[pi] ? 1 : 0;
+              }
+              pi += 1;
+            }
+          } else if (/filters = \?/i.test(sql) && !/target_url/i.test(sql)) {
+            row.filters = String(this.params[0] ?? row.filters);
+          }
+        }
+      } else if (/DELETE FROM subscriptions WHERE id = \?/i.test(sql)) {
+        subscriptions.delete(String(this.params[0]));
+      } else if (/DELETE FROM sse_leases WHERE subscription_id = \?/i.test(sql)) {
+        // best-effort; no-op in this mock
       }
       return { success: true, meta: { changes: 1 } };
     },
@@ -1103,6 +1142,78 @@ describe('client API routes', () => {
     const command = Array.from(commands.values()).at(-1);
     expect(command?.status).toBe('failed');
     expect(command?.error).toContain('active subscription limit');
+  });
+
+  it('deletes an owned subscription via delete_subscription and rejects foreign ids', async () => {
+    const { env, subscriptions, commands, queuedMessages } = makeEnv();
+    subscriptions.set('sub_mine', {
+      id: 'sub_mine', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'secret_mine', filters: '{"tickers":["AAPL"]}', cursor: 0, active: 1,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    subscriptions.set('sub_theirs', {
+      id: 'sub_theirs', client_id: 'user:other', delivery: 'sse', target_url: null,
+      secret: 'secret_theirs', filters: '{}', cursor: 0, active: 1,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+
+    const ok = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'delete_subscription', payload: { id: 'sub_mine' } }),
+    }, env);
+    expect(ok.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    const okCmd = Array.from(commands.values()).at(-1);
+    expect(okCmd?.status).toBe('succeeded');
+    expect(JSON.parse(okCmd?.result ?? '{}')).toMatchObject({ deleted: true, id: 'sub_mine' });
+    expect(subscriptions.has('sub_mine')).toBe(false);
+    expect(subscriptions.has('sub_theirs')).toBe(true);
+
+    const denied = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'delete_subscription', payload: { id: 'sub_theirs' } }),
+    }, env);
+    expect(denied.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    const deniedCmd = Array.from(commands.values()).at(-1);
+    expect(deniedCmd?.status).toBe('failed');
+    expect(deniedCmd?.error).toMatch(/subscription not found/i);
+    expect(subscriptions.has('sub_theirs')).toBe(true);
+  });
+
+  it('pauses and resumes an owned subscription via update_subscription active flag', async () => {
+    const { env, subscriptions, commands, queuedMessages } = makeEnv();
+    subscriptions.set('sub_toggle', {
+      id: 'sub_toggle', client_id: 'user:user_1', delivery: 'webhook',
+      target_url: 'https://example.com/hook', secret: 'secret', filters: '{}',
+      cursor: 0, active: 1, created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+
+    const pause = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_toggle', active: false } }),
+    }, env);
+    expect(pause.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
+    expect(subscriptions.get('sub_toggle')?.active).toBe(0);
+
+    const resume = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_toggle', active: true } }),
+    }, env);
+    expect(resume.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
+    expect(subscriptions.get('sub_toggle')?.active).toBe(1);
   });
 
   it('fails unsupported client command types on the command row', async () => {
