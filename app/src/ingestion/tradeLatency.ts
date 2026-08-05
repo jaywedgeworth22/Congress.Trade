@@ -256,30 +256,68 @@ async function fmpDailyCap(env: Env): Promise<number> {
 }
 const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 
-// The latest endpoints are finite windows, not authoritative historical
-// indexes. Keep the scoreboard scoped to observations active in this window,
-// then allow a full day for our watcher to catch up before calling a row
-// unmatched. These are intentionally conservative public-comparison gates.
-/** Active race window for scoreboard + pending match (7 days — denser sample). */
-export const LATENCY_SCORE_WINDOW_HOURS = 336;
-/** Keep observation match window aligned with the scoreboard window. */
-const RECENT_PROVIDER_HOURS = LATENCY_SCORE_WINDOW_HOURS;
+// Latency scoreboard policy (owner 2026-08):
+//   • Race only **live** newly-imported CT trades — never seed/historical backfills.
+//   • Match those to FMP / UW / Quiver as hard as possible (minute … multi-week gap OK).
+//   • Lead stats measure first-seen delta either way (we can win or lose by a week).
+//   • Scoreboard window is rolling 7 days of CT live first_seen; provider match
+//     lookback is longer so a provider that listed the trade days earlier still hits.
+/** Scoreboard: CT live first_seen in the last 7 days. */
+export const LATENCY_SCORE_WINDOW_HOURS = 168;
+/**
+ * When matching pending CT races, search this far back in provider observations
+ * so "they beat us by a week" still joins. Longer than the scoreboard window.
+ */
+export const LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS = 14 * 24;
+/** Keep RECENT_PROVIDER_HOURS as the match lookback (not the score window). */
+const RECENT_PROVIDER_HOURS = LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS;
 export const LATENCY_MATURITY_GRACE_HOURS = 24;
 /** Full "usable" claim requires this many matured provider-observed rows. */
 export const LATENCY_MIN_MATURED_ROWS = 15;
-/** Preliminary timing shown from this many concurrent in-window races. */
+/** Preliminary timing shown from this many timed matches. */
 export const LATENCY_MIN_PRELIMINARY_MATCHED = 2;
 export const LATENCY_MIN_COVERAGE_PCT = 80;
 /**
- * Lead/win timing only counts races where BOTH sides first-seen stamps fall
- * inside the score window AND |delta| is at most this many hours. Kept equal
- * to one week so genuine multi-day monitor lag (CT ingested days after a
- * provider) still counts, while multi-week reverse-seed clamps do not.
- * Was 48h — that hid nearly all real provider-ahead races after bulk heals.
+ * Max |first-seen gap| for lead stats. Up to 14 days either direction —
+ * minute, day, or week is all a real race. Beyond that is noise.
  */
-export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 48;
+export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS;
+/**
+ * If CT first_seen is more than this many days after the official filed_date,
+ * treat the import as a historical crawl/backfill (house index re-run, etc.)
+ * even when transaction.source is still `primary`.
+ */
+export const LATENCY_LIVE_FILING_MAX_LAG_DAYS = 21;
 /** Allow trade dates to differ by this many days for near-miss fuzzy match. */
 export const LATENCY_FUZZY_DATE_SLACK_DAYS = 2;
+
+const BACKFILL_TX_SOURCES = new Set(['seed_dataset', 'competitor_backfill']);
+
+/**
+ * True when this CT row is a live discovery/import we want on the scoreboard.
+ * Excludes seed/competitor backfills and primary-path historical crawls where
+ * we first_seen the filing long after it was filed.
+ */
+export function isLiveRaceImport(opts: {
+  source?: string | null;
+  filedDate?: string | null;
+  firstSeenAt?: string | null;
+  maxLagDays?: number;
+}): boolean {
+  const src = (opts.source || 'primary').toLowerCase();
+  if (BACKFILL_TX_SOURCES.has(src)) return false;
+  const filedRaw = opts.filedDate?.trim();
+  const seenRaw = opts.firstSeenAt?.trim();
+  if (!filedRaw || !seenRaw) return true; // no lag signal — allow primary-like sources
+  const filedMs = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(filedRaw) ? `${filedRaw}T00:00:00.000Z` : filedRaw);
+  const seenMs = Date.parse(seenRaw);
+  if (!Number.isFinite(filedMs) || !Number.isFinite(seenMs)) return true;
+  const lagDays = (seenMs - filedMs) / 86_400_000;
+  const maxLag = opts.maxLagDays ?? LATENCY_LIVE_FILING_MAX_LAG_DAYS;
+  // first_seen long after filed → historical backfill crawl, not live scout/agreement.
+  if (lagDays > maxLag) return false;
+  return true;
+}
 
 const PROVIDERS: ProviderDefinition[] = [
   {
@@ -963,6 +1001,7 @@ interface TradeLatencyTxContext {
   chamber: Chamber | null;
   source_url: string | null;
   filer_name: string | null;
+  source: string | null;
 }
 
 /**
@@ -981,7 +1020,7 @@ async function loadTradeLatencyTxContexts(
     const placeholders = chunk.map(() => '?').join(', ');
     const rows = await all<TradeLatencyTxContext>(
       env.DB,
-      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
+      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.source AS source,
               COALESCE(t.filed_date, f.filed_date) AS filed_date,
               COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
               f.chamber AS chamber,
@@ -1019,10 +1058,23 @@ export async function recordTradeLatencyCandidates(
       const ctx = contexts.get(tx.id);
       const filerName = ctx?.filer_name || tx.fullName || null;
       if (!filerName) continue;
+      const firstSeenRaw = tx.firstSeenAt || ctx?.first_seen_at || nowIso;
+      const filedDate = tx.filedDate || ctx?.filed_date || null;
+      // Never mint races for seed/competitor backfills or historical crawls.
+      if (
+        !isLiveRaceImport({
+          source: tx.source || ctx?.source,
+          filedDate,
+          firstSeenAt: firstSeenRaw,
+        })
+      ) {
+        continue;
+      }
       const chamber = normalizeChamber(ctx?.chamber ?? null, chamberFromDocId(tx.docId));
       const trade_hash = generateTradeHash(filerName, tx.ticker || ctx?.ticker || null, tx.txDate || ctx?.tx_date || null, tx.txType || ctx?.tx_type || null);
       if (!extractLastName(filerName)) continue;
-      const firstSeen = raceFirstSeenAt(tx.firstSeenAt || ctx?.first_seen_at, nowIso);
+      // Keep the real first_seen for live imports (no clamp-to-now for recent stamps).
+      const firstSeen = raceFirstSeenAt(firstSeenRaw, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
       mintedHashes.add(trade_hash);
       updates.push([
         `INSERT INTO trade_latency_candidates
@@ -1052,7 +1104,7 @@ export async function recordTradeLatencyCandidates(
           provider,
           chamber,
           ctx?.source_url || tx.sourceUrl || null,
-          tx.filedDate || ctx?.filed_date || null,
+          filedDate,
           filerName,
           tx.ticker || ctx?.ticker || null,
           tx.txDate || ctx?.tx_date || null,
@@ -1155,10 +1207,11 @@ export async function backfillTradeLatencyCandidates(
     full_name: string | null;
     source_url: string | null;
     chamber: string | null;
+    source: string | null;
   }>(
     env.DB,
-    `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
-            f.filed_date AS filed_date,
+    `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.source AS source,
+            COALESCE(t.filed_date, f.filed_date) AS filed_date,
             COALESCE(t.first_seen_at, f.first_seen_at, t.created_at) AS first_seen_at,
             t.created_at AS created_at,
             fil.full_name AS full_name,
@@ -1170,21 +1223,29 @@ export async function backfillTradeLatencyCandidates(
       WHERE t.ticker IS NOT NULL
         AND t.tx_date IS NOT NULL
         AND fil.full_name IS NOT NULL
+        AND t.source NOT IN ('seed_dataset', 'competitor_backfill')
+        AND t.deprecated_at IS NULL
         AND COALESCE(t.created_at, f.first_seen_at) >= ?
-        AND (t.deprecated_at IS NULL)
       ORDER BY COALESCE(t.created_at, f.first_seen_at) DESC
       LIMIT ?`,
     [cutoff, limit],
   );
   const nowIso = new Date().toISOString();
-  const asTx: Transaction[] = rows.map((row) => {
-    // Prefer the earliest trustworthy CT-seen stamp, but never older than the
-    // row's created_at for scoreboard honesty (avoids multi-year first_seen
-    // from re-imported filings looking like a "speed win").
+  const asTx: Transaction[] = [];
+  for (const row of rows) {
     const seen = row.first_seen_at || row.created_at || nowIso;
     const created = row.created_at || nowIso;
     const firstSeenAt = seen > created ? seen : created;
-    return {
+    if (
+      !isLiveRaceImport({
+        source: row.source,
+        filedDate: row.filed_date,
+        firstSeenAt,
+      })
+    ) {
+      continue;
+    }
+    asTx.push({
       id: row.id,
       docId: row.doc_id,
       filerId: null,
@@ -1200,15 +1261,15 @@ export async function backfillTradeLatencyCandidates(
       capGainsOver200: false,
       rawText: '',
       confidence: 1,
-      source: 'primary',
+      source: (row.source as Transaction['source']) || 'primary',
       createdAt: nowIso,
       cursorSeq: 0,
       fullName: row.full_name,
       filedDate: row.filed_date,
       firstSeenAt,
       sourceUrl: row.source_url,
-    };
-  });
+    });
+  }
   await recordTradeLatencyCandidates(env, asTx, nowIso);
   return { scanned: rows.length, recorded: asTx.length };
 }
@@ -1298,14 +1359,8 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
 
 /**
  * For recent provider observations that have no race candidate yet, find
- * matching CT transactions (by last name + date + optional ticker) and seed
- * candidates so the next match pass can score them. Caps work per probe run.
- *
- * Only seeds when the CT transaction's real first_seen is already inside the
- * score window. Historical backfill rows (first_seen months/years ago) would
- * only produce multi-day "provider ahead" artifacts after raceFirstSeenAt
- * clamps them to now — useful for coverage density but harmful for timing
- * honesty. Coverage still grows from live agreement mints + probes.
+ * matching **live** CT transactions and seed candidates. Caps work per probe.
+ * Never seeds seed_dataset / competitor_backfill / historical crawls.
  */
 async function seedCandidatesFromRecentObservations(
   env: Env,
@@ -1315,13 +1370,14 @@ async function seedCandidatesFromRecentObservations(
 ): Promise<{ seeded: number }> {
   const obs = await loadProviderRows(env, provider, now);
   if (!obs.length) return { seeded: 0 };
+  // CT live imports from the scoreboard window (7d of new live first_seen).
   const scoreCutoffMs = now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 3600_000;
 
   const txs: Transaction[] = [];
   const seen = new Set<string>();
   let examined = 0;
   for (const row of obs) {
-    if (examined >= 200) break;
+    if (examined >= 250) break;
     const parts = parseTradeHash(row.trade_hash);
     if (!parts.lastName || !parts.date) continue;
     examined++;
@@ -1349,22 +1405,24 @@ async function seedCandidatesFromRecentObservations(
       source_url: string | null;
       chamber: string | null;
       filed_date: string | null;
+      source: string | null;
     }>(
       env.DB,
-      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.created_at,
+      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.created_at, t.source AS source,
               COALESCE(t.first_seen_at, f.first_seen_at, t.created_at) AS first_seen_at,
               fil.full_name AS full_name, f.source_url AS source_url,
-              f.chamber AS chamber, f.filed_date AS filed_date
+              f.chamber AS chamber, COALESCE(t.filed_date, f.filed_date) AS filed_date
          FROM transactions t
          LEFT JOIN filings f ON f.doc_id = t.doc_id
          LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
         WHERE t.deprecated_at IS NULL
+          AND t.source NOT IN ('seed_dataset', 'competitor_backfill')
           AND t.tx_date = ?
           AND fil.full_name IS NOT NULL
           AND lower(fil.full_name) LIKE ?
           AND (? IS NULL OR upper(replace(COALESCE(t.ticker,''), '.', '-')) = ?)
         ORDER BY t.created_at DESC
-        LIMIT 3`,
+        LIMIT 5`,
       [parts.date, like, ticker, ticker],
     ).catch(() => [] as Array<{
       id: string;
@@ -1378,6 +1436,7 @@ async function seedCandidatesFromRecentObservations(
       source_url: string | null;
       chamber: string | null;
       filed_date: string | null;
+      source: string | null;
     }>);
 
     for (const r of rows) {
@@ -1390,12 +1449,18 @@ async function seedCandidatesFromRecentObservations(
       }
       const rawSeen = r.first_seen_at || r.created_at;
       const rawMs = rawSeen ? Date.parse(rawSeen) : NaN;
-      // Skip historical CT rows outside the live race window — reverse-seeding
-      // them only manufactures multi-day provider-ahead artifacts.
       if (!Number.isFinite(rawMs) || rawMs < scoreCutoffMs) continue;
+      if (
+        !isLiveRaceImport({
+          source: r.source,
+          filedDate: r.filed_date,
+          firstSeenAt: rawSeen,
+        })
+      ) {
+        continue;
+      }
       seen.add(r.id);
-      // Keep the real first_seen (already in-window); do not clamp to now.
-      const firstSeen = raceFirstSeenAt(rawSeen, nowIso);
+      const firstSeen = raceFirstSeenAt(rawSeen, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
       txs.push({
         id: r.id,
         docId: r.doc_id,
@@ -1412,7 +1477,7 @@ async function seedCandidatesFromRecentObservations(
         capGainsOver200: false,
         rawText: '',
         confidence: 1,
-        source: 'primary',
+        source: (r.source as Transaction['source']) || 'primary',
         createdAt: nowIso,
         cursorSeq: 0,
         fullName: r.full_name,
@@ -1684,13 +1749,12 @@ async function matchPendingCandidates(
   nowIso: string,
   errors: string[],
 ): Promise<{ pending: number; matched: number; examinedTradeHashes: string[]; matchedTradeHashes: string[] }> {
-  // Pass A: exact trade-hash SQL join — clears backlog matches that the
-  // newest-N scan would never reach.
+  // Pass A: exact trade-hash SQL join across all pending (live mints only exist
+  // for non-backfill imports). No chamber lock — max join density.
   const exact = await applyExactHashMatches(env, provider, nowIso);
 
-  // Pass B: fuzzy match on recent pending candidates only (score window).
-  // Historical bulk-backfilled pendings are intentionally excluded so they
-  // cannot starve live timing comparisons.
+  // Pass B: fuzzy match for recent live CT first_seen. Provider obs lookback is
+  // longer (14d) so "they listed it a week before us" still matches.
   const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const candidates = await all<CandidateRow>(
     env.DB,
@@ -1701,16 +1765,24 @@ async function matchPendingCandidates(
         AND status = 'pending'
         AND congress_first_seen_at >= ?
       ORDER BY congress_first_seen_at DESC
-      LIMIT 500`,
+      LIMIT 800`,
     [provider.id, scoreCutoff],
   );
+  // Drop any residual backfill-shaped candidates (historical crawl lag).
+  const liveCandidates = candidates.filter((c) =>
+    isLiveRaceImport({
+      source: 'primary',
+      filedDate: c.filed_date,
+      firstSeenAt: c.congress_first_seen_at,
+    }),
+  );
   const providerRows = await loadProviderRows(env, provider.id, now);
-  const fuzzy = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
+  const fuzzy = await matchAndUpdateCandidates(env, provider, liveCandidates, providerRows, nowIso, errors);
 
   const matchedTradeHashes = Array.from(new Set([...exact.matchedTradeHashes, ...fuzzy.matchedTradeHashes]));
   const examined = Array.from(new Set([
     ...exact.matchedTradeHashes,
-    ...candidates.map((c) => c.trade_hash),
+    ...liveCandidates.map((c) => c.trade_hash),
   ]));
   return {
     pending: examined.length,
@@ -2323,6 +2395,9 @@ function p90(values: number[]): number | null {
 
 export async function getDisclosureLatencySummary(env: Env, now: Date = new Date()): Promise<DisclosureLatencySummary> {
   const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+  const providerLookbackCutoff = new Date(
+    now.getTime() - LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS * 60 * 60 * 1000,
+  ).toISOString();
   const maturityCutoff = new Date(now.getTime() - LATENCY_MATURITY_GRACE_HOURS * 60 * 60 * 1000).toISOString();
   const rows = await all<{
     provider: ProviderId;
@@ -2333,44 +2408,35 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     congress_first_seen_at: string;
     provider_first_seen_at: string | null;
     provider_published_at: string | null;
+    filed_date: string | null;
     created_at: string;
     updated_at: string;
   }>(
     env.DB,
-    // Prefer matched rows in the active window. Ordering by created_at alone
-    // buried trade-hash matches under bulk-backfill pendings (LIMIT 5000), so
-    // the public scoreboard reported matched=0 even when matches existed.
-    // Timing uses only congress_first_seen_at inside the score window so a
-    // backfill that rewrites status/updated_at cannot invent a multi-day "CT
-    // lead" from a historical first_seen stamp.
+    // Live CT first_seen in the 7d score window (backfills never minted here).
     `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
-            provider_first_seen_at, provider_published_at, created_at, updated_at
+            provider_first_seen_at, provider_published_at, filed_date, created_at, updated_at
        FROM trade_latency_candidates
       WHERE congress_first_seen_at >= ?
-         OR (status = 'matched' AND updated_at >= ? AND congress_first_seen_at >= ?)
-         OR (status = 'pending' AND updated_at >= ?)
       ORDER BY CASE WHEN status = 'matched' THEN 0 ELSE 1 END,
                updated_at DESC
       LIMIT 8000`,
-    [scoreCutoff, scoreCutoff, scoreCutoff, scoreCutoff],
+    [scoreCutoff],
   ).catch((err) => {
     if (storageMissing(err)) return [];
     throw err;
   });
 
-  // Provider rows are an independent denominator. A latest endpoint can only
-  // prove that it showed us a row; it cannot prove that a missing row was
-  // absent. Rows are therefore called "unmatched" only after the grace period
-  // and are never folded into a congress.trade win/loss count.
+  // Provider listings in the 14d match lookback (they can beat us by a week).
   const providerRows = await all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,
             provider_published_at, source_url, filed_date, filer_name, payload
        FROM trade_provider_observations
-      WHERE last_observed_at >= ?
-      ORDER BY last_observed_at DESC
+      WHERE first_observed_at >= ?
+      ORDER BY first_observed_at DESC
       LIMIT 10000`,
-    [scoreCutoff],
+    [providerLookbackCutoff],
   ).catch((err) => {
     if (storageMissing(err)) return [];
     throw err;
@@ -2378,42 +2444,54 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
 
   const statuses = await getDisclosureLatencyProviderStatuses(env);
   const providers = PROVIDERS.filter((p) => p.supportsDirectLatest).map((provider) => {
-    const mine = rows.filter((row) => row.provider === provider.id);
+    // Drop residual historical-crawl candidates (filed long before first_seen).
+    const mine = rows.filter(
+      (row) =>
+        row.provider === provider.id &&
+        isLiveRaceImport({
+          source: 'primary',
+          filedDate: row.filed_date,
+          firstSeenAt: row.congress_first_seen_at,
+        }),
+    );
     const observations = providerRows.filter((row) => row.provider === provider.id);
-    // Exact trade-hash is the durable public comparison key. Also accept the
-    // two structured fuzzy methods when ticker or date is missing on one side
-    // (still same filer + side); pure free-text/name fallbacks stay excluded.
-    // Only rows whose congress_first_seen_at is inside the score window are
-    // eligible for timing — otherwise bulk backfill invents multi-day leads.
     const strongMethods = new Set([
       'trade-hash',
       'fuzzy-no-ticker',
       'fuzzy-missing-date',
       'fuzzy-near-date',
     ]);
-    const strongMatches = mine.filter(
+    // Live CT imports this week that matched a provider (identity).
+    const liveMatched = mine.filter(
       (row) =>
         row.status === 'matched' &&
-        row.congress_first_seen_at >= scoreCutoff &&
         !!row.match_method &&
         strongMethods.has(row.match_method),
     );
-    // Timing requires BOTH sides observed inside the score window. Backfilled
-    // candidates (first_seen clamped to created_at today) matched to provider
-    // rows from last week produce multi-day "provider ahead" artifacts that
-    // are not live races — exclude those from lead/win stats while still
-    // counting them toward coverage matchedKeys below.
+    // Timed race: have a provider stamp; |Δ| up to 14d either way (min…week).
     const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
-    const timingMatches = strongMatches.filter(
-      (row) => {
-        const providerTime = provider.timestampKind === 'provider' ? row.provider_published_at : row.provider_first_seen_at;
-        const validTime = provider.timestampKind === 'provider' ? !!row.provider_published_at : (!!row.provider_first_seen_at && row.provider_first_seen_at >= scoreCutoff);
-        
-        return validTime && Math.abs(deltaSeconds(providerTime, row.congress_first_seen_at) ?? 1e12) <= maxDeltaSec;
+    const timingMatches = liveMatched.filter((row) => {
+      if (provider.timestampKind === 'provider') {
+        const t = row.provider_published_at || row.provider_first_seen_at;
+        if (!t) return false;
+        return Math.abs(deltaSeconds(t, row.congress_first_seen_at) ?? 1e12) <= maxDeltaSec;
       }
-    );
+      if (!row.provider_first_seen_at) return false;
+      return (
+        Math.abs(deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at) ?? 1e12) <=
+        maxDeltaSec
+      );
+    });
+    // strongMatched ≡ timed sample so UI never shows huge strong + zero stats.
+    const strongMatches = timingMatches;
     const monitorDeltas = timingMatches
-      .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
+      .map((row) => {
+        const providerTime =
+          provider.timestampKind === 'provider'
+            ? row.provider_published_at || row.provider_first_seen_at
+            : row.provider_first_seen_at;
+        return deltaSeconds(providerTime, row.congress_first_seen_at);
+      })
       .filter((v): v is number => v != null);
     const publishedDeltas = timingMatches
       .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
@@ -2456,29 +2534,28 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     const sampleOk =
       maturedProviderObserved >= LATENCY_MIN_MATURED_ROWS &&
       maturedCandidates.length >= LATENCY_MIN_MATURED_ROWS;
-    // Timing gates use concurrent races (timingMatched); coverage still uses
-    // strongMatches so reverse-seeded density can grow the board.
+    // Both matched and strongMatched are the both-in-week timed sample.
     const timingN = timingMatched;
     const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] = !sampleOk
       ? timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
         ? 'preliminary'
-        : strongMatches.length > 0
+        : timingN > 0
           ? 'limited'
           : 'insufficient'
       : coverageOk && timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
         ? 'usable'
         : timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
           ? 'preliminary'
-          : strongMatches.length > 0
+          : timingN > 0
             ? 'limited'
             : 'insufficient';
     return {
       provider: provider.id,
       label: provider.label,
       candidates: mine.length,
-      // Concurrent races only — drives lead/win stats and preliminary gates.
+      // Both-in-week timed races — drives lead/win stats and status gates.
       matched: timingN,
-      // All high-confidence overlaps in the window (coverage density).
+      // Same cohort as matched (week-new on both sides).
       strongMatched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,

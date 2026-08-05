@@ -152,9 +152,9 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       totals: { racedDisclosures: number; matched: number; comparableProviders: number };
       providers: Array<Record<string, unknown>>;
     };
-    expect(body.windowHours).toBe(336);
-    expect(body.windowDays).toBe(14);
-    expect(body.maxConcurrentDeltaHours).toBe(48);
+    expect(body.windowHours).toBe(168);
+    expect(body.windowDays).toBe(7);
+    expect(body.maxConcurrentDeltaHours).toBe(336);
     expect(body.totals.racedDisclosures).toBe(3);
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');
@@ -204,11 +204,10 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     });
   });
 
-  it('excludes multi-week stamp alignments from concurrent timing while keeping strongMatched', async () => {
+  it('times live matches with multi-day gaps and drops historical-crawl first_seen/filed lag', async () => {
     const now = Date.now();
     const ctSeen = new Date(now - 1 * 60 * 60 * 1000).toISOString(); // 1h ago
-    // 10d ago: still inside 14d score window (counts as strong) but |delta| > 7d concurrent cap
-    const providerSeen = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const providerSeen = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5d ago — still within 14d
     const env = {
       DB: {
         prepare(sql: string) {
@@ -220,6 +219,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
               if (/FROM trade_latency_candidates/i.test(sql)) {
                 return {
                   results: [
+                    // Live: filed 2d before first_seen, provider 5d earlier → timed
                     {
                       provider: 'quiver',
                       status: 'matched',
@@ -229,19 +229,21 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
                       congress_first_seen_at: ctSeen,
                       provider_first_seen_at: providerSeen,
                       provider_published_at: providerSeen,
+                      filed_date: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
                       created_at: ctSeen,
                       updated_at: ctSeen,
                     },
-                    // Concurrent race: CT first at 1.5h ago, provider 1h ago → CT ahead ~30 min
+                    // Historical crawl: filed years before first_seen → excluded
                     {
                       provider: 'quiver',
                       status: 'matched',
                       chamber: 'senate',
                       provider_key: 'q2',
                       match_method: 'trade-hash',
-                      congress_first_seen_at: new Date(now - 1.5 * 60 * 60 * 1000).toISOString(),
+                      congress_first_seen_at: ctSeen,
                       provider_first_seen_at: ctSeen,
                       provider_published_at: ctSeen,
+                      filed_date: '2024-01-01',
                       created_at: ctSeen,
                       updated_at: ctSeen,
                     },
@@ -266,11 +268,11 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     const body = (await res.json()) as { providers: Array<Record<string, unknown>> };
     const qq = body.providers.find((p) => p.id === 'quiver');
     expect(qq).toMatchObject({
-      strongMatched: 2,
-      matched: 1, // only the concurrent race
+      strongMatched: 1,
+      matched: 1,
     });
-    // CT ahead by ~30 min on the concurrent race → positive lead
-    expect(Number(qq?.medianLeadSec)).toBeGreaterThan(0);
+    // Provider earlier by ~5d → negative lead (provider ahead)
+    expect(Number(qq?.medianLeadSec)).toBeLessThan(0);
   });
 
   it('degrades to an empty envelope when the latency tables are missing', async () => {

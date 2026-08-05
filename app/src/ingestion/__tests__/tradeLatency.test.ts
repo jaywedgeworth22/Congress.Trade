@@ -7,8 +7,11 @@ import {
   parseTradeHash,
   raceFirstSeenAt,
   tradeDateDayDistance,
+  isLiveRaceImport,
   LATENCY_MAX_CONCURRENT_DELTA_HOURS,
   LATENCY_SCORE_WINDOW_HOURS,
+  LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS,
+  LATENCY_LIVE_FILING_MAX_LAG_DAYS,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -150,9 +153,42 @@ describe('tradeLatency', () => {
   });
 
   describe('scoreboard constants', () => {
-    it('keeps a 14-day window and 7-day concurrent-race cap', () => {
-      expect(LATENCY_SCORE_WINDOW_HOURS).toBe(336);
-      expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(48);
+    it('uses 7d CT live window and 14d provider match/timing lookback', () => {
+      expect(LATENCY_SCORE_WINDOW_HOURS).toBe(168);
+      expect(LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS).toBe(336);
+      expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(336);
+      expect(LATENCY_LIVE_FILING_MAX_LAG_DAYS).toBe(21);
+    });
+  });
+
+  describe('isLiveRaceImport', () => {
+    it('excludes seed and competitor backfills', () => {
+      expect(isLiveRaceImport({ source: 'seed_dataset', filedDate: '2026-08-01', firstSeenAt: '2026-08-02T00:00:00.000Z' })).toBe(
+        false,
+      );
+      expect(
+        isLiveRaceImport({ source: 'competitor_backfill', filedDate: '2026-08-01', firstSeenAt: '2026-08-02T00:00:00.000Z' }),
+      ).toBe(false);
+    });
+
+    it('excludes primary-path historical crawls (first_seen long after filed)', () => {
+      expect(
+        isLiveRaceImport({
+          source: 'primary',
+          filedDate: '2024-05-01',
+          firstSeenAt: '2026-08-04T12:00:00.000Z',
+        }),
+      ).toBe(false);
+    });
+
+    it('allows live primary imports filed days before first_seen', () => {
+      expect(
+        isLiveRaceImport({
+          source: 'primary',
+          filedDate: '2026-08-01',
+          firstSeenAt: '2026-08-03T12:00:00.000Z',
+        }),
+      ).toBe(true);
     });
   });
 

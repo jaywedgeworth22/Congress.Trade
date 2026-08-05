@@ -274,10 +274,10 @@ describe('DASHBOARD_HTML', () => {
     // Honesty guard rails: lane threshold, concurrent-race empty-state copy,
     // losses always displayed, sample sizes visible, trademark fine print.
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 2');
-    expect(DASHBOARD_HTML).toContain("Probes haven't found concurrent races yet.");
-    expect(DASHBOARD_HTML).toContain('concurrent races only');
+    expect(DASHBOARD_HTML).toContain("Probes haven't matched live new imports yet");
+    expect(DASHBOARD_HTML).toContain('live new imports only');
     expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');
-    expect(DASHBOARD_HTML).toContain('concurrent · ');
+    expect(DASHBOARD_HTML).toContain('live matched · ');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
     // Every comparable provider rides the same honesty rails — no name-based
