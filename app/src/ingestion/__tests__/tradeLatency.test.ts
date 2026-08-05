@@ -12,6 +12,14 @@ import {
   LATENCY_SCORE_WINDOW_HOURS,
   LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS,
   LATENCY_LIVE_FILING_MAX_LAG_DAYS,
+  FMP_LATENCY_CALLS_PER_RUN,
+  FMP_LATENCY_DAILY_CAP_PER_KEY,
+  fmpLatencyEtHourWeight,
+  fmpLatencyIntervalSec,
+  selectFmpLatencyKey,
+  getFmpLatencyUsed,
+  addFmpLatencyUsed,
+  getDisclosureLatencyProviderStatuses,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -197,6 +205,112 @@ describe('tradeLatency', () => {
       expect(tradeDateDayDistance('2026-07-24', '2026-07-26')).toBe(2);
       expect(tradeDateDayDistance('2026-07-24', '2026-07-24')).toBe(0);
       expect(tradeDateDayDistance('bad', '2026-07-24')).toBeNull();
+    });
+  });
+
+  describe('FMP latency-only dual keys', () => {
+    it('spaces remaining budget across the UTC day with floor/ceiling', () => {
+      // Noon UTC mid-day with plenty of remaining runs.
+      const noon = new Date('2026-08-05T16:00:00.000Z'); // 12:00 ET in summer
+      const interval = fmpLatencyIntervalSec(noon, FMP_LATENCY_DAILY_CAP_PER_KEY);
+      expect(interval).toBeGreaterThanOrEqual(120);
+      expect(interval).toBeLessThanOrEqual(45 * 60);
+      // Exhausted budget → max interval (skip signal for caller).
+      expect(fmpLatencyIntervalSec(noon, 0)).toBe(45 * 60);
+      expect(fmpLatencyIntervalSec(noon, 1)).toBe(45 * 60); // < CALLS_PER_RUN
+    });
+
+    it('weights peak ET hours denser than overnight', () => {
+      // America/New_York: 2026-08-05 14:00 UTC = 10:00 ET (peak weekday)
+      const peak = fmpLatencyEtHourWeight(new Date('2026-08-05T14:00:00.000Z'));
+      // 2026-08-05 04:00 UTC = 00:00 ET (overnight)
+      const night = fmpLatencyEtHourWeight(new Date('2026-08-05T04:00:00.000Z'));
+      expect(peak).toBeGreaterThan(night);
+      // Peak spacing should be shorter than overnight for same remaining budget.
+      const remaining = 100;
+      const peakIv = fmpLatencyIntervalSec(new Date('2026-08-05T14:00:00.000Z'), remaining);
+      const nightIv = fmpLatencyIntervalSec(new Date('2026-08-05T04:00:00.000Z'), remaining);
+      expect(peakIv).toBeLessThanOrEqual(nightIv);
+    });
+
+    it('never selects FMP_API_KEY — only FMP_LATENCY_API_KEY[_2]', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_API_KEY: 'legacy-must-not-use',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      expect(await selectFmpLatencyKey(env, new Date('2026-08-05T15:00:00.000Z'), { force: true })).toBeNull();
+
+      const envLatency = {
+        ...env,
+        FMP_LATENCY_API_KEY: 'latency-key-1',
+      } as never;
+      const sel = await selectFmpLatencyKey(envLatency, new Date('2026-08-05T15:00:00.000Z'), { force: true });
+      expect(sel?.apiKey).toBe('latency-key-1');
+      expect(sel?.slot).toBe('1');
+      expect(sel?.secretName).toBe('FMP_LATENCY_API_KEY');
+      expect(sel?.cap).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY);
+      expect(FMP_LATENCY_CALLS_PER_RUN).toBe(2);
+    });
+
+    it('prefers the key with more remaining budget and tracks per-key counters', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        ['FMP_LATENCY_API_KEY' + '_2']: 'k2',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      // Exhaust most of key1 so key2 is preferred.
+      await addFmpLatencyUsed(env, '1', FMP_LATENCY_DAILY_CAP_PER_KEY - 4, now);
+      await addFmpLatencyUsed(env, '2', 10, now);
+      expect(await getFmpLatencyUsed(env, '1', now)).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY - 4);
+      const sel = await selectFmpLatencyKey(env, now, { force: true });
+      expect(sel?.slot).toBe('2');
+      expect(sel?.apiKey).toBe('k2');
+      expect(sel?.remaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY - 10);
+    });
+
+    it('skips a key that is at daily cap', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      await addFmpLatencyUsed(env, '1', FMP_LATENCY_DAILY_CAP_PER_KEY, now);
+      expect(await selectFmpLatencyKey(env, now, { force: true })).toBeNull();
+    });
+
+    it('reports FMP configured only when a latency key is present (not FMP_API_KEY)', async () => {
+      const statusesLegacy = await getDisclosureLatencyProviderStatuses({
+        FMP_API_KEY: 'legacy-only',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+      } as never);
+      const fmpLegacy = statusesLegacy.find((s) => s.id === 'fmp');
+      expect(fmpLegacy?.configured).toBe(false);
+
+      const statuses = await getDisclosureLatencyProviderStatuses({
+        ['FMP_LATENCY_API_KEY' + '_2']: 'second-key',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+      } as never);
+      const fmp = statuses.find((s) => s.id === 'fmp');
+      expect(fmp?.configured).toBe(true);
     });
   });
 });

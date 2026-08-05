@@ -86,7 +86,7 @@ describe('admin disclosure latency API', () => {
     const res = await app.request(
       '/disclosure-latency/summary',
       { headers: { Authorization: 'Bearer admin-secret' } },
-      { ADMIN_TOKEN: 'admin-secret', FMP_API_KEY: 'configured', DB: fakeDb() } as never,
+      { ADMIN_TOKEN: 'admin-secret', FMP_LATENCY_API_KEY: 'configured', DB: fakeDb() } as never,
     );
 
     expect(res.status).toBe(200);

@@ -12,6 +12,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-05 — GROK — IN PROGRESS — FMP free keys latency-only.** Branch `grok/fmp-latency-keys-only`. Dual-key 235/day ET-spaced probes; FMP_LATENCY_API_KEY (+ secondary); enrichment hard-off; prices never FMP.
 - **2026-08-05 — GROK — IN PROGRESS — Housekeeping + query index (#1049/#1043 remainder).** Branch `grok/query-opts`.
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->

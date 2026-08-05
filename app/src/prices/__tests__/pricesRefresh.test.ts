@@ -1,10 +1,12 @@
 /**
  * src/prices/__tests__/pricesRefresh.test.ts
  *
- * Behavioral tests for runPriceRefresh (real migrated SQLite + a stubbed FMP
+ * Behavioral tests for runPriceRefresh (real migrated SQLite + a stubbed price
  * client): the negative-cache write on an empty EOD fetch, the latest_price_date
  * bookkeeping on success, and the incremental fetch window that stops the price
  * refresh from re-downloading each ticker's entire multi-year history every pass.
+ *
+ * FMP is never selected for prices (latency keys only) — tests use Massive.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,9 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   eodCalls: [] as Array<{ symbol: string; from: string; to: string }>,
   responses: new Map<string, Array<{ date: string; close: number }>>(),
-  // Symbols whose fetch throws — simulating the client's new behavior of throwing
-  // on transient/global failures (401/402/403/429/5xx) rather than returning [].
-  errors: new Set<string>(),
+  // Symbols whose fetch throws — message defaults to MASSIVE_HTTP_403 (auth/plan
+  // fatal) unless a custom message is stored in the map.
+  errors: new Map<string, string>(),
 }));
 
 vi.mock('../../secrets/infisical', async (importOriginal) => ({
@@ -29,12 +31,14 @@ vi.mock('../fmp', () => ({
   buildFmpPriceClient: () => ({
     eodHistory: async (symbol: string, from: string, to: string) => {
       h.eodCalls.push({ symbol, from, to });
-      if (h.errors.has(symbol)) throw new Error('FMP_HTTP_429');
+      const herr = h.errors.get(symbol);
+      if (herr) throw new Error(herr);
       return h.responses.get(symbol) ?? [];
     },
     spxHistory: async (from: string, to: string) => {
       h.eodCalls.push({ symbol: 'SPY', from, to });
-      if (h.errors.has('SPY')) throw new Error('FMP_HTTP_429');
+      const herr = h.errors.get('SPY');
+      if (herr) throw new Error(herr);
       return h.responses.get('SPY') ?? [];
     },
   }),
@@ -49,17 +53,26 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock('../massive', () => ({
   buildMassivePriceClient: () => ({
-    eodHistory: async (symbol: string) => {
+    // Default suite records into h.* (same shape as the old FMP mock) so
+    // assertions on h.eodCalls / h.responses stay stable. Unmetered-provider
+    // suite below uses m.* overrides when PRICE_PROVIDER=massive with m.errors.
+    eodHistory: async (symbol: string, from?: string, to?: string) => {
       m.eodCalls.push({ symbol });
+      h.eodCalls.push({ symbol, from: from ?? '', to: to ?? '' });
       const err = m.errors.get(symbol);
       if (err) throw new Error(err);
-      return m.responses.get(symbol) ?? [];
+      const herr = h.errors.get(symbol);
+      if (herr) throw new Error(herr);
+      return m.responses.get(symbol) ?? h.responses.get(symbol) ?? [];
     },
-    spxHistory: async () => {
+    spxHistory: async (from?: string, to?: string) => {
       m.eodCalls.push({ symbol: 'SPY' });
+      h.eodCalls.push({ symbol: 'SPY', from: from ?? '', to: to ?? '' });
       const err = m.errors.get('SPY');
       if (err) throw new Error(err);
-      return m.responses.get('SPY') ?? [];
+      const herr = h.errors.get('SPY');
+      if (herr) throw new Error(herr);
+      return m.responses.get('SPY') ?? h.responses.get('SPY') ?? [];
     },
   }),
 }));
@@ -84,9 +97,9 @@ beforeEach(async () => {
   close = opened.close;
   env = {
     DB: opened.d1,
-    FMP_API_KEY: 'test-key',
-    // getDailyUsed/addDailyUsed hit CONFIG_KV; a tolerant stub keeps the FMP
-    // budget path working without a real KV binding.
+    // FMP free keys are latency-only — price refresh uses Massive (or peer/tiingo).
+    MASSIVE_API_KEY: 'test-massive-key',
+    PRICE_PROVIDER: 'massive',
     CONFIG_KV: { get: async () => null, put: async () => {} },
   } as unknown as Env;
 });
@@ -126,7 +139,7 @@ describe('runPriceRefresh — negative-cache on empty history', () => {
 
   it('does NOT negative-cache when the provider fetch THROWS (transient error) — retry next cycle', async () => {
     seedTrade('t1', 'FLAKY', '2026-01-05');
-    h.errors.add('FLAKY'); // simulate 429/5xx/auth failure → client throws
+    h.errors.set('FLAKY', 'MASSIVE_HTTP_429'); // simulate 429/5xx/auth failure → client throws
 
     const res = await runPriceRefresh(env, { max: 10 });
 
@@ -234,11 +247,11 @@ describe('runPriceRefresh — two-stage not-found backoff (7d then 30d)', () => 
   });
 });
 
-describe('runPriceRefresh — abort on auth/plan/rate-limit (401/402/403/429)', () => {
+describe('runPriceRefresh — abort on auth/plan failures (401/402/403)', () => {
   it('aborts the whole run when the SPX fetch hits a fatal provider error, never attempting any ticker', async () => {
     seedTrade('t9', 'AAA', '2026-01-05');
     seedTrade('t10', 'BBB', '2026-01-06');
-    h.errors.add('SPY'); // spxHistory throws FMP_HTTP_429 (fatal — see FATAL_PRICE_PROVIDER_ERROR)
+    h.errors.set('SPY', 'MASSIVE_HTTP_403'); // auth/plan fatal — aborts whole run
 
     const res = await runPriceRefresh(env, { max: 10 });
 
@@ -255,7 +268,7 @@ describe('runPriceRefresh — abort on auth/plan/rate-limit (401/402/403/429)', 
     seedTrade('t12', 'FATAL', '2026-01-06');
     seedTrade('t13', 'NEVERREACHED', '2026-01-07'); // newest-traded → after FATAL
     h.responses.set('FIRSTOK', [{ date: '2026-07-11', close: 100 }]);
-    h.errors.add('FATAL'); // eodHistory throws FMP_HTTP_429 for this ticker
+    h.errors.set('FATAL', 'MASSIVE_HTTP_403'); // auth/plan fatal per-ticker
 
     const res = await runPriceRefresh(env, { max: 10 });
 
@@ -273,7 +286,7 @@ describe('runPriceRefresh — abort on auth/plan/rate-limit (401/402/403/429)', 
 describe('runPriceRefresh — accurate meter counting (an attempt counts even when it throws)', () => {
   it('counts a thrown per-ticker fetch attempt against fmpCalls, same as a successful one', async () => {
     seedTrade('t14', 'FATAL2', '2026-01-05');
-    h.errors.add('FATAL2');
+    h.errors.set('FATAL2', 'MASSIVE_HTTP_403');
 
     const res = await runPriceRefresh(env, { max: 10 });
 
@@ -284,7 +297,7 @@ describe('runPriceRefresh — accurate meter counting (an attempt counts even wh
 
   it('counts the SPX attempt itself even when SPX throws before any ticker is reached', async () => {
     seedTrade('t15', 'AAA2', '2026-01-05');
-    h.errors.add('SPY');
+    h.errors.set('SPY', 'MASSIVE_HTTP_403');
 
     const res = await runPriceRefresh(env, { max: 10 });
 

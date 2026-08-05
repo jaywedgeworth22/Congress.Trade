@@ -47,8 +47,13 @@ type EnvX = Env & {
   TIINGO_API_KEY?: string;
 };
 
-function fmpEnrichmentEnabled(value?: string): boolean {
-  return ['true', '1', 'yes', 'on'].includes((value || '').trim().toLowerCase());
+/**
+ * FMP enrichment is permanently off (owner 2026-08): free FMP keys are reserved
+ * for disclosure-latency probes only. Even FMP_ENRICHMENT_ENABLED=true is ignored
+ * so a mis-set Infisical flag cannot burn the latency budget.
+ */
+function fmpEnrichmentEnabled(_value?: string): boolean {
+  return false;
 }
 
 interface ChainEntry {
