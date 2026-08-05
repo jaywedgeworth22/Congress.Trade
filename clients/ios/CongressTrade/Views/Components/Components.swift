@@ -344,7 +344,7 @@ extension String {
     var label: String {
         switch self {
         case "S": return "Sell"
-        case "P", "B": return "Buy"
+        case "B", "P": return "Buy"
         case "E": return "Exchange"
         default: return self
         }
@@ -353,7 +353,7 @@ extension String {
     var tint: Color {
         switch self {
         case "S": return .red
-        case "P", "B": return .green
+        case "B", "P": return .green
         default: return .blue
         }
     }

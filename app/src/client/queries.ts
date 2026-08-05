@@ -47,12 +47,12 @@ export function tickerSummarySql(ticker: string): { sql: string; params: string[
   return {
     sql:
       'SELECT COUNT(*) AS total_trades, ' +
-      "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END) AS buy_count, " +
+      "SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN 1 ELSE 0 END) AS buy_count, " +
       "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END) AS sell_count, " +
       "SUM(CASE WHEN t.tx_type = 'E' THEN 1 ELSE 0 END) AS exchange_count, " +
       'COUNT(DISTINCT t.filer_id) AS member_count, ' +
       `SUM(t.est_value) AS est_volume, ` +
-      `SUM(CASE WHEN t.tx_type = 'P' THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
+      `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
       'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
       'FROM transactions t WHERE t.deprecated_at IS NULL AND t.ticker = ?',
     params: [ticker],
@@ -63,13 +63,13 @@ export function memberSummarySql(memberId: string): { sql: string; params: strin
   return {
     sql:
       'SELECT COUNT(*) AS total_trades, ' +
-      "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END) AS buy_count, " +
+      "SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN 1 ELSE 0 END) AS buy_count, " +
       "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END) AS sell_count, " +
       "SUM(CASE WHEN t.tx_type = 'E' THEN 1 ELSE 0 END) AS exchange_count, " +
       "COUNT(DISTINCT CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN t.ticker END) AS unique_tickers, " +
       "COUNT(DISTINCT COALESCE(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN t.ticker END, NULLIF(t.asset_name, ''))) AS unique_assets, " +
       `SUM(t.est_value) AS est_volume, ` +
-      `SUM(CASE WHEN t.tx_type = 'P' THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
+      `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
       'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
       'FROM transactions t WHERE t.deprecated_at IS NULL AND t.filer_id = ?',
     params: [memberId],

@@ -190,7 +190,7 @@ describe('aggregateMemberPerformance', () => {
   it('buysOnly skips sells; filing anchor uses priceAtFiling', () => {
     const rows: MemberPerfRow[] = [
       row({
-        txType: 'P',
+        txType: 'B',
         priceAtTrade: 100,
         currentPrice: 120,
         spxAtTrade: 100,
@@ -241,7 +241,7 @@ describe('aggregateMemberDualPerformance', () => {
       [
         {
           isOption: false,
-          txType: 'P',
+          txType: 'B',
           priceAtTrade: 100,
           spxAtTrade: 100,
           priceAtFiling: 105,

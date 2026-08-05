@@ -138,7 +138,7 @@ export const BRACKET_MIDPOINT_SQL =
 
 /** Signed midpoint: +mid for purchases, -mid for sales, 0 otherwise (net flow). */
 export const SIGNED_MIDPOINT_SQL =
-  "(CASE WHEN t.tx_type = 'P' THEN " +
+  "(CASE WHEN t.tx_type IN ('B', 'P') THEN " +
   BRACKET_MIDPOINT_SQL +
   " WHEN t.tx_type = 'S' THEN -" +
   BRACKET_MIDPOINT_SQL +
@@ -202,7 +202,7 @@ export interface CommonFilters {
   minConf?: number;
   /** Require a resolved (non-null, non-empty) ticker. */
   tickerNotNull?: boolean;
-  /** Restrict to these transaction types (e.g. ['P','S']). */
+  /** Restrict to these transaction types (e.g. ['B','S']). */
   txTypes?: TxType[];
   /** Restrict to this explicit set of tickers (e.g. a precomputed candidate set). */
   tickers?: string[];
@@ -252,8 +252,19 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
     where.push(TICKER_RESOLVED_SQL);
   }
   if (p.txTypes && p.txTypes.length) {
-    where.push(`t.tx_type IN (${p.txTypes.map(() => '?').join(', ')})`);
-    for (const ty of p.txTypes) params.push(ty);
+    // Expand Buy (B) to include legacy Purchase letter P during migration window.
+    const expanded = new Set<string>();
+    for (const ty of p.txTypes) {
+      expanded.add(ty);
+      const code = String(ty);
+      if (code === 'B' || code === 'P') {
+        expanded.add('B');
+        expanded.add('P');
+      }
+    }
+    const list = [...expanded];
+    where.push(`t.tx_type IN (${list.map(() => '?').join(', ')})`);
+    for (const ty of list) params.push(ty);
   }
   if (p.tickers && p.tickers.length) {
     where.push(`t.ticker IN (${p.tickers.map(() => '?').join(', ')})`);

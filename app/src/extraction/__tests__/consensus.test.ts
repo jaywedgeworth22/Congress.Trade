@@ -15,7 +15,7 @@ function tx(over: Partial<ParsedTx> = {}): ParsedTx {
     assetName: 'Apple Inc',
     ticker: 'AAPL',
     assetType: 'ST',
-    txType: 'P',
+    txType: 'B',
     amountMin: 15000,
     amountMax: 50000,
     isOption: false,
@@ -212,12 +212,12 @@ describe('buildConsensusRows', () => {
     const { rows } = buildConsensusRows(runs);
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.rowKey)).toEqual([
-      'AAPL|2026-01-15|P#1',
-      'AAPL|2026-01-15|P#2',
+      'AAPL|2026-01-15|B#1',
+      'AAPL|2026-01-15|B#2',
     ]);
     expect(rows.map((row) => row.baseRowKey)).toEqual([
-      'AAPL|2026-01-15|P',
-      'AAPL|2026-01-15|P',
+      'AAPL|2026-01-15|B',
+      'AAPL|2026-01-15|B',
     ]);
     expect(rows.map((row) => row.occurrence)).toEqual([1, 2]);
     expect(rows[0].fields.amount.value).toEqual({ amountMin: 1001, amountMax: 15000 });

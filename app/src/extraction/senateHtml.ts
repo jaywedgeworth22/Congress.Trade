@@ -294,7 +294,7 @@ export function normalizeTxType(raw: string): TxType | null {
   const s = (raw || '').toLowerCase().trim();
   if (!s) return null;
   // Product short letter B (= Buy) aliases storage P.
-  if (s.includes('purchase') || s.includes('buy') || s === 'p' || s === 'b') return 'P';
+  if (s.includes('purchase') || s.includes('buy') || s === 'p' || s === 'b') return 'B';
   if (s.includes('exchange') || s === 'e') return 'E';
   if (s.includes('sale') || s.includes('sold') || s.includes('sell') || s === 's') return 'S';
   if (s.includes('partial') || s.includes('full')) return 'S';

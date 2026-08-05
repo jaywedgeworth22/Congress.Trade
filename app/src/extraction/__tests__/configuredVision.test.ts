@@ -55,7 +55,7 @@ function okResult(over: Partial<CandidateDocResult> = {}): CandidateDocResult {
     ok: true,
     latencyMs: 50,
     rowCount: 1,
-    rowKeys: ['AAPL|2026-07-01|P'],
+    rowKeys: ['AAPL|2026-07-01|B'],
     avgConfidence: 0.9,
     rows: [{ ticker: 'AAPL', confidence: 0.9 } as never],
     resolvedModel: 'mistral-ocr-latest-2026',

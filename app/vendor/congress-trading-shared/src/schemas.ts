@@ -27,8 +27,11 @@ export type PartyBucket = z.infer<typeof PartyBucketSchema>;
 export const OwnerSchema = z.enum(["self", "spouse", "joint", "dependent"]);
 export type Owner = z.infer<typeof OwnerSchema>;
 
-export const TxTypeSchema = z.enum(["P", "S", "E"]);
-export type TxType = z.infer<typeof TxTypeSchema>;
+/** B = Buy, S = Sell, E = Exchange. Legacy form letter P (Purchase) is accepted on parse and coerced to B. */
+export const TxTypeSchema = z
+  .enum(["B", "S", "E", "P"])
+  .transform((v): "B" | "S" | "E" => (v === "P" ? "B" : v));
+export type TxType = "B" | "S" | "E";
 
 export const AssetTypeCategorySchema = z.enum([
   "public_equity",

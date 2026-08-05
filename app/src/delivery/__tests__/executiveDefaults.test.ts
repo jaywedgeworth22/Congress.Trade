@@ -60,7 +60,7 @@ describe('analytics default includes executive', () => {
 });
 
 describe('subscription delivery default includes executive', () => {
-  const tx = { id: 't1', ticker: 'NVDA', txType: 'P', amountMin: 1001, amountMax: 15000 } as unknown as Transaction;
+  const tx = { id: 't1', ticker: 'NVDA', txType: 'B', amountMin: 1001, amountMax: 15000 } as unknown as Transaction;
 
   it('a subscription with NO chambers filter receives executive rows', () => {
     expect(matchesFiltersWithChamber(tx, {}, 'house')).toBe(true);

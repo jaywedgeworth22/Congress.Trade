@@ -159,7 +159,11 @@ export function validateSubscriptionFilters(value: unknown):
   const sectors = strings('sectors', 25, 100); if (typeof sectors === 'string') return { ok: false, error: sectors };
   const buckets = strings('marketCapBuckets', 6, 10); if (typeof buckets === 'string') return { ok: false, error: buckets };
   if (chambers.some((v) => v !== 'house' && v !== 'senate' && v !== 'executive')) return { ok: false, error: 'chambers contains an invalid value' };
-  if (sides.some((v) => v !== 'P' && v !== 'S' && v !== 'E')) return { ok: false, error: 'sides contains an invalid value' };
+  // Canonical B|S|E; accept legacy P as Buy and coerce.
+  if (sides.some((v) => v !== 'B' && v !== 'P' && v !== 'S' && v !== 'E')) {
+    return { ok: false, error: 'sides contains an invalid value' };
+  }
+  const sidesNorm = [...new Set(sides.map((v) => (v === 'P' ? 'B' : v)))];
   if (buckets.some((v) => !['mega', 'large', 'mid', 'small', 'micro', 'nano'].includes(v))) return { ok: false, error: 'marketCapBuckets contains an invalid value' };
   const min = raw.minAmount; const max = raw.maxAmount;
   if (min != null && (typeof min !== 'number' || !Number.isFinite(min) || min < 0)) return { ok: false, error: 'minAmount must be a non-negative number' };
@@ -169,7 +173,7 @@ export function validateSubscriptionFilters(value: unknown):
     ...(members.length ? { members } : {}), ...(tickersRaw.length ? { tickers: [...new Set(tickersRaw.map((v) => v.toUpperCase()))] } : {}),
     ...(chambers.length ? { chambers: chambers as SubscriptionFilters['chambers'] } : {}),
     ...(typeof min === 'number' ? { minAmount: min } : {}), ...(typeof max === 'number' ? { maxAmount: max } : {}),
-    ...(sides.length ? { sides: sides as SubscriptionFilters['sides'] } : {}), ...(sectors.length ? { sectors } : {}),
+    ...(sidesNorm.length ? { sides: sidesNorm as SubscriptionFilters['sides'] } : {}), ...(sectors.length ? { sectors } : {}),
     ...(buckets.length ? { marketCapBuckets: buckets } : {}),
   } };
 }
@@ -394,7 +398,8 @@ export function matchesFilters(tx: Transaction, filters: SubscriptionFilters): b
   }
 
   if (filters.sides && filters.sides.length > 0) {
-    if (!filters.sides.includes(tx.txType)) return false;
+    const side = String(tx.txType) === 'P' ? 'B' : tx.txType;
+    if (!side || !filters.sides.includes(side)) return false;
   }
 
   return true;

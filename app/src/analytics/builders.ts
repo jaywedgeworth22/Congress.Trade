@@ -42,9 +42,9 @@ export interface BuiltQuery {
 
 const MID = BRACKET_MIDPOINT_SQL;
 const SIGNED = SIGNED_MIDPOINT_SQL;
-const BUY = "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END)";
+const BUY = "SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN 1 ELSE 0 END)";
 const SELL = "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END)";
-const BUY_VOL = `SUM(CASE WHEN t.tx_type = 'P' THEN ${MID} ELSE 0 END)`;
+const BUY_VOL = `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${MID} ELSE 0 END)`;
 const SELL_VOL = `SUM(CASE WHEN t.tx_type = 'S' THEN ${MID} ELSE 0 END)`;
 
 // ---------------------------------------------------------------------------
@@ -100,8 +100,8 @@ export function buildTickerLeaderboardQuery(
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
-    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count, " +
-    "COUNT(DISTINCT CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('B', 'P', 'S') THEN t.filer_id END) AS directional_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('B', 'P') THEN t.filer_id END) AS buy_member_count, " +
     "COUNT(DISTINCT CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count, " +
     `SUM(${MID}) AS est_volume, ` +
     `SUM(${SIGNED}) AS est_net_flow ` +
@@ -159,10 +159,10 @@ export function buildMemberLeaderboardQuery(
 export function buildClusterBuysQuery(
   p: CommonFilters & { minMembers?: number; limit?: number },
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['P', 'S'] });
+  const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['B', 'S'] });
   const minMembers = clampLimit(p.minMembers, 3, 50);
   // Max 200 so a caller restricting to a candidate ticker set can fetch both the
-  // buy ('P') and sell ('S') cluster row for up to 100 tickers; public callers
+  // buy ('B') and sell ('S') cluster row for up to 100 tickers; public callers
   // pin their own limit (see /cluster-buys).
   const limit = clampLimit(p.limit, 12, 200);
   const sql =
@@ -189,7 +189,7 @@ export function buildClusterMembersQuery(
   tickers: string[],
   p: CommonFilters,
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, txTypes: ['P', 'S'] });
+  const { where, params } = buildCommonFilters({ ...p, txTypes: ['B', 'S'] });
   const placeholders = tickers.map(() => '?').join(', ');
   const allWhere = [`t.ticker IN (${placeholders})`, ...where];
   const allParams: SqlParam[] = [...tickers, ...params];
@@ -281,7 +281,7 @@ export function buildVolumeOverTimeQuery(
   const sql =
     'SELECT strftime(?, t.tx_date) AS period, ' +
     `${BUY} AS buys, ${SELL} AS sells, ` +
-    `SUM(CASE WHEN t.tx_type = 'P' THEN ${MID} ELSE 0 END) AS est_buy_vol, ` +
+    `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${MID} ELSE 0 END) AS est_buy_vol, ` +
     `SUM(CASE WHEN t.tx_type = 'S' THEN ${MID} ELSE 0 END) AS est_sell_vol ` +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
@@ -479,7 +479,7 @@ export function buildMemberPerformanceLeaderboardQuery(
   const ELAPSED_DAYS = `(julianday('now') - julianday(${ANCHOR_DATE}))`;
   const ANNUALIZED_EXCESS = `((${EXCESS}) * (365.25 / MAX(30.0, ${ELAPSED_DAYS})))`;
   const allWhere = [
-    "t.tx_type = 'P'",
+    "t.tx_type IN ('B', 'P')",
     't.is_option = 0',
     'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
     'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
@@ -524,7 +524,7 @@ export function buildMemberPerformanceLeaderboardQuery(
  * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
  */
 export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['P', 'S'] });
+  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['B', 'S'] });
   const allWhere = ['t.filer_id IS NOT NULL', ...where];
   const sql =
     'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +
@@ -547,7 +547,7 @@ export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): Bui
     '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
   const where = [
     't.deprecated_at IS NULL',
-    "t.tx_type = 'P'",
+    "t.tx_type IN ('B', 'P')",
     't.is_option = 0',
     'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
     'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
@@ -613,7 +613,7 @@ export function buildTickerBacktestCohortQuery(
   p: CommonFilters,
   filerId?: string,
 ): BuiltQuery {
-  const { where, params } = tickerFilters(ticker, { ...p, txTypes: ['P'] });
+  const { where, params } = tickerFilters(ticker, { ...p, txTypes: ['B'] });
   const allWhere = [...where, 't.is_option = 0', "t.tx_date IS NOT NULL", "t.tx_date <> ''"];
   if (filerId) {
     allWhere.push('t.filer_id = ?');
@@ -668,10 +668,10 @@ export function buildTickerTimeSeriesQuery(
   return { sql, params: [granularityFormat(p.granularity), ...params] };
 }
 
-/** Top buyers (txType 'P') or sellers ('S') of one ticker. */
+/** Top buyers (txType 'B') or sellers ('S') of one ticker. */
 export function buildTickerTopTradersQuery(
   ticker: string,
-  txType: 'P' | 'S',
+  txType: 'B' | 'S',
   p: CommonFilters & { limit?: number },
 ): BuiltQuery {
   const { where, params } = tickerFilters(ticker, { ...p, txTypes: [txType] });

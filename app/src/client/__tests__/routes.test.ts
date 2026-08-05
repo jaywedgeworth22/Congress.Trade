@@ -67,7 +67,7 @@ function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string }
     asset_name: 'Apple Inc.',
     ticker: 'AAPL',
     asset_type: 'ST',
-    tx_type: 'P',
+    tx_type: 'B',
     amount_min: 15_001,
     amount_max: 50_000,
     is_option: 0,
@@ -165,13 +165,13 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     const estVolume = rows.reduce((sum, row) => sum + midpoint(row), 0);
     const estNetFlow = rows.reduce((sum, row) => {
       const value = midpoint(row);
-      if (row.tx_type === 'P') return sum + value;
+      if ((row.tx_type === 'B' || row.tx_type === 'P')) return sum + value;
       if (row.tx_type === 'S') return sum - value;
       return sum;
     }, 0);
     return {
       total_trades: rows.length,
-      buy_count: rows.filter((row) => row.tx_type === 'P').length,
+      buy_count: rows.filter((row) => (row.tx_type === 'B' || row.tx_type === 'P')).length,
       sell_count: rows.filter((row) => row.tx_type === 'S').length,
       exchange_count: rows.filter((row) => row.tx_type === 'E').length,
       member_count: new Set(rows.map((row) => row.filer_id).filter(Boolean)).size,
@@ -505,7 +505,7 @@ describe('client API routes', () => {
       asset_name: 'Austin TX ARPT SYS TRAN',
       ticker: null,
       asset_type: 'GS',
-      tx_type: 'P',
+      tx_type: 'B',
       amount_min: 50001,
       amount_max: 100000,
       is_option: 0,
@@ -553,7 +553,7 @@ describe('client API routes', () => {
       asset_name: 'Apple Inc. - Common Stock',
       ticker: 'AAPL',
       asset_type: 'ST',
-      tx_type: 'P',
+      tx_type: 'B',
       amount_min: 1001,
       amount_max: 15000,
       is_option: 0,
@@ -607,7 +607,7 @@ describe('client API routes', () => {
       asset_name: 'Austin TX ARPT SYS TRAN',
       ticker: null,
       asset_type: 'GS',
-      tx_type: 'P',
+      tx_type: 'B',
       amount_min: 50001,
       amount_max: 100000,
       is_option: 0,
@@ -656,7 +656,7 @@ describe('client API routes', () => {
       asset_name: 'Apple Inc. - Common Stock',
       ticker: 'AAPL',
       asset_type: 'ST',
-      tx_type: 'P',
+      tx_type: 'B',
       amount_min: 1001,
       amount_max: 15000,
       is_option: 0,
@@ -727,7 +727,7 @@ describe('client API routes', () => {
         asset_name: 'Apple Inc.',
         ticker: 'AAPL',
         asset_type: 'ST',
-        tx_type: 'P',
+        tx_type: 'B',
         amount_min: 1001,
         amount_max: 15000,
         is_option: 0,
@@ -789,7 +789,7 @@ describe('client API routes', () => {
         asset_name: 'Microsoft Corp.',
         ticker: 'MSFT',
         asset_type: 'ST',
-        tx_type: 'P',
+        tx_type: 'B',
         amount_min: 1001,
         amount_max: 15000,
         is_option: 0,
@@ -860,7 +860,7 @@ describe('client API routes', () => {
         asset_name: 'Apple Inc.',
         ticker: 'AAPL',
         asset_type: 'ST',
-        tx_type: 'P',
+        tx_type: 'B',
         amount_min: 1001,
         amount_max: 15000,
         is_option: 0,

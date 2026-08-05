@@ -146,13 +146,13 @@ export function mapTransaction(row: TransactionRow): Transaction {
     assetTypeCategoryLabel: assetType.categoryLabel,
     // Honest passthrough: a filing row with no disclosed side (row.tx_type
     // NULL — malformed/partial source text) is surfaced as null, never
-    // silently defaulted to 'P' (Buy). Downstream aggregates already
+    // silently defaulted to Buy. Downstream aggregates already
     // treat a non-matching tx_type as "not counted" (see tickerSummarySql/
-    // memberSummarySql's `tx_type = 'P'`/'S'/'E' CASE expressions and
+    // memberSummarySql's buy/sell CASE expressions and
     // subscriptions.ts's `sides` filter), so a null side is naturally
     // excluded from buy/sell/exchange counts rather than misreported as a buy.
-    // Product labels: Buy/Sell/Exchange; storage stays P|S|E (B = Buy alias).
-    txType: row.tx_type as TxType,
+    // Storage codes B|S|E; legacy P coerced to B on read.
+    txType: ((row.tx_type === 'B' || row.tx_type === 'P') ? 'B' : row.tx_type) as TxType,
     amountMin: row.amount_min,
     amountMax: row.amount_max,
     estValue: row.est_value ?? null,
@@ -487,8 +487,13 @@ function buildTxFilters(
     params.push(`%${escapeLikePattern(p.memberName.toLowerCase())}%`);
   }
   if (p.type) {
-    where.push('t.tx_type = ?');
-    params.push(p.type);
+    // Buy dual-read: B is canonical; legacy P still matches until migrate lands.
+    if (p.type === 'B') {
+      where.push("t.tx_type IN ('B', 'P')");
+    } else {
+      where.push('t.tx_type = ?');
+      params.push(p.type);
+    }
   }
   if (p.stockAct) {
     where.push('t.stock_act_status = ?');

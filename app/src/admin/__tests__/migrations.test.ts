@@ -397,7 +397,7 @@ describe('admin migration bootstrap', () => {
         assetName: 'Example Corp',
         ticker: 'EXM',
         assetType: 'stock',
-        txType: 'P',
+        txType: 'B',
         amountMin: 15_001,
         amountMax: 50_000,
         isOption: false,

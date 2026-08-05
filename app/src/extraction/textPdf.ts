@@ -219,7 +219,7 @@ function parseInlineRecords(text: string): ParsedTx[] {
     const assetType = groups.assetType?.toUpperCase() ?? null;
     const details = parseHouseRowDetails(rawText);
     const assetName = cleanAssetNameString(groups.asset ?? '') || ticker || '(unknown)';
-    const txType = parseTxType(groups.txType ?? '') ?? 'P';
+    const txType = parseTxType(groups.txType ?? '') ?? 'B';
     const txDate = toIsoDate(groups.txDate ?? '');
     const { min, max } = parseAmountRange(groups.amount ?? '');
 
@@ -365,7 +365,7 @@ function blockToParsedTx(block: string[]): ParsedTx | null {
     ticker,
     assetType,
     assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
-    txType: txType ?? 'P',
+    txType: txType ?? 'B',
     amountMin: min,
     amountMax: max,
     isOption: detectOption(joined) || assetType === 'OP',
@@ -462,8 +462,8 @@ function parseTxType(text: string): TxType | null {
   const m = text.match(TXTYPE_RE);
   if (!m) return null;
   const tok = (m[1] || m[2] || '').toLowerCase();
-  if (tok === 'p' || tok === 'purchase') return 'P';
-  if (tok === 's' || tok === 'sale') return 'S';
+  if (tok === 'p' || tok === 'b' || tok === 'purchase' || tok === 'buy') return 'B';
+  if (tok === 's' || tok === 'sale' || tok === 'sell') return 'S';
   if (tok === 'e' || tok === 'exchange') return 'E';
   return null;
 }

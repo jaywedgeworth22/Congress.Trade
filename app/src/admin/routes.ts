@@ -932,11 +932,11 @@ function validateReviewEdits(
       return { error: `edits[${index}] must be an object` };
     }
     const e = raw as EditedTx;
-    // Accept product buy letter B as alias of storage P.
+    // Canonical B|S|E; legacy form letter P (Purchase) → B.
     let txType = typeof e.txType === 'string' ? e.txType.toUpperCase() : '';
-    if (txType === 'B') txType = 'P';
-    if (txType !== 'P' && txType !== 'S' && txType !== 'E') {
-      return { error: `edits[${index}].txType must be explicitly P (Buy), S (Sell), or E (Exchange); B is accepted as Buy` };
+    if (txType === 'P') txType = 'B';
+    if (txType !== 'B' && txType !== 'S' && txType !== 'E') {
+      return { error: `edits[${index}].txType must be explicitly B (Buy), S (Sell), or E (Exchange); P is accepted as Buy` };
     }
     const ownerRaw = typeof e.owner === 'string' ? e.owner.trim().toLowerCase() : '';
     const owner = ownerRaw === '' ? null : ownerRaw;
@@ -1192,9 +1192,9 @@ function normalizeStoredOwner(value: string | null): 'self' | 'spouse' | 'joint'
 }
 
 function normalizeStoredTxType(value: string | null): TxType {
-  // Product buy letter B aliases storage P.
-  if (value === 'B') return 'P';
-  return value === 'P' || value === 'S' || value === 'E' ? value : 'P';
+  // Canonical B|S|E; legacy P → B on read so API never serves Purchase letter.
+  if (value === 'P' || value === 'B') return 'B';
+  return value === 'S' || value === 'E' ? value : 'B';
 }
 
 /**
@@ -4582,7 +4582,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          FROM transactions
         WHERE source = 'competitor_backfill'
           AND deprecated_at IS NULL
-          AND (filer_id LIKE 'EXEC-%' OR tx_type NOT IN ('P','S','E')
+          AND (filer_id LIKE 'EXEC-%' OR tx_type NOT IN ('B','P','S','E')
                OR lower(COALESCE(asset_name,'')) IN ('unknown',''))
         LIMIT 20000`,
     );

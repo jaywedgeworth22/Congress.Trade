@@ -21,7 +21,7 @@ function tx(overrides: Partial<Transaction> = {}): Transaction {
     assetName: 'Apple Inc.',
     ticker: 'AAPL',
     assetType: 'stock',
-    txType: 'P',
+    txType: 'B',
     amountMin: 1_000,
     amountMax: 15_000,
     isOption: false,
@@ -104,9 +104,9 @@ describe('matchesFilters', () => {
 
   // --- sides[] ------------------------------------------------------------
   it('filters by transaction side (buys only)', () => {
-    expect(matchesFilters(tx({ txType: 'P' }), { sides: ['P'] })).toBe(true);
-    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['P'] })).toBe(false);
-    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['P', 'S'] })).toBe(true);
+    expect(matchesFilters(tx({ txType: 'B' }), { sides: ['B'] })).toBe(true);
+    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['B'] })).toBe(false);
+    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['B', 'S'] })).toBe(true);
   });
 
   // --- combined (AND semantics) ------------------------------------------
@@ -150,7 +150,7 @@ describe('matchesFiltersWithContext (sector + market cap)', () => {
       chambers: ['house'],
       sectors: ['Technology'],
       marketCapBuckets: ['mega'],
-      sides: ['P'],
+      sides: ['B'],
     };
     expect(matchesFiltersWithContext(tx(), filters, ctx())).toBe(true);
     expect(matchesFiltersWithContext(tx({ txType: 'S' }), filters, ctx())).toBe(false);

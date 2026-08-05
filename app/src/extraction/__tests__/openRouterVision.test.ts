@@ -56,7 +56,7 @@ describe('OpenRouterVisionExtractor', () => {
                   {
                     ticker: 'AAPL',
                     assetName: 'Apple Inc.',
-                    txType: 'P',
+                    txType: 'B',
                     amountRange: '$1,001 - $15,000',
                     txDate: '2026-05-01',
                     owner: 'Self',

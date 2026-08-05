@@ -259,7 +259,7 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
         {
           ticker: 'NVDA',
           assetName: 'NVIDIA Corporation',
-          txType: 'P',
+          txType: 'B',
           txDate: '2026-07-25',
           amountMin: 1001,
           amountMax: 15000,
@@ -320,7 +320,7 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
             {
               ticker: 'NVDA',
               assetName: 'NVIDIA Corporation',
-              txType: 'P',
+              txType: 'B',
               txDate: '2026-07-25',
               amountMin: 1001,
               amountMax: 15000,

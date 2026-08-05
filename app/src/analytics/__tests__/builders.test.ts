@@ -70,8 +70,8 @@ describe('buildTickerLeaderboardQuery', () => {
 
   it('exposes directional + per-side distinct-politician counts (for conviction breadth)', () => {
     const q = buildTickerLeaderboardQuery({ window: 'all' });
-    expect(q.sql).toContain("CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count");
-    expect(q.sql).toContain("CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type IN ('B', 'P', 'S') THEN t.filer_id END) AS directional_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type IN ('B', 'P') THEN t.filer_id END) AS buy_member_count");
     expect(q.sql).toContain("CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count");
   });
 });
@@ -90,16 +90,17 @@ describe('buildMemberLeaderboardQuery', () => {
 });
 
 describe('buildClusterBuysQuery', () => {
-  it('filters to P/S, counts distinct politicians + party split, applies HAVING', () => {
+  it('filters to B/S (dual-read legacy P), counts distinct politicians + party split, applies HAVING', () => {
     const q = buildClusterBuysQuery({ window: '30d', minMembers: 4, limit: 10 });
-    expect(q.sql).toContain('t.tx_type IN (?, ?)');
+    // Buy expands to B+P for dual-read → three binds with S
+    expect(q.sql).toContain('t.tx_type IN (?, ?, ?)');
     expect(q.sql).toContain('GROUP BY t.ticker, t.tx_type');
     expect(q.sql).toContain('HAVING COUNT(DISTINCT t.filer_id) >= 4');
     expect(q.sql).toContain('AS d_members');
     expect(q.sql).toContain('AS r_members');
     expect(q.sql).toContain('LIMIT 10');
-    // window offset first, then the two tx_type params
-    expect(q.params).toEqual(['-30 days', 'P', 'S']);
+    // window offset first, then B,P,S (buy dual-read + sell)
+    expect(q.params).toEqual(['-30 days', 'B', 'P', 'S']);
   });
 
   it('defaults minMembers to 3', () => {
@@ -113,8 +114,8 @@ describe('buildClusterMembersQuery', () => {
     const q = buildClusterMembersQuery(['AAPL', 'NVDA'], { window: '30d' });
     expect(q.sql).toContain('t.ticker IN (?, ?)');
     expect(q.sql).toContain('GROUP BY t.ticker, t.tx_type, t.filer_id');
-    // tickers first, then window offset, then the P/S tx_type params
-    expect(q.params).toEqual(['AAPL', 'NVDA', '-30 days', 'P', 'S']);
+    // tickers first, then window offset, then B,P,S (buy dual-read + sell)
+    expect(q.params).toEqual(['AAPL', 'NVDA', '-30 days', 'B', 'P', 'S']);
   });
 });
 
@@ -208,10 +209,10 @@ describe('conviction realized-skill inputs', () => {
     const q = buildConvictionMemberLinksQuery(['AAPL', 'MSFT'], { window: '90d' });
     expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id');
     expect(q.sql).toContain('t.ticker IN (?, ?)');
-    expect(q.sql).toContain('t.tx_type IN (?, ?)');
+    expect(q.sql).toContain('t.tx_type IN (?, ?, ?)');
     expect(q.sql).toContain('t.filer_id IS NOT NULL');
-    // bind order: window offset, then tx_types, then the ticker IN-list.
-    expect(q.params).toEqual(['-90 days', 'P', 'S', 'AAPL', 'MSFT']);
+    // bind order: window offset, then B/P/S (buy dual-read), then the ticker IN-list.
+    expect(q.params).toEqual(['-90 days', 'B', 'P', 'S', 'AAPL', 'MSFT']);
   });
 
   it('buildMemberSkillQuery: per-politician scored/wins/avg-excess for the given filers (>=5)', () => {
@@ -220,7 +221,7 @@ describe('conviction realized-skill inputs', () => {
     expect(q.sql).toContain('COUNT(*) AS scored');
     expect(q.sql).toContain('AS wins');
     expect(q.sql).toContain('AS avg_excess');
-    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain("t.tx_type IN ('B', 'P')");
     expect(q.sql).toContain('t.filer_id IN (?, ?, ?)');
     expect(q.sql).toContain('HAVING scored >= 5');
     // window is intentionally omitted (career track record); no date bind.
@@ -246,7 +247,7 @@ describe('buildMemberPerformanceLeaderboardQuery', () => {
     expect(q.sql).not.toContain('price_at_trade');
     // Latest SPX brought in via a one-row cross join.
     expect(q.sql).toContain('SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1');
-    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain("t.tx_type IN ('B', 'P')");
     expect(q.sql).toContain('t.is_option = 0');
     expect(q.sql).toContain("julianday('now') - julianday(COALESCE(f.filed_date, f.first_seen_at, t.tx_date))");
     expect(q.sql).toContain('AS avg_annualized_excess');
@@ -333,10 +334,11 @@ describe('ticker deep-dive builders', () => {
     expect(q.params).toEqual([granularityFormat('week'), 'NVDA', '-90 days']);
   });
   it('top traders filter by tx type and order by est volume', () => {
-    const q = buildTickerTopTradersQuery('AAPL', 'P', { window: 'all' });
-    expect(q.sql).toContain('t.tx_type IN (?)');
+    const q = buildTickerTopTradersQuery('AAPL', 'B', { window: 'all' });
+    // Buy dual-read expands B → B,P
+    expect(q.sql).toContain('t.tx_type IN (?, ?)');
     expect(q.sql).toContain('ORDER BY est_volume DESC');
-    expect(q.params).toEqual(['AAPL', 'P']);
+    expect(q.params).toEqual(['AAPL', 'B', 'P']);
   });
   it('recent trades order by date desc and clamp the limit', () => {
     const q = buildTickerRecentTradesQuery('AAPL', { window: 'all', limit: 999 });

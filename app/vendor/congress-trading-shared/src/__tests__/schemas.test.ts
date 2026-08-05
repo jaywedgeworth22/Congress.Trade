@@ -145,10 +145,13 @@ describe("OwnerSchema", () => {
 });
 
 describe("TxTypeSchema", () => {
-  it("accepts valid transaction types", () => {
-    expect(TxTypeSchema.safeParse("P").success).toBe(true);
+  it("accepts B/S/E and coerces legacy P to B", () => {
+    expect(TxTypeSchema.safeParse("B").success).toBe(true);
     expect(TxTypeSchema.safeParse("S").success).toBe(true);
     expect(TxTypeSchema.safeParse("E").success).toBe(true);
+    const p = TxTypeSchema.safeParse("P");
+    expect(p.success).toBe(true);
+    if (p.success) expect(p.data).toBe("B");
   });
 
   it("rejects invalid transaction types", () => {
@@ -396,7 +399,7 @@ describe("CongressTransactionSchema", () => {
     assetName: "Apple Inc.",
     ticker: "AAPL",
     assetType: "stock",
-    txType: "P",
+    txType: "B",
     amountMin: 1001,
     amountMax: 15000,
     estValue: 8000,
@@ -511,7 +514,7 @@ describe("TransactionsPageSchema", () => {
     assetName: "Apple Inc.",
     ticker: "AAPL",
     assetType: "stock",
-    txType: "P",
+    txType: "B",
     amountMin: 1001,
     amountMax: 15000,
     estValue: 8000,
@@ -870,7 +873,7 @@ describe("SharePayloadSchema", () => {
           sourceUrl: "https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf",
           filerName: "Nancy Pelosi",
           ticker: "NVDA",
-          txType: "P",
+          txType: "B",
           transactionDate: "2026-07-15",
           transactionTimestamp: "2026-07-15T00:00:00Z",
           disclosureDate: "2026-07-22",
@@ -949,7 +952,7 @@ describe("CongressEventSchema", () => {
       id: "evt-1",
       seq: 1,
       emittedAt: "2024-01-15T10:00:00Z",
-      data: { ticker: "AAPL", txType: "P" },
+      data: { ticker: "AAPL", txType: "B" },
     });
     expect(result.success).toBe(true);
   });
@@ -1051,7 +1054,7 @@ describe("ClusterBuySchema", () => {
     const result = ClusterBuySchema.safeParse({
       ticker: "AAPL",
       name: "Apple Inc.",
-      txType: "P",
+      txType: "B",
       memberCount: 5,
       tradeCount: 10,
       estVolumeUsd: 2_000_000,
@@ -1137,7 +1140,7 @@ describe("TickerBacktestSchema", () => {
   it("parses valid backtest data", () => {
     const result = TickerBacktestSchema.safeParse({
       ticker: "AAPL",
-      txType: "P",
+      txType: "B",
       totalBuyEvents: 25,
       pricedDays: 20,
       horizons: [
@@ -1154,7 +1157,7 @@ describe("CommitteeConflictSchema", () => {
       id: "conflict-1",
       ticker: "AAPL",
       sector: "Technology",
-      txType: "P",
+      txType: "B",
       txDate: "2024-01-15",
       filerId: "f1",
       memberName: "John Doe",

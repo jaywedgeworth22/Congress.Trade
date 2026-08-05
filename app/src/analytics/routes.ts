@@ -284,7 +284,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
       // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
       // ranking) directional, and a ticker with no P/S simply isn't a candidate.
-      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['P', 'S'], sort: 'trades', limit: pool });
+      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['B', 'S'], sort: 'trades', limit: pool });
       const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
       // Fetch the party + momentum + skill-link aggregates restricted to THIS
       // candidate set, so every ranked candidate's resolved side is present (a
@@ -302,7 +302,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const clQ = buildClusterBuysQuery({ ...fStock, tickers: batch, minMembers: 2, limit: 200 });
           // Momentum is PER SIDE (bySide) and directional (P/S) only — rising
           // purchases must not feed a SELL signal, and 'E'/option rows never count.
-          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['P', 'S'], bySide: true, limit: 200 });
+          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['B', 'S'], bySide: true, limit: 200 });
           // Who traded each candidate, by side (for the realized-skill rollup).
           const lkQ = buildConvictionMemberLinksQuery(batch, fStock);
           return [
@@ -831,7 +831,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       return meta(f, {
         ticker: tickerParam,
         filerId: filerId ?? null,
-        txType: 'P',
+        txType: 'B',
         totalBuyEvents: bt.tradeCount,
         pricedDays: priceAsc.length,
         horizons: bt.horizons,
@@ -853,7 +853,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const data = await cached(c.env, key, 600, async () => {
       const sumQ = buildTickerSummaryQuery(tickerParam, f);
       const tsQ = buildTickerTimeSeriesQuery(tickerParam, { ...f, granularity });
-      const buyersQ = buildTickerTopTradersQuery(tickerParam, 'P', f);
+      const buyersQ = buildTickerTopTradersQuery(tickerParam, 'B', f);
       const sellersQ = buildTickerTopTradersQuery(tickerParam, 'S', f);
       const recentQ = buildTickerRecentTradesQuery(tickerParam, f);
       const [sumRow, tsRows, buyerRows, sellerRows, recentRows, refRow] = await Promise.all([

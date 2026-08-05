@@ -326,7 +326,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
   .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
-  .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
+  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
   .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }
   .conf { font-family: var(--mono); font-size: 12px; }
@@ -600,7 +600,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .ccard .faces { display:flex; margin-top:9px; }
   .ccard .faces .avatar { margin-right:-7px; box-shadow:0 0 0 2px var(--panel-2); }
   .dirpill { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; letter-spacing:.4px; }
-  .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
+  .dirpill.B, .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
   .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:19px 24px; margin-bottom:26px; }
@@ -1639,7 +1639,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="P">Buy</option>
+        <option value="">All Types</option><option value="B">Buy</option>
         <option value="S">Sell</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
@@ -2036,7 +2036,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
         <select id="newSides" disabled title="Trade side filter">
           <option value="">all sides</option>
-          <option value="P">Purchases only</option>
+          <option value="B">Buys only</option>
           <option value="S">Sales only</option>
         </select>
         <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
@@ -2371,7 +2371,7 @@ function fmtBracketAmount(n) {
 }
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
 /* Product labels: Buy / Sell / Exchange. Storage/API codes stay P|S|E (B accepted as buy alias on input). */
-var typeName = { P: 'Buy', B: 'Buy', S: 'Sell', E: 'Exchange' };
+var typeName = { B: 'Buy', P: 'Buy', S: 'Sell', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 /* Format a politician name so a generational suffix sits after a single comma
@@ -3608,7 +3608,7 @@ function txToRow(tx) {
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
     assetTypeName: tx.assetTypeName || '',
-    type: tx.txType || 'P',
+    type: (tx.txType === 'P' ? 'B' : tx.txType) || 'B',
     min: tx.amountMin, max: tx.amountMax,
     txdate: toISODate(tx.txDate) || '',
     owner: tx.owner || '',
@@ -4127,8 +4127,8 @@ function normalizeReviewEdit(t, sourceLabel) {
   var ticker = cleanAsset(t.ticker || '').toUpperCase();
   var asset = cleanAsset(t.assetName || t.asset || '');
   var type = String(t.txType || t.type || '').toUpperCase();
-  if (type === 'B') type = 'P'; // product Buy letter → storage P
-  if (type !== 'P' && type !== 'S' && type !== 'E') type = null;
+  if (type === 'P') type = 'B'; // legacy Purchase letter → storage B
+  if (type !== 'B' && type !== 'S' && type !== 'E') type = null;
   var owner = String(t.owner || '').toLowerCase();
   if (['self', 'spouse', 'joint', 'dependent'].indexOf(owner) < 0) owner = null;
   function n(v) {
@@ -4660,7 +4660,7 @@ function meRowHtml(tx, chamber) {
   }
   return '<div class="me-row' + (isLow ? ' me-row-low-conf' : '') + '">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
-    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
+    '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="B"' + selectedOption('B', (tx.txType === 'P' ? 'B' : tx.txType)) + '>Buy</option><option value="S"' + selectedOption('S', tx.txType) + '>Sell</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
     amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value=""' + selectedOption('', tx.owner || '') + '>Owner unknown</option><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
@@ -7839,7 +7839,7 @@ function loadTrClusters() {
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
-      var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
+      var dir = c.txType === 'B' || c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
       // minDate can be absent on malformed/partial rows; drop the leading
@@ -8279,7 +8279,7 @@ function analyticsTradeRow(t, ctx) {
     ticker: t.ticker || ctx.ticker || '',
     assetType: t.assetType || '',
     assetTypeName: t.assetTypeName || '',
-    type: t.txType || 'P',
+    type: (t.txType === 'P' ? 'B' : t.txType) || 'B',
     min: t.amountMin == null ? null : t.amountMin,
     max: t.amountMax == null ? null : t.amountMax,
     txdate: toISODate(t.txDate) || '',
@@ -8509,7 +8509,7 @@ function openTrade(row) {
   var memberVal = row.filerId
     ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(fmtName(row.member)) + '</span>'
     : esc(fmtName(row.member));
-  var sideWord = row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
+  var sideWord = row.type === 'B' || row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
   var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
   var displayAsset = cleanAsset(row.asset || '');
   // A trade drawer leads with the TRANSACTION (kicker + amount), not the company —
@@ -9202,7 +9202,7 @@ function clientTradeToRow(item) {
     ticker: a.ticker || '',
     assetType: a.type || '',
     assetTypeName: '',
-    type: t.type || 'P',
+    type: (t.type === 'P' ? 'B' : t.type) || 'B',
     min: t.amountMin, max: t.amountMax,
     txdate: toISODate(t.date) || '',
     owner: t.owner || '',
