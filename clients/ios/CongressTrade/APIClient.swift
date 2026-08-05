@@ -412,6 +412,18 @@ final class CongressTradeAPIClient {
         }
     }
 
+    /// Confirm a StoreKit 2 purchase with the backend (`POST /billing/apple/confirm`).
+    func confirmApplePurchase(signedTransaction: String) async throws -> AppleConfirmResponse {
+        var request = try makeRequest(originURL.appendingPathComponent("billing/apple/confirm"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["signedTransaction": signedTransaction],
+            options: []
+        )
+        return try await send(request)
+    }
+
     func absoluteClientURL(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         if let url = URL(string: value), url.scheme != nil {

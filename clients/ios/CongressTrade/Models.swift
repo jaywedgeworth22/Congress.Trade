@@ -529,6 +529,34 @@ struct DeliveryCredential: Identifiable, Equatable {
     let secret: String?
 }
 
+struct AppleConfirmResponse: Decodable {
+    let ok: Bool?
+    let plan: String?
+    let expiresAt: String?
+    let originalTransactionId: String?
+    let entitlement: EntitlementSnapshot?
+
+    struct EntitlementSnapshot: Decodable {
+        let premium: Bool?
+        let status: String?
+        let plan: String?
+        let trialing: Bool?
+    }
+}
+
+/// App Store product identifiers (configure matching subscriptions in App Store Connect).
+enum AppleIAPProduct: String, CaseIterable, Identifiable {
+    case monthly = "trade.congress.premium.monthly"
+    case annual = "trade.congress.premium.annual"
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .monthly: return "Premium Monthly"
+        case .annual: return "Premium Annual"
+        }
+    }
+}
+
 enum JSONValue: Codable, Hashable {
     case string(String)
     case number(Double)
