@@ -7,12 +7,10 @@ struct TrendsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     disclaimerHeader
 
-                    trendsWindowPicker
-
-                    trendsPartyPicker
+                    FeedControlBar(showMetrics: false)
 
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
@@ -63,28 +61,10 @@ struct TrendsView: View {
                 .padding(16)
             }
             .background(AppTheme.background)
-            .navigationTitle("Trends")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: AppToolbarPlacement.trailing) {
-                    Menu {
-                        ForEach(TimeRange.allCases) { range in
-                            Button {
-                                Task {
-                                    await store.setTimeRange(range)
-                                    await store.refreshTrends()
-                                }
-                            } label: {
-                                HStack {
-                                    Text(range.label)
-                                    if store.selectedTimeRange == range {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(store.selectedTimeRange.label, systemImage: "calendar")
-                    }
+                ToolbarItem(placement: .principal) {
+                    BrandTitle()
                 }
             }
             .task {
@@ -99,17 +79,18 @@ struct TrendsView: View {
     }
 
     private var disclaimerHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showDisclaimerDetails.toggle()
                 }
             } label: {
-                HStack {
+                HStack(spacing: 4) {
                     Image(systemName: "info.circle.fill")
+                        .font(.caption2)
                         .foregroundStyle(.blue)
-                    Text("For Educational Use, Not Investment Advice")
-                        .font(.caption.weight(.semibold))
+                    Text("Educational Use Only · Not Investment Advice")
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.primary)
                     Spacer()
                     Image(systemName: showDisclaimerDetails ? "chevron.up" : "chevron.down")
@@ -122,55 +103,12 @@ struct TrendsView: View {
                 Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                    .padding(.top, 2)
             }
         }
-        .padding(12)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var trendsWindowPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach([TimeRange.thirtyDays, .ninetyDays, .oneYear, .all], id: \.rawValue) { range in
-                    FilterChip(
-                        title: range == .all ? "All Time" : range.label,
-                        isSelected: store.selectedTimeRange == range
-                    ) {
-                        Task {
-                            await store.setTimeRange(range)
-                            await store.refreshTrends()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var trendsPartyPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                FilterChip(
-                    title: "All Parties",
-                    isSelected: store.selectedParty == nil
-                ) {
-                    Task {
-                        await store.setPartyFilter(nil)
-                    }
-                }
-
-                ForEach(PartyFilter.allCases) { party in
-                    FilterChip(
-                        title: "\(party.emoji) \(party.label)",
-                        isSelected: store.selectedParty == party
-                    ) {
-                        Task {
-                            await store.setPartyFilter(party)
-                        }
-                    }
-                }
-            }
-        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var summaryStrip: some View {
@@ -205,10 +143,10 @@ struct TrendsView: View {
             VStack(spacing: 6) {
                 ForEach(store.volumeSeries.suffix(12)) { point in
                     HStack(spacing: 8) {
-                        Text(point.period)
+                        Text(formatVolumePeriod(point.period))
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
-                            .frame(width: 64, alignment: .leading)
+                            .frame(width: 72, alignment: .leading)
                         GeometryReader { geo in
                             HStack(spacing: 2) {
                                 let buyW = geo.size.width * CGFloat(point.buys) / CGFloat(maxCount)
@@ -530,6 +468,49 @@ struct TrendsView: View {
                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
             }
         }
+    }
+
+    private func formatVolumePeriod(_ period: String) -> String {
+        let parts = period.split(separator: "-")
+        if parts.count == 2, let year = Int(parts[0]), let num = Int(parts[1]) {
+            if num > 12 {
+                // Week number 13..53 (e.g. 2026-18)
+                var components = DateComponents()
+                components.year = year
+                components.weekOfYear = num
+                components.weekday = 2
+                let cal = Calendar(identifier: .gregorian)
+                if let date = cal.date(from: components) {
+                    let fmt = DateFormatter()
+                    fmt.dateFormat = "MMM d"
+                    return fmt.string(from: date)
+                }
+            } else {
+                // Month 1..12 (e.g. 2026-05)
+                var components = DateComponents()
+                components.year = year
+                components.month = num
+                let cal = Calendar(identifier: .gregorian)
+                if let date = cal.date(from: components) {
+                    let fmt = DateFormatter()
+                    fmt.dateFormat = "MMM yyyy"
+                    return fmt.string(from: date)
+                }
+            }
+        } else if parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) {
+            // Day (e.g. 2026-05-04)
+            var components = DateComponents()
+            components.year = year
+            components.month = month
+            components.day = day
+            let cal = Calendar(identifier: .gregorian)
+            if let date = cal.date(from: components) {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "MMM d"
+                return fmt.string(from: date)
+            }
+        }
+        return period
     }
 }
 

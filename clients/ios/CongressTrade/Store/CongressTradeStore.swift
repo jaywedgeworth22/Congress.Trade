@@ -137,19 +137,25 @@ final class CongressTradeStore: ObservableObject {
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
         // Allow empty = all branches (website parity with unselected H/S/P).
         selectedChambers = chambers
-        await refresh()
+        async let r1: Void = refresh()
+        async let r2: Void = refreshTrends()
+        _ = await (r1, r2)
     }
 
     func setTimeRange(_ range: TimeRange) async {
         guard range != selectedTimeRange else { return }
         selectedTimeRange = range
-        await refresh()
+        async let r1: Void = refresh()
+        async let r2: Void = refreshTrends()
+        _ = await (r1, r2)
     }
 
     func setTradeType(_ type: TradeTypeFilter) async {
         guard type != selectedTradeType else { return }
         selectedTradeType = type
-        await refresh()
+        async let r1: Void = refresh()
+        async let r2: Void = refreshTrends()
+        _ = await (r1, r2)
     }
 
     /// Applies a server-side search filter (submit path; typing alone keeps
@@ -267,7 +273,9 @@ final class CongressTradeStore: ObservableObject {
 
     func setPartyFilter(_ party: PartyFilter?) async {
         selectedParty = party
-        await refreshTrends()
+        async let r1: Void = refreshTrends()
+        async let r2: Void = refresh()
+        _ = await (r1, r2)
     }
 
     func refreshTrends() async {

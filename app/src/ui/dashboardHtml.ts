@@ -7301,6 +7301,31 @@ function scrollToChart(id) {
     }, 1500);
   }
 }
+function fmtPeriod(p) {
+  if (!p) return '';
+  var m = /^(\d{4})-(\d{1,2})$/.exec(p);
+  if (m) {
+    var yr = parseInt(m[1], 10), num = parseInt(m[2], 10);
+    if (num > 12) {
+      var jan1 = new Date(Date.UTC(yr, 0, 1));
+      var dayOfWeek = jan1.getUTCDay();
+      var daysToFirstMon = (8 - dayOfWeek) % 7;
+      var firstMon = new Date(Date.UTC(yr, 0, 1 + daysToFirstMon));
+      var weekMon = new Date(firstMon.getTime() + (num - 1) * 7 * 86400000);
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return months[weekMon.getUTCMonth()] + ' ' + weekMon.getUTCDate();
+    } else {
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return months[num - 1] + ' ' + yr;
+    }
+  }
+  var m2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(p);
+  if (m2) {
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return months[parseInt(m2[2],10)-1] + ' ' + parseInt(m2[3],10);
+  }
+  return p;
+}
 /* Mini CSS-column time chart of buys vs sells (no chart library).
    metric: 'count' | 'dollars' | omitted (auto: dollars when volume exists). */
 function timeChartHtml(series, labelStep, metric) {
@@ -7323,7 +7348,7 @@ function timeChartHtml(series, labelStep, metric) {
     var vS = useVol ? (p.estSellVolUsd || 0) : (p.sells || 0);
     var bh = vB > 0 ? Math.max(3, Math.round(100 * vB / max)) : 0;
     var sh = vS > 0 ? Math.max(3, Math.round(100 * vS / max)) : 0;
-    var lbl = (i % step === 0) ? esc(p.period || '') : '';
+    var lbl = (i % step === 0) ? esc(fmtPeriod(p.period || '')) : '';
 
     return '<div class="tcol" tabindex="0" data-period="'+esc(p.period||'')+'" ' +
       'data-b="'+(p.buys||0)+'" data-s="'+(p.sells||0)+'" ' +
