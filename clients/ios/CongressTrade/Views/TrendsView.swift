@@ -8,7 +8,14 @@ struct TrendsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    disclaimerHeader
+                    if showDisclaimerDetails {
+                        Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.bottom, 4)
+                    }
 
                     FeedControlBar(showMetrics: false)
 
@@ -66,10 +73,23 @@ struct TrendsView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        withAnimation { showDisclaimerDetails.toggle() }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.blue)
+                    }
+                }
             }
             .task {
                 if store.analyticsSummary == nil {
                     await store.refreshTrends()
+                }
+                showDisclaimerDetails = true
+                try? await Task.sleep(for: .seconds(4))
+                if !Task.isCancelled {
+                    withAnimation { showDisclaimerDetails = false }
                 }
             }
             .refreshable {
@@ -78,38 +98,7 @@ struct TrendsView: View {
         }
     }
 
-    private var disclaimerHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showDisclaimerDetails.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "info.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                    Text("Educational Use Only · Not Investment Advice")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: showDisclaimerDetails ? "chevron.up" : "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
 
-            if showDisclaimerDetails {
-                Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
-    }
 
     private var summaryStrip: some View {
         let s = store.analyticsSummary
@@ -472,11 +461,12 @@ struct TrendsView: View {
 
     private func formatVolumePeriod(_ period: String) -> String {
         let parts = period.split(separator: "-")
-        if parts.count == 2, let year = Int(parts[0]), let num = Int(parts[1]) {
-            if num > 12 {
-                // Week number 13..53 (e.g. 2026-18)
+        if parts.count == 2, let year = Int(parts[0]) {
+            let numStr = parts[1]
+            if numStr.hasPrefix("W"), let num = Int(numStr.dropFirst()) {
+                // Week (e.g. 2026-W18)
                 var components = DateComponents()
-                components.year = year
+                components.yearForWeekOfYear = year
                 components.weekOfYear = num
                 components.weekday = 2
                 let cal = Calendar(identifier: .gregorian)
@@ -485,8 +475,8 @@ struct TrendsView: View {
                     fmt.dateFormat = "MMM d"
                     return fmt.string(from: date)
                 }
-            } else {
-                // Month 1..12 (e.g. 2026-05)
+            } else if let num = Int(numStr) {
+                // Month (e.g. 2026-05)
                 var components = DateComponents()
                 components.year = year
                 components.month = num

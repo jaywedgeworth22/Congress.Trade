@@ -11,6 +11,7 @@ struct FeedDashboardView: View {
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
     @State private var selectedTicker: String?
+    @State private var showDisclaimerDetails = false
 
     /// Newest trade date first; cursor is only a tie-breaker so seed imports of
     /// old filings don't sit above recent activity just because they were
@@ -64,13 +65,30 @@ struct FeedDashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
+                    if showDisclaimerDetails {
+                        Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.bottom, 4)
+                            .padding(.horizontal, 16)
+                    }
+
                     FeedControlBar()
 
-                    SearchField(text: $searchText, onSubmit: {
-                        Task { await store.setSearch(searchText) }
-                    }, onClear: {
-                        Task { await store.setSearch(nil) }
-                    })
+                    HStack {
+                        SearchField(text: $searchText, onSubmit: {
+                            Task { await store.setSearch(searchText) }
+                        }, onClear: {
+                            Task { await store.setSearch(nil) }
+                        })
+                        
+                        Text("\(filteredTrades.count) trades")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 4)
+                    }
 
                     if let notice = store.feedNotice, store.isOffline || !notice.isEmpty {
                         FeedFreshnessView(
@@ -130,8 +148,23 @@ struct FeedDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        withAnimation { showDisclaimerDetails.toggle() }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.blue)
+                    }
+                }
             }
             .refreshable { await store.refresh() }
+            .task {
+                showDisclaimerDetails = true
+                try? await Task.sleep(for: .seconds(4))
+                if !Task.isCancelled {
+                    withAnimation { showDisclaimerDetails = false }
+                }
+            }
             .overlay {
                 if store.isRefreshing && cachedTrades.isEmpty {
                     ProgressView()
@@ -215,28 +248,85 @@ struct FeedControlBar: View {
     var showMetrics: Bool = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 6) {
-                // Chamber Filter Chips (H, S, P)
-                HStack(spacing: 6) {
-                    ForEach(ChamberFilter.allCases) { chamber in
-                        FilterChip(
-                            title: chamber.shortLabel,
-                            isSelected: store.selectedChambers.contains(chamber)
-                        ) {
-                            toggleChamber(chamber)
-                        }
-                        .accessibilityLabel(chamber.label)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // Branch/Chamber Filter
+                Menu {
+                    Button("All Branches") {
+                        Task { await store.setChamberSelection([]) }
                     }
+                    ForEach(ChamberFilter.allCases) { chamber in
+                        Button {
+                            toggleChamber(chamber)
+                        } label: {
+                            HStack {
+                                Text(chamber.label)
+                                if store.selectedChambers.contains(chamber) {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.selectedChambers.isEmpty ? "All Branches" : store.selectedChambers.map { $0.shortLabel }.joined(separator: ", "),
+                        icon: "building.columns",
+                        isActive: !store.selectedChambers.isEmpty
+                    )
                 }
 
-                // Calendar button placed down right after 'P' in filters
+                // Party Filter
+                Menu {
+                    Button("All Parties") {
+                        Task { await store.setPartyFilter(nil) }
+                    }
+                    ForEach(PartyFilter.allCases) { party in
+                        Button {
+                            Task { await store.setPartyFilter(party) }
+                        } label: {
+                            HStack {
+                                Text("\(party.emoji) \(party.label)")
+                                if store.selectedParty == party {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.selectedParty?.label ?? "All Parties",
+                        icon: "person.2.fill",
+                        isActive: store.selectedParty != nil
+                    )
+                }
+
+                // Side Filter (Buy/Sell)
+                Menu {
+                    ForEach(TradeTypeFilter.allCases) { type in
+                        Button {
+                            Task { await store.setTradeType(type) }
+                        } label: {
+                            HStack {
+                                Text(type.label)
+                                if store.selectedTradeType == type {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.selectedTradeType.label,
+                        icon: "arrow.left.arrow.right",
+                        isActive: store.selectedTradeType != .all
+                    )
+                }
+
+                // Timeframe Filter
                 Menu {
                     ForEach(TimeRange.allCases) { range in
                         Button {
-                            Task {
-                                await store.setTimeRange(range)
-                            }
+                            Task { await store.setTimeRange(range) }
                         } label: {
                             HStack {
                                 Text(range.label)
@@ -247,74 +337,15 @@ struct FeedControlBar: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "calendar")
-                            .font(.caption.weight(.bold))
-                        Text(store.selectedTimeRange.label)
-                            .font(.caption.weight(.semibold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .foregroundStyle(.primary)
-                    .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                    .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
-                }
-                .accessibilityLabel("Select Time Window (\(store.selectedTimeRange.label))")
-
-                if showMetrics {
-                    Spacer(minLength: 4)
-
-                    MetricTile(
-                        title: "Trades",
-                        value: store.tradeTotal > 0
-                            ? store.tradeTotal.formatted(.number.grouping(.automatic))
-                            : "—"
+                    FilterMenuLabel(
+                        title: store.selectedTimeRange.label,
+                        icon: "calendar",
+                        isActive: store.selectedTimeRange != .ninetyDays
                     )
-                    .frame(width: 88)
-
-                    MetricTile(title: "Plan", value: store.entitlementLabel)
-                        .frame(width: 78)
-                } else {
-                    Spacer(minLength: 0)
                 }
             }
-
-            // Party & Side Filter Chips
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    // Party filter chips
-                    FilterChip(
-                        title: "All Parties",
-                        isSelected: store.selectedParty == nil
-                    ) {
-                        Task { await store.setPartyFilter(nil) }
-                    }
-
-                    ForEach(PartyFilter.allCases) { party in
-                        FilterChip(
-                            title: "\(party.emoji) \(party.label)",
-                            isSelected: store.selectedParty == party
-                        ) {
-                            Task { await store.setPartyFilter(party) }
-                        }
-                    }
-
-                    Divider()
-                        .frame(height: 16)
-                        .padding(.horizontal, 2)
-
-                    // Side filter chips (All / Buy / Sell)
-                    ForEach(TradeTypeFilter.allCases) { type in
-                        FilterChip(
-                            title: type.label,
-                            isSelected: store.selectedTradeType == type
-                        ) {
-                            Task { await store.setTradeType(type) }
-                        }
-                        .accessibilityLabel("\(type.label) trades")
-                    }
-                }
-            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
         }
     }
 
@@ -329,24 +360,30 @@ struct FeedControlBar: View {
     }
 }
 
-struct FilterChip: View {
+struct FilterMenuLabel: View {
     let title: String
-    let isSelected: Bool
-    let action: () -> Void
+    let icon: String
+    let isActive: Bool
 
     var body: some View {
-        Button(action: action) {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption.weight(.bold))
             Text(title)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .foregroundStyle(isSelected ? .white : .primary)
-                .background(
-                    isSelected ? Color.blue : Color(uiColor: .secondarySystemBackground),
-                    in: Capsule()
-                )
-                .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+                .font(.caption.weight(.semibold))
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .opacity(0.5)
+                .padding(.leading, 2)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundStyle(isActive ? .white : .primary)
+        .background(
+            isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
+            in: Capsule()
+        )
+        .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
     }
 }
 

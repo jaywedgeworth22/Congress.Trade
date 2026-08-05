@@ -374,6 +374,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       type: asTxType(q.type),
       stockAct: asStockActStatus(q.stockAct),
       owner: asOwner(q.owner),
+      minAmount: parseIntOrUndef(q.minAmount),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
       order: asOrder(q.order),

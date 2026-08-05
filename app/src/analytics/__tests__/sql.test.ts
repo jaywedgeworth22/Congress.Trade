@@ -89,7 +89,7 @@ describe('validators', () => {
     expect(autoGranularity('90d')).toBe('week');
     expect(autoGranularity('365d')).toBe('month');
     expect(granularityFormat('day')).toBe('%Y-%m-%d');
-    expect(granularityFormat('week')).toBe('%Y-%W');
+    expect(granularityFormat('week')).toBe('%Y-W%W');
     expect(granularityFormat('month')).toBe('%Y-%m');
   });
 });

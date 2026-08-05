@@ -119,7 +119,7 @@ export function autoGranularity(w: Window): Granularity {
 }
 /** strftime() format string for a granularity. */
 export function granularityFormat(g: Granularity): string {
-  return g === 'day' ? '%Y-%m-%d' : g === 'week' ? '%Y-%W' : '%Y-%m';
+  return g === 'day' ? '%Y-%m-%d' : g === 'week' ? '%Y-W%W' : '%Y-%m';
 }
 
 // ---------------------------------------------------------------------------

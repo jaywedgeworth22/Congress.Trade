@@ -46,15 +46,34 @@ struct TradeDetailView: View {
 
                     VStack(spacing: 16) {
                         DetailSection("Trade Summary") {
-                            HStack {
-                                Text("Politician")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(trade.member.party?.partyEmoji ?? "")
-                                Text(trade.member.name ?? "Unknown")
-                                    .fontWeight(.bold)
+                            if let memberId = trade.member.id {
+                                NavigationLink(destination: PoliticianDetailView(memberId: memberId, memberName: trade.member.name ?? "Unknown")) {
+                                    HStack {
+                                        Text("Politician")
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(trade.member.party?.partyEmoji ?? "")
+                                        Text(trade.member.name ?? "Unknown")
+                                            .fontWeight(.bold)
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.leading, 2)
+                                    }
+                                    .font(.subheadline)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                HStack {
+                                    Text("Politician")
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(trade.member.party?.partyEmoji ?? "")
+                                    Text(trade.member.name ?? "Unknown")
+                                        .fontWeight(.bold)
+                                }
+                                .font(.subheadline)
                             }
-                            .font(.subheadline)
                             
                             DetailRow("Amount", trade.amountLabel)
                             DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
@@ -70,6 +89,25 @@ struct TradeDetailView: View {
                         }
 
                         DetailSection("Company Info") {
+                            if let ticker = trade.asset.ticker, !ticker.isEmpty {
+                                NavigationLink(destination: TickerDetailView(ticker: ticker)) {
+                                    HStack {
+                                        Text("Asset")
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(trade.asset.displayName)
+                                            .fontWeight(.bold)
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.leading, 2)
+                                    }
+                                    .font(.subheadline)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                DetailRow("Asset", trade.asset.displayName)
+                            }
                             DetailRow("Sector", trade.asset.sector ?? "Not Enriched Yet")
                             DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
                         }
@@ -110,7 +148,7 @@ struct TradeDetailView: View {
                 }
             }
             .background(AppTheme.background)
-            .navigationTitle("Trade Detail")
+            .navigationTitle("Trade Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let shareURL = store.api.shareURL(queryItem: URLQueryItem(name: "trade", value: trade.id)) {

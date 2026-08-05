@@ -12,9 +12,49 @@ struct DeliveryView: View {
     @State private var showSubscribe = false
     @State private var editingSubscriptionId: String?
 
+    @AppStorage("notify_all_trades") private var notifyAllTrades = true
+    @AppStorage("notify_new_buys") private var notifyNewBuys = false
+    @AppStorage("notify_new_sells") private var notifyNewSells = false
+    @AppStorage("notify_watchlist") private var notifyWatchlist = false
+
     var body: some View {
         NavigationStack {
             Form {
+                Section("Notifications") {
+                    Toggle("All Trades", isOn: Binding(
+                        get: { notifyAllTrades },
+                        set: { isOn in
+                            notifyAllTrades = isOn
+                            if isOn {
+                                notifyNewBuys = false
+                                notifyNewSells = false
+                                notifyWatchlist = false
+                            }
+                        }
+                    ))
+                    Toggle("New Buys", isOn: Binding(
+                        get: { notifyNewBuys },
+                        set: { isOn in
+                            notifyNewBuys = isOn
+                            if isOn { notifyAllTrades = false }
+                        }
+                    ))
+                    Toggle("New Sells", isOn: Binding(
+                        get: { notifyNewSells },
+                        set: { isOn in
+                            notifyNewSells = isOn
+                            if isOn { notifyAllTrades = false }
+                        }
+                    ))
+                    Toggle("Watchlist", isOn: Binding(
+                        get: { notifyWatchlist },
+                        set: { isOn in
+                            notifyWatchlist = isOn
+                            if isOn { notifyAllTrades = false }
+                        }
+                    ))
+                }
+
                 Section("Create Delivery") {
                     if !store.signedIn {
                         VStack(alignment: .leading, spacing: 10) {
@@ -201,18 +241,6 @@ struct DeliveryView: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
-            .navigationTitle("Delivery")
-            .toolbar {
-                ToolbarItem(placement: AppToolbarPlacement.trailing) {
-                    Button {
-                        Task { await store.refreshSignedInState() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .fontWeight(.semibold)
-                    }
-                    .accessibilityLabel("Refresh deliveries")
-                }
-            }
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }

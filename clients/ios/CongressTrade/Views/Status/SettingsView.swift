@@ -24,58 +24,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Appearance") {
-                    Picker("Theme Mode", selection: $appColorScheme) {
-                        Text("Match System").tag("system")
-                        Text("Light").tag("light")
-                        Text("Dark").tag("dark")
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section("Push Notifications (APNs)") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Real-Time Trade Alerts")
-                                .font(.body.weight(.medium))
-                            Text(pushManager.isAuthorized ? "APNs Notifications Active" : "Notifications Disabled")
-                                .font(.caption)
-                                .foregroundStyle(pushManager.isAuthorized ? .green : .secondary)
-                        }
-                        Spacer()
-                        if pushManager.isAuthorized {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Button("Enable Alerts") {
-                                Task { await pushManager.requestAuthorization() }
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-
-                    #if DEBUG
-                    if let token = pushManager.deviceToken {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("APNs Device Token (debug)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(token)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    #endif
-
-                    if let error = pushManager.lastError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-
                 Section {
                     if store.signedIn, let user = store.signedInUser {
                         HStack(spacing: 12) {
@@ -167,6 +115,59 @@ struct SettingsView: View {
                     Text("Sign in to manage delivery alerts and a saved watchlist. Preferences sync to the Congress.Trade backend — this app never holds provider keys or admin tokens.")
                 }
 
+                Section("Appearance") {
+                    Picker("Theme Mode", selection: $appColorScheme) {
+                        Text("Match System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("Push Notifications (APNs)") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Real-Time Trade Alerts")
+                                .font(.body.weight(.medium))
+                            Text(pushManager.isAuthorized ? "APNs Notifications Active" : "Notifications Disabled")
+                                .font(.caption)
+                                .foregroundStyle(pushManager.isAuthorized ? .green : .secondary)
+                        }
+                        Spacer()
+                        if pushManager.isAuthorized {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Button("Enable Alerts") {
+                                Task { await pushManager.requestAuthorization() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+
+                    #if DEBUG
+                    if let token = pushManager.deviceToken {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("APNs Device Token (debug)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(token)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    #endif
+
+                    if let error = pushManager.lastError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+                }
+
                 if store.signedIn && !store.isPremium {
                     Section("Premium") {
                         Text("1-month free trial, then $5/month or $50/year.")
@@ -189,24 +190,29 @@ struct SettingsView: View {
                             Text("No recent commands.")
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(store.commands) { command in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(command.type.replacingOccurrences(of: "_", with: " ").capitalized)
-                                            .font(.subheadline.weight(.medium))
-                                        Text(Optional(command.createdAt).shortDate)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                            ScrollView {
+                                VStack(spacing: 12) {
+                                    ForEach(store.commands) { command in
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(command.type.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                    .font(.subheadline.weight(.medium))
+                                                Text(Optional(command.createdAt).shortDate)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            StatusPill(
+                                                text: command.status.rawValue.capitalized,
+                                                color: command.status.tint,
+                                                compact: true
+                                            )
+                                        }
+                                        .accessibilityElement(children: .combine)
                                     }
-                                    Spacer()
-                                    StatusPill(
-                                        text: command.status.rawValue.capitalized,
-                                        color: command.status.tint,
-                                        compact: true
-                                    )
                                 }
-                                .accessibilityElement(children: .combine)
                             }
+                            .frame(maxHeight: 150)
                         }
                     }
                 }
@@ -228,7 +234,6 @@ struct SettingsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
-            .navigationTitle("Settings")
             .sheet(isPresented: $showSubscribe) {
                 SubscribeView()
                     .environmentObject(store)
