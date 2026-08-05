@@ -12,7 +12,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
-- **2026-08-05 — GROK — IN PROGRESS — #1040 extract dashboard assets to app/public static files.** Branch `grok/extract-dashboard-assets`. Dropped multi-MB base64 from assets.ts; binaries under app/public/; HTML already uses URL paths; cache headers via routes.
+- **2026-08-05 — GROK — IN PR — #1040 extract dashboard assets to app/public static files.** PR #1406 `grok/extract-dashboard-assets`. assets.ts 2.5MB→2.8KB; binaries under app/public/ (~1.8MB); HTML path refs unchanged; typecheck + UI tests pass.
 - **2026-08-05 — GROK — IN PROGRESS — Housekeeping + query index (#1049/#1043 remainder).** Branch `grok/query-opts`.
 
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
