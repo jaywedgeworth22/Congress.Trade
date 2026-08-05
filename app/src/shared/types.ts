@@ -802,6 +802,8 @@ export interface Env {
   STRIPE_PRICE_ANNUAL?: string;
   /** Free-trial length in days for new subscriptions (default 7). */
   STRIPE_TRIAL_DAYS?: string;
+  /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
+  APPLE_BUNDLE_ID?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */

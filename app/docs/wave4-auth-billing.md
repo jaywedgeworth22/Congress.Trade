@@ -25,11 +25,11 @@ npx wrangler secret put APP_BASE_URL   # e.g. https://congress.trade
 
 ## 1. Stripe (freemium paywall)
 
-**Pricing (decided):** 7-day free trial → **$15/mo** or **$140/yr**.
+**Pricing (decided 2026-08-05):** 1-month free trial → **$5/mo** or **$50/yr**.
 
 1. **Create the product + prices** (Stripe Dashboard → Products, in *live* mode):
    - Product: "Congress.Trade Premium".
-   - Add two **recurring** prices: `$15 / month` and `$140 / year`. Copy each
+   - Add two **recurring** prices: `$5 / month` and `$50 / year`. Copy each
      `price_…` id.
 2. **Enable the Billing Portal**: Dashboard → Settings → Billing → Customer portal
    → activate (allow cancel + payment-method updates). This backs the
@@ -44,15 +44,15 @@ npx wrangler secret put APP_BASE_URL   # e.g. https://congress.trade
 ```bash
 npx wrangler secret put STRIPE_SECRET_KEY        # sk_live_…
 npx wrangler secret put STRIPE_WEBHOOK_SECRET    # whsec_…
-npx wrangler secret put STRIPE_PRICE_MONTHLY     # price_… ($15/mo)
-npx wrangler secret put STRIPE_PRICE_ANNUAL      # price_… ($140/yr)
+npx wrangler secret put STRIPE_PRICE_MONTHLY     # price_… ($5/mo)
+npx wrangler secret put STRIPE_PRICE_ANNUAL      # price_… ($50/yr)
 # optional — defaults to 7 if unset; can also live in wrangler.toml [vars]
-npx wrangler secret put STRIPE_TRIAL_DAYS        # 7
+npx wrangler secret put STRIPE_TRIAL_DAYS        # 30
 ```
 
 **Test before live:** do all of the above in Stripe *test* mode with `sk_test_…`
 keys and the test webhook secret; use card `4242 4242 4242 4242`. The trial means
-no charge for 7 days, so confirm the flow end-to-end first.
+no charge for 30 days (1 month), so confirm the flow end-to-end first.
 
 How it reconciles: checkout creates the customer up-front and stores the
 `customer ↔ user` link; the `customer.subscription.*` webhooks are the source of

@@ -1949,14 +1949,24 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   // (covered above alongside the sector canonicalization fix, since both land
   // in the same loadTrSectorFlow() change.)
 
-  // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
-  it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
-    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
-    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr');
-    expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
-    expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
+  // ---- 7. Canonical Premium pricing = $5/mo · $50/yr · 1-month trial -------
+  it('shows $5/mo and $50/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
+    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 1-month free trial');
+    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial');
+    expect(DASHBOARD_HTML).toContain('$5<span class="per">/mo</span>');
+    expect(DASHBOARD_HTML).toContain('$50<span class="per">/yr</span>');
+    expect(DASHBOARD_HTML).toContain('1-month free trial');
+    expect(DASHBOARD_HTML).not.toContain('$9<span class="per">/mo</span>');
+    expect(DASHBOARD_HTML).not.toContain('$90<span class="per">/yr</span>');
     expect(DASHBOARD_HTML).not.toContain('$15/mo');
     expect(DASHBOARD_HTML).not.toContain('$140/yr');
+  });
+
+  it('supports editing existing deliveries (edit button + save path)', () => {
+    expect(DASHBOARD_HTML).toContain('data-sub-edit');
+    expect(DASHBOARD_HTML).toContain('function beginEditSubscription(');
+    expect(DASHBOARD_HTML).toContain('function saveSubscriptionEdits(');
+    expect(DASHBOARD_HTML).toContain("type: 'update_subscription'");
   });
 
   // ---- 8a. Keyboard-focusable + Enter-activatable drill-down rows ----------

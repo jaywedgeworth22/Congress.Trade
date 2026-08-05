@@ -9244,6 +9244,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- POST /users/grant-premium ------------------------------------------
+  // Operator grant: set trialing/active Premium for an email so they can
+  // create/edit Delivery. User must have signed in once (row exists).
+  r.post('/users/grant-premium', async (c) => {
+    let body: {
+      email?: unknown;
+      plan?: unknown;
+      trialDays?: unknown;
+      status?: unknown;
+      seedDelivery?: unknown;
+    };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!email || !email.includes('@')) return c.json({ error: 'email required' }, 400);
+    const plan = body.plan === 'annual' ? 'annual' : 'monthly';
+    const trialDaysRaw = Number(body.trialDays);
+    const trialDays = Number.isFinite(trialDaysRaw) && trialDaysRaw >= 0 ? Math.min(trialDaysRaw, 365) : 30;
+    const status = body.status === 'active' ? 'active' : 'trialing';
+    const { getUserByEmail, getUserById } = await import('../auth/users.ts');
+    const user = await getUserByEmail(c.env, email);
+    if (!user) {
+      return c.json({
+        error: 'user not found — have them sign in once (Google or magic link) first',
+        email,
+      }, 404);
+    }
+    const now = new Date();
+    const trialEnd = new Date(now.getTime() + trialDays * 86400000).toISOString();
+    const periodEnd = trialEnd;
+    await run(
+      c.env.DB,
+      `UPDATE users
+          SET subscription_status = ?,
+              plan = ?,
+              trial_end = ?,
+              current_period_end = ?,
+              cancel_at_period_end = 0
+        WHERE id = ?`,
+      [status, plan, status === 'trialing' ? trialEnd : null, periodEnd, user.id],
+    );
+    const refreshed = await getUserById(c.env, user.id);
+    let seed: { subscriptionId?: string; secret?: string; streamUrl?: string } | null = null;
+    if (body.seedDelivery === true || body.seedDelivery === 'sse') {
+      try {
+        const clientId = `user:${user.id}`;
+        const sub = await createSubscription(c.env, {
+          clientId,
+          delivery: 'sse',
+          targetUrl: null,
+          secret: null,
+          filters: {},
+        });
+        seed = {
+          subscriptionId: sub.id,
+          secret: sub.secret,
+          streamUrl: `/api/stream?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(sub.secret)}`,
+        };
+      } catch (err) {
+        return c.json({
+          ok: true,
+          user: refreshed
+            ? {
+                id: refreshed.id,
+                email: refreshed.email,
+                subscriptionStatus: refreshed.subscriptionStatus,
+                plan: refreshed.plan,
+                trialEnd: refreshed.trialEnd,
+              }
+            : null,
+          seedError: (err as Error).message,
+        });
+      }
+    }
+    return c.json({
+      ok: true,
+      user: refreshed
+        ? {
+            id: refreshed.id,
+            email: refreshed.email,
+            subscriptionStatus: refreshed.subscriptionStatus,
+            plan: refreshed.plan,
+            trialEnd: refreshed.trialEnd,
+            currentPeriodEnd: refreshed.currentPeriodEnd,
+          }
+        : null,
+      seed,
+      note: seed?.secret
+        ? 'Save the seed delivery secret now — it will not be shown again.'
+        : undefined,
+    });
+  });
+
   // --- POST /subscriptions/:id/deactivate ---------------------------------
   // Set a subscription inactive: webhook/SSE fanout already filters on
   // active = 1, so a deactivated subscription stops receiving deliveries, and

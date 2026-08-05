@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C19828CDAFE62F809DF6C27 /* App.swift */; };
 		46330F4471E179775BED47C5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88525FFED7FEDE1EF0D7D06 /* SettingsView.swift */; };
+		DC167BC4DFF045BC868A4FFC /* SubscribeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6481AE88834E358CE3569B /* SubscribeView.swift */; };
 		4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */; };
 		4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8927A2808F29C1F169FB78CD /* DeliveryView.swift */; };
 		5A1000010000000000000002 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000012 /* APIClient.swift */; };
@@ -56,6 +57,7 @@
 		8927A2808F29C1F169FB78CD /* DeliveryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DeliveryView.swift; path = Views/Delivery/DeliveryView.swift; sourceTree = "<group>"; };
 		A818AF84BA5C2B7444CA9B87 /* Components.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Components.swift; path = Views/Components/Components.swift; sourceTree = "<group>"; };
 		B88525FFED7FEDE1EF0D7D06 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = Views/Status/SettingsView.swift; sourceTree = "<group>"; };
+		DC6481AE88834E358CE3569B /* SubscribeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SubscribeView.swift; path = Views/Status/SubscribeView.swift; sourceTree = "<group>"; };
 		BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CongressTradeStore.swift; path = Store/CongressTradeStore.swift; sourceTree = "<group>"; };
 		D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrendsView.swift; path = Views/TrendsView.swift; sourceTree = "<group>"; };
 		E27BB7081F81F5E987131893 /* FeedDashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FeedDashboardView.swift; path = Views/Feed/FeedDashboardView.swift; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				B88525FFED7FEDE1EF0D7D06 /* SettingsView.swift */,
+				DC6481AE88834E358CE3569B /* SubscribeView.swift */,
 			);
 			name = Status;
 			sourceTree = "<group>";
@@ -303,6 +306,7 @@
 				D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */,
 				4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */,
 				46330F4471E179775BED47C5 /* SettingsView.swift in Sources */,
+				DC167BC4DFF045BC868A4FFC /* SubscribeView.swift in Sources */,
 				82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */,
 				9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */,
 				9CDCA9446C95EB22EBF95E80 /* CongressTrade/Views/Feed/TickerDetailView.swift in Sources */,

@@ -1713,7 +1713,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center" data-premium-cue="export">
-      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr
+      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
         <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
     </div>
 
@@ -2041,10 +2041,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
         <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
         <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
+        <button class="btn ghost sm" id="subsEditCancel" type="button" hidden onclick="clearDeliveryForm(); if(el('newDelivery')) el('newDelivery').disabled=false; updateDeliveryGate();">Cancel edit</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
+        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 1-month free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
@@ -2310,15 +2311,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
-        <div class="price">$9<span class="per">/mo</span></div>
+        <div class="price">$5<span class="per">/mo</span></div>
       </div>
       <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
         <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
-        <div class="price">$90<span class="per">/yr</span></div>
+        <div class="price">$50<span class="per">/yr</span></div>
       </div>
     </div>
-    <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
+    <p class="trial-note" id="pricingTrialNote">1-month free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -4926,29 +4927,34 @@ function updateDeliveryGate() {
   }
   if (!premium) {
     gate.style.display = '';
-    gate.innerHTML = 'You are signed in, but Delivery stays deactivated until Premium is active. Trends and analytics remain free. '
+    gate.innerHTML = 'You are signed in. Premium is required to create or edit Delivery targets (1-month free trial · $5/mo or $50/yr). Existing deliveries still appear below. '
       + (checkoutConfigured()
         ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
         : '<span class="muted">Billing is not configured yet.</span>');
-    if (body) body.innerHTML = stateRow(5, 'Premium required to create Delivery targets.');
     return;
   }
   gate.style.display = 'none';
   gate.textContent = '';
 }
 
+/** In-memory list of the signed-in user's deliveries (for edit form prefill). */
+var USER_SUBS = [];
+var EDITING_SUB_ID = null;
+
 function loadSubs() {
   updateDeliveryGate();
   if (!(ME.user && ME.user.id)) return Promise.resolve();
-  if (!isPremium()) return Promise.resolve();
-  // Account-owned list: GET /api/client/v1/subscriptions (session cookie).
+  // Always list account deliveries when signed in (Premium gates create/edit only).
   return fetch('/api/client/v1/subscriptions', { headers: { accept: 'application/json' }, credentials: 'same-origin' })
     .then(function (r) {
       if (r.status === 401) throw new Error('Sign in required.');
       if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || ('HTTP ' + r.status)); });
       return r.json();
     })
-    .then(function (data) { renderSubs(data.subscriptions || []); })
+    .then(function (data) {
+      USER_SUBS = data.subscriptions || [];
+      renderSubs(USER_SUBS);
+    })
     .catch(function (e) {
       el('subsBody').innerHTML = stateRow(5, 'Could not load deliveries: ' + e.message);
     });
@@ -4956,7 +4962,12 @@ function loadSubs() {
 function renderSubs(subs) {
   var body = el('subsBody');
   if (!body) return;
-  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No deliveries yet. Create one below.'); return; }
+  if (subs.length === 0) {
+    body.innerHTML = stateRow(5, isPremium()
+      ? 'No deliveries yet. Create one below.'
+      : 'No deliveries on this account yet. Upgrade to Premium to create webhook/SSE deliveries.');
+    return;
+  }
   body.innerHTML = subs.map(function (s) {
     var f = s.filters || {};
     var parts = [];
@@ -4965,19 +4976,102 @@ function renderSubs(subs) {
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
     if (f.members && f.members.length) parts.push(f.members.length + ' member' + (f.members.length === 1 ? '' : 's'));
-    return '<tr class="row">' +
+    var canEdit = isPremium();
+    return '<tr class="row" data-sub-id="' + esc(s.id) + '">' +
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
       '<td><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + (s.active ? 'active' : 'paused') + '</span></td>' +
-      '<td><button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button></td>' +
+      '<td class="row-flex" style="gap:6px;flex-wrap:wrap">' +
+        (canEdit ? '<button class="btn ghost sm" data-sub-edit="' + esc(s.id) + '">Edit</button>' : '') +
+        '<button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button>' +
+      '</td>' +
     '</tr>';
   }).join('');
+}
+function clearDeliveryForm() {
+  EDITING_SUB_ID = null;
+  if (el('newDelivery')) el('newDelivery').value = 'sse';
+  if (el('newTarget')) el('newTarget').value = '';
+  if (el('newTickers')) el('newTickers').value = '';
+  if (el('newMembers')) el('newMembers').value = '';
+  if (el('newChambers')) el('newChambers').value = '';
+  if (el('newSides')) el('newSides').value = '';
+  if (el('newMinAmt')) el('newMinAmt').value = '';
+  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = '+ New delivery';
+  if (el('subsMsg')) el('subsMsg').textContent = '';
+  var cancel = el('subsEditCancel');
+  if (cancel) cancel.hidden = true;
+}
+function beginEditSubscription(id) {
+  var s = USER_SUBS.find(function (x) { return x.id === id; });
+  if (!s) { showToast('Delivery not found.', true); return; }
+  if (!isPremium()) { openPricing('alerts'); return; }
+  EDITING_SUB_ID = id;
+  var f = s.filters || {};
+  if (el('newDelivery')) {
+    el('newDelivery').value = s.delivery === 'webhook' ? 'webhook' : 'sse';
+    el('newDelivery').disabled = true; // delivery mode is immutable after create
+  }
+  if (el('newTarget')) el('newTarget').value = s.targetUrl || '';
+  if (el('newTickers')) el('newTickers').value = (f.tickers || []).join(', ');
+  if (el('newMembers')) el('newMembers').value = (f.members || []).join(', ');
+  if (el('newChambers')) el('newChambers').value = (f.chambers || []).join(',');
+  if (el('newSides')) el('newSides').value = (f.sides && f.sides[0]) || '';
+  if (el('newMinAmt')) el('newMinAmt').value = f.minAmount != null ? String(f.minAmount) : '';
+  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = 'Save changes';
+  var cancel = el('subsEditCancel');
+  if (cancel) cancel.hidden = false;
+  if (el('subsMsg')) el('subsMsg').textContent = 'Editing ' + id + ' — update filters/target and save.';
+  try { el('subsCreateRow').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+}
+function saveSubscriptionEdits() {
+  if (!EDITING_SUB_ID) return createSubscription();
+  if (!isPremium()) { el('subsMsg').textContent = 'Premium required to edit Delivery.'; openPricing('alerts'); return; }
+  var delivery = el('newDelivery').value;
+  var targetUrl = el('newTarget').value.trim();
+  if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
+  var filters = {};
+  var tickersRaw = (el('newTickers') && el('newTickers').value || '').split(',').map(function (t) { return t.trim().toUpperCase(); }).filter(Boolean);
+  if (tickersRaw.length) filters.tickers = tickersRaw;
+  var membersRaw = (el('newMembers') && el('newMembers').value || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+  if (membersRaw.length) filters.members = membersRaw;
+  var chambersRaw = el('newChambers') ? el('newChambers').value : '';
+  if (chambersRaw) filters.chambers = chambersRaw.split(',').filter(Boolean);
+  var sidesRaw = el('newSides') ? el('newSides').value : '';
+  if (sidesRaw) filters.sides = sidesRaw.split(',').filter(Boolean);
+  var minAmtRaw = el('newMinAmt') ? el('newMinAmt').value : '';
+  var minAmt = minAmtRaw === '' || minAmtRaw == null ? NaN : Number(minAmtRaw);
+  if (Number.isFinite(minAmt) && minAmt > 0) filters.minAmount = minAmt;
+  el('subsMsg').textContent = 'Saving…';
+  var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-edit-' + Date.now());
+  var payload = { id: EDITING_SUB_ID, filters: filters };
+  if (delivery === 'webhook') payload.targetUrl = targetUrl;
+  fetch('/api/client/v1/commands', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'Idempotency-Key': idem },
+    body: JSON.stringify({ type: 'update_subscription', idempotencyKey: idem, payload: payload })
+  })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j; }); })
+    .then(function () {
+      showToast('Delivery updated.');
+      clearDeliveryForm();
+      if (el('newDelivery')) el('newDelivery').disabled = false;
+      updateDeliveryGate();
+      loadSubs();
+    })
+    .catch(function (err) { el('subsMsg').textContent = 'Save failed: ' + err.message; });
 }
 /* Pause/Resume a delivery through the session-based update_subscription command.
    (There is no delete endpoint anywhere in the API — deactivation is the
    supported lifecycle, and it frees the account's active-quota slot.) */
 document.addEventListener('click', function (e) {
+  var editBtn = e.target && e.target.closest ? e.target.closest('[data-sub-edit]') : null;
+  if (editBtn) {
+    beginEditSubscription(editBtn.getAttribute('data-sub-edit'));
+    return;
+  }
   var b = e.target && e.target.closest ? e.target.closest('[data-sub-toggle]') : null;
   if (!b) return;
   var id = b.getAttribute('data-sub-toggle');
@@ -4999,6 +5093,7 @@ document.addEventListener('click', function (e) {
     .catch(function (err) { b.disabled = false; showToast('Update failed: ' + err.message, true); });
 });
 function createSubscription() {
+  if (EDITING_SUB_ID) { saveSubscriptionEdits(); return; }
   updateDeliveryGate();
   if (!(ME.user && ME.user.id)) { el('subsMsg').textContent = 'Sign in required.'; return; }
   if (!isPremium()) { el('subsMsg').textContent = 'Premium required to create Delivery.'; openPricing('alerts'); return; }

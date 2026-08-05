@@ -9,6 +9,8 @@ struct DeliveryView: View {
     @State private var membersText = ""
     @State private var watchlistDraft: [String] = []
     @State private var newTicker = ""
+    @State private var showSubscribe = false
+    @State private var editingSubscriptionId: String?
 
     var body: some View {
         NavigationStack {
@@ -31,18 +33,26 @@ struct DeliveryView: View {
                             Label("Premium Feature", systemImage: "star.fill")
                                 .font(.headline)
                                 .foregroundStyle(.orange)
-                            Text("Delivery alerts push new filings to your devices the moment Congress.Trade sees them. Upgrade to Premium to create SSE or webhook deliveries.")
+                            Text("1-month free trial, then $5/month or $50/year. Upgrade with In‑App Purchase or on the website to create SSE/webhook deliveries. Existing deliveries still appear below.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+                            Button {
+                                showSubscribe = true
+                            } label: {
+                                Label("Subscribe with Apple", systemImage: "apple.logo")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                             if let url = store.api.upgradeURL {
                                 Link(destination: url) {
-                                    Label("Subscribe on Congress.Trade", systemImage: "safari")
+                                    Label("Or subscribe on congress.trade", systemImage: "safari")
                                         .font(.subheadline.weight(.semibold))
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
+                                        .padding(.vertical, 8)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
                         .padding(.vertical, 4)
@@ -206,7 +216,14 @@ struct DeliveryView: View {
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }
-            .onAppear { watchlistDraft = store.watchlist }
+            .sheet(isPresented: $showSubscribe) {
+                SubscribeView()
+                    .environmentObject(store)
+            }
+            .onAppear {
+                watchlistDraft = store.watchlist
+                Task { await store.refreshSignedInState() }
+            }
             .onChange(of: store.watchlist) { _, newValue in
                 watchlistDraft = newValue
             }
