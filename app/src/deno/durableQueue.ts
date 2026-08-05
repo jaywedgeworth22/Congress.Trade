@@ -196,6 +196,7 @@ function queueDedupeKey(
     case "filing.new":
     case "filing.fetched":
     case "filing.extracted":
+    case "filing.local_wait_check":
       return typeof message.docId === "string" ? key(message.docId) : null;
     case "tx.persisted":
       return typeof message.txId === "string" ? key(message.txId) : null;
@@ -274,6 +275,11 @@ export function assertCanonicalQueueMessage(
       return;
     case "filing.fetched":
     case "filing.extracted":
+    // Local vision wait polls — enqueued by classifyFiling for scanned_pdf
+    // when a local worker heartbeat is fresh. Missing this case dead-lettered
+    // every scanned filing with "invalid ingest queue message type:
+    // filing.local_wait_check" (prod 2026-08-04/05: 1540 durable + 270 outbox).
+    case "filing.local_wait_check":
       requireString(message.docId, "docId", type);
       return;
     case "tx.persisted":
