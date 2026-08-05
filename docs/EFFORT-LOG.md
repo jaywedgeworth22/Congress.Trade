@@ -11,6 +11,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-05T01:02Z — GROK — IN PROGRESS — Canonical tx_type B (Buy) storage.** Branch `grok/tx-type-b-storage`. P→B migrate + auto-translate on ingest.
+
 - **2026-08-04 — GROK — IN PROGRESS — UX wave2 WEB lane.** Branch `grok/ux-wave2-web` from `origin/grok/ux-wave2-premium-csv`. Premium CSV exportCsv gate + pricingCopy('export') + from/to; People directory (GET /api/members); Trends conflicts; delivery members/sides/minAmount; trends-fold CSS; mobile bottom nav already present. Tests dashboardHtml+freemiumGating green.
 - **2026-08-04T23:58Z — GROK — IN PROGRESS — Product labels Buy/Sell/Exchange (B alias).** Branch `grok/tx-type-buy-labels`. Storage/API stays P|S|E (STOCK Act); UI/iOS/docs use Buy/Sell/Exchange; accept B as Buy input alias. No DB migration.
 

@@ -17,7 +17,7 @@ function tx(over: Partial<ParsedTx> = {}): ParsedTx {
     assetName: 'Apple Inc',
     ticker: 'AAPL',
     assetType: 'ST',
-    txType: 'P',
+    txType: 'B',
     amountMin: 1001,
     amountMax: 15000,
     isOption: false,
@@ -67,11 +67,11 @@ function extractor(name: string, out: ExtractorResult): Extractor {
 
 describe('arbitrationRowKey', () => {
   it('keys on ticker + date + type, uppercased', () => {
-    expect(arbitrationRowKey(tx({ ticker: 'aapl' }))).toBe('AAPL|2026-01-02|P');
+    expect(arbitrationRowKey(tx({ ticker: 'aapl' }))).toBe('AAPL|2026-01-02|B');
   });
   it('falls back to asset name when no ticker', () => {
     expect(arbitrationRowKey(tx({ ticker: null, assetName: 'US T-Bill' }))).toBe(
-      'US T-BILL|2026-01-02|P',
+      'US T-BILL|2026-01-02|B',
     );
   });
 });

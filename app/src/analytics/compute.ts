@@ -224,7 +224,7 @@ type PerfAnchor = 'trade' | 'filing';
 
 function isBuyRow(r: MemberPerfRow): boolean {
   const t = (r.txType || '').toUpperCase();
-  return t === 'P' || t === 'PURCHASE' || t === 'BUY';
+  return t === 'B' || t === 'P' || t === 'PURCHASE' || t === 'BUY';
 }
 
 function rowAnchors(

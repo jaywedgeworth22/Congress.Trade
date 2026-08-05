@@ -1592,9 +1592,12 @@ function cleanParsedTx(tx: ParsedTx): ParsedTx {
     owner = 'self';
   }
 
-  // Default txType to 'P' if missing or invalid
-  if (!txType || (txType !== 'P' && txType !== 'S' && txType !== 'E')) {
-    txType = 'P';
+  // Default txType to 'B' (Buy) if missing or invalid; coerce legacy P → B
+  {
+    const raw = String(txType ?? '');
+    if (raw === 'P' || raw === 'p') txType = 'B';
+    else if (raw === 'B' || raw === 'S' || raw === 'E') txType = raw as typeof txType;
+    else txType = 'B';
   }
 
   // Clean Clerk of the House hallucination

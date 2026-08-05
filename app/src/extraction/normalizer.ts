@@ -6,7 +6,7 @@
  * (ParsedTx[]) into persistence-ready Transaction rows and writes the result:
  *   - resolve ticker against securities_master (exact ticker, then alias JSON)
  *   - enforce the canonical STOCK Act bracket set (see src/shared/brackets.ts)
- *   - sanity-check tx_date <= filed_date and tx_type in {P,S,E}
+ *   - sanity-check tx_date <= filed_date and tx_type in {B,S,E} (legacy P coerced to B)
  *   - compute per-tx confidence = extractor confidence x validation penalties
  *   - route low-confidence docs to review_queue; otherwise INSERT transactions,
  *     mark filings persisted, and fan out delivery.dispatch per tx.
@@ -36,6 +36,7 @@ import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-share
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { deprecatePredecessorFilingTransactions } from './agreement.ts';
 import { parseAmountRange } from './amounts.ts';
+import { canonicalizeTxType } from '../shared/txType.ts';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -53,7 +54,7 @@ const PENALTY_UNRESOLVED_TICKER = 0.85; // asset/ticker could not be resolved
 const PENALTY_INVALID_BRACKET = 0.6; //   amount range is not a canonical bracket
 const PENALTY_FUTURE_TX_DATE = 0.7; //    tx_date after the filing's filed_date or today
 const PENALTY_MISSING_TX_DATE = 0.7; //   tx_date is missing entirely
-const PENALTY_BAD_TX_TYPE = 0.5; //       tx_type not in {P,S,E}
+const PENALTY_BAD_TX_TYPE = 0.5; //       tx_type not in {B,S,E}
 const PENALTY_BAD_ASSET_NAME = 0.4; //    parsed asset contains PTR header chrome
 
 /** Outcome of normalizing one filing's extracted rows. */
@@ -509,12 +510,12 @@ export function scoreFields(
     confidence *= PENALTY_INVALID_BRACKET;
   }
 
-  // --- tx_type must be one of P / S / E ------------------------------------
-  let txType = fields.txType as TxType;
+  // --- tx_type must be B / S / E (Purchase/P/buy → B) ----------------------
+  let txType = (canonicalizeTxType(fields.txType) ?? fields.txType) as TxType;
   if (!isTxType(txType)) {
     flags.push('bad_tx_type');
     confidence *= PENALTY_BAD_TX_TYPE;
-    txType = 'P';
+    txType = 'B';
   }
 
   // --- tx_date sanity: must be <= filed_date and <= today -------------------
@@ -1083,7 +1084,7 @@ function reviewReason(flagged: FlaggedTx[], minConfidence: number): string {
 // ---------------------------------------------------------------------------
 
 function isTxType(v: unknown): v is TxType {
-  return v === 'P' || v === 'S' || v === 'E';
+  return v === 'B' || v === 'S' || v === 'E';
 }
 
 function normalizeOwner(o: Owner | null): Owner | null {

@@ -151,11 +151,12 @@ describe('buildCommonFilters', () => {
     const { where, params } = buildCommonFilters({
       window: 'all',
       tickerNotNull: true,
-      txTypes: ['P', 'S'],
+      txTypes: ['B', 'S'],
     });
     expect(where).toContain("(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))");
-    expect(where.some((w) => w.includes('t.tx_type IN (?, ?)'))).toBe(true);
-    expect(params).toEqual(['P', 'S']);
+    // Buy dual-read expands B → B,P so three binds with S
+    expect(where.some((w) => w.includes('t.tx_type IN (?, ?, ?)'))).toBe(true);
+    expect(params).toEqual(['B', 'P', 'S']);
   });
 
   it('tickers expands to an IN-list with one bind per ticker', () => {

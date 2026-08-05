@@ -1,43 +1,40 @@
 /**
- * Canonical transaction-type **storage/API codes**: P | S | E
- * (STOCK Act / OGE form letters — do not rename without a data migration).
+ * Canonical transaction-type **storage/API codes**: B | S | E
+ *   B = Buy, S = Sell, E = Exchange
  *
- * Product-facing labels (UI, iOS, docs, share copy):
- *   P → Buy   (short letter B also accepted on input)
- *   S → Sell
- *   E → Exchange
- *
- * Upstream sources (UW dumps, Senate eFD, House "S (partial)", seed CSVs,
- * vision transcriptions) emit many aliases. Map them here so API/UI/analytics
- * never surface raw strings like `sale_full` or `purchase`.
+ * Form text still says Purchase/Sale (STOCK Act / OGE). Every write path
+ * must run {@link canonicalizeTxType} so Purchase / P / buy / bought → **B**.
+ * Legacy rows may still hold P until the admin migrate UPDATE lands; readers
+ * treat P as Buy via dual-read helpers.
  */
 import type { TxType } from './types.ts';
 
 /** Human label for a stored code. Unknown/empty → null. */
 export function txTypeLabel(code: string | null | undefined): string | null {
   const c = canonicalizeTxType(code);
-  if (c === 'P') return 'Buy';
+  if (c === 'B') return 'Buy';
   if (c === 'S') return 'Sell';
   if (c === 'E') return 'Exchange';
   return null;
 }
 
-/**
- * Short product letter for badges/CSV when a single letter is preferred.
- * Storage stays P; display letter for buys is B.
- */
+/** Single-letter product code (same as storage after B migration). */
 export function txTypeDisplayLetter(code: string | null | undefined): string | null {
-  const c = canonicalizeTxType(code);
-  if (c === 'P') return 'B';
-  if (c === 'S') return 'S';
-  if (c === 'E') return 'E';
-  return null;
+  return canonicalizeTxType(code);
 }
 
 /**
- * Map any raw provider/admin/form/transcription label to P|S|E.
- * Accepts product short letter **B** as buy (alias of P).
- * Returns null when empty or unrecognised.
+ * SQL fragment: buy side including legacy P during/after migration.
+ * Use for analytics CASE / WHERE on t.tx_type.
+ */
+export const SQL_TX_TYPE_BUY = `t.tx_type IN ('B', 'P')`;
+export const SQL_TX_TYPE_SELL = `t.tx_type = 'S'`;
+export const SQL_TX_TYPE_EXCHANGE = `t.tx_type = 'E'`;
+export const SQL_TX_TYPE_DIRECTIONAL = `t.tx_type IN ('B', 'P', 'S')`;
+
+/**
+ * Map any raw provider/admin/form/transcription label to B|S|E.
+ * Purchase / P / buy / B all become **B**. Returns null if empty/unknown.
  */
 export function canonicalizeTxType(raw: string | null | undefined): TxType | null {
   const s = String(raw ?? '')
@@ -47,15 +44,13 @@ export function canonicalizeTxType(raw: string | null | undefined): TxType | nul
     .replace(/\s+/g, ' ');
   if (!s) return null;
 
-  // Exact single-letter codes (P storage + B product alias for buy).
-  if (s === 'p' || s === 'b') return 'P';
+  // Exact single-letter codes — legacy P maps to B.
+  if (s === 'b' || s === 'p') return 'B';
   if (s === 's') return 'S';
   if (s === 'e') return 'E';
 
-  // Exchange before sale: "sale and exchange" is rare; prefer exchange tokens.
   if (s.includes('exchange') || s === 'exch') return 'E';
 
-  // Sales: full, partial, sell, sold, S (partial), sale_full, etc.
   if (
     s.includes('sale') ||
     s.includes('sell') ||
@@ -66,22 +61,29 @@ export function canonicalizeTxType(raw: string | null | undefined): TxType | nul
     return 'S';
   }
 
-  // Buys: purchase, buy, bought, and transcription "B".
-  if (s.includes('purchase') || s.includes('buy') || s.includes('bought')) return 'P';
+  if (s.includes('purchase') || s.includes('buy') || s.includes('bought')) return 'B';
 
   return null;
 }
 
-/**
- * Like {@link canonicalizeTxType}, but never returns null — unrecognised /
- * empty values become Buy (P). Use only at display/export edges where a
- * missing type would otherwise render as garbage.
- */
+/** Never null — unknown/empty → Buy (B). Display/export edges only. */
 export function canonicalizeTxTypeOrBuy(raw: string | null | undefined): TxType {
-  return canonicalizeTxType(raw) ?? 'P';
+  return canonicalizeTxType(raw) ?? 'B';
 }
 
 /** @deprecated use {@link canonicalizeTxTypeOrBuy} */
 export function canonicalizeTxTypeOrPurchase(raw: string | null | undefined): TxType {
   return canonicalizeTxTypeOrBuy(raw);
+}
+
+/** True if code is a buy (including legacy P). */
+export function isBuyTxType(code: string | null | undefined): boolean {
+  const c = String(code ?? '').toUpperCase();
+  return c === 'B' || c === 'P';
+}
+
+/** True if code is a valid storage side (B|S|E or legacy P). */
+export function isTxTypeCode(code: string | null | undefined): boolean {
+  const c = String(code ?? '').toUpperCase();
+  return c === 'B' || c === 'S' || c === 'E' || c === 'P';
 }

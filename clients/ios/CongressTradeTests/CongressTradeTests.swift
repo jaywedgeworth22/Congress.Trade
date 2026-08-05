@@ -113,7 +113,7 @@ final class CongressTradeTests: XCTestCase {
             chambers: ["house", "senate"],
             minAmount: 1001,
             maxAmount: 50000,
-            sides: ["P"],
+            sides: ["B"],
             sectors: ["Technology"],
             marketCapBuckets: ["mega", "large"]
         )

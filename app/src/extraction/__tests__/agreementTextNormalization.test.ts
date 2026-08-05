@@ -20,7 +20,7 @@ function tx(over: Partial<ParsedTx> = {}): ParsedTx {
     ticker: 'AAPL',
     assetType: 'ST',
     assetTypeName: 'Stock',
-    txType: 'P',
+    txType: 'B',
     amountMin: 1001,
     amountMax: 15000,
     isOption: false,

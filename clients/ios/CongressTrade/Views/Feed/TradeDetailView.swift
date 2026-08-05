@@ -34,7 +34,7 @@ struct TradeDetailView: View {
                         StatusPill(
                             text: trade.transaction.type.label,
                             color: trade.transaction.type.tint,
-                            icon: trade.transaction.type == "P" ? "arrow.down.right.circle.fill" : (trade.transaction.type == "S" ? "arrow.up.right.circle.fill" : "arrow.left.and.right.circle.fill")
+                            icon: (trade.transaction.type == "B" || trade.transaction.type == "P") ? "arrow.down.right.circle.fill" : (trade.transaction.type == "S" ? "arrow.up.right.circle.fill" : "arrow.left.and.right.circle.fill")
                         )
                         .padding(.top, 4)
                     }

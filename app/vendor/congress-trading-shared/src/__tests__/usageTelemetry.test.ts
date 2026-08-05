@@ -423,7 +423,7 @@ describe("schema validation", () => {
       assetName: "Apple Inc.",
       ticker: "AAPL",
       assetType: "stock",
-      txType: "P",
+      txType: "B",
       amountMin: 1001,
       amountMax: 15000,
       isOption: false,

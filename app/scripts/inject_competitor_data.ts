@@ -152,7 +152,7 @@ async function run() {
       assetName,
       ticker: tk,
       assetType: 'stock', // Fallback
-      txType: type === 'buy' ? 'P' : type === 'sell' ? 'S' : 'E',
+      txType: type === 'buy' ? 'B' : type === 'sell' ? 'S' : 'E',
       amountMin: 1001, // default
       amountMax: 15000, // default
       isOption: false,

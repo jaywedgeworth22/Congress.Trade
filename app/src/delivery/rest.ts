@@ -205,9 +205,9 @@ function asChambers(v: string | undefined): Chamber[] | undefined {
 }
 
 function asTxType(v: string | undefined): TxType | undefined {
-  // Product short letter B (= Buy) is an accepted alias of storage code P.
-  if (v === 'B' || v === 'b') return 'P';
-  return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
+  // Canonical storage B|S|E; legacy P (Purchase) → B.
+  if (v === 'P' || v === 'p' || v === 'B' || v === 'b') return 'B';
+  return v === 'S' || v === 'E' ? v : undefined;
 }
 
 /** Closed enum for the public `?owner=` feed filter (canonical insert-time set). */
@@ -577,7 +577,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const items = rows.map((row) => {
       const tx = mapFeedTransaction(row);
       const who = row.__member_name ?? tx.fullName ?? tx.filerId ?? 'Unknown filer';
-      const side = tx.txType === 'P' ? 'bought' : tx.txType === 'S' ? 'sold' : 'traded';
+      const side = (tx.txType === 'B' || String(tx.txType) === 'P') ? 'bought' : tx.txType === 'S' ? 'sold' : 'traded';
       const what = tx.ticker ?? tx.assetName;
       const title = `${who} ${side} ${what}`;
       const link = tx.sourceUrl ?? `${origin}/api/filings/${encodeURIComponent(tx.docId)}`;

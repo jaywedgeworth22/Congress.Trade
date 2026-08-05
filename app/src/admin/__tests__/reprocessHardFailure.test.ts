@@ -53,7 +53,7 @@ function parsedTx(): ParsedTx {
     assetName: 'Header-contaminated row',
     ticker: 'AAPL',
     assetType: 'Stock',
-    txType: 'P',
+    txType: 'B',
     amountMin: 1001,
     amountMax: 15000,
     isOption: false,

@@ -58,7 +58,7 @@ export type DocKind = 'senate_html' | 'text_pdf' | 'scanned_pdf' | 'unknown';
 
 /** Beneficial owner of a transaction. */
 
-/** Transaction type storage codes: P (Buy) | S (Sell) | E (Exchange). Product labels use Buy/Sell/Exchange; input also accepts B for Buy. */
+/** Transaction type storage codes: B (Buy) | S (Sell) | E (Exchange). Legacy P (Purchase) is dual-read and coerced to B on write. */
 
 /** Delivery transport for a subscription. */
 export type DeliveryChannel = 'webhook' | 'sse';
@@ -237,7 +237,7 @@ export interface SubscriptionFilters {
   minAmount?: number;
   /** Maximum transaction amount_min (bracket floor); pairs with minAmount for a range. */
   maxAmount?: number;
-  /** Transaction sides to include, e.g. ['P'] for buys only (empty/undefined => all). Product label for P is Buy; B is accepted as a Buy alias on some input paths. */
+  /** Transaction sides to include, e.g. ['B'] for buys only (empty/undefined => all). Legacy 'P' is accepted and treated as Buy. */
   sides?: TxType[];
   /** GICS sectors to include (securities_ref.sector); empty/undefined => all. */
   sectors?: string[];

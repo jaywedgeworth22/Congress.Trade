@@ -49,7 +49,7 @@ const maliciousRow = {
   asset_name: '=HYPERLINK("https://evil.example","claim your refund")',
   ticker: '@SUM(1+1)',
   asset_type: 'stock',
-  tx_type: 'P',
+  tx_type: 'B',
   amount_min: 1001,
   amount_max: 15000,
   is_option: 0,
