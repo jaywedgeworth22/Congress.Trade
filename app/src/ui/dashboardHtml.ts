@@ -1112,16 +1112,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
    Crisper header, calmer sub capped to a readable measure on wide cards,
    and a 3px accent tick that marks every section start. */
 #view-trends .section h3,
-#view-trends h3.tf-h {
+#view-trends h3.tf-h,
+#view-trends details.trends-fold > summary.tf-h,
+#view-trends details.trends-fold > summary {
   font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.01em;
   line-height: 1.25;
   margin-top: 0;
 }
+/* Collapsible Trends sections: summary matches section h3, with a native
+   disclosure caret kept readable against the section surface. */
+#view-trends details.trends-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+#view-trends details.trends-fold > summary::-webkit-details-marker { display: none; }
+#view-trends details.trends-fold > summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+  flex: 0 0 auto;
+}
+#view-trends details.trends-fold[open] > summary::before { transform: rotate(90deg); }
 #view-trends h3.tf-h .chip,
 #view-trends h3.tf-h .tf-chip,
 #view-trends h3.tf-h .info-tip,
+#view-trends details.trends-fold > summary .info-tip,
 #view-trends .section h3 .info-tip { letter-spacing: 0; font-weight: 400; }
 #view-trends .section p.sub {
   font-size: 12.5px;
@@ -3553,6 +3577,8 @@ function feedQueryParams() {
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
+  var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   return p;
 }
 function setFeedKpis() {
@@ -3689,12 +3715,12 @@ function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage();
 /* The server rejects public offsets beyond this depth (see
    MAX_PUBLIC_TX_OFFSET in src/security/botDefense.ts, enforced
    unconditionally in delivery/rest.ts). Interpolated, not hand-copied, so
-   the pager can never 400. Deeper history is the free CSV export. */
+   the pager can never 400. Deeper history is the Premium CSV export. */
 var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
 function nextFeedPage() {
   if ((feedPage + 1) * feedPageSize >= totalRows) return;
   if ((feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET) {
-    showToast('Deeper history is available in the free CSV export — use ⤓ Export CSV.');
+    showToast('Deeper history is available with Premium CSV export — use ⤓ Export CSV.');
     return;
   }
   feedPage += 1;
@@ -4753,7 +4779,10 @@ function updateDeliveryGate() {
   var deliverySel = el('newDelivery');
   var target = el('newTarget');
   var tickersIn = el('newTickers');
+  var membersIn = el('newMembers');
   var chambersSel = el('newChambers');
+  var sidesSel = el('newSides');
+  var minAmtIn = el('newMinAmt');
   var body = el('subsBody');
   var signedIn = !!(ME.user && ME.user.id);
   var premium = isPremium();
@@ -4761,7 +4790,10 @@ function updateDeliveryGate() {
   if (deliverySel) deliverySel.disabled = !canCreate;
   if (target) target.disabled = !canCreate;
   if (tickersIn) tickersIn.disabled = !canCreate;
+  if (membersIn) membersIn.disabled = !canCreate;
   if (chambersSel) chambersSel.disabled = !canCreate;
+  if (sidesSel) sidesSel.disabled = !canCreate;
+  if (minAmtIn) minAmtIn.disabled = !canCreate;
   if (createBtn) createBtn.disabled = !canCreate;
   if (!gate) return;
   if (!signedIn) {
@@ -4808,8 +4840,10 @@ function renderSubs(subs) {
     var f = s.filters || {};
     var parts = [];
     if (f.chambers && f.chambers.length) parts.push(f.chambers.join('+')); else parts.push('all chambers');
+    if (f.sides && f.sides.length) parts.push(f.sides.map(function (x) { return typeName[x] || x; }).join('/'));
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
+    if (f.members && f.members.length) parts.push(f.members.length + ' member' + (f.members.length === 1 ? '' : 's'));
     return '<tr class="row">' +
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
@@ -4853,8 +4887,15 @@ function createSubscription() {
   var filters = {};
   var tickersRaw = (el('newTickers') && el('newTickers').value || '').split(',').map(function (t) { return t.trim().toUpperCase(); }).filter(Boolean);
   if (tickersRaw.length) filters.tickers = tickersRaw;
+  var membersRaw = (el('newMembers') && el('newMembers').value || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+  if (membersRaw.length) filters.members = membersRaw;
   var chambersRaw = el('newChambers') ? el('newChambers').value : '';
   if (chambersRaw) filters.chambers = chambersRaw.split(',');
+  var sidesRaw = el('newSides') ? el('newSides').value : '';
+  if (sidesRaw) filters.sides = sidesRaw.split(',').filter(Boolean);
+  var minAmtRaw = el('newMinAmt') ? el('newMinAmt').value : '';
+  var minAmt = minAmtRaw === '' || minAmtRaw == null ? NaN : Number(minAmtRaw);
+  if (Number.isFinite(minAmt) && minAmt > 0) filters.minAmount = minAmt;
   el('subsMsg').textContent = 'Creating…';
   var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now());
   fetch('/api/client/v1/commands', {
@@ -7177,7 +7218,138 @@ function loadTrends() {
   loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
+  loadTrConflicts();
 }
+
+/* Committee sector conflicts for the current Trends window. */
+function loadTrConflicts() {
+  var body = el('trConflicts');
+  if (!body) return;
+  body.innerHTML = stateRow(6, 'Loading…');
+  aGet('conflicts?' + trParams() + '&limit=40').then(function (d) {
+    var rows = d.conflicts || [];
+    if (!rows.length) {
+      body.innerHTML = stateRow(6, 'No committee-sector conflicts in this window.');
+      return;
+    }
+    body.innerHTML = rows.map(function (r) {
+      var name = fmtName(r.memberName || r.filerId || 'Unknown');
+      var memberAttr = r.filerId
+        ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
+        : ' class="member-cell"';
+      var committees = Array.isArray(r.viaCommittees) ? r.viaCommittees.join(', ') : (r.viaCommittees || '—');
+      var side = typeName[r.txType] || r.txType || '—';
+      var asset = r.ticker || '—';
+      return '<tr class="row">' +
+        '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
+        '<td class="muted">' + esc(committees) + '</td>' +
+        '<td class="muted">' + esc(r.sector || '—') + '</td>' +
+        '<td>' + (r.ticker
+          ? '<span class="clickable" data-asset="' + esc(r.ticker) + '">' + esc(asset) + '</span>'
+          : esc(asset)) + '</td>' +
+        '<td><span class="dirpill ' + esc(r.txType || '') + '">' + esc(side) + '</span></td>' +
+        '<td class="est">' + estUsd(r.estAmountUsd) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) {
+    body.innerHTML = stateRow(6, 'Could not load: ' + e.message);
+  });
+}
+
+/* ---- People directory (GET /api/members; client filter by name/party/state) ---- */
+var PEOPLE_CACHE = null; // full roster once loaded
+var PEOPLE_CACHE_AT = 0;
+var PEOPLE_TTL_MS = 5 * 60 * 1000;
+function loadPeopleDirectory() {
+  var body = el('peopleBody');
+  var countEl = el('peopleCount');
+  if (!body) return Promise.resolve();
+  body.innerHTML = stateRow(5, 'Loading directory…');
+  if (countEl) countEl.textContent = '';
+  var now = Date.now();
+  var useCache = PEOPLE_CACHE && (now - PEOPLE_CACHE_AT) < PEOPLE_TTL_MS;
+  var fetchRoster = useCache
+    ? Promise.resolve(PEOPLE_CACHE)
+    : fetch('/api/members', { headers: { accept: 'application/json' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) {
+          PEOPLE_CACHE = d;
+          PEOPLE_CACHE_AT = Date.now();
+          return d;
+        });
+  return fetchRoster
+    .then(function (d) { renderPeopleDirectory(d && d.members ? d.members : []); })
+    .catch(function (e) {
+      body.innerHTML = stateRow(5, 'Could not load directory: ' + e.message);
+    });
+}
+function renderPeopleDirectory(all) {
+  var body = el('peopleBody');
+  var countEl = el('peopleCount');
+  if (!body) return;
+  var chamberSel = el('peopleChamber');
+  var chamber = chamberSel ? String(chamberSel.value || '').toLowerCase() : '';
+  var qEl = el('peopleQ');
+  var q = qEl ? String(qEl.value || '').trim().toLowerCase() : '';
+  var rows = (all || []).filter(function (m) {
+    if (chamber) {
+      var ch = String(m.chamber || '').toLowerCase();
+      if (chamber === 'house' && ch !== 'house' && ch !== 'h' && ch.indexOf('house') === -1) return false;
+      if (chamber === 'senate' && ch !== 'senate' && ch !== 's' && ch.indexOf('senate') === -1) return false;
+      if (chamber === 'executive' && ch !== 'executive' && ch !== 'oge' && ch !== 'exec' && ch.indexOf('exec') === -1) return false;
+    }
+    if (!q) return true;
+    var hay = [
+      m.fullName, m.filerId, m.party, m.state, m.district, m.chamber
+    ].map(function (x) { return String(x || '').toLowerCase(); }).join(' ');
+    return hay.indexOf(q) !== -1;
+  });
+  if (!rows.length) {
+    body.innerHTML = stateRow(5, q || chamber ? 'No politicians match this filter.' : 'No politicians in the directory yet.');
+    if (countEl) countEl.textContent = '0 shown';
+    return;
+  }
+  body.innerHTML = rows.map(function (m) {
+    var name = fmtName(m.fullName || m.filerId || 'Unknown');
+    var memberAttr = m.filerId
+      ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
+      : ' class="member-cell"';
+    return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '" style="cursor:pointer"' : '') + '>' +
+      '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
+      '<td class="muted">' + esc(chamberLabel(m.chamber) || '—') + '</td>' +
+      '<td class="muted">' + esc(m.party || '—') + '</td>' +
+      '<td class="muted">' + esc(m.state || '—') + (m.district ? ' · ' + esc(String(m.district)) : '') + '</td>' +
+      '<td class="muted">' + (m.txCount != null ? Number(m.txCount) : '—') + '</td></tr>';
+  }).join('');
+  if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
+}
+function filterPeopleDirectory() {
+  if (!PEOPLE_CACHE || !PEOPLE_CACHE.members) {
+    loadPeopleDirectory();
+    return;
+  }
+  renderPeopleDirectory(PEOPLE_CACHE.members);
+}
+/* Click a people-directory row → open the member drawer. */
+(function () {
+  var pb = null;
+  function bindPeopleClicks() {
+    pb = el('peopleBody');
+    if (!pb || pb._peopleBound) return;
+    pb._peopleBound = true;
+    pb.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return;
+      var hit = e.target.closest('[data-member]');
+      if (!hit) return;
+      var id = hit.getAttribute('data-member');
+      if (id) openMember(id);
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindPeopleClicks);
+  } else {
+    bindPeopleClicks();
+  }
+})();
 
 /* ================= SPEED VS DATA PROVIDERS (provider scorecard) ================= */
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
@@ -8367,6 +8539,7 @@ function loadMe() {
       renderAccount();
       applyAdminVisibility();
       updatePremiumCues();
+      updateGateRow();
       updateDeliveryGate();
       hiddenCols = hiddenCols.filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
@@ -8375,7 +8548,7 @@ function loadMe() {
       renderColChooser();
       renderFeed();
     })
-    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateDeliveryGate(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
 }
 
 function renderAccount() {
@@ -8473,10 +8646,20 @@ function pricingCopy(intent) {
       'Live SSE stream of every new filing — no polling',
     ],
   };
+  if (intent === 'export') return {
+    title: 'Export Full History',
+    sub: 'Premium unlocks full-history CSV downloads of every congressional trade, plus instant delivery via webhook or SSE.',
+    features: [
+      'Full-history CSV export with ticker, member, type, chamber, and date filters',
+      'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
+      'Live SSE stream of every new filing — no polling',
+    ],
+  };
   return {
     title: 'Premium',
-    sub: 'The public dashboard stays free. Premium gets you the filing the moment we see it.',
+    sub: 'The public dashboard stays free. Premium gets full-history CSV export and the filing the moment we see it.',
     features: [
+      'Full-history CSV export of the filtered trade feed',
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
     ],
@@ -8560,19 +8743,36 @@ function manageBilling() {
     .catch(function () { showToast('Network error — try again.', true); });
 }
 
-/* ---- CSV export (free; same filters as the live feed toolbar) ---- */
+/* ---- CSV export (Premium; same filters as the live feed toolbar) ---- */
 function exportCsv() {
+  if (!ME.user) {
+    openLogin();
+    showToast('Sign in to export CSV — Premium required for full-history downloads.');
+    return;
+  }
+  if (!isPremium()) {
+    openPricing('export');
+    return;
+  }
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
+  var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   var qs = p.toString();
+  // Cookie session is sent automatically with same-origin navigation.
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
 
-/* ---- gated feed CTA + post-redirect toasts ---- */
-function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated && checkoutConfigured() ? '' : 'none'; }
+/* ---- Premium CSV / delivery CTA under the feed pager ---- */
+function updateGateRow() {
+  var g = el('gateRow');
+  if (!g) return;
+  // Show export Premium CTA when not premium and checkout is configured.
+  g.style.display = (!isPremium() && checkoutConfigured()) ? '' : 'none';
+}
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
   var t = el('toast'); if (!t) return;
@@ -8692,6 +8892,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
     if (b.dataset.view === 'trends') loadTrends();
+    if (b.dataset.view === 'people') loadPeopleDirectory();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') {
       updateDeliveryGate();
@@ -8956,8 +9157,8 @@ function openDeepLink() {
       if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
       return;
     }
-    if (pricing === '1' || pricing === 'true' || pricing === 'alerts') {
-      openPricing(pricing === 'alerts' ? 'alerts' : 'default');
+    if (pricing === '1' || pricing === 'true' || pricing === 'alerts' || pricing === 'export') {
+      openPricing(pricing === 'alerts' || pricing === 'export' ? pricing : 'default');
       return;
     }
     if (ticker) { openAsset(ticker); return; }
@@ -9097,6 +9298,7 @@ loadMe().then(function () {
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     
     if (initialView === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (initialView === 'people') loadPeopleDirectory();
     if (initialView === 'review' && canUseAdmin()) loadReview();
     if (initialView === 'subs') {
       updateDeliveryGate();

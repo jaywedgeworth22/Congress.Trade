@@ -127,7 +127,7 @@ describe('DASHBOARD_HTML', () => {
     const main = document.querySelector('main');
     expect(main).not.toBeNull();
 
-    const viewIds = ['view-feed', 'view-trends', 'view-review', 'view-subs', 'view-admin'];
+    const viewIds = ['view-feed', 'view-trends', 'view-people', 'view-review', 'view-subs', 'view-admin'];
     expect(document.querySelectorAll('section.view').map((view) => view.id)).toEqual(viewIds);
 
     for (const id of viewIds) {
@@ -370,18 +370,19 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
-    // Columns and CSV export are never Premium-gated: Premium is
-    // delivery (webhooks/SSE) only.
+    // Public feed + columns stay free. Premium is delivery + full-history CSV
+    // (subtle Pro badge / gateRow CTA — not a paywalled feed).
     expect(DASHBOARD_HTML).not.toContain('data-premium-col');
     expect(DASHBOARD_HTML).not.toContain('Premium enrichment');
     expect(DASHBOARD_HTML).not.toContain("tier: 'premium'");
     expect(DASHBOARD_HTML).not.toContain('Premium Enrichment Columns');
-    expect(DASHBOARD_HTML).not.toContain('CSV Export Requires Premium');
-    expect(DASHBOARD_HTML).not.toContain('CSV export is Premium');
-    expect(DASHBOARD_HTML).not.toContain('Full-history CSV exports');
     expect(DASHBOARD_HTML).not.toContain('Free view shows the last 30 days');
     expect(DASHBOARD_HTML).not.toContain('soon) real-time alerts');
     expect(DASHBOARD_HTML).not.toContain('Go Premium');
+    // Export is Premium but cued subtly (Pro badge + pricing intent), not a hard feed wall.
+    expect(DASHBOARD_HTML).toContain('data-premium-cue="export"');
+    expect(DASHBOARD_HTML).toContain('Export CSV');
+    expect(DASHBOARD_HTML).toContain('premium-mark');
   });
 
   it('gates Premium checkout copy and actions on server billing availability', () => {
@@ -1937,7 +1938,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
 
   // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
   it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
-    expect(DASHBOARD_HTML).toContain('Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('Delivery + CSV export are included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $9/mo or $90/yr');
     expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
     expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
     expect(DASHBOARD_HTML).not.toContain('$15/mo');
@@ -2200,11 +2202,18 @@ describe('UX P0 review fixes (web)', () => {
     expect(DASHBOARD_HTML).not.toContain('Trades only resolve against loaded rows');
   });
 
-  it('exports CSV with the politician filter and free-export copy', () => {
+  it('gates CSV export as Premium with memberName+from filters and export pricing intent', () => {
     expect(DASHBOARD_HTML).toContain("if (m) p.set('memberName', m)");
+    expect(DASHBOARD_HTML).toContain("if (from) p.set('from', from)");
+    expect(DASHBOARD_HTML).toContain("if (to) p.set('to', to)");
     expect(DASHBOARD_HTML).toContain("window.location.href = '/api/export/transactions.csv'");
-    expect(DASHBOARD_HTML).toContain('CSV export is free (full history)');
-    expect(DASHBOARD_HTML).not.toContain('Premium adds full-history CSV export');
+    expect(DASHBOARD_HTML).toContain("openPricing('export')");
+    expect(DASHBOARD_HTML).toContain("intent === 'export'");
+    expect(DASHBOARD_HTML).toContain('Full-history CSV export');
+    expect(DASHBOARD_HTML).toContain('Sign in to export CSV');
+    expect(DASHBOARD_HTML).not.toContain('CSV export is free (full history)');
+    expect(DASHBOARD_HTML).not.toContain('free CSV export');
+    expect(DASHBOARD_HTML).toContain("!isPremium() && checkoutConfigured()");
   });
 
   it('lazy-loads asset drawer backtest instead of a hard PERF_GATE', () => {
@@ -2226,6 +2235,44 @@ describe('UX P0 review fixes (web)', () => {
 
   it('opens pricing from ?pricing= deep links', () => {
     expect(DASHBOARD_HTML).toContain("pricing === '1'");
-    expect(DASHBOARD_HTML).toContain("openPricing(pricing === 'alerts' ? 'alerts' : 'default')");
+    expect(DASHBOARD_HTML).toContain("openPricing(pricing === 'alerts' || pricing === 'export' ? pricing : 'default')");
+  });
+});
+
+describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => {
+  it('implements People directory load + client filter + openMember', () => {
+    expect(DASHBOARD_HTML).toContain('function loadPeopleDirectory(');
+    expect(DASHBOARD_HTML).toContain('function filterPeopleDirectory(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/members'");
+    expect(DASHBOARD_HTML).toContain('id="peopleBody"');
+    expect(DASHBOARD_HTML).toContain("b.dataset.view === 'people'");
+    expect(DASHBOARD_HTML).toContain('openMember(id)');
+  });
+
+  it('loads committee conflicts into #trConflicts on Trends refresh', () => {
+    expect(DASHBOARD_HTML).toContain('function loadTrConflicts(');
+    expect(DASHBOARD_HTML).toContain("aGet('conflicts?'");
+    expect(DASHBOARD_HTML).toContain('id="trConflicts"');
+    expect(DASHBOARD_HTML).toContain('loadTrConflicts();');
+  });
+
+  it('wires delivery create filters for members, sides, and minAmount', () => {
+    expect(DASHBOARD_HTML).toContain("filters.members = membersRaw");
+    expect(DASHBOARD_HTML).toContain('filters.sides = sidesRaw.split');
+    expect(DASHBOARD_HTML).toContain('filters.minAmount = minAmt');
+    expect(DASHBOARD_HTML).toContain('id="newMembers"');
+    expect(DASHBOARD_HTML).toContain('id="newSides"');
+    expect(DASHBOARD_HTML).toContain('id="newMinAmt"');
+  });
+
+  it('styles trends-fold summaries like section headers and keeps mobile bottom nav', () => {
+    expect(DASHBOARD_HTML).toContain('details.trends-fold > summary');
+    expect(DASHBOARD_HTML).toContain('class="section trends-fold"');
+    // Fixed bottom tab bar with safe-area + body padding at the phone breakpoint.
+    expect(DASHBOARD_HTML).toContain('position: fixed; left: 0; right: 0; bottom: 0');
+    expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom');
+    expect(DASHBOARD_HTML).toContain('padding-bottom: calc(86px + env(safe-area-inset-bottom))');
+    expect(DASHBOARD_HTML).toContain('data-view="people"');
+    expect(DASHBOARD_HTML).toContain('data-mobile="People"');
   });
 });
