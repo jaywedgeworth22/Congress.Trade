@@ -67,9 +67,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default light; stored pref may be light|dark|system.
+  // Theme before first paint: default system; stored pref may be light|dark|system.
   (function () {
-    var pref = 'light';
+    var pref = 'system';
     try {
       var s = localStorage.getItem('ui-theme');
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
@@ -80,6 +80,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme-pref', pref);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -2788,14 +2790,14 @@ function fmtMs(ms) {
   return fmtDuration(Math.round(ms / 1000));
 }
 
-/* ---- light / dark / system theme (per-visitor preference; default light) ---- */
+/* ---- light / dark / system theme (per-visitor preference; default system) ---- */
 /* Mirrors Socratic.Trade console: Light | Dark | System segmented control. */
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
     if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
-  return 'light';
+  return 'system';
 }
 function resolveTheme(pref) {
   if (pref === 'dark' || pref === 'light') return pref;
@@ -2852,7 +2854,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -9469,7 +9471,7 @@ renderFeedHeader();
 
 window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
 
-// Apply resolved theme (default light; respects light|dark|system pref).
+// Apply resolved theme (default system; respects light|dark|system pref).
 applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.
