@@ -8,7 +8,7 @@
  * tick could claim + process heavy extraction work.
  *
  * NOTE: Deno Deploy forbids custom env var names starting with `DENO_`. Use the
- * `CT_*` names below (Congress.Trade). Legacy `DENO_*` names are still read for
+ * `CT_*` names below (congress.trade). Legacy `DENO_*` names are still read for
  * local tests only; they cannot be set on Deploy.
  *
  * Profiles trade discovery/queue latency for billable wall-clock. Set via

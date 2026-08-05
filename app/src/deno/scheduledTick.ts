@@ -94,23 +94,17 @@ export async function probePendingWork(env: Env, now = new Date()): Promise<Pend
       [nowIso, nowIso],
     ),
     exists(
-      `SELECT 1 AS ok FROM (
-         SELECT 1 AS ok FROM ingestion_outbox
-          WHERE status IN ('pending', 'sending') AND available_at <= ?
-         UNION ALL
-         SELECT 1 AS ok FROM ingestion_outbox
-          WHERE status = 'enqueued' AND updated_at <= ?
-       ) LIMIT 1`,
+      `SELECT 1 AS ok FROM ingestion_outbox
+        WHERE (status IN ('pending', 'sending') AND available_at <= ?)
+           OR (status = 'enqueued' AND updated_at <= ?)
+        LIMIT 1`,
       [nowIso, staleEnqueuedBefore],
     ),
     exists(
-      `SELECT 1 AS ok FROM (
-         SELECT 1 AS ok FROM delivery_outbox
-          WHERE status IN ('pending', 'sending') AND available_at <= ?
-         UNION ALL
-         SELECT 1 AS ok FROM delivery_outbox
-          WHERE status = 'enqueued' AND updated_at <= ?
-       ) LIMIT 1`,
+      `SELECT 1 AS ok FROM delivery_outbox
+        WHERE (status IN ('pending', 'sending') AND available_at <= ?)
+           OR (status = 'enqueued' AND updated_at <= ?)
+        LIMIT 1`,
       [nowIso, staleEnqueuedBefore],
     ),
   ]);

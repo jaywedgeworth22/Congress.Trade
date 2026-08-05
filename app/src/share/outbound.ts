@@ -3,7 +3,7 @@
  * OWNER: foundation
  *
  * The return half of the cross-app data share. App B pushes the prices/refs it
- * fetched into Congress.Trade's /securities/import; this pushes the prices/refs
+ * fetched into congress.trade's /securities/import; this pushes the prices/refs
  * *we* fetched back to App B's equivalent endpoint, so the two apps act as one
  * shared cache and neither double-fetches.
  *

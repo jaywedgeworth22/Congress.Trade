@@ -3210,8 +3210,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /disclosure-latency -------------------------------------------
-  // Congress.Trade-vs-provider race monitor. `providerDeltaSec` is provider
-  // monitor first-observed minus Congress.Trade first_seen_at: positive means we
+  // congress.trade-vs-provider race monitor. `providerDeltaSec` is provider
+  // monitor first-observed minus congress.trade first_seen_at: positive means we
   // observed first; negative means the provider was already observed first.
   r.get('/disclosure-latency', async (c) => {
     const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10) || 50, 1), 200);
@@ -3833,7 +3833,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       (appBReceived?.imported_refs ?? 0) + (appBReceived?.fundamentals_rows ?? 0) + (appBReceived?.analyst_rows ?? 0);
     connections.push({
       id: 'app-b:receive',
-      label: 'App B → Congress.Trade Import',
+      label: 'App B → congress.trade Import',
       status: connectionStatus(!!runtimeSecrets.INGEST_TOKEN, 0, appBReceived?.latest_import_at ?? null),
       configured: !!runtimeSecrets.INGEST_TOKEN,
       lastUsedAt: appBReceived?.latest_import_at ?? null,
@@ -3849,7 +3849,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const appBPushConfigured = !!(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN);
     connections.push({
       id: 'app-b:send',
-      label: 'Congress.Trade → App B Push',
+      label: 'congress.trade → App B Push',
       status: appBPushConfigured ? 'ok' : 'warn',
       configured: appBPushConfigured,
       lastUsedAt: null,
@@ -8222,7 +8222,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
       // 0020_disclosure_available_generated.sql — generated column for disclosure availability.
       ...DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
-      // 0021_disclosure_latency_watch.sql — Congress.Trade-vs-FMP disclosure race monitor.
+      // 0021_disclosure_latency_watch.sql — congress.trade-vs-FMP disclosure race monitor.
       `CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
          doc_id TEXT NOT NULL,
          provider TEXT NOT NULL DEFAULT 'fmp',

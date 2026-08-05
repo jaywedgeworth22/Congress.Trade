@@ -3,7 +3,7 @@
  * `senate-latest` endpoint.
  *
  * These rows are deliberately persisted as `seed_dataset`: they provide broad
- * historical coverage without pretending that Congress.Trade fetched and
+ * historical coverage without pretending that congress.trade fetched and
  * parsed the original filing.  Unlike the legacy aggregate seed, each row is
  * tied to its real Senate report id and a stable per-report row key.  A later
  * official discovery can therefore upgrade the filing in place; the normal

@@ -73,7 +73,7 @@ export async function runHouseReconciler(env: Env, now: Date): Promise<void> {
 
   try {
     await notifyAdmin(env, {
-      subject: `Congress.Trade Data Quality: House Index Discrepancies`,
+      subject: `congress.trade Data Quality: House Index Discrepancies`,
       text: `The nightly House Reconciler job found discrepancies between our database and the official bulk XML index for ${year}.\n\n${errorText}\n\nInvestigate whether these are live-search artifacts, true mutations, or ingestion failures.`,
       dedupeKey: `house-reconciler-${year}-${now.toISOString().slice(0, 10)}`,
       throttleSec: 86400, // Once a day
