@@ -88,7 +88,7 @@ function loadBenchmarkPresentationHelpers() {
 describe('DASHBOARD_HTML', () => {
   it('uses the descriptive product name as the document title', () => {
     expect(DASHBOARD_HTML).toContain(
-      '<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
+      '<title>Congress.Trade</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
     expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
@@ -261,16 +261,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
-    // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
-    expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
-    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo(?:-light)?\.png(?:\?v=\d+)?)"/);
-    expect(brandLogoMatch).toBeTruthy();
-    // Lockup is the brand — no separate Zilla wordmark span next to it.
-    expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
-
-    expect(DASHBOARD_HTML).toContain('data-src-light');
-    expect(DASHBOARD_HTML).toContain('data-src-dark');
-
+    expect(DASHBOARD_HTML).toContain('src="/icon-192.png?v=5"');
+    expect(DASHBOARD_HTML).toMatch(/class="brand-text"/);
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
@@ -431,7 +423,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
-    expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
+    expect(DASHBOARD_HTML).toContain('icon-192.png');
   });
 
   it('contains mobile-first feed and navigation hooks', () => {

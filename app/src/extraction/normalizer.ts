@@ -610,6 +610,50 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     if (continuous !== t && byTicker.has(continuous)) return byTicker.get(continuous)!;
     if (t && byTicker.has(t)) return byTicker.get(t)!;
     const name = (assetName || '').trim().toLowerCase();
+    const COMMON_ASSET_NAMES: Record<string, string> = {
+      'microsoft': 'MSFT',
+      'microsoft corp': 'MSFT',
+      'microsoft corp.': 'MSFT',
+      'microsoft corporation': 'MSFT',
+      'apple': 'AAPL',
+      'apple inc': 'AAPL',
+      'apple inc.': 'AAPL',
+      'adobe': 'ADBE',
+      'adobe inc': 'ADBE',
+      'adobe inc.': 'ADBE',
+      'adobe systems': 'ADBE',
+      'meta': 'META',
+      'meta platforms': 'META',
+      'meta platforms inc': 'META',
+      'meta platforms, inc.': 'META',
+      'facebook': 'META',
+      'alphabet': 'GOOGL',
+      'alphabet inc': 'GOOGL',
+      'alphabet inc.': 'GOOGL',
+      'google': 'GOOGL',
+      'amazon': 'AMZN',
+      'amazon.com': 'AMZN',
+      'amazon.com inc': 'AMZN',
+      'amazon.com, inc.': 'AMZN',
+      'netflix': 'NFLX',
+      'netflix inc': 'NFLX',
+      'netflix, inc.': 'NFLX',
+      'tesla': 'TSLA',
+      'tesla inc': 'TSLA',
+      'tesla, inc.': 'TSLA',
+      'tesla motors': 'TSLA',
+      'nvidia': 'NVDA',
+      'nvidia corp': 'NVDA',
+      'nvidia corp.': 'NVDA',
+      'nvidia corporation': 'NVDA',
+      'paypal': 'PYPL',
+      'paypal holdings': 'PYPL',
+      'salesforce': 'CRM',
+      'salesforce.com': 'CRM',
+      'salesforce inc': 'CRM',
+      'salesforce, inc.': 'CRM',
+    };
+    if (name && COMMON_ASSET_NAMES[name]) return COMMON_ASSET_NAMES[name]!;
     if (name && byAlias.has(name)) return byAlias.get(name)!;
     if (name && byName.has(name)) return byName.get(name)!;
     // Also try the raw ticker as an alias (sometimes asset name lands in ticker).

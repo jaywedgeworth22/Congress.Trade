@@ -367,20 +367,18 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
     }
 }
 
-/// Feed side filter: All / Buy (`type=P`) / Sell (`type=S`). Matches
-/// `FeedQuery.type` and local cache filtering.
 enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
     case all
-    case buy = "P"
+    case buy = "B"
     case sell = "S"
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .all: return "All"
-        case .buy: return "Buy"
-        case .sell: return "Sell"
+        case .all: return "All Sides"
+        case .buy: return "Buys"
+        case .sell: return "Sells"
         }
     }
 
@@ -396,7 +394,10 @@ enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
     func matches(txType: String?) -> Bool {
         switch self {
         case .all: return true
-        case .buy, .sell:
+        case .buy:
+            let t = (txType ?? "").uppercased()
+            return t == "B" || t == "P"
+        case .sell:
             return (txType ?? "").uppercased() == rawValue
         }
     }
