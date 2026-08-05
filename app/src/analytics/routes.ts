@@ -1198,7 +1198,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // names, or provider payloads — pinned by the admin summary test), with
   // fields renamed to a stable public contract. Timing is explicitly a
   // matched-overlap measurement; provider-observed and unmatched rows stay in
-  // the public denominator so a Congress.Trade miss cannot become a speed win.
+  // the public denominator so a congress.trade miss cannot become a speed win.
   r.get('/latency-summary', async (c) => {
     // v3: concurrent-race timing + strongMatched/window metadata — bump key.
     const data = await cached(c.env, 'analytics:latency-summary:v3', 300, async () => {

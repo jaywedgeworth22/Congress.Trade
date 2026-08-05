@@ -24312,8 +24312,8 @@ export const APPLE_TOUCH_ICON_PNG = asset(APPLE_TOUCH_ICON_PNG_B64, 'image/png')
 export const FAVICON_PNG = asset(FAVICON_PNG_B64, 'image/png');
 
 export const SITE_WEBMANIFEST = JSON.stringify({
-  name: 'Congress.Trade',
-  short_name: 'Congress.Trade',
+  name: 'congress.trade',
+  short_name: 'congress.trade',
   description: 'Live STOCK Act disclosures from the House & Senate, plus premium webhooks.',
   start_url: '/',
   display: 'standalone',

@@ -1011,7 +1011,7 @@ function buildPitValidity(txs: TxRow[]): Record<string, unknown> {
     availabilityPrecisions,
     disclosureSources,
     note:
-      'A row is true score-input PIT only when the disclosure was observed by Congress.Trade with a timestamped first_seen_at and came from primary live ingestion. Context metadata remains current-state until vintage tables exist.',
+      'A row is true score-input PIT only when the disclosure was observed by congress.trade with a timestamped first_seen_at and came from primary live ingestion. Context metadata remains current-state until vintage tables exist.',
   };
 }
 

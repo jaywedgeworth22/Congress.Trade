@@ -241,8 +241,12 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
     params.push(p.party);
   }
   if (p.source && p.source !== 'all') {
-    where.push('t.source = ?');
-    params.push(p.source);
+    if (p.source === 'primary') {
+      where.push("t.source IN ('primary', 'manual')");
+    } else {
+      where.push('t.source = ?');
+      params.push(p.source);
+    }
   }
   if (typeof p.minConf === 'number' && Number.isFinite(p.minConf)) {
     where.push('t.confidence >= ?');

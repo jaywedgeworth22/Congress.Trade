@@ -38,24 +38,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>
-<meta name="description" content="Track U.S. Congress stock trades in near real time. Congress.Trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
+<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>
+<meta name="description" content="Track U.S. Congress stock trades in near real time. congress.trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
 <link rel="canonical" href="https://congress.trade/" />
 <meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
-<meta property="og:site_name" content="Congress.Trade" />
-<meta property="og:title" content="Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate" />
+<meta property="og:site_name" content="congress.trade" />
+<meta property="og:title" content="congress.trade — Live STOCK Act disclosures from the House &amp; Senate" />
 <meta property="og:description" content="Track U.S. Congress stock trades in near real time: a live, filterable feed parsed from House &amp; Senate disclosures, with member and ticker analytics." />
 <meta property="og:url" content="https://congress.trade/" />
 <meta property="og:image" content="https://congress.trade/og-image.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Congress.Trade eagle logo on a dark background" />
+<meta property="og:image:alt" content="congress.trade eagle logo on a dark background" />
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Congress.Trade — Live STOCK Act disclosures" />
+<meta name="twitter:title" content="congress.trade — Live STOCK Act disclosures" />
 <meta name="twitter:description" content="Track U.S. Congress stock trades in near real time: live feed, member and ticker analytics, premium webhooks." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
@@ -67,9 +67,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default light; stored pref may be light|dark|system.
+  // Theme before first paint: default system; stored pref may be light|dark|system.
   (function () {
-    var pref = 'light';
+    var pref = 'system';
     try {
       var s = localStorage.getItem('ui-theme');
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
@@ -80,6 +80,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme-pref', pref);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -1617,8 +1619,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 
 <header class="top">
-  <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="Congress.Trade" height="40" decoding="async" /></div>
+  <div class="brand" aria-label="congress.trade">
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=4" data-src-dark="/assets/brand-logo-dark.png?v=6" data-src-light="/assets/brand-logo-light.png?v=4" alt="congress.trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -1749,9 +1751,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
         <div class="party-chips" id="trPartyGroup" style="position:relative;">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> D</button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> R</button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> O</button>
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> Dem</button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> Rep</button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> Other</button>
           <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
           <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
             <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
@@ -1765,7 +1767,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
       <div class="disclaimer-body" id="trDisclaimerBody">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
+      <strong>For education, not investment advice.</strong> congress.trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
       </div>
     </div>
 
@@ -2248,7 +2250,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 7 days &mdash; so multi-week backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. <strong>Lead and win rates count concurrent races only</strong> &mdash; both sides first-seen the same trade inside the active window, with a gap of at most 7 days &mdash; so multi-week backfill alignments never look like a live speed win. High-confidence overlaps that fall outside that concurrent gate still grow coverage. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as congress.trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
@@ -2260,7 +2262,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </div>
 
   <footer class="site-footer">
-    <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
+    <span>congress.trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
     <span class="footer-links">
       <a href="/privacy-policy">Privacy</a>
       <a href="/terms-of-service">Terms</a>
@@ -2280,7 +2282,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <div class="overlay" id="loginOverlay" onclick="if(event.target===this)closeLogin()">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Sign In">
     <button class="close" onclick="closeLogin()" aria-label="Close">×</button>
-    <h2>Sign In to Congress.Trade</h2>
+    <h2>Sign In to congress.trade</h2>
     <p class="sub">Sign in to manage your account and use Premium research tools.</p>
     <button class="gbtn" onclick="loginGoogle()">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
@@ -2788,14 +2790,14 @@ function fmtMs(ms) {
   return fmtDuration(Math.round(ms / 1000));
 }
 
-/* ---- light / dark / system theme (per-visitor preference; default light) ---- */
+/* ---- light / dark / system theme (per-visitor preference; default system) ---- */
 /* Mirrors Socratic.Trade console: Light | Dark | System segmented control. */
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
     if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
-  return 'light';
+  return 'system';
 }
 function resolveTheme(pref) {
   if (pref === 'dark' || pref === 'light') return pref;
@@ -2852,7 +2854,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -3119,10 +3121,10 @@ var FEED_COLS = [
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When congress.trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When congress.trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When congress.trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
@@ -3586,7 +3588,7 @@ function clearSearch() {
 var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Primary', manual: 'Manual' };
 function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
 function sourceTitle(src) {
-  if (src === 'primary') return 'Parsed from an official filing by the Congress.Trade ingestion pipeline.';
+  if (src === 'primary') return 'Parsed from an official filing by the congress.trade ingestion pipeline.';
   if (src === 'seed_dataset') return 'Imported from a historical seed dataset.';
   if (src === 'manual') return 'Hand-keyed by an admin during manual review.';
   return src || 'Unknown source';
@@ -7256,7 +7258,7 @@ function trParams() {
   }
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Section headers display the
@@ -8403,7 +8405,7 @@ function openAsset(ticker) {
   // Follow the Trends window if it's on the page; fall back to all-time when the
   // drawer is opened from a context without the window selector (feed, search).
   var tickerWindow = document.querySelector('.tr-window-select') ? getTrWindow() : 'all';
-  var tickerWindowLabel = tickerWindow === 'all' ? 'All Time' : windowLabel(tickerWindow);
+  var tickerWindowLabel = tickerWindow === 'all' ? 'All' : windowLabel(tickerWindow);
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
     : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
@@ -9469,7 +9471,7 @@ renderFeedHeader();
 
 window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
 
-// Apply resolved theme (default light; respects light|dark|system pref).
+// Apply resolved theme (default system; respects light|dark|system pref).
 applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.

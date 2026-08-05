@@ -91,17 +91,12 @@ export async function flushDeliveryOutbox(
   const idClause = txIds.length ? ` AND tx_id IN (${txIds.map(() => '?').join(',')})` : '';
   const rows = await all<OutboxRow>(
     env.DB,
-    `SELECT tx_id, status, attempts, dead_letter_cycles, available_at FROM (
-       SELECT tx_id, status, attempts, dead_letter_cycles, available_at
-         FROM delivery_outbox
-        WHERE status IN ('pending', 'sending') AND available_at <= ?${idClause}
-       UNION ALL
-       SELECT tx_id, status, attempts, dead_letter_cycles, available_at
-         FROM delivery_outbox
-        WHERE status = 'enqueued' AND updated_at <= ?${idClause}
-     )
-     ORDER BY available_at ASC
-     LIMIT ${limit}`,
+    `SELECT tx_id, status, attempts, dead_letter_cycles, available_at
+       FROM delivery_outbox
+      WHERE (status IN ('pending', 'sending') AND available_at <= ?${idClause})
+         OR (status = 'enqueued' AND updated_at <= ?${idClause})
+      ORDER BY available_at ASC
+      LIMIT ${limit}`,
     [nowIso, ...txIds, staleEnqueuedBefore, ...txIds],
   );
 

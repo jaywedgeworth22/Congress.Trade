@@ -1810,7 +1810,7 @@ describe('outbound-call inventory enforcement', () => {
     }
     for (const file of operatorJavaScriptFiles(scriptsRoot)) {
       const scriptRelative = decodeURIComponent(file.pathname.slice(scriptsRoot.pathname.length));
-      // This operator script calls Congress.Trade's own admin route. The model
+      // This operator script calls congress.trade's own admin route. The model
       // provider request it triggers happens inside the instrumented Worker.
       if (scriptRelative === 'retry-llamaparse-failed.mjs') continue;
       if (scriptRelative.endsWith('.mjs')) continue;

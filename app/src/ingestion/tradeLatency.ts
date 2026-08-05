@@ -3,10 +3,10 @@
  * OWNER: ingestion
  *
  * Provider-latency monitor for congressional disclosures. Candidates are
- * created when Congress.Trade first sees a new filing; provider observations
+ * created when congress.trade first sees a new filing; provider observations
  * are populated from third-party "latest" endpoints. The public comparison
  * is deliberately limited to the intersection of both feeds and publishes
- * the provider-observed denominator separately, so a Congress.Trade miss
+ * the provider-observed denominator separately, so a congress.trade miss
  * cannot silently turn into a speed win.
  */
 
@@ -133,19 +133,19 @@ export interface DisclosureLatencyProviderMetrics {
   errored: number;
   /** Rows observed by the provider during the active monitor window. */
   providerObserved: number;
-  /** Provider rows old enough that a late Congress.Trade match is no longer pending. */
+  /** Provider rows old enough that a late congress.trade match is no longer pending. */
   maturedProviderObserved: number;
-  /** Provider rows without a high-confidence Congress.Trade match after the grace period. */
+  /** Provider rows without a high-confidence congress.trade match after the grace period. */
   unmatchedProvider: number;
   /** Recent provider rows still inside the late-match grace period. */
   pendingProvider: number;
-  /** Congress.Trade candidates old enough for a directional coverage estimate. */
+  /** congress.trade candidates old enough for a directional coverage estimate. */
   maturedCandidates: number;
   /** Jointly observed, high-confidence rows in the matured provider cohort. */
   maturedMatched: number;
-  /** Congress.Trade coverage of the provider-observed matured cohort. */
+  /** congress.trade coverage of the provider-observed matured cohort. */
   ctCoveragePct: number | null;
-  /** Provider coverage of the Congress.Trade matured candidate cohort. */
+  /** Provider coverage of the congress.trade matured candidate cohort. */
   providerCoveragePct: number | null;
   /** Jaccard overlap of the two matured observed cohorts. */
   overlapPct: number | null;
@@ -277,7 +277,7 @@ export const LATENCY_MIN_COVERAGE_PCT = 80;
  * provider) still counts, while multi-week reverse-seed clamps do not.
  * Was 48h — that hid nearly all real provider-ahead races after bulk heals.
  */
-export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 168;
+export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = 48;
 /** Allow trade dates to differ by this many days for near-miss fuzzy match. */
 export const LATENCY_FUZZY_DATE_SLACK_DAYS = 2;
 
@@ -1259,10 +1259,10 @@ async function alertMatch(env: Env, provider: ProviderDefinition, candidate: Can
     deltaSec == null
       ? 'Delta unavailable'
       : deltaSec > 0
-        ? `Congress.Trade observed it ${deltaSec}s before ${provider.label} was first observed by this monitor.`
+        ? `congress.trade observed it ${deltaSec}s before ${provider.label} was first observed by this monitor.`
         : deltaSec < 0
-          ? `${provider.label} was already observed ${Math.abs(deltaSec)}s before Congress.Trade first saw it.`
-          : `Congress.Trade and ${provider.label} were observed in the same second.`;
+          ? `${provider.label} was already observed ${Math.abs(deltaSec)}s before congress.trade first saw it.`
+          : `congress.trade and ${provider.label} were observed in the same second.`;
   const published =
     match.provider_published_at && deltaSeconds(match.provider_published_at, candidate.congress_first_seen_at) != null
       ? `\n${provider.label} provider timestamp: ${match.provider_published_at}`
@@ -1270,12 +1270,12 @@ async function alertMatch(env: Env, provider: ProviderDefinition, candidate: Can
   await notifyAdmin(env, {
     dedupeKey: `disclosure-latency:${provider.id}:${candidate.trade_hash}`,
     throttleSec: 30 * 24 * 60 * 60,
-    subject: `Congress.Trade vs ${provider.label} disclosure latency`,
+    subject: `congress.trade vs ${provider.label} disclosure latency`,
     text:
       `${direction}\n\n` +
       `Doc: ${candidate.trade_hash}\n` +
       `Chamber: ${candidate.chamber}\n` +
-      `Congress.Trade first_seen_at: ${candidate.congress_first_seen_at}\n` +
+      `congress.trade first_seen_at: ${candidate.congress_first_seen_at}\n` +
       `${provider.label} monitor first_observed_at: ${match.first_observed_at}${published}\n` +
       `${provider.label} key: ${match.provider_key}\n` +
       `Source URL: ${candidate.source_url ?? 'n/a'}\n`,
@@ -2361,7 +2361,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   // Provider rows are an independent denominator. A latest endpoint can only
   // prove that it showed us a row; it cannot prove that a missing row was
   // absent. Rows are therefore called "unmatched" only after the grace period
-  // and are never folded into a Congress.Trade win/loss count.
+  // and are never folded into a congress.trade win/loss count.
   const providerRows = await all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,

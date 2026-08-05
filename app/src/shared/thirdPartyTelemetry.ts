@@ -1,5 +1,5 @@
 /**
- * Complete outbound-call accounting for Congress.Trade.
+ * Complete outbound-call accounting for congress.trade.
  *
  * Every deployed Worker-owned third-party HTTP attempt passes through `trackedFetch`.
  * The active Worker invocation's Env is carried with AsyncLocalStorage, so
@@ -455,7 +455,7 @@ function parseUsageTelemetryFallback(raw: string): DeliverableUsageTelemetryEven
       || !parsed.occurredAt
       || !['usage', 'cost', 'limit'].includes(parsed.metricType)
     ) {
-      throw new Error('fallback telemetry event is not a Congress.Trade event');
+      throw new Error('fallback telemetry event is not a congress.trade event');
     }
     return parsed as ThirdPartyUsageTelemetryEvent;
   }
@@ -470,7 +470,7 @@ function parseUsageTelemetryFallback(raw: string): DeliverableUsageTelemetryEven
     || !parsed.occurredAt
     || !['usage', 'cost', 'limit'].includes(parsed.metricType)
   ) {
-    throw new Error('fallback telemetry event is not a Congress.Trade event');
+    throw new Error('fallback telemetry event is not a congress.trade event');
   }
   return parsed as LegacyThirdPartyUsageTelemetryEvent;
 }
@@ -1117,7 +1117,7 @@ export async function trackedFetch(
 
 /**
  * The shared client accepts a service base URL and appends its canonical ingest
- * path. Older Congress.Trade config stored the full endpoint, so strip that
+ * path. Older congress.trade config stored the full endpoint, so strip that
  * suffix before constructing the client to avoid appending it twice.
  */
 export function normalizeUsageMonitorBaseUrl(configuredUrl: string): string {

@@ -154,7 +154,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     };
     expect(body.windowHours).toBe(336);
     expect(body.windowDays).toBe(14);
-    expect(body.maxConcurrentDeltaHours).toBe(168);
+    expect(body.maxConcurrentDeltaHours).toBe(48);
     expect(body.totals.racedDisclosures).toBe(3);
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');

@@ -88,7 +88,7 @@ function loadBenchmarkPresentationHelpers() {
 describe('DASHBOARD_HTML', () => {
   it('uses the descriptive product name as the document title', () => {
     expect(DASHBOARD_HTML).toContain(
-      '<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
+      '<title>congress.trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
     expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
@@ -420,8 +420,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
-  it('defaults theme to light and offers Light/Dark/System controls like Socratic.Trade', () => {
-    expect(DASHBOARD_HTML).toContain("var pref = 'light'");
+  it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
+    expect(DASHBOARD_HTML).toContain("var pref = 'system'");
+    expect(DASHBOARD_HTML).toContain("return 'system'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
     expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref)');
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
@@ -430,7 +431,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
-    expect(DASHBOARD_HTML).toContain('content="#eff3f8"');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
@@ -1260,7 +1260,7 @@ describe('DASHBOARD_HTML', () => {
   it('does not use imported/published time as disclosure lag', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
-    expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
+    expect(DASHBOARD_HTML).not.toContain('using congress.trade import date');
   });
 
   it('explains disclosure timeliness metrics and keeps slowest filers scrollable', () => {
