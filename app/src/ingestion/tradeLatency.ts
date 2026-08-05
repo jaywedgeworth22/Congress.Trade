@@ -162,6 +162,11 @@ export interface DisclosureLatencyProviderMetrics {
   p90MonitorDeltaSec: number | null;
   avgProviderPublishedDeltaSec: number | null;
   medianProviderPublishedDeltaSec: number | null;
+  ctAheadPublishedCount: number;
+  providerAheadPublishedCount: number;
+  tiePublishedCount: number;
+  /** Whether this provider uses monitor (crawler first-seen) or provider (provider's own semantic timestamp) for timing. */
+  timestampKind: 'monitor' | 'provider' | 'none';
 }
 
 export interface DisclosureLatencyTotals {
@@ -2400,13 +2405,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // counting them toward coverage matchedKeys below.
     const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
     const timingMatches = strongMatches.filter(
-      (row) =>
-        !!row.provider_first_seen_at &&
-        row.provider_first_seen_at >= scoreCutoff &&
-        // Drop absurd deltas even inside the window — usually a stamp-alignment
-        // bug / reverse-seed artifact rather than a real concurrent race.
-        Math.abs(deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at) ?? 1e12) <=
-          maxDeltaSec,
+      (row) => {
+        const providerTime = provider.timestampKind === 'provider' ? row.provider_published_at : row.provider_first_seen_at;
+        const validTime = provider.timestampKind === 'provider' ? !!row.provider_published_at : (!!row.provider_first_seen_at && row.provider_first_seen_at >= scoreCutoff);
+        
+        return validTime && Math.abs(deltaSeconds(providerTime, row.congress_first_seen_at) ?? 1e12) <= maxDeltaSec;
+      }
     );
     const monitorDeltas = timingMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -2495,8 +2499,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       avgMonitorDeltaSec: average(monitorDeltas),
       medianMonitorDeltaSec: median(monitorDeltas),
       p90MonitorDeltaSec: p90(monitorDeltas),
+      ctAheadPublishedCount: publishedDeltas.filter((d) => d > 0).length,
+      providerAheadPublishedCount: publishedDeltas.filter((d) => d < 0).length,
+      tiePublishedCount: publishedDeltas.filter((d) => d === 0).length,
       avgProviderPublishedDeltaSec: average(publishedDeltas),
       medianProviderPublishedDeltaSec: median(publishedDeltas),
+      timestampKind: provider.timestampKind,
     };
   });
   const totals = {
