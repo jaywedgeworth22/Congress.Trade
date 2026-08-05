@@ -17,8 +17,8 @@ import { isPremiumUser } from '../billing/entitlement.ts';
 const SELECT_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
 
-export const MAX_SUBSCRIPTIONS_PER_USER = 20;
-export const MAX_ACTIVE_SUBSCRIPTIONS_PER_USER = 10;
+export const MAX_SUBSCRIPTIONS_PER_USER = 2;
+export const MAX_ACTIVE_SUBSCRIPTIONS_PER_USER = 2;
 export const MAX_SUBSCRIPTION_SECRET_LENGTH = 256;
 export const MAX_WEBHOOK_TARGET_URL_LENGTH = 2048;
 /** Stricter floor for an operator-supplied secret rotated in after an incident. */

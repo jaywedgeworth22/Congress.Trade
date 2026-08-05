@@ -792,6 +792,38 @@ export const LOCAL_VISION_WORKER_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS local_worker_heartbeat (worker_id TEXT PRIMARY KEY, last_heartbeat_at TEXT NOT NULL, status_json TEXT)`,
 ] as const;
 
+export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
+  'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
+  `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
+BEFORE INSERT ON subscriptions
+WHEN (
+  SELECT COUNT(*) FROM subscriptions
+   WHERE client_id = NEW.client_id AND active = 1
+) >= 2
+BEGIN
+  SELECT RAISE(ABORT, 'subscription total quota exceeded');
+END`,
+  'DROP TRIGGER IF EXISTS trg_subscriptions_active_insert_quota',
+  `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_active_insert_quota
+BEFORE INSERT ON subscriptions
+WHEN NEW.active = 1 AND (
+  SELECT COUNT(*) FROM subscriptions WHERE client_id = NEW.client_id AND active = 1
+) >= 2
+BEGIN
+  SELECT RAISE(ABORT, 'subscription active quota exceeded');
+END`,
+  'DROP TRIGGER IF EXISTS trg_subscriptions_active_update_quota',
+  `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_active_update_quota
+BEFORE UPDATE OF active, client_id ON subscriptions
+WHEN NEW.active = 1 AND (OLD.active != 1 OR OLD.client_id != NEW.client_id) AND (
+  SELECT COUNT(*) FROM subscriptions WHERE client_id = NEW.client_id AND active = 1 AND id != OLD.id
+) >= 2
+BEGIN
+  SELECT RAISE(ABORT, 'subscription active quota exceeded');
+END`,
+] as const;
+
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -882,6 +914,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...QUEUE_OUTBOX_RETENTION_INDEX_SCHEMA_STATEMENTS,
   // 0072_local_vision_worker.sql
   ...LOCAL_VISION_WORKER_SCHEMA_STATEMENTS,
+  // 0074_lower_subscription_quota.sql
+  ...LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
@@ -936,5 +970,6 @@ export async function runMigrations(db: { prepare: (sql: string) => { run: () =>
     } catch {}
   }
 }
+
 
 
