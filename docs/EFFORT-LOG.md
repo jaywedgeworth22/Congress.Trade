@@ -1,3 +1,4 @@
+- **2026-08-05 — GROK — R2 Class A emergency pause (host litestream-congress stopped).** Pace ~256%; ~975 LTX PutObject/hr. Marker /etc/litestream/congress-r2-paused.flag. Rollout: docs/rollouts/2026-08-05-r2-freetier-class-a-survival.md.
 - **[GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PR 2026-08-04 (ST #2442 / CT #1348 / UM #943); IPA export verified; upload blocked on ASC API key handoff 2026-08-04.** Fleet script + per-repo wrappers so agents can archive/sign/upload without Xcode UI. Bundle IDs: trade.socratic.app / trade.congress.ios / services.jays.usage.monitor. Team CC8UTF7ATG. Branch grok/ios-testflight-ship. Needs ASC API key handoff at ~/.secrets/appstore-connect.env if Xcode session upload fails.
 
 # Congress.Trade Effort Log — cross-agent board
