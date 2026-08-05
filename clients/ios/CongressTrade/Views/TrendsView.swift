@@ -534,7 +534,7 @@ struct LatencyComparisonView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Speed vs. Data Providers")
                 .font(.headline)
-            Text("Concurrent races only: both feeds first-seen the same trade inside the score window (gap ≤ 14 days). Multi-week backfill alignments are excluded from lead stats.")
+            Text("Live new imports only (seed/historical backfills excluded). Matched against provider feeds even if the gap is minutes or up to about two weeks either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
