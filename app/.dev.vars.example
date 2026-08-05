@@ -162,15 +162,23 @@ IMPORT_MAX_SHORT_VOLUME="5000"
 
 # Optional disclosure-latency benchmark: polls third-party latest-disclosure
 # endpoints and records whether Congress.Trade saw new filings first.
-# Supported direct providers: fmp, unusual_whales, quiver. Finnhub and AInvest
-# are symbol-scoped and Capitol Trades has no stable server API, so those are
-# reported in admin provider status but not automatically probed.
-# Turn on before waiting for the next new disclosures; default code path is off.
+# Supported direct providers: fmp, fmp_rapidapi, unusual_whales, quiver.
+# FMP family (stable + RapidAPI) defaults to OFF (no spend) until
+# FMP_LATENCY_PROBE_ENABLED=true. Paths race when ON (default both).
 DISCLOSURE_LATENCY_WATCH_ENABLED=""
-DISCLOSURE_LATENCY_PROVIDERS="fmp,unusual_whales,quiver"
+DISCLOSURE_LATENCY_PROVIDERS="fmp,fmp_rapidapi,unusual_whales,quiver"
 DISCLOSURE_LATENCY_WATCH_LIMIT="100"
 FMP_DISCLOSURE_WATCH_ENABLED=""
 FMP_DISCLOSURE_WATCH_LIMIT="100"
+# Master FMP probe switch — default OFF (grey). Set true to spend free-tier keys.
+FMP_LATENCY_PROBE_ENABLED=""
+# Which FMP paths to race when probe is on: stable, rapidapi (default both).
+FMP_LATENCY_PATHS="stable,rapidapi"
+# Optional path base overrides / dedicated RapidAPI key:
+# FMP_STABLE_BASE_URL="https://financialmodelingprep.com/stable"
+# FMP_RAPIDAPI_BASE_URL="https://financial-modeling-prep.p.rapidapi.com/stable"
+# FMP_RAPIDAPI_HOST="financial-modeling-prep.p.rapidapi.com"
+# FMP_RAPIDAPI_KEY=""
 # Unusual Whales deep-match: how many distinct filed dates per probe run
 # (default 8; 0 disables). Explicit Infisical value keeps admin config-sources
 # from reporting "missing".

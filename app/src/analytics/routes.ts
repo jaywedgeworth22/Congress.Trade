@@ -1220,6 +1220,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         providers: publicSummary.providers.map((p) => ({
           id: p.provider,
           label: p.label,
+          operationalStatus: p.operationalStatus ?? 'unknown',
           candidates: p.candidates,
           // Timed live races (CT live first_seen in 7d; |Δ| up to 14d).
           matched: p.matched,

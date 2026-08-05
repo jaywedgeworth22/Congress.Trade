@@ -302,6 +302,11 @@ describe('DASHBOARD_HTML', () => {
     // Accessible table twin + never buy/sell colors for the race.
     expect(DASHBOARD_HTML).toContain('id="speedTableBody"');
     expect(DASHBOARD_HTML).toContain('--rival');
+    // Intentional OFF (grey) for FMP family — distinct from green running / red error.
+    expect(DASHBOARD_HTML).toContain('.diag-status.off');
+    expect(DASHBOARD_HTML).toContain('.sp-badge.off');
+    expect(DASHBOARD_HTML).toContain("p.operationalStatus === 'off'");
+    expect(DASHBOARD_HTML).toContain('FMP_LATENCY_PROBE_ENABLED');
     // The public pager mirrors the server's anti-scrape offset cap.
     expect(DASHBOARD_HTML).toContain(`var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET}`);
   });

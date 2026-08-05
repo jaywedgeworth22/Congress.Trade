@@ -177,6 +177,8 @@ const HOST_PROVIDERS = new Map<string, string>([
   ['generativelanguage.googleapis.com', 'gemini'],
   ['api.cloud.llamaindex.ai', 'llamaparse'],
   ['financialmodelingprep.com', 'fmp'],
+  ['financial-modeling-prep.p.rapidapi.com', 'fmp'],
+  ['fmp-api.p.rapidapi.com', 'fmp'],
   ['api.unusualwhales.com', 'unusual-whales'],
   ['api.quiverquant.com', 'quiver-quant'],
   ['api.massive.com', 'massive'],

@@ -757,7 +757,8 @@ async function reviewQueueTotals(db: D1Database, filters: ReviewQueueFilters): P
 interface DiagnosticConnection {
   id: string;
   label: string;
-  status: 'ok' | 'warn' | 'error' | 'unknown';
+  /** off = intentional disable (grey); ok = green running; error = red; warn/unknown = amber */
+  status: 'ok' | 'warn' | 'error' | 'unknown' | 'off';
   configured: boolean | null;
   lastUsedAt: string | null;
   callsTotal: number;
@@ -3337,7 +3338,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/config-sources', async (c) => {
     const REGISTRY: Record<string, string[]> = {
       'provider-keys': [
-        'FMP_API_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
+        'FMP_API_KEY', 'FMP_LATENCY_API_KEY', 'FMP_RAPIDAPI_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
         'FINNHUB_API_KEY', 'UNUSUAL_WHALES_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
         'LOGODEV_PUBLISHABLE_KEY',
       ],
@@ -3359,6 +3360,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'APP_BASE_URL', 'PRICE_PROVIDER', 'FMP_DAILY_CALL_CAP', 'FMP_MAX_PER_MINUTE', 'EDGAR_MAX_PER_MINUTE',
         'SCRAPE_GUARD_ENABLED', 'DISCLOSURE_LATENCY_WATCH_ENABLED', 'DISCLOSURE_LATENCY_PROVIDERS',
         'DISCLOSURE_LATENCY_WATCH_LIMIT', 'FMP_DISCLOSURE_WATCH_ENABLED', 'FMP_DISCLOSURE_WATCH_LIMIT',
+        'FMP_LATENCY_PROBE_ENABLED', 'FMP_LATENCY_PATHS', 'FMP_STABLE_BASE_URL',
+        'FMP_RAPIDAPI_BASE_URL', 'FMP_RAPIDAPI_HOST', 'FMP_LATENCY_DAILY_CAP',
         'UW_DEEP_MATCH_DATES_PER_RUN',
         'HOUSE_LIVE_SEARCH_ENABLED', 'HOUSE_PRIOR_YEAR_OVERLAP_DAYS',
         'SENATE_LOOKBACK_DAYS', 'SENATE_MAX_LOOKBACK_DAYS',
@@ -3797,18 +3800,48 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       [last24, today, last24],
     );
     const fmpRow = fmp[0];
+    // Market-data FMP enrichment is intentionally disabled (latency-only keys).
+    // Show as OFF (grey), not error/stopped — no spend until product re-enables.
     connections.push({
       id: 'provider:fmp',
-      label: 'FMP Market Data',
-      status: connectionStatus(!!runtimeSecrets.FMP_API_KEY, fmpRow?.errors_last_24h ?? 0, fmpRow?.last_used_at ?? null),
+      label: 'FMP Market Data (enrichment)',
+      status: 'off',
       configured: !!runtimeSecrets.FMP_API_KEY,
       lastUsedAt: fmpRow?.last_used_at ?? null,
       callsTotal: fmpRow?.calls_total ?? 0,
       callsLast24h: fmpRow?.calls_last_24h ?? 0,
       callsToday: fmpRow?.calls_today ?? 0,
       errorsLast24h: fmpRow?.errors_last_24h ?? 0,
-      note: runtimeSecrets.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not available to this Worker runtime',
+      note: 'OFF: FMP free keys reserved for disclosure-latency probes only (not enrichment/prices)',
     });
+
+    // FMP latency family (stable + RapidAPI) — CT latency system only; default OFF.
+    const { getDisclosureLatencyProviderStatuses, listFmpLatencyPathRegistry } = await import(
+      '../ingestion/tradeLatency.ts'
+    );
+    const latencyStatuses = await getDisclosureLatencyProviderStatuses(c.env);
+    for (const path of listFmpLatencyPathRegistry()) {
+      const st = latencyStatuses.find((s) => s.id === path.providerId);
+      const op = st?.operationalStatus ?? 'off';
+      const diagStatus: DiagnosticConnection['status'] =
+        op === 'off' ? 'off'
+        : op === 'running' ? 'ok'
+        : op === 'error' ? 'error'
+        : op === 'stopped' ? 'warn'
+        : 'unknown';
+      connections.push({
+        id: `latency:${path.providerId}`,
+        label: `Latency · ${path.label}`,
+        status: diagStatus,
+        configured: st?.configured ?? false,
+        lastUsedAt: null,
+        callsTotal: 0,
+        callsLast24h: 0,
+        callsToday: 0,
+        errorsLast24h: 0,
+        note: st?.reason ?? `Default OFF. Path ${path.pathId} → ${path.defaultBaseUrl}`,
+      });
+    }
 
     const appBReceivedRows = await optionalAll<{
       imported_refs: number;

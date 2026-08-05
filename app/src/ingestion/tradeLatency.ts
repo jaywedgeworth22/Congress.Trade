@@ -21,7 +21,29 @@ import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
-type ProviderId = 'fmp' | 'unusual_whales' | 'quiver' | 'finnhub' | 'ainvest' | 'capitol_trades';
+/**
+ * Latency race providers. FMP family lives here (and on Mac scout) — not on
+ * Socratic.Trade product surfaces. `fmp` = direct stable host; `fmp_rapidapi` =
+ * RapidAPI alternate path so both can race when probes are ON.
+ */
+export type ProviderId =
+  | 'fmp'
+  | 'fmp_rapidapi'
+  | 'unusual_whales'
+  | 'quiver'
+  | 'finnhub'
+  | 'ainvest'
+  | 'capitol_trades';
+
+/** Operational lifecycle for a latency source (admin + scout badges). */
+export type LatencySourceStatus = 'off' | 'running' | 'error' | 'stopped' | 'unknown';
+
+/** FMP family provider ids (CT latency + Mac scout only). */
+export const FMP_FAMILY_PROVIDER_IDS: readonly ProviderId[] = ['fmp', 'fmp_rapidapi'] as const;
+
+export function isFmpFamilyProvider(id: string): boolean {
+  return (FMP_FAMILY_PROVIDER_IDS as readonly string[]).includes(id);
+}
 
 type EnvWithWatch = Env & {
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
@@ -43,6 +65,26 @@ type EnvWithWatch = Env & {
   FMP_LATENCY_API_KEY?: string;
   /** Per-key daily cap for latency probes (default 235; free plan is 250). */
   FMP_LATENCY_DAILY_CAP?: string;
+  /**
+   * Master switch for FMP-family latency probes (stable + RapidAPI paths).
+   * Default OFF — no FMP spend until operator sets true/1/yes/on.
+   * Independent of DISCLOSURE_LATENCY_WATCH_ENABLED (UW/QQ can still run).
+   */
+  FMP_LATENCY_PROBE_ENABLED?: string;
+  /**
+   * Comma-separated FMP path ids to probe when FMP_LATENCY_PROBE_ENABLED is on:
+   * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi). Default both so they
+   * can race when turned on.
+   */
+  FMP_LATENCY_PATHS?: string;
+  /** Override base for stable FMP disclosures (default financialmodelingprep.com/stable). */
+  FMP_STABLE_BASE_URL?: string;
+  /** Override base for RapidAPI FMP disclosures. */
+  FMP_RAPIDAPI_BASE_URL?: string;
+  /** RapidAPI host header (default financial-modeling-prep.p.rapidapi.com). */
+  FMP_RAPIDAPI_HOST?: string;
+  /** Optional dedicated RapidAPI key; falls back to FMP_LATENCY_* keys. */
+  FMP_RAPIDAPI_KEY?: string;
 };
 
 interface CandidateRow {
@@ -100,6 +142,17 @@ export interface DisclosureLatencyProviderStatus {
   requiresMembership: boolean;
   supportsDirectLatest: boolean;
   timestampKind: 'provider' | 'monitor' | 'none';
+  /**
+   * Lifecycle badge for admin/scout UI:
+   *  - off     intentional disable (grey) — default for FMP family
+   *  - running probe path active (green)
+   *  - error   enabled but failing (red)
+   *  - stopped would run but missing keys/config (red-ish / warn)
+   *  - unknown cannot determine
+   */
+  operationalStatus: LatencySourceStatus;
+  /** Path family tag for multi-path providers (e.g. fmp stable vs rapidapi). */
+  pathId?: string;
   reason?: string;
 }
 
@@ -124,6 +177,8 @@ export interface DisclosureLatencyProbeResult {
 export interface DisclosureLatencyProviderMetrics {
   provider: ProviderId;
   label: string;
+  /** Lifecycle for scoreboard (FMP family defaults to off). */
+  operationalStatus?: LatencySourceStatus;
   candidates: number;
   /**
    * Concurrent races only (both first-seen in window, |delta| ≤ max concurrent
@@ -202,6 +257,42 @@ export interface DisclosureLatencySummary {
   };
 }
 
+/** Alternate FMP HTTP path (stable host vs RapidAPI) for dual-path race. */
+export type FmpLatencyPathId = 'stable' | 'rapidapi';
+
+export interface FmpLatencyPathDefinition {
+  pathId: FmpLatencyPathId;
+  /** Matches ProviderId used in trade_latency_candidates / observations. */
+  providerId: ProviderId;
+  label: string;
+  defaultBaseUrl: string;
+  auth: 'query' | 'rapidapi';
+  rapidApiHost?: string;
+}
+
+/**
+ * Registered FMP path collection for CT latency + Mac scout.
+ * Default operational state is OFF (no spend) until FMP_LATENCY_PROBE_ENABLED.
+ * When ON, enabled paths race (first observation wins per provider id).
+ */
+export const FMP_LATENCY_PATHS: readonly FmpLatencyPathDefinition[] = [
+  {
+    pathId: 'stable',
+    providerId: 'fmp',
+    label: 'FMP Stable',
+    defaultBaseUrl: 'https://financialmodelingprep.com/stable',
+    auth: 'query',
+  },
+  {
+    pathId: 'rapidapi',
+    providerId: 'fmp_rapidapi',
+    label: 'FMP RapidAPI',
+    defaultBaseUrl: 'https://financial-modeling-prep.p.rapidapi.com/stable',
+    auth: 'rapidapi',
+    rapidApiHost: 'financial-modeling-prep.p.rapidapi.com',
+  },
+] as const;
+
 interface ProviderDefinition {
   id: ProviderId;
   label: string;
@@ -209,12 +300,15 @@ interface ProviderDefinition {
   requiresMembership: boolean;
   supportsDirectLatest: boolean;
   timestampKind: 'provider' | 'monitor' | 'none';
+  /** FMP path id when this provider is an FMP-family alternate path. */
+  fmpPathId?: FmpLatencyPathId;
   reason?: string;
   fetchRows?: (
     apiKey: string,
     max: number,
     fetchImpl: typeof fetch,
     pace?: () => Promise<void>,
+    opts?: { baseUrl?: string; auth?: 'query' | 'rapidapi'; rapidApiHost?: string },
   ) => Promise<DisclosureProviderRow[]>;
 }
 
@@ -413,7 +507,12 @@ export async function selectFmpLatencyKey(
   candidates.sort((a, b) => b.remaining - a.remaining || a.slot.localeCompare(b.slot));
   return candidates[0]!;
 }
-const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
+/**
+ * Full default probe list when DISCLOSURE_LATENCY_PROVIDERS is unset.
+ * FMP family is listed so statuses register, but probes stay OFF until
+ * FMP_LATENCY_PROBE_ENABLED (see isFmpProbeEnabled).
+ */
+const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'fmp_rapidapi', 'unusual_whales', 'quiver'];
 
 // Latency scoreboard policy (owner 2026-08):
 //   • Race only **live** newly-imported CT trades — never seed/historical backfills.
@@ -481,13 +580,38 @@ export function isLiveRaceImport(opts: {
 const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'fmp',
-    label: 'Financial Modeling Prep',
+    label: 'FMP Stable',
     secretNames: [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
-    reason: 'FMP exposes disclosure/transaction dates, but not a provider first-seen timestamp.',
-    fetchRows: fetchFmpRows,
+    fmpPathId: 'stable',
+    reason:
+      'FMP stable host (financialmodelingprep.com). Default OFF — set FMP_LATENCY_PROBE_ENABLED=true to spend. No provider first-seen timestamp; monitor first-observed is used.',
+    fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
+      fetchFmpRows(apiKey, max, fetchImpl, pace, {
+        baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[0]!.defaultBaseUrl,
+        auth: 'query',
+        providerId: 'fmp',
+      }),
+  },
+  {
+    id: 'fmp_rapidapi',
+    label: 'FMP RapidAPI',
+    secretNames: ['FMP_RAPIDAPI_KEY', FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY],
+    requiresMembership: true,
+    supportsDirectLatest: true,
+    timestampKind: 'monitor',
+    fmpPathId: 'rapidapi',
+    reason:
+      'FMP via RapidAPI alternate host. Default OFF. Enable with FMP_LATENCY_PROBE_ENABLED + FMP_LATENCY_PATHS including rapidapi so it can race FMP Stable.',
+    fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
+      fetchFmpRows(apiKey, max, fetchImpl, pace, {
+        baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
+        auth: 'rapidapi',
+        rapidApiHost: opts?.rapidApiHost ?? FMP_LATENCY_PATHS[1]!.rapidApiHost,
+        providerId: 'fmp_rapidapi',
+      }),
   },
   {
     id: 'unusual_whales',
@@ -540,6 +664,61 @@ const PROVIDERS: ProviderDefinition[] = [
 
 function truthy(v: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((v ?? '').trim());
+}
+
+/** Master switch: FMP-family probes OFF by default (no spend). */
+export async function isFmpProbeEnabled(env: Env): Promise<boolean> {
+  const envx = env as EnvWithWatch;
+  const live =
+    (await resolveSecret(env, 'FMP_LATENCY_PROBE_ENABLED')).value ?? envx.FMP_LATENCY_PROBE_ENABLED;
+  return truthy(live);
+}
+
+/**
+ * Which FMP paths to activate when the master probe switch is on.
+ * Default both (`stable,rapidapi`) so alternate hosts can race.
+ */
+export async function enabledFmpPathIds(env: Env): Promise<Set<FmpLatencyPathId>> {
+  const envx = env as EnvWithWatch;
+  const raw =
+    (await resolveSecret(env, 'FMP_LATENCY_PATHS')).value ?? envx.FMP_LATENCY_PATHS ?? 'stable,rapidapi';
+  const parts = raw
+    .split(/[,\s]+/)
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  const out = new Set<FmpLatencyPathId>();
+  for (const p of parts) {
+    if (p === 'stable' || p === 'fmp') out.add('stable');
+    if (p === 'rapidapi' || p === 'fmp_rapidapi' || p === 'rapid') out.add('rapidapi');
+  }
+  if (!out.size) {
+    out.add('stable');
+    out.add('rapidapi');
+  }
+  return out;
+}
+
+export async function resolveFmpPathRuntime(
+  env: Env,
+  path: FmpLatencyPathDefinition,
+): Promise<{ baseUrl: string; rapidApiHost?: string }> {
+  const envx = env as EnvWithWatch;
+  if (path.pathId === 'stable') {
+    const base =
+      (await resolveSecret(env, 'FMP_STABLE_BASE_URL')).value ??
+      envx.FMP_STABLE_BASE_URL ??
+      path.defaultBaseUrl;
+    return { baseUrl: base.replace(/\/+$/, '') };
+  }
+  const base =
+    (await resolveSecret(env, 'FMP_RAPIDAPI_BASE_URL')).value ??
+    envx.FMP_RAPIDAPI_BASE_URL ??
+    path.defaultBaseUrl;
+  const host =
+    (await resolveSecret(env, 'FMP_RAPIDAPI_HOST')).value ??
+    envx.FMP_RAPIDAPI_HOST ??
+    path.rapidApiHost;
+  return { baseUrl: base.replace(/\/+$/, ''), rapidApiHost: host };
 }
 
 async function enabled(env: EnvWithWatch): Promise<boolean> {
@@ -836,14 +1015,18 @@ function rowKeyFromFields(provider: ProviderId, payload: Record<string, unknown>
   return `${provider}:${simpleHash(basis)}`;
 }
 
-export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisclosureRow[] {
+export function parseFmpDisclosureRows(
+  chamber: Chamber,
+  json: unknown,
+  providerId: ProviderId = 'fmp',
+): FmpDisclosureRow[] {
   return extractRows(json).map((payload) => {
     const sourceUrl = firstUrl(payload);
     const text = rowText(payload);
     const docToken = providerKeyFromUrl(sourceUrl) ?? fieldString(payload, ['docId', 'documentId', 'reportId', 'disclosureId', 'disclosure_id']);
     const providerKey = docToken ? String(docToken).toLowerCase() : simpleHash(text);
     return {
-      provider: 'fmp',
+      provider: providerId,
       chamber,
       providerKey,
       tradeHash: generateTradeHash(fieldString(payload, ['representative', 'senator', 'filerName', 'name']), fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transactionDate', 'txDate']), fieldString(payload, ['type', 'transactionType'])),
@@ -977,22 +1160,41 @@ async function fetchJson(url: string, headers: Record<string, string>, fetchImpl
   return res.json();
 }
 
+export interface FetchFmpRowsOpts {
+  baseUrl?: string;
+  auth?: 'query' | 'rapidapi';
+  rapidApiHost?: string;
+  providerId?: ProviderId;
+}
+
+/**
+ * Fetch house+senate latest disclosures from an FMP path (stable or RapidAPI).
+ * Path bases are injectable so alternate hosts can race without code edits.
+ */
 async function fetchFmpRows(
   apiKey: string,
   max: number,
   fetchImpl: typeof fetch,
   pace: () => Promise<void> = async () => {},
+  opts: FetchFmpRowsOpts = {},
 ): Promise<DisclosureProviderRow[]> {
+  const baseUrl = (opts.baseUrl ?? 'https://financialmodelingprep.com/stable').replace(/\/+$/, '');
+  const auth = opts.auth ?? 'query';
+  const providerId = opts.providerId ?? 'fmp';
   const fetchOne = async (chamber: Chamber) => {
     const fmpLimit = Math.min(max, 25);
-    const url =
-      `https://financialmodelingprep.com/stable/${chamber}-latest?page=0&limit=${fmpLimit}` +
-      '&apikey=' +
-      encodeURIComponent(apiKey);
+    let url = `${baseUrl}/${chamber}-latest?page=0&limit=${fmpLimit}`;
+    const headers: Record<string, string> = {};
+    if (auth === 'rapidapi') {
+      headers['X-RapidAPI-Key'] = apiKey;
+      if (opts.rapidApiHost) headers['X-RapidAPI-Host'] = opts.rapidApiHost;
+    } else {
+      url += '&apikey=' + encodeURIComponent(apiKey);
+    }
     try {
       // Latency-only pacer: serializes house+senate; separate from enrichment.
       await pace();
-      return parseFmpDisclosureRows(chamber, await fetchJson(url, {}, fetchImpl));
+      return parseFmpDisclosureRows(chamber, await fetchJson(url, headers, fetchImpl), providerId);
     } catch (err) {
       const status = /HTTP_(\d+)/.exec((err as Error).message)?.[1];
       if (status) assertFmpTierOk(Number(status));
@@ -1128,6 +1330,28 @@ async function resolveProviderSecret(env: Env, provider: ProviderDefinition): Pr
 
 async function providerStatus(env: Env, provider: ProviderDefinition): Promise<DisclosureLatencyProviderStatus> {
   const configured = provider.secretNames.length === 0 || Boolean(await resolveProviderSecret(env, provider));
+  const fmpProbeOn = isFmpFamilyProvider(provider.id) ? await isFmpProbeEnabled(env) : true;
+  const paths = isFmpFamilyProvider(provider.id) ? await enabledFmpPathIds(env) : null;
+  const pathEnabled =
+    !provider.fmpPathId || !paths ? true : paths.has(provider.fmpPathId);
+
+  let operationalStatus: LatencySourceStatus = 'unknown';
+  let reason = provider.reason;
+  if (isFmpFamilyProvider(provider.id) && (!fmpProbeOn || !pathEnabled)) {
+    // Intentional disable — grey OFF, not red stopped.
+    operationalStatus = 'off';
+    reason = !fmpProbeOn
+      ? 'OFF (default): set FMP_LATENCY_PROBE_ENABLED=true to enable FMP family probes (no spend until then)'
+      : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
+  } else if (!provider.supportsDirectLatest) {
+    operationalStatus = 'stopped';
+  } else if (!configured) {
+    operationalStatus = 'stopped';
+    reason = reason ?? `${provider.secretNames[0] ?? 'secret'} missing`;
+  } else {
+    operationalStatus = 'running';
+  }
+
   return {
     id: provider.id,
     label: provider.label,
@@ -1135,7 +1359,9 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     requiresMembership: provider.requiresMembership,
     supportsDirectLatest: provider.supportsDirectLatest,
     timestampKind: provider.timestampKind,
-    reason: provider.reason,
+    operationalStatus,
+    pathId: provider.fmpPathId,
+    reason,
   };
 }
 
@@ -2338,8 +2564,24 @@ async function runProviderProbe(
     return { ...base, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors };
   }
 
+  // FMP family: intentional OFF (grey) — skip all HTTP spend unless master
+  // switch is on AND this path is in FMP_LATENCY_PATHS. force=true still
+  // respects OFF unless FMP_LATENCY_PROBE_ENABLED is also true (operator must
+  // opt in to spend).
+  if (isFmpFamilyProvider(provider.id) && base.operationalStatus === 'off') {
+    return {
+      ...base,
+      enabled: false,
+      fetchedRows: 0,
+      pending: 0,
+      matched: 0,
+      errors,
+    };
+  }
+
   const nowIso = now.toISOString();
-  const isFmp = provider.id === 'fmp';
+  const isFmpFamily = isFmpFamilyProvider(provider.id);
+  const isFmpStable = provider.id === 'fmp';
   const isUnusualWhales = provider.id === 'unusual_whales';
   const envx = env as EnvWithWatch;
   let fetchedRows = 0;
@@ -2351,31 +2593,41 @@ async function runProviderProbe(
   // independent daily counters + ET-weighted spacing. Never use FMP_API_KEY
   // here and never touch the enrichment/prices shared fmp:calls counter.
   let capSkipped = false;
-  if (isFmp) {
-    fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force });
-    if (!fmpSelection) {
-      // Still configured if either latency key exists — just throttled/exhausted.
-      const anyKey = await resolveProviderSecret(env, provider);
-      if (!anyKey) {
-        return {
-          ...base,
-          configured: false,
-          enabled: false,
-          fetchedRows: 0,
-          pending: 0,
-          matched: 0,
-          errors,
-          reason: `${FMP_LATENCY_KEY_PRIMARY} / ${FMP_LATENCY_KEY_SECONDARY} missing`,
-        };
+  if (isFmpFamily) {
+    // RapidAPI may use a dedicated key; otherwise share dual latency keys.
+    if (provider.id === 'fmp_rapidapi') {
+      const rapid =
+        (await resolveSecret(env, 'FMP_RAPIDAPI_KEY')).value ?? envx.FMP_RAPIDAPI_KEY;
+      if (rapid?.trim()) {
+        apiKey = rapid.trim();
       }
-      capSkipped = true;
-      errors.push(
-        'FMP latency keys at daily cap or spacing interval; skipped latest fetch (DB re-match still runs)',
-      );
-    } else {
-      apiKey = fmpSelection.apiKey;
-      // Reserve full house+senate batch on this key's counter before HTTP.
-      await addFmpLatencyUsed(env, fmpSelection.slot, FMP_LATENCY_CALLS_PER_RUN, now);
+    }
+    if (!apiKey) {
+      fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force });
+      if (!fmpSelection) {
+        const anyKey = await resolveProviderSecret(env, provider);
+        if (!anyKey) {
+          return {
+            ...base,
+            configured: false,
+            enabled: false,
+            operationalStatus: 'stopped',
+            fetchedRows: 0,
+            pending: 0,
+            matched: 0,
+            errors,
+            reason: `${FMP_LATENCY_KEY_PRIMARY} / ${FMP_LATENCY_KEY_SECONDARY} missing`,
+          };
+        }
+        capSkipped = true;
+        errors.push(
+          'FMP latency keys at daily cap or spacing interval; skipped latest fetch (DB re-match still runs)',
+        );
+      } else {
+        apiKey = fmpSelection.apiKey;
+        // Reserve full house+senate batch on this key's counter before HTTP.
+        await addFmpLatencyUsed(env, fmpSelection.slot, FMP_LATENCY_CALLS_PER_RUN, now);
+      }
     }
   } else {
     apiKey = await resolveProviderSecret(env, provider);
@@ -2384,6 +2636,7 @@ async function runProviderProbe(
         ...base,
         configured: false,
         enabled: false,
+        operationalStatus: 'stopped',
         fetchedRows: 0,
         pending: 0,
         matched: 0,
@@ -2399,7 +2652,7 @@ async function runProviderProbe(
     // with free keys (avoids coupling to enrichment cadence). Simple serial wait.
     let lastFmpCallMs = 0;
     const FMP_LATENCY_MIN_GAP_MS = 350;
-    const pace = isFmp
+    const pace = isFmpFamily
       ? async () => {
           fmpCallsMade++;
           const wait = Math.max(0, lastFmpCallMs + FMP_LATENCY_MIN_GAP_MS - Date.now());
@@ -2408,11 +2661,24 @@ async function runProviderProbe(
         }
       : undefined;
     try {
-      const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace);
+      let fetchOpts: FetchFmpRowsOpts | undefined;
+      if (isFmpFamily && provider.fmpPathId) {
+        const pathDef = FMP_LATENCY_PATHS.find((p) => p.pathId === provider.fmpPathId)!;
+        const runtime = await resolveFmpPathRuntime(env, pathDef);
+        fetchOpts = {
+          baseUrl: runtime.baseUrl,
+          auth: pathDef.auth,
+          rapidApiHost: runtime.rapidApiHost,
+          providerId: provider.id,
+        };
+      }
+      const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
       fetchedRows = rows.length;
       freshRows = rows;
       await upsertProviderRows(env, provider.id, rows, nowIso);
-      if (fmpSelection) {
+      if (fmpSelection && isFmpStable) {
+        await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
+      } else if (fmpSelection) {
         await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
       }
     } catch (err) {
@@ -2468,10 +2734,31 @@ async function runProviderProbe(
       await routeProviderOnlyObservationsToReview(env, provider.id, freshRows, nowIso);
     }
 
-    return { ...base, configured: true, enabled: true, fetchedRows: totalFetchedRows, pending: totalPending, matched: totalMatched, errors };
+    const operationalStatus: LatencySourceStatus =
+      errors.length > 0 ? 'error' : 'running';
+    return {
+      ...base,
+      configured: true,
+      enabled: true,
+      operationalStatus,
+      fetchedRows: totalFetchedRows,
+      pending: totalPending,
+      matched: totalMatched,
+      errors,
+    };
   } catch (err) {
     if (storageMissing(err)) {
-      return { ...base, configured: true, enabled: true, fetchedRows, pending: 0, matched: 0, errors, reason: 'latency tables missing; run /api/admin/migrate' };
+      return {
+        ...base,
+        configured: true,
+        enabled: true,
+        operationalStatus: 'error',
+        fetchedRows,
+        pending: 0,
+        matched: 0,
+        errors,
+        reason: 'latency tables missing; run /api/admin/migrate',
+      };
     }
     throw err;
   }
@@ -2543,7 +2830,30 @@ export async function runFmpDisclosureLatencyProbe(
   fetchImpl: typeof fetch = fetch,
   opts: { force?: boolean } = {},
 ): Promise<DisclosureLatencyProbeResult> {
-  return runDisclosureLatencyProbe(env, now, fetchImpl, { ...opts, providers: ['fmp'] });
+  // Probe entire FMP family (stable + RapidAPI) so dual paths can race when ON.
+  return runDisclosureLatencyProbe(env, now, fetchImpl, {
+    ...opts,
+    providers: [...FMP_FAMILY_PROVIDER_IDS],
+  });
+}
+
+/** Export registry snapshot for admin/scout consumers (no secrets). */
+export function listFmpLatencyPathRegistry(): Array<{
+  pathId: FmpLatencyPathId;
+  providerId: ProviderId;
+  label: string;
+  defaultBaseUrl: string;
+  auth: 'query' | 'rapidapi';
+  defaultStatus: 'off';
+}> {
+  return FMP_LATENCY_PATHS.map((p) => ({
+    pathId: p.pathId,
+    providerId: p.providerId,
+    label: p.label,
+    defaultBaseUrl: p.defaultBaseUrl,
+    auth: p.auth,
+    defaultStatus: 'off' as const,
+  }));
 }
 
 function median(values: number[]): number | null {
@@ -2720,9 +3030,11 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
           : timingN > 0
             ? 'limited'
             : 'insufficient';
+    const st = statuses.find((s) => s.id === provider.id);
     return {
       provider: provider.id,
       label: provider.label,
+      operationalStatus: st?.operationalStatus ?? 'unknown',
       candidates: mine.length,
       // Both-in-week timed races — drives lead/win stats and status gates.
       matched: timingN,
