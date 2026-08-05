@@ -261,8 +261,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
-    expect(DASHBOARD_HTML).toContain('src="/icon-192.png?v=5"');
-    expect(DASHBOARD_HTML).toMatch(/class="brand-text"/);
+    expect(DASHBOARD_HTML).toContain('src="/assets/brand-logo-light.png');
+    expect(DASHBOARD_HTML).not.toMatch(/class="brand-text"/);
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
@@ -423,7 +423,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
-    expect(DASHBOARD_HTML).toContain('icon-192.png');
+    expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
