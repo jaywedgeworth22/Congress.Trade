@@ -1200,8 +1200,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // matched-overlap measurement; provider-observed and unmatched rows stay in
   // the public denominator so a congress.trade miss cannot become a speed win.
   r.get('/latency-summary', async (c) => {
-    // v3: concurrent-race timing + strongMatched/window metadata — bump key.
-    const data = await cached(c.env, 'analytics:latency-summary:v3', 300, async () => {
+    // v4: 7d live-only scoreboard (exclude backfills); 14d match lookback.
+    const data = await cached(c.env, 'analytics:latency-summary:v4', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       return {
         generatedAt: publicSummary.generatedAt,
@@ -1221,9 +1221,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           id: p.provider,
           label: p.label,
           candidates: p.candidates,
-          // Concurrent races (both stamps in window, |delta| ≤ maxConcurrentHours).
+          // Timed live races (CT live first_seen in 7d; |Δ| up to 14d).
           matched: p.matched,
-          // All high-confidence overlaps in the window (coverage density).
+          // Same cohort as matched (live imports only; backfills excluded).
           strongMatched: p.strongMatched,
           providerObserved: p.providerObserved,
           maturedProviderObserved: p.maturedProviderObserved,
