@@ -7303,7 +7303,7 @@ function scrollToChart(id) {
 }
 function fmtPeriod(p) {
   if (!p) return '';
-  var m = /^(\d{4})-(\d{1,2})$/.exec(p);
+  var m = /^(\\d{4})-(\\d{1,2})$/.exec(p);
   if (m) {
     var yr = parseInt(m[1], 10), num = parseInt(m[2], 10);
     if (num > 12) {
@@ -7319,7 +7319,7 @@ function fmtPeriod(p) {
       return months[num - 1] + ' ' + yr;
     }
   }
-  var m2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(p);
+  var m2 = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(p);
   if (m2) {
     var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return months[parseInt(m2[2],10)-1] + ' ' + parseInt(m2[3],10);
