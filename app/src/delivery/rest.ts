@@ -1148,6 +1148,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 }
 
 export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
+  const user = await getCurrentUserFromRequest(c);
+  if (!user || !isPremiumUser(user)) {
+    return c.redirect('/pricing?feature=pdf', 302);
+  }
+
   const docId = c.req.param('docId');
   const filingRow = await get<FilingRow>(
     c.env.DB,
