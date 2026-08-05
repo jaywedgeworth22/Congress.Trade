@@ -6,6 +6,9 @@ struct TradeDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var didCheckRetraction = false
+    @State private var performance: TradePerformanceResponse?
+    @State private var performanceLoaded = false
+    @State private var performanceFailed = false
 
     var body: some View {
         NavigationStack {
@@ -57,6 +60,8 @@ struct TradeDetailView: View {
                             DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
                             DetailRow("Confidence", "\(Int(((trade.confidence ?? 1.0) * 100).rounded()))%")
                         }
+
+                        performanceSection
 
                         DetailSection("Timeline") {
                             DetailRow("Traded", trade.transaction.date.longDate)
@@ -139,6 +144,110 @@ struct TradeDetailView: View {
                 dismiss()
             }
         }
+        .task(id: trade.id) {
+            await loadPerformance()
+        }
+    }
+
+    @ViewBuilder
+    private var performanceSection: some View {
+        DetailSection("Performance vs S&P 500") {
+            if !performanceLoaded {
+                HStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading returns…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let perf = performance, perf.available, let leg = perf.tradeLeg {
+                let isSell = (perf.txType ?? trade.transaction.type) == "S"
+                let sinceLabel = isSell ? "Since sold" : "Since traded"
+
+                HStack(spacing: 12) {
+                    MetricTile(
+                        title: sinceLabel,
+                        value: Self.formatSignedPct(leg.assetReturn)
+                    )
+                    MetricTile(
+                        title: "S&P 500",
+                        value: Self.formatSignedPct(leg.spxReturn)
+                    )
+                    MetricTile(
+                        title: "Excess",
+                        value: Self.formatSignedPct(leg.excessReturn)
+                    )
+                }
+
+                if let filing = perf.filingDatePerformance,
+                   filing.assetReturn != nil || filing.excessReturn != nil {
+                    let filingLabel = isSell ? "Since reported" : "Since filing"
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(filingLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            MetricTile(
+                                title: "Return",
+                                value: Self.formatSignedPct(filing.assetReturn)
+                            )
+                            MetricTile(
+                                title: "S&P 500",
+                                value: Self.formatSignedPct(filing.spxReturn)
+                            )
+                            MetricTile(
+                                title: "Excess",
+                                value: Self.formatSignedPct(filing.excessReturn)
+                            )
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+
+                if let from = perf.priceAtTrade ?? leg.priceAt, let to = perf.currentPrice {
+                    let dateSuffix = perf.currentPriceDate.map { " (\($0))" } ?? ""
+                    Text(String(format: "$%.2f → $%.2f%@", from, to, dateSuffix))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("Observational price change, not portfolio P&L. Options are excluded.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if performance?.isOption == true {
+                Text("Performance isn’t shown for options — return depends on strike, expiry, and exercise, which the filing doesn’t disclose.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(
+                    performanceFailed
+                        ? "Couldn’t load performance for this trade."
+                        : "Price & performance vs the S&P 500 will appear when market data is available for this ticker."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func loadPerformance() async {
+        performanceLoaded = false
+        performanceFailed = false
+        performance = nil
+        do {
+            performance = try await store.api.tradePerformance(txId: trade.id)
+            performanceFailed = false
+        } catch {
+            performance = nil
+            performanceFailed = true
+        }
+        performanceLoaded = true
+    }
+
+    private static func formatSignedPct(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return String(format: "%+.1f%%", value * 100)
     }
     
     private var chamberGradient: Color {

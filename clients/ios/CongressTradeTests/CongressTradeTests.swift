@@ -378,108 +378,6 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<ClientTrade>()).count, 1)
     }
 
-    // MARK: - Test helpers
-
-    private func makeSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        return URLSession(configuration: configuration)
-    }
-
-    private static let baseURL = URL(string: "https://example.test/api/client/v1")!
-
-    private static let bootstrapJSON = """
-    {"serverTime":"2026-07-18T00:00:00Z","auth":{"user":null,"entitlement":{"premium":false,"status":null,"plan":null}},
-     "capabilities":{},"endpoints":{}}
-    """
-
-    private static func feedJSON(items: [String], cursor: Int, count: Int, total: Int, limit: Int) -> String {
-        "{\"items\":[\(items.joined(separator: ","))],\"cursor\":\(cursor),\"count\":\(count),\"total\":\(total),\"limit\":\(limit),\"nextPollAfterSec\":30}"
-    }
-
-    private static func tradeJSON(id: String, cursor: Int) -> String {
-        """
-        {"id":"\(id)","cursor":\(cursor),"docId":"doc_\(id)","member":{},
-         "asset":{"name":"Acme Corp"},"transaction":{"type":"P","isOption":false},
-         "filing":{},"confidence":0.9,"source":"primary"}
-        """
-    }
-
-    @MainActor
-    private static func makeInMemoryModelContext() throws -> ModelContext {
-        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: ClientTrade.self, configurations: configuration)
-        return ModelContext(container)
-    }
-
-    private static func makeTrade(id: String, cursor: Int) -> ClientTrade {
-        ClientTrade(
-            id: id,
-            cursor: cursor,
-            docId: "doc_\(id)",
-            member: .init(id: nil, name: nil, chamber: nil, party: nil, state: nil, photoUrl: nil),
-            asset: .init(name: "Acme Corp", ticker: nil, type: nil, sector: nil, marketCapBucket: nil),
-            transaction: .init(date: nil, type: "P", owner: nil, amountMin: nil, amountMax: nil, isOption: false),
-            filing: .init(filedDate: nil, firstSeenAt: nil, sourceUrl: nil),
-            confidence: 0.9,
-            source: .primary
-        )
-    }
-
-    private static func response(
-        for request: URLRequest,
-        status: Int = 200,
-        json: String
-    ) -> (HTTPURLResponse, Data) {
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: status,
-            httpVersion: nil,
-            headerFields: ["content-type": "application/json"]
-        )!
-        return (response, Data(json.utf8))
-    }
-}
-
-private final class InMemorySyncCursorStore: SyncCursorStore {
-    private var values: [String: Int] = [:]
-
-    func cursor(for key: String) -> Int? { values[key] }
-    func setCursor(_ cursor: Int, for key: String) { values[key] = cursor }
-}
-
-private final class MemoryTokenStore: SessionTokenStore {
-    private var token: String?
-
-    init(token: String?) {
-        self.token = token
-    }
-
-    func load() throws -> String? { token }
-    func save(_ token: String) throws { self.token = token }
-    func clear() throws { token = nil }
-}
-
-private final class MockURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        do {
-            let (response, data) = try XCTUnwrap(Self.handler)(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {}
-}
-
     // MARK: - UX P0: memberName search + async command result claim
 
     func testFeedQueryEmitsMemberNameNotMemberForFreeText() {
@@ -487,6 +385,121 @@ private final class MockURLProtocol: URLProtocol {
         let items = query.queryItems
         XCTAssertEqual(items.first(where: { $0.name == "memberName" })?.value, "Pelosi")
         XCTAssertNil(items.first(where: { $0.name == "member" }))
+    }
+
+    // MARK: - UX wave2: type filter + trade performance
+
+    func testFeedQueryEmitsTypeForBuySellFilter() {
+        let buy = FeedQuery(limit: 50, type: TradeTypeFilter.buy.queryValue)
+        XCTAssertEqual(buy.queryItems.first(where: { $0.name == "type" })?.value, "P")
+        let sell = FeedQuery(limit: 50, type: TradeTypeFilter.sell.queryValue)
+        XCTAssertEqual(sell.queryItems.first(where: { $0.name == "type" })?.value, "S")
+        let all = FeedQuery(limit: 50, type: TradeTypeFilter.all.queryValue)
+        XCTAssertNil(all.queryItems.first(where: { $0.name == "type" }))
+    }
+
+    func testTradeTypeFilterMatchesLocalCacheSides() {
+        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "P"))
+        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "S"))
+        XCTAssertTrue(TradeTypeFilter.buy.matches(txType: "P"))
+        XCTAssertFalse(TradeTypeFilter.buy.matches(txType: "S"))
+        XCTAssertTrue(TradeTypeFilter.sell.matches(txType: "S"))
+        XCTAssertFalse(TradeTypeFilter.sell.matches(txType: "E"))
+    }
+
+    func testTradePerformanceResponseDecodesAvailableAndEmpty() throws {
+        let availableJSON = """
+        {
+          "available": true,
+          "txType": "P",
+          "ticker": "AAPL",
+          "txDate": "2025-01-02",
+          "filedDate": "2025-01-15",
+          "priceAtTrade": 100,
+          "currentPrice": 110,
+          "currentPriceDate": "2025-06-01",
+          "assetReturn": 0.1,
+          "spxReturn": 0.05,
+          "excessReturn": 0.05,
+          "tradeDatePerformance": {
+            "priceAt": 100, "spxAt": 4000,
+            "assetReturn": 0.1, "spxReturn": 0.05, "excessReturn": 0.05
+          },
+          "filingDatePerformance": {
+            "priceAt": 102, "spxAt": 4010,
+            "assetReturn": 0.078, "spxReturn": 0.04, "excessReturn": 0.038
+          }
+        }
+        """
+        let available = try JSONDecoder().decode(TradePerformanceResponse.self, from: Data(availableJSON.utf8))
+        XCTAssertTrue(available.available)
+        XCTAssertEqual(available.excessReturn, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(available.tradeLeg?.assetReturn, 0.1, accuracy: 0.0001)
+        XCTAssertNotNil(available.filingDatePerformance)
+
+        let empty = try JSONDecoder().decode(
+            TradePerformanceResponse.self,
+            from: Data(#"{"available":false,"isOption":true}"#.utf8)
+        )
+        XCTAssertFalse(empty.available)
+        XCTAssertEqual(empty.isOption, true)
+        XCTAssertNil(empty.tradeLeg)
+    }
+
+    func testShareURLBuildsTickerDeepLink() {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: nil)
+        )
+        let url = client.shareURL(queryItem: URLQueryItem(name: "ticker", value: "NVDA"))
+        XCTAssertEqual(url?.absoluteString, "https://example.test/?ticker=NVDA")
+    }
+
+    @MainActor
+    func testSetTradeTypeSendsTypeQueryParam() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setTradeType(.buy)
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "P")
+        // Free-text search still uses memberName when set later; type alone must not emit member=.
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
+    }
+
+    @MainActor
+    func testSetSearchUsesMemberNameNotMember() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setSearch("Nancy Pelosi")
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "memberName" })?.value, "Nancy Pelosi")
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
     }
 
     func testCommandResponseDecodesResultNestedOnCommand() throws {
@@ -597,3 +610,105 @@ private final class MockURLProtocol: URLProtocol {
         XCTAssertEqual(result.command.status, .succeeded)
         XCTAssertEqual(result.result?.subscription.secret, "claimed-secret")
     }
+
+    // MARK: - Test helpers
+
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private static let baseURL = URL(string: "https://example.test/api/client/v1")!
+
+    private static let bootstrapJSON = """
+    {"serverTime":"2026-07-18T00:00:00Z","auth":{"user":null,"entitlement":{"premium":false,"status":null,"plan":null}},
+     "capabilities":{},"endpoints":{}}
+    """
+
+    private static func feedJSON(items: [String], cursor: Int, count: Int, total: Int, limit: Int) -> String {
+        "{\"items\":[\(items.joined(separator: ","))],\"cursor\":\(cursor),\"count\":\(count),\"total\":\(total),\"limit\":\(limit),\"nextPollAfterSec\":30}"
+    }
+
+    private static func tradeJSON(id: String, cursor: Int) -> String {
+        """
+        {"id":"\(id)","cursor":\(cursor),"docId":"doc_\(id)","member":{},
+         "asset":{"name":"Acme Corp"},"transaction":{"type":"P","isOption":false},
+         "filing":{},"confidence":0.9,"source":"primary"}
+        """
+    }
+
+    @MainActor
+    private static func makeInMemoryModelContext() throws -> ModelContext {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: ClientTrade.self, configurations: configuration)
+        return ModelContext(container)
+    }
+
+    private static func makeTrade(id: String, cursor: Int) -> ClientTrade {
+        ClientTrade(
+            id: id,
+            cursor: cursor,
+            docId: "doc_\(id)",
+            member: .init(id: nil, name: nil, chamber: nil, party: nil, state: nil, photoUrl: nil),
+            asset: .init(name: "Acme Corp", ticker: nil, type: nil, sector: nil, marketCapBucket: nil),
+            transaction: .init(date: nil, type: "P", owner: nil, amountMin: nil, amountMax: nil, isOption: false),
+            filing: .init(filedDate: nil, firstSeenAt: nil, sourceUrl: nil),
+            confidence: 0.9,
+            source: .primary
+        )
+    }
+
+    private static func response(
+        for request: URLRequest,
+        status: Int = 200,
+        json: String
+    ) -> (HTTPURLResponse, Data) {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["content-type": "application/json"]
+        )!
+        return (response, Data(json.utf8))
+    }
+}
+
+private final class InMemorySyncCursorStore: SyncCursorStore {
+    private var values: [String: Int] = [:]
+
+    func cursor(for key: String) -> Int? { values[key] }
+    func setCursor(_ cursor: Int, for key: String) { values[key] = cursor }
+}
+
+private final class MemoryTokenStore: SessionTokenStore {
+    private var token: String?
+
+    init(token: String?) {
+        self.token = token
+    }
+
+    func load() throws -> String? { token }
+    func save(_ token: String) throws { self.token = token }
+    func clear() throws { token = nil }
+}
+
+private final class MockURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let (response, data) = try XCTUnwrap(Self.handler)(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}

@@ -1,5 +1,6 @@
 # Congress.Trade Effort Log — cross-agent board
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
+- **2026-08-04 — GROK — IN PROGRESS — UX wave2 integrate.** Merging web (`883cc886`) + API CSV tests (`3d3b8044`) + iOS (`87810c6b`). Premium CSV + People/conflicts + iOS performance/type filter.
 (mirror: docs/EFFORT-LOG.md in the repo). As of 2026-07-05.
 2026-07-05 (CLAUDE next-wave) correction: the repo mirror `docs/EFFORT-LOG.md` at origin/main was
 stale vs this live board — missing the CURSOR completed batch, both MONET sentry-ci-report
