@@ -400,8 +400,15 @@ export async function runFmpSenateRecovery(
   const dryRun = opts.dryRun ?? false;
   const nowIso = (opts.now ?? new Date()).toISOString();
   const fetchImpl = opts.fetchImpl ?? fetch;
+  // Free-tier FMP latency keys (primary + secondary) are monitoring-only and must never
+  // be used here. Recovery requires a separate FMP_API_KEY (paid or intentionally
+  // non-latency). Do not fall back to latency secrets.
   const key = (await resolveSecret(env, 'FMP_API_KEY')).value;
-  if (!key) throw new Error('FMP_API_KEY is not available');
+  if (!key) {
+    throw new Error(
+      'FMP_API_KEY is not available (FMP_LATENCY_* keys are latency-only and cannot run recovery)',
+    );
+  }
 
   const envx = env as Env & { FMP_MAX_PER_MINUTE?: string; FMP_DAILY_CALL_CAP?: string };
   const maxPerMinuteRaw = (await resolveSecret(env, 'FMP_MAX_PER_MINUTE')).value ?? envx.FMP_MAX_PER_MINUTE;
