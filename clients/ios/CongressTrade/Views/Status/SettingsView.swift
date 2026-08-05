@@ -179,7 +179,7 @@ struct SettingsView: View {
                             Label("Subscribe with Apple", systemImage: "apple.logo")
                         }
                         if let url = store.api.upgradeURL {
-                            Link("Subscribe on congress.trade", destination: url)
+                            Link("Subscribe on Congress.Trade", destination: url)
                         }
                     }
                 }

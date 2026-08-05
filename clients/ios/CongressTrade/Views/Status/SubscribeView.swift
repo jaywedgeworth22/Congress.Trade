@@ -32,7 +32,7 @@ struct SubscribeView: View {
                         Text("In-app products are not available yet. You can still subscribe on the website.")
                             .foregroundStyle(.secondary)
                         if let url = store.api.upgradeURL {
-                            Link("Open congress.trade pricing", destination: url)
+                            Link("Open Congress.Trade pricing", destination: url)
                         }
                     }
                 } else {
