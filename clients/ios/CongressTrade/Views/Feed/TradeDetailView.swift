@@ -9,45 +9,53 @@ struct TradeDetailView: View {
     @State private var performance: TradePerformanceResponse?
     @State private var performanceLoaded = false
     @State private var performanceFailed = false
+    @State private var performanceTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    // Hero Header
+                    // Hero Header — company name + chevron link like politician
                     VStack(alignment: .center, spacing: 12) {
-                        AssetMark(symbol: trade.asset.displayName, isTicker: trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true))
-                            .scaleEffect(1.3)
-                            .padding(.bottom, 8)
-                        
-                        Text(trade.asset.displayName)
-                            .font(.largeTitle.weight(.heavy))
-                            .multilineTextAlignment(.center)
-                        
-                        if trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true), let name = trade.asset.name, !name.isEmpty, name != trade.asset.ticker {
-                            Text(name)
-                                .font(.title3.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        
+                        AssetMark(
+                            symbol: trade.asset.displayName,
+                            isTicker: trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true)
+                        )
+                        .scaleEffect(1.3)
+                        .padding(.bottom, 8)
+
+                        companyTitle
+
                         StatusPill(
                             text: trade.transaction.type.label,
                             color: trade.transaction.type.tint,
-                            icon: (trade.transaction.type == "B" || trade.transaction.type == "P") ? "arrow.down.right.circle.fill" : (trade.transaction.type == "S" ? "arrow.up.right.circle.fill" : "arrow.left.and.right.circle.fill")
+                            icon: (trade.transaction.type == "B" || trade.transaction.type == "P")
+                                ? "arrow.down.right.circle.fill"
+                                : (trade.transaction.type == "S"
+                                    ? "arrow.up.right.circle.fill"
+                                    : "arrow.left.and.right.circle.fill")
                         )
                         .padding(.top, 4)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 32)
                     .background(
-                        LinearGradient(colors: [chamberGradient.opacity(0.2), AppTheme.background], startPoint: .top, endPoint: .bottom)
+                        LinearGradient(
+                            colors: [chamberGradient.opacity(0.2), AppTheme.background],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
 
                     VStack(spacing: 16) {
                         DetailSection("Trade Summary") {
                             if let memberId = trade.member.id {
-                                NavigationLink(destination: PoliticianDetailView(memberId: memberId, memberName: trade.member.name ?? "Unknown")) {
+                                NavigationLink(
+                                    destination: PoliticianDetailView(
+                                        memberId: memberId,
+                                        memberName: trade.member.name ?? "Unknown"
+                                    )
+                                ) {
                                     HStack {
                                         Text("Politician")
                                             .foregroundStyle(.secondary)
@@ -74,13 +82,16 @@ struct TradeDetailView: View {
                                 }
                                 .font(.subheadline)
                             }
-                            
+
                             DetailRow("Amount", trade.amountLabel)
                             DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
                             DetailRow("Confidence", "\(Int(((trade.confidence ?? 1.0) * 100).rounded()))%")
                         }
 
                         performanceSection
+
+                        // TODO(ios): dual-axis chart S&P vs stock since filing when
+                        // a lightweight Charts series endpoint is available.
 
                         DetailSection("Timeline") {
                             DetailRow("Traded", trade.transaction.date.longDate)
@@ -112,37 +123,7 @@ struct TradeDetailView: View {
                             DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
                         }
 
-                        if let docId = trade.docId, !docId.isEmpty, let pdfURL = store.api.documentPDFURL(docId: docId) {
-                            Button {
-                                openURL(pdfURL)
-                            } label: {
-                                Label("View Filing PDF", systemImage: "doc.richtext")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(chamberGradient)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .padding(.top, 8)
-                        }
-
-                        if let sourceURL = trade.filing.sourceUrl,
-                           let url = URL(string: sourceURL),
-                           url.scheme == "https" || url.scheme == "http" {
-                            Button {
-                                openURL(url)
-                            } label: {
-                                Label("View Source Filing", systemImage: "doc.text.magnifyingglass")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(chamberGradient)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .padding(.top, 8)
-                        }
+                        filingButtons
                     }
                     .padding(.horizontal, 16)
                 }
@@ -185,6 +166,102 @@ struct TradeDetailView: View {
         .task(id: trade.id) {
             await loadPerformance()
         }
+        .onDisappear {
+            performanceTask?.cancel()
+        }
+    }
+
+    /// Company name at top with ">" link like politician when a ticker exists.
+    @ViewBuilder
+    private var companyTitle: some View {
+        let display = trade.asset.displayName
+        let companyName: String? = {
+            guard let name = trade.asset.name, !name.isEmpty, name != trade.asset.ticker else { return nil }
+            return name
+        }()
+
+        if let ticker = trade.asset.ticker, !ticker.isEmpty {
+            NavigationLink(destination: TickerDetailView(ticker: ticker)) {
+                HStack(spacing: 6) {
+                    Text(display)
+                        .font(.largeTitle.weight(.heavy))
+                        .multilineTextAlignment(.center)
+                    Image(systemName: "chevron.right")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(display) trades")
+
+            if let companyName {
+                Text(companyName)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        } else {
+            Text(display)
+                .font(.largeTitle.weight(.heavy))
+                .multilineTextAlignment(.center)
+            if let companyName {
+                Text(companyName)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    /// PDF + source filing side-by-side (~half width), liquid-glass / light grey,
+    /// no "View" word in the labels.
+    @ViewBuilder
+    private var filingButtons: some View {
+        let pdfURL: URL? = {
+            guard let docId = trade.docId, !docId.isEmpty else { return nil }
+            return store.api.documentPDFURL(docId: docId)
+        }()
+        let sourceURL: URL? = {
+            guard let raw = trade.filing.sourceUrl,
+                  let url = URL(string: raw),
+                  url.scheme == "https" || url.scheme == "http" else { return nil }
+            return url
+        }()
+
+        if pdfURL != nil || sourceURL != nil {
+            HStack(spacing: 10) {
+                if let pdfURL {
+                    Button {
+                        openURL(pdfURL)
+                    } label: {
+                        Label("Filing PDF", systemImage: "doc.richtext")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(chamberGradient.opacity(0.85))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                if let sourceURL {
+                    Button {
+                        openURL(sourceURL)
+                    } label: {
+                        Label("Source Filing", systemImage: "doc.text.magnifyingglass")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(chamberGradient.opacity(0.85))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+            }
+            .padding(.top, 8)
+        }
     }
 
     @ViewBuilder
@@ -202,6 +279,12 @@ struct TradeDetailView: View {
             } else if let perf = performance, perf.available, let leg = perf.tradeLeg {
                 let isSell = (perf.txType ?? trade.transaction.type) == "S"
                 let sinceLabel = isSell ? "Since sold" : "Since traded"
+                let politician = trade.member.name ?? "Politician"
+                let asset = perf.ticker ?? trade.asset.displayName
+
+                Text("\(politician) · \(asset)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
                 HStack(spacing: 12) {
                     MetricTile(
@@ -250,7 +333,7 @@ struct TradeDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Observational price change, not portfolio P&L. Options are excluded.")
+                Text("Observational price change for this politician’s trade, not portfolio P&L. Options are excluded.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else if performance?.isOption == true {
@@ -260,7 +343,7 @@ struct TradeDetailView: View {
             } else {
                 Text(
                     performanceFailed
-                        ? "Couldn’t load performance for this trade."
+                        ? "Couldn’t load performance for this trade (timed out or market data unavailable)."
                         : "Price & performance vs the S&P 500 will appear when market data is available for this ticker."
                 )
                 .font(.subheadline)
@@ -270,24 +353,46 @@ struct TradeDetailView: View {
     }
 
     private func loadPerformance() async {
+        performanceTask?.cancel()
         performanceLoaded = false
         performanceFailed = false
         performance = nil
-        do {
-            performance = try await store.api.tradePerformance(txId: trade.id)
-            performanceFailed = false
-        } catch {
-            performance = nil
-            performanceFailed = true
+        let txId = trade.id
+        let task = Task {
+            do {
+                // Bounded timeout avoids CSCO / thin-history hangs hanging the sheet.
+                let result = try await store.api.tradePerformance(txId: txId, timeout: 12)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    performance = result
+                    performanceFailed = false
+                    performanceLoaded = true
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                if let apiError = error as? APIError, apiError.isCancellation {
+                    await MainActor.run {
+                        performanceLoaded = true
+                        performanceFailed = false
+                    }
+                    return
+                }
+                await MainActor.run {
+                    performance = nil
+                    performanceFailed = true
+                    performanceLoaded = true
+                }
+            }
         }
-        performanceLoaded = true
+        performanceTask = task
+        await task.value
     }
 
     private static func formatSignedPct(_ value: Double?) -> String {
         guard let value else { return "—" }
         return String(format: "%+.1f%%", value * 100)
     }
-    
+
     private var chamberGradient: Color {
         let chamber = trade.member.chamber?.lowercased() ?? ""
         if chamber == "house" { return AppTheme.houseColor }

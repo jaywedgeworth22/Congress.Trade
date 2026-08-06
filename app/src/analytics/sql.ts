@@ -29,18 +29,19 @@ import type { SqlParam } from '../shared/db.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * A window is either 'all' or `<N>d` (N whole days, e.g. '90d'). The UI surfaces
- * the presets below, but any positive `<N>d` is valid — so callers can request a
- * custom age (e.g. ?window=45d) without enumerating it here.
+ * A window is either 'all', `<N>d` (N whole days, e.g. '90d'), or a calendar-year
+ * preset (`this_cy` / `last_cy`). Any positive `<N>d` is also valid.
  */
 export const WINDOW_PRESETS = SHARED_WINDOW_PRESETS;
-export type Window = string; // always produced via asWindow(): 'all' | `${number}d`
+export type Window = string; // always produced via asWindow()
 const WINDOW_RE = /^(\d{1,5})d$/;
 const MAX_WINDOW_DAYS = 36500; // ~100y guardrail against absurd inputs
+const CALENDAR_WINDOWS = new Set(['this_cy', 'last_cy']);
 
 export function isWindow(v: unknown): v is Window {
   if (v === 'all') return true;
   if (typeof v !== 'string') return false;
+  if (CALENDAR_WINDOWS.has(v)) return true;
   const m = WINDOW_RE.exec(v);
   if (!m) return false;
   const n = Number(m[1]);
@@ -53,6 +54,12 @@ export function asWindow(v: unknown, fallback: Window = '90d'): Window {
 /** Number of days a window spans, or null for 'all'. Defaults to 30 on garbage. */
 export function windowDays(w: Window): number | null {
   if (w === 'all') return null;
+  if (w === 'this_cy') {
+    const now = new Date();
+    const start = Date.UTC(now.getUTCFullYear(), 0, 1);
+    return Math.max(1, Math.ceil((Date.now() - start) / 86_400_000));
+  }
+  if (w === 'last_cy') return 365;
   const m = WINDOW_RE.exec(w);
   return m ? Number(m[1]) : 30;
 }
@@ -92,11 +99,12 @@ export function asChambers(v: unknown): Chamber[] | undefined {
 }
 
 /**
- * Map a window to the SQLite date modifier used in `date('now', ?)`. `all`
- * returns null (no date clause — the whole corpus). The returned strings are a
- * closed set, never user input.
+ * Map a window to the SQLite date modifier used in `date('now', ?)`. `all` and
+ * calendar-year presets return null (calendar years use absolute date bounds in
+ * buildCommonFilters). Returned offset strings are a closed set, never user input.
  */
 export function windowToOffset(w: Window): string | null {
+  if (w === 'all' || CALENDAR_WINDOWS.has(w)) return null;
   const d = windowDays(w);
   return d == null ? null : `-${d} days`;
 }
@@ -222,10 +230,20 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   // Retracted (un-published) rows never appear in any analytics aggregate.
   where.push('t.deprecated_at IS NULL');
 
-  const offset = windowToOffset(p.window ?? '30d');
-  if (offset) {
-    where.push("t.tx_date >= date('now', ?)");
-    params.push(offset);
+  const win = p.window ?? '30d';
+  if (win === 'this_cy') {
+    // Inclusive from Jan 1 of the current UTC calendar year.
+    where.push("t.tx_date >= date(strftime('%Y', 'now') || '-01-01')");
+  } else if (win === 'last_cy') {
+    // Full previous UTC calendar year [Jan 1, Jan 1 this year).
+    where.push("t.tx_date >= date(strftime('%Y', 'now') || '-01-01', '-1 year')");
+    where.push("t.tx_date < date(strftime('%Y', 'now') || '-01-01')");
+  } else {
+    const offset = windowToOffset(win);
+    if (offset) {
+      where.push("t.tx_date >= date('now', ?)");
+      params.push(offset);
+    }
   }
   if (p.chambers && p.chambers.length) {
     where.push(`${CHAMBER_EXPR} IN (${p.chambers.map(() => '?').join(', ')})`);

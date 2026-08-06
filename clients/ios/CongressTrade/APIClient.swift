@@ -253,13 +253,6 @@ final class CongressTradeAPIClient {
         try await analyticsGet("member-performance", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
-    /// Per-trade performance vs S&P (`GET /api/analytics/performance/:txId`).
-    /// Returns `{ available: false }` when prices are missing or the row is an option.
-    func tradePerformance(txId: String) async throws -> TradePerformanceResponse {
-        let encoded = txId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? txId
-        return try await analyticsGet("performance/\(encoded)")
-    }
-
     func marketCapBreakdown(window: String, party: String? = nil, chamber: String? = nil) async throws -> MarketCapResponse {
         try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
@@ -398,6 +391,75 @@ final class CongressTradeAPIClient {
                 "payload": ["id": id, "active": active]
             ]
         )
+    }
+
+    /// Hard-delete a delivery subscription (`delete_subscription` command).
+    func deleteSubscription(
+        id: String,
+        idempotencyKey: String
+    ) async throws -> ClientCommandResponse<DeleteSubscriptionResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "delete_subscription",
+                "payload": ["id": id]
+            ]
+        )
+    }
+
+    /// Premium CSV export (`GET /api/export/transactions.csv`). Accepts the
+    /// same filters as the live feed; requires a Premium bearer session.
+    func exportTransactionsCSV(
+        from: String? = nil,
+        to: String? = nil,
+        ticker: String? = nil,
+        memberName: String? = nil,
+        chamber: String? = nil,
+        type: String? = nil
+    ) async throws -> Data {
+        guard var components = URLComponents(
+            url: originURL.appendingPathComponent("api/export/transactions.csv"),
+            resolvingAgainstBaseURL: false
+        ) else { throw APIError.invalidResponse }
+        var items: [URLQueryItem] = []
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let ticker, !ticker.isEmpty { items.append(URLQueryItem(name: "ticker", value: ticker)) }
+        if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if !items.isEmpty { components.queryItems = items }
+        guard let url = components.url else { throw APIError.invalidResponse }
+        var request = try makeRequest(url)
+        // Export can be large; give it a longer budget than interactive GETs.
+        request.timeoutInterval = 60
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Export failed",
+                retryAfterSeconds: retryAfter
+            )
+        }
+        return data
+    }
+
+    /// Per-trade performance with an explicit timeout so slow tickers (e.g.
+    /// thin history) cannot hang the detail sheet indefinitely.
+    func tradePerformance(txId: String, timeout: TimeInterval = 12) async throws -> TradePerformanceResponse {
+        let encoded = txId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? txId
+        guard let components = URLComponents(
+            url: originURL.appendingPathComponent("api/analytics/performance/\(encoded)"),
+            resolvingAgainstBaseURL: false
+        ), let url = components.url else {
+            throw APIError.invalidResponse
+        }
+        var request = try makeRequest(url)
+        request.timeoutInterval = timeout
+        return try await send(request)
     }
 
     func logout() async throws {
@@ -556,10 +618,22 @@ enum APIError: LocalizedError {
         ].contains(error.code)
     }
 
+    /// True when the underlying URLSession task was cancelled (view dismiss,
+    /// Task cancel, or refresh superseded). Callers must not surface these as
+    /// feed/trends error banners.
+    var isCancellation: Bool {
+        if case .transport(let error) = self {
+            return error.code == .cancelled
+        }
+        return false
+    }
+
     /// Whether a retry is worth attempting: rate limiting (429), transient
     /// server failure (5xx), or a transport-level hiccup. Anything else
     /// (400/401/404/etc.) is a permanent rejection that retrying cannot fix.
+    /// Cancellation is never retryable.
     var isRetryable: Bool {
+        if isCancellation { return false }
         switch self {
         case .server(let status, _, _):
             return status == 429 || (500...599).contains(status)

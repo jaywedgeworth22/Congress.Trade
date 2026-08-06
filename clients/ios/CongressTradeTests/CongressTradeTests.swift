@@ -390,8 +390,9 @@ final class CongressTradeTests: XCTestCase {
     // MARK: - UX wave2: type filter + trade performance
 
     func testFeedQueryEmitsTypeForBuySellFilter() {
+        // Storage/API canonical buy is B (legacy P still accepted by matchers).
         let buy = FeedQuery(limit: 50, type: TradeTypeFilter.buy.queryValue)
-        XCTAssertEqual(buy.queryItems.first(where: { $0.name == "type" })?.value, "P")
+        XCTAssertEqual(buy.queryItems.first(where: { $0.name == "type" })?.value, "B")
         let sell = FeedQuery(limit: 50, type: TradeTypeFilter.sell.queryValue)
         XCTAssertEqual(sell.queryItems.first(where: { $0.name == "type" })?.value, "S")
         let all = FeedQuery(limit: 50, type: TradeTypeFilter.all.queryValue)
@@ -400,11 +401,40 @@ final class CongressTradeTests: XCTestCase {
 
     func testTradeTypeFilterMatchesLocalCacheSides() {
         XCTAssertTrue(TradeTypeFilter.all.matches(txType: "P"))
+        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "B"))
         XCTAssertTrue(TradeTypeFilter.all.matches(txType: "S"))
         XCTAssertTrue(TradeTypeFilter.buy.matches(txType: "P"))
+        XCTAssertTrue(TradeTypeFilter.buy.matches(txType: "B"))
         XCTAssertFalse(TradeTypeFilter.buy.matches(txType: "S"))
         XCTAssertTrue(TradeTypeFilter.sell.matches(txType: "S"))
         XCTAssertFalse(TradeTypeFilter.sell.matches(txType: "E"))
+    }
+
+    func testTimeRangeCalendarYearBounds() {
+        let thisYear = TimeRange.thisCalendarYear
+        let lastYear = TimeRange.lastCalendarYear
+        let fromThis = thisYear.fromDateISO
+        let fromLast = lastYear.fromDateISO
+        let toLast = lastYear.toDateISO
+        XCTAssertNotNil(fromThis)
+        XCTAssertNotNil(fromLast)
+        XCTAssertNotNil(toLast)
+        XCTAssertTrue(fromThis!.hasSuffix("-01-01"))
+        XCTAssertTrue(fromLast!.hasSuffix("-01-01"))
+        XCTAssertTrue(toLast!.hasSuffix("-12-31"))
+        XCTAssertNil(thisYear.toDateISO)
+        XCTAssertEqual(TimeRange.all.fromDateISO, nil)
+        XCTAssertEqual(thisYear.label, "This calendar year")
+        XCTAssertEqual(lastYear.label, "Last calendar year")
+    }
+
+    func testAPIErrorCancellationIsNotRetryable() {
+        let cancelled = APIError.transport(URLError(.cancelled))
+        XCTAssertTrue(cancelled.isCancellation)
+        XCTAssertFalse(cancelled.isRetryable)
+        let offline = APIError.transport(URLError(.notConnectedToInternet))
+        XCTAssertFalse(offline.isCancellation)
+        XCTAssertTrue(offline.isOffline)
     }
 
     func testTradePerformanceResponseDecodesAvailableAndEmpty() throws {
@@ -433,8 +463,8 @@ final class CongressTradeTests: XCTestCase {
         """
         let available = try JSONDecoder().decode(TradePerformanceResponse.self, from: Data(availableJSON.utf8))
         XCTAssertTrue(available.available)
-        XCTAssertEqual(available.excessReturn, 0.05, accuracy: 0.0001)
-        XCTAssertEqual(available.tradeLeg?.assetReturn, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(available.excessReturn), 0.05, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(available.tradeLeg?.assetReturn), 0.1, accuracy: 0.0001)
         XCTAssertNotNil(available.filingDatePerformance)
 
         let empty = try JSONDecoder().decode(
@@ -474,9 +504,59 @@ final class CongressTradeTests: XCTestCase {
         await store.setTradeType(.buy)
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
-        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "P")
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
         // Free-text search still uses memberName when set later; type alone must not emit member=.
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
+    }
+
+    @MainActor
+    func testCancelledFeedRefreshDoesNotSetFeedNotice() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        MockURLProtocol.handler = { request in
+            throw URLError(.cancelled)
+        }
+        await store.refresh()
+        XCTAssertNil(store.feedNotice)
+        XCTAssertFalse(store.isOffline)
+    }
+
+    @MainActor
+    func testDeleteSubscriptionCommandPayload() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-1")
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["type"] as? String, "delete_subscription")
+            let payload = try XCTUnwrap(json["payload"] as? [String: Any])
+            XCTAssertEqual(payload["id"] as? String, "sub_gone")
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "command": {
+                    "id": "cmd_del", "userId": "user_1", "type": "delete_subscription",
+                    "status": "succeeded", "idempotencyKey": "del-1", "error": null,
+                    "createdAt": "2026-07-11T00:00:00Z", "updatedAt": "2026-07-11T00:00:00Z",
+                    "startedAt": "2026-07-11T00:00:00Z", "finishedAt": "2026-07-11T00:00:01Z"
+                  },
+                  "result": { "deleted": true, "id": "sub_gone" }
+                }
+                """
+            )
+        }
+        let result = try await client.deleteSubscription(id: "sub_gone", idempotencyKey: "del-1")
+        XCTAssertEqual(result.result?.deleted, true)
+        XCTAssertEqual(result.result?.id, "sub_gone")
     }
 
     @MainActor

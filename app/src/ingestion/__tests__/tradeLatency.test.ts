@@ -22,6 +22,11 @@ import {
   getDisclosureLatencyProviderStatuses,
   listFmpLatencyPathRegistry,
   runDisclosureLatencyProbe,
+  earliestIso,
+  effectiveRaceProviderTime,
+  mergeFmpFamilyCandidateRows,
+  mergeFmpFamilyObservationRows,
+  mergeFmpOperationalStatus,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -375,6 +380,112 @@ describe('tradeLatency', () => {
       expect(fetchCount).toBe(0);
       expect(result.providers.every((p) => p.operationalStatus === 'off')).toBe(true);
       expect(result.fetchedRows).toBe(0);
+    });
+  });
+
+  describe('public scoreboard FMP merge + effective timing', () => {
+    it('earliestIso picks the minimum parseable stamp', () => {
+      expect(earliestIso('2026-08-05T12:00:00.000Z', '2026-08-05T11:00:00.000Z', null)).toBe(
+        '2026-08-05T11:00:00.000Z',
+      );
+      expect(earliestIso(null, undefined, '')).toBeNull();
+    });
+
+    it('effectiveRaceProviderTime falls back to first_seen for provider-kind feeds', () => {
+      expect(
+        effectiveRaceProviderTime('provider', {
+          provider_published_at: null,
+          provider_first_seen_at: '2026-08-05T10:00:00.000Z',
+        }),
+      ).toBe('2026-08-05T10:00:00.000Z');
+      expect(
+        effectiveRaceProviderTime('provider', {
+          provider_published_at: '2026-08-05T09:00:00.000Z',
+          provider_first_seen_at: '2026-08-05T10:00:00.000Z',
+        }),
+      ).toBe('2026-08-05T09:00:00.000Z');
+      expect(
+        effectiveRaceProviderTime('monitor', {
+          provider_published_at: '2026-08-05T09:00:00.000Z',
+          provider_first_seen_at: '2026-08-05T10:00:00.000Z',
+        }),
+      ).toBe('2026-08-05T10:00:00.000Z');
+    });
+
+    it('mergeFmpFamilyCandidateRows collapses dual paths by trade_hash with earliest stamp', () => {
+      const merged = mergeFmpFamilyCandidateRows([
+        {
+          provider: 'fmp',
+          trade_hash: 't1',
+          status: 'matched',
+          chamber: 'house',
+          provider_key: 'a',
+          match_method: 'trade-hash',
+          congress_first_seen_at: '2026-08-05T10:00:00.000Z',
+          provider_first_seen_at: '2026-08-05T10:05:00.000Z',
+          provider_published_at: null,
+          filed_date: '2026-08-05',
+          created_at: '2026-08-05T10:00:00.000Z',
+          updated_at: '2026-08-05T10:05:00.000Z',
+        },
+        {
+          provider: 'fmp_rapidapi',
+          trade_hash: 't1',
+          status: 'matched',
+          chamber: 'house',
+          provider_key: 'b',
+          match_method: 'trade-hash',
+          congress_first_seen_at: '2026-08-05T10:00:00.000Z',
+          provider_first_seen_at: '2026-08-05T10:02:00.000Z',
+          provider_published_at: null,
+          filed_date: '2026-08-05',
+          created_at: '2026-08-05T10:00:00.000Z',
+          updated_at: '2026-08-05T10:02:00.000Z',
+        },
+      ]);
+      expect(merged).toHaveLength(1);
+      expect(merged[0]!.provider).toBe('fmp');
+      expect(merged[0]!.provider_first_seen_at).toBe('2026-08-05T10:02:00.000Z');
+    });
+
+    it('mergeFmpFamilyObservationRows dedupes by trade_hash', () => {
+      const merged = mergeFmpFamilyObservationRows([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: 'a',
+          trade_hash: 't1',
+          first_observed_at: '2026-08-05T10:05:00.000Z',
+          last_observed_at: '2026-08-05T10:05:00.000Z',
+          provider_published_at: null,
+          source_url: null,
+          filed_date: null,
+          filer_name: null,
+          payload: null,
+        },
+        {
+          provider: 'fmp_rapidapi',
+          chamber: 'house',
+          provider_key: 'b',
+          trade_hash: 't1',
+          first_observed_at: '2026-08-05T10:01:00.000Z',
+          last_observed_at: '2026-08-05T10:01:00.000Z',
+          provider_published_at: null,
+          source_url: null,
+          filed_date: null,
+          filer_name: null,
+          payload: null,
+        },
+      ]);
+      expect(merged).toHaveLength(1);
+      expect(merged[0]!.first_observed_at).toBe('2026-08-05T10:01:00.000Z');
+      expect(merged[0]!.provider).toBe('fmp');
+    });
+
+    it('mergeFmpOperationalStatus prefers running over stopped/off', () => {
+      expect(mergeFmpOperationalStatus(['off', 'running'])).toBe('running');
+      expect(mergeFmpOperationalStatus(['stopped', 'off'])).toBe('stopped');
+      expect(mergeFmpOperationalStatus(['off', 'off'])).toBe('off');
     });
   });
 });

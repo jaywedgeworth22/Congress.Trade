@@ -854,6 +854,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .party-chip.on { background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:var(--accent); color:var(--text); }
   .party-chip.on[data-party="D"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
   .party-chip.on[data-party="R"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
+  .side-chips { display:flex; gap:4px; align-items:center; }
+  .side-chip { padding:3px 9px; border-radius:6px; border:1px solid var(--border); background:transparent; cursor:pointer; font-size:12px; line-height:1; color:var(--text-dim); }
+  .side-chip .side-up { color:var(--buy); font-size:11px; }
+  .side-chip .side-dn { color:var(--sell); font-size:11px; }
+  .side-chip.on { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent); }
+  .side-chip.on[data-side="B"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
+  .side-chip.on[data-side="S"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
+  .shared-filters { margin-bottom:10px; }
+  .trades-only-filters { margin-bottom:14px; }
+  #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
+  #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
+  #exportCsvDialog .lbl { display:inline-block; margin:8px 8px 4px 0; }
+  #exportCsvDialog input[type=date] { margin-right:10px; }
   
   @keyframes slideUpFade {
     from { opacity: 0; transform: translateY(10px); }
@@ -1642,13 +1655,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
-    <div class="toolbar">
-      <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
-      <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
-      <input id="qMinAmt" type="number" min="0" placeholder="Min $" aria-label="Filter by minimum amount" oninput="handleFeedTextFilter()" style="width:90px" />
-      <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="B">Buy</option>
-        <option value="S">Sell</option><option value="E">Exchange</option>
+    <!-- Shared filter row (mirrored on Trends) -->
+    <div class="toolbar shared-filters" id="feedSharedFilters">
+      <select id="feedGlobalWindow" class="tr-window-select shared-window" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
+        <option value="1d">Past Day</option>
+        <option value="7d">Past Week</option>
+        <option value="30d">Past Month</option>
+        <option value="90d" selected>Past 3 Months</option>
+        <option value="180d">Past 6 Months</option>
+        <option value="365d">Past Year</option>
+        <option value="1825d">Past 5 Years</option>
+        <option value="this_cy">This calendar year</option>
+        <option value="last_cy">Last calendar year</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
         <div class="branch-seg">
@@ -1664,21 +1682,57 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div class="branch-pop-note">Tap a letter to include or exclude that branch.</div>
         </div>
       </div>
-<div id="feedStats" class="feed-stats muted">
+      <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
+        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
+        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
+        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+      </div>
+      <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by side">
+        <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
+        <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
+      </div>
+      <select id="qMinAmt" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();" style="width:auto;min-width:7.5rem">
+        <option value="">Any $</option>
+        <option value="1001">$1,001+</option>
+        <option value="15001">$15,001+</option>
+        <option value="50001">$50,001+</option>
+        <option value="100001">$100,001+</option>
+        <option value="250001">$250,001+</option>
+        <option value="500001">$500,001+</option>
+        <option value="1000001">$1,000,001+</option>
+        <option value="5000001">$5,000,001+</option>
+        <option value="25000001">$25,000,001+</option>
+        <option value="50000001">$50,000,001+</option>
+      </select>
+      <button class="btn ghost sm" id="exportCsvBtn" onclick="openExportCsvDialog()" title="Export CSV (Premium)">⤓ CSV <span class="premium-mark" title="Premium">Pro</span></button>
+    </div>
+    <!-- Trades-only extras -->
+    <div class="toolbar trades-only-filters" id="feedExtraFilters">
+      <input id="qMember" placeholder="Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
+      <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
+      <select id="qType" onchange="resetFeedPage()">
+        <option value="">All Types</option><option value="B">Buy</option>
+        <option value="S">Sell</option><option value="E">Exchange</option>
+      </select>
+      <div id="feedStats" class="feed-stats muted">
         <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
       </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
       <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
-      <label class="lbl" for="qFrom">From</label>
-      <input id="qFrom" type="date" aria-label="Trade date from" onchange="resetFeedPage()" />
-      <label class="lbl" for="qTo">To</label>
-      <input id="qTo" type="date" aria-label="Trade date to" onchange="resetFeedPage()" />
-      <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV (Premium)">⤓ Export CSV <span class="premium-mark" title="Premium">Pro</span></button>
       <label class="lbl" for="pageSize">Rows</label>
       <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
         <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
       </select>
     </div>
+    <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
+      <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
+      <p class="note" style="margin:0 0 10px">Optional date range (trade date). Full-history export is Premium.</p>
+      <label class="lbl" for="qFrom">From</label>
+      <input id="qFrom" type="date" aria-label="Trade date from" />
+      <label class="lbl" for="qTo">To</label>
+      <input id="qTo" type="date" aria-label="Trade date to" />
+      <button class="btn sm" type="button" onclick="exportCsv()">Download CSV</button>
+    </dialog>
     <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
          is hidden below the 768px breakpoint along with .table-wrap, so this is
          the only sort affordance on phones. Shares sortKey/sortDir + the
@@ -1699,7 +1753,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="lbl">Search this page</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $ (this page)</span>
-      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
+      <input id="qPageMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
       <span class="lbl">Max $ (this page)</span>
       <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
@@ -1729,46 +1783,61 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
-    <div class="toolbar">
-      <div class="time-filter-wrap" style="display:inline-flex;align-items:center;gap:6px;">
-        <select id="trGlobalWindow" class="tr-window-select" title="Time window" aria-label="Time window">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-        </select>
-      </div>
-      <div class="trends-filter-row">
-        <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" title="Senate trades — Senate eFD PTR filings">S</button>
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
-          </div>
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
-          <div class="branch-pop" id="trChamberInfo" role="note" hidden>
-            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-note">No selection = all branches. Tap a letter to filter to that branch.</div>
-          </div>
+    <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
+      <select id="trGlobalWindow" class="tr-window-select shared-window" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
+        <option value="1d">Past Day</option>
+        <option value="7d">Past Week</option>
+        <option value="30d">Past Month</option>
+        <option value="90d" selected>Past 3 Months</option>
+        <option value="180d">Past 6 Months</option>
+        <option value="365d">Past Year</option>
+        <option value="1825d">Past 5 Years</option>
+        <option value="this_cy">This calendar year</option>
+        <option value="last_cy">Last calendar year</option>
+      </select>
+      <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
+        <div class="branch-seg">
+          <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" title="House trades — House Clerk PTR filings">H</button>
+          <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" title="Senate trades — Senate eFD PTR filings">S</button>
+          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
         </div>
-        <div class="party-chips" id="trPartyGroup" style="position:relative;">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span> Dem</button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span> Rep</button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span> Other</button>
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
-          <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
-            <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (Independent, etc.)</span></div>
-            <div class="branch-pop-note">No selection = all parties. Tap an emoji to filter.</div>
-          </div>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
+        <div class="branch-pop" id="trChamberInfo" role="note" hidden>
+          <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
+          <div class="branch-pop-note">No selection = all branches. Tap a letter to filter to that branch.</div>
         </div>
       </div>
+      <div class="party-chips" id="trPartyGroup" style="position:relative;">
+        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
+        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
+        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
+        <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
+          <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (Independent, etc.)</span></div>
+          <div class="branch-pop-note">No selection = all parties. Tap an emoji to filter.</div>
+        </div>
+      </div>
+      <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by side">
+        <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
+        <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
+      </div>
+      <select id="trMinAmt" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)" style="width:auto;min-width:7.5rem">
+        <option value="">Any $</option>
+        <option value="1001">$1,001+</option>
+        <option value="15001">$15,001+</option>
+        <option value="50001">$50,001+</option>
+        <option value="100001">$100,001+</option>
+        <option value="250001">$250,001+</option>
+        <option value="500001">$500,001+</option>
+        <option value="1000001">$1,000,001+</option>
+        <option value="5000001">$5,000,001+</option>
+        <option value="25000001">$25,000,001+</option>
+        <option value="50000001">$50,000,001+</option>
+      </select>
     </div>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
@@ -3319,9 +3388,9 @@ function renderFeed() {
     return chs.indexOf(r.chamber) >= 0;
   }
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
-  var qa = (el('qAll').value || '').toLowerCase().trim();
-  var minAmt = parseFloat(el('qMinAmt').value);
-  var maxAmt = parseFloat(el('qMaxAmt').value);
+  var qa = (el('qAll') && el('qAll').value || '').toLowerCase().trim();
+  var minAmt = parseFloat(el('qPageMinAmt') && el('qPageMinAmt').value);
+  var maxAmt = parseFloat(el('qMaxAmt') && el('qMaxAmt').value);
   var body = el('feedBody');
   var cards = el('feedCards');
   var cols = visibleCols();
@@ -3591,7 +3660,9 @@ function toggleSearch() {
   if (open) setTimeout(function () { el('qAll').focus(); }, 0);
 }
 function clearSearch() {
-  el('qAll').value = ''; el('qMinAmt').value = ''; el('qMaxAmt').value = '';
+  if (el('qAll')) el('qAll').value = '';
+  if (el('qPageMinAmt')) el('qPageMinAmt').value = '';
+  if (el('qMaxAmt')) el('qMaxAmt').value = '';
   renderFeed();
 }
 
@@ -3708,12 +3779,37 @@ function feedQueryParams() {
   p.set('order', apiOrder);
   p.set('limit', String(feedPageSize));
   p.set('offset', String(feedPage * feedPageSize));
-  var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
-  var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
-  var ty = el('qType').value; if (ty) p.set('type', ty);
+  var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
+  var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
+  var ty = el('qType') && el('qType').value;
+  // Side chips override type select when exactly one side is pressed.
+  var sideSel = selectedSideParam('qSideGroup');
+  if (sideSel) ty = sideSel;
+  if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var amt = el('qMinAmt').value.trim(); if (amt) p.set('minAmount', amt);
+  var amtEl = el('qMinAmt');
+  var amt = amtEl ? String(amtEl.value || '').trim() : '';
+  if (amt) p.set('minAmount', amt);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
+  // Shared timeframe → from/to when calendar year (export dialog dates win if set)
+  var winEl = el('feedGlobalWindow') || el('trGlobalWindow');
+  var win = winEl && winEl.value;
+  if (!from && win === 'this_cy') p.set('from', new Date().getUTCFullYear() + '-01-01');
+  if (!from && win === 'last_cy') {
+    var y0 = new Date().getUTCFullYear() - 1;
+    p.set('from', y0 + '-01-01');
+    var toEl2 = el('qTo');
+    if (!(toEl2 && toEl2.value)) p.set('to', y0 + '-12-31');
+  }
+  // Rolling windows: approximate via from for feed (tx_date)
+  if (!from && win && /^\\d+d$/.test(win)) {
+    var days = parseInt(win, 10);
+    if (days > 0 && days < 40000) {
+      var d = new Date();
+      d.setUTCDate(d.getUTCDate() - days);
+      p.set('from', d.toISOString().slice(0, 10));
+    }
+  }
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   return p;
 }
@@ -7339,7 +7435,7 @@ function trParams() {
   }
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All' };
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This calendar year', 'last_cy': 'Last calendar year', 'all': 'All' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Section headers display the
@@ -7737,22 +7833,27 @@ function spCardHtml(p) {
       '<div class="sp-gathering">Intentionally disabled (no API spend). Enable with <code>FMP_LATENCY_PROBE_ENABLED=true</code>.</div>' +
       '</div>';
   }
-  var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED;
+  var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
+  /* Real timing sample: matched races AND non-null average lead (empty W/L/T is not a tie). */
+  var deltaSample = wins + losses + ties;
+  var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
+  var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED && deltaSample > 0 && hasLead;
   var usable = p.comparisonStatus === 'usable';
   var preliminary = p.comparisonStatus === 'preliminary';
-  /* Show timing for usable OR preliminary (soft claim with clear badge). */
+  /* Show timing for usable OR preliminary only when a real delta sample exists. */
   var hasStats = hasTiming && (usable || preliminary);
-  var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0;
   var ahead = hasStats && wins > losses;
-  var tied = hasStats && !ahead && wins === losses;
+  /* Tie only when we actually observed equal wins/losses with n>=min — never 0-0. */
+  var tied = hasStats && wins === losses && deltaSample > 0;
   var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : tied ? ' sp-tied' : ' sp-behind') : '');
 
   /* Header: provider name + outcome badge */
   var badgeCls, badgeTxt;
   if (!hasStats && !hasTiming) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
-  } else if (preliminary) {
-    badgeCls = 'sp-badge gathering'; badgeTxt = ahead ? 'Preliminary lead' : (tied ? 'Preliminary tie' : 'Preliminary');
+  } else if (preliminary && hasStats) {
+    badgeCls = 'sp-badge gathering';
+    badgeTxt = ahead ? 'Preliminary lead' : (tied ? 'Preliminary tie' : (wins < losses ? 'Preliminary behind' : 'Preliminary'));
   } else if (!usable) {
     badgeCls = 'sp-badge gathering'; badgeTxt = p.comparisonStatus === 'limited' ? 'Coverage limited' : 'Insufficient coverage';
   } else if (ahead) {
@@ -7768,22 +7869,24 @@ function spCardHtml(p) {
   /* Win-rate bar */
   var barHtml = '';
   if (hasStats && p.matched > 0) {
-    var winPct = Math.round(100 * (p.usFirstCount || 0) / p.matched);
+    var winPct = Math.round(100 * wins / p.matched);
     var fillCls = ahead ? 'sp-bar-fill' : tied ? 'sp-bar-fill tied' : 'sp-bar-fill behind';
     barHtml = '<div class="sp-bar-wrap">' +
-      '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + p.usFirstCount + '/' + p.matched + ')</span></div>' +
+      '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + wins + '/' + p.matched + ')</span></div>' +
       '<div class="sp-bar-track"><div class="' + fillCls + '" style="width:' + winPct + '%"></div></div>' +
       '</div>';
   }
 
-  /* Lead stat */
+  /* Lead stat — prefer average (matches human mean lead/lag), show median secondary. */
   var leadHtml = '';
   if (!hasTiming) {
-    var need = SPEED_LANE_MIN_MATCHED - p.matched;
+    var need = Math.max(0, SPEED_LANE_MIN_MATCHED - (p.matched || 0));
     leadHtml = '<div class="sp-gathering">' +
-      (p.matched > 0
-        ? "We've timed <strong>" + p.matched + "</strong> live matched races so far — " + need + " more needed for timing estimates."
-        : "Probes haven't matched live new imports yet (seed/historical backfills are excluded). Sample builds as filings land.") +
+      (p.matched > 0 && !hasLead
+        ? "We've matched <strong>" + p.matched + "</strong> live races but have no usable first-seen timestamps yet for lead/lag."
+        : p.matched > 0
+          ? "We've timed <strong>" + p.matched + "</strong> live matched races so far — " + need + " more needed for timing estimates."
+          : "Probes haven't matched live new imports yet (seed/historical backfills are excluded). Sample builds as filings land.") +
       (p.unmatchedProvider > 0 ? " <strong>" + p.unmatchedProvider + "</strong> provider-observed rows are not matched to our feed yet." : '') +
       '</div>';
   } else if (!hasStats && !usable) {
@@ -7792,17 +7895,20 @@ function spCardHtml(p) {
       (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
       '</div>';
   } else {
-    var med = p.medianLeadSec || 0;
-    var isPos = med > 0;
-    var numCls = 'sp-lead-num' + (isPos ? '' : (med < 0 ? ' negative' : ' neutral'));
+    var avg = p.avgLeadSec != null ? p.avgLeadSec : (p.medianLeadSec || 0);
+    var isPos = avg > 0;
+    var numCls = 'sp-lead-num' + (isPos ? '' : (avg < 0 ? ' negative' : ' neutral'));
     var sign = isPos ? '+' : '';
+    var medTxt = p.medianLeadSec != null && p.medianLeadSec !== p.avgLeadSec
+      ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">Median: ' + fmtLead(p.medianLeadSec) + '</div>'
+      : '';
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
     var labelNote = preliminary
-      ? 'preliminary median lead on live imports (coverage still building)'
-      : 'median lead on live imports vs. their feed';
+      ? 'preliminary avg lead on live imports (coverage still building)'
+      : 'average lead on live imports vs. their feed';
     leadHtml = '<div class="sp-lead">' +
-      '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
-      '<div class="sp-lead-label">' + labelNote + p90Txt + '</div>' +
+      '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(avg)) + '</div>' +
+      '<div class="sp-lead-label">' + labelNote + medTxt + p90Txt + '</div>' +
       '</div>';
   }
 
@@ -7810,9 +7916,9 @@ function spCardHtml(p) {
   var wlt = '';
   if (hasStats) {
     wlt = '<div class="sp-wlt">' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val w">' + (p.usFirstCount || 0) + '</span><span class="sp-wlt-key">Wins</span></div>' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + (p.providerFirstCount || 0) + '</span><span class="sp-wlt-key">Losses</span></div>' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + (p.tieCount || 0) + '</span><span class="sp-wlt-key">Ties</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val w">' + wins + '</span><span class="sp-wlt-key">Wins</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + losses + '</span><span class="sp-wlt-key">Losses</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + ties + '</span><span class="sp-wlt-key">Ties</span></div>' +
       '</div>';
   } else if (p.matched > 0 || p.strongMatched > 0 || p.providerObserved > 0) {
     wlt = '<div class="sp-sample">n = ' + p.matched + ' live matched · ' +
@@ -9071,6 +9177,39 @@ function manageBilling() {
     .catch(function () { showToast('Network error — try again.', true); });
 }
 
+/* ---- Shared filter sync (Trades ↔ Trends) ---- */
+function onSharedWindowChange(src) {
+  var v = src && src.value ? src.value : '90d';
+  document.querySelectorAll('select.shared-window').forEach(function (sel) {
+    if (sel !== src && sel.value !== v) sel.value = v;
+  });
+  if (typeof updateTrWindowLabels === 'function') updateTrWindowLabels();
+  if (typeof loadTrends === 'function') loadTrends();
+  if (typeof resetFeedPage === 'function') resetFeedPage();
+}
+function onSharedMinAmtChange(src) {
+  var v = src && src.value != null ? src.value : '';
+  ['qMinAmt', 'trMinAmt'].forEach(function (id) {
+    var n = el(id);
+    if (n && n !== src) n.value = v;
+  });
+  if (typeof loadTrends === 'function') loadTrends();
+}
+function openExportCsvDialog() {
+  if (!ME.user) {
+    openLogin();
+    showToast('Sign in to export CSV — Premium required for full-history downloads.');
+    return;
+  }
+  if (!isPremium()) {
+    openPricing('export');
+    return;
+  }
+  var d = el('exportCsvDialog');
+  if (d && d.showModal) d.showModal();
+  else exportCsv();
+}
+
 /* ---- CSV export (Premium; same filters as the live feed toolbar) ---- */
 function exportCsv() {
   if (!ME.user) {
@@ -9083,13 +9222,25 @@ function exportCsv() {
     return;
   }
   var p = new URLSearchParams();
-  var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
-  var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
-  var ty = el('qType').value; if (ty) p.set('type', ty);
+  var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
+  var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
+  var ty = el('qType') && el('qType').value; if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var minAmt = el('qMinAmt') && el('qMinAmt').value; if (minAmt) p.set('minAmount', minAmt);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
+  // Map shared timeframe into from when calendar year selected and no explicit from
+  var win = (el('feedGlobalWindow') || el('trGlobalWindow') || {}).value;
+  if (!from && win === 'this_cy') {
+    p.set('from', new Date().getUTCFullYear() + '-01-01');
+  } else if (!from && win === 'last_cy') {
+    var y = new Date().getUTCFullYear() - 1;
+    p.set('from', y + '-01-01');
+    if (!to) p.set('to', y + '-12-31');
+  }
   var qs = p.toString();
+  var dlg = el('exportCsvDialog');
+  if (dlg && dlg.open) dlg.close();
   // Cookie session is sent automatically with same-origin navigation.
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
@@ -9349,33 +9500,91 @@ initBranchInfo('qChamber');
 initBranchInfo('trChamber');
 initBranchInfo('trPartyGroup');
 
+function selectedSideParam(groupId) {
+  var g = el(groupId); if (!g) return '';
+  var on = [];
+  g.querySelectorAll('.side-chip.on').forEach(function (b) { on.push(b.getAttribute('data-side')); });
+  if (on.length === 1) return on[0];
+  return '';
+}
+function applyPartySelection(parties) {
+  ['qPartyGroup', 'trPartyGroup'].forEach(function (id) {
+    var g = el(id); if (!g) return;
+    g.querySelectorAll('.party-chip').forEach(function (b) {
+      var on = parties.indexOf(b.getAttribute('data-party')) !== -1;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  });
+}
+function applySideSelection(sides) {
+  ['qSideGroup', 'trSideGroup'].forEach(function (id) {
+    var g = el(id); if (!g) return;
+    g.querySelectorAll('.side-chip').forEach(function (b) {
+      var on = sides.indexOf(b.getAttribute('data-side')) !== -1;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  });
+}
 function initPartyChips() {
-  var g = el('trPartyGroup'); if (!g) return;
-  var KEY = 'trends-parties-v1';
+  var KEY = 'shared-parties-v1';
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (Array.isArray(saved)) {
-      g.querySelectorAll('.party-chip').forEach(function (b) {
-        var on = saved.indexOf(b.getAttribute('data-party')) !== -1;
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-pressed', on ? 'true' : 'false');
-      });
-    }
-  } catch (_e) { /* ignore bad storage */ }
-  g.addEventListener('click', function (e) {
+    if (Array.isArray(saved)) applyPartySelection(saved);
+  } catch (_e) { /* ignore */ }
+  function onPartyClick(e) {
     var b = e.target.closest ? e.target.closest('.party-chip') : null;
     if (!b) return;
     b.classList.toggle('on');
     b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false');
-    try {
-      var on = [];
+    var on = [];
+    (b.parentElement || b).querySelectorAll('.party-chip.on').forEach(function (c) {
+      on.push(c.getAttribute('data-party'));
+    });
+    // Prefer reading from the group that was clicked
+    var g = b.closest('.party-chips');
+    if (g) {
+      on = [];
       g.querySelectorAll('.party-chip.on').forEach(function (c) { on.push(c.getAttribute('data-party')); });
-      localStorage.setItem(KEY, JSON.stringify(on));
-    } catch (_e) { /* storage may be unavailable */ }
-    loadTrends();
+    }
+    applyPartySelection(on);
+    try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    if (typeof loadTrends === 'function') loadTrends();
+    if (typeof resetFeedPage === 'function') resetFeedPage();
+  }
+  ['qPartyGroup', 'trPartyGroup'].forEach(function (id) {
+    var g = el(id); if (g) g.addEventListener('click', onPartyClick);
+  });
+}
+function initSideChips() {
+  var KEY = 'shared-sides-v1';
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (Array.isArray(saved)) applySideSelection(saved);
+  } catch (_e) { /* */ }
+  function onSideClick(e) {
+    var b = e.target.closest ? e.target.closest('.side-chip') : null;
+    if (!b) return;
+    b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false');
+    var g = b.closest('.side-chips');
+    var on = [];
+    if (g) g.querySelectorAll('.side-chip.on').forEach(function (c) { on.push(c.getAttribute('data-side')); });
+    applySideSelection(on);
+    try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    // Mirror into type select when single side
+    var ty = el('qType');
+    if (ty) ty.value = on.length === 1 ? on[0] : '';
+    if (typeof loadTrends === 'function') loadTrends();
+    if (typeof resetFeedPage === 'function') resetFeedPage();
+  }
+  ['qSideGroup', 'trSideGroup'].forEach(function (id) {
+    var g = el(id); if (g) g.addEventListener('click', onSideClick);
   });
 }
 initPartyChips();
+initSideChips();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();

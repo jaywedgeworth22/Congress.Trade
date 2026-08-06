@@ -174,9 +174,15 @@ struct DeliveryView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(store.subscriptions) { subscription in
-                            SubscriptionRow(subscription: subscription) {
-                                Task { await store.toggleSubscription(subscription) }
-                            }
+                            SubscriptionRow(
+                                subscription: subscription,
+                                onToggle: {
+                                    Task { await store.toggleSubscription(subscription) }
+                                },
+                                onDelete: {
+                                    Task { await store.deleteSubscription(subscription) }
+                                }
+                            )
                             .disabled(store.subscriptionIDsInFlight.contains(subscription.id))
                         }
                     }
@@ -270,6 +276,8 @@ struct DeliveryView: View {
 struct SubscriptionRow: View {
     let subscription: Subscription
     let onToggle: () -> Void
+    var onDelete: (() -> Void)? = nil
+    @State private var confirmDelete = false
 
     var body: some View {
         HStack(alignment: .center) {
@@ -285,10 +293,35 @@ struct SubscriptionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(subscription.active ? "Pause" : "Resume", action: onToggle)
-                .buttonStyle(.bordered)
-                .tint(subscription.active ? .orange : .green)
-                .clipShape(Capsule())
+            HStack(spacing: 8) {
+                Button(subscription.active ? "Pause" : "Resume", action: onToggle)
+                    .buttonStyle(.bordered)
+                    .tint(subscription.active ? .orange : .green)
+                    .clipShape(Capsule())
+                if let onDelete {
+                    Button {
+                        if confirmDelete {
+                            onDelete()
+                            confirmDelete = false
+                        } else {
+                            withAnimation { confirmDelete = true }
+                            // Auto-reset confirm after a few seconds so a
+                            // stray tap doesn't permanently arm delete.
+                            Task {
+                                try? await Task.sleep(for: .seconds(4))
+                                if confirmDelete { confirmDelete = false }
+                            }
+                        }
+                    } label: {
+                        Text(confirmDelete ? "Confirm?" : "Delete")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .clipShape(Capsule())
+                    .accessibilityLabel(confirmDelete ? "Confirm delete delivery" : "Delete delivery")
+                }
+            }
         }
         .padding(.vertical, 4)
     }
