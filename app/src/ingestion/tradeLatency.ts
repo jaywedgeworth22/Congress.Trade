@@ -89,8 +89,20 @@ type EnvWithWatch = Env & {
   FMP_RAPIDAPI_BASE_URL?: string;
   /** RapidAPI host header (default financial-modeling-prep.p.rapidapi.com). */
   FMP_RAPIDAPI_HOST?: string;
-  /** Optional dedicated RapidAPI key; falls back to FMP_LATENCY_* keys. */
+  /**
+   * Optional dedicated RapidAPI key for FMP path. Preferred over shared
+   * RAPIDAPI_KEY. Never falls back to free-tier FMP_LATENCY_* (those are
+   * native FMP query keys; RapidAPI marketplace needs a RapidAPI key).
+   */
   FMP_RAPIDAPI_KEY?: string;
+  /**
+   * Shared RapidAPI marketplace key (Socratic.Trade convention). One account
+   * key for all RapidAPI-hosted products; CT uses it only for FMP latency /
+   * scout when FMP_RAPIDAPI_KEY is unset.
+   */
+  RAPIDAPI_KEY?: string;
+  /** Daily HTTP call budget for FMP-via-RapidAPI path (default 500). */
+  FMP_RAPIDAPI_DAILY_CAP?: string;
 };
 
 interface CandidateRow {
@@ -384,8 +396,12 @@ export const DISCLOSURE_PUBLISH_YIELD_WEIGHT: Record<DisclosurePublishYieldBand,
   low: 0.4,
 };
 
-/** Sources with independent daily HTTP budgets + yield-weighted spacing. */
-export type LatencyBudgetSourceId = 'unusual_whales' | 'quiver';
+/**
+ * Sources with independent daily HTTP budgets + yield-weighted spacing.
+ * `fmp_rapidapi` is the RapidAPI marketplace avenue (shared RAPIDAPI_KEY from
+ * Socratic.Trade); free-tier FMP_LATENCY_* keys stay on the stable host only.
+ */
+export type LatencyBudgetSourceId = 'unusual_whales' | 'quiver' | 'fmp_rapidapi';
 
 export interface LatencySourceBudgetSpec {
   id: LatencyBudgetSourceId;
@@ -406,6 +422,8 @@ export interface LatencySourceBudgetSpec {
  * Per-source daily caps (HTTP call units). Tunable via Infisical.
  * - UW: 1 call for recent-trades; deep-match dates spend extra from remaining.
  * - QQ: house + senate + trump bulk = 3 calls per probe.
+ * - FMP RapidAPI: house+senate = 2 calls; separate marketplace quota (not free-tier).
+ *   With dual free keys (~235×2) + this path, total FMP fleet can be ~2×+ free-only.
  */
 export const LATENCY_SOURCE_BUDGETS: Record<LatencyBudgetSourceId, LatencySourceBudgetSpec> = {
   unusual_whales: {
@@ -432,7 +450,36 @@ export const LATENCY_SOURCE_BUDGETS: Record<LatencyBudgetSourceId, LatencySource
     minIntervalSec: 60,
     maxIntervalSec: 45 * 60,
   },
+  fmp_rapidapi: {
+    id: 'fmp_rapidapi',
+    pollSource: 'disclosure-latency-fmp-rapidapi',
+    dayKeyPrefix: 'latency-budget:fmp-rapidapi',
+    envCapKey: 'FMP_RAPIDAPI_DAILY_CAP',
+    // Conservative default; ST lists marketplace FMP high — CT is latency-only.
+    // Override via Infisical if the RapidAPI FMP plan is larger.
+    defaultDailyCap: 500,
+    maxDailyCap: 50_000,
+    callsPerRun: FMP_LATENCY_CALLS_PER_RUN,
+    minIntervalSec: 60,
+    maxIntervalSec: 45 * 60,
+  },
 };
+
+/**
+ * Resolve RapidAPI marketplace key for FMP path (Socratic.Trade pattern).
+ * Order: FMP_RAPIDAPI_KEY (dedicated) → RAPIDAPI_KEY (shared marketplace).
+ * Does **not** fall back to free-tier FMP_LATENCY_* — those are native FMP
+ * query keys and do not authenticate RapidAPI hosts.
+ */
+export async function resolveFmpRapidApiKey(env: Env): Promise<string | null> {
+  const envx = env as unknown as Record<string, string | undefined>;
+  for (const name of ['FMP_RAPIDAPI_KEY', 'RAPIDAPI_KEY'] as const) {
+    const value = (await resolveSecret(env, name as keyof Env & string)).value ?? envx[name];
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
 
 function fmpLatencyDayKey(slot: FmpLatencyKeySlot, now = new Date()): string {
   return `fmp-latency:calls:key${slot}:` + now.toISOString().slice(0, 10);
@@ -767,10 +814,15 @@ export async function selectFmpLatencyKey(
  * Among enabled FMP paths present in the requested provider list, pick exactly
  * one path for this probe cycle (round-robin). Returns null when no path is
  * eligible (probe off / filtered out of FMP_LATENCY_PATHS / not requested).
+ *
+ * RapidAPI is only eligible when a marketplace key is present
+ * (`FMP_RAPIDAPI_KEY` or shared `RAPIDAPI_KEY`) AND its daily budget remains —
+ * never authenticated with free-tier FMP_LATENCY_* keys (ST pattern).
  */
 export async function selectFmpLatencyPathForCycle(
   env: Env,
   requestedProviderIds: readonly string[],
+  opts: { force?: boolean } = {},
 ): Promise<FmpLatencyPathId | null> {
   if (!(await isFmpProbeEnabled(env))) return null;
   const enabled = await enabledFmpPathIds(env);
@@ -778,11 +830,75 @@ export async function selectFmpLatencyPathForCycle(
   for (const path of FMP_LATENCY_PATHS) {
     if (!enabled.has(path.pathId)) continue;
     if (!requestedProviderIds.includes(path.providerId)) continue;
+    if (path.pathId === 'rapidapi') {
+      const rapidKey = await resolveFmpRapidApiKey(env);
+      if (!rapidKey) continue;
+      // Skip RapidAPI this cycle when its independent daily budget/spacing is exhausted.
+      const rapidBudget = await selectLatencySourceProbe(env, 'fmp_rapidapi', new Date(), {
+        force: opts.force,
+      });
+      if (!rapidBudget && !opts.force) continue;
+      // force still needs remaining budget (cap), only bypasses spacing.
+      if (!rapidBudget && opts.force) {
+        const cap = await latencySourceDailyCap(env, 'fmp_rapidapi');
+        const used = await getLatencySourceUsed(env, 'fmp_rapidapi');
+        if (cap - used < FMP_LATENCY_CALLS_PER_RUN) continue;
+      }
+    } else if (path.pathId === 'stable') {
+      // Free-tier dual keys only on stable host.
+      const keySel = await selectFmpLatencyKey(env, new Date(), { force: opts.force });
+      if (!keySel) continue;
+    }
     candidates.push(path.pathId);
   }
   if (!candidates.length) return null;
   const picked = await selectRotatedAvenue(env, 'fmp-path', candidates);
   return (picked as FmpLatencyPathId | null) ?? null;
+}
+
+/**
+ * Fleet-wide remaining FMP latency HTTP calls: dual free-tier keys + RapidAPI
+ * path budget (when marketplace key present). Used for docs/diagnostics and
+ * denser spacing when multiple avenues still have quota.
+ */
+export async function getFmpLatencyFleetRemaining(env: Env, now: Date = new Date()): Promise<{
+  freeTierRemaining: number;
+  freeTierCap: number;
+  freeTierKeysConfigured: number;
+  rapidapiRemaining: number | null;
+  rapidapiCap: number | null;
+  totalRemaining: number;
+}> {
+  const capPerKey = await fmpLatencyDailyCap(env);
+  const envx = env as unknown as Record<string, string | undefined>;
+  let freeRemaining = 0;
+  let freeCap = 0;
+  let keysConfigured = 0;
+  for (let i = 0; i < FMP_LATENCY_SECRET_NAMES.length; i++) {
+    const secretName = FMP_LATENCY_SECRET_NAMES[i]!;
+    const slot: FmpLatencyKeySlot = i === 0 ? '1' : '2';
+    const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
+    if (!value?.trim()) continue;
+    keysConfigured++;
+    freeCap += capPerKey;
+    const used = await getFmpLatencyUsed(env, slot, now);
+    freeRemaining += Math.max(0, capPerKey - used);
+  }
+  let rapidRemaining: number | null = null;
+  let rapidCap: number | null = null;
+  if (await resolveFmpRapidApiKey(env)) {
+    rapidCap = await latencySourceDailyCap(env, 'fmp_rapidapi');
+    const used = await getLatencySourceUsed(env, 'fmp_rapidapi', now);
+    rapidRemaining = Math.max(0, rapidCap - used);
+  }
+  return {
+    freeTierRemaining: freeRemaining,
+    freeTierCap: freeCap,
+    freeTierKeysConfigured: keysConfigured,
+    rapidapiRemaining: rapidRemaining,
+    rapidapiCap: rapidCap,
+    totalRemaining: freeRemaining + (rapidRemaining ?? 0),
+  };
 }
 /**
  * Full default probe list when DISCLOSURE_LATENCY_PROVIDERS is unset.
@@ -875,13 +991,14 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'fmp_rapidapi',
     label: 'FMP RapidAPI',
-    secretNames: ['FMP_RAPIDAPI_KEY', FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY],
+    // Marketplace keys only (ST shared RAPIDAPI_KEY). Never FMP_LATENCY_* free-tier.
+    secretNames: ['FMP_RAPIDAPI_KEY', 'RAPIDAPI_KEY'],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI alternate host. Default ON for CT; alternates with FMP Stable (one avenue per cycle to protect free-tier quotas). Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
+      'FMP via RapidAPI alternate host (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). Alternates with FMP Stable; separate daily budget so dual free keys + RapidAPI ≈ 2×+ fleet capacity. Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -1472,8 +1589,9 @@ async function fetchFmpRows(
     let url = `${baseUrl}/${chamber}-latest?page=0&limit=${fmpLimit}`;
     const headers: Record<string, string> = {};
     if (auth === 'rapidapi') {
-      headers['X-RapidAPI-Key'] = apiKey;
-      if (opts.rapidApiHost) headers['X-RapidAPI-Host'] = opts.rapidApiHost;
+      // Socratic.Trade RapidAPI transport: header auth only (never query apikey).
+      headers['x-rapidapi-key'] = apiKey;
+      if (opts.rapidApiHost) headers['x-rapidapi-host'] = opts.rapidApiHost;
     } else {
       url += '&apikey=' + encodeURIComponent(apiKey);
     }
@@ -2916,20 +3034,39 @@ async function runProviderProbe(
   /** Extra UW deep-match HTTP calls allowed this run after base probe. */
   let uwDeepMatchCallBudget = 0;
 
-  // FMP free-tier keys are latency-only (owner 2026-08): dual keys with
-  // independent daily counters + ET-weighted spacing. Never use FMP_API_KEY
-  // here and never touch the enrichment/prices shared fmp:calls counter.
+  // FMP free-tier keys are latency/scout-only (owner 2026-08): dual keys with
+  // independent daily counters + ET-weighted spacing. RapidAPI path uses the
+  // marketplace key (FMP_RAPIDAPI_KEY / RAPIDAPI_KEY) with its own budget —
+  // never free-tier FMP_LATENCY_* on the RapidAPI host (ST pattern).
+  // Never use FMP_API_KEY here and never touch enrichment/prices fmp:calls.
   let capSkipped = false;
   if (isFmpFamily) {
-    // RapidAPI may use a dedicated key; otherwise share dual latency keys.
     if (provider.id === 'fmp_rapidapi') {
-      const rapid =
-        (await resolveSecret(env, 'FMP_RAPIDAPI_KEY')).value ?? envx.FMP_RAPIDAPI_KEY;
-      if (rapid?.trim()) {
-        apiKey = rapid.trim();
+      apiKey = await resolveFmpRapidApiKey(env);
+      if (!apiKey) {
+        return {
+          ...base,
+          configured: false,
+          enabled: false,
+          operationalStatus: 'stopped',
+          fetchedRows: 0,
+          pending: 0,
+          matched: 0,
+          errors,
+          reason: 'FMP_RAPIDAPI_KEY / RAPIDAPI_KEY missing (marketplace key required; free-tier FMP_LATENCY_* not valid on RapidAPI)',
+        };
       }
-    }
-    if (!apiKey) {
+      sourceBudget = await selectLatencySourceProbe(env, 'fmp_rapidapi', now, { force: opts.force });
+      if (!sourceBudget) {
+        capSkipped = true;
+        errors.push(
+          'FMP RapidAPI at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)',
+        );
+      } else {
+        await addLatencySourceUsed(env, 'fmp_rapidapi', sourceBudget.callsPerRun, now);
+        await setLastPollAt(env, LATENCY_SOURCE_BUDGETS.fmp_rapidapi.pollSource, now);
+      }
+    } else {
       fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force });
       if (!fmpSelection) {
         const anyKey = await resolveProviderSecret(env, provider);
@@ -3141,7 +3278,9 @@ export async function runDisclosureLatencyProbe(
   const requested = await requestedProviderIds(envx, opts);
   // One FMP avenue per cycle (stable XOR rapidapi). Same pattern applies to
   // any multi-path family: selectRotatedAvenue / selectFmpLatencyPathForCycle.
-  const selectedFmpPathId = await selectFmpLatencyPathForCycle(env, requested);
+  const selectedFmpPathId = await selectFmpLatencyPathForCycle(env, requested, {
+    force: opts.force,
+  });
   for (const providerId of requested) {
     runs.push(
       await runProviderProbe(env, definition(providerId), now, fetchImpl, max, {

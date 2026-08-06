@@ -24,8 +24,8 @@
  *   FMP_PROBE_ENABLED=1 FMP_API_KEY=xxx node scout/congress-scout.mjs
  *
  * ENV:
- *   FMP_API_KEY / FMP_LATENCY_API_KEY   FMP key (query auth for stable path)
- *   FMP_RAPIDAPI_KEY                   optional dedicated RapidAPI key
+ *   FMP_API_KEY / FMP_LATENCY_API_KEY   FMP key (query auth for stable path only)
+ *   FMP_RAPIDAPI_KEY / RAPIDAPI_KEY     RapidAPI marketplace key (ST shared RAPIDAPI_KEY ok)
  *   FMP_PROBE_ENABLED                  "1"/"true" to poll FMP family (default OFF)
  *   FMP_PATHS                          "stable,rapidapi" (default both when ON)
  *   FMP_STABLE_BASE_URL                override stable base
@@ -50,7 +50,9 @@ dns.setDefaultResultOrder('ipv4first');
 const ARGV = new Set(process.argv.slice(2));
 const ONCE = ARGV.has('--once');
 const FMP_KEY = process.env.FMP_API_KEY || process.env.FMP_LATENCY_API_KEY || '';
-const FMP_RAPIDAPI_KEY = process.env.FMP_RAPIDAPI_KEY || FMP_KEY;
+// Marketplace key only — do not fall back to free-tier FMP keys (invalid on RapidAPI hosts).
+// Shared RAPIDAPI_KEY is the Socratic.Trade convention for one marketplace credential.
+const FMP_RAPIDAPI_KEY = process.env.FMP_RAPIDAPI_KEY || process.env.RAPIDAPI_KEY || '';
 // Default ON for CT when unset (FMP is a first-class CT latency path). Explicit false/0/off disables.
 const _fmpProbeRaw = (process.env.FMP_PROBE_ENABLED || '').trim();
 const FMP_PROBE_ENABLED = _fmpProbeRaw === '' ? true : !/^(0|false|no|off)$/i.test(_fmpProbeRaw);
@@ -293,8 +295,9 @@ async function pollFmpPath(src) {
     let url = `${src.baseUrl}/${ch}-latest?page=0&limit=100`;
     const headers = { accept: 'application/json' };
     if (src.auth === 'rapidapi') {
-      headers['X-RapidAPI-Key'] = key;
-      if (src.host) headers['X-RapidAPI-Host'] = src.host;
+      // Socratic.Trade RapidAPI transport: header auth (never query apikey).
+      headers['x-rapidapi-key'] = key;
+      if (src.host) headers['x-rapidapi-host'] = src.host;
     } else {
       url += `&apikey=${encodeURIComponent(key)}`;
     }

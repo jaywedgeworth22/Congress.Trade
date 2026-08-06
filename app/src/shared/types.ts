@@ -618,8 +618,20 @@ export interface Env {
   FMP_RAPIDAPI_BASE_URL?: string;
   /** RapidAPI host header for FMP path. */
   FMP_RAPIDAPI_HOST?: string;
-  /** Optional dedicated RapidAPI key for fmp_rapidapi path. */
+  /**
+   * Optional dedicated RapidAPI key for fmp_rapidapi path.
+   * Falls back to shared RAPIDAPI_KEY (Socratic.Trade marketplace convention).
+   * Does not use free-tier FMP_LATENCY_* keys.
+   */
   FMP_RAPIDAPI_KEY?: string;
+  /**
+   * Shared RapidAPI marketplace key (same secret Socratic.Trade uses for
+   * RapidAPI-hosted providers). CT uses it for FMP latency/scout only when
+   * FMP_RAPIDAPI_KEY is unset.
+   */
+  RAPIDAPI_KEY?: string;
+  /** Daily HTTP budget for FMP-via-RapidAPI latency path (default 500). */
+  FMP_RAPIDAPI_DAILY_CAP?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
   /** Shared FMP per-minute pacer ceiling (stringified int). Infisical-tunable. */

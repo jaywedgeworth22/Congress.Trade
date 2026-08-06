@@ -23,6 +23,8 @@ import {
   selectRotatedAvenue,
   selectFmpLatencyPathForCycle,
   selectLatencySourceProbe,
+  resolveFmpRapidApiKey,
+  getFmpLatencyFleetRemaining,
   getFmpLatencyUsed,
   addFmpLatencyUsed,
   addLatencySourceUsed,
@@ -384,10 +386,26 @@ describe('tradeLatency', () => {
       expect(await selectRotatedAvenue(env, 'other', ['x', 'y'])).toBe('x');
     });
 
-    it('selectFmpLatencyPathForCycle alternates stable and rapidapi', async () => {
+    it('resolveFmpRapidApiKey prefers FMP_RAPIDAPI_KEY then shared RAPIDAPI_KEY (ST)', async () => {
+      expect(await resolveFmpRapidApiKey({} as never)).toBeNull();
+      expect(await resolveFmpRapidApiKey({ RAPIDAPI_KEY: 'shared-marketplace' } as never)).toBe(
+        'shared-marketplace',
+      );
+      expect(
+        await resolveFmpRapidApiKey({
+          FMP_RAPIDAPI_KEY: 'dedicated',
+          RAPIDAPI_KEY: 'shared-marketplace',
+        } as never),
+      ).toBe('dedicated');
+      // Free-tier FMP keys are NOT valid RapidAPI credentials.
+      expect(await resolveFmpRapidApiKey({ FMP_LATENCY_API_KEY: 'free-tier' } as never)).toBeNull();
+    });
+
+    it('selectFmpLatencyPathForCycle alternates stable and rapidapi when marketplace key present', async () => {
       const kv = new Map<string, string>();
       const env = {
         FMP_LATENCY_API_KEY: 'k1',
+        RAPIDAPI_KEY: 'marketplace-key',
         CONFIG_KV: {
           get: async (k: string) => kv.get(k) ?? null,
           put: async (k: string, v: string) => {
@@ -396,16 +414,46 @@ describe('tradeLatency', () => {
         },
       } as never;
       const ids = ['fmp', 'fmp_rapidapi', 'quiver'] as const;
-      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('stable');
-      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('rapidapi');
-      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('rapidapi');
+      expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
+      // Without marketplace key, RapidAPI is not a candidate.
+      const noRapid = {
+        FMP_LATENCY_API_KEY: 'k1',
+        CONFIG_KV: env.CONFIG_KV,
+      } as never;
+      expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
       // Single path config — always that path.
       const stableOnly = { ...env, FMP_LATENCY_PATHS: 'stable' } as never;
-      expect(await selectFmpLatencyPathForCycle(stableOnly, ids)).toBe('stable');
-      expect(await selectFmpLatencyPathForCycle(stableOnly, ids)).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(stableOnly, ids, { force: true })).toBe('stable');
       // Probe OFF — no path selected.
       const off = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;
-      expect(await selectFmpLatencyPathForCycle(off, ids)).toBeNull();
+      expect(await selectFmpLatencyPathForCycle(off, ids, { force: true })).toBeNull();
+    });
+
+    it('getFmpLatencyFleetRemaining sums dual free keys + RapidAPI path budget', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        ['FMP_LATENCY_API_KEY' + '_2']: 'k2',
+        RAPIDAPI_KEY: 'marketplace',
+        FMP_RAPIDAPI_DAILY_CAP: '100',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      const fleet = await getFmpLatencyFleetRemaining(env, now);
+      expect(fleet.freeTierKeysConfigured).toBe(2);
+      expect(fleet.freeTierCap).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY * 2);
+      expect(fleet.freeTierRemaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY * 2);
+      expect(fleet.rapidapiCap).toBe(100);
+      expect(fleet.rapidapiRemaining).toBe(100);
+      expect(fleet.totalRemaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY * 2 + 100);
     });
 
     it('probe run HTTP-spends only one FMP path per cycle when both enabled', async () => {
@@ -419,6 +467,7 @@ describe('tradeLatency', () => {
       const env = {
         DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
         FMP_LATENCY_API_KEY: 'k1',
+        RAPIDAPI_KEY: 'marketplace-key',
         FMP_LATENCY_PATHS: 'stable,rapidapi',
         CONFIG_KV: {
           get: async (k: string) => kv.get(k) ?? null,
@@ -505,6 +554,7 @@ describe('tradeLatency', () => {
     it('defaults FMP family ON for CT when latency key present (explicit false disables)', async () => {
       const env = {
         FMP_LATENCY_API_KEY: 'latency-key',
+        RAPIDAPI_KEY: 'marketplace-key',
         CONFIG_KV: { get: async () => null, put: async () => {} },
       } as never;
       const defaultStatuses = await getDisclosureLatencyProviderStatuses(env);
@@ -514,6 +564,7 @@ describe('tradeLatency', () => {
       expect(fmp?.operationalStatus).toBe('running');
       expect(rapid?.operationalStatus).toBe('running');
       expect(fmp?.configured).toBe(true);
+      expect(rapid?.configured).toBe(true);
       expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);
 
       const offEnv = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;

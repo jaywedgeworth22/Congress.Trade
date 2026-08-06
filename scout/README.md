@@ -86,8 +86,8 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 |---|---|---|
 | `FMP_PROBE_ENABLED` | on | default ON for CT; set `0`/`false`/`off` to disable FMP family |
 | `FMP_PATHS` | `stable,rapidapi` | which FMP paths race when probe is on |
-| `FMP_API_KEY` / `FMP_LATENCY_API_KEY` | — | FMP key for stable (query) path |
-| `FMP_RAPIDAPI_KEY` | falls back to FMP key | key for RapidAPI path |
+| `FMP_API_KEY` / `FMP_LATENCY_API_KEY` | — | FMP free-tier key for **stable** (query) path only |
+| `FMP_RAPIDAPI_KEY` / `RAPIDAPI_KEY` | — | RapidAPI marketplace key for RapidAPI path (ST shared `RAPIDAPI_KEY` ok; **not** free-tier FMP keys) |
 | `FMP_STABLE_BASE_URL` | `https://financialmodelingprep.com/stable` | override stable base |
 | `FMP_RAPIDAPI_BASE_URL` | RapidAPI FMP stable base | override RapidAPI base |
 | `FMP_RAPIDAPI_HOST` | `financial-modeling-prep.p.rapidapi.com` | RapidAPI host header |
