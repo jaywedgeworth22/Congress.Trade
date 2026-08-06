@@ -52,3 +52,6 @@ app/.prod.vars.local
 # default password for the production DB browser.
 *.orig
 *.rej
+
+# Latency week tracker samples (may contain ops snapshots)
+docs/latency-week/samples/
