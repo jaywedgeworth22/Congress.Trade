@@ -341,19 +341,44 @@ async function pollFmpPath(src, freeKey) {
 
 /**
  * Poll enabled FMP paths. Stable uses one free-tier key per cycle (rotates dual
- * keys). Does not race stable+rapidapi every cycle — only enabled paths, and
- * rapidapi is off by default (404 product gap).
+ * keys). On 402/429 for stable, try the other free key once (owner: no known
+ * per-IP limit — second account still has quota when first is bandwidth-capped).
+ * RapidAPI off by default (404 product gap).
  */
 async function pollFmpFamily() {
   const out = [];
-  const freeKey = nextFmpFreeKey();
   for (const src of FMP_SOURCE_REGISTRY) {
     if (fmpSourceStatus(src) !== 'running') continue;
-    try {
-      out.push(...(await pollFmpPath(src, freeKey)));
-    } catch (e) {
-      warn(`fmp:${src.id}`, e);
+    if (src.auth === 'rapidapi') {
+      try {
+        out.push(...(await pollFmpPath(src, '')));
+      } catch (e) {
+        warn(`fmp:${src.id}`, e);
+      }
+      continue;
     }
+    // Stable: rotate key; on quota errors try remaining free keys.
+    const tried = new Set();
+    let lastErr = null;
+    for (let attempt = 0; attempt < Math.max(1, FMP_FREE_KEYS.length); attempt++) {
+      const freeKey = nextFmpFreeKey();
+      if (!freeKey || tried.has(freeKey)) continue;
+      tried.add(freeKey);
+      try {
+        out.push(...(await pollFmpPath(src, freeKey)));
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e?.message || e);
+        if (/HTTP (402|429)/.test(msg) && tried.size < FMP_FREE_KEYS.length) {
+          warn(`fmp:${src.id}`, `${msg} — trying next free key`);
+          continue;
+        }
+        break;
+      }
+    }
+    if (lastErr) warn(`fmp:${src.id}`, lastErr);
   }
   return out;
 }
