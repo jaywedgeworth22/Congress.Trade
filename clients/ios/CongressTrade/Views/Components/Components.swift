@@ -81,6 +81,28 @@ struct StatusPill: View {
     }
 }
 
+/// Selectable capsule chip used by delivery filters and similar multi-select UIs.
+struct FilterChip: View {
+    let title: String
+    let isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .background(
+                    isSelected ? Color.accentColor : Color(uiColor: .systemGray5),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct AssetMark: View {
     let symbol: String
     var isTicker: Bool = true
