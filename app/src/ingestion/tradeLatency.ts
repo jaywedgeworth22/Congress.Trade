@@ -24,7 +24,9 @@ type Chamber = 'house' | 'senate' | 'executive';
 /**
  * Latency race providers. FMP family lives here (and on Mac scout) — not on
  * Socratic.Trade product surfaces. `fmp` = direct stable host; `fmp_rapidapi` =
- * RapidAPI alternate path so both can race when probes are ON.
+ * RapidAPI alternate path. When both paths are enabled we **alternate**
+ * (exactly one avenue per probe cycle) so free-tier daily quotas are not
+ * doubled for the same answer a minute apart.
  */
 export type ProviderId =
   | 'fmp'
@@ -72,9 +74,9 @@ type EnvWithWatch = Env & {
    */
   FMP_LATENCY_PROBE_ENABLED?: string;
   /**
-   * Comma-separated FMP path ids to probe when FMP_LATENCY_PROBE_ENABLED is on:
-   * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi). Default both so they
-   * can race when turned on.
+   * Comma-separated FMP path ids eligible when FMP_LATENCY_PROBE_ENABLED is on:
+   * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi). Default both; the
+   * probe loop **rotates** across them (one path per cycle) to protect quotas.
    */
   FMP_LATENCY_PATHS?: string;
   /** Override base for stable FMP disclosures (default financialmodelingprep.com/stable). */
@@ -274,7 +276,7 @@ export interface FmpLatencyPathDefinition {
  * Registered FMP path collection for CT latency + Mac scout.
  * Default operational state is ON for CT when latency keys present; explicit
  * FMP_LATENCY_PROBE_ENABLED=false forces OFF (grey).
- * When ON, enabled paths race (first observation wins per provider id).
+ * When ON, enabled paths are rotated (one HTTP avenue per probe cycle).
  */
 export const FMP_LATENCY_PATHS: readonly FmpLatencyPathDefinition[] = [
   {
@@ -461,10 +463,46 @@ export interface FmpLatencyKeySelection {
 }
 
 /**
+ * Round-robin across equivalent access avenues (paths, keys, hosts) so multi-
+ * avenue sources spend **exactly one** avenue per cycle. Prevents doubling
+ * free-tier daily quotas when two keys/hosts would return the same answer a
+ * minute apart (owner 2026-08).
+ *
+ * State lives in CONFIG_KV under `avenue-rotate:<family>`. Reusable for any
+ * provider family with multiple keys or alternate hosts.
+ */
+export async function selectRotatedAvenue(
+  env: Env,
+  family: string,
+  candidates: string[],
+): Promise<string | null> {
+  const list = [...new Set(candidates.map((c) => String(c).trim()).filter(Boolean))];
+  if (!list.length) return null;
+  if (list.length === 1) return list[0]!;
+
+  const kvKey = `avenue-rotate:${family}`;
+  let last: string | null = null;
+  try {
+    last = (await env.CONFIG_KV.get(kvKey)) ?? null;
+  } catch {
+    last = null;
+  }
+  const lastIdx = last ? list.indexOf(last) : -1;
+  const next = list[(lastIdx + 1) % list.length]!;
+  try {
+    await env.CONFIG_KV.put(kvKey, next, { expirationTtl: 7 * 86400 });
+  } catch {
+    /* best effort — still return next so this cycle uses one avenue */
+  }
+  return next;
+}
+
+/**
  * Pick a configured latency-only key that still has budget and whose poll
- * spacing has elapsed. Prefers the key with more remaining budget.
- * Never falls back to FMP_API_KEY (enrichment/prices/recovery must not share
- * these free-tier keys — owner: latency monitoring only).
+ * spacing has elapsed. **Alternates** among eligible keys (round-robin) so
+ * dual free-tier keys are not drained in lockstep / doubled for the same
+ * probe. Never falls back to FMP_API_KEY (enrichment/prices/recovery must not
+ * share these free-tier keys — owner: latency monitoring only).
  */
 export async function selectFmpLatencyKey(
   env: Env,
@@ -504,9 +542,36 @@ export async function selectFmpLatencyKey(
   }
 
   if (!candidates.length) return null;
-  // Prefer more remaining budget; tie-break slot 1 then 2.
-  candidates.sort((a, b) => b.remaining - a.remaining || a.slot.localeCompare(b.slot));
-  return candidates[0]!;
+  // Stable order for rotation (slot 1 then 2); round-robin among eligible.
+  candidates.sort((a, b) => a.slot.localeCompare(b.slot));
+  const pickedSlot = await selectRotatedAvenue(
+    env,
+    'fmp-key',
+    candidates.map((c) => c.slot),
+  );
+  return candidates.find((c) => c.slot === pickedSlot) ?? candidates[0]!;
+}
+
+/**
+ * Among enabled FMP paths present in the requested provider list, pick exactly
+ * one path for this probe cycle (round-robin). Returns null when no path is
+ * eligible (probe off / filtered out of FMP_LATENCY_PATHS / not requested).
+ */
+export async function selectFmpLatencyPathForCycle(
+  env: Env,
+  requestedProviderIds: readonly string[],
+): Promise<FmpLatencyPathId | null> {
+  if (!(await isFmpProbeEnabled(env))) return null;
+  const enabled = await enabledFmpPathIds(env);
+  const candidates: FmpLatencyPathId[] = [];
+  for (const path of FMP_LATENCY_PATHS) {
+    if (!enabled.has(path.pathId)) continue;
+    if (!requestedProviderIds.includes(path.providerId)) continue;
+    candidates.push(path.pathId);
+  }
+  if (!candidates.length) return null;
+  const picked = await selectRotatedAvenue(env, 'fmp-path', candidates);
+  return (picked as FmpLatencyPathId | null) ?? null;
 }
 /**
  * Full default probe list when DISCLOSURE_LATENCY_PROVIDERS is unset.
@@ -588,7 +653,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'stable',
     reason:
-      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. No provider first-seen timestamp; monitor first-observed is used.',
+      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. Alternates with RapidAPI path (one avenue per cycle). No provider first-seen timestamp; monitor first-observed is used.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[0]!.defaultBaseUrl,
@@ -605,7 +670,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI alternate host. Default ON for CT (races FMP Stable when path enabled). Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
+      'FMP via RapidAPI alternate host. Default ON for CT; alternates with FMP Stable (one avenue per cycle to protect free-tier quotas). Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -684,8 +749,9 @@ export async function isFmpProbeEnabled(env: Env): Promise<boolean> {
 }
 
 /**
- * Which FMP paths to activate when the master probe switch is on.
- * Default both (`stable,rapidapi`) so alternate hosts can race.
+ * Which FMP paths are eligible when the master probe switch is on.
+ * Default both (`stable,rapidapi`); the probe loop rotates across them
+ * (one path per cycle) so dual free-tier quotas are not burned together.
  */
 export async function enabledFmpPathIds(env: Env): Promise<Set<FmpLatencyPathId>> {
   const envx = env as EnvWithWatch;
@@ -2565,7 +2631,11 @@ async function runProviderProbe(
   now: Date,
   fetchImpl: typeof fetch,
   max: number,
-  opts: { force?: boolean } = {},
+  opts: {
+    force?: boolean;
+    /** When set, only this FMP path id may spend HTTP this cycle (rotation). */
+    selectedFmpPathId?: FmpLatencyPathId | null;
+  } = {},
 ): Promise<DisclosureLatencyProviderRun> {
   const base = await providerStatus(env, provider);
   const errors: string[] = [];
@@ -2583,6 +2653,26 @@ async function runProviderProbe(
       pending: 0,
       matched: 0,
       errors,
+    };
+  }
+
+  // Multi-avenue rotation: only the selected FMP path spends quota this cycle.
+  // Other enabled paths stay "running" in status but skip HTTP so dual hosts
+  // do not both burn free-tier caps for the same answer minutes apart.
+  if (
+    isFmpFamilyProvider(provider.id) &&
+    provider.fmpPathId &&
+    opts.selectedFmpPathId &&
+    provider.fmpPathId !== opts.selectedFmpPathId
+  ) {
+    return {
+      ...base,
+      enabled: false,
+      fetchedRows: 0,
+      pending: 0,
+      matched: 0,
+      errors,
+      reason: `rotated: probing FMP path "${opts.selectedFmpPathId}" this cycle (single avenue protects daily quota)`,
     };
   }
 
@@ -2817,8 +2907,17 @@ export async function runDisclosureLatencyProbe(
 
   const runs: DisclosureLatencyProviderRun[] = [];
   const max = await limit(envx);
-  for (const providerId of await requestedProviderIds(envx, opts)) {
-    runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, max, { force: opts.force }));
+  const requested = await requestedProviderIds(envx, opts);
+  // One FMP avenue per cycle (stable XOR rapidapi). Same pattern applies to
+  // any multi-path family: selectRotatedAvenue / selectFmpLatencyPathForCycle.
+  const selectedFmpPathId = await selectFmpLatencyPathForCycle(env, requested);
+  for (const providerId of requested) {
+    runs.push(
+      await runProviderProbe(env, definition(providerId), now, fetchImpl, max, {
+        force: opts.force,
+        selectedFmpPathId,
+      }),
+    );
   }
   await setLastPollAt(env, PROBE_POLL_SOURCE, now);
   return {
@@ -2837,7 +2936,7 @@ export async function runFmpDisclosureLatencyProbe(
   fetchImpl: typeof fetch = fetch,
   opts: { force?: boolean } = {},
 ): Promise<DisclosureLatencyProbeResult> {
-  // Probe entire FMP family (stable + RapidAPI) so dual paths can race when ON.
+  // Request entire FMP family; runDisclosureLatencyProbe rotates to one path.
   return runDisclosureLatencyProbe(env, now, fetchImpl, {
     ...opts,
     providers: [...FMP_FAMILY_PROVIDER_IDS],
