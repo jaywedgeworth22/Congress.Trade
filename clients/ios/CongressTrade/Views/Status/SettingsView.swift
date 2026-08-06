@@ -166,7 +166,6 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
                 }
-                }
 
                 if store.signedIn && !store.isPremium {
                     Section("Premium") {
