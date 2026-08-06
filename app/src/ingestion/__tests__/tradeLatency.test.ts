@@ -17,6 +17,8 @@ import {
   fmpLatencyEtHourWeight,
   fmpLatencyIntervalSec,
   selectFmpLatencyKey,
+  selectRotatedAvenue,
+  selectFmpLatencyPathForCycle,
   getFmpLatencyUsed,
   addFmpLatencyUsed,
   getDisclosureLatencyProviderStatuses,
@@ -265,7 +267,7 @@ describe('tradeLatency', () => {
       expect(FMP_LATENCY_CALLS_PER_RUN).toBe(2);
     });
 
-    it('prefers the key with more remaining budget and tracks per-key counters', async () => {
+    it('rotates among eligible dual keys (does not dual-spend) and tracks counters', async () => {
       const kv = new Map<string, string>();
       const env = {
         FMP_LATENCY_API_KEY: 'k1',
@@ -278,14 +280,126 @@ describe('tradeLatency', () => {
         },
       } as never;
       const now = new Date('2026-08-05T15:00:00.000Z');
-      // Exhaust most of key1 so key2 is preferred.
-      await addFmpLatencyUsed(env, '1', FMP_LATENCY_DAILY_CAP_PER_KEY - 4, now);
       await addFmpLatencyUsed(env, '2', 10, now);
-      expect(await getFmpLatencyUsed(env, '1', now)).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY - 4);
-      const sel = await selectFmpLatencyKey(env, now, { force: true });
-      expect(sel?.slot).toBe('2');
-      expect(sel?.apiKey).toBe('k2');
-      expect(sel?.remaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY - 10);
+      expect(await getFmpLatencyUsed(env, '2', now)).toBe(10);
+      // First pick among [1,2] → slot 1 (round-robin from empty last).
+      const sel1 = await selectFmpLatencyKey(env, now, { force: true });
+      expect(sel1?.slot).toBe('1');
+      expect(sel1?.apiKey).toBe('k1');
+      // Second pick rotates to slot 2.
+      const sel2 = await selectFmpLatencyKey(env, now, { force: true });
+      expect(sel2?.slot).toBe('2');
+      expect(sel2?.apiKey).toBe('k2');
+      expect(sel2?.remaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY - 10);
+      // Exhaust key1 — only key2 remains eligible, rotation stays on 2.
+      await addFmpLatencyUsed(env, '1', FMP_LATENCY_DAILY_CAP_PER_KEY, now);
+      const sel3 = await selectFmpLatencyKey(env, now, { force: true });
+      expect(sel3?.slot).toBe('2');
+    });
+
+    it('selectRotatedAvenue round-robins multi-avenue families', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      expect(await selectRotatedAvenue(env, 'demo', [])).toBeNull();
+      expect(await selectRotatedAvenue(env, 'demo', ['only'])).toBe('only');
+      expect(await selectRotatedAvenue(env, 'demo', ['a', 'b'])).toBe('a');
+      expect(await selectRotatedAvenue(env, 'demo', ['a', 'b'])).toBe('b');
+      expect(await selectRotatedAvenue(env, 'demo', ['a', 'b'])).toBe('a');
+      // Independent family namespaces.
+      expect(await selectRotatedAvenue(env, 'other', ['x', 'y'])).toBe('x');
+    });
+
+    it('selectFmpLatencyPathForCycle alternates stable and rapidapi', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const ids = ['fmp', 'fmp_rapidapi', 'quiver'] as const;
+      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('rapidapi');
+      expect(await selectFmpLatencyPathForCycle(env, ids)).toBe('stable');
+      // Single path config — always that path.
+      const stableOnly = { ...env, FMP_LATENCY_PATHS: 'stable' } as never;
+      expect(await selectFmpLatencyPathForCycle(stableOnly, ids)).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(stableOnly, ids)).toBe('stable');
+      // Probe OFF — no path selected.
+      const off = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;
+      expect(await selectFmpLatencyPathForCycle(off, ids)).toBeNull();
+    });
+
+    it('probe run HTTP-spends only one FMP path per cycle when both enabled', async () => {
+      const kv = new Map<string, string>();
+      const hosts: string[] = [];
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        hosts.push(url);
+        return new Response(JSON.stringify([]), { status: 200 });
+      }) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_API_KEY: 'k1',
+        FMP_LATENCY_PATHS: 'stable,rapidapi',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() {
+                return this;
+              },
+              async all() {
+                return { results: [] };
+              },
+              async first() {
+                return null;
+              },
+              async run() {
+                return { success: true, meta: { changes: 0 } };
+              },
+            };
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      const r1 = await runDisclosureLatencyProbe(env, now, fetchImpl, {
+        force: true,
+        providers: ['fmp', 'fmp_rapidapi'],
+      });
+      // House + senate = 2 calls for the selected path only.
+      expect(hosts.length).toBe(2);
+      expect(hosts.every((u) => u.includes('financialmodelingprep.com'))).toBe(true);
+      const rotated = r1.providers.find((p) => p.id === 'fmp_rapidapi');
+      expect(rotated?.enabled).toBe(false);
+      expect(rotated?.reason).toMatch(/rotated/i);
+
+      hosts.length = 0;
+      const r2 = await runDisclosureLatencyProbe(env, now, fetchImpl, {
+        force: true,
+        providers: ['fmp', 'fmp_rapidapi'],
+      });
+      // Second cycle should hit RapidAPI host, not stable.
+      expect(hosts.length).toBe(2);
+      expect(hosts.every((u) => u.includes('rapidapi.com'))).toBe(true);
+      const rotatedStable = r2.providers.find((p) => p.id === 'fmp');
+      expect(rotatedStable?.enabled).toBe(false);
+      expect(rotatedStable?.reason).toMatch(/rotated/i);
     });
 
     it('skips a key that is at daily cap', async () => {
