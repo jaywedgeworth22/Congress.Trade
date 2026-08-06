@@ -1722,7 +1722,7 @@ async function alertMatch(env: Env, provider: ProviderDefinition, candidate: Can
   await notifyAdmin(env, {
     dedupeKey: `disclosure-latency:${provider.id}:${candidate.trade_hash}`,
     throttleSec: 30 * 24 * 60 * 60,
-    subject: `congress.trade vs ${provider.label} disclosure latency`,
+    subject: `Congress.Trade vs ${provider.label} disclosure latency`,
     text:
       `${direction}\n\n` +
       `Doc: ${candidate.trade_hash}\n` +

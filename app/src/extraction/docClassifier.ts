@@ -220,7 +220,7 @@ export async function classifyDocClassWithModel(
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://congress.trade',
-        'X-Title': 'congress.trade',
+        'X-Title': 'Congress.Trade',
       },
       body: JSON.stringify({
         model: knobs.model,
