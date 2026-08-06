@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-06 — Latency week focus (GROK)
+
+Track latency probes + provider publish/first-seen timestamps through 2026-08-13.
+Goal: 5y H/S/Exec completeness + win new filings. Plan: `docs/rollouts/2026-08-06-latency-week-focus.md`.
+Tracker: `python3 scripts/latency-week-tracker.py`. Known issues: FMP 0 matches, RapidAPI 0 obs, UW 401, Quiver null public leads.
+
+
 Last updated: 2026-07-24 (CURSOR)
 
 ## 2026-07-24 — Owner decisions wave (CURSOR)
