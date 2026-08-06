@@ -70,16 +70,21 @@ budget-status polling, see Tunables & flags below)
 - Disclosure-latency race: `DISCLOSURE_LATENCY_WATCH_ENABLED`,
   `DISCLOSURE_LATENCY_PROVIDERS`, `DISCLOSURE_LATENCY_WATCH_LIMIT`,
   legacy `FMP_DISCLOSURE_WATCH_ENABLED` / `FMP_DISCLOSURE_WATCH_LIMIT`,
-  `UW_DEEP_MATCH_DATES_PER_RUN` (Unusual Whales deep-match date budget;
-  default `8`). Production should keep these set in Infisical:
+  **FMP family (default OFF):** `FMP_LATENCY_PROBE_ENABLED` (must be true to
+  spend; grey OFF otherwise), `FMP_LATENCY_PATHS` (`stable,rapidapi` default
+  when ON so alternate hosts can race), optional `FMP_STABLE_BASE_URL` /
+  `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST` / `FMP_RAPIDAPI_KEY`,
+  `FMP_LATENCY_DAILY_CAP`, `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date
+  budget; default `8`). Production should keep these set in Infisical:
   `DISCLOSURE_LATENCY_WATCH_ENABLED=true`,
-  `DISCLOSURE_LATENCY_PROVIDERS=fmp,unusual_whales,quiver`,
+  `DISCLOSURE_LATENCY_PROVIDERS=fmp,fmp_rapidapi,unusual_whales,quiver`,
   `DISCLOSURE_LATENCY_WATCH_LIMIT=100`,
-  `FMP_DISCLOSURE_WATCH_ENABLED=true`,
-  `FMP_DISCLOSURE_WATCH_LIMIT=100`,
+  `FMP_LATENCY_PROBE_ENABLED` unset/false until operator wants FMP spend,
+  `FMP_LATENCY_PATHS=stable,rapidapi`,
   `UW_DEEP_MATCH_DATES_PER_RUN=8`. Provider API keys
-  (`FMP_API_KEY`, `UNUSUAL_WHALES_API_KEY`, `QUIVER_API_KEY`) live under
-  provider-keys.
+  (`FMP_LATENCY_API_KEY`, `FMP_RAPIDAPI_KEY`, `UNUSUAL_WHALES_API_KEY`,
+  `QUIVER_API_KEY`) live under provider-keys. FMP is CT latency + Mac scout
+  only — not Socratic product.
 - Ingestion: `HOUSE_LIVE_SEARCH_ENABLED`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
   `OGE_POLL_INTERVAL_SEC`, `OGE_MAX_VISION_BYTES`

@@ -13,15 +13,23 @@
  *     they appear — House Clerk (intraday live search + PDF-URL frontier probe)
  *     and Senate eFD (the 3-step CSRF/agreement/DataTables flow) — and stamps
  *     `our_detected_at`. This is DETECTION ONLY (existence + link), not parsing.
- *   - Polls FMP (house-latest, senate-latest, executive-latest), QQ, and UW and stamps `fmp_first_seen_at`
- *     (and qq_first_seen_at, uw_first_seen_at) the first time they surface each filing.
+ *   - Optionally polls FMP family (stable + RapidAPI paths), QQ, and UW.
+ *     FMP sources default to OFF (no spend) until FMP_PROBE_ENABLED=1.
  *   - Joins FMP by the filing's doc key and logs the lead. (QQ and UW are saved to state for offline analysis).
  *
  * RUN:
- *   FMP_API_KEY=xxx QQ_API_KEY=xxx UW_API_KEY=xxx node scout/congress-scout.mjs
+ *   # Detection only (FMP OFF — default):
+ *   node scout/congress-scout.mjs --once
+ *   # Enable FMP race (stable + RapidAPI paths can race):
+ *   FMP_PROBE_ENABLED=1 FMP_API_KEY=xxx node scout/congress-scout.mjs
  *
  * ENV:
- *   FMP_API_KEY           FMP key
+ *   FMP_API_KEY / FMP_LATENCY_API_KEY   FMP key (query auth for stable path)
+ *   FMP_RAPIDAPI_KEY                   optional dedicated RapidAPI key
+ *   FMP_PROBE_ENABLED                  "1"/"true" to poll FMP family (default OFF)
+ *   FMP_PATHS                          "stable,rapidapi" (default both when ON)
+ *   FMP_STABLE_BASE_URL                override stable base
+ *   FMP_RAPIDAPI_BASE_URL / FMP_RAPIDAPI_HOST  override RapidAPI path
  *   QQ_API_KEY            Quiver Quant key
  *   UW_API_KEY            Unusual Whales key
  *   POLL_INTERVAL_SEC     default 45
@@ -41,7 +49,11 @@ dns.setDefaultResultOrder('ipv4first');
 // --- config -----------------------------------------------------------------
 const ARGV = new Set(process.argv.slice(2));
 const ONCE = ARGV.has('--once');
-const FMP_KEY = process.env.FMP_API_KEY || '';
+const FMP_KEY = process.env.FMP_API_KEY || process.env.FMP_LATENCY_API_KEY || '';
+const FMP_RAPIDAPI_KEY = process.env.FMP_RAPIDAPI_KEY || FMP_KEY;
+const FMP_PROBE_ENABLED = /^(1|true|yes|on)$/i.test((process.env.FMP_PROBE_ENABLED || '').trim());
+const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable,rapidapi').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable', 'rapidapi']);
 const QQ_KEY = process.env.QQ_API_KEY || '';
 const UW_KEY = process.env.UW_API_KEY || '';
 const INTERVAL_MS = (Number(process.env.POLL_INTERVAL_SEC) || 45) * 1000;
@@ -53,6 +65,45 @@ const STATE_FILE = process.env.STATE_FILE || './scout-state.json';
 const LEADS_FILE = process.env.LEADS_FILE || './scout-leads.jsonl';
 const CT_INGEST_URL = process.env.CT_INGEST_URL || '';
 const CT_INGEST_TOKEN = process.env.CT_INGEST_TOKEN || '';
+
+/**
+ * FMP latency source registry (CT latency + Mac scout only; not Socratic).
+ * Default operational status = OFF (grey) — no spend until FMP_PROBE_ENABLED.
+ */
+const FMP_SOURCE_REGISTRY = [
+  {
+    id: 'fmp',
+    pathId: 'stable',
+    label: 'FMP Stable',
+    baseUrl: (process.env.FMP_STABLE_BASE_URL || 'https://financialmodelingprep.com/stable').replace(/\/+$/, ''),
+    auth: 'query',
+    defaultStatus: 'off',
+  },
+  {
+    id: 'fmp_rapidapi',
+    pathId: 'rapidapi',
+    label: 'FMP RapidAPI',
+    baseUrl: (process.env.FMP_RAPIDAPI_BASE_URL || 'https://financial-modeling-prep.p.rapidapi.com/stable').replace(/\/+$/, ''),
+    host: process.env.FMP_RAPIDAPI_HOST || 'financial-modeling-prep.p.rapidapi.com',
+    auth: 'rapidapi',
+    defaultStatus: 'off',
+  },
+];
+
+function fmpSourceStatus(src) {
+  if (!FMP_PROBE_ENABLED) return 'off';
+  if (!FMP_PATHS.has(src.pathId) && !FMP_PATHS.has(src.id)) return 'off';
+  const key = src.auth === 'rapidapi' ? FMP_RAPIDAPI_KEY : FMP_KEY;
+  if (!key) return 'stopped';
+  return 'running';
+}
+
+function logFmpRegistry() {
+  for (const src of FMP_SOURCE_REGISTRY) {
+    const st = fmpSourceStatus(src);
+    log(`fmp-source ${src.id.padEnd(14)} path=${src.pathId.padEnd(8)} status=${st} base=${src.baseUrl}`);
+  }
+}
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
@@ -233,18 +284,41 @@ async function detectHouseFrontier(state) {
   return out;
 }
 
-// --- FMP (the competitor we're timing against) ------------------------------
-async function pollFmp() {
+// --- FMP family (stable + RapidAPI alternate paths; default OFF) ------------
+async function pollFmpPath(src) {
   const out = [];
+  const key = src.auth === 'rapidapi' ? FMP_RAPIDAPI_KEY : FMP_KEY;
+  if (!key) return out;
   for (const ch of ['house', 'senate', 'executive']) {
-    const url = `https://financialmodelingprep.com/stable/${ch}-latest?page=0&limit=100&apikey=${encodeURIComponent(FMP_KEY)}`;
-    const r = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!r.ok) throw new Error(`${ch}-latest HTTP ${r.status}`);
+    let url = `${src.baseUrl}/${ch}-latest?page=0&limit=100`;
+    const headers = { accept: 'application/json' };
+    if (src.auth === 'rapidapi') {
+      headers['X-RapidAPI-Key'] = key;
+      if (src.host) headers['X-RapidAPI-Host'] = src.host;
+    } else {
+      url += `&apikey=${encodeURIComponent(key)}`;
+    }
+    const r = await fetch(url, { headers });
+    if (!r.ok) throw new Error(`${src.id}/${ch}-latest HTTP ${r.status}`);
     const json = await r.json();
     const rows = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
     for (const row of rows) {
-      const key = keyFromLink(row?.link || row?.url || '');
-      if (key) out.push({ key });
+      const k = keyFromLink(row?.link || row?.url || '');
+      if (k) out.push({ key: k, pathId: src.pathId, sourceId: src.id });
+    }
+  }
+  return out;
+}
+
+/** Poll all enabled FMP paths; first path to see a key wins for lead timing. */
+async function pollFmpFamily() {
+  const out = [];
+  for (const src of FMP_SOURCE_REGISTRY) {
+    if (fmpSourceStatus(src) !== 'running') continue;
+    try {
+      out.push(...(await pollFmpPath(src)));
+    } catch (e) {
+      warn(`fmp:${src.id}`, e);
     }
   }
   return out;
@@ -343,15 +417,14 @@ async function cycle(state) {
   // posted to the app and scored as us "winning" a race that never happened.
   const isBaselineCycle = !state.baselineEstablishedAt;
 
-  // Poll FMP BEFORE running our own detection. Both happen within the same
-  // cycle a few hundred ms apart; detecting first would always stamp
-  // `ourSeen` ahead of `fmpSeen` for anything FMP already had by this cycle,
-  // silently inflating our measured lead. Polling FMP first errs the other way
-  // (conservative), which is the correct bias for an experiment measuring
-  // whether we're actually ahead.
-  if (FMP_KEY) {
-    try { for (const f of await pollFmp()) if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso() }; }
-    catch (e) { warn('fmp', e); }
+  // Poll FMP BEFORE running our own detection (only when FMP_PROBE_ENABLED).
+  // Polling FMP first errs conservative (does not inflate our measured lead).
+  if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY)) {
+    try {
+      for (const f of await pollFmpFamily()) {
+        if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
+      }
+    } catch (e) { warn('fmp', e); }
   }
   if (QQ_KEY) {
     try { for (const q of await pollQQ()) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() }; }
@@ -426,7 +499,9 @@ function summarize(state) {
 // --- main -------------------------------------------------------------------
 (async () => {
   const state = loadState();
-  log(`scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER} fmp=${FMP_KEY ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}`);
+  const fmpOn = FMP_PROBE_ENABLED && !!(FMP_KEY || FMP_RAPIDAPI_KEY);
+  log(`scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER} fmp=${fmpOn ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}`);
+  logFmpRegistry();
   if (ONCE) { await cycle(state); return; }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
 })();

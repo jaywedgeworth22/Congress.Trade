@@ -605,6 +605,21 @@ export interface Env {
    */
   /** Per-key daily cap for latency probes (default 235). */
   FMP_LATENCY_DAILY_CAP?: string;
+  /**
+   * Master switch for FMP-family latency probes (stable + RapidAPI).
+   * Default OFF — no FMP spend until operator sets true/1/yes/on.
+   */
+  FMP_LATENCY_PROBE_ENABLED?: string;
+  /** Comma list of FMP paths when probe is on: stable, rapidapi (default both). */
+  FMP_LATENCY_PATHS?: string;
+  /** Override base URL for FMP stable path. */
+  FMP_STABLE_BASE_URL?: string;
+  /** Override base URL for FMP RapidAPI path. */
+  FMP_RAPIDAPI_BASE_URL?: string;
+  /** RapidAPI host header for FMP path. */
+  FMP_RAPIDAPI_HOST?: string;
+  /** Optional dedicated RapidAPI key for fmp_rapidapi path. */
+  FMP_RAPIDAPI_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
   /** Shared FMP per-minute pacer ceiling (stringified int). Infisical-tunable. */

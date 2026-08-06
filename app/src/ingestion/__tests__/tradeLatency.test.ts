@@ -20,6 +20,8 @@ import {
   getFmpLatencyUsed,
   addFmpLatencyUsed,
   getDisclosureLatencyProviderStatuses,
+  listFmpLatencyPathRegistry,
+  runDisclosureLatencyProbe,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -311,6 +313,67 @@ describe('tradeLatency', () => {
       } as never);
       const fmp = statuses.find((s) => s.id === 'fmp');
       expect(fmp?.configured).toBe(true);
+    });
+
+    it('defaults FMP family operationalStatus to off (no spend) until FMP_LATENCY_PROBE_ENABLED', async () => {
+      const env = {
+        FMP_LATENCY_API_KEY: 'latency-key',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+      } as never;
+      const offStatuses = await getDisclosureLatencyProviderStatuses(env);
+      const fmp = offStatuses.find((s) => s.id === 'fmp');
+      const rapid = offStatuses.find((s) => s.id === 'fmp_rapidapi');
+      expect(fmp?.operationalStatus).toBe('off');
+      expect(rapid?.operationalStatus).toBe('off');
+      expect(fmp?.configured).toBe(true);
+      expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);
+
+      const onEnv = { ...env, FMP_LATENCY_PROBE_ENABLED: 'true' } as never;
+      const onStatuses = await getDisclosureLatencyProviderStatuses(onEnv);
+      expect(onStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
+      expect(onStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('running');
+
+      const stableOnly = {
+        ...env,
+        FMP_LATENCY_PROBE_ENABLED: '1',
+        FMP_LATENCY_PATHS: 'stable',
+      } as never;
+      const pathStatuses = await getDisclosureLatencyProviderStatuses(stableOnly);
+      expect(pathStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
+      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
+    });
+
+    it('skips FMP HTTP when probe is OFF even if watch is force-run', async () => {
+      let fetchCount = 0;
+      const fetchImpl = (async () => {
+        fetchCount += 1;
+        return new Response(JSON.stringify([]), { status: 200 });
+      }) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_API_KEY: 'k1',
+        CONFIG_KV: {
+          get: async () => null,
+          put: async () => {},
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() { return null; },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const result = await runDisclosureLatencyProbe(env, new Date('2026-08-05T15:00:00.000Z'), fetchImpl, {
+        force: true,
+        providers: ['fmp', 'fmp_rapidapi'],
+      });
+      expect(fetchCount).toBe(0);
+      expect(result.providers.every((p) => p.operationalStatus === 'off')).toBe(true);
+      expect(result.fetchedRows).toBe(0);
     });
   });
 });

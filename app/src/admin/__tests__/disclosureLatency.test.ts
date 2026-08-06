@@ -95,8 +95,9 @@ describe('admin disclosure latency API', () => {
       providers: Array<{ provider: string; avgMonitorDeltaSec: number | null; avgProviderPublishedDeltaSec: number | null }>;
       publicSummary: { providers: Array<{ provider: string }> };
     };
-    expect(body.totals).toEqual(expect.objectContaining({ candidates: 1, matched: 1, configuredComparableProviders: 1 }));
-    expect(body.providers[0]).toEqual(
+    // FMP family has two direct paths (stable + RapidAPI); both share latency keys.
+    expect(body.totals).toEqual(expect.objectContaining({ candidates: 1, matched: 1, configuredComparableProviders: 2 }));
+    expect(body.providers.find((p) => p.provider === 'fmp')).toEqual(
       expect.objectContaining({ provider: 'fmp', avgMonitorDeltaSec: 210, avgProviderPublishedDeltaSec: 120 }),
     );
     expect(JSON.stringify(body.publicSummary)).not.toContain('H-2026-20012345');

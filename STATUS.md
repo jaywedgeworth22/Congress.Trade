@@ -13,6 +13,13 @@ Last updated: 2026-07-24 (CURSOR)
 - Branch `cursor/owner-decisions-wave-d376` / PR #915.
 - Rollout: `docs/rollouts/2026-07-24-owner-decisions-delivery-stripe.md`.
 
+## 2026-08-05 — FMP latency family OFF + alternate paths (GROK)
+
+FMP stable + RapidAPI registered on CT disclosure-latency + Mac scout. Default
+`operationalStatus=off` (grey UI, no spend) until `FMP_LATENCY_PROBE_ENABLED=true`.
+Paths race when ON (`FMP_LATENCY_PATHS=stable,rapidapi`). Rollout:
+`docs/rollouts/2026-08-05-fmp-latency-family-off.md`. Branch `grok/fmp-latency-off`.
+
 ## 2026-07-24 — Fix executive latency candidate test (CURSOR)
 
 Main CI red after `5264fe9` allowed executive filings in latency candidates but left the skip test asserting the old behavior. Updated the test to expect INSERT. Branch `cursor/fix-exec-latency-test-14e5`.

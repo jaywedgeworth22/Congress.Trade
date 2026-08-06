@@ -21,8 +21,9 @@ Everything else (storage, API, delivery) stays on Cloudflare; this is just the
   appear — House Clerk (intraday live search + PDF-URL frontier probe) and
   Senate eFD (the CSRF/agreement/DataTables flow) — stamping `our_detected_at`.
   Detection only (existence + link), no parsing.
-- **Polls FMP** (`house-latest` + `senate-latest`) and stamps `fmp_first_seen_at`
-  the first time FMP surfaces each filing.
+- **Optionally polls FMP family** (`stable` + `rapidapi` alternate paths) and
+  stamps `fmp_first_seen_at` the first time either path surfaces each filing.
+  **Default = OFF (no spend)** until `FMP_PROBE_ENABLED=1`.
 - **Logs the lead** per filing: `lead = fmp_first_seen_at − our_detected_at`
   (positive = we were first). Filings present at startup are flagged `baseline`;
   only ones that first appear *while running* count as a `live` race.
@@ -30,16 +31,19 @@ Everything else (storage, API, delivery) stays on Cloudflare; this is just the
 ## Run it
 
 ```bash
-# One cycle to sanity-check (detection only, no FMP key needed):
+# One cycle to sanity-check (detection only; FMP OFF by default):
 node scout/congress-scout.mjs --once
 
-# The real thing (needs your FMP key for the race):
-FMP_API_KEY=xxxxx node scout/congress-scout.mjs
+# Enable FMP race (stable + RapidAPI paths can race when both keys/paths set):
+FMP_PROBE_ENABLED=1 FMP_API_KEY=xxxxx node scout/congress-scout.mjs
+
+# Stable path only:
+FMP_PROBE_ENABLED=1 FMP_PATHS=stable FMP_API_KEY=xxxxx node scout/congress-scout.mjs
 ```
 
-Leave it running for a few days. Watch `scout-leads.jsonl` and the `SUMMARY`
-line: `live-races`, `we-were-first`, and `median-lead`. If we consistently lead
-FMP by 60s+ the edge is real; if not, it isn't worth the ingestion build (yet).
+Startup logs each FMP source with status `off` (grey intent), `running`, or
+`stopped` (missing key). Leave it running for a few days. Watch `scout-leads.jsonl`
+and the `SUMMARY` line: `live-races`, `we-were-first`, and `median-lead`.
 
 ### Keep it alive on a Mac (survives logout/reboot)
 
@@ -80,7 +84,13 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 
 | var | default | meaning |
 |---|---|---|
-| `FMP_API_KEY` | — | FMP key; omit for detection-only |
+| `FMP_PROBE_ENABLED` | off | set `1`/`true` to poll FMP family (default **OFF**, no spend) |
+| `FMP_PATHS` | `stable,rapidapi` | which FMP paths race when probe is on |
+| `FMP_API_KEY` / `FMP_LATENCY_API_KEY` | — | FMP key for stable (query) path |
+| `FMP_RAPIDAPI_KEY` | falls back to FMP key | key for RapidAPI path |
+| `FMP_STABLE_BASE_URL` | `https://financialmodelingprep.com/stable` | override stable base |
+| `FMP_RAPIDAPI_BASE_URL` | RapidAPI FMP stable base | override RapidAPI base |
+| `FMP_RAPIDAPI_HOST` | `financial-modeling-prep.p.rapidapi.com` | RapidAPI host header |
 | `POLL_INTERVAL_SEC` | `45` | cycle interval |
 | `SOURCES` | `house,senate` | subset to poll |
 | `HOUSE_FRONTIER` | `1` | probe the PDF-URL frontier (earliest House detection) |
@@ -96,7 +106,9 @@ Point the scout at production:
 ```bash
 export CT_INGEST_URL=https://congress.trade/api/ingest/detection
 export CT_INGEST_TOKEN="..."   # Worker INGEST_TOKEN (Infisical / secret handoff; never commit)
-export FMP_API_KEY="..."       # optional; only needed for the FMP race measurement
+# FMP race is opt-in (default OFF):
+# export FMP_PROBE_ENABLED=1
+# export FMP_API_KEY="..."
 node scout/congress-scout.mjs --once
 ```
 

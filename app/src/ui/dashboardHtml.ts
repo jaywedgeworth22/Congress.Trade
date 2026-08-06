@@ -711,6 +711,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .diag-status.ok { color:var(--buy); background:color-mix(in srgb,var(--buy) 13%,transparent); }
   .diag-status.warn, .diag-status.unknown { color:var(--warn); background:color-mix(in srgb,var(--warn) 13%,transparent); }
   .diag-status.error { color:var(--sell); background:color-mix(in srgb,var(--sell) 13%,transparent); }
+  /* Intentional disable — grey OFF (not red stopped, not green running). */
+  .diag-status.off { color:var(--text-dim); background:color-mix(in srgb,var(--text-dim) 12%,transparent); border-color:color-mix(in srgb,var(--text-dim) 35%,transparent); }
   .diag-meta { display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; color:var(--text-dim); font-size:11px; }
   .diag-note { margin-top:8px; color:var(--text-dim); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
   .diag-error { color:var(--sell); font-weight:700; }
@@ -935,6 +937,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-badge.behind { background:color-mix(in srgb,var(--rival) 15%,transparent); color:var(--rival); border:1px solid color-mix(in srgb,var(--rival) 35%,transparent); }
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
   .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
+  .sp-badge.off { background:color-mix(in srgb,var(--text-dim) 10%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--text-dim) 30%,transparent); }
+  .sp-card.sp-off { opacity: 0.72; border-color: color-mix(in srgb, var(--text-dim) 25%, var(--border)); }
   /* Win-rate bar */
   .sp-bar-wrap { display:flex; flex-direction:column; gap:5px; }
   .sp-bar-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); font-family:var(--mono); }
@@ -7725,6 +7729,14 @@ function refreshSpeedUpdated() {
 }
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
+  /* Intentional OFF (grey) — FMP family default until operator enables probes. */
+  if (p.operationalStatus === 'off') {
+    return '<div class="sp-card sp-off">' +
+      '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
+      '<span class="sp-badge off">OFF</span></div>' +
+      '<div class="sp-gathering">Intentionally disabled (no API spend). Enable with <code>FMP_LATENCY_PROBE_ENABLED=true</code>.</div>' +
+      '</div>';
+  }
   var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED;
   var usable = p.comparisonStatus === 'usable';
   var preliminary = p.comparisonStatus === 'preliminary';

@@ -159,7 +159,8 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
-      label: 'Financial Modeling Prep',
+      label: 'FMP Stable',
+      operationalStatus: 'off', // default OFF until FMP_LATENCY_PROBE_ENABLED
       candidates: 2,
       matched: 2,
       strongMatched: 2,
