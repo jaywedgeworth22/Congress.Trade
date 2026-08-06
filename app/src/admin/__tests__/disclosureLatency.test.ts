@@ -95,8 +95,9 @@ describe('admin disclosure latency API', () => {
       providers: Array<{ provider: string; avgMonitorDeltaSec: number | null; avgProviderPublishedDeltaSec: number | null }>;
       publicSummary: { providers: Array<{ provider: string }> };
     };
-    // FMP family has two direct paths (stable + RapidAPI); both share latency keys.
-    expect(body.totals).toEqual(expect.objectContaining({ candidates: 1, matched: 1, configuredComparableProviders: 2 }));
+    // Free-tier FMP_LATENCY_* configures stable only; RapidAPI needs RAPIDAPI_KEY /
+    // FMP_RAPIDAPI_KEY (ST marketplace convention). So one configured path here.
+    expect(body.totals).toEqual(expect.objectContaining({ candidates: 1, matched: 1, configuredComparableProviders: 1 }));
     expect(body.providers.find((p) => p.provider === 'fmp')).toEqual(
       expect.objectContaining({ provider: 'fmp', avgMonitorDeltaSec: 210, avgProviderPublishedDeltaSec: 120 }),
     );
