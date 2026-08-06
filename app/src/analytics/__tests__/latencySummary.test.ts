@@ -160,7 +160,9 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
       label: 'FMP Stable',
-      operationalStatus: 'off', // default OFF until FMP_LATENCY_PROBE_ENABLED
+      // Default probe ON for CT; without latency keys the lane is stopped (red/amber),
+      // not intentional OFF (grey — only when FMP_LATENCY_PROBE_ENABLED=false).
+      operationalStatus: 'stopped',
       candidates: 2,
       matched: 2,
       strongMatched: 2,

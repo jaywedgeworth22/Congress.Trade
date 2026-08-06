@@ -315,27 +315,27 @@ describe('tradeLatency', () => {
       expect(fmp?.configured).toBe(true);
     });
 
-    it('defaults FMP family operationalStatus to off (no spend) until FMP_LATENCY_PROBE_ENABLED', async () => {
+    it('defaults FMP family ON for CT when latency key present (explicit false disables)', async () => {
       const env = {
         FMP_LATENCY_API_KEY: 'latency-key',
         CONFIG_KV: { get: async () => null, put: async () => {} },
       } as never;
-      const offStatuses = await getDisclosureLatencyProviderStatuses(env);
-      const fmp = offStatuses.find((s) => s.id === 'fmp');
-      const rapid = offStatuses.find((s) => s.id === 'fmp_rapidapi');
-      expect(fmp?.operationalStatus).toBe('off');
-      expect(rapid?.operationalStatus).toBe('off');
+      const defaultStatuses = await getDisclosureLatencyProviderStatuses(env);
+      const fmp = defaultStatuses.find((s) => s.id === 'fmp');
+      const rapid = defaultStatuses.find((s) => s.id === 'fmp_rapidapi');
+      // Default ON — not grey OFF (owner: FMP is for CT latency, not ST product).
+      expect(fmp?.operationalStatus).toBe('running');
+      expect(rapid?.operationalStatus).toBe('running');
       expect(fmp?.configured).toBe(true);
       expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);
 
-      const onEnv = { ...env, FMP_LATENCY_PROBE_ENABLED: 'true' } as never;
-      const onStatuses = await getDisclosureLatencyProviderStatuses(onEnv);
-      expect(onStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
-      expect(onStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('running');
+      const offEnv = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;
+      const offStatuses = await getDisclosureLatencyProviderStatuses(offEnv);
+      expect(offStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('off');
+      expect(offStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
 
       const stableOnly = {
         ...env,
-        FMP_LATENCY_PROBE_ENABLED: '1',
         FMP_LATENCY_PATHS: 'stable',
       } as never;
       const pathStatuses = await getDisclosureLatencyProviderStatuses(stableOnly);
@@ -343,7 +343,7 @@ describe('tradeLatency', () => {
       expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
     });
 
-    it('skips FMP HTTP when probe is OFF even if watch is force-run', async () => {
+    it('skips FMP HTTP when probe is explicitly OFF even if watch is force-run', async () => {
       let fetchCount = 0;
       const fetchImpl = (async () => {
         fetchCount += 1;
@@ -351,6 +351,7 @@ describe('tradeLatency', () => {
       }) as typeof fetch;
       const env = {
         DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_PROBE_ENABLED: 'false',
         FMP_LATENCY_API_KEY: 'k1',
         CONFIG_KV: {
           get: async () => null,

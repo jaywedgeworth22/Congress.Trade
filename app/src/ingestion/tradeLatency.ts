@@ -272,7 +272,8 @@ export interface FmpLatencyPathDefinition {
 
 /**
  * Registered FMP path collection for CT latency + Mac scout.
- * Default operational state is OFF (no spend) until FMP_LATENCY_PROBE_ENABLED.
+ * Default operational state is ON for CT when latency keys present; explicit
+ * FMP_LATENCY_PROBE_ENABLED=false forces OFF (grey).
  * When ON, enabled paths race (first observation wins per provider id).
  */
 export const FMP_LATENCY_PATHS: readonly FmpLatencyPathDefinition[] = [
@@ -587,7 +588,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'stable',
     reason:
-      'FMP stable host (financialmodelingprep.com). Default OFF — set FMP_LATENCY_PROBE_ENABLED=true to spend. No provider first-seen timestamp; monitor first-observed is used.',
+      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. No provider first-seen timestamp; monitor first-observed is used.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[0]!.defaultBaseUrl,
@@ -604,7 +605,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI alternate host. Default OFF. Enable with FMP_LATENCY_PROBE_ENABLED + FMP_LATENCY_PATHS including rapidapi so it can race FMP Stable.',
+      'FMP via RapidAPI alternate host. Default ON for CT (races FMP Stable when path enabled). Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -666,12 +667,20 @@ function truthy(v: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((v ?? '').trim());
 }
 
-/** Master switch: FMP-family probes OFF by default (no spend). */
+/**
+ * Master switch for FMP-family latency probes.
+ * Default ON for Congress.Trade (FMP is a first-class CT data path / latency race source).
+ * Explicitly disable with FMP_LATENCY_PROBE_ENABLED=false|0|off|no.
+ * (Socratic.Trade blocks FMP product use separately — this switch is CT-only.)
+ */
 export async function isFmpProbeEnabled(env: Env): Promise<boolean> {
   const envx = env as EnvWithWatch;
   const live =
     (await resolveSecret(env, 'FMP_LATENCY_PROBE_ENABLED')).value ?? envx.FMP_LATENCY_PROBE_ENABLED;
-  return truthy(live);
+  if (live === undefined || live === null || String(live).trim() === '') return true;
+  // Explicit falsey
+  if (/^(0|false|no|off)$/i.test(String(live).trim())) return false;
+  return truthy(String(live));
 }
 
 /**
@@ -1341,7 +1350,7 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     // Intentional disable — grey OFF, not red stopped.
     operationalStatus = 'off';
     reason = !fmpProbeOn
-      ? 'OFF (default): set FMP_LATENCY_PROBE_ENABLED=true to enable FMP family probes (no spend until then)'
+      ? 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)'
       : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
   } else if (!provider.supportsDirectLatest) {
     operationalStatus = 'stopped';
@@ -2564,10 +2573,8 @@ async function runProviderProbe(
     return { ...base, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors };
   }
 
-  // FMP family: intentional OFF (grey) — skip all HTTP spend unless master
-  // switch is on AND this path is in FMP_LATENCY_PATHS. force=true still
-  // respects OFF unless FMP_LATENCY_PROBE_ENABLED is also true (operator must
-  // opt in to spend).
+  // FMP family: skip HTTP when explicitly OFF (FMP_LATENCY_PROBE_ENABLED=false)
+  // or path filtered out of FMP_LATENCY_PATHS. Default is ON for CT.
   if (isFmpFamilyProvider(provider.id) && base.operationalStatus === 'off') {
     return {
       ...base,
