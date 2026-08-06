@@ -58,14 +58,8 @@ type EnvWithWatch = Env & {
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
   UNUSUAL_WHALES_API_KEY?: string;
-  /** Alias without underscores (legacy Infisical name). */
+  /** Alias used in global-api-keys / Infisical (no underscores in “unusualwhales”). */
   UNUSUALWHALES_API_KEY?: string;
-  /**
-   * Secondary UW key (owner 2026-08: UNUSUALWHALES_API_KEY_2). Trial membership
-   * then residual free access — rotate with primary so one 401 does not stop probes.
-   */
-  UNUSUALWHALES_API_KEY_2?: string;
-  UNUSUAL_WHALES_API_KEY_2?: string;
   QUIVER_API_KEY?: string;
   QUIVER_API_TOKEN?: string;
   FINNHUB_API_KEY?: string;
@@ -728,136 +722,20 @@ export interface FmpLatencyKeySelection {
   intervalSec: number;
 }
 
-/** Dual Unusual Whales keys — primary + secondary (_2); rotate one per probe. */
-type UwLatencyKeySlot = '1' | '2';
-/** Per-key daily HTTP cap (base recent-trades + deep-match share remaining). */
-export const UW_LATENCY_DAILY_CAP_PER_KEY = 200;
-const UW_LATENCY_CALLS_PER_RUN = 1;
-const UW_LATENCY_MIN_INTERVAL_SEC = 60;
-const UW_LATENCY_MAX_INTERVAL_SEC = 45 * 60;
+/** Canonical UW secret names (single trial/paid key — no free residual after trial). */
+const UW_SECRET_NAMES = ['UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY'] as const;
 
-/** Primary slot secret names (first match wins). Secondary = same names + "_2". */
-const UW_LATENCY_KEY_PRIMARY_NAMES = ['UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY'] as const;
-
-function uwLatencyDayKey(slot: UwLatencyKeySlot, now = new Date()): string {
-  return `uw-latency:calls:key${slot}:` + now.toISOString().slice(0, 10);
-}
-
-function uwLatencyPollSource(slot: UwLatencyKeySlot): string {
-  return `uw-disclosure-latency-key${slot}`;
-}
-
-async function uwLatencyDailyCapPerKey(env: Env): Promise<number> {
-  const envx = env as EnvWithWatch;
-  const live =
-    (await resolveSecret(env, 'UW_LATENCY_DAILY_CAP')).value ?? envx.UW_LATENCY_DAILY_CAP;
-  const n = parseInt(live || '', 10);
-  // When set, treat as per-key cap (half of old combined default if operator set 240).
-  if (Number.isFinite(n) && n > 0) return Math.min(n, 2000);
-  return UW_LATENCY_DAILY_CAP_PER_KEY;
-}
-
-export async function getUwLatencyUsed(env: Env, slot: UwLatencyKeySlot, now = new Date()): Promise<number> {
-  try {
-    const v = await env.CONFIG_KV.get(uwLatencyDayKey(slot, now));
-    const n = v ? parseInt(v, 10) : 0;
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
-}
-
-export async function addUwLatencyUsed(
-  env: Env,
-  slot: UwLatencyKeySlot,
-  n: number,
-  now = new Date(),
-): Promise<number> {
-  const used = await getUwLatencyUsed(env, slot, now);
-  const next = Math.max(0, used + Math.floor(n));
-  try {
-    await env.CONFIG_KV.put(uwLatencyDayKey(slot, now), String(next), { expirationTtl: 172800 });
-  } catch {
-    /* best effort */
-  }
-  return next;
-}
-
-export interface UwLatencyKeySelection {
-  apiKey: string;
-  slot: UwLatencyKeySlot;
-  secretName: string;
-  used: number;
-  cap: number;
-  remaining: number;
-  intervalSec: number;
-}
-
-async function resolveUwKeyForSlot(
-  env: Env,
-  slot: UwLatencyKeySlot,
-): Promise<{ apiKey: string; secretName: string } | null> {
+/**
+ * Resolve the single Unusual Whales API key (canonical or owner alias).
+ */
+export async function resolveUnusualWhalesKey(env: Env): Promise<{ apiKey: string; secretName: string } | null> {
   const envx = env as unknown as Record<string, string | undefined>;
-  const names =
-    slot === '1'
-      ? [...UW_LATENCY_KEY_PRIMARY_NAMES]
-      : UW_LATENCY_KEY_PRIMARY_NAMES.map((n) => `${n}_2`);
-  // Owner global file uses UNUSUALWHALES_API_KEY_2 (no underscores in "unusualwhales").
-  if (slot === '2') names.unshift('UNUSUALWHALES_API_KEY_2', 'UNUSUAL_WHALES_API_KEY_2');
-  for (const secretName of names) {
+  for (const secretName of UW_SECRET_NAMES) {
     const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
     const apiKey = value?.trim();
     if (apiKey) return { apiKey, secretName };
   }
   return null;
-}
-
-/**
- * Pick one UW key that still has daily budget and spacing elapsed.
- * Alternates primary / _2 so trial + residual free tiers are both used.
- */
-export async function selectUnusualWhalesKey(
-  env: Env,
-  now: Date = new Date(),
-  opts: { force?: boolean } = {},
-): Promise<UwLatencyKeySelection | null> {
-  const cap = await uwLatencyDailyCapPerKey(env);
-  const candidates: UwLatencyKeySelection[] = [];
-  for (const slot of ['1', '2'] as const) {
-    const resolved = await resolveUwKeyForSlot(env, slot);
-    if (!resolved) continue;
-    const used = await getUwLatencyUsed(env, slot, now);
-    const remaining = Math.max(0, cap - used);
-    if (remaining < UW_LATENCY_CALLS_PER_RUN) continue;
-    const runsLeft = Math.max(1, Math.floor(remaining / UW_LATENCY_CALLS_PER_RUN));
-    const intervalSec = budgetedProbeIntervalSec({
-      now,
-      remainingRuns: runsLeft,
-      minIntervalSec: UW_LATENCY_MIN_INTERVAL_SEC,
-      maxIntervalSec: UW_LATENCY_MAX_INTERVAL_SEC,
-    });
-    if (!opts.force) {
-      const last = await getLastPollAt(env, uwLatencyPollSource(slot));
-      if (last && now.getTime() - last.getTime() < intervalSec * 1000) continue;
-    }
-    candidates.push({
-      apiKey: resolved.apiKey,
-      slot,
-      secretName: resolved.secretName,
-      used,
-      cap,
-      remaining,
-      intervalSec,
-    });
-  }
-  if (!candidates.length) return null;
-  candidates.sort((a, b) => a.slot.localeCompare(b.slot));
-  const pickedSlot = await selectRotatedAvenue(
-    env,
-    'uw-key',
-    candidates.map((c) => c.slot),
-  );
-  return candidates.find((c) => c.slot === pickedSlot) ?? candidates[0]!;
 }
 
 /**
@@ -1150,17 +1028,12 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'unusual_whales',
     label: 'Unusual Whales',
-    secretNames: [
-      'UNUSUAL_WHALES_API_KEY',
-      'UNUSUALWHALES_API_KEY',
-      'UNUSUALWHALES_API_KEY_2',
-      'UNUSUAL_WHALES_API_KEY_2',
-    ],
+    secretNames: ['UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY'],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
     reason:
-      'Recent Congress trades exposes filed_at_date, but not a provider first-seen timestamp. Dual keys rotate (primary + _2).',
+      'Recent Congress trades exposes filed_at_date, but not a provider first-seen timestamp. Single API key (trial/paid).',
     fetchRows: fetchUnusualWhalesRows,
   },
   {
@@ -3170,14 +3043,13 @@ async function runProviderProbe(
   const isFmpStable = provider.id === 'fmp';
   const isUnusualWhales = provider.id === 'unusual_whales';
   const budgetSourceId: LatencyBudgetSourceId | null =
-    provider.id === 'quiver' ? provider.id : null;
+    provider.id === 'unusual_whales' || provider.id === 'quiver' ? provider.id : null;
   const envx = env as EnvWithWatch;
   let fetchedRows = 0;
   let freshRows: DisclosureProviderRow[] = [];
   let apiKey: string | null = null;
   let fmpSelection: FmpLatencyKeySelection | null = null;
   let sourceBudget: LatencySourceProbeSelection | null = null;
-  let uwSelection: UwLatencyKeySelection | null = null;
   /** Extra UW deep-match HTTP calls allowed this run after base probe. */
   let uwDeepMatchCallBudget = 0;
 
@@ -3240,38 +3112,13 @@ async function runProviderProbe(
         await addFmpLatencyUsed(env, fmpSelection.slot, FMP_LATENCY_CALLS_PER_RUN, now);
       }
     }
-  } else if (isUnusualWhales) {
-    // Dual UW keys (primary + _2): rotate one key per cycle with per-key budget.
-    uwSelection = await selectUnusualWhalesKey(env, now, { force: opts.force });
-    if (!uwSelection) {
-      const anyKey =
-        (await resolveUwKeyForSlot(env, '1')) || (await resolveUwKeyForSlot(env, '2'));
-      if (!anyKey) {
-        return {
-          ...base,
-          configured: false,
-          enabled: false,
-          operationalStatus: 'stopped',
-          fetchedRows: 0,
-          pending: 0,
-          matched: 0,
-          errors,
-          reason: 'UNUSUAL_WHALES_API_KEY / UNUSUALWHALES_API_KEY_2 missing',
-        };
-      }
-      capSkipped = true;
-      errors.push(
-        'Unusual Whales keys at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)',
-      );
-    } else {
-      apiKey = uwSelection.apiKey;
-      await addUwLatencyUsed(env, uwSelection.slot, UW_LATENCY_CALLS_PER_RUN, now);
-      await setLastPollAt(env, uwLatencyPollSource(uwSelection.slot), now);
-      // Deep-match spends remaining budget on this key only.
-      uwDeepMatchCallBudget = Math.max(0, uwSelection.remaining - UW_LATENCY_CALLS_PER_RUN);
-    }
   } else {
-    apiKey = await resolveProviderSecret(env, provider);
+    if (isUnusualWhales) {
+      const uw = await resolveUnusualWhalesKey(env);
+      apiKey = uw?.apiKey ?? null;
+    } else {
+      apiKey = await resolveProviderSecret(env, provider);
+    }
     if (!apiKey) {
       return {
         ...base,
@@ -3282,10 +3129,12 @@ async function runProviderProbe(
         pending: 0,
         matched: 0,
         errors,
-        reason: `${provider.secretNames[0]} missing`,
+        reason: isUnusualWhales
+          ? 'UNUSUAL_WHALES_API_KEY / UNUSUALWHALES_API_KEY missing'
+          : `${provider.secretNames[0]} missing`,
       };
     }
-    // Per-source daily budget + yield-weighted spacing (Quiver).
+    // Per-source daily budget + yield-weighted spacing (UW / Quiver).
     if (budgetSourceId) {
       sourceBudget = await selectLatencySourceProbe(env, budgetSourceId, now, { force: opts.force });
       if (!sourceBudget) {
@@ -3295,6 +3144,9 @@ async function runProviderProbe(
         );
       } else {
         await addLatencySourceUsed(env, budgetSourceId, sourceBudget.callsPerRun, now);
+        if (isUnusualWhales) {
+          uwDeepMatchCallBudget = Math.max(0, sourceBudget.remaining - sourceBudget.callsPerRun);
+        }
         await setLastPollAt(env, LATENCY_SOURCE_BUDGETS[budgetSourceId].pollSource, now);
       }
     }
@@ -3326,34 +3178,7 @@ async function runProviderProbe(
           providerId: provider.id,
         };
       }
-      let rows: DisclosureProviderRow[];
-      try {
-        rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
-      } catch (err) {
-        // UW dual-key failover: on 401/403 try the other slot once (trial vs residual free).
-        const msg = (err as Error).message || '';
-        const authFail = /HTTP_401|HTTP_403/.test(msg);
-        if (isUnusualWhales && uwSelection && authFail) {
-          const otherSlot: UwLatencyKeySlot = uwSelection.slot === '1' ? '2' : '1';
-          const other = await resolveUwKeyForSlot(env, otherSlot);
-          if (other && other.apiKey !== apiKey) {
-            errors.push(`UW key slot ${uwSelection.slot} auth failed; retrying slot ${otherSlot}`);
-            apiKey = other.apiKey;
-            uwSelection = {
-              ...uwSelection,
-              slot: otherSlot,
-              apiKey: other.apiKey,
-              secretName: other.secretName,
-            };
-            await setLastPollAt(env, uwLatencyPollSource(otherSlot), now);
-            rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
-          } else {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
-      }
+      const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
       fetchedRows = rows.length;
       freshRows = rows;
       await upsertProviderRows(env, provider.id, rows, nowIso);
@@ -3403,8 +3228,8 @@ async function runProviderProbe(
       totalFetchedRows += deep.fetchedRows;
       totalMatched += deep.matched;
       errors.push(...deep.errors);
-      if (deep.fetchedDates > 0 && uwSelection) {
-        await addUwLatencyUsed(env, uwSelection.slot, deep.fetchedDates, now);
+      if (deep.fetchedDates > 0) {
+        await addLatencySourceUsed(env, 'unusual_whales', deep.fetchedDates, now);
       }
       // De-duplicated pending count across both passes: a stranded candidate
       // can appear in the normal pass's newest-100 page AND in the deep

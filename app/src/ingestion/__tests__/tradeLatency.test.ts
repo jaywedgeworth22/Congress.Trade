@@ -23,12 +23,9 @@ import {
   selectRotatedAvenue,
   selectFmpLatencyPathForCycle,
   selectLatencySourceProbe,
-  selectUnusualWhalesKey,
+  resolveUnusualWhalesKey,
   resolveFmpRapidApiKey,
   getFmpLatencyFleetRemaining,
-  getUwLatencyUsed,
-  addUwLatencyUsed,
-  UW_LATENCY_DAILY_CAP_PER_KEY,
   getFmpLatencyUsed,
   addFmpLatencyUsed,
   addLatencySourceUsed,
@@ -287,33 +284,22 @@ describe('tradeLatency', () => {
       expect(peakShared).toBeLessThan(nightShared);
     });
 
-    it('UW dual keys rotate and enforce per-key daily caps', async () => {
-      const kv = new Map<string, string>();
-      const env = {
-        UNUSUAL_WHALES_API_KEY: 'uw-primary',
-        UNUSUALWHALES_API_KEY_2: 'uw-secondary',
-        UW_LATENCY_DAILY_CAP: String(UW_LATENCY_DAILY_CAP_PER_KEY),
-        CONFIG_KV: {
-          get: async (k: string) => kv.get(k) ?? null,
-          put: async (k: string, v: string) => {
-            kv.set(k, v);
-          },
-        },
-      } as never;
-      const peakNow = new Date('2026-08-05T14:00:00.000Z');
-      const a = await selectUnusualWhalesKey(env, peakNow, { force: true });
-      expect(a?.slot).toBe('1');
-      expect(a?.apiKey).toBe('uw-primary');
-      const b = await selectUnusualWhalesKey(env, peakNow, { force: true });
-      expect(b?.slot).toBe('2');
-      expect(b?.apiKey).toBe('uw-secondary');
-      await addUwLatencyUsed(env, '1', UW_LATENCY_DAILY_CAP_PER_KEY, peakNow);
-      await addUwLatencyUsed(env, '2', UW_LATENCY_DAILY_CAP_PER_KEY, peakNow);
-      expect(await getUwLatencyUsed(env, '1', peakNow)).toBe(UW_LATENCY_DAILY_CAP_PER_KEY);
-      expect(await selectUnusualWhalesKey(env, peakNow, { force: true })).toBeNull();
+    it('resolveUnusualWhalesKey accepts canonical or UNUSUALWHALES alias (single key)', async () => {
+      expect(await resolveUnusualWhalesKey({} as never)).toBeNull();
+      expect(
+        (await resolveUnusualWhalesKey({ UNUSUALWHALES_API_KEY: 'from-global' } as never))?.apiKey,
+      ).toBe('from-global');
+      expect(
+        (
+          await resolveUnusualWhalesKey({
+            UNUSUAL_WHALES_API_KEY: 'canonical',
+            UNUSUALWHALES_API_KEY: 'alias',
+          } as never)
+        )?.apiKey,
+      ).toBe('canonical');
     });
 
-    it('QQ selectLatencySourceProbe enforces daily cap and yield spacing', async () => {
+    it('UW/QQ selectLatencySourceProbe enforces daily cap and yield spacing', async () => {
       const kv = new Map<string, string>();
       const env = {
         CONFIG_KV: {
@@ -322,9 +308,17 @@ describe('tradeLatency', () => {
             kv.set(k, v);
           },
         },
+        UW_LATENCY_DAILY_CAP: '10',
         QUIVER_LATENCY_DAILY_CAP: '12',
       } as never;
       const peakNow = new Date('2026-08-05T14:00:00.000Z');
+      const uw = await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true });
+      expect(uw?.cap).toBe(10);
+      expect(uw?.callsPerRun).toBe(1);
+      expect(uw?.band).toBe('peak');
+      await addLatencySourceUsed(env, 'unusual_whales', 10, peakNow);
+      expect(await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true })).toBeNull();
+
       const qq = await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true });
       expect(qq?.cap).toBe(12);
       expect(qq?.callsPerRun).toBe(LATENCY_SOURCE_BUDGETS.quiver.callsPerRun);
