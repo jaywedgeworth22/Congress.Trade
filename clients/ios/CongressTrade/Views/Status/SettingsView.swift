@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var magicEmail = ""
     @State private var showSubscribe = false
+    @FocusState private var magicEmailFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -101,7 +102,11 @@ struct SettingsView: View {
                                 .urlKeyboard()
                                 .neverAutocapitalized()
                                 .autocorrectionDisabled()
+                                .focused($magicEmailFocused)
+                                .submitLabel(.done)
+                                .onSubmit { magicEmailFocused = false }
                             Button {
+                                magicEmailFocused = false
                                 Task { await store.requestMagicLink(email: magicEmail) }
                             } label: {
                                 Label("Email Link", systemImage: "envelope")
@@ -232,7 +237,14 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.background)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { magicEmailFocused = false }
+                }
+            }
             .sheet(isPresented: $showSubscribe) {
                 SubscribeView()
                     .environmentObject(store)

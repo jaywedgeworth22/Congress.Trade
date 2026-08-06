@@ -58,6 +58,10 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Buy / Sell / All side filter (`type=` on feed + local cache filter).
     @Published private(set) var selectedTradeType: TradeTypeFilter = .all
+    /// Trades-only free-text politician filter (`memberName=`).
+    @Published private(set) var politicianFilter: String = ""
+    /// Trades-only asset/ticker filter (`ticker=`).
+    @Published private(set) var assetFilter: String = ""
 
     @Published var isLoadingMore = false
 
@@ -158,8 +162,25 @@ final class CongressTradeStore: ObservableObject {
         _ = await (r1, r2)
     }
 
+    /// Trades-only politician name filter (server `memberName=`).
+    func setPoliticianFilter(_ text: String) async {
+        let next = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard next != politicianFilter else { return }
+        politicianFilter = next
+        await refresh()
+    }
+
+    /// Trades-only asset/ticker filter (server `ticker=`).
+    func setAssetFilter(_ text: String) async {
+        let next = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard next != assetFilter else { return }
+        assetFilter = next
+        await refresh()
+    }
+
     /// Applies a server-side search filter (submit path; typing alone keeps
     /// using the local debounced cache filter). `nil`/empty clears it.
+    /// Prefer `setPoliticianFilter` / `setAssetFilter` for dedicated fields.
     func setSearch(_ term: String?) async {
         let trimmed = (term ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let next = trimmed.isEmpty ? nil : trimmed
@@ -211,8 +232,18 @@ final class CongressTradeStore: ObservableObject {
         let chambers = selectedChambers
         let chamberParam = Self.chamberQueryValue(for: chambers)
         let from = selectedTimeRange.fromDateISO
+        let to = selectedTimeRange.toDateISO
         let search = searchTerm
         let typeParam = selectedTradeType.queryValue
+        // Dedicated fields win; legacy combined search still fills the other slot.
+        let tickerParam: String? = {
+            if !assetFilter.isEmpty { return assetFilter }
+            return search.flatMap { Self.looksLikeTicker($0) ? $0.uppercased() : nil }
+        }()
+        let memberNameParam: String? = {
+            if !politicianFilter.isEmpty { return politicianFilter }
+            return search.flatMap { Self.looksLikeTicker($0) ? nil : $0 }
+        }()
         do {
             async let bootstrapTask = api.bootstrap()
             // Single newest-first snapshot for the visible window — not a
@@ -222,14 +253,15 @@ final class CongressTradeStore: ObservableObject {
                 FeedQuery(
                     limit: pageLimit,
                     since: nil,
-                    ticker: search.flatMap { Self.looksLikeTicker($0) ? $0.uppercased() : nil },
+                    ticker: tickerParam,
                     // Free-text politician search must use memberName= (LIKE),
                     // not member= (exact filer/bioguide id). CT UX P0.
                     member: nil,
-                    memberName: search.flatMap { Self.looksLikeTicker($0) ? nil : $0 },
+                    memberName: memberNameParam,
                     chamber: chamberParam,
                     type: typeParam,
                     from: from,
+                    to: to,
                     sort: "tx_date",
                     order: "desc"
                 )
@@ -256,10 +288,15 @@ final class CongressTradeStore: ObservableObject {
                 watchlist = []
             }
         } catch {
-            isOffline = (error as? APIError)?.isOffline == true
-            feedNotice = isOffline
-                ? "Offline. Showing saved trades from this device."
-                : error.localizedDescription
+            if Task.isCancelled { /* superseding refresh / view teardown */ }
+            else if let apiError = error as? APIError, apiError.isCancellation {
+                // Normal Task cancel — do not paint a grey "cancelled" banner.
+            } else {
+                isOffline = (error as? APIError)?.isOffline == true
+                feedNotice = isOffline
+                    ? "Offline. Showing saved trades from this device."
+                    : error.localizedDescription
+            }
         }
         isRefreshing = false
         if refreshQueued {
@@ -281,12 +318,10 @@ final class CongressTradeStore: ObservableObject {
     func refreshTrends() async {
         isLoadingTrends = true
         trendsNotice = nil
-        let window = selectedTimeRange == .all ? "all" : selectedTimeRange.rawValue
-        // All-time analytics is expensive and some endpoints expect a window;
-        // map "all" to a long window for scoreboard parity.
-        let analyticsWindow = selectedTimeRange == .all ? "1825d" : window
+        // All-time + calendar-year analytics map through analyticsWindow.
+        let analyticsWindow = selectedTimeRange.analyticsWindow
         let partyParam = selectedParty?.rawValue
-        let chamberParam = selectedChambers.count == ChamberFilter.allCases.count
+        let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
 
@@ -320,10 +355,19 @@ final class CongressTradeStore: ObservableObject {
             do {
                 latencySummary = try await latencyTask
             } catch {
-                latencySummary = nil
+                if let apiError = error as? APIError, apiError.isCancellation {
+                    // ignore
+                } else {
+                    latencySummary = nil
+                }
             }
         } catch {
-            trendsNotice = error.localizedDescription
+            if Task.isCancelled { /* ignore */ }
+            else if let apiError = error as? APIError, apiError.isCancellation {
+                // Normal Task cancel — do not paint a grey "cancelled" banner.
+            } else {
+                trendsNotice = error.localizedDescription
+            }
         }
         isLoadingTrends = false
     }
@@ -554,6 +598,43 @@ final class CongressTradeStore: ObservableObject {
             deliveryNotice = "Could not update delivery. Retry will safely reuse this request: \(error.localizedDescription)"
         }
         subscriptionIDsInFlight.remove(subscription.id)
+    }
+
+    /// Permanently removes a delivery subscription after the UI double-confirm.
+    func deleteSubscription(_ subscription: Subscription) async {
+        subscriptionIDsInFlight.insert(subscription.id)
+        deliveryNotice = nil
+        let key = UUID().uuidString
+        do {
+            let response = try await api.deleteSubscription(id: subscription.id, idempotencyKey: key)
+            lastCommand = response.command
+            subscriptions.removeAll { $0.id == subscription.id }
+            deliveryNotice = "Delivery deleted."
+        } catch {
+            deliveryNotice = "Could not delete delivery: \(error.localizedDescription)"
+            await refreshSignedInState()
+        }
+        subscriptionIDsInFlight.remove(subscription.id)
+    }
+
+    /// Premium CSV export using explicit From/To (export popup) plus active
+    /// feed filters. Returns raw CSV bytes for share-sheet handoff.
+    func exportCSV(from: String?, to: String?) async throws -> Data {
+        guard signedIn else {
+            throw APIError.server(status: 401, message: "Sign in required for CSV export", retryAfterSeconds: nil)
+        }
+        guard isPremium else {
+            throw APIError.server(status: 402, message: "CSV export requires Premium", retryAfterSeconds: nil)
+        }
+        let chamberParam = Self.chamberQueryValue(for: selectedChambers)
+        return try await api.exportTransactionsCSV(
+            from: from,
+            to: to,
+            ticker: assetFilter.isEmpty ? nil : assetFilter,
+            memberName: politicianFilter.isEmpty ? nil : politicianFilter,
+            chamber: chamberParam,
+            type: selectedTradeType.queryValue
+        )
     }
 
     @discardableResult

@@ -1,17 +1,24 @@
 import SwiftUI
 import SwiftData
+import UIKit
+
+enum TradeFilterField: Hashable {
+    case politician, asset
+}
 
 struct FeedDashboardView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Query private var cachedTrades: [ClientTrade]
-    @State private var searchText = ""
-    @State private var appliedSearch = ""
-    @State private var searchTask: Task<Void, Never>?
+    @State private var politicianText = ""
+    @State private var assetText = ""
+    @State private var filterTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
     @State private var selectedTicker: String?
     @State private var showDisclaimerDetails = false
+    @State private var showExportSheet = false
+    @FocusState private var focusedField: TradeFilterField?
 
     /// Newest trade date first; cursor is only a tie-breaker so seed imports of
     /// old filings don't sit above recent activity just because they were
@@ -29,16 +36,22 @@ struct FeedDashboardView: View {
     }
 
     var filteredTrades: [ClientTrade] {
-        let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let politicianNeedle = politicianText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let assetNeedle = assetText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let chambers = store.selectedChambers
         let filteringChambers = !chambers.isEmpty
         let fromISO = store.selectedTimeRange.fromDateISO
+        let toISO = store.selectedTimeRange.toDateISO
         let typeFilter = store.selectedTradeType
 
         return sortedCached.filter { trade in
             if let fromISO {
                 let tx = trade.transaction.date ?? ""
                 if !tx.isEmpty, tx < fromISO { return false }
+            }
+            if let toISO {
+                let tx = trade.transaction.date ?? ""
+                if !tx.isEmpty, tx > toISO { return false }
             }
 
             if filteringChambers {
@@ -54,43 +67,68 @@ struct FeedDashboardView: View {
                 return false
             }
 
-            if !needle.isEmpty {
-                return TradeSearch.matches(trade, normalizedNeedle: needle)
+            if !politicianNeedle.isEmpty {
+                let name = (trade.member.name ?? "").lowercased()
+                let state = (trade.member.state ?? "").lowercased()
+                if !name.contains(politicianNeedle) && !state.contains(politicianNeedle) {
+                    return false
+                }
+            }
+
+            if !assetNeedle.isEmpty {
+                let ticker = (trade.asset.ticker ?? "").lowercased()
+                let name = (trade.asset.name ?? "").lowercased()
+                if !ticker.contains(assetNeedle) && !name.contains(assetNeedle) {
+                    return false
+                }
             }
             return true
         }
+    }
+
+    private var hasActiveTextFilter: Bool {
+        !politicianText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !assetText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    if showDisclaimerDetails {
-                        Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(12)
-                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
-                            .padding(.bottom, 4)
-                            .padding(.horizontal, 16)
-                    }
+                    DisclaimerBanner(isExpanded: $showDisclaimerDetails)
 
+                    // Shared filters (also on Trends) — chamber / party / sides / timeframe.
                     FeedControlBar()
 
+                    // Trades-only extras: politician, asset, type is already in shared bar as Sides.
+                    TradesExtraFilters(
+                        politicianText: $politicianText,
+                        assetText: $assetText,
+                        focusedField: $focusedField,
+                        onPoliticianSubmit: {
+                            Task { await store.setPoliticianFilter(politicianText) }
+                        },
+                        onAssetSubmit: {
+                            Task { await store.setAssetFilter(assetText) }
+                        },
+                        onPoliticianClear: {
+                            Task { await store.setPoliticianFilter("") }
+                        },
+                        onAssetClear: {
+                            Task { await store.setAssetFilter("") }
+                        }
+                    )
+
                     HStack {
-                        SearchField(text: $searchText, onSubmit: {
-                            Task { await store.setSearch(searchText) }
-                        }, onClear: {
-                            Task { await store.setSearch(nil) }
-                        })
-                        
+                        Spacer(minLength: 0)
                         Text("\(filteredTrades.count) trades")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
-                            .padding(.trailing, 4)
                     }
 
-                    if let notice = store.feedNotice, store.isOffline || !notice.isEmpty {
+                    // Only real offline/error notices — never cancellation noise.
+                    if let notice = store.feedNotice,
+                       store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
                         FeedFreshnessView(
                             isOffline: store.isOffline,
                             lastRefresh: store.lastSuccessfulRefresh,
@@ -102,14 +140,14 @@ struct FeedDashboardView: View {
                     if filteredTrades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
-                                appliedSearch.isEmpty ? "No Trades in Range" : "No Matching Trades",
+                                hasActiveTextFilter ? "No Matching Trades" : "No Trades in Range",
                                 systemImage: "tray"
                             )
                         } description: {
                             Text(
-                                appliedSearch.isEmpty
-                                    ? "Try a wider time range, or pull to refresh."
-                                    : "Try another ticker, politician, or state."
+                                hasActiveTextFilter
+                                    ? "Try another ticker, politician, or state."
+                                    : "Try a wider time range, or pull to refresh."
                             )
                         } actions: {
                             Button("Retry") { Task { await store.refresh() } }
@@ -142,9 +180,19 @@ struct FeedDashboardView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 24)
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showExportSheet = true
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundStyle(.primary)
+                    }
+                    .accessibilityLabel("Export CSV")
+                }
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
@@ -155,6 +203,11 @@ struct FeedDashboardView: View {
                         Image(systemName: "info.circle")
                             .foregroundStyle(.blue)
                     }
+                    .accessibilityLabel("About Congress.Trade")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
                 }
             }
             .refreshable { await store.refresh() }
@@ -201,48 +254,66 @@ struct FeedDashboardView: View {
                         .presentationCornerRadius(18)
                 }
             }
-            .onChange(of: searchText) { _, newValue in
-                searchTask?.cancel()
-                searchTask = Task {
-                    try? await Task.sleep(for: .milliseconds(180))
-                    guard !Task.isCancelled else { return }
-                    appliedSearch = newValue
+            .sheet(isPresented: $showExportSheet) {
+                ExportCSVSheet()
+                    .environmentObject(store)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+            }
+            .onChange(of: politicianText) { _, newValue in
+                scheduleFilterApply {
+                    await store.setPoliticianFilter(newValue)
                 }
             }
-            .onDisappear { searchTask?.cancel() }
+            .onChange(of: assetText) { _, newValue in
+                scheduleFilterApply {
+                    await store.setAssetFilter(newValue)
+                }
+            }
+            .onDisappear { filterTask?.cancel() }
+            .onAppear {
+                politicianText = store.politicianFilter
+                assetText = store.assetFilter
+            }
+            .simultaneousGesture(
+                TapGesture().onEnded { focusedField = nil }
+            )
         }
     }
 
-    private func toggleChamber(_ chamber: ChamberFilter) {
-        var next = store.selectedChambers
-        if next.contains(chamber) {
-            next.remove(chamber)
-        } else {
-            next.insert(chamber)
+    private func scheduleFilterApply(_ work: @escaping @MainActor () async -> Void) {
+        filterTask?.cancel()
+        filterTask = Task {
+            try? await Task.sleep(for: .milliseconds(320))
+            guard !Task.isCancelled else { return }
+            await work()
         }
-        Task { await store.setChamberSelection(next) }
+    }
+
+    /// Grey full-width "cancelled" cards under the filter bar came from
+    /// URLError.cancelled / Task cancel being painted as feedNotice.
+    private static func isBenignCancellationNotice(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower == "cancelled" || lower == "canceled" || lower.contains("cancelled") || lower.contains("canceled")
     }
 }
 
 // MARK: - Header / controls
 
+/// Website-parity brand lockup: eagle+bag with CONGRESS / TRADE baked into the
+/// light/dark lockup assets. No trailing "Congress.Trade" text after the mark.
 struct BrandTitle: View {
     var body: some View {
-        HStack(spacing: 8) {
-            // Settle target for EagleSplashView (~32pt).
-            Image("BrandLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 32, height: 32)
-            Text("Congress.Trade")
-                .font(.custom("ZillaSlab-Bold", size: 18, relativeTo: .headline))
-                .foregroundStyle(.primary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Congress.Trade")
+        Image("BrandLockup")
+            .resizable()
+            .scaledToFit()
+            .frame(height: 28)
+            .frame(maxWidth: 200)
+            .accessibilityLabel("Congress.Trade")
     }
 }
 
+/// Shared under-header filter strip used on both Trades and Trends.
 struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
     var showMetrics: Bool = true
@@ -300,7 +371,7 @@ struct FeedControlBar: View {
                     )
                 }
 
-                // Side Filter (Buy/Sell)
+                // Side Filter (Buy/Sell) — green up + red down instead of double-arrow.
                 Menu {
                     ForEach(TradeTypeFilter.allCases) { type in
                         Button {
@@ -315,10 +386,10 @@ struct FeedControlBar: View {
                         }
                     }
                 } label: {
-                    FilterMenuLabel(
+                    SidesFilterMenuLabel(
                         title: store.selectedTradeType.label,
-                        icon: "arrow.left.arrow.right",
-                        isActive: store.selectedTradeType != .all
+                        isActive: store.selectedTradeType != .all,
+                        selected: store.selectedTradeType
                     )
                 }
 
@@ -360,6 +431,40 @@ struct FeedControlBar: View {
     }
 }
 
+/// Tiny green up + red down arrows for the shared Sides control.
+struct SidesFilterMenuLabel: View {
+    let title: String
+    let isActive: Bool
+    let selected: TradeTypeFilter
+
+    var body: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 1) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(selected == .sell ? (isActive ? .white : .secondary) : Color.green)
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(selected == .buy ? (isActive ? .white : .secondary) : Color.red)
+            }
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .opacity(0.5)
+                .padding(.leading, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundStyle(isActive ? .white : .primary)
+        .background(
+            isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
+            in: Capsule()
+        )
+        .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+    }
+}
+
 struct FilterMenuLabel: View {
     let title: String
     let icon: String
@@ -387,10 +492,94 @@ struct FilterMenuLabel: View {
     }
 }
 
+/// Trades-only politician + asset fields under the shared filter bar.
+struct TradesExtraFilters: View {
+    @Binding var politicianText: String
+    @Binding var assetText: String
+    var focusedField: FocusState<TradeFilterField?>.Binding
+    var onPoliticianSubmit: () -> Void
+    var onAssetSubmit: () -> Void
+    var onPoliticianClear: () -> Void
+    var onAssetClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            CompactFilterField(
+                text: $politicianText,
+                placeholder: "Politician…",
+                systemImage: "person",
+                focused: focusedField,
+                field: .politician,
+                onSubmit: onPoliticianSubmit,
+                onClear: onPoliticianClear
+            )
+            CompactFilterField(
+                text: $assetText,
+                placeholder: "Asset / ticker…",
+                systemImage: "chart.bar",
+                focused: focusedField,
+                field: .asset,
+                autocap: true,
+                onSubmit: onAssetSubmit,
+                onClear: onAssetClear
+            )
+        }
+    }
+}
+
+struct CompactFilterField: View {
+    @Binding var text: String
+    let placeholder: String
+    let systemImage: String
+    var focused: FocusState<TradeFilterField?>.Binding
+    let field: TradeFilterField
+    var autocap: Bool = false
+    var onSubmit: () -> Void = {}
+    var onClear: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Group {
+                if autocap {
+                    TextField(placeholder, text: $text)
+                        .tickerAutocapitalized()
+                } else {
+                    TextField(placeholder, text: $text)
+                        .neverAutocapitalized()
+                }
+            }
+            .font(.subheadline)
+            .autocorrectionDisabled()
+            .focused(focused, equals: field)
+            .submitLabel(.search)
+            .onSubmit(onSubmit)
+            if !text.isEmpty {
+                Button {
+                    withAnimation { text = "" }
+                    onClear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Clear")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(AppTheme.border(cornerRadius: 12))
+    }
+}
+
 struct SearchField: View {
     @Binding var text: String
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -399,7 +588,12 @@ struct SearchField: View {
             TextField("Search ticker, politician, or state", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
-                .onSubmit(onSubmit)
+                .focused($isFocused)
+                .submitLabel(.search)
+                .onSubmit {
+                    onSubmit()
+                    isFocused = false
+                }
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
@@ -416,6 +610,145 @@ struct SearchField: View {
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
         .overlay(AppTheme.border(cornerRadius: 12))
     }
+}
+
+/// Shared educational disclaimer used on Trades and Trends.
+struct DisclaimerBanner: View {
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        if isExpanded {
+            Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+/// Trades-only export popup: From / To dates + small ↓ CSV (Premium-gated).
+struct ExportCSVSheet: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var fromDate = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
+    @State private var toDate = Date()
+    @State private var isExporting = false
+    @State private var notice: String?
+    @State private var shareURL: URL?
+    @State private var showSubscribe = false
+
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    DatePicker("From", selection: $fromDate, displayedComponents: .date)
+                    DatePicker("To", selection: $toDate, displayedComponents: .date)
+                } header: {
+                    Text("Date range")
+                } footer: {
+                    Text("Exports the filtered feed for this range. Premium required.")
+                }
+
+                if let notice {
+                    Section {
+                        Text(notice)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    if !store.signedIn {
+                        Text("Sign in with a Premium account to export CSV.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else if !store.isPremium {
+                        Text("CSV export is a Premium feature ($5/mo or $50/yr, 1-month free trial).")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            showSubscribe = true
+                        } label: {
+                            Label("Subscribe with Apple", systemImage: "apple.logo")
+                        }
+                    } else {
+                        Button {
+                            Task { await runExport() }
+                        } label: {
+                            if isExporting {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                Text("↓ CSV")
+                                    .font(.caption.weight(.bold))
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .disabled(isExporting)
+                    }
+                }
+            }
+            .navigationTitle("Export")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showSubscribe) {
+                SubscribeView()
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: Binding(
+                get: { shareURL != nil },
+                set: { if !$0 { shareURL = nil } }
+            )) {
+                if let shareURL {
+                    ShareSheet(items: [shareURL])
+                }
+            }
+        }
+    }
+
+    private func runExport() async {
+        isExporting = true
+        notice = nil
+        defer { isExporting = false }
+        let from = Self.dayFormatter.string(from: min(fromDate, toDate))
+        let to = Self.dayFormatter.string(from: max(fromDate, toDate))
+        do {
+            let data = try await store.exportCSV(from: from, to: to)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("congress-trades-\(from)-\(to).csv")
+            try data.write(to: url, options: .atomic)
+            shareURL = url
+            notice = "Ready to share."
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+}
+
+/// UIKit share sheet bridge for the exported CSV file URL.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Compact trade row

@@ -506,6 +506,11 @@ struct SubscriptionCommandResult: Decodable {
     let subscription: Subscription
 }
 
+struct DeleteSubscriptionResult: Decodable {
+    let deleted: Bool?
+    let id: String?
+}
+
 struct PreferencesCommandResult: Decodable {
     let preferences: ClientPreferences
 }
@@ -690,13 +695,16 @@ struct LatencySummary: Decodable {
 }
 
 /// Consumer time windows matching the website's Trends/Trades selector
-/// (`app/src/ui/dashboardHtml.ts` TR_WINDOW_LABELS / default `90d`).
+/// (`app/src/ui/dashboardHtml.ts` TR_WINDOW_LABELS / default `90d`) plus
+/// calendar-year options requested for iOS parity.
 enum TimeRange: String, CaseIterable, Identifiable, Codable {
     case sevenDays = "7d"
     case thirtyDays = "30d"
     case ninetyDays = "90d"
     case sixMonths = "180d"
     case oneYear = "365d"
+    case thisCalendarYear = "ytd"
+    case lastCalendarYear = "prev_year"
     case all = "all"
 
     var id: String { rawValue }
@@ -708,32 +716,88 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
         case .ninetyDays: return "Past 3 Months"
         case .sixMonths: return "Past 6 Months"
         case .oneYear: return "Past Year"
+        case .thisCalendarYear: return "This calendar year"
+        case .lastCalendarYear: return "Last calendar year"
         case .all: return "All Time"
+        }
+    }
+
+    /// Window string for analytics endpoints. Calendar-year cases map to a
+    /// day-count window large enough to cover the range; the feed still uses
+    /// exact `from`/`to` ISO bounds below.
+    var analyticsWindow: String {
+        switch self {
+        case .thisCalendarYear, .lastCalendarYear:
+            return "365d"
+        case .all:
+            return "1825d"
+        default:
+            return rawValue
         }
     }
 
     /// ISO `yyyy-MM-dd` lower bound for `?from=` on the feed, or `nil` for all-time.
     var fromDateISO: String? {
-        guard self != .all else { return nil }
-        let days: Int
-        switch self {
-        case .sevenDays: days = 7
-        case .thirtyDays: days = 30
-        case .ninetyDays: days = 90
-        case .sixMonths: days = 180
-        case .oneYear: days = 365
-        case .all: return nil
-        }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        guard let date = cal.date(byAdding: .day, value: -days, to: Date()) else { return nil }
+        let formatter = Self.isoDayFormatter
+        switch self {
+        case .all:
+            return nil
+        case .thisCalendarYear:
+            let year = cal.component(.year, from: Date())
+            var comps = DateComponents()
+            comps.year = year
+            comps.month = 1
+            comps.day = 1
+            guard let date = cal.date(from: comps) else { return nil }
+            return formatter.string(from: date)
+        case .lastCalendarYear:
+            let year = cal.component(.year, from: Date()) - 1
+            var comps = DateComponents()
+            comps.year = year
+            comps.month = 1
+            comps.day = 1
+            guard let date = cal.date(from: comps) else { return nil }
+            return formatter.string(from: date)
+        case .sevenDays, .thirtyDays, .ninetyDays, .sixMonths, .oneYear:
+            let days: Int
+            switch self {
+            case .sevenDays: days = 7
+            case .thirtyDays: days = 30
+            case .ninetyDays: days = 90
+            case .sixMonths: days = 180
+            case .oneYear: days = 365
+            default: return nil
+            }
+            guard let date = cal.date(byAdding: .day, value: -days, to: Date()) else { return nil }
+            return formatter.string(from: date)
+        }
+    }
+
+    /// ISO `yyyy-MM-dd` upper bound for `?to=` when the window has a hard end
+    /// (last calendar year ends Dec 31 of that year). `nil` means open-ended.
+    var toDateISO: String? {
+        guard self == .lastCalendarYear else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let year = cal.component(.year, from: Date()) - 1
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = 12
+        comps.day = 31
+        guard let date = cal.date(from: comps) else { return nil }
+        return Self.isoDayFormatter.string(from: date)
+    }
+
+    private static let isoDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
+        return formatter
+    }()
 }
 
 struct AnalyticsSummary: Decodable {
