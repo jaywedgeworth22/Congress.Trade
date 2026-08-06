@@ -74,9 +74,13 @@ budget-status polling, see Tunables & flags below)
   (explicit false/off disables; grey OFF), `FMP_LATENCY_PATHS` (`stable,rapidapi`
   default — **rotated one path per probe cycle**, not dual-called, so free-tier
   daily quotas are not doubled for the same answer), optional `FMP_STABLE_BASE_URL` /
-  `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST` / `FMP_RAPIDAPI_KEY`,
+  `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST`,
+  `FMP_RAPIDAPI_KEY` **or shared `RAPIDAPI_KEY`** (Socratic.Trade marketplace
+  convention — CT never uses free-tier `FMP_LATENCY_*` on the RapidAPI host),
+  `FMP_RAPIDAPI_DAILY_CAP` (default 500 HTTP/day for RapidAPI path),
   `FMP_LATENCY_DAILY_CAP` (per free-tier key, default 235), dual keys
   `FMP_LATENCY_API_KEY` + `_2` also **rotate** among eligible budget/spacing,
+  fleet ≈ dual free keys + RapidAPI path (~2×+ free-only when both configured),
   `UW_LATENCY_DAILY_CAP` (default 240 HTTP/day incl. deep-match),
   `QUIVER_LATENCY_DAILY_CAP` (default 360 HTTP/day; 3 calls per probe),
   `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date budget; default `8`).
