@@ -19,6 +19,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 <!-- board-hygiene 2026-08-05 GROK final: only current WIP / open PRs / active incidents. -->
 
 ## Recently completed (2026-08-02 closeout)
+- **2026-08-06 — GROK — COMPLETED — Second CT self-hosted CI runner.** Reassigned idle Socratic runner → `oracle-congress-ci-2` (labels congress-ci/oracle-ci). CT has 2 online runners. Idle listeners ~75–105MB RSS / ~0% CPU. See docs/rollouts/2026-08-06-second-congress-ci-runner.md.
 - **2026-08-05 — GROK — COMPLETED — FMP latency family OFF (grey) + dual-path race.** Branch `grok/fmp-latency-off`. Rollout docs/rollouts/2026-08-05-fmp-latency-family-off.md.
 - **2026-08-05 — GROK — COMPLETED — Straightforward planned effort closeout (board hygiene).** Removed shipped rows from Planned/Active so Issues mirror stays closed: #1030–#1045 batch, #1049, #155, #205, #1380; merged #1406 assets + #1408 DLQ wait-check. Open PRs: #1407 delivery UI, #1409 iOS brand, #1410 docs. Remaining planned: #1044 cron, #1046 push, #1047 interop, #1048 iOS release, #156 deferred, #159 go-live, #203/#204 audit.
 - **COMPLETED (already on main; board hygiene 2026-08-05 GROK):** **Web: OG/Twitter/meta tags + favicon/manifest (unassigned, S).**
