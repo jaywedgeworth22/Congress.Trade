@@ -2881,28 +2881,339 @@ function p90(values: number[]): number | null {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.9) - 1)];
 }
 
+/** Earliest parseable ISO timestamp among candidates (null if none). */
+export function earliestIso(...vals: Array<string | null | undefined>): string | null {
+  let best: string | null = null;
+  let bestMs = Infinity;
+  for (const v of vals) {
+    if (!v) continue;
+    const ms = Date.parse(v);
+    if (!Number.isFinite(ms) || ms >= bestMs) continue;
+    bestMs = ms;
+    best = v;
+  }
+  return best;
+}
+
+/**
+ * Timestamp used for scoreboard lead/lag for a matched race.
+ * Provider-kind feeds prefer their own stamp, then fall back to monitor first-seen
+ * so missing Quiver_Upload_Time (etc.) does not produce matched=N with empty lead stats.
+ */
+export function effectiveRaceProviderTime(
+  timestampKind: 'provider' | 'monitor' | 'none',
+  row: { provider_published_at?: string | null; provider_first_seen_at?: string | null },
+): string | null {
+  if (timestampKind === 'provider') {
+    return row.provider_published_at || row.provider_first_seen_at || null;
+  }
+  if (timestampKind === 'monitor') {
+    return row.provider_first_seen_at || null;
+  }
+  return null;
+}
+
+const STRONG_MATCH_METHODS = new Set([
+  'trade-hash',
+  'fuzzy-no-ticker',
+  'fuzzy-missing-date',
+  'fuzzy-near-date',
+]);
+
+type LatencyCandidateSummaryRow = {
+  provider: ProviderId;
+  trade_hash: string | null;
+  status: string;
+  chamber: Chamber;
+  provider_key: string | null;
+  match_method: string | null;
+  congress_first_seen_at: string;
+  provider_first_seen_at: string | null;
+  provider_published_at: string | null;
+  filed_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Collapse FMP stable + RapidAPI candidate rows into one race per trade_hash.
+ * Provider first-seen / published = earliest observation across either path.
+ */
+export function mergeFmpFamilyCandidateRows(
+  rows: LatencyCandidateSummaryRow[],
+): LatencyCandidateSummaryRow[] {
+  const byHash = new Map<string, LatencyCandidateSummaryRow[]>();
+  for (const row of rows) {
+    if (!isFmpFamilyProvider(row.provider)) continue;
+    const key = row.trade_hash || `${row.chamber}:${row.provider_key || row.created_at}`;
+    const list = byHash.get(key);
+    if (list) list.push(row);
+    else byHash.set(key, [row]);
+  }
+  const out: LatencyCandidateSummaryRow[] = [];
+  for (const group of byHash.values()) {
+    const matched = group.filter(
+      (r) => r.status === 'matched' && r.match_method && STRONG_MATCH_METHODS.has(r.match_method),
+    );
+    const pickFrom = matched.length ? matched : group;
+    // Prefer a matched row as the identity base; always take earliest provider stamps.
+    const base = pickFrom.reduce((a, b) =>
+      (a.congress_first_seen_at || '') <= (b.congress_first_seen_at || '') ? a : b,
+    );
+    out.push({
+      ...base,
+      provider: 'fmp',
+      provider_first_seen_at: earliestIso(...group.map((r) => r.provider_first_seen_at)),
+      provider_published_at: earliestIso(...group.map((r) => r.provider_published_at)),
+      status: matched.length ? 'matched' : base.status,
+      match_method: matched[0]?.match_method ?? base.match_method,
+      // Any path's key is fine for coverage bookkeeping after merge.
+      provider_key: matched.find((r) => r.provider_key)?.provider_key ?? base.provider_key,
+    });
+  }
+  return out;
+}
+
+/**
+ * Collapse FMP-family observations: one row per trade_hash (earliest first_observed).
+ */
+export function mergeFmpFamilyObservationRows(
+  rows: Array<ProviderObservationRow & { trade_hash?: string | null }>,
+): Array<ProviderObservationRow & { trade_hash?: string | null }> {
+  const byHash = new Map<string, Array<ProviderObservationRow & { trade_hash?: string | null }>>();
+  for (const row of rows) {
+    if (!isFmpFamilyProvider(row.provider)) continue;
+    const key = row.trade_hash || `${row.chamber}:${row.provider_key}`;
+    const list = byHash.get(key);
+    if (list) list.push(row);
+    else byHash.set(key, [row]);
+  }
+  const out: Array<ProviderObservationRow & { trade_hash?: string | null }> = [];
+  for (const group of byHash.values()) {
+    const earliest = group.reduce((a, b) =>
+      (a.first_observed_at || '') <= (b.first_observed_at || '') ? a : b,
+    );
+    out.push({
+      ...earliest,
+      provider: 'fmp',
+      first_observed_at: earliestIso(...group.map((r) => r.first_observed_at)) ?? earliest.first_observed_at,
+      provider_published_at: earliestIso(...group.map((r) => r.provider_published_at)),
+    });
+  }
+  return out;
+}
+
+/** Prefer running > error > stopped > off > unknown for merged FMP status badge. */
+export function mergeFmpOperationalStatus(
+  statuses: Array<LatencySourceStatus | undefined | null>,
+): LatencySourceStatus {
+  const set = new Set(statuses.filter(Boolean) as LatencySourceStatus[]);
+  if (set.has('running')) return 'running';
+  if (set.has('error')) return 'error';
+  if (set.has('stopped')) return 'stopped';
+  if (set.has('off')) return 'off';
+  return 'unknown';
+}
+
+function comparisonStatusFromSample(opts: {
+  timingN: number;
+  sampleOk: boolean;
+  coverageOk: boolean;
+}): DisclosureLatencyProviderMetrics['comparisonStatus'] {
+  const { timingN, sampleOk, coverageOk } = opts;
+  // No timed deltas at all → never claim preliminary/usable (prevents "tie" with n=0).
+  if (timingN <= 0) return 'insufficient';
+  if (!sampleOk) {
+    return timingN >= LATENCY_MIN_PRELIMINARY_MATCHED ? 'preliminary' : 'limited';
+  }
+  if (coverageOk && timingN >= LATENCY_MIN_PRELIMINARY_MATCHED) return 'usable';
+  if (timingN >= LATENCY_MIN_PRELIMINARY_MATCHED) return 'preliminary';
+  return 'limited';
+}
+
+function computeProviderMetrics(opts: {
+  providerId: ProviderId;
+  label: string;
+  timestampKind: 'provider' | 'monitor' | 'none';
+  operationalStatus: LatencySourceStatus;
+  mine: LatencyCandidateSummaryRow[];
+  observations: Array<{
+    provider: string;
+    chamber: Chamber;
+    provider_key: string;
+    trade_hash?: string | null;
+    first_observed_at: string;
+  }>;
+  maturityCutoff: string;
+}): DisclosureLatencyProviderMetrics {
+  const { providerId, label, timestampKind, operationalStatus, mine, observations, maturityCutoff } =
+    opts;
+  const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
+  const liveMatched = mine.filter(
+    (row) =>
+      row.status === 'matched' && !!row.match_method && STRONG_MATCH_METHODS.has(row.match_method),
+  );
+  const timingMatches = liveMatched.filter((row) => {
+    const t = effectiveRaceProviderTime(timestampKind, row);
+    if (!t) return false;
+    return Math.abs(deltaSeconds(t, row.congress_first_seen_at) ?? 1e12) <= maxDeltaSec;
+  });
+  // Effective deltas — same stamp cohort as matched (no published-only empty set).
+  const effectiveDeltas = timingMatches
+    .map((row) =>
+      deltaSeconds(effectiveRaceProviderTime(timestampKind, row), row.congress_first_seen_at),
+    )
+    .filter((v): v is number => v != null);
+  const publishedDeltas = timingMatches
+    .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
+    .filter((v): v is number => v != null);
+  // matched ≡ number of timed races with a real delta (never inflate above lead sample).
+  const timingN = effectiveDeltas.length;
+  const strongMatched = timingN;
+  const matchedKeys = new Set(
+    timingMatches
+      .filter((row) => row.provider_key)
+      .map((row) => `${row.chamber}:${row.provider_key}`),
+  );
+  // Also match observations by trade_hash when keys differ across FMP paths.
+  const matchedHashes = new Set(
+    timingMatches.map((row) => row.trade_hash).filter((h): h is string => !!h),
+  );
+  const obsMatched = (row: { chamber: Chamber; provider_key: string; trade_hash?: string | null }) =>
+    matchedKeys.has(`${row.chamber}:${row.provider_key}`) ||
+    (!!row.trade_hash && matchedHashes.has(row.trade_hash));
+
+  const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
+  const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
+  const maturedMatched = maturedObservations.filter(obsMatched).length;
+  const maturedProviderObserved = maturedObservations.length;
+  const unmatchedProvider = maturedProviderObserved - maturedMatched;
+  const pendingProvider = observations.filter(
+    (row) => row.first_observed_at > maturityCutoff && !obsMatched(row),
+  ).length;
+  const matchedMaturedCandidates = maturedCandidates.filter(
+    (row) =>
+      row.status === 'matched' && !!row.match_method && STRONG_MATCH_METHODS.has(row.match_method),
+  ).length;
+  const ctCoveragePct = maturedProviderObserved
+    ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
+    : null;
+  const providerCoveragePct = maturedCandidates.length
+    ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
+    : null;
+  const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
+  const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
+  const coverageOk =
+    (ctCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT &&
+    (providerCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT;
+  const sampleOk =
+    maturedProviderObserved >= LATENCY_MIN_MATURED_ROWS &&
+    maturedCandidates.length >= LATENCY_MIN_MATURED_ROWS;
+
+  return {
+    provider: providerId,
+    label,
+    operationalStatus,
+    candidates: mine.length,
+    matched: timingN,
+    strongMatched,
+    pending: mine.filter((row) => row.status === 'pending').length,
+    errored: mine.filter((row) => row.status === 'error').length,
+    providerObserved: observations.length,
+    maturedProviderObserved,
+    unmatchedProvider,
+    pendingProvider,
+    maturedCandidates: maturedCandidates.length,
+    maturedMatched,
+    ctCoveragePct,
+    providerCoveragePct,
+    overlapPct,
+    comparisonStatus: comparisonStatusFromSample({ timingN, sampleOk, coverageOk }),
+    comparisonBasis: 'matched-overlap-only',
+    // "Monitor" fields carry the effective race deltas (provider stamp with fallback).
+    ctAheadMonitorCount: effectiveDeltas.filter((d) => d > 0).length,
+    providerAheadMonitorCount: effectiveDeltas.filter((d) => d < 0).length,
+    tieMonitorCount: effectiveDeltas.filter((d) => d === 0).length,
+    avgMonitorDeltaSec: average(effectiveDeltas),
+    medianMonitorDeltaSec: median(effectiveDeltas),
+    p90MonitorDeltaSec: p90(effectiveDeltas),
+    ctAheadPublishedCount: publishedDeltas.filter((d) => d > 0).length,
+    providerAheadPublishedCount: publishedDeltas.filter((d) => d < 0).length,
+    tiePublishedCount: publishedDeltas.filter((d) => d === 0).length,
+    avgProviderPublishedDeltaSec: average(publishedDeltas),
+    medianProviderPublishedDeltaSec: median(publishedDeltas),
+    timestampKind,
+  };
+}
+
+/**
+ * Public scoreboard providers: FMP stable + RapidAPI collapse to one "FMP" lane
+ * using the earliest path observation per trade. Other direct providers pass through.
+ */
+export function buildPublicLatencyProviders(
+  pathMetrics: DisclosureLatencyProviderMetrics[],
+  candidateRows: LatencyCandidateSummaryRow[],
+  observationRows: Array<ProviderObservationRow & { trade_hash?: string | null }>,
+  statuses: DisclosureLatencyProviderStatus[],
+  maturityCutoff: string,
+): DisclosureLatencyProviderMetrics[] {
+  const liveCandidates = candidateRows.filter((row) =>
+    isLiveRaceImport({
+      source: 'primary',
+      filedDate: row.filed_date,
+      firstSeenAt: row.congress_first_seen_at,
+    }),
+  );
+  const fmpCandidates = mergeFmpFamilyCandidateRows(liveCandidates);
+  const fmpObservations = mergeFmpFamilyObservationRows(
+    observationRows.filter((r) => isFmpFamilyProvider(r.provider)),
+  );
+  const fmpStatus = mergeFmpOperationalStatus(
+    statuses.filter((s) => isFmpFamilyProvider(s.id)).map((s) => s.operationalStatus),
+  );
+  const fmpMetrics = computeProviderMetrics({
+    providerId: 'fmp',
+    label: 'FMP',
+    timestampKind: 'monitor',
+    operationalStatus: fmpStatus,
+    mine: fmpCandidates,
+    observations: fmpObservations,
+    maturityCutoff,
+  });
+
+  const others = PROVIDERS.filter(
+    (p) => p.supportsDirectLatest && !isFmpFamilyProvider(p.id),
+  ).map((provider) => {
+    const existing = pathMetrics.find((m) => m.provider === provider.id);
+    if (existing) {
+      // Public label: shorten Quiver display name is already fine.
+      return existing;
+    }
+    return computeProviderMetrics({
+      providerId: provider.id,
+      label: provider.label,
+      timestampKind: provider.timestampKind,
+      operationalStatus:
+        statuses.find((s) => s.id === provider.id)?.operationalStatus ?? 'unknown',
+      mine: liveCandidates.filter((r) => r.provider === provider.id),
+      observations: observationRows.filter((r) => r.provider === provider.id),
+      maturityCutoff,
+    });
+  });
+
+  return [fmpMetrics, ...others];
+}
+
 export async function getDisclosureLatencySummary(env: Env, now: Date = new Date()): Promise<DisclosureLatencySummary> {
   const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const providerLookbackCutoff = new Date(
     now.getTime() - LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS * 60 * 60 * 1000,
   ).toISOString();
   const maturityCutoff = new Date(now.getTime() - LATENCY_MATURITY_GRACE_HOURS * 60 * 60 * 1000).toISOString();
-  const rows = await all<{
-    provider: ProviderId;
-    status: string;
-    chamber: Chamber;
-    provider_key: string | null;
-    match_method: string | null;
-    congress_first_seen_at: string;
-    provider_first_seen_at: string | null;
-    provider_published_at: string | null;
-    filed_date: string | null;
-    created_at: string;
-    updated_at: string;
-  }>(
+  const rows = await all<LatencyCandidateSummaryRow>(
     env.DB,
     // Live CT first_seen in the 7d score window (backfills never minted here).
-    `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
+    `SELECT provider, trade_hash, status, chamber, provider_key, match_method, congress_first_seen_at,
             provider_first_seen_at, provider_published_at, filed_date, created_at, updated_at
        FROM trade_latency_candidates
       WHERE congress_first_seen_at >= ?
@@ -2918,7 +3229,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   // Provider listings in the 14d match lookback (they can beat us by a week).
   const providerRows = await all<ProviderObservationRow>(
     env.DB,
-    `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,
+    `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
             provider_published_at, source_url, filed_date, filer_name, payload
        FROM trade_provider_observations
       WHERE first_observed_at >= ?
@@ -2931,8 +3242,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   });
 
   const statuses = await getDisclosureLatencyProviderStatuses(env);
+  // Per-path metrics (admin / ops — FMP stable and RapidAPI stay separate).
   const providers = PROVIDERS.filter((p) => p.supportsDirectLatest).map((provider) => {
-    // Drop residual historical-crawl candidates (filed long before first_seen).
     const mine = rows.filter(
       (row) =>
         row.provider === provider.id &&
@@ -2943,137 +3254,26 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
         }),
     );
     const observations = providerRows.filter((row) => row.provider === provider.id);
-    const strongMethods = new Set([
-      'trade-hash',
-      'fuzzy-no-ticker',
-      'fuzzy-missing-date',
-      'fuzzy-near-date',
-    ]);
-    // Live CT imports this week that matched a provider (identity).
-    const liveMatched = mine.filter(
-      (row) =>
-        row.status === 'matched' &&
-        !!row.match_method &&
-        strongMethods.has(row.match_method),
-    );
-    // Timed race: have a provider stamp; |Δ| up to 14d either way (min…week).
-    const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
-    const timingMatches = liveMatched.filter((row) => {
-      if (provider.timestampKind === 'provider') {
-        const t = row.provider_published_at || row.provider_first_seen_at;
-        if (!t) return false;
-        return Math.abs(deltaSeconds(t, row.congress_first_seen_at) ?? 1e12) <= maxDeltaSec;
-      }
-      if (!row.provider_first_seen_at) return false;
-      return (
-        Math.abs(deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at) ?? 1e12) <=
-        maxDeltaSec
-      );
-    });
-    // strongMatched ≡ timed sample so UI never shows huge strong + zero stats.
-    const strongMatches = timingMatches;
-    const monitorDeltas = timingMatches
-      .map((row) => {
-        const providerTime =
-          provider.timestampKind === 'provider'
-            ? row.provider_published_at || row.provider_first_seen_at
-            : row.provider_first_seen_at;
-        return deltaSeconds(providerTime, row.congress_first_seen_at);
-      })
-      .filter((v): v is number => v != null);
-    const publishedDeltas = timingMatches
-      .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
-      .filter((v): v is number => v != null);
-    const timingMatched = timingMatches.length;
-    const strongMatched = strongMatches.length;
-    const matchedKeys = new Set(
-      strongMatches
-        .filter((row) => row.provider_key)
-        .map((row) => `${row.chamber}:${row.provider_key}`),
-    );
-    const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
-    const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
-
-    const maturedMatched = maturedObservations.filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`)).length;
-    const maturedProviderObserved = maturedObservations.length;
-    const unmatchedProvider = maturedProviderObserved - maturedMatched;
-
-    const pendingProvider = observations.filter(
-      (row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`)
-    ).length;
-
-    const matchedMaturedCandidates = maturedCandidates.filter(
-      (row) =>
-        row.status === 'matched' &&
-        !!row.match_method &&
-        strongMethods.has(row.match_method),
-    ).length;
-    const ctCoveragePct = maturedProviderObserved
-      ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
-      : null;
-    const providerCoveragePct = maturedCandidates.length
-      ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
-      : null;
-    const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
-    const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
-    const coverageOk =
-      (ctCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT &&
-      (providerCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT;
-    const sampleOk =
-      maturedProviderObserved >= LATENCY_MIN_MATURED_ROWS &&
-      maturedCandidates.length >= LATENCY_MIN_MATURED_ROWS;
-    // Both matched and strongMatched are the both-in-week timed sample.
-    const timingN = timingMatched;
-    const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] = !sampleOk
-      ? timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
-        ? 'preliminary'
-        : timingN > 0
-          ? 'limited'
-          : 'insufficient'
-      : coverageOk && timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
-        ? 'usable'
-        : timingN >= LATENCY_MIN_PRELIMINARY_MATCHED
-          ? 'preliminary'
-          : timingN > 0
-            ? 'limited'
-            : 'insufficient';
     const st = statuses.find((s) => s.id === provider.id);
-    return {
-      provider: provider.id,
+    return computeProviderMetrics({
+      providerId: provider.id,
       label: provider.label,
-      operationalStatus: st?.operationalStatus ?? 'unknown',
-      candidates: mine.length,
-      // Both-in-week timed races — drives lead/win stats and status gates.
-      matched: timingN,
-      // Same cohort as matched (week-new on both sides).
-      strongMatched,
-      pending: mine.filter((row) => row.status === 'pending').length,
-      errored: mine.filter((row) => row.status === 'error').length,
-      providerObserved: observations.length,
-      maturedProviderObserved,
-      unmatchedProvider,
-      pendingProvider,
-      maturedCandidates: maturedCandidates.length,
-      maturedMatched,
-      ctCoveragePct,
-      providerCoveragePct,
-      overlapPct,
-      comparisonStatus,
-      comparisonBasis: 'matched-overlap-only' as const,
-      ctAheadMonitorCount: monitorDeltas.filter((d) => d > 0).length,
-      providerAheadMonitorCount: monitorDeltas.filter((d) => d < 0).length,
-      tieMonitorCount: monitorDeltas.filter((d) => d === 0).length,
-      avgMonitorDeltaSec: average(monitorDeltas),
-      medianMonitorDeltaSec: median(monitorDeltas),
-      p90MonitorDeltaSec: p90(monitorDeltas),
-      ctAheadPublishedCount: publishedDeltas.filter((d) => d > 0).length,
-      providerAheadPublishedCount: publishedDeltas.filter((d) => d < 0).length,
-      tiePublishedCount: publishedDeltas.filter((d) => d === 0).length,
-      avgProviderPublishedDeltaSec: average(publishedDeltas),
-      medianProviderPublishedDeltaSec: median(publishedDeltas),
       timestampKind: provider.timestampKind,
-    };
+      operationalStatus: st?.operationalStatus ?? 'unknown',
+      mine,
+      observations,
+      maturityCutoff,
+    });
   });
+
+  // Public scoreboard: one FMP lane (earliest of stable/RapidAPI), no dual listing.
+  const publicProviders = buildPublicLatencyProviders(
+    providers,
+    rows,
+    providerRows,
+    statuses,
+    maturityCutoff,
+  );
   const totals = {
     candidates: rows.length,
     matched: providers.reduce((sum, p) => sum + p.matched, 0),
@@ -3084,6 +3284,21 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     unmatchedProvider: providers.reduce((sum, p) => sum + p.unmatchedProvider, 0),
     comparableProviders: PROVIDERS.filter((p) => p.supportsDirectLatest).length,
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
+  };
+  // Public totals count scoreboard lanes (FMP merged), not dual FMP paths.
+  const publicTotals = {
+    ...totals,
+    matched: publicProviders.reduce((sum, p) => sum + p.matched, 0),
+    maturedProviderObserved: publicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
+    unmatchedProvider: publicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
+    comparableProviders: publicProviders.length,
+    configuredComparableProviders: statuses.filter(
+      (p) =>
+        p.supportsDirectLatest &&
+        p.configured &&
+        // Count FMP family once when any path is configured.
+        (!isFmpFamilyProvider(p.id) || p.id === 'fmp'),
+    ).length,
   };
   const generatedAt = now.toISOString();
   const meta = {
@@ -3096,7 +3311,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     totals,
     providers,
     providerStatuses: statuses,
-    publicSummary: { generatedAt, ...meta, totals, providers },
+    publicSummary: { generatedAt, ...meta, totals: publicTotals, providers: publicProviders },
   };
 }
 

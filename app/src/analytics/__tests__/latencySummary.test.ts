@@ -31,6 +31,7 @@ function fakeDb() {
               results: [
                 {
                   provider: 'fmp',
+                  trade_hash: 'hash_a',
                   status: 'matched',
                   chamber: 'house',
                   provider_key: 'k1',
@@ -38,11 +39,13 @@ function fakeDb() {
                   provider_first_seen_at: t1,
                   provider_published_at: null,
                   match_method: 'trade-hash',
+                  filed_date: t0.slice(0, 10),
                   created_at: t0,
                   updated_at: t1,
                 },
                 {
                   provider: 'fmp',
+                  trade_hash: 'hash_b',
                   status: 'matched',
                   chamber: 'house',
                   provider_key: 'k2',
@@ -50,11 +53,13 @@ function fakeDb() {
                   provider_first_seen_at: t3,
                   provider_published_at: null,
                   match_method: 'fuzzy-no-ticker',
+                  filed_date: t2.slice(0, 10),
                   created_at: t2,
                   updated_at: t3,
                 },
                 {
                   provider: 'unusual_whales',
+                  trade_hash: 'hash_c',
                   status: 'pending',
                   chamber: 'house',
                   provider_key: null,
@@ -62,6 +67,7 @@ function fakeDb() {
                   provider_first_seen_at: null,
                   provider_published_at: null,
                   match_method: null,
+                  filed_date: t4.slice(0, 10),
                   created_at: t4,
                   updated_at: t4,
                 },
@@ -92,6 +98,7 @@ function fairnessEnv() {
   const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const candidates = Array.from({ length: 20 }, (_, i) => ({
     provider: 'fmp',
+    trade_hash: `fmp-hash-${i}`,
     status: i < 10 ? 'matched' : 'pending',
     chamber: 'house',
     provider_key: i < 10 ? `fmp-key-${i}` : null,
@@ -99,6 +106,7 @@ function fairnessEnv() {
     congress_first_seen_at: old,
     provider_first_seen_at: old,
     provider_published_at: null,
+    filed_date: old.slice(0, 10),
     created_at: old,
     updated_at: old,
   }));
@@ -106,6 +114,7 @@ function fairnessEnv() {
     provider: 'fmp',
     chamber: 'house',
     provider_key: `fmp-key-${i}`,
+    trade_hash: `fmp-hash-${i}`,
     first_observed_at: old,
     last_observed_at: old,
     provider_published_at: null,
@@ -159,7 +168,8 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.totals.matched).toBe(2);
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
-      label: 'FMP Stable',
+      // Public scoreboard collapses stable + RapidAPI into one "FMP" lane.
+      label: 'FMP',
       // Default probe ON for CT; without latency keys the lane is stopped (red/amber),
       // not intentional OFF (grey — only when FMP_LATENCY_PROBE_ENABLED=false).
       operationalStatus: 'stopped',
@@ -172,6 +182,8 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       medianLeadSec: 3600,
       avgLeadSec: 3600,
     });
+    // RapidAPI must not appear as a separate public provider.
+    expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
     const uw = body.providers.find((p) => p.id === 'unusual_whales');
     expect(uw).toMatchObject({ matched: 0, strongMatched: 0, medianLeadSec: null });
   });
@@ -225,6 +237,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
                     // Live: filed 2d before first_seen, provider 5d earlier → timed
                     {
                       provider: 'quiver',
+                      trade_hash: 'q_hash_1',
                       status: 'matched',
                       chamber: 'senate',
                       provider_key: 'q1',
@@ -239,6 +252,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
                     // Historical crawl: filed years before first_seen → excluded
                     {
                       provider: 'quiver',
+                      trade_hash: 'q_hash_2',
                       status: 'matched',
                       chamber: 'senate',
                       provider_key: 'q2',
@@ -276,6 +290,240 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     });
     // Provider earlier by ~5d → negative lead (provider ahead)
     expect(Number(qq?.medianLeadSec)).toBeLessThan(0);
+  });
+
+  it('merges FMP stable + RapidAPI into one public FMP lane using earliest path stamp', async () => {
+    const ct = recentIso(3);
+    const rapidEarlier = recentIso(2.5); // RapidAPI saw first
+    const stableLater = recentIso(2.0);
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async all<T>() {
+              if (/FROM trade_latency_candidates/i.test(sql)) {
+                return {
+                  results: [
+                    {
+                      provider: 'fmp',
+                      trade_hash: 'shared_trade',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'stable-key',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: stableLater,
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: stableLater,
+                    },
+                    {
+                      provider: 'fmp_rapidapi',
+                      trade_hash: 'shared_trade',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'rapid-key',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: rapidEarlier,
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: rapidEarlier,
+                    },
+                    {
+                      provider: 'fmp',
+                      trade_hash: 'only_stable',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'stable-only',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      // CT ahead by 600s
+                      provider_first_seen_at: new Date(Date.parse(ct) + 600_000).toISOString(),
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: ct,
+                    },
+                  ] as T[],
+                };
+              }
+              return { results: [] as T[] };
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+      CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      FMP_LATENCY_API_KEY: 'k',
+    } as never;
+    const res = await app.request('http://localhost/latency-summary', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      totals: { comparableProviders: number };
+      providers: Array<Record<string, unknown>>;
+    };
+    expect(body.providers.filter((p) => String(p.id).startsWith('fmp'))).toHaveLength(1);
+    expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
+    const fmp = body.providers.find((p) => p.id === 'fmp')!;
+    expect(fmp.label).toBe('FMP');
+    // Two distinct trades (shared_trade merged once + only_stable)
+    expect(fmp.matched).toBe(2);
+    expect(fmp.candidates).toBe(2);
+    // shared: earliest = rapid (ct → rapidEarlier = +0.5h = +1800s)
+    // only_stable: +600s → avg = (1800+600)/2 = 1200
+    expect(fmp.avgLeadSec).toBe(1200);
+    expect(fmp.medianLeadSec).toBe(1200);
+    expect(fmp.usFirstCount).toBe(2);
+  });
+
+  it('uses Quiver monitor first-seen when provider_published_at is missing (no fake empty tie)', async () => {
+    const ct = recentIso(4);
+    // Provider first-seen 900s after CT; no Quiver_Upload_Time published stamp.
+    const providerSeen = new Date(Date.parse(ct) + 900_000).toISOString();
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async all<T>() {
+              if (/FROM trade_latency_candidates/i.test(sql)) {
+                return {
+                  results: [
+                    {
+                      provider: 'quiver',
+                      trade_hash: 'qq1',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'qq-key-1',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: providerSeen,
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: providerSeen,
+                    },
+                    {
+                      provider: 'quiver',
+                      trade_hash: 'qq2',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'qq-key-2',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: new Date(Date.parse(ct) + 1_200_000).toISOString(),
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: ct,
+                    },
+                  ] as T[],
+                };
+              }
+              return { results: [] as T[] };
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+      CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    } as never;
+    const res = await app.request('http://localhost/latency-summary', {}, env);
+    const body = (await res.json()) as { providers: Array<Record<string, unknown>> };
+    const qq = body.providers.find((p) => p.id === 'quiver')!;
+    expect(qq.matched).toBe(2);
+    // Must expose real lead stats (not null/0-0 which the UI painted as "Preliminary tie").
+    expect(qq.usFirstCount).toBe(2);
+    expect(qq.providerFirstCount).toBe(0);
+    expect(qq.tieCount).toBe(0);
+    expect(qq.avgLeadSec).toBe(1050); // (900+1200)/2
+    expect(qq.medianLeadSec).toBe(1050);
+    expect(qq.comparisonStatus).toBe('preliminary');
+  });
+
+  it('marks comparison insufficient when matched identity exists but no usable race timestamps', async () => {
+    const ct = recentIso(4);
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async all<T>() {
+              if (/FROM trade_latency_candidates/i.test(sql)) {
+                return {
+                  results: [
+                    {
+                      provider: 'quiver',
+                      trade_hash: 'qq-empty',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'qq-empty-key',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: null,
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: ct,
+                    },
+                    {
+                      provider: 'quiver',
+                      trade_hash: 'qq-empty-2',
+                      status: 'matched',
+                      chamber: 'house',
+                      provider_key: 'qq-empty-key-2',
+                      match_method: 'trade-hash',
+                      congress_first_seen_at: ct,
+                      provider_first_seen_at: null,
+                      provider_published_at: null,
+                      filed_date: ct.slice(0, 10),
+                      created_at: ct,
+                      updated_at: ct,
+                    },
+                  ] as T[],
+                };
+              }
+              return { results: [] as T[] };
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+      CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    } as never;
+    const res = await app.request('http://localhost/latency-summary', {}, env);
+    const body = (await res.json()) as { providers: Array<Record<string, unknown>> };
+    const qq = body.providers.find((p) => p.id === 'quiver')!;
+    expect(qq.matched).toBe(0);
+    expect(qq.avgLeadSec).toBeNull();
+    expect(qq.medianLeadSec).toBeNull();
+    expect(qq.usFirstCount).toBe(0);
+    expect(qq.comparisonStatus).toBe('insufficient');
   });
 
   it('degrades to an empty envelope when the latency tables are missing', async () => {

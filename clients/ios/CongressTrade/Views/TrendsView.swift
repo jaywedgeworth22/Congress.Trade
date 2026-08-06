@@ -8,15 +8,9 @@ struct TrendsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if showDisclaimerDetails {
-                        Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(12)
-                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
-                            .padding(.bottom, 4)
-                    }
+                    DisclaimerBanner(isExpanded: $showDisclaimerDetails)
 
+                    // Identical shared filters as Trades (no export, no politician/asset extras).
                     FeedControlBar(showMetrics: false)
 
                     if store.isLoadingTrends && store.analyticsSummary == nil {
@@ -24,7 +18,8 @@ struct TrendsView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 40)
                     } else {
-                        if let notice = store.trendsNotice {
+                        if let notice = store.trendsNotice,
+                           !Self.isBenignCancellationNotice(notice) {
                             NoticeView(message: notice)
                         }
 
@@ -70,6 +65,10 @@ struct TrendsView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Empty leading slot so brand stays centered like Trades (export is Trades-only).
+                ToolbarItem(placement: .topBarLeading) {
+                    Color.clear.frame(width: 28, height: 28)
+                }
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
@@ -80,6 +79,7 @@ struct TrendsView: View {
                         Image(systemName: "info.circle")
                             .foregroundStyle(.blue)
                     }
+                    .accessibilityLabel("About Congress.Trade")
                 }
             }
             .task {
@@ -96,6 +96,12 @@ struct TrendsView: View {
                 await store.refreshTrends()
             }
         }
+    }
+
+    private static func isBenignCancellationNotice(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower == "cancelled" || lower == "canceled"
+            || lower.contains("cancelled") || lower.contains("canceled")
     }
 
 
@@ -553,14 +559,19 @@ struct ProviderScorecard: View {
 
     var body: some View {
         // Mirror web honesty gates: usable = full claim; preliminary = soft timing.
+        // Never paint "tie" when W+L+T is empty or lead seconds are missing (QQ empty-publish bug).
         let status = provider.comparisonStatus ?? "insufficient"
         let usable = status == "usable"
         let preliminary = status == "preliminary"
-        let hasStats = provider.matched >= minMatched && (usable || preliminary)
         let wins = provider.usFirstCount
         let losses = provider.providerFirstCount
+        let ties = provider.tieCount
+        let deltaSample = wins + losses + ties
+        let hasLead = provider.avgLeadSec != nil || provider.medianLeadSec != nil
+        let hasTiming = provider.matched >= minMatched && deltaSample > 0 && hasLead
+        let hasStats = hasTiming && (usable || preliminary)
         let ahead = hasStats && wins > losses
-        let tied = hasStats && !ahead && wins == losses
+        let tied = hasStats && wins == losses && deltaSample > 0
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -569,7 +580,7 @@ struct ProviderScorecard: View {
                 Spacer()
                 if hasStats {
                     if preliminary {
-                        Text(ahead ? "Preliminary lead" : (tied ? "Preliminary tie" : "Preliminary"))
+                        Text(ahead ? "Preliminary lead" : (tied ? "Preliminary tie" : (wins < losses ? "Preliminary behind" : "Preliminary")))
                             .font(.caption2.weight(.bold))
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(Color.orange.opacity(0.15)).foregroundStyle(.orange).clipShape(Capsule())
@@ -589,11 +600,13 @@ struct ProviderScorecard: View {
 
             if hasStats {
                 let winPct = provider.matched > 0 ? Int(round(100.0 * Double(wins) / Double(provider.matched))) : 0
+                // Prefer average lead (matches human mean lead/lag); median is secondary.
+                let leadSecs = provider.avgLeadSec ?? provider.medianLeadSec
                 HStack {
-                    Text(formatLead(provider.medianLeadSec))
+                    Text(formatLead(leadSecs))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(ahead ? .green : (tied ? .primary : .red))
-                    Text(preliminary ? "prelim. concurrent median" : "concurrent median")
+                    Text(preliminary ? "prelim. avg lead" : "avg lead")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -611,7 +624,10 @@ struct ProviderScorecard: View {
                     return ""
                 }()
                 Text(
-                    provider.matched > 0
+                    provider.matched > 0 && !hasLead
+                        ? "Matched \(provider.matched) races but no usable first-seen timestamps for lead/lag yet."
+                            + strongNote
+                        : provider.matched > 0
                         ? "Timed \(provider.matched) concurrent races of \(provider.candidates) CT filings so far."
                             + strongNote
                             + (unmatched > 0 ? " \(unmatched) provider-only rows still unmatched." : "")
@@ -627,7 +643,7 @@ struct ProviderScorecard: View {
     }
 
     private func formatLead(_ secs: Int?) -> String {
-        guard let s = secs else { return "0s" }
+        guard let s = secs else { return "—" }
         let absS = abs(Double(s))
         let sign = s > 0 ? "+" : (s < 0 ? "−" : "")
         if absS < 90 { return "\(sign)\(Int(round(absS)))s" }

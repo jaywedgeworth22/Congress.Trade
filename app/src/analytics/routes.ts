@@ -1199,9 +1199,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // fields renamed to a stable public contract. Timing is explicitly a
   // matched-overlap measurement; provider-observed and unmatched rows stay in
   // the public denominator so a congress.trade miss cannot become a speed win.
+  //
+  // Honesty (2026-08):
+  //  - FMP stable + RapidAPI are one public "FMP" lane (earliest path stamp).
+  //  - Lead stats always use effective race timestamps (provider stamp with
+  //    monitor first-seen fallback) so Quiver-style feeds never report
+  //    matched=N with empty W/L → fake "preliminary tie".
   r.get('/latency-summary', async (c) => {
-    // v4: 7d live-only scoreboard (exclude backfills); 14d match lookback.
-    const data = await cached(c.env, 'analytics:latency-summary:v4', 300, async () => {
+    // v5: FMP family merge + effective timing deltas (not published-only).
+    const data = await cached(c.env, 'analytics:latency-summary:v5', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       return {
         generatedAt: publicSummary.generatedAt,
@@ -1241,12 +1247,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           overlapPct: p.overlapPct,
           comparisonStatus: p.comparisonStatus,
           comparisonBasis: p.comparisonBasis,
-          usFirstCount: p.timestampKind === 'provider' ? p.ctAheadPublishedCount : p.ctAheadMonitorCount,
-          providerFirstCount: p.timestampKind === 'provider' ? p.providerAheadPublishedCount : p.providerAheadMonitorCount,
-          tieCount: p.timestampKind === 'provider' ? p.tiePublishedCount : p.tieMonitorCount,
-          medianLeadSec: p.timestampKind === 'provider' ? p.medianProviderPublishedDeltaSec : p.medianMonitorDeltaSec,
-          avgLeadSec: p.timestampKind === 'provider' ? p.avgProviderPublishedDeltaSec : p.avgMonitorDeltaSec,
-          p90LeadSec: p.timestampKind === 'provider' ? null : p.p90MonitorDeltaSec, // p90 for published isn't calculated right now, could fall back to null
+          // Effective race deltas (monitor* fields already include provider-stamp
+          // fallback). Never switch to published-only — that empty-set path made
+          // Quiver show "preliminary tie" with null median/avg.
+          usFirstCount: p.ctAheadMonitorCount,
+          providerFirstCount: p.providerAheadMonitorCount,
+          tieCount: p.tieMonitorCount,
+          medianLeadSec: p.medianMonitorDeltaSec,
+          avgLeadSec: p.avgMonitorDeltaSec,
+          p90LeadSec: p.p90MonitorDeltaSec,
         })),
       };
     });
