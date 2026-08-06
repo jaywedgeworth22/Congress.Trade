@@ -699,6 +699,10 @@ export interface Env {
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
   /** Unusual Whales API key for recent Congress trades. */
   UNUSUAL_WHALES_API_KEY?: string;
+  UNUSUALWHALES_API_KEY?: string;
+  /** Secondary UW key (trial / residual free) — rotates with primary. */
+  UNUSUALWHALES_API_KEY_2?: string;
+  UNUSUAL_WHALES_API_KEY_2?: string;
   /** Distinct filed dates the UW disclosure-latency deep-match pass may query
    *  per probe run (recent-trades?date=<filedDate>), for pending observations
    *  older than the normal ~200-row window. Default 8; clamped to [0, 25];
