@@ -3339,7 +3339,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const REGISTRY: Record<string, string[]> = {
       'provider-keys': [
         'FMP_API_KEY', 'FMP_LATENCY_API_KEY', 'FMP_RAPIDAPI_KEY', 'RAPIDAPI_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
-        'FINNHUB_API_KEY', 'UNUSUAL_WHALES_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
+        'UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY',
+        'FINNHUB_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
         'LOGODEV_PUBLISHABLE_KEY',
       ],
       'model-keys': [
