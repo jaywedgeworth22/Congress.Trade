@@ -346,22 +346,37 @@ final class CongressTradeAPIClient {
         )
     }
 
+    /// Register this device for backend-owned push alerts (`register_device`).
+    /// Tokens are stored on the account; they do not consume SSE/webhook quota.
+    /// Use a stable `idempotencyKey` (e.g. derived from the token) so refresh
+    /// loops do not flood the async command queue.
+    func registerDevice(
+        apnsToken: String,
+        appBundle: String = Bundle.main.bundleIdentifier ?? "trade.congress.ios",
+        env: String = "production",
+        idempotencyKey: String
+    ) async throws -> ClientCommandResponse<DeviceRegistrationResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "register_device",
+                "payload": [
+                    "platform": "apns",
+                    "token": apnsToken,
+                    "appBundle": appBundle,
+                    "env": env
+                ]
+            ]
+        )
+    }
+
+    /// Legacy name kept for call sites; prefers `register_device`.
     func createAPNsSubscription(
         apnsToken: String,
         filters: SubscriptionFilters = SubscriptionFilters(),
         idempotencyKey: String = UUID().uuidString
-    ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
-        try await postCommand(
-            idempotencyKey: idempotencyKey,
-            body: [
-                "type": "create_subscription",
-                "payload": [
-                    "delivery": "apns",
-                    "targetUrl": apnsToken,
-                    "filters": filters.commandPayload
-                ]
-            ]
-        )
+    ) async throws -> ClientCommandResponse<DeviceRegistrationResult> {
+        try await registerDevice(apnsToken: apnsToken, idempotencyKey: idempotencyKey)
     }
 
     func updatePreferences(

@@ -134,14 +134,26 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Real-Time Trade Alerts")
                                 .font(.body.weight(.medium))
-                            Text(pushManager.isAuthorized ? "APNs Notifications Active" : "Notifications Disabled")
+                            Text(pushStatusCaption)
                                 .font(.caption)
-                                .foregroundStyle(pushManager.isAuthorized ? .green : .secondary)
+                                .foregroundStyle(pushStatusColor)
                         }
                         Spacer()
                         if pushManager.isAuthorized {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
+                            if pushManager.isBackendSynced {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else if store.signedIn {
+                                Button("Sync") {
+                                    Task {
+                                        await pushManager.syncTokenWithBackend(api: store.api, force: true)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            } else {
+                                Image(systemName: "checkmark.circle")
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             Button("Enable Alerts") {
                                 Task { await pushManager.requestAuthorization() }
@@ -250,6 +262,32 @@ struct SettingsView: View {
                     .environmentObject(store)
             }
         }
+    }
+
+    private var pushStatusCaption: String {
+        if !pushManager.isAuthorized {
+            return "Notifications Disabled"
+        }
+        if !store.signedIn {
+            return "Sign in to register this device"
+        }
+        if pushManager.isBackendSynced {
+            return "Device registered for alerts"
+        }
+        if pushManager.isRegistering {
+            return "Registering device…"
+        }
+        if pushManager.lastError != nil {
+            return "Registration failed — tap Sync"
+        }
+        return "Permission granted — waiting for sync"
+    }
+
+    private var pushStatusColor: Color {
+        if !pushManager.isAuthorized { return .secondary }
+        if pushManager.isBackendSynced { return .green }
+        if pushManager.lastError != nil { return .red }
+        return .secondary
     }
 
     private func startGoogleSignIn() {
