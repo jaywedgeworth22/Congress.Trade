@@ -51,7 +51,9 @@ const ARGV = new Set(process.argv.slice(2));
 const ONCE = ARGV.has('--once');
 const FMP_KEY = process.env.FMP_API_KEY || process.env.FMP_LATENCY_API_KEY || '';
 const FMP_RAPIDAPI_KEY = process.env.FMP_RAPIDAPI_KEY || FMP_KEY;
-const FMP_PROBE_ENABLED = /^(1|true|yes|on)$/i.test((process.env.FMP_PROBE_ENABLED || '').trim());
+// Default ON for CT when unset (FMP is a first-class CT latency path). Explicit false/0/off disables.
+const _fmpProbeRaw = (process.env.FMP_PROBE_ENABLED || '').trim();
+const FMP_PROBE_ENABLED = _fmpProbeRaw === '' ? true : !/^(0|false|no|off)$/i.test(_fmpProbeRaw);
 const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable,rapidapi').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable', 'rapidapi']);
 const QQ_KEY = process.env.QQ_API_KEY || '';
@@ -68,7 +70,7 @@ const CT_INGEST_TOKEN = process.env.CT_INGEST_TOKEN || '';
 
 /**
  * FMP latency source registry (CT latency + Mac scout only; not Socratic).
- * Default operational status = OFF (grey) — no spend until FMP_PROBE_ENABLED.
+ * Default operational = ON when keys present; grey OFF only if FMP_PROBE_ENABLED=false.
  */
 const FMP_SOURCE_REGISTRY = [
   {
@@ -77,7 +79,6 @@ const FMP_SOURCE_REGISTRY = [
     label: 'FMP Stable',
     baseUrl: (process.env.FMP_STABLE_BASE_URL || 'https://financialmodelingprep.com/stable').replace(/\/+$/, ''),
     auth: 'query',
-    defaultStatus: 'off',
   },
   {
     id: 'fmp_rapidapi',
@@ -86,7 +87,6 @@ const FMP_SOURCE_REGISTRY = [
     baseUrl: (process.env.FMP_RAPIDAPI_BASE_URL || 'https://financial-modeling-prep.p.rapidapi.com/stable').replace(/\/+$/, ''),
     host: process.env.FMP_RAPIDAPI_HOST || 'financial-modeling-prep.p.rapidapi.com',
     auth: 'rapidapi',
-    defaultStatus: 'off',
   },
 ];
 

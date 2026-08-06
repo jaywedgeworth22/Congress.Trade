@@ -23,7 +23,7 @@ Everything else (storage, API, delivery) stays on Cloudflare; this is just the
   Detection only (existence + link), no parsing.
 - **Optionally polls FMP family** (`stable` + `rapidapi` alternate paths) and
   stamps `fmp_first_seen_at` the first time either path surfaces each filing.
-  **Default = OFF (no spend)** until `FMP_PROBE_ENABLED=1`.
+  **Default = **ON** when keys present; set `FMP_PROBE_ENABLED=0` to disable.
 - **Logs the lead** per filing: `lead = fmp_first_seen_at − our_detected_at`
   (positive = we were first). Filings present at startup are flagged `baseline`;
   only ones that first appear *while running* count as a `live` race.
@@ -84,7 +84,7 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 
 | var | default | meaning |
 |---|---|---|
-| `FMP_PROBE_ENABLED` | off | set `1`/`true` to poll FMP family (default **OFF**, no spend) |
+| `FMP_PROBE_ENABLED` | on | default ON for CT; set `0`/`false`/`off` to disable FMP family |
 | `FMP_PATHS` | `stable,rapidapi` | which FMP paths race when probe is on |
 | `FMP_API_KEY` / `FMP_LATENCY_API_KEY` | — | FMP key for stable (query) path |
 | `FMP_RAPIDAPI_KEY` | falls back to FMP key | key for RapidAPI path |
