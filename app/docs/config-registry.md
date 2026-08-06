@@ -75,9 +75,15 @@ budget-status polling, see Tunables & flags below)
   default — **rotated one path per probe cycle**, not dual-called, so free-tier
   daily quotas are not doubled for the same answer), optional `FMP_STABLE_BASE_URL` /
   `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST` / `FMP_RAPIDAPI_KEY`,
-  `FMP_LATENCY_DAILY_CAP`, dual keys `FMP_LATENCY_API_KEY` + `_2` also **rotate**
-  among eligible budget/spacing, `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date
-  budget; default `8`). Production should keep these set in Infisical:
+  `FMP_LATENCY_DAILY_CAP` (per free-tier key, default 235), dual keys
+  `FMP_LATENCY_API_KEY` + `_2` also **rotate** among eligible budget/spacing,
+  `UW_LATENCY_DAILY_CAP` (default 240 HTTP/day incl. deep-match),
+  `QUIVER_LATENCY_DAILY_CAP` (default 360 HTTP/day; 3 calls per probe),
+  `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date budget; default `8`).
+  **Yield-weighted spacing (all three):** 4 America/New_York bands
+  (peak 08–12 / high 12–16 / mid 06–08+16–20 / low nights; weekends downshifted)
+  so daily budgets run **~2–3× denser in peak filing hours** and sparse overnight.
+  Production should keep these set in Infisical:
   `DISCLOSURE_LATENCY_WATCH_ENABLED=true`,
   `DISCLOSURE_LATENCY_PROVIDERS=fmp,fmp_rapidapi,unusual_whales,quiver`,
   `DISCLOSURE_LATENCY_WATCH_LIMIT=100`,
