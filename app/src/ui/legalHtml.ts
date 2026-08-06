@@ -9,7 +9,7 @@
  */
 
 const EFFECTIVE_DATE = 'June 22, 2026';
-const ENTITY = 'Jay Wedgeworth, LLC d/b/a congress.trade';
+const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
 const CONTACT = 'congress.trade@jays.services';
 
 /** Wrap page body in the shared dark-theme shell. */
@@ -60,7 +60,7 @@ export const TOS_HTML = shell(
 <h1>Terms of Service</h1>
 <p class="eff">Effective ${EFFECTIVE_DATE}</p>
 
-<p>These Terms of Service ("Terms") are a binding agreement between you and ${ENTITY} ("congress.trade," "we," "us"), governing your access to and use of the congress.trade website, API, data feeds, and related services (the "Service"). By creating an account, subscribing, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.</p>
+<p>These Terms of Service ("Terms") are a binding agreement between you and ${ENTITY} ("Congress.Trade," "we," "us"), governing your access to and use of the Congress.Trade website, API, data feeds, and related services (the "Service"). By creating an account, subscribing, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.</p>
 
 <h2>1. What the Service is</h2>
 <p>Congress.Trade aggregates and presents <strong>public financial-disclosure data</strong> filed by politicians serving in the U.S. Congress under the STOCK Act (2012), and provides tools to explore, analyze, and receive that data (including webhook and SSE delivery). It is an <strong>informational and educational</strong> product.</p>
@@ -132,7 +132,7 @@ export const PRIVACY_HTML = shell(
 <h1>Privacy Policy</h1>
 <p class="eff">Effective ${EFFECTIVE_DATE}</p>
 
-<p>This Privacy Policy explains how ${ENTITY} ("congress.trade," "we," "us") collects, uses, and shares personal information when you use the congress.trade website and services (the "Service").</p>
+<p>This Privacy Policy explains how ${ENTITY} ("Congress.Trade," "we," "us") collects, uses, and shares personal information when you use the Congress.Trade website and services (the "Service").</p>
 
 <h2>1. Information we collect</h2>
 <ul>

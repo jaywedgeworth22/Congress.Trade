@@ -52,7 +52,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="congress.trade eagle logo on a dark background" />
+<meta property="og:image:alt" content="Congress.Trade eagle logo on a dark background" />
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Congress.Trade" />

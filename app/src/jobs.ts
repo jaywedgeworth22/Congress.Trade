@@ -448,7 +448,7 @@ export async function maybeRunDailyMarketDataJobs(
     const sample = errors.filter((e) => /FMP_HTTP_/.test(e)).slice(0, 5).join('\n');
     await notifyAdmin(env, {
       dedupeKey: 'fmp-tier-failure',
-      subject: 'congress.trade ⚠️ FMP data refresh is failing',
+      subject: 'Congress.Trade ⚠️ FMP data refresh is failing',
       text:
         "Today's FMP enrichment / price refresh hit key/plan errors (401/402/403/429).\n" +
         'This usually means the FMP API key is invalid, the paid plan lapsed, or you are being\n' +

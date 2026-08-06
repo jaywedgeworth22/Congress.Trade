@@ -488,7 +488,7 @@ export class OpenRouterVisionExtractor implements Extractor {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
               'HTTP-Referer': 'https://congress.trade',
-              'X-Title': 'congress.trade',
+              'X-Title': 'Congress.Trade',
             },
             body: JSON.stringify({
               model,
@@ -541,7 +541,7 @@ export class OpenRouterVisionExtractor implements Extractor {
                     'Authorization': `Bearer ${backupKey}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://congress.trade',
-                    'X-Title': 'congress.trade',
+                    'X-Title': 'Congress.Trade',
                   },
                   body: JSON.stringify({
                     model,

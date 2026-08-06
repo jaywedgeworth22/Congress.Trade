@@ -142,7 +142,7 @@ export async function extractFromSenatePaperMedia(
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://congress.trade',
-        'X-Title': 'congress.trade senate paper media',
+        'X-Title': 'Congress.Trade senate paper media',
       },
       body: JSON.stringify(body),
       signal: opts.signal,
