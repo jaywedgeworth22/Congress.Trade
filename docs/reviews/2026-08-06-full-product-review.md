@@ -1,4 +1,9 @@
-# Full-product review — 2026-08-06 (CLAUDE)
+# Full-product review — 2026-08-06 (MONET)
+
+> Seat note: work began under the CLAUDE tag (Slack claim 14:33 CDT); the owner
+> re-designated this seat MONET mid-session ("for agent sync purposes going
+> forward always"). Same seat, one review; issues #1452–#1460 filed pre-rename
+> say CLAUDE.
 
 Owner-requested review of Congress.Trade: live website, iOS spot-checks, Grok's
 alternate-style mock (congresstrade.grok.me), cross-agent coordination health,
