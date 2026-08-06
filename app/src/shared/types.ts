@@ -303,6 +303,8 @@ export type ClientCommandType =
   | 'create_subscription'
   | 'update_subscription'
   | 'delete_subscription'
+  | 'register_device'
+  | 'unregister_device'
   | 'start_checkout'
   | 'request_export';
 

@@ -47,8 +47,25 @@ Command writes must validate account ownership and entitlement before queueing,
 be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
 The current router implements `update_preferences`, `create_subscription`,
-`update_subscription`, and `delete_subscription`; `start_checkout` and `request_export` are defined in the
+`update_subscription`, `delete_subscription`, `register_device`, and
+`unregister_device`; `start_checkout` and `request_export` are defined in the
 shared type set but still return `501`.
+
+### Device registration (APNs / web push)
+
+Push tokens are **not** delivery subscriptions. They live in `push_devices` and
+do not consume the SSE/webhook subscription quota.
+
+- `POST /api/client/v1/commands` `{ type: "register_device", payload: { platform: "apns"|"webpush", token, appBundle?, env? } }`
+  - Signed-in required. Not Premium-gated (store early; fan-out still Premium).
+  - APNs `token` must be 64–200 hex characters.
+  - Upserts on `(userId, platform, token)`; reactivates a previously deactivated row.
+  - Caps at 10 active devices per user (oldest deactivated on overflow).
+- `POST ...` `{ type: "unregister_device", payload: { id? } | { token, platform? } }`
+- **Legacy:** older iOS builds sent `create_subscription` with `delivery: "apns"`
+  and `targetUrl` = device token. The backend rewrites that to `register_device`
+  so those clients stop failing with `delivery must be 'sse' or 'webhook'`.
+- Actual APNs HTTP/2 trade fan-out is a follow-up (needs Apple `.p8` credentials).
 
 ## Initial Surface
 
@@ -123,8 +140,8 @@ shared type set but still return `501`.
   past `STALE_IN_FLIGHT_COMMAND_TTL_MS` (2 minutes; see `state.ts`), the next
   request with the same idempotency key reclaims and re-runs the same row
   instead of returning a status that can never change.
-- Next: analytics summary, alert create/update/pause commands, device
-  registration for APNs and web push, rotate secret, test delivery, delivery
+- Next: analytics summary, alert create/update/pause commands, APNs HTTP/2
+  trade fan-out (credentials), rotate secret, test delivery, delivery
   history, and foreground command streaming.
 
 ## Production Boundaries

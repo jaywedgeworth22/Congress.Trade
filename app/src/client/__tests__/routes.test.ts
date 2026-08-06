@@ -97,6 +97,18 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
   const preferences = new Map<string, PrefRow>();
   const filers = new Map<string, FilerRow>();
   const securities = new Map<string, SecurityRow>();
+  type PushDeviceRow = {
+    id: string;
+    user_id: string;
+    platform: string;
+    token: string;
+    app_bundle: string | null;
+    env: string | null;
+    active: number;
+    created_at: string;
+    updated_at: string;
+  };
+  const pushDevices = new Map<string, PushDeviceRow>();
   const feedRows: FeedTransactionRow[] = [];
   let duplicateRaceTriggered = false;
 
@@ -214,6 +226,33 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       if (/FROM subscriptions WHERE id = \?/i.test(sql)) {
         return (subscriptions.get(String(this.params[0])) ?? null) as T | null;
       }
+      if (/FROM push_devices\s+WHERE user_id = \? AND platform = \? AND token = \?/i.test(sql)) {
+        const found = Array.from(pushDevices.values()).find(
+          (row) =>
+            row.user_id === this.params[0] &&
+            row.platform === this.params[1] &&
+            row.token === this.params[2],
+        );
+        return (found ?? null) as T | null;
+      }
+      if (/FROM push_devices\s+WHERE id = \? AND user_id = \?/i.test(sql)) {
+        const row = pushDevices.get(String(this.params[0]));
+        return (row && row.user_id === this.params[1] ? row : null) as T | null;
+      }
+      if (/SELECT COUNT\(\*\) AS n FROM push_devices\s+WHERE user_id = \? AND active = 1/i.test(sql)) {
+        const n = Array.from(pushDevices.values()).filter(
+          (row) => row.user_id === this.params[0] && row.active === 1,
+        ).length;
+        return { n } as T;
+      }
+      if (
+        /FROM push_devices\s+WHERE user_id = \? AND active = 1\s+ORDER BY updated_at ASC/i.test(sql)
+      ) {
+        const rows = Array.from(pushDevices.values())
+          .filter((row) => row.user_id === this.params[0] && row.active === 1)
+          .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+        return (rows[0] ?? null) as T | null;
+      }
       if (/COUNT\(\*\) AS total/i.test(sql) && /FROM subscriptions WHERE client_id/i.test(sql)) {
         const owned = Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]);
         return { total: owned.length, active: owned.filter((row) => row.active === 1).length } as T;
@@ -263,6 +302,27 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       if (/FROM subscriptions WHERE client_id = \?/i.test(sql)) {
         return {
           results: Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]) as T[],
+        };
+      }
+      if (/SELECT COUNT\(\*\) AS n FROM push_devices WHERE user_id = \? AND active = 1/i.test(sql)) {
+        const n = Array.from(pushDevices.values()).filter(
+          (row) => row.user_id === this.params[0] && row.active === 1,
+        ).length;
+        return { results: [{ n } as T] };
+      }
+      if (
+        /FROM push_devices\s+WHERE user_id = \? AND active = 1\s+ORDER BY updated_at ASC/i.test(sql)
+      ) {
+        const rows = Array.from(pushDevices.values())
+          .filter((row) => row.user_id === this.params[0] && row.active === 1)
+          .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+        return { results: (rows[0] ? [rows[0]] : []) as T[] };
+      }
+      if (/FROM push_devices WHERE user_id = \? AND active = 1/i.test(sql)) {
+        return {
+          results: Array.from(pushDevices.values()).filter(
+            (row) => row.user_id === this.params[0] && row.active === 1,
+          ) as T[],
         };
       }
       if (/FROM transactions t/i.test(sql)) {
@@ -422,6 +482,54 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
         subscriptions.delete(String(this.params[0]));
       } else if (/DELETE FROM sse_leases WHERE subscription_id = \?/i.test(sql)) {
         // best-effort; no-op in this mock
+      } else if (/INSERT INTO push_devices/i.test(sql)) {
+        const [id, userId, platform, token, appBundle, deviceEnv, createdAt, updatedAt] = this.params;
+        pushDevices.set(String(id), {
+          id: String(id),
+          user_id: String(userId),
+          platform: String(platform),
+          token: String(token),
+          app_bundle: appBundle == null ? null : String(appBundle),
+          env: deviceEnv == null ? null : String(deviceEnv),
+          active: 1,
+          created_at: String(createdAt),
+          updated_at: String(updatedAt),
+        });
+      } else if (/UPDATE push_devices\s+SET active = 1/i.test(sql)) {
+        const [appBundle, deviceEnv, updatedAt, id] = this.params;
+        const row = pushDevices.get(String(id));
+        if (row) {
+          row.active = 1;
+          if (appBundle != null) row.app_bundle = String(appBundle);
+          if (deviceEnv != null) row.env = String(deviceEnv);
+          row.updated_at = String(updatedAt);
+        }
+      } else if (/UPDATE push_devices SET active = 0, updated_at = \? WHERE id = \?/i.test(sql)) {
+        const [updatedAt, id] = this.params;
+        const row = pushDevices.get(String(id));
+        if (row) {
+          row.active = 0;
+          row.updated_at = String(updatedAt);
+        }
+      } else if (
+        /UPDATE push_devices SET active = 0, updated_at = \?\s+WHERE user_id = \? AND platform = \? AND token = \?/i
+          .test(sql)
+      ) {
+        const [updatedAt, userId, platform, token] = this.params;
+        let changes = 0;
+        for (const row of pushDevices.values()) {
+          if (
+            row.user_id === userId &&
+            row.platform === platform &&
+            row.token === token &&
+            row.active === 1
+          ) {
+            row.active = 0;
+            row.updated_at = String(updatedAt);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
       }
       return { success: true, meta: { changes: 1 } };
     },
@@ -448,7 +556,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
-  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages };
+  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages, pushDevices };
 }
 
 /** Simulate the queue worker: run every captured command.execute message. */
@@ -1091,6 +1199,87 @@ describe('client API routes', () => {
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
+  });
+
+  it('registers an APNs device token via register_device and legacy create_subscription apns', async () => {
+    const { env, commands, queuedMessages, pushDevices } = makeEnv();
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+    const token = 'a'.repeat(64);
+
+    const create = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: {
+        authorization: auth,
+        'content-type': 'application/json',
+        'idempotency-key': 'apns-reg-1',
+      },
+      body: JSON.stringify({
+        type: 'register_device',
+        payload: { platform: 'apns', token, appBundle: 'trade.congress.ios', env: 'production' },
+      }),
+    }, env);
+    expect(create.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
+    expect(pushDevices.size).toBe(1);
+    const stored = Array.from(pushDevices.values())[0];
+    expect(stored.token).toBe(token);
+    expect(stored.platform).toBe('apns');
+    expect(stored.active).toBe(1);
+
+    // Idempotent re-register (same token) reactivates / updates, no second row.
+    const again = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: {
+        authorization: auth,
+        'content-type': 'application/json',
+        'idempotency-key': 'apns-reg-2',
+      },
+      body: JSON.stringify({
+        type: 'register_device',
+        payload: { platform: 'apns', token, appBundle: 'trade.congress.ios' },
+      }),
+    }, env);
+    expect(again.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(pushDevices.size).toBe(1);
+
+    // Legacy iOS path: create_subscription + delivery:apns must not fail validation.
+    const legacy = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: {
+        authorization: auth,
+        'content-type': 'application/json',
+        'idempotency-key': 'apns-legacy-1',
+      },
+      body: JSON.stringify({
+        type: 'create_subscription',
+        payload: { delivery: 'apns', targetUrl: 'b'.repeat(64), filters: {} },
+      }),
+    }, env);
+    expect(legacy.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
+    expect(pushDevices.size).toBe(2);
+
+    // Bad hex token fails cleanly.
+    const bad = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: {
+        authorization: auth,
+        'content-type': 'application/json',
+        'idempotency-key': 'apns-bad',
+      },
+      body: JSON.stringify({
+        type: 'register_device',
+        payload: { platform: 'apns', token: 'not-a-token' },
+      }),
+    }, env);
+    expect(bad.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
+    expect(Array.from(commands.values()).at(-1)?.error).toMatch(/hex/i);
   });
 
   it('rejects oversized webhook targets in client create and update commands', async () => {

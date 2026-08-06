@@ -21,6 +21,12 @@ import {
   clientIdForUser,
 } from './utils.ts';
 import { getOwnedSubscription } from './queries.ts';
+import {
+  asPushPlatform,
+  deactivatePushDevice,
+  publicPushDevice,
+  upsertPushDevice,
+} from './pushDevices.ts';
 
 export function commandType(value: unknown): ClientCommandType {
   const type = String(value || '');
@@ -29,6 +35,8 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'create_subscription' ||
     type === 'update_subscription' ||
     type === 'delete_subscription' ||
+    type === 'register_device' ||
+    type === 'unregister_device' ||
     type === 'start_checkout' ||
     type === 'request_export'
   ) {
@@ -117,6 +125,17 @@ export async function executeCommand(
     return { preferences: await upsertPreferences(env, user.id, normalizePreferencePatch(input)) };
   }
   if (type === 'create_subscription') {
+    // Legacy iOS builds registered APNs via create_subscription + delivery:'apns'.
+    // That is not a webhook/SSE channel — rewrite to the device-registration path
+    // so production tokens stop failing with "delivery must be 'sse' or 'webhook'".
+    if (input.delivery === 'apns' || input.delivery === 'ios' || input.delivery === 'push') {
+      return executeCommand(env, user, 'register_device', {
+        platform: 'apns',
+        token: input.targetUrl ?? input.token ?? input.deviceToken,
+        appBundle: input.appBundle,
+        env: input.env,
+      }, opts);
+    }
     if (!isPremiumUser(user)) {
       throw new ClientInputError('Creating a subscription requires a Premium account', 402);
     }
@@ -198,6 +217,68 @@ export async function executeCommand(
     const deleted = await deleteSubscription(env, id);
     if (!deleted) throw new ClientInputError('subscription not found', 404);
     return { deleted: true, id };
+  }
+  if (type === 'register_device') {
+    // Device registration is signed-in only (not Premium-gated). Actual trade
+    // push fan-out still requires Premium + APNs credentials when that path
+    // ships — storing the token early means upgrade → push without re-prompt.
+    let platform;
+    try {
+      platform = asPushPlatform(input.platform ?? input.delivery ?? 'apns');
+    } catch (err) {
+      throw new ClientInputError(err instanceof Error ? err.message : String(err));
+    }
+    const tokenRaw =
+      (typeof input.token === 'string' && input.token) ||
+      (typeof input.targetUrl === 'string' && input.targetUrl) ||
+      (typeof input.deviceToken === 'string' && input.deviceToken) ||
+      '';
+    const limited = await rateLimit(env, 'device-register-user', user.id, 30, 3600);
+    if (!limited.ok) throw new ClientInputError('too many device registration requests', 429);
+    try {
+      const device = await upsertPushDevice(env, {
+        userId: user.id,
+        platform,
+        token: tokenRaw,
+        appBundle: typeof input.appBundle === 'string' ? input.appBundle : null,
+        env: typeof input.env === 'string' ? input.env : null,
+      });
+      return { device: publicPushDevice(device) };
+    } catch (err) {
+      throw new ClientInputError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (type === 'unregister_device') {
+    const limited = await rateLimit(env, 'device-unregister-user', user.id, 30, 3600);
+    if (!limited.ok) throw new ClientInputError('too many device unregister requests', 429);
+    let platform;
+    try {
+      platform = input.platform !== undefined || input.delivery !== undefined
+        ? asPushPlatform(input.platform ?? input.delivery)
+        : undefined;
+    } catch (err) {
+      throw new ClientInputError(err instanceof Error ? err.message : String(err));
+    }
+    const token =
+      (typeof input.token === 'string' && input.token) ||
+      (typeof input.targetUrl === 'string' && input.targetUrl) ||
+      (typeof input.deviceToken === 'string' && input.deviceToken) ||
+      undefined;
+    const id = typeof input.id === 'string' ? input.id : undefined;
+    if (!id && !token) throw new ClientInputError('id or token is required');
+    try {
+      const deactivated = await deactivatePushDevice(env, {
+        userId: user.id,
+        id,
+        token,
+        platform,
+      });
+      if (!deactivated) throw new ClientInputError('device not found', 404);
+      return { deactivated: true, id: id ?? null };
+    } catch (err) {
+      if (err instanceof ClientInputError) throw err;
+      throw new ClientInputError(err instanceof Error ? err.message : String(err));
+    }
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

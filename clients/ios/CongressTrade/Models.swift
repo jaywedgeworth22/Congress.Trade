@@ -515,6 +515,21 @@ struct PreferencesCommandResult: Decodable {
     let preferences: ClientPreferences
 }
 
+struct DeviceRegistrationResult: Decodable {
+    let device: RegisteredDevice?
+}
+
+struct RegisteredDevice: Decodable, Identifiable {
+    let id: String
+    let platform: String?
+    let tokenSuffix: String?
+    let appBundle: String?
+    let env: String?
+    let active: Bool?
+    let createdAt: String?
+    let updatedAt: String?
+}
+
 struct Subscription: Decodable, Identifiable {
     let id: String
     let delivery: String

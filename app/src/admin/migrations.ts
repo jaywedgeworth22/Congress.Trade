@@ -796,6 +796,24 @@ export const LOCAL_VISION_WORKER_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS local_worker_heartbeat (worker_id TEXT PRIMARY KEY, last_heartbeat_at TEXT NOT NULL, status_json TEXT)`,
 ] as const;
 
+/** 0076_push_devices.sql — account-owned APNs/webpush device tokens. */
+export const PUSH_DEVICES_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS push_devices (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL,
+     platform TEXT NOT NULL,
+     token TEXT NOT NULL,
+     app_bundle TEXT,
+     env TEXT,
+     active INTEGER NOT NULL DEFAULT 1,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_user_platform_token ON push_devices (user_id, platform, token)',
+  'CREATE INDEX IF NOT EXISTS idx_push_devices_user_active ON push_devices (user_id, active)',
+  'CREATE INDEX IF NOT EXISTS idx_push_devices_platform_active ON push_devices (platform, active)',
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -920,6 +938,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LOCAL_VISION_WORKER_SCHEMA_STATEMENTS,
   // 0074_lower_subscription_quota.sql
   ...LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS,
+  // 0076_push_devices.sql
+  ...PUSH_DEVICES_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
