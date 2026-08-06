@@ -63,6 +63,10 @@ type EnvWithWatch = Env & {
   FINNHUB_API_KEY?: string;
   AINVEST_API_KEY?: string;
   UW_DEEP_MATCH_DATES_PER_RUN?: string;
+  /** Daily HTTP call budget for Unusual Whales latency probes (default 240). */
+  UW_LATENCY_DAILY_CAP?: string;
+  /** Daily HTTP call budget for Quiver latency probes (default 360; 3 calls/run). */
+  QUIVER_LATENCY_DAILY_CAP?: string;
   /** Free-tier keys reserved for disclosure-latency probes only. */
   FMP_LATENCY_API_KEY?: string;
   /** Per-key daily cap for latency probes (default 235; free plan is 250). */
@@ -356,9 +360,79 @@ export const FMP_LATENCY_DAILY_CAP_PER_KEY = 235;
 /** house-latest + senate-latest per successful FMP probe fetch. */
 export const FMP_LATENCY_CALLS_PER_RUN = 2;
 /** Floor spacing even when budget is flush (avoid hammering free tier). */
-const FMP_LATENCY_MIN_INTERVAL_SEC = 120;
+const FMP_LATENCY_MIN_INTERVAL_SEC = 60;
 /** Cap spacing so a late-day recovery can still burn remaining budget. */
 const FMP_LATENCY_MAX_INTERVAL_SEC = 45 * 60;
+
+/**
+ * 4-level America/New_York publish-yield bands for disclosure latency probes.
+ * Politicians almost always file during US business hours on weekdays; we
+ * burn daily API budget denser in high-yield windows and sacrifice nights.
+ *
+ * Relative frequency weights (peak ≈ 3× mid, ≈ 7.5× low):
+ *   peak  3.0  — weekday 08–12 ET (morning filing surge)
+ *   high  2.0  — weekday 12–16 ET
+ *   mid   1.0  — weekday 06–08 + 16–20 ET
+ *   low   0.4  — nights / late evening; weekends downshifted further
+ */
+export type DisclosurePublishYieldBand = 'peak' | 'high' | 'mid' | 'low';
+
+export const DISCLOSURE_PUBLISH_YIELD_WEIGHT: Record<DisclosurePublishYieldBand, number> = {
+  peak: 3.0,
+  high: 2.0,
+  mid: 1.0,
+  low: 0.4,
+};
+
+/** Sources with independent daily HTTP budgets + yield-weighted spacing. */
+export type LatencyBudgetSourceId = 'unusual_whales' | 'quiver';
+
+export interface LatencySourceBudgetSpec {
+  id: LatencyBudgetSourceId;
+  /** CONFIG_KV / last-poll namespace. */
+  pollSource: string;
+  dayKeyPrefix: string;
+  envCapKey: string;
+  defaultDailyCap: number;
+  /** Hard ceiling for env override (safety). */
+  maxDailyCap: number;
+  /** HTTP calls reserved for a normal successful probe (before deep-match). */
+  callsPerRun: number;
+  minIntervalSec: number;
+  maxIntervalSec: number;
+}
+
+/**
+ * Per-source daily caps (HTTP call units). Tunable via Infisical.
+ * - UW: 1 call for recent-trades; deep-match dates spend extra from remaining.
+ * - QQ: house + senate + trump bulk = 3 calls per probe.
+ */
+export const LATENCY_SOURCE_BUDGETS: Record<LatencyBudgetSourceId, LatencySourceBudgetSpec> = {
+  unusual_whales: {
+    id: 'unusual_whales',
+    pollSource: 'disclosure-latency-uw',
+    dayKeyPrefix: 'latency-budget:uw',
+    envCapKey: 'UW_LATENCY_DAILY_CAP',
+    // ~4 peak probes/hr if budget full; leaves headroom for deep-match dates.
+    defaultDailyCap: 240,
+    maxDailyCap: 2000,
+    callsPerRun: 1,
+    minIntervalSec: 60,
+    maxIntervalSec: 45 * 60,
+  },
+  quiver: {
+    id: 'quiver',
+    pollSource: 'disclosure-latency-qq',
+    dayKeyPrefix: 'latency-budget:qq',
+    envCapKey: 'QUIVER_LATENCY_DAILY_CAP',
+    // 3 HTTP/run; 360 calls ≈ 120 probes/day, denser in peak ET hours.
+    defaultDailyCap: 360,
+    maxDailyCap: 5000,
+    callsPerRun: 3,
+    minIntervalSec: 60,
+    maxIntervalSec: 45 * 60,
+  },
+};
 
 function fmpLatencyDayKey(slot: FmpLatencyKeySlot, now = new Date()): string {
   return `fmp-latency:calls:key${slot}:` + now.toISOString().slice(0, 10);
@@ -401,13 +475,7 @@ export async function addFmpLatencyUsed(
   return next;
 }
 
-/**
- * Weight remaining seconds of the day by America/New_York hour so probes are
- * denser when disclosures typically publish (morning–afternoon ET weekdays).
- * Returns a multiplier ≥ 0.35; peak hours ~1.0, overnight ~0.35–0.5.
- */
-export function fmpLatencyEtHourWeight(now: Date = new Date()): number {
-  // en-US + America/New_York gives weekday + hour without extra deps.
+function etHourAndWeekday(now: Date): { hour: number; weekday: string; isWeekend: boolean } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     hour: 'numeric',
@@ -417,20 +485,73 @@ export function fmpLatencyEtHourWeight(now: Date = new Date()): number {
   const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '12');
   const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Mon';
   const isWeekend = weekday === 'Sat' || weekday === 'Sun';
-  // Peak publish window weekdays 8–17 ET.
-  let w = 0.45;
-  if (hour >= 8 && hour < 12) w = 1.0;
-  else if (hour >= 12 && hour < 18) w = 0.85;
-  else if (hour >= 6 && hour < 8) w = 0.65;
-  else if (hour >= 18 && hour < 21) w = 0.55;
-  else w = 0.35;
-  if (isWeekend) w *= 0.55;
-  return w;
+  return { hour, weekday, isWeekend };
+}
+
+/**
+ * Classify current America/New_York time into a 4-level filing-yield band.
+ * Weekends never get `peak` (shift down one band) — low filing volume.
+ */
+export function disclosurePublishYieldBand(now: Date = new Date()): DisclosurePublishYieldBand {
+  const { hour, isWeekend } = etHourAndWeekday(now);
+  let band: DisclosurePublishYieldBand;
+  if (hour >= 8 && hour < 12) band = 'peak';
+  else if (hour >= 12 && hour < 16) band = 'high';
+  else if ((hour >= 6 && hour < 8) || (hour >= 16 && hour < 20)) band = 'mid';
+  else band = 'low';
+  if (isWeekend) {
+    if (band === 'peak') return 'high';
+    if (band === 'high') return 'mid';
+    if (band === 'mid') return 'low';
+    return 'low';
+  }
+  return band;
+}
+
+/**
+ * Relative probe frequency weight for the current ET yield band.
+ * Peak (~3.0) is ~3× mid and ~7.5× overnight low — owner request for 2–3×
+ * denser attempts during the high-yield filing window.
+ */
+export function disclosurePublishYieldWeight(now: Date = new Date()): number {
+  return DISCLOSURE_PUBLISH_YIELD_WEIGHT[disclosurePublishYieldBand(now)];
+}
+
+/**
+ * @deprecated Prefer disclosurePublishYieldWeight — kept for existing imports/tests.
+ * Same 4-level ET weight used by all latency sources.
+ */
+export function fmpLatencyEtHourWeight(now: Date = new Date()): number {
+  return disclosurePublishYieldWeight(now);
+}
+
+/**
+ * Spread remaining probe runs across the rest of the UTC day, denser in
+ * high-yield ET bands. Shared by FMP, Unusual Whales, and Quiver.
+ *
+ * interval ≈ (secLeft / runsLeft) / yieldWeight, clamped to [min, max].
+ */
+export function budgetedProbeIntervalSec(opts: {
+  now: Date;
+  remainingRuns: number;
+  minIntervalSec: number;
+  maxIntervalSec: number;
+}): number {
+  const { now, remainingRuns, minIntervalSec, maxIntervalSec } = opts;
+  if (remainingRuns < 1) return maxIntervalSec;
+  const endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  const secLeft = Math.max(60, Math.floor((endUtc - now.getTime()) / 1000));
+  const uniform = secLeft / remainingRuns;
+  const weight = Math.max(0.25, disclosurePublishYieldWeight(now));
+  const weighted = uniform / weight;
+  // Peak floor can be as low as minIntervalSec; overnight still respects min.
+  return Math.max(minIntervalSec, Math.min(maxIntervalSec, Math.round(weighted)));
 }
 
 /**
  * Seconds until the next FMP latency probe for a key, given remaining budget
- * for the UTC day. Spreads calls so we do not front-load free-tier quota.
+ * for the UTC day. Spreads calls so we do not front-load free-tier quota;
+ * peak ET hours run ~3× denser than mid-day baseline.
  */
 export function fmpLatencyIntervalSec(
   now: Date,
@@ -439,17 +560,107 @@ export function fmpLatencyIntervalSec(
 ): number {
   if (remainingCalls < callsPerRun) return FMP_LATENCY_MAX_INTERVAL_SEC;
   const runsLeft = Math.max(1, Math.floor(remainingCalls / callsPerRun));
-  // Seconds left in the UTC day (counters roll on UTC date key).
-  const endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
-  const secLeft = Math.max(60, Math.floor((endUtc - now.getTime()) / 1000));
-  const weight = fmpLatencyEtHourWeight(now);
-  // Base uniform spacing, then shrink interval in peak hours (more frequent).
-  const uniform = secLeft / runsLeft;
-  const weighted = uniform / Math.max(0.35, weight);
-  return Math.max(
-    FMP_LATENCY_MIN_INTERVAL_SEC,
-    Math.min(FMP_LATENCY_MAX_INTERVAL_SEC, Math.round(weighted)),
-  );
+  return budgetedProbeIntervalSec({
+    now,
+    remainingRuns: runsLeft,
+    minIntervalSec: FMP_LATENCY_MIN_INTERVAL_SEC,
+    maxIntervalSec: FMP_LATENCY_MAX_INTERVAL_SEC,
+  });
+}
+
+function sourceBudgetDayKey(spec: LatencySourceBudgetSpec, now = new Date()): string {
+  return `${spec.dayKeyPrefix}:${now.toISOString().slice(0, 10)}`;
+}
+
+export async function getLatencySourceUsed(
+  env: Env,
+  source: LatencyBudgetSourceId,
+  now = new Date(),
+): Promise<number> {
+  const spec = LATENCY_SOURCE_BUDGETS[source];
+  try {
+    const v = await env.CONFIG_KV.get(sourceBudgetDayKey(spec, now));
+    const n = v ? parseInt(v, 10) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function addLatencySourceUsed(
+  env: Env,
+  source: LatencyBudgetSourceId,
+  n: number,
+  now = new Date(),
+): Promise<number> {
+  const spec = LATENCY_SOURCE_BUDGETS[source];
+  const used = await getLatencySourceUsed(env, source, now);
+  const next = Math.max(0, used + Math.floor(n));
+  try {
+    await env.CONFIG_KV.put(sourceBudgetDayKey(spec, now), String(next), { expirationTtl: 172800 });
+  } catch {
+    /* best effort */
+  }
+  return next;
+}
+
+export async function latencySourceDailyCap(env: Env, source: LatencyBudgetSourceId): Promise<number> {
+  const spec = LATENCY_SOURCE_BUDGETS[source];
+  const envx = env as unknown as Record<string, string | undefined>;
+  const live = (await resolveSecret(env, spec.envCapKey as keyof Env & string)).value ?? envx[spec.envCapKey];
+  const n = parseInt(live || '', 10);
+  if (Number.isFinite(n) && n > 0) return Math.min(n, spec.maxDailyCap);
+  return spec.defaultDailyCap;
+}
+
+export interface LatencySourceProbeSelection {
+  source: LatencyBudgetSourceId;
+  used: number;
+  cap: number;
+  remaining: number;
+  intervalSec: number;
+  callsPerRun: number;
+  band: DisclosurePublishYieldBand;
+}
+
+/**
+ * Decide whether UW/QQ may spend HTTP this cycle given remaining daily budget
+ * and yield-weighted spacing. force=true bypasses spacing (still respects cap).
+ */
+export async function selectLatencySourceProbe(
+  env: Env,
+  source: LatencyBudgetSourceId,
+  now: Date = new Date(),
+  opts: { force?: boolean } = {},
+): Promise<LatencySourceProbeSelection | null> {
+  const spec = LATENCY_SOURCE_BUDGETS[source];
+  const cap = await latencySourceDailyCap(env, source);
+  const used = await getLatencySourceUsed(env, source, now);
+  const remaining = Math.max(0, cap - used);
+  if (remaining < spec.callsPerRun) return null;
+
+  const runsLeft = Math.max(1, Math.floor(remaining / spec.callsPerRun));
+  const intervalSec = budgetedProbeIntervalSec({
+    now,
+    remainingRuns: runsLeft,
+    minIntervalSec: spec.minIntervalSec,
+    maxIntervalSec: spec.maxIntervalSec,
+  });
+
+  if (!opts.force) {
+    const last = await getLastPollAt(env, spec.pollSource);
+    if (last && now.getTime() - last.getTime() < intervalSec * 1000) return null;
+  }
+
+  return {
+    source,
+    used,
+    cap,
+    remaining,
+    intervalSec,
+    callsPerRun: spec.callsPerRun,
+    band: disclosurePublishYieldBand(now),
+  };
 }
 
 export interface FmpLatencyKeySelection {
@@ -2506,10 +2717,13 @@ async function runUnusualWhalesDeepMatch(
   freshRows: DisclosureProviderRow[],
   nowIso: string,
   fetchImpl: typeof fetch,
+  opts: { maxDates?: number } = {},
 ): Promise<{
   pending: number;
   matched: number;
   fetchedRows: number;
+  /** Distinct date endpoints actually requested (HTTP count for budget). */
+  fetchedDates: number;
   errors: string[];
   examinedTradeHashes: string[];
   matchedTradeHashes: string[];
@@ -2518,11 +2732,16 @@ async function runUnusualWhalesDeepMatch(
     pending: 0,
     matched: 0,
     fetchedRows: 0,
+    fetchedDates: 0,
     errors: [] as string[],
     examinedTradeHashes: [] as string[],
     matchedTradeHashes: [] as string[],
   };
-  const capPerRun = await uwDeepMatchDatesPerRun(env as EnvWithWatch);
+  const envCap = await uwDeepMatchDatesPerRun(env as EnvWithWatch);
+  // Also bound by remaining daily HTTP budget (caller passes leftover after base).
+  const budgetCap =
+    opts.maxDates == null ? envCap : Math.max(0, Math.min(envCap, Math.floor(opts.maxDates)));
+  const capPerRun = budgetCap;
   if (capPerRun <= 0) return empty;
 
   const oldestFreshDate = freshRows
@@ -2622,7 +2841,13 @@ async function runUnusualWhalesDeepMatch(
     })),
     nowIso,
   );
-  return { ...result, fetchedRows, errors, examinedTradeHashes: targetCandidates.map((c) => c.doc_id) };
+  return {
+    ...result,
+    fetchedRows,
+    fetchedDates: targetDates.length,
+    errors,
+    examinedTradeHashes: targetCandidates.map((c) => c.doc_id),
+  };
 }
 
 async function runProviderProbe(
@@ -2680,11 +2905,16 @@ async function runProviderProbe(
   const isFmpFamily = isFmpFamilyProvider(provider.id);
   const isFmpStable = provider.id === 'fmp';
   const isUnusualWhales = provider.id === 'unusual_whales';
+  const budgetSourceId: LatencyBudgetSourceId | null =
+    provider.id === 'unusual_whales' || provider.id === 'quiver' ? provider.id : null;
   const envx = env as EnvWithWatch;
   let fetchedRows = 0;
   let freshRows: DisclosureProviderRow[] = [];
   let apiKey: string | null = null;
   let fmpSelection: FmpLatencyKeySelection | null = null;
+  let sourceBudget: LatencySourceProbeSelection | null = null;
+  /** Extra UW deep-match HTTP calls allowed this run after base probe. */
+  let uwDeepMatchCallBudget = 0;
 
   // FMP free-tier keys are latency-only (owner 2026-08): dual keys with
   // independent daily counters + ET-weighted spacing. Never use FMP_API_KEY
@@ -2740,6 +2970,21 @@ async function runProviderProbe(
         errors,
         reason: `${provider.secretNames[0]} missing`,
       };
+    }
+    // Per-source daily budget + yield-weighted spacing (UW / Quiver).
+    if (budgetSourceId) {
+      sourceBudget = await selectLatencySourceProbe(env, budgetSourceId, now, { force: opts.force });
+      if (!sourceBudget) {
+        capSkipped = true;
+        errors.push(
+          `${provider.label} at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)`,
+        );
+      } else {
+        // Reserve base probe HTTP calls; UW deep-match spends from remainder.
+        await addLatencySourceUsed(env, budgetSourceId, sourceBudget.callsPerRun, now);
+        uwDeepMatchCallBudget = Math.max(0, sourceBudget.remaining - sourceBudget.callsPerRun);
+        await setLastPollAt(env, LATENCY_SOURCE_BUDGETS[budgetSourceId].pollSource, now);
+      }
     }
   }
 
@@ -2811,11 +3056,17 @@ async function runProviderProbe(
     // the normal fetch actually returned rows to anchor a window against -
     // when a lapsed trial key makes that fetch 401 (freshRows stays empty),
     // this is skipped, degrading silently back to the normal-only behavior.
-    if (isUnusualWhales && freshRows.length) {
-      const deep = await runUnusualWhalesDeepMatch(env, provider, apiKey, freshRows, nowIso, fetchImpl);
+    if (isUnusualWhales && freshRows.length && apiKey && !capSkipped) {
+      // Deep-match date queries share the UW daily HTTP budget (remaining after base).
+      const deep = await runUnusualWhalesDeepMatch(env, provider, apiKey, freshRows, nowIso, fetchImpl, {
+        maxDates: uwDeepMatchCallBudget,
+      });
       totalFetchedRows += deep.fetchedRows;
       totalMatched += deep.matched;
       errors.push(...deep.errors);
+      if (deep.fetchedDates > 0) {
+        await addLatencySourceUsed(env, 'unusual_whales', deep.fetchedDates, now);
+      }
       // De-duplicated pending count across both passes: a stranded candidate
       // can appear in the normal pass's newest-100 page AND in the deep
       // pass's target set, and either pass may have just matched it, so
@@ -2861,16 +3112,11 @@ async function runProviderProbe(
   }
 }
 
-/** KV key for non-FMP provider probe cadence (UW/Quiver). FMP keys use
- *  fmp-disclosure-latency-key{1,2} with adaptive spacing. */
-const PROBE_POLL_SOURCE = 'disclosure-latency-providers';
 /**
- * Cron may fire every minute. Non-FMP providers (UW/Quiver) throttle here.
- * FMP free-tier keys self-throttle via selectFmpLatencyKey (per-key budget +
- * ET-weighted interval) so we never share enrichment counters or burn 250/day.
+ * Cron may fire every minute. Each source (FMP / UW / QQ) self-throttles via
+ * its own daily HTTP budget + 4-level ET yield-weighted interval — no shared
+ * global gate that would force them to the same cadence.
  */
-const MIN_PROBE_INTERVAL_SEC = 60;
-
 export async function runDisclosureLatencyProbe(
   env: Env,
   now: Date = new Date(),
@@ -2890,21 +3136,6 @@ export async function runDisclosureLatencyProbe(
     };
   }
 
-  if (!opts.force) {
-    const lastPolledAt = await getLastPollAt(env, PROBE_POLL_SOURCE);
-    if (lastPolledAt && now.getTime() - lastPolledAt.getTime() < MIN_PROBE_INTERVAL_SEC * 1000) {
-      return {
-        enabled: true,
-        reason: `throttled: non-FMP providers run at most every ${MIN_PROBE_INTERVAL_SEC}s`,
-        fetchedRows: 0,
-        pending: 0,
-        matched: 0,
-        errors: [],
-        providers: [],
-      };
-    }
-  }
-
   const runs: DisclosureLatencyProviderRun[] = [];
   const max = await limit(envx);
   const requested = await requestedProviderIds(envx, opts);
@@ -2919,7 +3150,6 @@ export async function runDisclosureLatencyProbe(
       }),
     );
   }
-  await setLastPollAt(env, PROBE_POLL_SOURCE, now);
   return {
     enabled: true,
     fetchedRows: runs.reduce((sum, r) => sum + r.fetchedRows, 0),

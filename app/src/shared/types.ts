@@ -690,6 +690,17 @@ export interface Env {
    *  older than the normal ~200-row window. Default 8; clamped to [0, 25];
    *  0 disables the pass. */
   UW_DEEP_MATCH_DATES_PER_RUN?: string;
+  /**
+   * Daily HTTP call budget for Unusual Whales latency probes (default 240).
+   * Base recent-trades = 1 call; deep-match date queries spend from remainder.
+   * Spread over 24h with denser ET peak-hour yield bands.
+   */
+  UW_LATENCY_DAILY_CAP?: string;
+  /**
+   * Daily HTTP call budget for Quiver latency probes (default 360).
+   * Each probe = 3 calls (house + senate + trump). Yield-weighted over the day.
+   */
+  QUIVER_LATENCY_DAILY_CAP?: string;
   /** Quiver API bearer token for live Congress trading endpoints. */
   QUIVER_API_KEY?: string;
   QUIVER_API_TOKEN?: string;

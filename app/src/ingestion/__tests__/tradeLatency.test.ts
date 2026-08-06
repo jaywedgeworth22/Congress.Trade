@@ -16,11 +16,18 @@ import {
   FMP_LATENCY_DAILY_CAP_PER_KEY,
   fmpLatencyEtHourWeight,
   fmpLatencyIntervalSec,
+  disclosurePublishYieldBand,
+  disclosurePublishYieldWeight,
+  budgetedProbeIntervalSec,
   selectFmpLatencyKey,
   selectRotatedAvenue,
   selectFmpLatencyPathForCycle,
+  selectLatencySourceProbe,
   getFmpLatencyUsed,
   addFmpLatencyUsed,
+  addLatencySourceUsed,
+  getLatencySourceUsed,
+  LATENCY_SOURCE_BUDGETS,
   getDisclosureLatencyProviderStatuses,
   listFmpLatencyPathRegistry,
   runDisclosureLatencyProbe,
@@ -222,24 +229,85 @@ describe('tradeLatency', () => {
       // Noon UTC mid-day with plenty of remaining runs.
       const noon = new Date('2026-08-05T16:00:00.000Z'); // 12:00 ET in summer
       const interval = fmpLatencyIntervalSec(noon, FMP_LATENCY_DAILY_CAP_PER_KEY);
-      expect(interval).toBeGreaterThanOrEqual(120);
+      expect(interval).toBeGreaterThanOrEqual(60);
       expect(interval).toBeLessThanOrEqual(45 * 60);
       // Exhausted budget → max interval (skip signal for caller).
       expect(fmpLatencyIntervalSec(noon, 0)).toBe(45 * 60);
       expect(fmpLatencyIntervalSec(noon, 1)).toBe(45 * 60); // < CALLS_PER_RUN
     });
 
-    it('weights peak ET hours denser than overnight', () => {
+    it('uses 4-level ET yield bands with peak ~3× denser than mid', () => {
+      // 2026-08-05 is a Wednesday.
+      // 14:00 UTC = 10:00 ET → peak
+      expect(disclosurePublishYieldBand(new Date('2026-08-05T14:00:00.000Z'))).toBe('peak');
+      // 17:00 UTC = 13:00 ET → high
+      expect(disclosurePublishYieldBand(new Date('2026-08-05T17:00:00.000Z'))).toBe('high');
+      // 21:00 UTC = 17:00 ET → mid
+      expect(disclosurePublishYieldBand(new Date('2026-08-05T21:00:00.000Z'))).toBe('mid');
+      // 04:00 UTC = 00:00 ET → low
+      expect(disclosurePublishYieldBand(new Date('2026-08-05T04:00:00.000Z'))).toBe('low');
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T14:00:00.000Z'))).toBe(3);
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T17:00:00.000Z'))).toBe(2);
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T21:00:00.000Z'))).toBe(1);
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T04:00:00.000Z'))).toBe(0.4);
+      // Weekend peak downgrades (Sat 2026-08-08 10:00 ET = 14:00 UTC).
+      expect(disclosurePublishYieldBand(new Date('2026-08-08T14:00:00.000Z'))).toBe('high');
+    });
+
+    it('weights peak ET hours denser than overnight (2–3×+)', () => {
       // America/New_York: 2026-08-05 14:00 UTC = 10:00 ET (peak weekday)
       const peak = fmpLatencyEtHourWeight(new Date('2026-08-05T14:00:00.000Z'));
       // 2026-08-05 04:00 UTC = 00:00 ET (overnight)
       const night = fmpLatencyEtHourWeight(new Date('2026-08-05T04:00:00.000Z'));
-      expect(peak).toBeGreaterThan(night);
+      expect(peak).toBeGreaterThanOrEqual(night * 2);
       // Peak spacing should be shorter than overnight for same remaining budget.
       const remaining = 100;
       const peakIv = fmpLatencyIntervalSec(new Date('2026-08-05T14:00:00.000Z'), remaining);
       const nightIv = fmpLatencyIntervalSec(new Date('2026-08-05T04:00:00.000Z'), remaining);
-      expect(peakIv).toBeLessThanOrEqual(nightIv);
+      expect(peakIv).toBeLessThan(nightIv);
+      // Shared budgeted helper used by UW/QQ as well.
+      const peakShared = budgetedProbeIntervalSec({
+        now: new Date('2026-08-05T14:00:00.000Z'),
+        remainingRuns: 50,
+        minIntervalSec: 60,
+        maxIntervalSec: 45 * 60,
+      });
+      const nightShared = budgetedProbeIntervalSec({
+        now: new Date('2026-08-05T04:00:00.000Z'),
+        remainingRuns: 50,
+        minIntervalSec: 60,
+        maxIntervalSec: 45 * 60,
+      });
+      expect(peakShared).toBeLessThan(nightShared);
+    });
+
+    it('UW/QQ selectLatencySourceProbe enforces daily cap and yield spacing', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+        UW_LATENCY_DAILY_CAP: '10',
+        QUIVER_LATENCY_DAILY_CAP: '12',
+      } as never;
+      const peakNow = new Date('2026-08-05T14:00:00.000Z');
+      const uw = await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true });
+      expect(uw?.cap).toBe(10);
+      expect(uw?.callsPerRun).toBe(1);
+      expect(uw?.band).toBe('peak');
+      await addLatencySourceUsed(env, 'unusual_whales', 10, peakNow);
+      expect(await getLatencySourceUsed(env, 'unusual_whales', peakNow)).toBe(10);
+      expect(await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true })).toBeNull();
+
+      const qq = await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true });
+      expect(qq?.cap).toBe(12);
+      expect(qq?.callsPerRun).toBe(LATENCY_SOURCE_BUDGETS.quiver.callsPerRun);
+      // Exhaust almost all QQ budget (< 3 remaining).
+      await addLatencySourceUsed(env, 'quiver', 11, peakNow);
+      expect(await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true })).toBeNull();
     });
 
     it('never selects FMP_API_KEY — only FMP_LATENCY_API_KEY[_2]', async () => {
