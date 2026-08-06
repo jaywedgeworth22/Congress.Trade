@@ -59,10 +59,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta name="twitter:description" content="Track U.S. Congress stock trades in near real time: live feed, member and ticker analytics, premium webhooks." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
-<link rel="icon" href="/favicon.ico?v=7" sizes="32x32" />
-<link rel="icon" type="image/png" href="/icon-192.png?v=7" sizes="192x192" />
-<link rel="icon" type="image/png" href="/icon-512.png?v=7" sizes="512x512" />
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7" />
+<link rel="icon" href="/favicon.ico?v=8" sizes="32x32" />
+<link rel="icon" type="image/png" href="/icon-192.png?v=8" sizes="192x192" />
+<link rel="icon" type="image/png" href="/icon-512.png?v=8" sizes="512x512" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=8" />
 <link rel="manifest" href="/site.webmanifest" />
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
