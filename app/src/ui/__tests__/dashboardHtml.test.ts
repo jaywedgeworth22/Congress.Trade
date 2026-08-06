@@ -272,7 +272,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'feed-chambers-v2'");
     expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v2'");
     // HSP sits on the same row as party chips; no redundant Timeframe label / Refresh.
-    expect(DASHBOARD_HTML).toContain('class="trends-filter-row"');
+    expect(DASHBOARD_HTML).toMatch(/class="[^"]*trends-filter-row[^"]*"/);
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');

@@ -21,6 +21,7 @@ import {
   isWindow,
   whereSql,
   windowToOffset,
+  windowDays,
 } from '../sql.ts';
 
 describe('validators', () => {
@@ -68,6 +69,15 @@ describe('validators', () => {
     expect(asChamber('xyz')).toBeUndefined();
     expect(asSourceFilter('primary')).toBe('primary');
     expect(asSourceFilter('bogus')).toBe('all');
+  });
+
+  it('accepts calendar-year window presets', () => {
+    expect(isWindow('this_cy')).toBe(true);
+    expect(isWindow('last_cy')).toBe(true);
+    expect(asWindow('this_cy')).toBe('this_cy');
+    expect(windowToOffset('this_cy')).toBeNull();
+    expect(windowToOffset('last_cy')).toBeNull();
+    expect(windowDays('this_cy')).toBeGreaterThan(0);
   });
 
   it('windowToOffset returns null only for "all"', () => {
