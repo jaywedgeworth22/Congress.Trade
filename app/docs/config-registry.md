@@ -71,16 +71,16 @@ budget-status polling, see Tunables & flags below)
   `DISCLOSURE_LATENCY_PROVIDERS`, `DISCLOSURE_LATENCY_WATCH_LIMIT`,
   legacy `FMP_DISCLOSURE_WATCH_ENABLED` / `FMP_DISCLOSURE_WATCH_LIMIT`,
   **FMP family (default ON for CT when keys present):** `FMP_LATENCY_PROBE_ENABLED`
-  (explicit false/off disables; grey OFF), `FMP_LATENCY_PATHS` (`stable,rapidapi`
-  default — **rotated one path per probe cycle**, not dual-called, so free-tier
-  daily quotas are not doubled for the same answer), optional `FMP_STABLE_BASE_URL` /
-  `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST`,
-  `FMP_RAPIDAPI_KEY` **or shared `RAPIDAPI_KEY`** (Socratic.Trade marketplace
-  convention — CT never uses free-tier `FMP_LATENCY_*` on the RapidAPI host),
-  `FMP_RAPIDAPI_DAILY_CAP` (default 500 HTTP/day for RapidAPI path),
-  `FMP_LATENCY_DAILY_CAP` (per free-tier key, default 235), dual keys
-  `FMP_LATENCY_API_KEY` + `_2` also **rotate** among eligible budget/spacing,
-  fleet ≈ dual free keys + RapidAPI path (~2×+ free-only when both configured),
+  (explicit false/off disables; grey OFF), `FMP_LATENCY_PATHS` (default **`stable`**
+  only — RapidAPI FMP product auth works but **house/senate-latest 404** as of
+  2026-08; opt in `stable,rapidapi` if marketplace gains congress endpoints),
+  optional `FMP_STABLE_BASE_URL` / `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST`,
+  `FMP_RAPIDAPI_KEY` **or shared `RAPIDAPI_KEY`** (ST marketplace convention —
+  never free-tier `FMP_LATENCY_*` on the RapidAPI host),
+  `FMP_RAPIDAPI_DAILY_CAP` (default 500 HTTP/day for RapidAPI path if enabled),
+  `FMP_LATENCY_DAILY_CAP` (per free-tier key, default 235), dual free keys
+  `FMP_LATENCY_API_KEY` + `_2` (or `FMP_API_KEY` as slot-2 fallback) **rotate**
+  for ~2× capacity — no known per-IP limit on free tier,
   `UW_LATENCY_DAILY_CAP` (default 240 HTTP/day incl. deep-match),
   `QUIVER_LATENCY_DAILY_CAP` (default 360 HTTP/day; 3 calls per probe),
   `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date budget; default `8`).
@@ -89,12 +89,12 @@ budget-status polling, see Tunables & flags below)
   so daily budgets run **~2–3× denser in peak filing hours** and sparse overnight.
   Production should keep these set in Infisical:
   `DISCLOSURE_LATENCY_WATCH_ENABLED=true`,
-  `DISCLOSURE_LATENCY_PROVIDERS=fmp,fmp_rapidapi,unusual_whales,quiver`,
+  `DISCLOSURE_LATENCY_PROVIDERS=fmp,unusual_whales,quiver` (add `fmp_rapidapi` only if product supports congress),
   `DISCLOSURE_LATENCY_WATCH_LIMIT=100`,
   `FMP_LATENCY_PROBE_ENABLED` unset (default ON) or false to disable spend,
-  `FMP_LATENCY_PATHS=stable,rapidapi`,
+  `FMP_LATENCY_PATHS=stable`,
   `UW_DEEP_MATCH_DATES_PER_RUN=8`. Provider API keys
-  (`FMP_LATENCY_API_KEY`, `FMP_RAPIDAPI_KEY`, `UNUSUAL_WHALES_API_KEY`,
+  (`FMP_LATENCY_API_KEY` + `_2`, `UNUSUAL_WHALES_API_KEY`,
   `QUIVER_API_KEY`) live under provider-keys. FMP is CT latency + Mac scout
   only — not Socratic product. Multi-avenue rotation (`selectRotatedAvenue`)
   is the pattern for any source with multiple keys/hosts.

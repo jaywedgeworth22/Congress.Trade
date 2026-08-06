@@ -79,8 +79,11 @@ type EnvWithWatch = Env & {
   FMP_LATENCY_PROBE_ENABLED?: string;
   /**
    * Comma-separated FMP path ids eligible when FMP_LATENCY_PROBE_ENABLED is on:
-   * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi). Default both; the
-   * probe loop **rotates** across them (one path per cycle) to protect quotas.
+   * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi).
+   * Default **stable only** — the RapidAPI FMP product authenticates but does
+   * **not** expose house/senate-latest (HTTP 404 verified 2026-08-06). Opt in
+   * with `stable,rapidapi` if the marketplace product gains those endpoints;
+   * when both are enabled the probe loop **rotates** (one path per cycle).
    */
   FMP_LATENCY_PATHS?: string;
   /** Override base for stable FMP disclosures (default financialmodelingprep.com/stable). */
@@ -354,8 +357,11 @@ const SQL_IN_CHUNK = 50;
 /**
  * FMP free-tier keys for latency monitoring ONLY (owner 2026-08).
  *
- * - Secrets: FMP_LATENCY_KEY_PRIMARY + secondary (suffix _2); never FMP_API_KEY.
- * - Each key has its own daily counter (not shared with enrichment/prices).
+ * - Slot 1: FMP_LATENCY_API_KEY
+ * - Slot 2: FMP_LATENCY_API_KEY_2, else FMP_API_KEY when distinct from slot 1
+ *   (owner: two free-tier accounts; no known per-IP limit — rotate both for ~2×
+ *   daily capacity on the stable host).
+ * - Each key has its own daily counter (not shared with enrichment/prices spend).
  * - Cap ~235/key/day (free plan is 250; leave headroom for 429s / manual tests).
  * - House+senate latest = 2 HTTP calls per probe run.
  * - Adaptive ET-weighted spacing spreads remaining budget across the rest of the
@@ -365,6 +371,8 @@ const SQL_IN_CHUNK = 50;
  *  does not false-positive the env var *name* as a secret value. */
 const FMP_LATENCY_KEY_PRIMARY = 'FMP_LATENCY_API_KEY';
 const FMP_LATENCY_KEY_SECONDARY = `${FMP_LATENCY_KEY_PRIMARY}_2`;
+/** Preferred names for slot 2; FMP_API_KEY is last-resort free-tier fallback. */
+const FMP_LATENCY_SLOT2_SECRET_NAMES = [FMP_LATENCY_KEY_SECONDARY, 'FMP_API_KEY'] as const;
 const FMP_LATENCY_SECRET_NAMES = [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY] as const;
 type FmpLatencyKeySlot = '1' | '2';
 /** Free-tier daily limit is 250; reserve margin so we never trip the hard wall. */
@@ -713,7 +721,8 @@ export async function selectLatencySourceProbe(
 export interface FmpLatencyKeySelection {
   apiKey: string;
   slot: FmpLatencyKeySlot;
-  secretName: (typeof FMP_LATENCY_SECRET_NAMES)[number];
+  /** Resolved env/secret name (may be FMP_API_KEY for slot 2 fallback). */
+  secretName: string;
   used: number;
   cap: number;
   remaining: number;
@@ -756,11 +765,42 @@ export async function selectRotatedAvenue(
 }
 
 /**
- * Pick a configured latency-only key that still has budget and whose poll
- * spacing has elapsed. **Alternates** among eligible keys (round-robin) so
- * dual free-tier keys are not drained in lockstep / doubled for the same
- * probe. Never falls back to FMP_API_KEY (enrichment/prices/recovery must not
- * share these free-tier keys — owner: latency monitoring only).
+ * Resolve free-tier key material for a latency slot.
+ * Slot 1 = FMP_LATENCY_API_KEY only.
+ * Slot 2 = FMP_LATENCY_API_KEY_2, else FMP_API_KEY when distinct from slot 1
+ * (two free accounts → ~2× daily HTTP on stable; no known per-IP limit).
+ */
+async function resolveFmpLatencyKeyMaterial(
+  env: Env,
+  slot: FmpLatencyKeySlot,
+  primaryKey?: string | null,
+): Promise<{ apiKey: string; secretName: string } | null> {
+  const envx = env as unknown as Record<string, string | undefined>;
+  if (slot === '1') {
+    const value =
+      (await resolveSecret(env, FMP_LATENCY_KEY_PRIMARY as keyof Env & string)).value ??
+      envx[FMP_LATENCY_KEY_PRIMARY];
+    const apiKey = value?.trim();
+    return apiKey ? { apiKey, secretName: FMP_LATENCY_KEY_PRIMARY } : null;
+  }
+  for (const secretName of FMP_LATENCY_SLOT2_SECRET_NAMES) {
+    const value =
+      (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
+    const apiKey = value?.trim();
+    if (!apiKey) continue;
+    // Skip duplicate of slot 1 so one physical key does not get two budgets.
+    if (primaryKey && apiKey === primaryKey) continue;
+    return { apiKey, secretName };
+  }
+  return null;
+}
+
+/**
+ * Pick a configured free-tier latency key that still has budget and whose poll
+ * spacing has elapsed. **Alternates** among eligible keys (round-robin) so dual
+ * free-tier keys are not drained in lockstep / doubled for the same probe.
+ * Slot 2 may resolve from FMP_API_KEY when FMP_LATENCY_API_KEY_2 is unset
+ * (owner: both free keys for latency; no known per-IP limit).
  */
 export async function selectFmpLatencyKey(
   env: Env,
@@ -768,15 +808,14 @@ export async function selectFmpLatencyKey(
   opts: { force?: boolean } = {},
 ): Promise<FmpLatencyKeySelection | null> {
   const cap = await fmpLatencyDailyCap(env);
-  const envx = env as unknown as Record<string, string | undefined>;
   const candidates: FmpLatencyKeySelection[] = [];
 
-  for (let i = 0; i < FMP_LATENCY_SECRET_NAMES.length; i++) {
-    const secretName = FMP_LATENCY_SECRET_NAMES[i]!;
-    const slot: FmpLatencyKeySlot = i === 0 ? '1' : '2';
-    const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
-    const apiKey = value?.trim();
-    if (!apiKey) continue;
+  const primary = await resolveFmpLatencyKeyMaterial(env, '1');
+  const slots: FmpLatencyKeySlot[] = ['1', '2'];
+  for (const slot of slots) {
+    const material =
+      slot === '1' ? primary : await resolveFmpLatencyKeyMaterial(env, '2', primary?.apiKey ?? null);
+    if (!material) continue;
 
     const used = await getFmpLatencyUsed(env, slot, now);
     const remaining = Math.max(0, cap - used);
@@ -789,9 +828,9 @@ export async function selectFmpLatencyKey(
     }
 
     candidates.push({
-      apiKey,
+      apiKey: material.apiKey,
       slot,
-      secretName,
+      secretName: material.secretName,
       used,
       cap,
       remaining,
@@ -870,15 +909,14 @@ export async function getFmpLatencyFleetRemaining(env: Env, now: Date = new Date
   totalRemaining: number;
 }> {
   const capPerKey = await fmpLatencyDailyCap(env);
-  const envx = env as unknown as Record<string, string | undefined>;
   let freeRemaining = 0;
   let freeCap = 0;
   let keysConfigured = 0;
-  for (let i = 0; i < FMP_LATENCY_SECRET_NAMES.length; i++) {
-    const secretName = FMP_LATENCY_SECRET_NAMES[i]!;
-    const slot: FmpLatencyKeySlot = i === 0 ? '1' : '2';
-    const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
-    if (!value?.trim()) continue;
+  const primary = await resolveFmpLatencyKeyMaterial(env, '1');
+  for (const slot of ['1', '2'] as const) {
+    const material =
+      slot === '1' ? primary : await resolveFmpLatencyKeyMaterial(env, '2', primary?.apiKey ?? null);
+    if (!material) continue;
     keysConfigured++;
     freeCap += capPerKey;
     const used = await getFmpLatencyUsed(env, slot, now);
@@ -974,13 +1012,14 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'fmp',
     label: 'FMP Stable',
-    secretNames: [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY],
+    // Slot 2 may also resolve FMP_API_KEY (see resolveFmpLatencyKeyMaterial).
+    secretNames: [FMP_LATENCY_KEY_PRIMARY, FMP_LATENCY_KEY_SECONDARY, 'FMP_API_KEY'],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
     fmpPathId: 'stable',
     reason:
-      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. Alternates with RapidAPI path (one avenue per cycle). No provider first-seen timestamp; monitor first-observed is used.',
+      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. Dual free-tier keys (FMP_LATENCY_API_KEY + _2, or FMP_API_KEY as slot-2 fallback) rotate for ~2× capacity — no known per-IP limit. RapidAPI path is opt-in only (congress endpoints not on RapidAPI product as of 2026-08). No provider first-seen timestamp; monitor first-observed is used.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[0]!.defaultBaseUrl,
@@ -998,7 +1037,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI alternate host (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). Alternates with FMP Stable; separate daily budget so dual free keys + RapidAPI ≈ 2×+ fleet capacity. Disable with FMP_LATENCY_PROBE_ENABLED=false or FMP_LATENCY_PATHS excluding rapidapi.',
+      'FMP via RapidAPI (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). OPT-IN only: RapidAPI FMP product auth works but house/senate-latest return 404 (product gap, not bad key — verified 2026-08-06). Default FMP_LATENCY_PATHS=stable. Enable with FMP_LATENCY_PATHS=stable,rapidapi if marketplace adds congress endpoints.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -1078,13 +1117,15 @@ export async function isFmpProbeEnabled(env: Env): Promise<boolean> {
 
 /**
  * Which FMP paths are eligible when the master probe switch is on.
- * Default both (`stable,rapidapi`); the probe loop rotates across them
- * (one path per cycle) so dual free-tier quotas are not burned together.
+ * Default **stable only** — RapidAPI FMP marketplace product does not expose
+ * house/senate-latest (HTTP 404; key auth still works for /v3/profile etc.).
+ * Opt in with FMP_LATENCY_PATHS=stable,rapidapi; when both are set the probe
+ * loop rotates (one path per cycle). Empty/invalid config falls back to stable.
  */
 export async function enabledFmpPathIds(env: Env): Promise<Set<FmpLatencyPathId>> {
   const envx = env as EnvWithWatch;
   const raw =
-    (await resolveSecret(env, 'FMP_LATENCY_PATHS')).value ?? envx.FMP_LATENCY_PATHS ?? 'stable,rapidapi';
+    (await resolveSecret(env, 'FMP_LATENCY_PATHS')).value ?? envx.FMP_LATENCY_PATHS ?? 'stable';
   const parts = raw
     .split(/[,\s]+/)
     .map((p) => p.trim().toLowerCase())
@@ -1096,7 +1137,6 @@ export async function enabledFmpPathIds(env: Env): Promise<Set<FmpLatencyPathId>
   }
   if (!out.size) {
     out.add('stable');
-    out.add('rapidapi');
   }
   return out;
 }

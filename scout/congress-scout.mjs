@@ -26,10 +26,10 @@
  * ENV:
  *   FMP_API_KEY / FMP_LATENCY_API_KEY   FMP key (query auth for stable path only)
  *   FMP_RAPIDAPI_KEY / RAPIDAPI_KEY     RapidAPI marketplace key (ST shared RAPIDAPI_KEY ok)
- *   FMP_PROBE_ENABLED                  "1"/"true" to poll FMP family (default OFF)
- *   FMP_PATHS                          "stable,rapidapi" (default both when ON)
+ *   FMP_PROBE_ENABLED                  "1"/"true" to poll FMP family (default ON when unset)
+ *   FMP_PATHS                          default "stable" (RapidAPI congress paths 404 on product)
  *   FMP_STABLE_BASE_URL                override stable base
- *   FMP_RAPIDAPI_BASE_URL / FMP_RAPIDAPI_HOST  override RapidAPI path
+ *   FMP_RAPIDAPI_BASE_URL / FMP_RAPIDAPI_HOST  override RapidAPI path (opt-in only)
  *   QQ_API_KEY            Quiver Quant key
  *   UW_API_KEY            Unusual Whales key
  *   POLL_INTERVAL_SEC     default 45
@@ -49,15 +49,27 @@ dns.setDefaultResultOrder('ipv4first');
 // --- config -----------------------------------------------------------------
 const ARGV = new Set(process.argv.slice(2));
 const ONCE = ARGV.has('--once');
-const FMP_KEY = process.env.FMP_API_KEY || process.env.FMP_LATENCY_API_KEY || '';
+// Dual free-tier keys for stable host (owner: no known per-IP limit → ~2× capacity).
+// Prefer dedicated latency names; FMP_API_KEY fills slot 2 when distinct from slot 1.
+const _fmpKey1 = (process.env.FMP_LATENCY_API_KEY || '').trim();
+const _fmpKey2Raw = (process.env.FMP_LATENCY_API_KEY_2 || process.env.FMP_API_KEY || '').trim();
+const _fmpKey2 = _fmpKey2Raw && _fmpKey2Raw !== _fmpKey1 ? _fmpKey2Raw : '';
+// Back-compat single key when only FMP_API_KEY is set (maps into slot 1).
+const FMP_FREE_KEYS = [_fmpKey1, _fmpKey2].filter(Boolean);
+if (!FMP_FREE_KEYS.length && (process.env.FMP_API_KEY || '').trim()) {
+  FMP_FREE_KEYS.push((process.env.FMP_API_KEY || '').trim());
+}
+const FMP_KEY = FMP_FREE_KEYS[0] || ''; // used only for status/logging "has any free key"
 // Marketplace key only — do not fall back to free-tier FMP keys (invalid on RapidAPI hosts).
 // Shared RAPIDAPI_KEY is the Socratic.Trade convention for one marketplace credential.
 const FMP_RAPIDAPI_KEY = process.env.FMP_RAPIDAPI_KEY || process.env.RAPIDAPI_KEY || '';
 // Default ON for CT when unset (FMP is a first-class CT latency path). Explicit false/0/off disables.
 const _fmpProbeRaw = (process.env.FMP_PROBE_ENABLED || '').trim();
 const FMP_PROBE_ENABLED = _fmpProbeRaw === '' ? true : !/^(0|false|no|off)$/i.test(_fmpProbeRaw);
-const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable,rapidapi').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
-const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable', 'rapidapi']);
+// Default stable only: RapidAPI FMP product auth works but house/senate-latest
+// return 404 (product gap verified 2026-08-06). Opt in with FMP_PATHS=stable,rapidapi.
+const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable']);
 const QQ_KEY = process.env.QQ_API_KEY || '';
 const UW_KEY = process.env.UW_API_KEY || '';
 const INTERVAL_MS = (Number(process.env.POLL_INTERVAL_SEC) || 45) * 1000;
@@ -73,6 +85,7 @@ const CT_INGEST_TOKEN = process.env.CT_INGEST_TOKEN || '';
 /**
  * FMP latency source registry (CT latency + Mac scout only; not Socratic).
  * Default operational = ON when keys present; grey OFF only if FMP_PROBE_ENABLED=false.
+ * Stable path rotates dual free-tier keys (one key per cycle).
  */
 const FMP_SOURCE_REGISTRY = [
   {
@@ -92,6 +105,15 @@ const FMP_SOURCE_REGISTRY = [
   },
 ];
 
+/** Round-robin free-tier key index (persisted in scout state via nextFmpFreeKey). */
+let fmpFreeKeyCursor = 0;
+function nextFmpFreeKey() {
+  if (!FMP_FREE_KEYS.length) return '';
+  const key = FMP_FREE_KEYS[fmpFreeKeyCursor % FMP_FREE_KEYS.length];
+  fmpFreeKeyCursor = (fmpFreeKeyCursor + 1) % FMP_FREE_KEYS.length;
+  return key;
+}
+
 function fmpSourceStatus(src) {
   if (!FMP_PROBE_ENABLED) return 'off';
   if (!FMP_PATHS.has(src.pathId) && !FMP_PATHS.has(src.id)) return 'off';
@@ -103,7 +125,10 @@ function fmpSourceStatus(src) {
 function logFmpRegistry() {
   for (const src of FMP_SOURCE_REGISTRY) {
     const st = fmpSourceStatus(src);
-    log(`fmp-source ${src.id.padEnd(14)} path=${src.pathId.padEnd(8)} status=${st} base=${src.baseUrl}`);
+    const extra = src.auth === 'query' && st === 'running'
+      ? ` freeKeys=${FMP_FREE_KEYS.length}`
+      : '';
+    log(`fmp-source ${src.id.padEnd(14)} path=${src.pathId.padEnd(8)} status=${st} base=${src.baseUrl}${extra}`);
   }
 }
 
@@ -286,12 +311,13 @@ async function detectHouseFrontier(state) {
   return out;
 }
 
-// --- FMP family (stable + RapidAPI alternate paths; default OFF) ------------
-async function pollFmpPath(src) {
+// --- FMP family (stable default; RapidAPI opt-in; dual free keys rotate) ---
+async function pollFmpPath(src, freeKey) {
   const out = [];
-  const key = src.auth === 'rapidapi' ? FMP_RAPIDAPI_KEY : FMP_KEY;
+  const key = src.auth === 'rapidapi' ? FMP_RAPIDAPI_KEY : freeKey;
   if (!key) return out;
-  for (const ch of ['house', 'senate', 'executive']) {
+  // house + senate only (executive-latest often 404 and wastes free-tier quota)
+  for (const ch of ['house', 'senate']) {
     let url = `${src.baseUrl}/${ch}-latest?page=0&limit=100`;
     const headers = { accept: 'application/json' };
     if (src.auth === 'rapidapi') {
@@ -313,13 +339,18 @@ async function pollFmpPath(src) {
   return out;
 }
 
-/** Poll all enabled FMP paths; first path to see a key wins for lead timing. */
+/**
+ * Poll enabled FMP paths. Stable uses one free-tier key per cycle (rotates dual
+ * keys). Does not race stable+rapidapi every cycle — only enabled paths, and
+ * rapidapi is off by default (404 product gap).
+ */
 async function pollFmpFamily() {
   const out = [];
+  const freeKey = nextFmpFreeKey();
   for (const src of FMP_SOURCE_REGISTRY) {
     if (fmpSourceStatus(src) !== 'running') continue;
     try {
-      out.push(...(await pollFmpPath(src)));
+      out.push(...(await pollFmpPath(src, freeKey)));
     } catch (e) {
       warn(`fmp:${src.id}`, e);
     }
