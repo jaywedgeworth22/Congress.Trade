@@ -94,7 +94,7 @@ final class CongressTradeStore: ObservableObject {
     /// Attempts (including the first) for a single page fetch before giving up.
     private static let maxAttemptsPerPage = 3
     /// The backend's true default view when `chamber` is omitted entirely:
-    /// congressional chambers, excluding Executive (OGE 278-T) disclosures
+    /// Congressional chambers, excluding Executive (OGE 278-T) disclosures
     /// unless explicitly requested. See app/docs/client-mobile-api.md.
     static let defaultChambers: Set<ChamberFilter> = [.house, .senate]
     static let initialChambers: Set<ChamberFilter> = [.house, .senate, .executive]

@@ -98,7 +98,7 @@ export const TOS_HTML = shell(
 <p>You agree not to: (a) scrape, crawl, or bulk-extract the Service except through interfaces we provide; (b) resell, sublicense, or publicly redistribute the data or feeds except as expressly permitted; (c) exceed published rate limits or interfere with the Service's operation or security; (d) reverse engineer or attempt unauthorized access; or (e) use the Service unlawfully or to violate any third party's rights.</p>
 
 <h2>7. Intellectual property</h2>
-<p>The underlying congressional disclosures are public records. The Service's software, design, compilation, enrichment, and analytics are owned by us or our licensors. Subject to these Terms, we grant you a limited, non-exclusive, non-transferable right to use the Service for your personal or internal business purposes.</p>
+<p>The underlying Congressional disclosures are public records. The Service's software, design, compilation, enrichment, and analytics are owned by us or our licensors. Subject to these Terms, we grant you a limited, non-exclusive, non-transferable right to use the Service for your personal or internal business purposes.</p>
 
 <h2>8. Third-party data &amp; services</h2>
 <p>The Service relies on third-party sources and providers (including U.S. House/Senate disclosure systems and market-data vendors). We do not control and are not responsible for the accuracy, availability, or content of third-party data or websites.</p>

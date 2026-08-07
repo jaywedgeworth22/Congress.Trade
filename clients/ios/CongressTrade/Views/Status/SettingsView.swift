@@ -134,7 +134,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Appearance")
                 } footer: {
-                    Text("Light, Dark, or System — same control as congress.trade.")
+                    Text("Light, Dark, or System — same control as Congress.Trade.")
                         .font(.footnote)
                 }
 
@@ -253,9 +253,9 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
-                    Link("Privacy Policy", destination: URL(string: "https://congress.trade/privacy-policy")!)
-                    Link("Terms of Service", destination: URL(string: "https://congress.trade/terms-of-service")!)
-                    Link("Pricing", destination: URL(string: "https://congress.trade/pricing")!)
+                    Link("Privacy Policy", destination: URL(string: "https://Congress.Trade/privacy-policy")!)
+                    Link("Terms of Service", destination: URL(string: "https://Congress.Trade/terms-of-service")!)
+                    Link("Pricing", destination: URL(string: "https://Congress.Trade/pricing")!)
                     Link("Support", destination: URL(string: "mailto:congress.trade@jays.services")!)
                 }
             }
