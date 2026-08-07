@@ -20,12 +20,19 @@ Last updated: 2026-07-24 (CURSOR)
 - Branch `cursor/owner-decisions-wave-d376` / PR #915.
 - Rollout: `docs/rollouts/2026-07-24-owner-decisions-delivery-stripe.md`.
 
+## 2026-08-06 — RapidAPI congress 404 + dual free FMP keys (GROK)
+
+RapidAPI FMP auth OK but house/senate-latest **404** (product gap). Default
+`FMP_LATENCY_PATHS=stable`; dual free keys rotate for ~2× capacity (no known
+per-IP limit). Rollout: `docs/rollouts/2026-08-06-fmp-rapidapi-congress-404.md`.
+
 ## 2026-08-05 — FMP latency family OFF + alternate paths (GROK)
 
 FMP stable + RapidAPI registered on CT disclosure-latency + Mac scout. Default
 `operationalStatus=off` (grey UI, no spend) until `FMP_LATENCY_PROBE_ENABLED=true`.
 Paths race when ON (`FMP_LATENCY_PATHS=stable,rapidapi`). Rollout:
 `docs/rollouts/2026-08-05-fmp-latency-family-off.md`. Branch `grok/fmp-latency-off`.
+(Superseded path default by 2026-08-06 note above.)
 
 ## 2026-07-24 — Fix executive latency candidate test (CURSOR)
 

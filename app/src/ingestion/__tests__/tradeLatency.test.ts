@@ -326,10 +326,10 @@ describe('tradeLatency', () => {
       expect(await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true })).toBeNull();
     });
 
-    it('never selects FMP_API_KEY — only FMP_LATENCY_API_KEY[_2]', async () => {
+    it('uses FMP_API_KEY as free-tier slot-2 (or sole key) for dual capacity', async () => {
       const kv = new Map<string, string>();
       const env = {
-        FMP_API_KEY: 'legacy-must-not-use',
+        FMP_API_KEY: 'free-only',
         CONFIG_KV: {
           get: async (k: string) => kv.get(k) ?? null,
           put: async (k: string, v: string) => {
@@ -337,7 +337,11 @@ describe('tradeLatency', () => {
           },
         },
       } as never;
-      expect(await selectFmpLatencyKey(env, new Date('2026-08-05T15:00:00.000Z'), { force: true })).toBeNull();
+      // Sole free key via FMP_API_KEY → slot 2 material (still eligible).
+      const sole = await selectFmpLatencyKey(env, new Date('2026-08-05T15:00:00.000Z'), { force: true });
+      expect(sole?.apiKey).toBe('free-only');
+      expect(sole?.secretName).toBe('FMP_API_KEY');
+      expect(sole?.slot).toBe('2');
 
       const envLatency = {
         ...env,
@@ -415,7 +419,7 @@ describe('tradeLatency', () => {
       expect(await resolveFmpRapidApiKey({ FMP_LATENCY_API_KEY: 'free-tier' } as never)).toBeNull();
     });
 
-    it('selectFmpLatencyPathForCycle alternates stable and rapidapi when marketplace key present', async () => {
+    it('selectFmpLatencyPathForCycle defaults to stable only; alternates when rapidapi opt-in', async () => {
       const kv = new Map<string, string>();
       const env = {
         FMP_LATENCY_API_KEY: 'k1',
@@ -428,22 +432,61 @@ describe('tradeLatency', () => {
         },
       } as never;
       const ids = ['fmp', 'fmp_rapidapi', 'quiver'] as const;
+      // Default FMP_LATENCY_PATHS=stable (RapidAPI congress endpoints 404 on product).
       expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
-      expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('rapidapi');
       expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
-      // Without marketplace key, RapidAPI is not a candidate.
+      // Opt-in both paths → rotate.
+      const both = { ...env, FMP_LATENCY_PATHS: 'stable,rapidapi' } as never;
+      expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('stable');
+      expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('rapidapi');
+      expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('stable');
+      // Without marketplace key, RapidAPI is not a candidate even when opt-in.
       const noRapid = {
         FMP_LATENCY_API_KEY: 'k1',
+        FMP_LATENCY_PATHS: 'stable,rapidapi',
         CONFIG_KV: env.CONFIG_KV,
       } as never;
       expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
       expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
-      // Single path config — always that path.
-      const stableOnly = { ...env, FMP_LATENCY_PATHS: 'stable' } as never;
-      expect(await selectFmpLatencyPathForCycle(stableOnly, ids, { force: true })).toBe('stable');
       // Probe OFF — no path selected.
       const off = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;
       expect(await selectFmpLatencyPathForCycle(off, ids, { force: true })).toBeNull();
+    });
+
+    it('selectFmpLatencyKey rotates dual free keys including FMP_API_KEY as slot-2 fallback', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'free-key-a',
+        FMP_API_KEY: 'free-key-b',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      const a = await selectFmpLatencyKey(env, now, { force: true });
+      const b = await selectFmpLatencyKey(env, now, { force: true });
+      const c = await selectFmpLatencyKey(env, now, { force: true });
+      expect(a?.apiKey).toBe('free-key-a');
+      expect(a?.slot).toBe('1');
+      expect(b?.apiKey).toBe('free-key-b');
+      expect(b?.slot).toBe('2');
+      expect(b?.secretName).toBe('FMP_API_KEY');
+      expect(c?.apiKey).toBe('free-key-a');
+      // Duplicate of primary must not create a second slot.
+      const same = {
+        FMP_LATENCY_API_KEY: 'same',
+        FMP_API_KEY: 'same',
+        CONFIG_KV: env.CONFIG_KV,
+      } as never;
+      const only = await selectFmpLatencyKey(same, now, { force: true });
+      expect(only?.slot).toBe('1');
+      expect(await selectFmpLatencyKey(same, now, { force: true })).toMatchObject({ slot: '1', apiKey: 'same' });
+      const fleet = await getFmpLatencyFleetRemaining(env, now);
+      expect(fleet.freeTierKeysConfigured).toBe(2);
+      expect(fleet.freeTierCap).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY * 2);
     });
 
     it('getFmpLatencyFleetRemaining sums dual free keys + RapidAPI path budget', async () => {
@@ -549,13 +592,14 @@ describe('tradeLatency', () => {
       expect(await selectFmpLatencyKey(env, now, { force: true })).toBeNull();
     });
 
-    it('reports FMP configured only when a latency key is present (not FMP_API_KEY)', async () => {
+    it('reports FMP configured when latency key or free-tier FMP_API_KEY present', async () => {
+      // FMP_API_KEY alone is valid free-tier material (slot-2 fallback / single key).
       const statusesLegacy = await getDisclosureLatencyProviderStatuses({
-        FMP_API_KEY: 'legacy-only',
+        FMP_API_KEY: 'free-tier-only',
         CONFIG_KV: { get: async () => null, put: async () => {} },
       } as never);
       const fmpLegacy = statusesLegacy.find((s) => s.id === 'fmp');
-      expect(fmpLegacy?.configured).toBe(false);
+      expect(fmpLegacy?.configured).toBe(true);
 
       const statuses = await getDisclosureLatencyProviderStatuses({
         ['FMP_LATENCY_API_KEY' + '_2']: 'second-key',
@@ -565,7 +609,7 @@ describe('tradeLatency', () => {
       expect(fmp?.configured).toBe(true);
     });
 
-    it('defaults FMP family ON for CT when latency key present (explicit false disables)', async () => {
+    it('defaults FMP family ON for CT when latency key present (explicit false disables); rapidapi path off by default', async () => {
       const env = {
         FMP_LATENCY_API_KEY: 'latency-key',
         RAPIDAPI_KEY: 'marketplace-key',
@@ -574,9 +618,10 @@ describe('tradeLatency', () => {
       const defaultStatuses = await getDisclosureLatencyProviderStatuses(env);
       const fmp = defaultStatuses.find((s) => s.id === 'fmp');
       const rapid = defaultStatuses.find((s) => s.id === 'fmp_rapidapi');
-      // Default ON — not grey OFF (owner: FMP is for CT latency, not ST product).
+      // Default ON for stable — not grey OFF (owner: FMP is for CT latency).
       expect(fmp?.operationalStatus).toBe('running');
-      expect(rapid?.operationalStatus).toBe('running');
+      // RapidAPI path default OFF (congress endpoints not on marketplace product).
+      expect(rapid?.operationalStatus).toBe('off');
       expect(fmp?.configured).toBe(true);
       expect(rapid?.configured).toBe(true);
       expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);
@@ -586,13 +631,13 @@ describe('tradeLatency', () => {
       expect(offStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('off');
       expect(offStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
 
-      const stableOnly = {
+      const withRapid = {
         ...env,
-        FMP_LATENCY_PATHS: 'stable',
+        FMP_LATENCY_PATHS: 'stable,rapidapi',
       } as never;
-      const pathStatuses = await getDisclosureLatencyProviderStatuses(stableOnly);
+      const pathStatuses = await getDisclosureLatencyProviderStatuses(withRapid);
       expect(pathStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
-      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
+      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('running');
     });
 
     it('skips FMP HTTP when probe is explicitly OFF even if watch is force-run', async () => {

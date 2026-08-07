@@ -21,9 +21,10 @@ Everything else (storage, API, delivery) stays on Cloudflare; this is just the
   appear — House Clerk (intraday live search + PDF-URL frontier probe) and
   Senate eFD (the CSRF/agreement/DataTables flow) — stamping `our_detected_at`.
   Detection only (existence + link), no parsing.
-- **Optionally polls FMP family** (`stable` + `rapidapi` alternate paths) and
-  stamps `fmp_first_seen_at` the first time either path surfaces each filing.
-  **Default = **ON** when keys present; set `FMP_PROBE_ENABLED=0` to disable.
+- **Optionally polls FMP family** (default **stable** path with dual free-tier
+  key rotation; RapidAPI opt-in only — marketplace product lacks congress
+  endpoints as of 2026-08) and stamps `fmp_first_seen_at`.
+  **Default = ON** when keys present; set `FMP_PROBE_ENABLED=0` to disable.
 - **Logs the lead** per filing: `lead = fmp_first_seen_at − our_detected_at`
   (positive = we were first). Filings present at startup are flagged `baseline`;
   only ones that first appear *while running* count as a `live` race.
@@ -85,9 +86,9 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 | var | default | meaning |
 |---|---|---|
 | `FMP_PROBE_ENABLED` | on | default ON for CT; set `0`/`false`/`off` to disable FMP family |
-| `FMP_PATHS` | `stable,rapidapi` | which FMP paths race when probe is on |
-| `FMP_API_KEY` / `FMP_LATENCY_API_KEY` | — | FMP free-tier key for **stable** (query) path only |
-| `FMP_RAPIDAPI_KEY` / `RAPIDAPI_KEY` | — | RapidAPI marketplace key for RapidAPI path (ST shared `RAPIDAPI_KEY` ok; **not** free-tier FMP keys) |
+| `FMP_PATHS` | `stable` | which FMP paths race (`stable` default; add `rapidapi` only if product gains congress endpoints) |
+| `FMP_LATENCY_API_KEY` + `FMP_LATENCY_API_KEY_2` / `FMP_API_KEY` | — | dual free-tier keys for **stable** path (rotate; ~2× capacity; no known per-IP limit) |
+| `FMP_RAPIDAPI_KEY` / `RAPIDAPI_KEY` | — | RapidAPI marketplace key if path opt-in (ST shared `RAPIDAPI_KEY` ok; **not** free-tier FMP keys) |
 | `FMP_STABLE_BASE_URL` | `https://financialmodelingprep.com/stable` | override stable base |
 | `FMP_RAPIDAPI_BASE_URL` | RapidAPI FMP stable base | override RapidAPI base |
 | `FMP_RAPIDAPI_HOST` | `financial-modeling-prep.p.rapidapi.com` | RapidAPI host header |
