@@ -503,7 +503,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         'Retry-After': String(exRl.retryAfterSec),
       });
     }
-    const built = buildTransactionsExportQuery(filtersFromQuery(c.req.query()));
+    // Premium product rule: full match set, no product row cap. Free users are
+    // already blocked above. Abuse/cost control = auth + per-IP rate limit
+    // (not a silent incomplete file).
+    const filters = filtersFromQuery(c.req.query());
+    const built = buildTransactionsExportQuery(filters);
     const rows = await all<
       FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
     >(c.env.DB, built.sql, built.params);
@@ -547,10 +551,15 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       );
     }
     const csv = lines.join('\r\n');
+    const day = isoDateDaysAgo(0);
     return new Response(csv, {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
-        'content-disposition': `attachment; filename="congress-trades-${isoDateDaysAgo(0)}.csv"`,
+        'content-disposition': `attachment; filename="congress-trades-${day}.csv"`,
+        'X-Export-Row-Count': String(rows.length),
+        'X-Export-Complete': 'true',
+        'Access-Control-Expose-Headers':
+          'X-Export-Row-Count, X-Export-Complete, Content-Disposition',
       },
     });
   });

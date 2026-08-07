@@ -271,6 +271,11 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
 
 Client apps (peer clients of the backend, not separate products):
 
+- **UI copy (fleet-wide):** `/Users/jay/apps/FLEET-UI-COPY.md` (mirror: `docs/FLEET-UI-COPY.md`).
+  Headings/titles/buttons use **Title Case** (e.g. `Consensus Cascade Simulation`);
+  secondary values use sentence case. iOS root screens use
+  `.navigationBarTitleDisplayMode(.inline)`. Theme controls: pictographic Light /
+  Dark / System (sun / moon / monitor) matching web + ST console.
 - `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
   in this Linux cloud environment.
 
@@ -303,3 +308,7 @@ bash scripts/ios-ship-testflight.sh
 
 Fleet: `/Users/jay/apps/ios-fleet/README.md`. Bundle `trade.congress.ios`, team `CC8UTF7ATG`.
 Secrets only via `~/.secrets/appstore-connect.env` (never print).
+
+## Fleet UI copy
+
+Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
