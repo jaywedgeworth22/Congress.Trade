@@ -3,7 +3,6 @@ import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
   buildTransactionsExportQuery,
-  MAX_EXPORT_ROWS,
 } from '../rows.ts';
 import { buildRestRouter } from '../rest.ts';
 import type { Env } from '../../shared/types.ts';
@@ -28,16 +27,19 @@ describe('freemium query gating (filedSince)', () => {
 });
 
 describe('buildTransactionsExportQuery', () => {
-  it('drops the cursor backstop, orders newest-first, and caps rows', () => {
+  it('drops the cursor backstop, orders newest-first, and has no product LIMIT', () => {
     const q = buildTransactionsExportQuery({ ticker: 'aapl' });
     expect(q.sql).not.toContain('cursor_seq > ?');
     expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
-    expect(q.sql).toContain(`LIMIT ${MAX_EXPORT_ROWS}`);
+    // Premium export is the full match set — no silent row cap.
+    expect(q.sql).not.toMatch(/\bLIMIT\b/i);
     expect(q.params).toContain('AAPL');
   });
 
-  it('clamps an oversized maxRows back to the cap', () => {
-    expect(buildTransactionsExportQuery({}, 10_000_000).limit).toBe(MAX_EXPORT_ROWS);
+  it('honors an explicit positive maxRows for tests/tooling only', () => {
+    const q = buildTransactionsExportQuery({}, 10_000);
+    expect(q.limit).toBe(10_000);
+    expect(q.sql).toContain('LIMIT 10000');
   });
 
   it('floors a fractional maxRows instead of embedding it verbatim (would be invalid SQL)', () => {
@@ -47,9 +49,11 @@ describe('buildTransactionsExportQuery', () => {
     expect(q.sql).not.toContain('500.7');
   });
 
-  it('treats a non-finite maxRows (NaN/Infinity) as absent, falling back to MAX_EXPORT_ROWS', () => {
-    expect(buildTransactionsExportQuery({}, NaN).limit).toBe(MAX_EXPORT_ROWS);
-    expect(buildTransactionsExportQuery({}, Infinity).limit).toBe(MAX_EXPORT_ROWS);
+  it('treats a non-finite or non-positive maxRows as unlimited (no LIMIT clause)', () => {
+    expect(buildTransactionsExportQuery({}, NaN).sql).not.toMatch(/\bLIMIT\b/i);
+    expect(buildTransactionsExportQuery({}, Infinity).sql).not.toMatch(/\bLIMIT\b/i);
+    expect(buildTransactionsExportQuery({}, 0).sql).not.toMatch(/\bLIMIT\b/i);
+    expect(buildTransactionsExportQuery({}, -1).sql).not.toMatch(/\bLIMIT\b/i);
   });
 });
 
@@ -146,7 +150,7 @@ describe('GET /export/transactions.csv', () => {
     expect(body.error).toMatch(/Premium/i);
   });
 
-  it('returns 200 text/csv for Premium users', async () => {
+  it('returns 200 text/csv for Premium users with complete-export headers', async () => {
     const app = buildRestRouter();
     const res = await app.request(
       'http://localhost/export/transactions.csv',
@@ -155,6 +159,8 @@ describe('GET /export/transactions.csv', () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(res.headers.get('X-Export-Complete')).toBe('true');
+    expect(res.headers.get('X-Export-Row-Count')).toBe('0');
     const csv = await res.text();
     expect(csv).toContain('filed_at');
     expect(csv).toContain('ticker');
