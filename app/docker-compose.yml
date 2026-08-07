@@ -35,8 +35,10 @@ services:
       dockerfile: Dockerfile.sqlite-web
     container_name: congress-sqlite-web
     restart: unless-stopped
+    # Bind loopback only — Coolify proxy already holds 0.0.0.0:8080; Tailscale
+    # IP binds also break when Coolify rewrites ports. Reach via SSH tunnel.
     ports:
-      - "100.97.154.2:8080:8080"
+      - "127.0.0.1:18080:8080"
     volumes:
       - /data/congress-trade:/data/congress-trade
     env_file:
