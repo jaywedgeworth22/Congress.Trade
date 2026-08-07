@@ -12,7 +12,8 @@ final class KeychainTokenStore: SessionTokenStore {
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
+        // Simulator: missing entitlement (-34018) must not block public feed.
+        if status == errSecItemNotFound || status == errSecMissingEntitlement { return nil }
         guard status == errSecSuccess else { throw KeychainError(status: status) }
         guard let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
@@ -31,6 +32,7 @@ final class KeychainTokenStore: SessionTokenStore {
         query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let addStatus = SecItemAdd(query as CFDictionary, nil)
+        if addStatus == errSecMissingEntitlement { return }
         guard addStatus == errSecSuccess else { throw KeychainError(status: addStatus) }
     }
 
