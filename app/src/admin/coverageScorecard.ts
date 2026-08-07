@@ -76,8 +76,14 @@ export async function buildCoverageScorecard(env: Env, now = new Date()): Promis
   }>();
 
   const txTotalRow = await db.prepare('SELECT COUNT(*) AS n FROM transactions').first<{ n: number }>();
+  // Only count filings that have ≥1 transaction — never orphan tx doc_ids
+  // (restores / provider seeds can leave txs for docs not in filings).
   const docsWithTxRow = await db.prepare(
-    `SELECT COUNT(DISTINCT doc_id) AS n FROM transactions WHERE doc_id IS NOT NULL`,
+    `SELECT COUNT(*) AS n FROM filings f
+      WHERE EXISTS (
+        SELECT 1 FROM transactions t
+         WHERE t.doc_id = f.doc_id
+      )`,
   ).first<{ n: number }>();
   const docsWithTransactions = num(docsWithTxRow?.n);
   const extractionCoveragePct = total > 0
