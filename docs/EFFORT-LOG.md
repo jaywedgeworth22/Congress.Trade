@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-07T07:15Z — GROK — IN PROGRESS — OR budget circuit (2–3 then hourly) + per-doc spend cap + purpose/doc_id meter + coverage scorecard.** Branch `grok/or-budget-scorecard-caps`. Secured dirty tree from forked session; finishing typecheck/tests → PR → ship. Policy: never raise OR budget. Open iOS/export PRs #1466–#1472 parked until this lands.
 - **2026-08-05 — GROK — R2 Class A emergency pause (host litestream-congress stopped).** Pace ~256%; ~975 LTX PutObject/hr. Marker /etc/litestream/congress-r2-paused.flag. Rollout: docs/rollouts/2026-08-05-r2-freetier-class-a-survival.md.
 - **[GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PR 2026-08-04 (ST #2442 / CT #1348 / UM #943); IPA export verified; upload blocked on ASC API key handoff 2026-08-04.** Fleet script + per-repo wrappers so agents can archive/sign/upload without Xcode UI. Bundle IDs: trade.socratic.app / trade.congress.ios / services.jays.usage.monitor. Team CC8UTF7ATG. Branch grok/ios-testflight-ship. Needs ASC API key handoff at ~/.secrets/appstore-connect.env if Xcode session upload fails.
 - **2026-08-06T14:19Z — GROK — IN PROGRESS — Latency week focus: track probes/timestamps + live-win H/S/E (5y complete, new filings first).** Branch `grok/latency-week-track`. Issues found: FMP 0 matches / RapidAPI 0 obs / UW 401 / filingsImportedToday=0.

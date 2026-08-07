@@ -814,6 +814,17 @@ export const PUSH_DEVICES_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_push_devices_platform_active ON push_devices (platform, active)',
 ] as const;
 
+/** 0077_llm_spend_purpose_doc.sql — purpose + doc_id indexes for per-doc caps. */
+export const LLM_SPEND_PURPOSE_DOC_SCHEMA_STATEMENTS = [
+  'ALTER TABLE llm_spend_settlements ADD COLUMN purpose TEXT',
+  `CREATE INDEX IF NOT EXISTS idx_llm_spend_settlements_doc
+     ON llm_spend_settlements (doc_id)
+     WHERE doc_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_llm_spend_settlements_purpose_day
+     ON llm_spend_settlements (purpose, day)
+     WHERE purpose IS NOT NULL`,
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -940,6 +951,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS,
   // 0076_push_devices.sql
   ...PUSH_DEVICES_SCHEMA_STATEMENTS,
+  // 0077_llm_spend_purpose_doc.sql
+  ...LLM_SPEND_PURPOSE_DOC_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
