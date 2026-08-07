@@ -69,7 +69,11 @@ services:
     depends_on:
       - congress-app
 
+# Join Coolify proxy network so Traefik/Caddy can reach congress-app after
+# Hetzner cutover. oracle_internal is legacy (Oracle host); do not require it.
+# Host helper `/usr/local/bin/ct-reattach-proxy.sh` also aliases the running
+# container as `congress-app` on this network for the dynamic Traefik file.
 networks:
   default:
-    name: oracle_internal
+    name: coolify
     external: true
