@@ -103,6 +103,12 @@ function sourceConfigs(env: Env): SourceConfig[] {
   const sharedProj = env.INFISICAL_SHARED_PROJECT_ID || '18f563a3-9c88-454c-96eb-28fc9678f3ba';
   const appProj = env.INFISICAL_APP_PROJECT_ID || 'f61a79de-8d77-4f0b-9361-4b7208598290';
 
+  // Coolify historically set INFISICAL_CLIENT_ID/SECRET (no _APP_). Prefer the
+  // explicit APP_* names the rest of the codebase documents; fall back to the
+  // legacy CLIENT_* pair so a missing rename does not 401 the app project.
+  const appClientId = env.INFISICAL_APP_CLIENT_ID || env.INFISICAL_CLIENT_ID;
+  const appClientSecret = env.INFISICAL_APP_CLIENT_SECRET || env.INFISICAL_CLIENT_SECRET;
+
   return [
     {
       name: 'shared',
@@ -114,9 +120,9 @@ function sourceConfigs(env: Env): SourceConfig[] {
     {
       name: 'app',
       projectId: appProj,
-      clientId: env.INFISICAL_APP_CLIENT_ID,
-      clientSecret: env.INFISICAL_APP_CLIENT_SECRET,
-      secretPath: env.INFISICAL_APP_SECRET_PATH || '/',
+      clientId: appClientId,
+      clientSecret: appClientSecret,
+      secretPath: env.INFISICAL_APP_SECRET_PATH || env.INFISICAL_SECRET_PATH || '/',
     },
   ];
 }

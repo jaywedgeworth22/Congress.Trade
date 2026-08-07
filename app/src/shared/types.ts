@@ -883,6 +883,11 @@ export interface Env {
   INFISICAL_APP_CLIENT_ID?: string;
   INFISICAL_APP_CLIENT_SECRET?: string;
   INFISICAL_APP_SECRET_PATH?: string;
+  /** Legacy Coolify names (no _APP_); accepted as aliases for the app project. */
+  INFISICAL_CLIENT_ID?: string;
+  INFISICAL_CLIENT_SECRET?: string;
+  INFISICAL_SECRET_PATH?: string;
+  INFISICAL_PROJECT_ID?: string;
   /** Shared Infisical machine identity + project for shared-at-ct secrets. */
   INFISICAL_SHARED_PROJECT_ID?: string;
   INFISICAL_SHARED_CLIENT_ID?: string;
