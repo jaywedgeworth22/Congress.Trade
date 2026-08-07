@@ -163,7 +163,7 @@ struct AssetMark: View {
 }
 
 /// Compact money/count formatting (Trends KPIs + trade amount brackets).
-/// Fleet UI copy: lowercase suffixes `$99.8k`, `$1.2m`, `$3.4b`.
+/// Fleet UI copy: lowercase suffixes `$15k`, `$99.8k`, `$1.2m`, `$3.4b`.
 enum CompactFormat {
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
@@ -446,5 +446,72 @@ extension View {
         #else
         self
         #endif
+    }
+}
+
+// MARK: - Theme segment (pictographic, matches web + ST console)
+
+/// Light / Dark / System control with SF Symbol icons — same pattern as
+/// congress.trade `theme-seg` and Socratic console (Sun / Moon / Monitor).
+/// Labels use Title Case per `/Users/jay/apps/FLEET-UI-COPY.md`.
+struct ThemeSegmentControl: View {
+    @Binding var selection: String
+
+    private struct Option: Identifiable {
+        let id: String
+        let label: String
+        let systemImage: String
+    }
+
+    private let options: [Option] = [
+        .init(id: "light", label: "Light", systemImage: "sun.max"),
+        .init(id: "dark", label: "Dark", systemImage: "moon"),
+        .init(id: "system", label: "System", systemImage: "desktopcomputer"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options) { option in
+                Button {
+                    selection = option.id
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: option.systemImage)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(option.label)
+                            .font(.caption.weight(selection == option.id ? .semibold : .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(selection == option.id ? Color.primary : Color.secondary)
+                    .background {
+                        if selection == option.id {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                                .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+                        }
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(
+                                selection == option.id ? Color(uiColor: .separator) : Color.clear,
+                                lineWidth: 1
+                            )
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Set Theme To \(option.label)")
+                .accessibilityAddTraits(selection == option.id ? [.isSelected] : [])
+            }
+        }
+        .padding(3)
+        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Theme")
     }
 }

@@ -316,7 +316,9 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
           async all() { return { results: [] }; },
           async run() {
             if (/INSERT OR IGNORE INTO llm_spend_settlements/i.test(sql)) {
-              meteredUsd.push(Number(this.params[9]));
+              // purpose column (0077) shifts usd to index 10; pre-migration is 9.
+              const usdIdx = /purpose/i.test(sql) || this.params.length >= 13 ? 10 : 9;
+              meteredUsd.push(Number(this.params[usdIdx]));
             }
             return { success: true, meta: { changes: 1 } };
           },
@@ -999,10 +1001,20 @@ describe('runCandidateOnDoc extraction cache', () => {
       usage: { input_tokens: 12, output_tokens: 3 },
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const first = vi.fn(async () => ({ result_json: JSON.stringify([cachedRow]) }));
+    const cacheFirst = vi.fn(async () => ({ result_json: JSON.stringify([cachedRow]) }));
     const run = vi.fn(async () => ({ success: true, meta: { changes: 1 } }));
     const env = {
-      DB: { prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first, run })) })) },
+      DB: {
+        prepare: vi.fn((sql: string) => ({
+          bind: vi.fn(() => ({
+            // Per-doc spend gates may query; extraction_runs cache must not.
+            first: /extraction_runs/i.test(sql)
+              ? cacheFirst
+              : vi.fn(async () => null),
+            run,
+          })),
+        })),
+      },
     } as unknown as Env;
 
     const result = await runCandidateOnDoc(
@@ -1018,7 +1030,7 @@ describe('runCandidateOnDoc extraction cache', () => {
       usage: { promptTokens: 12, completionTokens: 3 },
     });
     expect(result.cached).toBeUndefined();
-    expect(first).not.toHaveBeenCalled();
+    expect(cacheFirst).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

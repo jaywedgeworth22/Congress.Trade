@@ -27,6 +27,11 @@ import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { enqueueAgreementCheck } from './agreement.ts';
 import { ensureDocClass } from './docClassifier.ts';
 import { reportAiUsage } from '../shared/telemetry.ts';
+import {
+  assertDocLlmSpendAllowed,
+  isLlmDocBudgetHalt,
+  LlmDocBudgetExceededError,
+} from '../shared/llmSpend.ts';
 
 interface FilingRow {
   doc_id: string;
@@ -164,6 +169,18 @@ export async function extractAndNormalize(
   lease?: DurableQueueLeaseContext,
 ): Promise<void> {
   await lease?.assertOwned();
+  // Owner: never re-spend LLM on docs that already have transaction rows
+  // unless an explicit admin reprocess path is used (extractParsed forceVision
+  // / reprocess options). Early return avoids R2 loads + provider calls.
+  try {
+    await assertDocLlmSpendAllowed(env, docId);
+  } catch (err) {
+    if (err instanceof LlmDocBudgetExceededError || isLlmDocBudgetHalt(err)) {
+      console.info(`orchestrator: skip paid extract for ${docId}: ${(err as Error).message}`);
+      return;
+    }
+    throw err;
+  }
   const extracted = await extractParsed(env, docId, lease);
   if (!extracted) return; // missing row / raw object: already recorded as error.
 

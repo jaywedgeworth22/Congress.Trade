@@ -65,7 +65,7 @@ struct TrendsView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // No leading placeholder — it was tappable chrome with no action.
+                // No leading placeholder — dead chrome with no action.
                 // Brand centers via .principal; info is the only trailing control.
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
@@ -275,7 +275,7 @@ struct TrendsView: View {
                             color: (c.txType == "B" || c.txType == "P") ? .green : (c.txType == "S" ? .red : .blue),
                             compact: true
                         )
-                        Text("\(c.memberCount) pols")
+                        Text("\(c.memberCount) \(c.memberCount == 1 ? "politician" : "politicians")")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
