@@ -86,6 +86,7 @@ struct SubscribeView: View {
                 }
             }
             .navigationTitle("Premium")
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
