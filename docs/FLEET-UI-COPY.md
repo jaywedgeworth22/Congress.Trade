@@ -2,6 +2,12 @@
 
 Binding for **Socratic.Trade**, **Congress.Trade**, and **Usage Monitor** — web + iOS.
 
+
+## Proper nouns
+
+- **Congress** and **Congressional** always take a capital **C** (U.S. proper nouns) in product copy, App Store text, and UI.
+- Brand: **Congress.Trade**. Display URLs may use `https://Congress.Trade` (hostnames are case-insensitive; DNS/cert still resolve).
+- Keep technical identifiers lowercase: `trade.congress.ios`, `congress.trade` event names, email local-parts as configured.
 ## Headings / titles / buttons
 Use **Title Case** (capitalize main words):
 - Examples: `Agent Controls`, `Run Once`, `Win Rate`, `Needs Attention`,

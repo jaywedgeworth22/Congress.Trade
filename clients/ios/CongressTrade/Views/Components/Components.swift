@@ -452,7 +452,7 @@ extension View {
 // MARK: - Theme segment (pictographic, matches web + ST console)
 
 /// Light / Dark / System control with SF Symbol icons — same pattern as
-/// congress.trade `theme-seg` and Socratic console (Sun / Moon / Monitor).
+/// Congress.Trade `theme-seg` and Socratic console (Sun / Moon / Monitor).
 /// Labels use Title Case per `/Users/jay/apps/FLEET-UI-COPY.md`.
 struct ThemeSegmentControl: View {
     @Binding var selection: String

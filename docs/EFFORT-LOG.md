@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-07 — GROK — COMPLETED — Capitalize Congress/Congressional in product copy + ASC.** Proper-noun C everywhere user-facing; ASC marketing/support URL `https://Congress.Trade` (host case-insensitive). Branch `grok/capitalize-congress`.
 - **2026-08-07T07:30Z — GROK — IN PROGRESS — App Store publish + scorecard hotfix.** Landed #1466/#1467/#1468/#1470/#1471/#1473. Prod live SHA 8f71d76d; migrate ok; scorecard endpoint live (hotfix for join). Coolify port conflict fixed (stopped *-live, traefik upstream 10.0.2.12). App Store BLOCKED: need sudo Xcode 26.6 license accept; ASC v1.0 PREPARE_FOR_SUBMISSION no build. BrandTitle #1472 CI pending.
 - **2026-08-07T07:30Z — GROK — COMPLETED/DEPLOYED — OR budget circuit + per-doc spend cap + purpose/doc_id meter + coverage scorecard.** PR #1473 merged `1ed1c985` (feat `a9380cf7`); live build `8f71d76d` (includes #1473); migrate applied 0077 purpose/doc indexes. Gates: typecheck + 2167 tests; gitleaks green. Policy: never raise OR budget. Open iOS/export PRs still open separately.
 - **2026-08-05 — GROK — R2 Class A emergency pause (host litestream-congress stopped).** Pace ~256%; ~975 LTX PutObject/hr. Marker /etc/litestream/congress-r2-paused.flag. Rollout: docs/rollouts/2026-08-05-r2-freetier-class-a-survival.md.
