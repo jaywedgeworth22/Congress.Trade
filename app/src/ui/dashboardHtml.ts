@@ -593,11 +593,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
-  /* "politicians" spelled out where there's room; collapses to "pol(s)" on phones. */
+  /* "politicians" spelled out where there's room; "pol(s)" only when space is tight
+     (dense table columns, narrow cards, phones). See polCell / polWord. */
+  .u-full { display: inline; }
   .u-abbr { display: none; }
-  /* cluster cards */
+  /* Dense Trends tables: prefer short form once columns compete (still spell out on roomy desktops). */
+  @media (max-width: 1100px) {
+    #view-trends table .u-full { display: none; }
+    #view-trends table .u-abbr { display: inline; }
+  }
+  /* cluster cards — container query so a narrow card abbreviates even on wide screens */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
-  .ccard { background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:21px 22px; }
+  .ccard {
+    background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:21px 22px;
+    container-type: inline-size; container-name: ccard;
+  }
+  @container ccard (max-width: 280px) {
+    .u-full { display: none; }
+    .u-abbr { display: inline; }
+  }
   .ccard .chead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .ccard .big { font-size:18px; font-weight:700; }
   .ccard .faces { display:flex; margin-top:9px; }
@@ -1088,6 +1102,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
+    /* Phones: abbreviate politician counts everywhere in Trends (tables + cards). */
     #view-trends .u-full { display: none; }
     #view-trends .u-abbr { display: inline; }
     /* "What Congress Is Trading" is the densest row; on phones drop the gross
@@ -7498,15 +7513,20 @@ function splitBar(buys, sells) {
 function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n === 1 ? '' : 's'); }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
-/* "politician(s)" — spelled out for consistency with the Politicians KPI. */
+/* Spacious surfaces (KPI strip, flow chips, drawers): always spell out. */
 function polFull(n) { n = Number(n || 0); return n + ' politician' + (n === 1 ? '' : 's'); }
 function assetFull(n) { n = Number(n || 0); return n + ' asset' + (n === 1 ? '' : 's'); }
 function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
   return buys + ' buy' + (buys === 1 ? '' : 's') + ' / ' + sells + ' sell' + (sells === 1 ? '' : 's');
 }
-/* Table-cell variant: full word where there's room, "pol/pols" on phones (CSS toggle). */
-function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">' + (n === 1 ? 'pol' : 'pols') + '</span>'; }
+/* Word only — CSS .u-full / .u-abbr picks "politicians" vs "pols" by available space. */
+function polWord(n) {
+  n = Number(n || 0);
+  return '<span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">' + (n === 1 ? 'pol' : 'pols') + '</span>';
+}
+/* Table / count cell: "3 politicians" with room, "3 pols" when the column is tight. */
+function polCell(n) { n = Number(n || 0); return n + ' ' + polWord(n); }
 	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
@@ -8160,7 +8180,7 @@ function loadTrClusters() {
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for ' + esc(c.ticker) + '" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div><strong>' + c.memberCount + '</strong> ' + polWord(c.memberCount) + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
         '<div class="muted" style="margin-top:2px">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
