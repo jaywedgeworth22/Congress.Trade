@@ -42,12 +42,17 @@ import {
 } from './providerFailure.ts';
 import { priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import {
+  assertDocLlmSpendAllowed,
   checkLlmSpendCeiling,
+  isLlmDocBudgetHalt,
   llmBudgetHaltMessage,
+  LlmDocBudgetExceededError,
   LlmSpendSettlementError,
   settleLlmSpend,
 } from '../shared/llmSpend.ts';
 import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
+import { assertOpenRouterBudgetCircuitAllowsCall } from '../shared/openRouterBudgetCircuit.ts';
+import { IngestRetryError } from '../ingestion/fetcher.ts';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse' | 'openrouter';
 
@@ -1221,6 +1226,37 @@ export async function runCandidateOnDoc(
       rows: [],
     };
   }
+  // Per-doc cap + skip when rows already exist (unless admin reprocess path
+  // calls with a dedicated reprocess flag later). Live extraction never
+  // re-spends on docs that already have transactions.
+  try {
+    await assertDocLlmSpendAllowed(env, docId, {
+      reprocess: (invocation as { reprocess?: boolean } | undefined)?.reprocess === true,
+    });
+  } catch (err) {
+    if (err instanceof LlmDocBudgetExceededError || isLlmDocBudgetHalt(err)) {
+      return {
+        ...base,
+        ok: false,
+        error: (err as Error).message.slice(0, 300),
+        failure: classifyProviderFailure(provider, model, (err as Error).message) ?? undefined,
+        latencyMs: 0,
+        rowCount: 0,
+        rowKeys: [],
+        avgConfidence: 0,
+        rows: [],
+      };
+    }
+    throw err;
+  }
+  if (provider === 'openrouter') {
+    try {
+      await assertOpenRouterBudgetCircuitAllowsCall(env);
+    } catch (err) {
+      if (err instanceof IngestRetryError) throw err;
+      throw err;
+    }
+  }
   const key = invocation ? invocation.apiKey : await keyFor(env, provider);
   if (!key) {
     const error = `${provider} API key not configured`;
@@ -1373,6 +1409,7 @@ export async function runCandidateOnDoc(
       providerResponseId: providerRequestId,
       attemptId: accountingAttemptId,
       docId,
+      purpose: 'extraction',
       usd: candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0,
       occurredAt,
     });
@@ -1417,6 +1454,7 @@ export async function runCandidateOnDoc(
         providerResponseId: cast.providerRequestId,
         attemptId: accountingAttemptId,
         docId,
+        purpose: 'extraction',
         usd: candidateSpendUsd(provider, model, cast.resolvedModel, cast.usage) ?? 0,
         occurredAt,
       });

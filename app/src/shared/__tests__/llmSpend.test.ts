@@ -69,8 +69,16 @@ function spendEnv(rows: SpendRow[], vars: Record<string, string> = {}): {
     async run() {
       if (failures.writes) throw new Error('D1 unavailable');
       if (/INSERT OR IGNORE INTO llm_spend_settlements/i.test(sql)) {
-        const [settlementId, provider, providerResponseId, , day, , , , , usd, receiptHash]
-          = this.params as [string, string, string | null, string, string, string, string, string | null, string | null, number, string, string];
+        // Pre-0077: 12 binds (…, doc_id, usd, receipt_hash, created_at)
+        // Post-0077: 13 binds (…, doc_id, purpose, usd, receipt_hash, created_at)
+        const p = this.params as unknown[];
+        const settlementId = p[0] as string;
+        const provider = p[1] as string;
+        const providerResponseId = p[2] as string | null;
+        const day = p[4] as string;
+        const hasPurpose = p.length >= 13 || /purpose/i.test(sql);
+        const usd = (hasPurpose ? p[10] : p[9]) as number;
+        const receiptHash = (hasPurpose ? p[11] : p[10]) as string;
         const existing = settlements.find((row) =>
           row.settlementId === settlementId
           || (providerResponseId !== null
@@ -78,6 +86,7 @@ function spendEnv(rows: SpendRow[], vars: Record<string, string> = {}): {
             && row.providerResponseId === providerResponseId));
         if (existing) return { success: true, meta: { changes: 0 } };
         settlements.push({ settlementId, provider, providerResponseId, day, usd, receiptHash });
+        return { success: true, meta: { changes: 1 } };
       }
       return { success: true, meta: { changes: 1 } };
     },

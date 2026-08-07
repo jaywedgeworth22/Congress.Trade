@@ -64,6 +64,7 @@ const QQ_KEY =
   process.env.QUIVER_API_TOKEN ||
   process.env.QUIVERQUANT_API_TOKEN ||
   '';
+// Single UW key (trial/paid). Canonical + global-api-keys alias.
 const UW_KEY =
   process.env.UW_API_KEY ||
   process.env.UNUSUAL_WHALES_API_KEY ||

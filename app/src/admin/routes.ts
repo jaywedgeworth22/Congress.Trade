@@ -78,6 +78,12 @@ import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
+import { buildCoverageScorecard } from './coverageScorecard.ts';
+import {
+  readOpenRouterBudgetCircuit,
+  resolveOpenRouterBudgetCircuitKnobs,
+} from '../shared/openRouterBudgetCircuit.ts';
+import { readLlmSpend } from '../shared/llmSpend.ts';
 import { mapFiling } from '../delivery/rows.ts';
 import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
@@ -3339,7 +3345,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const REGISTRY: Record<string, string[]> = {
       'provider-keys': [
         'FMP_API_KEY', 'FMP_LATENCY_API_KEY', 'FMP_RAPIDAPI_KEY', 'RAPIDAPI_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
-        'FINNHUB_API_KEY', 'UNUSUAL_WHALES_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
+        'UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY',
+        'FINNHUB_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
         'LOGODEV_PUBLISHABLE_KEY',
       ],
       'model-keys': [
@@ -3435,6 +3442,26 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ok: result.errors.length === 0,
       ...result,
     }, result.errors.length === 0 ? 200 : 207);
+  });
+
+  // --- GET /coverage-scorecard --------------------------------------------
+  // Honest universe-vs-us report (owner 2026-08-07). complete is computed only.
+  r.get('/coverage-scorecard', async (c) => {
+    const scorecard = await buildCoverageScorecard(c.env);
+    const [llmSpend, orCircuit, orKnobs] = await Promise.all([
+      readLlmSpend(c.env),
+      readOpenRouterBudgetCircuit(c.env),
+      resolveOpenRouterBudgetCircuitKnobs(c.env),
+    ]);
+    return c.json({
+      ok: true,
+      scorecard,
+      llmSpend,
+      openRouterBudgetCircuit: {
+        ...orCircuit,
+        knobs: orKnobs,
+      },
+    });
   });
 
   // --- GET /diagnostics ---------------------------------------------------

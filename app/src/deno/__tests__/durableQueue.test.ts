@@ -538,6 +538,7 @@ describe('Deno durable queue', () => {
           requested_model TEXT NOT NULL,
           resolved_model TEXT,
           doc_id TEXT,
+          -- no purpose column: exercises rolling-deploy fallback in settleLlmSpend
           usd REAL NOT NULL,
           receipt_hash TEXT NOT NULL,
           created_at TEXT NOT NULL
