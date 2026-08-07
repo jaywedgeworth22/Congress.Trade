@@ -163,7 +163,7 @@ struct AssetMark: View {
 }
 
 /// Compact money/count formatting (Trends KPIs + trade amount brackets).
-/// Fleet UI copy: lowercase suffixes `$15k`, `$500k`, `$1m`.
+/// Fleet UI copy: lowercase suffixes `$15k`, `$99.8k`, `$1.2m`, `$3.4b`.
 enum CompactFormat {
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
@@ -181,7 +181,7 @@ enum CompactFormat {
         return "\(sign)$\(String(format: "%.0f", absV))"
     }
 
-    /// STOCK Act-style brackets: `$15k`, `$50k`, `$500k`, `$1m`.
+    /// STOCK Act-style bracket floors/ceilings: `$15k`, `$50k`, `$500k`, `$1m`.
     static func usdBracket(_ value: Int) -> String {
         usd(Double(value))
     }
@@ -196,7 +196,7 @@ enum CompactFormat {
 
     /// Drop trailing `.0` so `$1.0m` → `$1m`, keep `$1.2m` / `$15k`.
     private static func compactNumber(_ value: Double) -> String {
-        if abs(value - value.rounded()) < 0.05 {
+        if value == value.rounded(.towardZero) || abs(value - value.rounded()) < 0.05 {
             return String(format: "%.0f", value.rounded())
         }
         return String(format: "%.1f", value)

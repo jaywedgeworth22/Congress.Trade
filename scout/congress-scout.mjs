@@ -58,7 +58,12 @@ const _fmpProbeRaw = (process.env.FMP_PROBE_ENABLED || '').trim();
 const FMP_PROBE_ENABLED = _fmpProbeRaw === '' ? true : !/^(0|false|no|off)$/i.test(_fmpProbeRaw);
 const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable,rapidapi').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable', 'rapidapi']);
-const QQ_KEY = process.env.QQ_API_KEY || process.env.QUIVER_API_KEY || process.env.QUIVER_API_TOKEN || '';
+const QQ_KEY =
+  process.env.QQ_API_KEY ||
+  process.env.QUIVER_API_KEY ||
+  process.env.QUIVER_API_TOKEN ||
+  process.env.QUIVERQUANT_API_TOKEN ||
+  '';
 // Single UW key (trial/paid). Canonical + global-api-keys alias.
 const UW_KEY =
   process.env.UW_API_KEY ||

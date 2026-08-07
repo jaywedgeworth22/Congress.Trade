@@ -762,8 +762,8 @@ struct TradeCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            // Only when a ticker exists; AssetMark is EmptyView until a real logo
-            // loads (no blue monogram tiles that steal width from long names).
+            // Only reserve logo column when a ticker exists; AssetMark is EmptyView
+            // until a real logo loads (no blue monogram tiles that steal width).
             if trade.asset.ticker != nil {
                 Button {
                     onTickerTap?()

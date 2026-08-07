@@ -55,6 +55,12 @@ function memDb(state: {
           if (/COUNT\(\*\) AS n FROM transactions/i.test(sql)) {
             return { results: [{ n: state.transactions.length } as T] };
           }
+          if (/FROM filings f/i.test(sql) && /EXISTS/i.test(sql) && /transactions/i.test(sql)) {
+            const txDocs = new Set(state.transactions.map((t) => t.doc_id));
+            // memDb filings lack doc_id; treat one tx as covering first filing.
+            const n = Math.min(txDocs.size, state.filings.length);
+            return { results: [{ n } as T] };
+          }
           if (/COUNT\(DISTINCT doc_id\)/i.test(sql)) {
             const docs = new Set(state.transactions.map((t) => t.doc_id));
             return { results: [{ n: docs.size } as T] };
