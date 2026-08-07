@@ -302,13 +302,15 @@ struct FeedDashboardView: View {
 
 /// Website-parity brand lockup: eagle+bag with CONGRESS / TRADE baked into the
 /// light/dark lockup assets. No trailing "Congress.Trade" text after the mark.
+/// Sized ~50% larger than the old 28pt bar so it matches the height of the
+/// side toolbar buttons and uses the sticky nav chrome instead of empty padding.
 struct BrandTitle: View {
     var body: some View {
         Image("BrandLockup")
             .resizable()
             .scaledToFit()
-            .frame(height: 28)
-            .frame(maxWidth: 200)
+            .frame(height: 42)
+            .frame(maxWidth: 300)
             .accessibilityLabel("Congress.Trade")
     }
 }
