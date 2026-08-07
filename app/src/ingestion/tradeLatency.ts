@@ -58,6 +58,8 @@ type EnvWithWatch = Env & {
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
   UNUSUAL_WHALES_API_KEY?: string;
+  /** Alias used in global-api-keys / Infisical (no underscores in “unusualwhales”). */
+  UNUSUALWHALES_API_KEY?: string;
   QUIVER_API_KEY?: string;
   QUIVER_API_TOKEN?: string;
   FINNHUB_API_KEY?: string;
@@ -729,6 +731,22 @@ export interface FmpLatencyKeySelection {
   intervalSec: number;
 }
 
+/** Canonical UW secret names (single trial/paid key — no free residual after trial). */
+const UW_SECRET_NAMES = ['UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY'] as const;
+
+/**
+ * Resolve the single Unusual Whales API key (canonical or owner alias).
+ */
+export async function resolveUnusualWhalesKey(env: Env): Promise<{ apiKey: string; secretName: string } | null> {
+  const envx = env as unknown as Record<string, string | undefined>;
+  for (const secretName of UW_SECRET_NAMES) {
+    const value = (await resolveSecret(env, secretName as keyof Env & string)).value ?? envx[secretName];
+    const apiKey = value?.trim();
+    if (apiKey) return { apiKey, secretName };
+  }
+  return null;
+}
+
 /**
  * Round-robin across equivalent access avenues (paths, keys, hosts) so multi-
  * avenue sources spend **exactly one** avenue per cycle. Prevents doubling
@@ -1053,7 +1071,8 @@ const PROVIDERS: ProviderDefinition[] = [
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
-    reason: 'Recent Congress trades exposes filed_at_date, but not a provider first-seen timestamp.',
+    reason:
+      'Recent Congress trades exposes filed_at_date, but not a provider first-seen timestamp. Single API key (trial/paid).',
     fetchRows: fetchUnusualWhalesRows,
   },
   {
@@ -3134,7 +3153,12 @@ async function runProviderProbe(
       }
     }
   } else {
-    apiKey = await resolveProviderSecret(env, provider);
+    if (isUnusualWhales) {
+      const uw = await resolveUnusualWhalesKey(env);
+      apiKey = uw?.apiKey ?? null;
+    } else {
+      apiKey = await resolveProviderSecret(env, provider);
+    }
     if (!apiKey) {
       return {
         ...base,
@@ -3145,7 +3169,9 @@ async function runProviderProbe(
         pending: 0,
         matched: 0,
         errors,
-        reason: `${provider.secretNames[0]} missing`,
+        reason: isUnusualWhales
+          ? 'UNUSUAL_WHALES_API_KEY / UNUSUALWHALES_API_KEY missing'
+          : `${provider.secretNames[0]} missing`,
       };
     }
     // Per-source daily budget + yield-weighted spacing (UW / Quiver).
@@ -3157,9 +3183,10 @@ async function runProviderProbe(
           `${provider.label} at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)`,
         );
       } else {
-        // Reserve base probe HTTP calls; UW deep-match spends from remainder.
         await addLatencySourceUsed(env, budgetSourceId, sourceBudget.callsPerRun, now);
-        uwDeepMatchCallBudget = Math.max(0, sourceBudget.remaining - sourceBudget.callsPerRun);
+        if (isUnusualWhales) {
+          uwDeepMatchCallBudget = Math.max(0, sourceBudget.remaining - sourceBudget.callsPerRun);
+        }
         await setLastPollAt(env, LATENCY_SOURCE_BUDGETS[budgetSourceId].pollSource, now);
       }
     }

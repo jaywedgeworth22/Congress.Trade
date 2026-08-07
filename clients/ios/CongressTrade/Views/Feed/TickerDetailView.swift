@@ -121,7 +121,8 @@ struct TickerDetailView: View {
                 .padding(.bottom, 24)
             }
             .background(AppTheme.background)
-            .navigationTitle(ticker.uppercased())
+            .navigationTitle(ticker.uppercased()
+            .inlineNavigationTitle())
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {

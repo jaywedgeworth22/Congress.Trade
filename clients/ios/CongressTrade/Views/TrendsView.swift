@@ -65,10 +65,7 @@ struct TrendsView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Empty leading slot so brand stays centered like Trades (export is Trades-only).
-                ToolbarItem(placement: .topBarLeading) {
-                    Color.clear.frame(width: 28, height: 28)
-                }
+                // No leading placeholder — dead chrome with no action.
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
@@ -277,7 +274,7 @@ struct TrendsView: View {
                             color: (c.txType == "B" || c.txType == "P") ? .green : (c.txType == "S" ? .red : .blue),
                             compact: true
                         )
-                        Text("\(c.memberCount) pols")
+                        Text("\(c.memberCount) \(c.memberCount == 1 ? "politician" : "politicians")")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }

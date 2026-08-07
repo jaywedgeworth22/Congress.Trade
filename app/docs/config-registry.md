@@ -94,10 +94,14 @@ budget-status polling, see Tunables & flags below)
   `FMP_LATENCY_PROBE_ENABLED` unset (default ON) or false to disable spend,
   `FMP_LATENCY_PATHS=stable`,
   `UW_DEEP_MATCH_DATES_PER_RUN=8`. Provider API keys
-  (`FMP_LATENCY_API_KEY` + `_2`, `UNUSUAL_WHALES_API_KEY`,
-  `QUIVER_API_KEY`) live under provider-keys. FMP is CT latency + Mac scout
-  only — not Socratic product. Multi-avenue rotation (`selectRotatedAvenue`)
-  is the pattern for any source with multiple keys/hosts.
+  (`FMP_LATENCY_API_KEY` + `_2` / `FMP_API_KEY` slot-2, `RAPIDAPI_KEY` /
+  `FMP_RAPIDAPI_KEY`, `UNUSUAL_WHALES_API_KEY` / `UNUSUALWHALES_API_KEY`,
+  `QUIVER_API_KEY`) live under Infisical (shared holds `RAPIDAPI_KEY`; CT app
+  holds UW + FMP latency). FMP dual free keys rotate; RapidAPI path is optional
+  (default off — congress endpoints 404 on marketplace product). Multi-avenue
+  rotation (`selectRotatedAvenue`) is the multi-key/host pattern. FMP is CT
+  latency + Mac scout only — not Socratic product.
+
 - Ingestion: `HOUSE_LIVE_SEARCH_ENABLED`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
   `OGE_POLL_INTERVAL_SEC`, `OGE_MAX_VISION_BYTES`

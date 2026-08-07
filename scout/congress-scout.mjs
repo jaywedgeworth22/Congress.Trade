@@ -70,8 +70,18 @@ const FMP_PROBE_ENABLED = _fmpProbeRaw === '' ? true : !/^(0|false|no|off)$/i.te
 // return 404 (product gap verified 2026-08-06). Opt in with FMP_PATHS=stable,rapidapi.
 const FMP_PATHS_RAW = (process.env.FMP_PATHS || 'stable').split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 const FMP_PATHS = new Set(FMP_PATHS_RAW.length ? FMP_PATHS_RAW : ['stable']);
-const QQ_KEY = process.env.QQ_API_KEY || '';
-const UW_KEY = process.env.UW_API_KEY || '';
+const QQ_KEY =
+  process.env.QQ_API_KEY ||
+  process.env.QUIVER_API_KEY ||
+  process.env.QUIVER_API_TOKEN ||
+  process.env.QUIVERQUANT_API_TOKEN ||
+  '';
+// Single UW key (trial/paid). Canonical + global-api-keys alias.
+const UW_KEY =
+  process.env.UW_API_KEY ||
+  process.env.UNUSUAL_WHALES_API_KEY ||
+  process.env.UNUSUALWHALES_API_KEY ||
+  '';
 const INTERVAL_MS = (Number(process.env.POLL_INTERVAL_SEC) || 45) * 1000;
 const SOURCES = new Set((process.env.SOURCES || 'house,senate').split(',').map((s) => s.trim()));
 const FRONTIER = (process.env.HOUSE_FRONTIER ?? '1') !== '0';

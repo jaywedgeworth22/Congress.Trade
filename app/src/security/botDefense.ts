@@ -63,8 +63,8 @@ const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/healt
 
 /**
  * Paths under an EXEMPT_PREFIXES prefix that are NOT token-gated and must
- * stay inside the guard. /api/export/transactions.csv is anonymous (#558)
- * and returns up to MAX_EXPORT_ROWS rows per call, so exempting it hands a
+ * stay inside the guard. /api/export/transactions.csv is Premium-gated and
+ * returns the full matching set per call, so exempting it hands a
  * scraper the whole corpus in one unauthenticated GET — around the UA
  * blocklist AND both budgets.
  */
