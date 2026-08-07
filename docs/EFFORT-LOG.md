@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-07T15:36Z — GROK — COMPLETED — Landed iOS PRs #1500/#1501/#1502/#1504; closed #1503 as dup of #1500.** iOS 17.0 deployment + MARKETING_VERSION 1.0; brand lockup +10%; compact All chips + hide APNs debug; cream AppIcon. main tip `e8c08fb7`.
 - **2026-08-07T15:32Z — GROK — COMPLETED/DEPLOYED — Logo.dev prod wire (#1505).** Merged `1539a7e1`; live SHA matches. Proxy accepts LOGO_DEV_TOKEN|LOGODEV_PUBLISHABLE_KEY (both present pk_ len25). Verify: AAPL/SPCX/TSCO → x-logo-source:logo.dev; HONAV → local pack. Restored Hetzner CI runners hetzner-ct-ci-1/2 (expired reg tokens). Branch `grok/logodev-token-alias`.
 - **2026-08-07 — GROK — COMPLETED — Capitalize Congress/Congressional in product copy + ASC.** Proper-noun C everywhere user-facing; ASC marketing/support URL `https://Congress.Trade` (host case-insensitive). Branch `grok/capitalize-congress`.
 - **2026-08-07T07:30Z — GROK — IN PROGRESS — App Store publish + scorecard hotfix.** Landed #1466/#1467/#1468/#1470/#1471/#1473. Prod live SHA 8f71d76d; migrate ok; scorecard endpoint live (hotfix for join). Coolify port conflict fixed (stopped *-live, traefik upstream 10.0.2.12). App Store BLOCKED: need sudo Xcode 26.6 license accept; ASC v1.0 PREPARE_FOR_SUBMISSION no build. BrandTitle #1472 CI pending.
