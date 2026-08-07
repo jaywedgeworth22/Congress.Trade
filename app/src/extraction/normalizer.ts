@@ -21,7 +21,7 @@
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType, TxSource } from '../shared/types.ts';
 import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
-import { canonicalizeAssetType } from '../shared/assetTypes.ts';
+import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
 import { uuid } from '../shared/ids.ts';
 import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
@@ -349,9 +349,27 @@ function buildTransaction(
     filing.filedDate,
     resolve,
   );
-  const assetType = canonicalizeAssetType(p.assetType, p.assetTypeName ?? null, {
+  // Models (and local_mac OCR) often leave assetType null even when the PTR
+  // line says "Common Stock" or carries a House [ST] code. Infer before
+  // category rollup so review UI + feed show ST instead of Unknown.
+  const inferredType = inferHouseAssetTypeCode(p.assetType, {
+    assetTypeName: p.assetTypeName,
+    assetName: cleanedAssetName,
+    rawText: p.rawText,
+    isOption: p.isOption,
+  });
+  const resolvedAssetType = p.assetType?.trim() || inferredType?.code || null;
+  const resolvedAssetTypeName =
+    p.assetTypeName?.trim() ||
+    (resolvedAssetType && HOUSE_ASSET_TYPE_NAMES[resolvedAssetType.toUpperCase()]
+      ? HOUSE_ASSET_TYPE_NAMES[resolvedAssetType.toUpperCase()]
+      : null) ||
+    inferredType?.label ||
+    null;
+  const assetType = canonicalizeAssetType(resolvedAssetType, resolvedAssetTypeName, {
     isOption: p.isOption,
     assetName: cleanedAssetName,
+    rawText: p.rawText,
   });
 
   const txSource = sourceOverride ?? (p as { source?: TxSource }).source ?? 'primary';
@@ -364,8 +382,8 @@ function buildTransaction(
     owner: normalizeOwner(p.owner),
     assetName: cleanedAssetName || s.ticker || '(unknown)',
     ticker: s.ticker,
-    assetType: p.assetType,
-    assetTypeName: p.assetTypeName ?? null,
+    assetType: resolvedAssetType,
+    assetTypeName: resolvedAssetTypeName,
     assetTypeCategory: assetType.category,
     assetTypeCategoryLabel: assetType.categoryLabel,
     txType: s.txType,

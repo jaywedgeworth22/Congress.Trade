@@ -378,6 +378,32 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     expect(decision?.payload).toMatchObject({ resolvedBy: 'agreement-cascade', priority: 'high', tier: 3 });
   });
 
+  it('soft free-text 1/1/1 (supplementalText) does NOT block publish when material fields agree', async () => {
+    // Prod regression H-2026-20035035: 3 models agreed on ticker/date/type/amount/ST
+    // but split 1/1/1 on optional supplementalText → cascade_unresolved. Soft
+    // free-text is excluded from the material fingerprint, so this can now
+    // resolve at tier 2 (3-way material unanimity) instead of parking for a human.
+    stub(
+      asJson([row('MDT', 'S', AB, {
+        owner: 'joint', assetType: 'ST', assetTypeName: 'Stock',
+        supplementalText: 'See note A', confidence: 0.55,
+      })]),
+      asJson([row('MDT', 'S', AB, {
+        owner: 'joint', assetType: 'ST', assetTypeName: 'Stocks (including ADRs)',
+        supplementalText: 'See note B', confidence: 0.5,
+      })]),
+      asJson([row('MDT', 'S', AB, {
+        owner: 'joint', assetType: 'ST', assetTypeName: null,
+        supplementalText: null, confidence: 0.45,
+      })]),
+    );
+    const { env, cap } = makeEnv();
+    const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-soft-supp', 'raw/H-soft', false);
+    expect(res.outcome).toBe('published');
+    expect([2, 3]).toContain(res.tier);
+    expect(cap.inserted).toHaveLength(1);
+  });
+
   it('a multi-lot majority row (same key, distinct brackets) is NOT auto-published (tier 3)', async () => {
     // A + B each disclose TWO AAPL purchases the same day (same ticker|date|type,
     // different dollar brackets) — a real multi-lot filing. A also reads an extra
