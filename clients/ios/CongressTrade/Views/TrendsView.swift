@@ -66,6 +66,7 @@ struct TrendsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // No leading placeholder — dead chrome with no action.
+                // Brand centers via .principal; info is the only trailing control.
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
