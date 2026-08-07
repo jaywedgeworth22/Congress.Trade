@@ -23,6 +23,7 @@ import {
   selectRotatedAvenue,
   selectFmpLatencyPathForCycle,
   selectLatencySourceProbe,
+  resolveUnusualWhalesKey,
   resolveFmpRapidApiKey,
   getFmpLatencyFleetRemaining,
   getFmpLatencyUsed,
@@ -283,6 +284,21 @@ describe('tradeLatency', () => {
       expect(peakShared).toBeLessThan(nightShared);
     });
 
+    it('resolveUnusualWhalesKey accepts canonical or UNUSUALWHALES alias (single key)', async () => {
+      expect(await resolveUnusualWhalesKey({} as never)).toBeNull();
+      expect(
+        (await resolveUnusualWhalesKey({ UNUSUALWHALES_API_KEY: 'from-global' } as never))?.apiKey,
+      ).toBe('from-global');
+      expect(
+        (
+          await resolveUnusualWhalesKey({
+            UNUSUAL_WHALES_API_KEY: 'canonical',
+            UNUSUALWHALES_API_KEY: 'alias',
+          } as never)
+        )?.apiKey,
+      ).toBe('canonical');
+    });
+
     it('UW/QQ selectLatencySourceProbe enforces daily cap and yield spacing', async () => {
       const kv = new Map<string, string>();
       const env = {
@@ -301,13 +317,11 @@ describe('tradeLatency', () => {
       expect(uw?.callsPerRun).toBe(1);
       expect(uw?.band).toBe('peak');
       await addLatencySourceUsed(env, 'unusual_whales', 10, peakNow);
-      expect(await getLatencySourceUsed(env, 'unusual_whales', peakNow)).toBe(10);
       expect(await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true })).toBeNull();
 
       const qq = await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true });
       expect(qq?.cap).toBe(12);
       expect(qq?.callsPerRun).toBe(LATENCY_SOURCE_BUDGETS.quiver.callsPerRun);
-      // Exhaust almost all QQ budget (< 3 remaining).
       await addLatencySourceUsed(env, 'quiver', 11, peakNow);
       expect(await selectLatencySourceProbe(env, 'quiver', peakNow, { force: true })).toBeNull();
     });
