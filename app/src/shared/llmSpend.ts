@@ -80,6 +80,10 @@ export function isLlmBudgetHalt(error: unknown): boolean {
 }
 
 export const DEFAULT_LLM_DAILY_USD_CEILING = 10;
+/** Soft default per-doc lifetime LLM spend (all purposes). Override via LLM_DOC_USD_CEILING. */
+export const DEFAULT_LLM_DOC_USD_CEILING = 3;
+export const LLM_DOC_BUDGET_ERROR_MARKER = 'llm per-doc usd budget exceeded';
+export const LLM_DOC_ALREADY_EXTRACTED_MARKER = 'llm skip: doc already has transactions';
 
 function dayStr(now: Date): string {
   return now.toISOString().slice(0, 10);
@@ -128,6 +132,8 @@ export interface LlmSpendSettlementReceipt {
   requestedModel: string;
   resolvedModel: string | null;
   docId: string | null;
+  /** Call-site purpose: extraction | agreement | benchmark | autopilot | … */
+  purpose: string | null;
   usd: number;
   receiptHash: string;
   createdAt: string;
@@ -190,26 +196,60 @@ interface StoredLlmSettlement {
 export function createLlmSpendSettlementWriter(db: D1Database): LlmSpendSettlementWriter {
   return {
     async write(receipt) {
-      const inserted = await db.prepare(
-        `INSERT OR IGNORE INTO llm_spend_settlements
-           (settlement_id, provider, provider_response_id, attempt_id, day,
-            occurred_at, requested_model, resolved_model, doc_id, usd,
-            receipt_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        receipt.settlementId,
-        receipt.provider,
-        receipt.providerResponseId,
-        receipt.attemptId,
-        receipt.day,
-        receipt.occurredAt,
-        receipt.requestedModel,
-        receipt.resolvedModel,
-        receipt.docId,
-        receipt.usd,
-        receipt.receiptHash,
-        receipt.createdAt,
-      ).run();
+      // Prefer the purpose-aware insert (migration 0077). Fall back when the
+      // rolling deploy has not applied ALTER TABLE purpose yet so extraction
+      // is never blocked solely on schema lag.
+      let inserted: { meta?: { changes?: number } };
+      try {
+        inserted = await db.prepare(
+          `INSERT OR IGNORE INTO llm_spend_settlements
+             (settlement_id, provider, provider_response_id, attempt_id, day,
+              occurred_at, requested_model, resolved_model, doc_id, purpose, usd,
+              receipt_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          receipt.settlementId,
+          receipt.provider,
+          receipt.providerResponseId,
+          receipt.attemptId,
+          receipt.day,
+          receipt.occurredAt,
+          receipt.requestedModel,
+          receipt.resolvedModel,
+          receipt.docId,
+          receipt.purpose,
+          receipt.usd,
+          receipt.receiptHash,
+          receipt.createdAt,
+        ).run();
+      } catch (error) {
+        // SQLite variants: "no such column: purpose" vs "table X has no column named purpose"
+        if (!/no such column:\s*purpose|no column named purpose/i.test(
+          error instanceof Error ? error.message : String(error),
+        )) {
+          throw error;
+        }
+        inserted = await db.prepare(
+          `INSERT OR IGNORE INTO llm_spend_settlements
+             (settlement_id, provider, provider_response_id, attempt_id, day,
+              occurred_at, requested_model, resolved_model, doc_id, usd,
+              receipt_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          receipt.settlementId,
+          receipt.provider,
+          receipt.providerResponseId,
+          receipt.attemptId,
+          receipt.day,
+          receipt.occurredAt,
+          receipt.requestedModel,
+          receipt.resolvedModel,
+          receipt.docId,
+          receipt.usd,
+          receipt.receiptHash,
+          receipt.createdAt,
+        ).run();
+      }
       if ((inserted.meta?.changes ?? 0) > 0) return 'inserted';
 
       const existing = await db.prepare(
@@ -386,8 +426,128 @@ export interface SettleLlmSpendInput {
   providerResponseId?: string | null;
   attemptId: string;
   docId?: string | null;
+  /** Call-site purpose for admin/scorecard attribution. */
+  purpose?: string | null;
   usd: number;
   occurredAt?: string;
+}
+
+export interface DocLlmSpendDecision {
+  allowed: boolean;
+  docId: string;
+  spentUsd: number;
+  ceilingUsd: number;
+  reason: 'ok' | 'doc_ceiling' | 'already_extracted' | 'meter_unreadable';
+}
+
+/** Lifetime metered USD for one doc_id (all purposes). null when unreadable. */
+export async function readDocLlmSpendUsd(env: Env, docId: string): Promise<number | null> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function' || !docId.trim()) return null;
+  try {
+    const row = await db.prepare(
+      `SELECT COALESCE(SUM(usd), 0) AS usd FROM llm_spend_settlements WHERE doc_id = ?`,
+    ).bind(docId).first<{ usd: number }>();
+    return Number(row?.usd) || 0;
+  } catch {
+    return null;
+  }
+}
+
+/** True when transactions already exist for this filing (skip re-spend unless reprocess). */
+export async function docHasExistingTransactions(env: Env, docId: string): Promise<boolean> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function' || !docId.trim()) return false;
+  try {
+    const row = await db.prepare(
+      `SELECT 1 AS ok FROM transactions WHERE doc_id = ? LIMIT 1`,
+    ).bind(docId).first<{ ok: number }>();
+    return Boolean(row?.ok);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Per-doc spend gate + already-extracted skip.
+ * - `reprocess: true` (admin / explicit) bypasses the already-extracted skip
+ *   but still honors the per-doc USD ceiling.
+ * - Meter unreadable → fail open (same as daily ceiling).
+ */
+export async function checkDocLlmSpendAllowed(
+  env: Env,
+  docId: string,
+  opts: { reprocess?: boolean } = {},
+): Promise<DocLlmSpendDecision> {
+  const ceiling = (await resolveUsdKnob(env, 'LLM_DOC_USD_CEILING', DEFAULT_LLM_DOC_USD_CEILING))
+    ?? DEFAULT_LLM_DOC_USD_CEILING;
+  if (!opts.reprocess) {
+    if (await docHasExistingTransactions(env, docId)) {
+      return {
+        allowed: false,
+        docId,
+        spentUsd: 0,
+        ceilingUsd: ceiling,
+        reason: 'already_extracted',
+      };
+    }
+  }
+  const spent = await readDocLlmSpendUsd(env, docId);
+  if (spent == null) {
+    return {
+      allowed: true,
+      docId,
+      spentUsd: 0,
+      ceilingUsd: ceiling,
+      reason: 'meter_unreadable',
+    };
+  }
+  if (spent >= ceiling) {
+    return {
+      allowed: false,
+      docId,
+      spentUsd: spent,
+      ceilingUsd: ceiling,
+      reason: 'doc_ceiling',
+    };
+  }
+  return {
+    allowed: true,
+    docId,
+    spentUsd: spent,
+    ceilingUsd: ceiling,
+    reason: 'ok',
+  };
+}
+
+export class LlmDocBudgetExceededError extends Error {
+  readonly errorClass = 'budget' as const;
+  constructor(readonly decision: DocLlmSpendDecision) {
+    super(
+      decision.reason === 'already_extracted'
+        ? `${LLM_DOC_ALREADY_EXTRACTED_MARKER} (${decision.docId})`
+        : `${LLM_DOC_BUDGET_ERROR_MARKER} (${decision.docId}): `
+          + `$${decision.spentUsd.toFixed(4)} of $${decision.ceilingUsd.toFixed(2)}`,
+    );
+    this.name = 'LlmDocBudgetExceededError';
+  }
+}
+
+export function isLlmDocBudgetHalt(error: unknown): boolean {
+  if (error instanceof LlmDocBudgetExceededError) return true;
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const lower = message.toLowerCase();
+  return lower.includes(LLM_DOC_BUDGET_ERROR_MARKER)
+    || lower.includes(LLM_DOC_ALREADY_EXTRACTED_MARKER);
+}
+
+export async function assertDocLlmSpendAllowed(
+  env: Env,
+  docId: string,
+  opts: { reprocess?: boolean } = {},
+): Promise<void> {
+  const decision = await checkDocLlmSpendAllowed(env, docId, opts);
+  if (!decision.allowed) throw new LlmDocBudgetExceededError(decision);
 }
 
 /** Persist one immutable paid-response receipt through the lease-independent
@@ -404,6 +564,7 @@ export async function settleLlmSpend(
   if (!writer) return 'ignored';
   const occurredAt = input.occurredAt ?? new Date().toISOString();
   const providerResponseId = input.providerResponseId?.trim() || null;
+  const purpose = input.purpose?.trim() || null;
   const identity = providerResponseId
     ? [input.provider, 'response', providerResponseId]
     : [input.provider, 'attempt', input.attemptId];
@@ -418,6 +579,7 @@ export async function settleLlmSpend(
     requestedModel: input.requestedModel,
     resolvedModel: input.resolvedModel ?? null,
     docId: input.docId ?? null,
+    // purpose is attribution metadata only — not part of settlement identity.
     usd: input.usd,
   }));
   const receipt: LlmSpendSettlementReceipt = {
@@ -430,6 +592,7 @@ export async function settleLlmSpend(
     requestedModel: input.requestedModel,
     resolvedModel: input.resolvedModel ?? null,
     docId: input.docId ?? null,
+    purpose,
     usd: input.usd,
     receiptHash,
     createdAt: new Date().toISOString(),

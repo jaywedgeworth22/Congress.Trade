@@ -47,6 +47,13 @@ import {
   arrayBufferToBase64,
   markSalvaged,
 } from './visionLlm.ts';
+import {
+  assertOpenRouterBudgetCircuitAllowsCall,
+  isOpenRouterBudgetHttp,
+  noteOpenRouterBudgetFailure,
+  noteOpenRouterBudgetSuccess,
+} from '../shared/openRouterBudgetCircuit.ts';
+import { IngestRetryError } from '../ingestion/fetcher.ts';
 
 /** Live default (verified against the OpenRouter catalog 2026-07-18); the
  *  former default `qwen/qwen-2.5-vl-72b-instruct:free` is no longer listed. */
@@ -480,6 +487,10 @@ export class OpenRouterVisionExtractor implements Extractor {
           ...(maxPrice ? { max_price: maxPrice } : {}),
         };
 
+        // Owner: no million retries when the key is out of budget — short
+        // burst then hourly cool-down (openRouterBudgetCircuit).
+        await assertOpenRouterBudgetCircuitAllowsCall(this.env);
+
         const res = await fetchWithRetry(
           'https://openrouter.ai/api/v1/chat/completions',
           {
@@ -510,7 +521,9 @@ export class OpenRouterVisionExtractor implements Extractor {
               : AbortSignal.timeout(600_000),
           },
           this.name,
-          { model, spendGuard: { env: this.env, provider: 'openrouter' } }
+          // Budget 402/403 are not retryable at HTTP layer; maxAttempts=3 only
+          // covers transient 429/5xx. Burst+hourly lives in the circuit module.
+          { model, maxAttempts: 3, spendGuard: { env: this.env, provider: 'openrouter' } }
         );
 
         if (!res.ok) {
@@ -523,16 +536,17 @@ export class OpenRouterVisionExtractor implements Extractor {
           if (includeEngine && engine && isEngineOverrideRejection(res.status, detail)) {
             return { rejection: detail, status: res.status };
           }
-          if (res.status === 402 || res.status === 403) {
+          if (isOpenRouterBudgetHttp(res.status, detail)) {
             await sendPushover(this.env, {
               title: 'OpenRouter Budget Alert',
-              message: `OpenRouter HTTP ${res.status} budget cap reached for model ${model} (doc: ${docId ?? 'unknown'}). Attempting backup key failover.`,
+              message: `OpenRouter HTTP ${res.status} budget cap reached for model ${model} (doc: ${docId ?? 'unknown'}). Circuit will trip after a short burst; not waiting on credits as a strategy.`,
               priority: 1,
             }).catch(() => {});
 
             const backupKey = (await resolveSecret(this.env, 'OPENROUTER_BACKUP_API_KEY')).value;
             if (backupKey && backupKey !== key) {
               console.warn(`${this.name}: HTTP ${res.status} budget cap; attempting failover to OPENROUTER_BACKUP_API_KEY`);
+              await assertOpenRouterBudgetCircuitAllowsCall(this.env);
               const backupRes = await fetchWithRetry(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
@@ -560,16 +574,43 @@ export class OpenRouterVisionExtractor implements Extractor {
                     : AbortSignal.timeout(600_000),
                 },
                 this.name,
-                { model, spendGuard: { env: this.env, provider: 'openrouter' } }
+                { model, maxAttempts: 3, spendGuard: { env: this.env, provider: 'openrouter' } }
               );
               if (backupRes.ok) {
+                await noteOpenRouterBudgetSuccess(this.env);
                 return { payload: (await backupRes.json()) as OpenAIChatPayload };
               }
+              let backupDetail = '';
+              try {
+                backupDetail = (await backupRes.text()).slice(0, 500);
+              } catch {
+                /* ignore */
+              }
+              if (isOpenRouterBudgetHttp(backupRes.status, backupDetail)) {
+                const trip = await noteOpenRouterBudgetFailure(
+                  this.env,
+                  `HTTP ${backupRes.status} ${backupDetail}`,
+                );
+                throw new IngestRetryError(
+                  `${this.name}: OpenRouter API ${backupRes.status} budget ${backupDetail.slice(0, 200)}`,
+                  trip.delaySeconds,
+                );
+              }
             }
+
+            const trip = await noteOpenRouterBudgetFailure(
+              this.env,
+              `HTTP ${res.status} ${detail}`,
+            );
+            throw new IngestRetryError(
+              `${this.name}: OpenRouter API ${res.status} ${res.statusText} ${detail}`,
+              trip.delaySeconds,
+            );
           }
           throw new Error(`${this.name}: OpenRouter API ${res.status} ${res.statusText} ${detail}`);
         }
 
+        await noteOpenRouterBudgetSuccess(this.env);
         return { payload: (await res.json()) as OpenAIChatPayload };
       };
 

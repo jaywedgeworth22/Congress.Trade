@@ -9,9 +9,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **2026-08-07T07:15Z — GROK — IN PROGRESS — Land CT open PRs + App Store publish.** Merged #1466/#1468/#1470. #1473 OR scorecard blocked on gitleaks (oracle runners offline; hetzner queue). App Store: ASC v1.0 PREPARE_FOR_SUBMISSION, no build yet; release Xcode 26.6 needs `sudo xcodebuild -license accept` + xcode-select switch (agent cannot sudo). ASC API key wired to `~/.secrets/appstore-connect.env`.
-- **2026-08-07T06:40Z — GROK — IN PR #1473 — OR budget circuit + per-doc spend + coverage scorecard.** Branch `grok/or-budget-scorecard-caps`. typecheck+test green; gitleaks queued.
-- **2026-08-07T06:10Z — GROK — IN PROGRESS — iOS BrandTitle ~50% larger in sticky bar (height 28→42, maxWidth 200→300).** Branch `grok/ios-brand-title-larger` PR #1472; rebasing onto main after #1470.
+- **2026-08-07 — GROK — IN PROGRESS — Land all open PRs to deploy.** Conflicts resolved on #1463/#1464/#1465/#1469; babysitting CI + #1471/#1472. #1473 OR scorecard already on main.
+- **2026-08-07T06:10Z — GROK — IN PR #1472 — iOS BrandTitle ~50% larger in sticky bar (height 28→42, maxWidth 200→300).** Branch `grok/ios-brand-title-larger`.
+- **2026-08-05 — GROK — R2 Class A emergency pause (host litestream-congress stopped).** Pace ~256%; ~975 LTX PutObject/hr. Marker /etc/litestream/congress-r2-paused.flag. Rollout: docs/rollouts/2026-08-05-r2-freetier-class-a-survival.md.
+- **[GROK] iOS TestFlight agent ship pipeline (cross-app) — IN PR 2026-08-04 (ST #2442 / CT #1348 / UM #943); IPA export verified; upload blocked on ASC API key handoff 2026-08-04.** Fleet script + per-repo wrappers so agents can archive/sign/upload without Xcode UI. Bundle IDs: trade.socratic.app / trade.congress.ios / services.jays.usage.monitor. Team CC8UTF7ATG. Branch grok/ios-testflight-ship. Needs ASC API key handoff at ~/.secrets/appstore-connect.env if Xcode session upload fails.
 - **2026-08-06T14:19Z — GROK — IN PROGRESS — Latency week focus: track probes/timestamps + live-win H/S/E (5y complete, new filings first).** Branch `grok/latency-week-track`. Issues found: FMP 0 matches / RapidAPI 0 obs / UW 401 / filingsImportedToday=0.
 - **2026-08-06T05:10Z — GROK — IN PROGRESS — Web+iOS filter parity, brand header, latency FMP merge, delivery delete, keyboard UX.** Owner multi-item UI pass. Hand-made issue #1429 stays canonical.
 

@@ -70,6 +70,13 @@ export function classifyProviderErrorClass(
 ): ProviderErrorClass | null {
   const message = (error ?? '').trim().toLowerCase();
   if (!message) return null;
+  // App-level budget gates are not provider billing/auth — do not trip model bans.
+  if (
+    message.includes('llm daily usd budget exceeded')
+    || message.includes('llm per-doc usd budget exceeded')
+    || message.includes('llm skip: doc already has transactions')
+    || message.includes('openrouter key budget circuit open')
+  ) return 'quota';
   if (
     /\b402\b/.test(message)
     || message.includes('payment required')
@@ -78,14 +85,17 @@ export function classifyProviderErrorClass(
     || message.includes('credit balance is too low')
     || message.includes('insufficient_quota')
     || message.includes('billing hard limit')
+    // OpenRouter weekly/key budget — must be billing, not auth (403 alone).
+    || message.includes('budget limit')
+    || message.includes('api key budget')
+    || message.includes('key budget')
+    || message.includes('key limit exceeded')
+    || message.includes('exceeded your monthly')
+    || message.includes('weekly limit')
   ) return 'billing';
   if (
-    message.includes('key limit exceeded')
-    || message.includes('exceeded your monthly')
-  ) return 'quota';
-  if (
     /\b401\b/.test(message)
-    || /\b403\b/.test(message)
+    || (/\b403\b/.test(message) && !message.includes('budget'))
     || message.includes('forbidden')
     || message.includes('invalid_api_key')
     || message.includes('invalid api key')
