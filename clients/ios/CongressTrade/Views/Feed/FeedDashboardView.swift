@@ -760,20 +760,25 @@ struct TradeCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Button {
-                onTickerTap?()
-            } label: {
-                AssetMark(symbol: assetTitle, isTicker: trade.asset.ticker != nil, size: 40)
+            // Only when a ticker exists; AssetMark is EmptyView until a real logo
+            // loads (no blue monogram tiles that steal width from long names).
+            if trade.asset.ticker != nil {
+                Button {
+                    onTickerTap?()
+                } label: {
+                    AssetMark(symbol: assetTitle, isTicker: true, size: 40)
+                }
+                .buttonStyle(.plain)
+                .disabled(onTickerTap == nil)
+                .accessibilityLabel(onTickerTap == nil ? assetTitle : "View \(assetTitle) Trades")
             }
-            .buttonStyle(.plain)
-            .disabled(onTickerTap == nil)
-            .accessibilityLabel(onTickerTap == nil ? assetTitle : "View \(assetTitle) trades")
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(assetTitle)
                         .font(.subheadline.weight(.bold))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                     StatusPill(
                         text: shortTypeLabel,
                         color: trade.transaction.type.tint,
@@ -787,7 +792,7 @@ struct TradeCard: View {
                     Text(politicianLine)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
