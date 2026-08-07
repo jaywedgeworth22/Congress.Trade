@@ -666,23 +666,31 @@ export function buildTransactionsTodayFilingsQuery(
   return { sql, params: [...params, todayIso.slice(0, 10)] };
 }
 
-/** Hard cap on rows in a single CSV export (full-history download). */
-export const MAX_EXPORT_ROWS = 50000;
+/**
+ * @deprecated Product policy (2026-08-06): Premium CSV export is the full
+ * match set — no row cap. Free users get no CSV. Cost control is Premium
+ * auth + per-IP rate limit, not incomplete files. Kept as a named constant
+ * only so older tests/call sites that pass an explicit test limit still
+ * compile; production export does not apply this as a default.
+ */
+export const MAX_EXPORT_ROWS = Number.MAX_SAFE_INTEGER;
 
 /**
- * Build the query backing the CSV export. Unlike the paged feed it
- * drops the cursor backstop (exports the full matching set), orders newest-first
- * for a readable download, and allows up to `maxRows` (>> MAX_TX_LIMIT). The
- * same ticker/member/type/chamber filters apply; `filedSince` is normally unset
- * for callers but is honored if provided.
+ * Build the query backing the CSV export. Unlike the paged feed it drops the
+ * cursor backstop and returns the full matching set (newest-first). Same
+ * ticker/member/type/chamber filters as the feed.
+ *
+ * Optional `maxRows` is for tests / rare operator tooling only — omit it for
+ * production Premium export so the file is complete.
  */
 export function buildTransactionsExportQuery(
   p: TxQueryParams,
-  maxRows = MAX_EXPORT_ROWS,
+  maxRows?: number | null,
 ): BuiltQuery {
   const { where, params } = buildTxFilters(p, false);
-  let limit = Number.isFinite(maxRows) ? Math.floor(Number(maxRows)) : MAX_EXPORT_ROWS;
-  if (limit <= 0 || limit > MAX_EXPORT_ROWS) limit = MAX_EXPORT_ROWS;
+  const hasLimit =
+    maxRows != null && Number.isFinite(maxRows) && Math.floor(Number(maxRows)) > 0;
+  const limit = hasLimit ? Math.floor(Number(maxRows)) : Number.MAX_SAFE_INTEGER;
   const sql =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
@@ -691,7 +699,7 @@ export function buildTransactionsExportQuery(
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')} ` : '') +
-    'ORDER BY t.cursor_seq DESC ' +
-    `LIMIT ${limit}`;
+    'ORDER BY t.cursor_seq DESC' +
+    (hasLimit ? ` LIMIT ${limit}` : '');
   return { sql, params, limit, offset: 0 };
 }
