@@ -56,16 +56,17 @@
  * "Unanimous"/"majority" above means MATERIAL agreement, not byte agreement.
  * The 9 strict/enum fields (ticker, amount_min, amount_max, tx_type, tx_date,
  * owner, is_option, cap_gains_over_200, filing_status) always require exact
- * value equality. The 7 free-text fields (assetName, assetType, assetTypeName,
- * subholding, location, description, supplementalText) compare through a
- * canonical form (casefold, punctuation stripped, company suffixes
- * canonicalized via the existing cleanAssetString helper) so two vendors that
- * both correctly read "First Data Corp." don't disagree merely over casing or
- * punctuation — the single largest cause of the cascade's production
- * 0-publish rate before this normalization (324/324 cascade_unresolved over a
- * 6h sample). Gated by AGREEMENT_TEXT_NORMALIZATION (default on; 'false'
- * restores byte-strict comparison on every tier). See materialRowFingerprint,
- * buildMajorityRows, and resolveAgreedRows below for the mechanics.
+ * value equality. Material free-text (assetName, assetType) also must agree
+ * (through a canonical form when AGREEMENT_TEXT_NORMALIZATION is on). Soft
+ * free-text (assetTypeName, subholding, location, description,
+ * supplementalText) is NOT part of the material fingerprint and NEVER blocks
+ * a publish: models routinely 1/1/1-split on optional footnotes while agreeing
+ * on the trade itself (prod H-2026-20035035: 77/77 rows material-ok, blocked
+ * only on MDT|…|S supplementalText 1/3). Soft fields still prefer a majority
+ * value when one exists; otherwise the highest-confidence non-empty reading
+ * (else null). Gated by AGREEMENT_TEXT_NORMALIZATION (default on; 'false'
+ * restores byte-strict comparison on material free-text). See
+ * materialRowFingerprint, buildMajorityRows, and resolveAgreedRows.
  */
 
 import type { Env, ParsedTx, Transaction } from '../shared/types.ts';
@@ -212,17 +213,30 @@ function isValidTransactionDate(value: string | null | undefined): value is stri
 }
 
 /**
- * Exact material-row fingerprint used by the unanimous tiers. Confidence and
- * rawText are intentionally excluded: they are model/audit metadata, not facts
- * disclosed by the filer. Every other publishable filing-row detail is part of
- * the comparison so agreement cannot hide a different owner, bracket, asset
- * classification, option/capital-gain flag, or structured row detail.
+ * Free-text fields that are footnotes / display labels, not the disclosed
+ * trade identity. Excluded from {@link materialRowFingerprint} and allowed to
+ * soft-resolve in {@link buildMajorityRows} without parking the doc for humans.
+ */
+const SOFT_FREE_TEXT_FIELDS = [
+  'assetTypeName',
+  'subholding',
+  'location',
+  'description',
+  'supplementalText',
+] as const;
+type SoftFreeTextField = (typeof SOFT_FREE_TEXT_FIELDS)[number];
+
+/**
+ * Exact material-row fingerprint used by the unanimous tiers. Confidence,
+ * rawText, and soft free-text footnotes are intentionally excluded: they are
+ * model/audit metadata or optional narration, not the disclosed trade facts.
+ * Material comparison still covers owner, bracket, asset classification
+ * (assetType), option/capital-gain flags, and filing status.
  *
  * The 9 strict/enum fields (ticker, txDate, txType, amountMin, amountMax,
  * owner, isOption, capGainsOver200, filingStatus) ALWAYS go through
- * canonicalText only, regardless of `normalizeText` — no loosening there. The
- * 7 free-text fields (assetName, assetType, assetTypeName, subholding,
- * location, description, supplementalText) go through canonicalAgreementText
+ * canonicalText only, regardless of `normalizeText` — no loosening there.
+ * Material free-text (assetName, assetType) go through canonicalAgreementText
  * when `normalizeText` is true (AGREEMENT_TEXT_NORMALIZATION default-on; see
  * resolveAgreementEnv), else canonicalText — the exact legacy byte-strict
  * comparison, restored verbatim by the kill switch.
@@ -240,14 +254,9 @@ function materialRowFingerprint(tx: ParsedTx, normalizeText: boolean): string | 
     tx.amountMax,
     canonicalText(tx.owner),
     text(tx.assetType),
-    text(tx.assetTypeName),
     tx.isOption === true,
     tx.capGainsOver200 === true,
     canonicalText(tx.filingStatus),
-    text(tx.subholding),
-    text(tx.location),
-    text(tx.description),
-    text(tx.supplementalText),
   ]);
 }
 
@@ -1052,21 +1061,19 @@ interface MajorityBuild {
 /**
  * Build a fail-closed tier-3 majority. Unlike the reviewer-facing consensus
  * grid, publishing may not ignore minority-only rows or fall back to one
- * high-confidence model for a material field. Every union row must be backed by
- * at least two of the three models, and every publishable field must itself
- * receive at least two votes. A duplicate arbitration key is ambiguous to align
- * across models, so tier 3 rejects it instead of collapsing a disclosed lot.
+ * high-confidence model for a MATERIAL field. Every union row must be backed by
+ * at least two of the three models, and every hard field must itself receive
+ * at least two votes. Soft free-text footnotes (see SOFT_FREE_TEXT_FIELDS) do
+ * not block: no majority → highest-confidence non-empty, else null.
+ * A duplicate arbitration key is ambiguous to align across models, so tier 3
+ * rejects it instead of collapsing a disclosed lot.
  *
- * Fields vote through the SAME comparator as materialRowFingerprint (shared
- * per constraint: one comparator for both the unanimous tiers and this
- * majority resolve): the 4 strict/enum fields still handled here (ticker,
- * txType, owner, filingStatus — the rest of the 9 strict fields are voted as
- * txDate/amount/isOption/capGainsOver200 special cases below) stay on
- * canonicalText; the 7 free-text fields vote through canonicalAgreementText
- * when `normalizeText` is true. When the winning bloc's members carry
- * byte-different-but-normalize-equal text, the published value is the
- * CONTRIBUTING row with the higher per-row confidence, ties broken by slot
- * order (a before b before c) — never an arbitrary "first seen" pick.
+ * Material fields vote through the SAME comparator as materialRowFingerprint
+ * (shared constraint: one comparator for unanimous tiers and this majority
+ * resolve): strict/enum fields stay on canonicalText; material free-text
+ * (assetName, assetType) vote through canonicalAgreementText when
+ * `normalizeText` is true. Soft free-text uses the same text comparator but
+ * never fails the row.
  */
 function buildMajorityRows(
   reads: CandidateDocResult[],
@@ -1081,19 +1088,15 @@ function buildMajorityRows(
     | 'amount'
     | 'owner'
     | 'assetType'
-    | 'assetTypeName'
+    | SoftFreeTextField
     | 'isOption'
     | 'capGainsOver200'
-    | 'filingStatus'
-    | 'subholding'
-    | 'location'
-    | 'description'
-    | 'supplementalText';
-  const fields: MaterialField[] = [
+    | 'filingStatus';
+  const hardFields: MaterialField[] = [
     'ticker', 'assetName', 'txDate', 'txType', 'amount', 'owner', 'assetType',
-    'assetTypeName', 'isOption', 'capGainsOver200', 'filingStatus', 'subholding',
-    'location', 'description', 'supplementalText',
+    'isOption', 'capGainsOver200', 'filingStatus',
   ];
+  const softFields: SoftFreeTextField[] = [...SOFT_FREE_TEXT_FIELDS];
   // The 4 remaining strict/enum fields voted through this generic path (the
   // other 5 strict fields — txDate, amountMin/amountMax, isOption,
   // capGainsOver200 — are special-cased below); these ALWAYS stay on
@@ -1112,6 +1115,36 @@ function buildMajorityRows(
       return canonicalAgreementText(raw, field === 'assetName' ? tx.ticker : null);
     }
     return canonicalText(raw);
+  };
+  const pickSoftValue = (present: ParsedTx[], field: SoftFreeTextField): string | null => {
+    const blocs = new Map<string, { count: number; entries: Array<{ tx: ParsedTx; order: number }> }>();
+    present.forEach((tx, order) => {
+      const key = voteKey(tx, field);
+      const bloc = blocs.get(key);
+      if (bloc) { bloc.count += 1; bloc.entries.push({ tx, order }); }
+      else blocs.set(key, { count: 1, entries: [{ tx, order }] });
+    });
+    const ranked = [...blocs.entries()].sort(
+      (a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]),
+    );
+    const winnerBloc = ranked[0]?.[1];
+    if (winnerBloc && winnerBloc.count * 2 > totalModels) {
+      const winnerEntry = [...winnerBloc.entries].sort(
+        (x, y) => (y.tx.confidence ?? 0) - (x.tx.confidence ?? 0) || x.order - y.order,
+      )[0];
+      const raw = winnerEntry.tx[field];
+      return raw == null || String(raw).trim() === '' ? null : String(raw);
+    }
+    // No majority on an optional footnote — take the best non-empty reading
+    // rather than parking a fully material-agreed trade for a human.
+    const nonEmpty = present
+      .map((tx, order) => ({ tx, order, text: tx[field] }))
+      .filter((e) => e.text != null && String(e.text).trim() !== '');
+    if (nonEmpty.length === 0) return null;
+    nonEmpty.sort(
+      (a, b) => (b.tx.confidence ?? 0) - (a.tx.confidence ?? 0) || a.order - b.order,
+    );
+    return String(nonEmpty[0].text);
   };
   const groups = reads.map((read) => {
     const grouped = new Map<string, ParsedTx[]>();
@@ -1146,7 +1179,7 @@ function buildMajorityRows(
     }
     const base = [...present].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
     const winners = new Map<MaterialField, unknown>();
-    for (const field of fields) {
+    for (const field of hardFields) {
       const blocs = new Map<string, { count: number; entries: Array<{ tx: ParsedTx; order: number }> }>();
       present.forEach((tx, order) => {
         const key = voteKey(tx, field);
@@ -1169,6 +1202,9 @@ function buildMajorityRows(
         (x, y) => (y.tx.confidence ?? 0) - (x.tx.confidence ?? 0) || x.order - y.order,
       )[0];
       winners.set(field, valueFor(winnerEntry.tx, field));
+    }
+    for (const field of softFields) {
+      winners.set(field, pickSoftValue(present, field));
     }
     const amount = winners.get('amount') as AmountBracket;
     built.push({

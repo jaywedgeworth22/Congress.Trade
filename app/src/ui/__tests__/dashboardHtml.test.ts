@@ -1317,6 +1317,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("etf: 'ETF'");
     expect(DASHBOARD_HTML).toContain("['GS', 'Government Securities and Agency Debt', 'Government / Municipal Debt']");
     expect(DASHBOARD_HTML).toContain("['ST', 'Stocks (including ADRs)', 'Public Equity']");
+    // Datalist option text must include the human label so typing "Stock" matches ST.
+    expect(DASHBOARD_HTML).toContain("code + ' — ' + name");
     expect(DASHBOARD_HTML).toContain("kvRow('Asset Type', assetTypeDetailHtml(row))");
     expect(DASHBOARD_HTML).not.toContain("kvRow('Instrument', row.isOption ? 'Option' : 'Equity / Other')");
   });

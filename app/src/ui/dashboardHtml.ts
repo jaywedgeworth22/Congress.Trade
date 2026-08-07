@@ -2718,9 +2718,18 @@ function ensureReviewAssetTypeDatalists() {
   ['house', 'senate', 'all'].forEach(function (chamber) {
     var dl = document.createElement('datalist');
     dl.id = reviewAssetTypeDatalistId(chamber);
+    // Put the human label in option *text* (not only the label= attr). Browsers
+    // filter datalist suggestions on visible text; with only value="ST" and a
+    // label= attribute, typing "Stock" often shows no match even though House
+    // PTRs mark public equity as [ST] / "Stocks (including ADRs)".
     dl.innerHTML = reviewAssetPairsForChamber(chamber).map(function (pair) {
-      var label = pair[0] === pair[1] ? pair[2] : pair[1] + ' - ' + pair[2];
-      return '<option value="' + esc(pair[0]) + '" label="' + esc(label) + '"></option>';
+      var code = String(pair[0] || '');
+      var name = String(pair[1] || '');
+      var category = String(pair[2] || '');
+      var text = code === name
+        ? name + (category ? ' — ' + category : '')
+        : code + ' — ' + name + (category ? ' (' + category + ')' : '');
+      return '<option value="' + esc(code) + '">' + esc(text) + '</option>';
     }).join('');
     document.body.appendChild(dl);
   });
