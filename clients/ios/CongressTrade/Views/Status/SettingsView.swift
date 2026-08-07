@@ -171,20 +171,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    #if DEBUG
-                    if let token = pushManager.deviceToken {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("APNs Device Token (Debug)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(token)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    #endif
+                    // APNs device token is never shown in Settings (not even DEBUG).
 
                     if let error = pushManager.lastError {
                         Text(error)

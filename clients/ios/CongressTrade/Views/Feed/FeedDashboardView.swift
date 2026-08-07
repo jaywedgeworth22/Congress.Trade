@@ -342,7 +342,10 @@ struct FeedControlBar: View {
                     }
                 } label: {
                     FilterMenuLabel(
-                        title: store.selectedChambers.isEmpty ? "All Branches" : store.selectedChambers.map { $0.shortLabel }.joined(separator: ", "),
+                        // Compact "All" when default so all four filters fit on one row.
+                        title: store.selectedChambers.isEmpty
+                            ? "All"
+                            : store.selectedChambers.map { $0.shortLabel }.joined(separator: ", "),
                         icon: "building.columns",
                         isActive: !store.selectedChambers.isEmpty
                     )
@@ -367,7 +370,7 @@ struct FeedControlBar: View {
                     }
                 } label: {
                     FilterMenuLabel(
-                        title: store.selectedParty?.label ?? "All Parties",
+                        title: store.selectedParty?.label ?? "All",
                         icon: "person.2.fill",
                         isActive: store.selectedParty != nil
                     )
@@ -389,7 +392,7 @@ struct FeedControlBar: View {
                     }
                 } label: {
                     SidesFilterMenuLabel(
-                        title: store.selectedTradeType.label,
+                        title: store.selectedTradeType == .all ? "All" : store.selectedTradeType.label,
                         isActive: store.selectedTradeType != .all,
                         selected: store.selectedTradeType
                     )
