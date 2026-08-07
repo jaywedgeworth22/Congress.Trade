@@ -247,6 +247,8 @@ struct DeliveryView: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            .navigationTitle("Delivery")
+            .inlineNavigationTitle()
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }

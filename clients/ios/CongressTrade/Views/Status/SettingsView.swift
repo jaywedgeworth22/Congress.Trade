@@ -120,16 +120,25 @@ struct SettingsView: View {
                     Text("Sign in to manage delivery alerts and a saved watchlist. Preferences sync to the Congress.Trade backend — this app never holds provider keys or admin tokens.")
                 }
 
-                Section("Appearance") {
-                    Picker("Theme Mode", selection: $appColorScheme) {
-                        Text("Match System").tag("system")
-                        Text("Light").tag("light")
-                        Text("Dark").tag("dark")
+                Section {
+                    HStack {
+                        Text("Theme")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 12)
+                        ThemeSegmentControl(selection: $appColorScheme)
+                            .frame(maxWidth: 280)
                     }
-                    .pickerStyle(.segmented)
+                    .padding(.vertical, 2)
+                    .accessibilityElement(children: .contain)
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("Light, Dark, or System — same control as congress.trade.")
+                        .font(.footnote)
                 }
 
-                Section("Push Notifications (APNs)") {
+                Section {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Real-Time Trade Alerts")
@@ -165,7 +174,7 @@ struct SettingsView: View {
                     #if DEBUG
                     if let token = pushManager.deviceToken {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("APNs Device Token (debug)")
+                            Text("APNs Device Token (Debug)")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Text(token)
@@ -182,6 +191,8 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
+                } header: {
+                    Text("Push Notifications (APNs)")
                 }
 
                 if store.signedIn && !store.isPremium {
@@ -251,6 +262,8 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.background)
+            .navigationTitle("Settings")
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -265,22 +278,23 @@ struct SettingsView: View {
     }
 
     private var pushStatusCaption: String {
+        // Secondary status / data lines: sentence case per FLEET-UI-COPY.md
         if !pushManager.isAuthorized {
-            return "Notifications Disabled"
+            return "notifications disabled"
         }
         if !store.signedIn {
-            return "Sign in to register this device"
+            return "sign in to register this device"
         }
         if pushManager.isBackendSynced {
-            return "Device registered for alerts"
+            return "device registered for alerts"
         }
         if pushManager.isRegistering {
-            return "Registering device…"
+            return "registering device…"
         }
         if pushManager.lastError != nil {
-            return "Registration failed — tap Sync"
+            return "registration failed — tap Sync"
         }
-        return "Permission granted — waiting for sync"
+        return "permission granted — waiting for sync"
     }
 
     private var pushStatusColor: Color {
