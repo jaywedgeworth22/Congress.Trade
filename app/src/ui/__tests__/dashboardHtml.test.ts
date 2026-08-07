@@ -432,6 +432,18 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
+  it('spells out politicians with room and allows pol/pols when space is tight', () => {
+    expect(DASHBOARD_HTML).toContain('function polWord(n)');
+    expect(DASHBOARD_HTML).toContain('function polCell(n)');
+    expect(DASHBOARD_HTML).toContain('class="u-full"');
+    expect(DASHBOARD_HTML).toContain('class="u-abbr"');
+    expect(DASHBOARD_HTML).toContain("n === 1 ? 'pol' : 'pols'");
+    expect(DASHBOARD_HTML).toContain('polWord(c.memberCount)');
+    // Dense tables / narrow cards / phones flip to abbr; spacious defaults keep full.
+    expect(DASHBOARD_HTML).toContain('@container ccard (max-width: 280px)');
+    expect(DASHBOARD_HTML).toContain('#view-trends table .u-abbr');
+  });
+
   it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
     expect(DASHBOARD_HTML).toContain("var pref = 'system'");
     expect(DASHBOARD_HTML).toContain("return 'system'");
