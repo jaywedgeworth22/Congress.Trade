@@ -561,6 +561,11 @@ export interface Env {
   TIINGO_API_KEY?: string;
   /** Logo.dev public token for the ticker-logo proxy. */
   LOGODEV_PUBLISHABLE_KEY?: string;
+  /**
+   * Alias used on Coolify/Hetzner (and some older env files). Same publishable
+   * logo.dev key as LOGODEV_PUBLISHABLE_KEY — accepted so either name works.
+   */
+  LOGO_DEV_TOKEN?: string;
   /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   /** Max review docs the autonomous pass attempts per cron tick (default 3). */

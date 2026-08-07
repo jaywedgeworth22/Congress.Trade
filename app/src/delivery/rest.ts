@@ -649,9 +649,16 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /logos/ticker --------------------------------------------------
   // Cached company-logo proxy (see ui/tickerLogos.ts). Reachable at
   // /api/logos/ticker?symbol=AAPL, matching the dashboard's <img> src.
-  r.get('/logos/ticker', async (c) =>
-    handleTickerLogoRequest(new URL(c.req.url), (await resolveSecret(c.env, 'LOGODEV_PUBLISHABLE_KEY')).value),
-  );
+  r.get('/logos/ticker', async (c) => {
+    // Coolify historically injected LOGO_DEV_TOKEN; code/docs use LOGODEV_PUBLISHABLE_KEY.
+    // Accept either so logo.dev is not silently skipped.
+    const primary = (await resolveSecret(c.env, 'LOGODEV_PUBLISHABLE_KEY')).value;
+    const alias = primary
+      ? undefined
+      : (await resolveSecret(c.env, 'LOGO_DEV_TOKEN')).value
+        ?? (typeof c.env.LOGO_DEV_TOKEN === 'string' ? c.env.LOGO_DEV_TOKEN : undefined);
+    return handleTickerLogoRequest(new URL(c.req.url), primary ?? alias);
+  });
 
   // --- GET /filings/:docId ------------------------------------------------
   // Detail endpoint on the same public corpus as /transactions: applies the
