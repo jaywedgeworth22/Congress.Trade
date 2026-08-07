@@ -1,27 +1,28 @@
 # Local ticker logos (repo-hosted)
 
-Served **first** by `GET /api/logos/ticker?symbol=…` (before logo.dev / GitHub).
+**These are optional gap-fills**, not necessarily the best or final marks.
 
-## Layout
+Resolution order for `GET /api/logos/ticker`:
 
-| File | Symbol(s) |
-|------|-----------|
-| `TSCO.png` | Tractor Supply |
-| `SPCX.png` | SpaceX (private disclosure name) |
-| `HONAV.png` | Honeywell Aerospace |
-| `HON.png` | Honeywell |
-| `BRK.B.png` / `BRKB.png` / `BRK-B.png` | Berkshire Hathaway Class B |
-| Plus copies of common mirrors (HUBB, ECL, …) when useful |
+1. **logo.dev** (when `LOGODEV_PUBLISHABLE_KEY` / `LOGO_DEV_TOKEN` is live)
+2. **This pack** (only if logo.dev misses or is unavailable)
+3. GitHub ticker-logos mirror
 
-## Adding a logo
+So a better logo.dev hit always wins over files here. Overwrite any PNG anytime
+you have a cleaner official asset.
 
-1. Save a **square PNG** (256×256 preferred) as `SYMBOL.png` (uppercase ticker).
-2. Commit under this directory — no code change if the filename matches the symbol.
-3. After deploy, hard-refresh; `x-logo-source: local:ticker-logos/SYMBOL.png`.
+## Current options (2026-08-07)
 
-## Owner-supplied pack (2026-08-07)
+| File | Use | Notes |
+|------|-----|--------|
+| `TSCO.png` | Tractor Supply | Interim TSC-style option |
+| `SPCX.png` | SpaceX (disclosure) | Interim X mark |
+| `HONAV.png` / `HON.png` | Honeywell Aerospace / HON | Interim wordmark |
+| `BRK.B.png` / `BRKB.png` / `BRK-B.png` | Berkshire B | Interim BH monogram |
+| Others | HUBB, ECL, … | Mirrors; replace freely |
 
-- Berkshire **BH** mark → BRK.B / BRKB / BRK-B  
-- Tractor Supply **TSC** → TSCO  
-- Honeywell wordmark → HONAV + HON  
-- SpaceX **X** mark → SPCX  
+## Replace a logo
+
+1. Drop a square PNG (256×256 preferred) as `SYMBOL.png`.
+2. Commit — no code change if the filename matches the ticker.
+3. Deploy; confirm with `curl -sI '…/api/logos/ticker?symbol=TSCO' | grep x-logo-source`.

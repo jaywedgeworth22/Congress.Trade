@@ -7,11 +7,11 @@
  * provider's key + allowed-referrer stay server-side, and the edge caches the
  * result). Sources, in order:
  *
- *   0. Repo-hosted pack (`app/public/assets/ticker-logos/SYMBOL.png`) — for
- *      private names and thin coverage (SPCX, HONAV, TSCO, BRK.B, …).
- *   1. logo.dev — best general coverage. Publishable key may be
- *      LOGODEV_PUBLISHABLE_KEY or Coolify alias LOGO_DEV_TOKEN.
- *   2. davidepalazzo/ticker-logos on GitHub — if logo.dev is absent / miss.
+ *   1. logo.dev — best general coverage when the key is live (prefer over
+ *      interim local options). Key: LOGODEV_PUBLISHABLE_KEY or LOGO_DEV_TOKEN.
+ *   2. Repo pack (`app/public/assets/ticker-logos/SYMBOL.png`) — gap-fill for
+ *      private / thin-coverage names (SPCX, HONAV, …). Owner options, replaceable.
+ *   3. davidepalazzo/ticker-logos on GitHub — last resort.
  *
  * The dashboard renders `<img src="/api/logos/ticker?symbol=AAPL">` and toggles
  * only the *framing* client-side (glass "tile" vs bare "transparent" vs "off").
@@ -138,11 +138,7 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
   }
   const theme = url.searchParams.get('theme') === 'light' ? 'light' : 'dark';
 
-  // 0) Repo-hosted pack first (owner overrides / private names).
-  const local = tryLocalTickerLogo(symbol);
-  if (local) return local;
-
-  // 1) logo.dev — referrer-restricted key, so spoof the allowed origin.
+  // 1) logo.dev first when key is present (preferred over interim local options).
   if (logoDevToken) {
     try {
       const res = await trackedFetch(logoDevUrl(symbol, logoDevToken, theme), {
@@ -153,11 +149,15 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
         return passThroughPng(res, 'logo.dev');
       }
     } catch {
-      /* fall through to the GitHub source */
+      /* fall through */
     }
   }
 
-  // 2) davidepalazzo/ticker-logos on GitHub (fallback), trying spelling variants.
+  // 2) Repo pack — gap-fill only (private names / logo.dev miss).
+  const local = tryLocalTickerLogo(symbol);
+  if (local) return local;
+
+  // 3) davidepalazzo/ticker-logos on GitHub (last resort).
   for (const candidate of tickerLogoCandidates(symbol)) {
     let upstream: Response;
     try {
