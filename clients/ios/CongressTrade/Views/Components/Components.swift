@@ -111,7 +111,9 @@ struct AssetMark: View {
 
     private var themedLogoURL: URL? {
         guard isTicker else { return nil }
-        guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+        let trimmed = symbol.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let encodedSymbol = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return nil
         }
         // Logos are served at site origin, not under /api/client/v1.
@@ -131,6 +133,8 @@ struct AssetMark: View {
     }
 
     var body: some View {
+        // No monogram / blue-square placeholders: when there is no real logo,
+        // take zero space so asset + politician names get the width.
         if let url = themedLogoURL {
             AsyncImage(url: url) { phase in
                 switch phase {
@@ -151,48 +155,51 @@ struct AssetMark: View {
                                 .stroke(AppTheme.borderColor, lineWidth: 1)
                         )
                 default:
-                    fallbackMark
+                    EmptyView()
                 }
             }
-        } else {
-            fallbackMark
         }
-    }
-
-    private var fallbackMark: some View {
-        Text(String(symbol.prefix(4)).uppercased())
-            .font(.system(size: max(9, size * 0.28), weight: .heavy, design: .monospaced))
-            .frame(width: size, height: size)
-            .foregroundStyle(.white)
-            .background(
-                AppTheme.primaryGradient,
-                in: RoundedRectangle(cornerRadius: size * 0.22)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: size * 0.22)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
     }
 }
 
-/// Compact money/count formatting shared by Trends KPIs.
+/// Compact money/count formatting (Trends KPIs + trade amount brackets).
+/// Fleet UI copy: lowercase suffixes `$99.8k`, `$1.2m`, `$3.4b`.
 enum CompactFormat {
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
         let absV = abs(value)
         let sign = value < 0 ? "-" : ""
-        if absV >= 1_000_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000_000))b" }
-        if absV >= 1_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000))m" }
-        if absV >= 1_000 { return "\(sign)$\(String(format: "%.0f", absV / 1_000))k" }
+        if absV >= 1_000_000_000 {
+            return "\(sign)$\(Self.compactNumber(absV / 1_000_000_000))b"
+        }
+        if absV >= 1_000_000 {
+            return "\(sign)$\(Self.compactNumber(absV / 1_000_000))m"
+        }
+        if absV >= 1_000 {
+            return "\(sign)$\(Self.compactNumber(absV / 1_000))k"
+        }
         return "\(sign)$\(String(format: "%.0f", absV))"
+    }
+
+    /// STOCK Act-style bracket floors/ceilings: `$15k`, `$50k`, `$500k`, `$1m`.
+    static func usdBracket(_ value: Int) -> String {
+        usd(Double(value))
     }
 
     static func count(_ value: Int?) -> String {
         guard let value else { return "—" }
         let absV = abs(Double(value))
-        if absV >= 1_000_000 { return "\(String(format: "%.1f", Double(value) / 1_000_000.0))m" }
-        if absV >= 10_000 { return "\(String(format: "%.1f", Double(value) / 1_000.0))k" }
+        if absV >= 1_000_000 { return "\(Self.compactNumber(Double(value) / 1_000_000.0))m" }
+        if absV >= 10_000 { return "\(Self.compactNumber(Double(value) / 1_000.0))k" }
         return value.formatted(.number.grouping(.automatic))
+    }
+
+    /// Drop trailing `.0` so `$1.0m` → `$1m`, keep `$1.2m` / `$15k`.
+    private static func compactNumber(_ value: Double) -> String {
+        if value == value.rounded(.towardZero) || abs(value - value.rounded()) < 0.05 {
+            return String(format: "%.0f", value.rounded())
+        }
+        return String(format: "%.1f", value)
     }
 }
 
@@ -352,11 +359,12 @@ extension Optional where Wrapped == String {
 
 @MainActor
 extension ClientTrade {
+    /// Compact bracket label, e.g. `$15k - $50k`, `$500k - $1m`.
     var amountLabel: String {
         guard let min = transaction.amountMin else { return "Undisclosed" }
-        let low = DisplayFormatters.currency.string(from: NSNumber(value: min)) ?? "$\(min)"
+        let low = CompactFormat.usdBracket(min)
         guard let max = transaction.amountMax else { return "\(low)+" }
-        let high = DisplayFormatters.currency.string(from: NSNumber(value: max)) ?? "$\(max)"
+        let high = CompactFormat.usdBracket(max)
         return "\(low) - \(high)"
     }
 }

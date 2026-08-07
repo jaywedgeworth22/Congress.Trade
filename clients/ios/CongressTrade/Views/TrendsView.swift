@@ -65,10 +65,8 @@ struct TrendsView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Empty leading slot so brand stays centered like Trades (export is Trades-only).
-                ToolbarItem(placement: .topBarLeading) {
-                    Color.clear.frame(width: 28, height: 28)
-                }
+                // No leading placeholder — it was tappable chrome with no action.
+                // Brand centers via .principal; info is the only trailing control.
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
