@@ -3347,7 +3347,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'FMP_API_KEY', 'FMP_LATENCY_API_KEY', 'FMP_RAPIDAPI_KEY', 'RAPIDAPI_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
         'UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY',
         'FINNHUB_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
-        'LOGODEV_PUBLISHABLE_KEY',
+        'LOGODEV_PUBLISHABLE_KEY', 'LOGO_DEV_TOKEN',
       ],
       'model-keys': [
         'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
@@ -3487,6 +3487,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'TWELVEDATA_API_KEY',
       'FINNHUB_API_KEY',
       'LOGODEV_PUBLISHABLE_KEY',
+      'LOGO_DEV_TOKEN',
       'APP_B_IMPORT_URL',
       'APP_B_INGEST_TOKEN',
       'INGEST_TOKEN',
@@ -3973,17 +3974,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     addMarketProvider('tiingo', 'Tiingo Reference', !!runtimeSecrets.TIINGO_API_KEY, runtimeSecrets.TIINGO_API_KEY ? 'Reference/price fallback configured' : 'TIINGO_API_KEY is not available to this Worker runtime');
     addMarketProvider('edgar', 'SEC EDGAR Reference', true, 'Free fallback; no secret required');
 
+    const logoDevToken = runtimeSecrets.LOGODEV_PUBLISHABLE_KEY || runtimeSecrets.LOGO_DEV_TOKEN;
     connections.push({
       id: 'provider:logodev',
       label: 'Logo.dev',
-      status: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'ok' : 'warn',
-      configured: !!runtimeSecrets.LOGODEV_PUBLISHABLE_KEY,
+      status: logoDevToken ? 'ok' : 'warn',
+      configured: !!logoDevToken,
       lastUsedAt: null,
       callsTotal: 0,
       callsLast24h: 0,
       callsToday: 0,
       errorsLast24h: 0,
-      note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
+      note: logoDevToken
+        ? (runtimeSecrets.LOGODEV_PUBLISHABLE_KEY
+          ? 'Ticker logo proxy token available (LOGODEV_PUBLISHABLE_KEY)'
+          : 'Ticker logo proxy token available via LOGO_DEV_TOKEN alias')
+        : 'Neither LOGODEV_PUBLISHABLE_KEY nor LOGO_DEV_TOKEN is available to this runtime',
     });
 
     // Read the maintained, indexed securities_ref.latest_price_date instead of
