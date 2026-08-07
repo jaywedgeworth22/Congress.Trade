@@ -220,10 +220,21 @@ function paceLine(label: string, used: number, limit: number, monthElapsed: numb
 /** This process's product identity for Pushover footers. */
 export const R2_SENDER_APP_LABEL = 'Congress.Trade';
 
-/** Append `(sent from APP)` once so the runner is visible next to the subject logo. */
-export function appendSentFromFooter(body: string, senderLabel: string = R2_SENDER_APP_LABEL): string {
-  const footer = `(sent from ${senderLabel})`;
+/**
+ * Append `(sent from APP)` only when messaging under another product's Pushover
+ * logo (subject ≠ this runner). Same-product messages omit the footer.
+ *
+ * @param subjectIsSelf true when the free-tier subject matches this host (CT).
+ */
+export function appendSentFromFooter(
+  body: string,
+  opts?: { subjectIsSelf?: boolean; senderLabel?: string },
+): string {
   const trimmed = body.replace(/\s+$/u, '');
+  const subjectIsSelf = opts?.subjectIsSelf ?? true;
+  if (subjectIsSelf) return trimmed;
+  const senderLabel = opts?.senderLabel ?? R2_SENDER_APP_LABEL;
+  const footer = `(sent from ${senderLabel})`;
   if (trimmed.endsWith(footer)) return trimmed;
   return `${trimmed}\n${footer}`;
 }
@@ -281,7 +292,8 @@ export function formatUsageMessage(s: R2UsageSummary, now: Date): string {
   const status = worst >= 80 ? '⚠️ OVER 80% — action needed' : worst >= 50 ? 'Heads-up: >50% projected' : 'OK — well within free tier';
   lines.push(`Status: ${status}`);
   lines.push(formatOwnBackupRegimenLine(false));
-  return appendSentFromFooter(lines.join('\n'));
+  // Own free tier under CT logo — no sent-from footer (only peers would stamp one).
+  return appendSentFromFooter(lines.join('\n'), { subjectIsSelf: true });
 }
 
 interface GraphqlResponse {

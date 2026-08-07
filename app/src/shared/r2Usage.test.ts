@@ -97,7 +97,8 @@ describe('formatUsageMessage', () => {
     expect(msg).toContain('Status: OK — well within free tier');
     expect(msg).toContain('Backup:');
     expect(msg).toContain('Hetzner');
-    expect(msg).toContain('(sent from Congress.Trade)');
+    // Own free tier under CT logo — no sent-from footer.
+    expect(msg).not.toContain('(sent from');
   });
 
   it('warns when any dimension projects over 80%', () => {
