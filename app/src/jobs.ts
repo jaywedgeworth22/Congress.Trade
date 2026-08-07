@@ -608,26 +608,39 @@ export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promis
  */
 export async function maybeRunDailyRetentionJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
-  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'retention', day))) return 'stamped';
 
-  // Daily R2 free-tier usage summary → Pushover. Two HTTP calls and zero DB
-  // writes, so it deliberately runs BEFORE the dailyBudgetExceeded gate: an
-  // over-budget day is exactly when this report must still go out. No-ops
-  // when the Cloudflare analytics token or Pushover creds are unconfigured.
-  try {
-    const r2Secrets = await resolveSecrets(env, [
-      'CLOUDFLARE_ACCOUNT_ID',
-      'CLOUDFLARE_R2_ANALYTICS_TOKEN',
-      'PUSHOVER_APP_TOKEN',
-      'PUSHOVER_USER_KEY',
-    ]);
-    const r2 = await runR2UsageSummary(env, now, r2Secrets);
-    if (!r2.sent && r2.reason && !/not configured/.test(r2.reason)) {
-      console.warn('r2 usage summary not sent:', r2.reason);
+  // Daily R2 free-tier usage summary → Pushover. Own day-stamp (not retention's)
+  // so we can wait until fleet-staggered UTC hour 20 (ST=14, UM=8) without
+  // burning the once-per-day retention stamp on an early-hour skip.
+  // Deno in prod; Node/vitest in unit tests — read both without throwing.
+  const preferHourEnv =
+    (typeof Deno !== 'undefined' ? Deno.env.get('R2_USAGE_DIGEST_UTC_HOUR') : undefined) ??
+    (typeof process !== 'undefined' ? process.env?.R2_USAGE_DIGEST_UTC_HOUR : undefined) ??
+    '20';
+  const preferHourRaw = Number(preferHourEnv);
+  const preferHour =
+    Number.isFinite(preferHourRaw) && preferHourRaw >= 0 && preferHourRaw <= 23 ? preferHourRaw : 20;
+  if (now.getUTCHours() >= preferHour) {
+    if (await stampDaily(env, LANE_KEY_PREFIX + 'r2-usage', day)) {
+      try {
+        const r2Secrets = await resolveSecrets(env, [
+          'CLOUDFLARE_ACCOUNT_ID',
+          'CLOUDFLARE_R2_ANALYTICS_TOKEN',
+          'PUSHOVER_APP_TOKEN',
+          'PUSHOVER_CT_API_TOKEN',
+          'PUSHOVER_USER_KEY',
+        ]);
+        const r2 = await runR2UsageSummary(env, now, r2Secrets);
+        if (!r2.sent && r2.reason && !/not configured/.test(r2.reason)) {
+          console.warn('r2 usage summary not sent:', r2.reason);
+        }
+      } catch (err) {
+        console.warn('r2 usage summary failed:', (err as Error).message);
+      }
     }
-  } catch (err) {
-    console.warn('r2 usage summary failed:', (err as Error).message);
   }
+
+  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'retention', day))) return 'stamped';
 
   if (await dailyBudgetExceeded(env, 'retention sweep')) return 'budget';
 

@@ -95,6 +95,9 @@ describe('formatUsageMessage', () => {
     expect(msg).toContain('Class A ops: 2500 (0.25% MTD, pace → 0.25% at month-end)');
     expect(msg).toContain('Class B ops: 17.5K (0.18% MTD, pace → 0.18% at month-end)');
     expect(msg).toContain('Status: OK — well within free tier');
+    expect(msg).toContain('Backup:');
+    expect(msg).toContain('Hetzner');
+    expect(msg).toContain('(sent from Congress.Trade)');
   });
 
   it('warns when any dimension projects over 80%', () => {

@@ -217,6 +217,39 @@ function paceLine(label: string, used: number, limit: number, monthElapsed: numb
   return `${label}: ${fmtCount(used)} (${current}% MTD, pace → ${projected}% at month-end)`;
 }
 
+/** This process's product identity for Pushover footers. */
+export const R2_SENDER_APP_LABEL = 'Congress.Trade';
+
+/** Append `(sent from APP)` once so the runner is visible next to the subject logo. */
+export function appendSentFromFooter(body: string, senderLabel: string = R2_SENDER_APP_LABEL): string {
+  const footer = `(sent from ${senderLabel})`;
+  const trimmed = body.replace(/\s+$/u, '');
+  if (trimmed.endsWith(footer)) return trimmed;
+  return `${trimmed}\n${footer}`;
+}
+
+/**
+ * Prefer the SUBJECT product's Pushover app token (CT for own free tier).
+ * When messaging about another fleet free tier, pass that product's token env.
+ */
+export function resolveCongressPushoverAppToken(
+  secrets: { PUSHOVER_APP_TOKEN?: string; PUSHOVER_CT_API_TOKEN?: string },
+): string {
+  return (
+    secrets.PUSHOVER_CT_API_TOKEN?.trim() ||
+    secrets.PUSHOVER_APP_TOKEN?.trim() ||
+    ''
+  );
+}
+
+/** Own backup reminder: shallow R2 litestream + Hetzner ~24h volume floor. */
+export function formatOwnBackupRegimenLine(killEngaged = false): string {
+  if (killEngaged) {
+    return 'Backup: R2 litestream paused (free-tier). Hetzner volume snapshots remain the ~24h PITR floor.';
+  }
+  return 'Backup: own litestream→R2 (15m/24h policy) + Hetzner ~24h volume floor.';
+}
+
 /** Compact message body for the Pushover notification. */
 export function formatUsageMessage(s: R2UsageSummary, now: Date): string {
   const lines: string[] = [];
@@ -247,7 +280,8 @@ export function formatUsageMessage(s: R2UsageSummary, now: Date): string {
   );
   const status = worst >= 80 ? '⚠️ OVER 80% — action needed' : worst >= 50 ? 'Heads-up: >50% projected' : 'OK — well within free tier';
   lines.push(`Status: ${status}`);
-  return lines.join('\n');
+  lines.push(formatOwnBackupRegimenLine(false));
+  return appendSentFromFooter(lines.join('\n'));
 }
 
 interface GraphqlResponse {
@@ -327,12 +361,14 @@ type R2UsageSecretKeys =
   | 'CLOUDFLARE_ACCOUNT_ID'
   | 'CLOUDFLARE_R2_ANALYTICS_TOKEN'
   | 'PUSHOVER_APP_TOKEN'
+  | 'PUSHOVER_CT_API_TOKEN'
   | 'PUSHOVER_USER_KEY';
 
 const R2_USAGE_SECRET_KEYS: R2UsageSecretKeys[] = [
   'CLOUDFLARE_ACCOUNT_ID',
   'CLOUDFLARE_R2_ANALYTICS_TOKEN',
   'PUSHOVER_APP_TOKEN',
+  'PUSHOVER_CT_API_TOKEN',
   'PUSHOVER_USER_KEY',
 ];
 
@@ -362,12 +398,14 @@ export async function runR2UsageSummary(
     const summary = buildSummary(storage, ops, now);
     const message = formatUsageMessage(summary, now);
     const dateLabel = now.toISOString().slice(0, 10);
+    // Subject free tier is Congress.Trade → CT Pushover app token (logo).
+    const appToken = resolveCongressPushoverAppToken(secrets);
 
     const delivered = await sendPushover(env, {
       title: `Congress.Trade R2 usage — ${dateLabel}`,
       message,
     }, {
-      appToken: secrets.PUSHOVER_APP_TOKEN,
+      appToken,
       userKey: secrets.PUSHOVER_USER_KEY,
     });
     if (!delivered.sent) return { sent: false, reason: delivered.reason, summary };
