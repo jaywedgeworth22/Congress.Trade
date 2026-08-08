@@ -95,6 +95,7 @@ import {
   MEMBER_NAME_ALIASES,
   type MemberFilerMerge,
 } from '../shared/memberIdentity.ts';
+import { dedupeSplitFilerIdentities } from './filerIdentityDedupe.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import {
@@ -4616,6 +4617,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.post('/repair-member-identity', async (c) => {
     try {
       const result = await repairMemberIdentityMerges(c.env);
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /dedupe-filer-identities -----------------------------------------
+  // Generic (non-curated) counterpart to /repair-member-identity: finds
+  // `filers` rows that forked for the same real member purely from a
+  // middle-initial/punctuation/suffix name variance within the same
+  // chamber+state (e.g. "Michael T. McCaul" vs "Michael McCaul" — issue
+  // #1452), and merges them. Never deletes a row — aliases are tombstoned
+  // via `merged_into` and every rewrite is recorded in
+  // filer_identity_merges (migration 0078) so it stays auditable/reversible.
+  // Idempotent; safe to re-run (e.g. from a cron alongside /repair-member-identity).
+  r.post('/dedupe-filer-identities', async (c) => {
+    try {
+      const result = await dedupeSplitFilerIdentities(c.env);
       return c.json({ ok: true, ...result });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);

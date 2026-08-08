@@ -13,7 +13,8 @@
  */
 
 import type { Chamber, Env } from '../shared/types.ts';
-import { all, batch, run } from '../shared/db.ts';
+import { all, batch, get, run } from '../shared/db.ts';
+import { sameFilerIdentity } from '../shared/filerIdentityMatch.ts';
 import {
   getConfig,
   getLastAttemptAt,
@@ -196,6 +197,62 @@ function houseDiscovery(f: { pipelineDocId: string; sourceUrl: string; filingDat
  */
 export type InsertFilingResult = 'inserted' | 'duplicate' | 'deferred';
 
+/**
+ * Best-effort match-time canonicalization: when a newly discovered filing's
+ * synthetic filer_id (houseFilerId/senateFilerId) hasn't been seen before,
+ * check whether it's a fresh middle-initial/punctuation/suffix fork of an
+ * already-known filer — same chamber + state, see
+ * shared/filerIdentityMatch.ts — and reuse that filer's id instead of
+ * minting a brand-new `filers` row. This is what stops a NEW fork (e.g.
+ * "Michael T. McCaul" landing after "Michael McCaul" is already on file)
+ * from ever being created going forward. Any fork that already exists in the
+ * DB is fixed by the repeatable backfill in admin/filerIdentityDedupe.ts
+ * (POST /api/admin/dedupe-filer-identities).
+ *
+ * Two cheap, indexed lookups short-circuit the common case (an id already
+ * recorded as a merge alias, or an id that's already a live filers row)
+ * before the pricier chamber+state scan, which only runs for a genuinely
+ * first-ever sighting of a synthetic id — rare (a new member, or a name-
+ * format variance), not the steady-state poll of already-known filers.
+ * `state` is frequently unknown for a brand-new Senate filer (the Senate
+ * source carries no state code; photo enrichment fills it in later) — this
+ * fails closed and returns the input id unchanged rather than guessing.
+ */
+async function resolveIngestFilerId(
+  env: Env,
+  filerId: string,
+  fullName: string,
+  chamber: Chamber,
+  state: string | null | undefined,
+): Promise<string> {
+  const merge = await get<{ canonical_filer_id: string }>(
+    env.DB,
+    'SELECT canonical_filer_id FROM filer_identity_merges WHERE alias_filer_id = ?',
+    [filerId],
+  );
+  if (merge?.canonical_filer_id) return merge.canonical_filer_id;
+
+  const existing = await get<{ bioguide_id: string }>(
+    env.DB,
+    'SELECT bioguide_id FROM filers WHERE bioguide_id = ?',
+    [filerId],
+  );
+  if (existing) return filerId;
+
+  if (!state) return filerId;
+  const candidates = await all<{ bioguide_id: string; full_name: string | null }>(
+    env.DB,
+    'SELECT bioguide_id, full_name FROM filers WHERE chamber = ? AND state = ? AND merged_into IS NULL',
+    [chamber, state],
+  );
+  for (const c of candidates) {
+    if (sameFilerIdentity({ fullName, chamber, state }, { fullName: c.full_name, chamber, state })) {
+      return c.bioguide_id;
+    }
+  }
+  return filerId;
+}
+
 export async function insertFilingIfNew(
   env: Env,
   f: DiscoveredFiling,
@@ -211,7 +268,10 @@ export async function insertFilingIfNew(
     return 'deferred';
   }
   const filerName = cleanFilerName(f.filerName) || null;
-  if (f.filerId && filerName) {
+  const filerId = f.filerId && filerName
+    ? await resolveIngestFilerId(env, f.filerId, filerName, f.chamber, f.state ?? null)
+    : f.filerId ?? null;
+  if (filerId && filerName) {
     if (f.party || f.photoUrl) {
       // Sources that curate party/portrait metadata (the OGE executive index)
       // upsert it so pre-existing filer rows — created before the metadata was
@@ -225,14 +285,14 @@ export async function insertFilingIfNew(
            photo_url = COALESCE(excluded.photo_url, photo_url)
          WHERE (excluded.party IS NOT NULL AND (filers.party IS NULL OR filers.party != excluded.party))
             OR (excluded.photo_url IS NOT NULL AND (filers.photo_url IS NULL OR filers.photo_url != excluded.photo_url))`,
-        [f.filerId, f.chamber, filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
+        [filerId, f.chamber, filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
       );
     } else {
       await run(
         env.DB,
         `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
          VALUES (?, ?, ?, NULL, ?, ?, NULL)`,
-        [f.filerId, f.chamber, filerName, f.state ?? null, f.district ?? null],
+        [filerId, f.chamber, filerName, f.state ?? null, f.district ?? null],
       );
     }
   }
@@ -246,7 +306,7 @@ export async function insertFilingIfNew(
         confidence, first_seen_at, source_updated_at, error)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', ?, NULL, NULL,
              NULL, ?, NULL, NULL)`,
-      [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, docKind, nowIso],
+      [f.docId, f.chamber, filerId ?? null, filedDate, f.sourceUrl, docKind, nowIso],
     ],
     ingestionOutboxInsertForDoc(f.docId, nowIso),
   ]);
@@ -288,7 +348,7 @@ export async function insertFilingIfNew(
           AND ingest_status = 'provider_seeded'
           AND extractor = 'fmp-senate-latest'
           AND raw_object_key IS NULL`,
-        [f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso, f.docId],
+        [f.chamber, filerId ?? null, filedDate, f.sourceUrl, nowIso, f.docId],
       );
       upgradedProviderSeed = (upgrade.meta?.changes ?? 0) > 0;
     }
@@ -322,13 +382,13 @@ export async function insertFilingIfNew(
       if (!storageMissing(err)) throw err;
     }
   }
-  if (f.filerId) {
+  if (filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = ? WHERE doc_id = ? AND filer_id IS NULL', [
-      f.filerId,
+      filerId,
       f.docId,
     ]);
     await run(env.DB, 'UPDATE transactions SET filer_id = ? WHERE doc_id = ? AND filer_id IS NULL', [
-      f.filerId,
+      filerId,
       f.docId,
     ]);
   }

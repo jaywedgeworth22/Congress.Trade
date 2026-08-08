@@ -49,6 +49,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { isPremiumUser } from '../billing/entitlement.ts';
 import { getUserById } from '../auth/users.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { formatPartyLabel } from '../shared/partyLabel.ts';
 import {
   createSubscription,
   getSubscription,
@@ -164,6 +165,77 @@ function toPublicSubscription(
     }
   }
   return out;
+}
+
+interface MembersRosterRow {
+  filer_id: string;
+  full_name: string | null;
+  chamber: string | null;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+  tx_count: number;
+}
+
+/**
+ * GET /members' query. Deliberately the SAME shape as the original (join
+ * `filers` onto `transactions`, then GROUP BY filer_id) — an aggregate-first
+ * subquery rewrite was tried and measured ~2x SLOWER locally (SQLite
+ * materializes the derived table via a co-routine + its own temp b-tree
+ * instead of using idx_tx_filer's natural group order). What actually
+ * mattered for issue #1454 was excluding deprecated_at rows for correctness
+ * (every other live read already does — buildTxFilters) without regressing
+ * the query the planner already had a good, index-covering plan for.
+ *
+ * Naively adding `AND deprecated_at IS NULL` to the old WHERE clause gives
+ * the planner a second candidate index (idx_tx_deprecated_at, migration
+ * 0013) that a stats-less planner prefers over the covering idx_tx_filer —
+ * and that choice needs a per-row table fetch for every live (~95%) row,
+ * measured ~5x SLOWER than the pre-fix baseline. idx_tx_filer_live
+ * (migration 0079) is a partial covering index built for exactly this
+ * filter; INDEXED BY forces the planner onto it instead of guessing.
+ *
+ * INDEXED BY hard-fails if the index doesn't exist, which is possible for a
+ * narrow window on this app's own deploy path — scripts/ship.sh confirms the
+ * new Worker code is live BEFORE calling POST /api/admin/migrate, so a
+ * request could land after the code deploys but before the migration runs.
+ * Fall back to the un-hinted query (still correct, just possibly using
+ * whatever plan the stats-less planner picks) rather than 500ing the People
+ * tab for that window.
+ */
+async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[]; count: number }> {
+  const baseSql = `SELECT t.filer_id AS filer_id,
+                f.full_name AS full_name,
+                f.chamber   AS chamber,
+                f.party     AS party,
+                f.state     AS state,
+                f.district  AS district,
+                COUNT(*)    AS tx_count
+           FROM transactions t %INDEX_HINT%
+           LEFT JOIN filers f ON f.bioguide_id = t.filer_id
+          WHERE t.filer_id IS NOT NULL AND t.deprecated_at IS NULL
+          GROUP BY t.filer_id
+          ORDER BY tx_count DESC`;
+  let rows: MembersRosterRow[];
+  try {
+    rows = await all<MembersRosterRow>(db, baseSql.replace('%INDEX_HINT%', 'INDEXED BY idx_tx_filer_live'));
+  } catch {
+    rows = await all<MembersRosterRow>(db, baseSql.replace('%INDEX_HINT%', ''));
+  }
+  const members = rows.map((row) => ({
+    filerId: row.filer_id,
+    fullName: row.full_name ? (cleanFilerName(row.full_name) || row.full_name) : null,
+    chamber: row.chamber,
+    // One shared formatter across every branch (House/Senate carry
+    // congress-legislators' spelled-out "Republican"/"Democrat"; curated
+    // executive filers carry a bare "R"/"D" — see shared/partyLabel.ts) so
+    // the directory never shows both spellings side by side (#1452).
+    party: formatPartyLabel(row.party) ?? row.party,
+    state: row.state,
+    district: row.district,
+    txCount: row.tx_count,
+  }));
+  return { members, count: members.length };
 }
 
 function bearerToken(value: string | undefined): string | null {
@@ -964,45 +1036,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /members -------------------------------------------------------
   // Filers that actually appear in the transaction feed, joined to filer meta.
   r.get('/members', async (c) => {
-    // Full-corpus GROUP BY over transactions with a joined-table filter — not
-    // indexable, and recomputed on every members page load. Cache the whole
-    // roster (no params → a single key); it only shifts with the daily ingest
-    // bursts, so a 30-min TTL is invisible to users and cuts a full scan per hit.
-    const payload = await cached(c.env, 'members:roster', 1800, async () => {
-      const rows = await all<{
-        filer_id: string;
-        full_name: string | null;
-        chamber: string | null;
-        party: string | null;
-        state: string | null;
-        district: string | null;
-        tx_count: number;
-      }>(
-        c.env.DB,
-        `SELECT t.filer_id AS filer_id,
-                f.full_name AS full_name,
-                f.chamber   AS chamber,
-                f.party     AS party,
-                f.state     AS state,
-                f.district  AS district,
-                COUNT(*)    AS tx_count
-           FROM transactions t
-           LEFT JOIN filers f ON f.bioguide_id = t.filer_id
-          WHERE t.filer_id IS NOT NULL
-          GROUP BY t.filer_id
-          ORDER BY tx_count DESC`,
-      );
-      const members = rows.map((row) => ({
-        filerId: row.filer_id,
-        fullName: row.full_name ? (cleanFilerName(row.full_name) || row.full_name) : null,
-        chamber: row.chamber,
-        party: row.party,
-        state: row.state,
-        district: row.district,
-        txCount: row.tx_count,
-      }));
-      return { members, count: members.length };
-    });
+    // The per-filer counts are a full-corpus GROUP BY over transactions — not
+    // indexable away, and expensive to recompute on every members page load
+    // (issue #1454, ~6s cold). Cache the whole roster (no params → a single
+    // key); it only shifts with the daily ingest bursts, so a 30-min TTL is
+    // invisible to users and cuts a full scan per hit down to one per window.
+    const payload = await cached(c.env, 'members:roster', 1800, () => queryMembersRoster(c.env.DB));
     c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json(payload);
   });

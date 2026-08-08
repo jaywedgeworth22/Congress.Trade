@@ -825,6 +825,44 @@ export const LLM_SPEND_PURPOSE_DOC_SCHEMA_STATEMENTS = [
      WHERE purpose IS NOT NULL`,
 ] as const;
 
+/**
+ * 0078_filer_identity_merges.sql — durable, reversible identity-merge support
+ * for `filers` rows that forked for the same real member (e.g. "Michael T.
+ * McCaul" vs "Michael McCaul" — see shared/filerIdentityMatch.ts). Rows are
+ * never deleted: `merged_into` tombstones an alias row (points at the
+ * surviving canonical bioguide_id) and filer_identity_merges keeps an
+ * auditable alias -> canonical mapping. Populated by
+ * admin/filerIdentityDedupe.ts via POST /api/admin/dedupe-filer-identities.
+ */
+export const FILER_IDENTITY_MERGE_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filers ADD COLUMN merged_into TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_filers_merged_into ON filers (merged_into)',
+  `CREATE TABLE IF NOT EXISTS filer_identity_merges (
+     alias_filer_id     TEXT PRIMARY KEY,
+     canonical_filer_id TEXT NOT NULL,
+     chamber             TEXT,
+     state               TEXT,
+     reason              TEXT NOT NULL DEFAULT 'name-normalization',
+     merged_at           TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_filer_identity_merges_canonical
+     ON filer_identity_merges (canonical_filer_id)`,
+] as const;
+
+/**
+ * 0079_members_directory_perf.sql — issue #1454 (GET /api/members ~6s).
+ * Partial covering index matching delivery/rest.ts queryMembersRoster's
+ * filter (filer_id IS NOT NULL AND deprecated_at IS NULL) exactly, so the
+ * planner (forced via INDEXED BY) gets an index-only scan instead of a
+ * per-row table fetch. See migrations/0079_members_directory_perf.sql for
+ * the full "why not just add the WHERE clause" writeup.
+ */
+export const MEMBERS_DIRECTORY_PERF_SCHEMA_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS idx_tx_filer_live
+     ON transactions (filer_id)
+     WHERE deprecated_at IS NULL`,
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -953,6 +991,10 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...PUSH_DEVICES_SCHEMA_STATEMENTS,
   // 0077_llm_spend_purpose_doc.sql
   ...LLM_SPEND_PURPOSE_DOC_SCHEMA_STATEMENTS,
+  // 0078_filer_identity_merges.sql
+  ...FILER_IDENTITY_MERGE_SCHEMA_STATEMENTS,
+  // 0079_members_directory_perf.sql
+  ...MEMBERS_DIRECTORY_PERF_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
