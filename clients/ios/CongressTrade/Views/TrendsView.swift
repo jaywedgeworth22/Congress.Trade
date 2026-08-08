@@ -3,6 +3,9 @@ import SwiftUI
 struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @State private var showDisclaimerDetails = false
+    @State private var selectedTicker: String?
+    @State private var selectedPoliticianId: String?
+    @State private var selectedPoliticianName: String?
 
     var body: some View {
         NavigationStack {
@@ -93,6 +96,28 @@ struct TrendsView: View {
             .refreshable {
                 await store.refreshTrends()
             }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedTicker != nil },
+                set: { if !$0 { selectedTicker = nil } }
+            )) {
+                if let ticker = selectedTicker {
+                    TickerDetailView(ticker: ticker)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
+                }
+            }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedPoliticianId != nil },
+                set: { if !$0 { selectedPoliticianId = nil } }
+            )) {
+                if let memberId = selectedPoliticianId {
+                    PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
+                }
+            }
         }
     }
 
@@ -173,30 +198,38 @@ struct TrendsView: View {
                 .font(.headline)
             VStack(spacing: 0) {
                 ForEach(Array(store.tickerLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, item in
-                    HStack(spacing: 10) {
-                        Text("\(idx + 1)")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18)
-                        AssetMark(symbol: item.ticker, isTicker: true, size: 28)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.ticker)
-                                .font(.subheadline.weight(.bold))
-                            Text(item.formattedName ?? "—")
-                                .font(.caption2)
+                    Button {
+                        selectedTicker = item.ticker
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text("\(idx + 1)")
+                                .font(.caption.weight(.bold))
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .frame(width: 18)
+                            AssetMark(symbol: item.ticker, isTicker: true, size: 28)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.ticker)
+                                    .font(.subheadline.weight(.bold))
+                                Text(item.formattedName ?? "—")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text("\(item.tradeCount)")
+                                    .font(.subheadline.weight(.bold))
+                                Text(CompactFormat.usd(item.estVolumeUsd))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text("\(item.tradeCount)")
-                                .font(.subheadline.weight(.bold))
-                            Text(CompactFormat.usd(item.estVolumeUsd))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.ticker), \(item.formattedName ?? "—"), \(item.tradeCount) trades")
+                    .accessibilityHint("Opens ticker details")
                     if idx < min(9, store.tickerLeaderboard.count - 1) {
                         Divider()
                     }
@@ -216,31 +249,39 @@ struct TrendsView: View {
                 .foregroundStyle(.secondary)
             VStack(spacing: 0) {
                 ForEach(Array(store.trendingAssets.prefix(8).enumerated()), id: \.element.id) { idx, item in
-                    HStack(spacing: 10) {
-                        AssetMark(symbol: item.ticker, isTicker: true, size: 26)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.ticker)
-                                .font(.subheadline.weight(.bold))
-                            Text("\(item.recentMembers ?? 0) politicians")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(item.priorCount) → \(item.recentCount) trades")
-                                .font(.caption.weight(.medium))
-                            if let pct = item.changePct {
-                                Text("+\(Int(round(pct * 100)))%")
-                                    .font(.caption2.weight(.bold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.green.opacity(0.15))
-                                    .foregroundStyle(.green)
-                                    .clipShape(Capsule())
+                    Button {
+                        selectedTicker = item.ticker
+                    } label: {
+                        HStack(spacing: 10) {
+                            AssetMark(symbol: item.ticker, isTicker: true, size: 26)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.ticker)
+                                    .font(.subheadline.weight(.bold))
+                                Text("\(item.recentMembers ?? 0) politicians")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("\(item.priorCount) → \(item.recentCount) trades")
+                                    .font(.caption.weight(.medium))
+                                if let pct = item.changePct {
+                                    Text("+\(Int(round(pct * 100)))%")
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.green.opacity(0.15))
+                                        .foregroundStyle(.green)
+                                        .clipShape(Capsule())
+                                }
                             }
                         }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.ticker), \(item.priorCount) to \(item.recentCount) trades")
+                    .accessibilityHint("Opens ticker details")
                     if idx < min(7, store.trendingAssets.count - 1) {
                         Divider()
                     }
@@ -260,27 +301,36 @@ struct TrendsView: View {
                 .foregroundStyle(.secondary)
             VStack(spacing: 8) {
                 ForEach(store.clusterBuys.prefix(8)) { c in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(c.ticker)
-                                .font(.subheadline.weight(.bold))
-                            Text(c.formattedName ?? "")
-                                .font(.caption2)
+                    Button {
+                        selectedTicker = c.ticker
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.ticker)
+                                    .font(.subheadline.weight(.bold))
+                                Text(c.formattedName ?? "")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            StatusPill(
+                                text: (c.txType == "B" || c.txType == "P") ? "Buy" : (c.txType == "S" ? "Sell" : (c.txType == "E" ? "Exchange" : c.txType)),
+                                color: (c.txType == "B" || c.txType == "P") ? .green : (c.txType == "S" ? .red : .blue),
+                                compact: true
+                            )
+                            Text("\(c.memberCount) \(c.memberCount == 1 ? "politician" : "politicians")")
+                                .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
                         }
-                        Spacer()
-                        StatusPill(
-                            text: (c.txType == "B" || c.txType == "P") ? "Buy" : (c.txType == "S" ? "Sell" : (c.txType == "E" ? "Exchange" : c.txType)),
-                            color: (c.txType == "B" || c.txType == "P") ? .green : (c.txType == "S" ? .red : .blue),
-                            compact: true
-                        )
-                        Text("\(c.memberCount) \(c.memberCount == 1 ? "politician" : "politicians")")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        .padding(10)
+                        .frame(minHeight: 44)
+                        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                        .contentShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .padding(10)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(c.ticker), \(c.memberCount) \(c.memberCount == 1 ? "politician" : "politicians")")
+                    .accessibilityHint("Opens ticker details")
                 }
             }
         }
@@ -355,23 +405,33 @@ struct TrendsView: View {
 
             VStack(spacing: 0) {
                 ForEach(Array(store.topPerformers.prefix(8).enumerated()), id: \.element.id) { idx, p in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(p.fullName ?? p.filerId)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text("\(p.tradeCount) buys")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                    Button {
+                        selectedPoliticianId = p.filerId
+                        selectedPoliticianName = p.fullName ?? p.filerId
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(p.fullName ?? p.filerId)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text("\(p.tradeCount) buys")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if let ret = p.avgAnnualizedExcessReturn {
+                                Text(String(format: "%+.1f%% vs SPX", ret * 100))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(ret >= 0 ? .green : .red)
+                            }
                         }
-                        Spacer()
-                        if let ret = p.avgAnnualizedExcessReturn {
-                            Text(String(format: "%+.1f%% vs SPX", ret * 100))
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(ret >= 0 ? .green : .red)
-                        }
+                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(p.fullName ?? p.filerId), \(p.tradeCount) buys")
+                    .accessibilityHint("Opens politician details")
                     if idx < min(7, store.topPerformers.count - 1) {
                         Divider()
                     }
@@ -388,23 +448,33 @@ struct TrendsView: View {
                 .font(.headline)
             VStack(spacing: 0) {
                 ForEach(Array(store.memberLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, m in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.fullName ?? m.filerId)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text([m.chamber?.chamberLabel, m.party, m.state].compactMap { $0 }.joined(separator: " · "))
+                    Button {
+                        selectedPoliticianId = m.filerId
+                        selectedPoliticianName = m.fullName ?? m.filerId
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.fullName ?? m.filerId)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text([m.chamber?.chamberLabel, m.party, m.state].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text("\(m.tradeCount ?? 0)")
+                                .font(.subheadline.weight(.bold))
+                            Text("trades")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        Text("\(m.tradeCount ?? 0)")
-                            .font(.subheadline.weight(.bold))
-                        Text("trades")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(m.fullName ?? m.filerId), \(m.tradeCount ?? 0) trades")
+                    .accessibilityHint("Opens politician details")
                     if idx < min(9, store.memberLeaderboard.count - 1) {
                         Divider()
                     }
@@ -437,21 +507,31 @@ struct TrendsView: View {
                     .padding(.top, 6)
                 VStack(spacing: 0) {
                     ForEach(Array(late.prefix(6).enumerated()), id: \.element.id) { idx, f in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(f.fullName ?? f.filerId)
-                                    .font(.subheadline.weight(.medium))
-                                    .lineLimit(1)
-                                Text("\(f.tradeCount ?? 0) trades")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                        Button {
+                            selectedPoliticianId = f.filerId
+                            selectedPoliticianName = f.fullName ?? f.filerId
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(f.fullName ?? f.filerId)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                    Text("\(f.tradeCount ?? 0) trades")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text("\(Int(round(f.avgLagDays ?? 0)))d avg")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.orange)
                             }
-                            Spacer()
-                            Text("\(Int(round(f.avgLagDays ?? 0)))d avg")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.orange)
+                            .padding(.vertical, 6)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 6)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(f.fullName ?? f.filerId), \(Int(round(f.avgLagDays ?? 0))) days average delay")
+                        .accessibilityHint("Opens politician details")
                         if idx < min(5, late.count - 1) {
                             Divider()
                         }
