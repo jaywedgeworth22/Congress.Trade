@@ -2522,6 +2522,184 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
 });
 
 /**
+ * Issue #1529 — design convergence: filter-chrome restyle + per-surface feed
+ * presentation + header/search convergence. Restyle-only pass on top of LANE
+ * A1/A2: verifies the new capsule-pill chrome, icon search fields, mobile
+ * feed-card layout, and header hamburger radius, while confirming every
+ * DO-NOT-BREAK id/handler/attribute from the spec survives unchanged.
+ */
+describe('design convergence — filter chrome + card restyle (issue #1529)', () => {
+  it('adds the capsule radius + shared control-height tokens without touching --radius', () => {
+    expect(DASHBOARD_HTML).toContain('--radius-pill: 999px;');
+    expect(DASHBOARD_HTML).toContain('--control-h:   34px;');
+    expect(DASHBOARD_HTML).toContain('--radius:    12px;');
+  });
+
+  it('layers a capsule radius + bolder solid-fill "on" state on the chip clusters (CSS-only)', () => {
+    // The original tinted/inset-ring rule stays untouched (source-order base)...
+    expect(DASHBOARD_HTML).toContain(
+      '.branch-seg, .party-chips, .side-chips { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:9px; overflow:hidden; }',
+    );
+    // ...and a later, more opinionated layer wins the cascade for the pill look.
+    expect(DASHBOARD_HTML).toContain('.branch-seg, .party-chips, .side-chips { border-radius: var(--radius-pill); }');
+    expect(DASHBOARD_HTML).toContain('.branch-toggle, .party-chip, .side-chip { height: var(--control-h); }');
+    expect(DASHBOARD_HTML).toContain('.branch-toggle.on { background: var(--accent); color: #fff; box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.party-chip.on[data-party="D"] { background: var(--buy); box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.party-chip.on[data-party="R"] { background: var(--sell); box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.party-chip.on[data-party="O"] { background: var(--accent); color:#fff; box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.side-chip.on[data-side="E"] { background: var(--exch); box-shadow: none; }');
+  });
+
+  it('keeps every chip data-attribute, aria-pressed, and delegated group id exactly as-is under the restyle', () => {
+    const document = parse(DASHBOARD_HTML);
+    for (const groupId of ['qChamber', 'qPartyGroup', 'qSideGroup', 'trChamber', 'trPartyGroup', 'trSideGroup']) {
+      const group = document.querySelector('#' + groupId);
+      expect(group, groupId).not.toBeNull();
+      const buttons = group!.querySelectorAll('button');
+      expect(buttons.length, groupId).toBeGreaterThan(0);
+      for (const btn of buttons) {
+        expect(btn.getAttribute('aria-pressed'), groupId).toBe('false');
+        const hasEntityAttr = btn.hasAttribute('data-ch') || btn.hasAttribute('data-party') || btn.hasAttribute('data-side');
+        expect(hasEntityAttr, groupId).toBe(true);
+      }
+    }
+    // Delegated listener wiring (container ids, not per-chip handlers) is untouched.
+    expect(DASHBOARD_HTML).toContain('function initChamberChips(');
+    expect(DASHBOARD_HTML).toContain('function initPartyChips(');
+    expect(DASHBOARD_HTML).toContain('function initSideChips(');
+  });
+
+  it('wraps Timeframe + $ Minimum selects in icon+chevron pills without touching id/onchange/options', () => {
+    const document = parse(DASHBOARD_HTML);
+    for (const [selectId, wrapperClass] of [
+      ['feedGlobalWindow', 'pill-cal'],
+      ['trGlobalWindow', 'pill-cal'],
+      ['qMinAmt', 'pill-amt'],
+      ['trMinAmt', 'pill-amt'],
+    ] as const) {
+      const select = document.querySelector('#' + selectId);
+      expect(select, selectId).not.toBeNull();
+      expect(select!.tagName.toLowerCase()).toBe('select');
+      expect(select!.classList.contains('pill-select-el'), selectId).toBe(true);
+      const wrapper = select!.parentNode;
+      expect(wrapper?.tagName?.toLowerCase(), selectId).toBe('span');
+      expect((wrapper as any).classList.contains('pill-select'), selectId).toBe(true);
+      expect((wrapper as any).classList.contains(wrapperClass), selectId).toBe(true);
+    }
+    // onchange handlers + id-based wiring (getTrWindow/onSharedMinAmtChange/etc.)
+    // are byte-for-byte unchanged.
+    expect(DASHBOARD_HTML).toContain('onchange="onSharedWindowChange(this)"');
+    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this); resetFeedPage();"');
+    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this)"');
+    // .tr-window-select / .shared-window / .min-amt-select stay on the <select>
+    // itself (still queried directly by JS) — pill-select-el is additive.
+    expect(DASHBOARD_HTML).toContain('class="tr-window-select shared-window pill-select-el"');
+    expect(DASHBOARD_HTML).toContain('class="min-amt-select pill-select-el"');
+    // New pill CSS resolves through the shared tokens, with a dark-mode chevron swap.
+    expect(DASHBOARD_HTML).toContain('.pill-select-el {');
+    expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-pill); font:600 12px var(--sans);');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] .pill-select-el {');
+  });
+
+  it('wraps #qMember/#qTicker in rounded leading-icon fields, updates the ticker placeholder, keeps id/oninput/aria-label', () => {
+    const document = parse(DASHBOARD_HTML);
+    const member = document.querySelector('#qMember');
+    const ticker = document.querySelector('#qTicker');
+    expect(member).not.toBeNull();
+    expect(ticker).not.toBeNull();
+    expect(member!.getAttribute('oninput')).toBe('handleFeedTextFilter()');
+    expect(ticker!.getAttribute('oninput')).toBe('handleFeedTextFilter()');
+    expect(member!.getAttribute('aria-label')).toBe('Filter by politician');
+    expect(ticker!.getAttribute('aria-label')).toBe('Filter by asset ticker');
+    expect(member!.classList.contains('icon-input')).toBe(true);
+    expect(ticker!.classList.contains('icon-input')).toBe(true);
+    expect(member!.parentNode?.tagName.toLowerCase()).toBe('span');
+    expect((member!.parentNode as any).classList.contains('icon-field')).toBe(true);
+    expect((ticker!.parentNode as any).classList.contains('icon-field')).toBe(true);
+    // Placeholder copy: "Asset…" -> "Asset / ticker…" (iOS-parity, copy-only).
+    expect(ticker!.getAttribute('placeholder')).toBe('Asset / ticker…');
+    expect(member!.getAttribute('placeholder')).toBe('Politician…');
+    // The old inline width:120px is gone from the input itself.
+    expect(ticker!.getAttribute('style')).toBeFalsy();
+    // Icon glyphs + CSS.
+    expect(DASHBOARD_HTML).toContain('<span class="icon-field-ic" aria-hidden="true">👤</span>');
+    expect(DASHBOARD_HTML).toContain('<span class="icon-field-ic" aria-hidden="true">📈</span>');
+    expect(DASHBOARD_HTML).toContain('.icon-input { padding-left:30px; border-radius:var(--radius-pill); height:var(--control-h); }');
+  });
+
+  it('enlarges + tile-backs the mobile feed-card logo without touching the desktop table logo size', () => {
+    expect(DASHBOARD_HTML).toContain('.feed-card .tkr-logo { width:36px; height:36px; border-radius:9px; }');
+    // Desktop/table-wide default logo size (22px) is untouched by this pass.
+    expect(DASHBOARD_HTML).toContain('.tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }');
+    expect(DASHBOARD_HTML).toContain(
+      'html[data-theme="light"] .feed-card .tkr-logo.transparent,\n  html[data-theme="light"] .feed-card .tkr-logo.mono,\n  html[data-theme="light"] .feed-card .tkr-logo.glyph { background:#fff; }',
+    );
+  });
+
+  it('restructures feedCardHtml() into a trailing amount/date stack, dropping the duplicate "Traded" fragment from row 2', () => {
+    const start = DASHBOARD_HTML.indexOf('function feedCardHtml(');
+    expect(start).toBeGreaterThan(-1);
+    const end = DASHBOARD_HTML.indexOf('\nfunction lagBasisDate(');
+    expect(end).toBeGreaterThan(start);
+    const fn = DASHBOARD_HTML.slice(start, end);
+    // New structure: fc-top (asset + badge + trailing amount/date), fc-trail, fc-date.
+    expect(fn).toContain('<div class="fc-top">');
+    expect(fn).toContain('<div class="fc-trail">');
+    expect(fn).toContain('<div class="fc-date muted">');
+    expect(fn).toContain("assetCellHtml(r) + actionBadge(r.type) +");
+    expect(fn).toContain("amountCellHtml(r) + '<div class=\"fc-date muted\">' + esc(traded) + '</div></div>'");
+    // Row 2 no longer duplicates the trade date as a "Traded <date>" fragment.
+    expect(fn).not.toContain("bits.push('Traded '");
+    expect(fn).not.toContain("'Traded ' + esc(traded)");
+    // Member/chamber/lag/late-filing bits are untouched.
+    expect(fn).toContain('if (member) bits.push(memberHtml);');
+    expect(fn).toContain('if (chamber) bits.push(esc(chamber));');
+    expect(fn).toContain("if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));");
+    expect(fn).toContain("r.stockActStatus === 'late' || r.stockActStatus === 'severely_late'");
+    // Click-scoping: the trailing amount/date block carries no data-asset/
+    // data-member/data-txid of its own — it falls through to the card's own
+    // data-txid via handleFeedOpenEvent's delegation order (DO-NOT-BREAK #4).
+    expect(fn).not.toMatch(/fc-trail[^"]*"[^>]*data-(asset|member|txid)/);
+  });
+
+  it('gives .acct-hamburger the same capsule radius as every other icon-only header/dialog control', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '.acct-hamburger {\n    width:38px; height:38px; border:1px solid var(--border); border-radius: var(--radius-pill);',
+    );
+    // Sibling circular controls it now matches stay untouched.
+    expect(DASHBOARD_HTML).toContain('.branch-info { width:24px; height:24px; border-radius:999px;');
+    expect(DASHBOARD_HTML).toContain(
+      'margin:-8px -8px -8px 0; border-radius:999px; border:1px solid transparent;\n    background:transparent; color:var(--text-dim); cursor:pointer; font-size:20px; line-height:1;',
+    );
+  });
+
+  it('right-aligns the desktop "N trades" count and compacts it (total only) on mobile', () => {
+    expect(DASHBOARD_HTML).toContain('.feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
+    expect(DASHBOARD_HTML).toContain('.feed-stats .stat-today { display: none; }');
+    const document = parse(DASHBOARD_HTML);
+    const stats = document.querySelector('#feedStats');
+    expect(stats).not.toBeNull();
+    const statToday = stats!.querySelector('.stat-today');
+    expect(statToday).not.toBeNull();
+    expect(statToday!.querySelector('#kpiToday')).not.toBeNull();
+    // kpiTotal stays outside .stat-today so it's the one mobile keeps.
+    expect(statToday!.querySelector('#kpiTotal')).toBeNull();
+    expect(stats!.querySelector('#kpiTotal')).not.toBeNull();
+  });
+
+  it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
+    expect(DASHBOARD_HTML).toContain('@media (max-width:720px) {');
+    expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {');
+    expect(DASHBOARD_HTML).toContain('#view-feed .table-wrap { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#view-feed .feed-cards { display: grid; grid-template-columns: minmax(0, 1fr); }');
+  });
+});
+
+/**
  * LANE A2 of the owner UX work order — continues LANE A1 on the same branch
  * (monet/web-ux-workorder). Covers:
  *   1. Filing Latency Comparison placement rules + the isLatencyAhead() gate.
