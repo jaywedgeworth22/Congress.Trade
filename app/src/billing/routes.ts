@@ -42,9 +42,10 @@ import {
 } from './webhookEvents.ts';
 import {
   appleTransactionIsActive,
-  assertAppleJwsShape,
   planFromAppleProductId,
+  type AppleTransactionPayload,
 } from './apple.ts';
+import { verifyAppleSignedJws } from './appleJws.ts';
 import { run } from '../shared/db.ts';
 
 /** Default free trial when STRIPE_TRIAL_DAYS is unset: one calendar month. */
@@ -158,10 +159,20 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /billing/apple/confirm ----------------------------------------
-  // StoreKit 2: client sends transaction.jwsRepresentation after purchase.
+  // DEPRECATED + LOCKED DOWN (2026-08-09 security fix). This legacy #1345 route
+  // granted Premium from an UNVERIFIED token: assertAppleJwsShape only checked
+  // the JWS shape (no signature), so any signed-in user could forge an active
+  // subscription and self-grant Premium. It also had no APPLE_IAP_ENABLED gate,
+  // so it was live in production. It is now fail-closed: it does real signed-JWS
+  // verification (verifyAppleSignedJws → X.509 chain to the pinned Apple root)
+  // AND requires APPLE_IAP_ENABLED, matching the webhook + redeem_apple_purchase
+  // command. The canonical purchase path is the redeem_apple_purchase client
+  // command; this endpoint remains only for any old client still calling it.
   r.post('/apple/confirm', async (c) => {
     const user = await getCurrentUser(c);
     if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
+    const iapEnabled = (await resolveSecret(c.env, 'APPLE_IAP_ENABLED')).value === 'true';
+    if (!iapEnabled) return c.json({ error: 'Apple in-app purchase is not enabled' }, 503);
     let body: { signedTransaction?: unknown; jwsRepresentation?: unknown };
     try {
       body = (await c.req.json()) as typeof body;
@@ -175,9 +186,11 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     if (!jws) return c.json({ error: 'signedTransaction required' }, 400);
     let payload;
     try {
-      payload = assertAppleJwsShape(jws);
+      // Real cryptographic verification: signature + X.509 chain to Apple's
+      // pinned root. Replaces the shape-only assertAppleJwsShape.
+      payload = await verifyAppleSignedJws<AppleTransactionPayload>(jws);
     } catch (err) {
-      return c.json({ error: (err as Error).message || 'invalid Apple transaction' }, 400);
+      return c.json({ error: (err as Error).message || 'invalid Apple transaction' }, 401);
     }
     const expectedBundle = (await resolveSecret(c.env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
     if (payload.bundleId && payload.bundleId !== expectedBundle) {
