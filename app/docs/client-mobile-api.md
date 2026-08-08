@@ -75,8 +75,29 @@ do not consume the SSE/webhook subscription quota.
 - `bootstrap` currently returns `serverTime`, `auth`, `capabilities`, and an
   `endpoints` map for the current client surface.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
-  `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
-  cursor/count/total metadata used by polling clients.
+  `memberName`, `chamber`, `type`, `minAmount`, `from`, `to`, `sort`, `order`,
+  `offset`, and `limit`, and returns the cursor/count/total metadata used by
+  polling clients. `minAmount` (server-side `filtersFromQuery`/`TxQueryParams`,
+  same as the website's shared `qMinAmt`/`trMinAmt` pill) filters to
+  `amountMin >= minAmount`; iOS wires it as the `$`-threshold filter pill
+  (2026-08-09, iOS punch list). `GET /api/export/transactions.csv` accepts
+  the same filter set (including `minAmount`) for Premium CSV export.
+  - `sort` accepts `published`, `cursor` (default), or `tx_date` (fixed
+    2026-08-09 — `tx_date` was already a valid `TxQueryParams`/SQL sort key
+    for `/api/transactions` but this endpoint's query parser silently dropped
+    it, so `?sort=tx_date` fell back to cursor order). iOS's Trades sort
+    control (owner punch list #2, item 7) sends `sort=tx_date&order=asc|desc`
+    for its Date option; its Amount option re-sorts the already-loaded page
+    client-side only (the backend has no `amount` sort key — same pattern as
+    the web dashboard's `setSort()`, which treats non-backend columns as a
+    local re-sort, never a fetch beyond the loaded page).
+  - `offset` (added 2026-08-09, iOS punch list #2 item 8) pages a DESC
+    snapshot (pair with `order=desc`); guarded by the same
+    `MAX_PUBLIC_TX_OFFSET` (2000) public depth cap as `/api/transactions` —
+    a 400 past the cap points callers at Premium CSV export instead. iOS's
+    "Page X of Y" pager computes total pages from the response's `total` and
+    its own page-size (`limit`), independent of the forward `since`-cursor
+    poll watermark, which is unaffected.
 - Chamber filter: `chamber` accepts a CSV multi-selection over
   `house`, `senate`, and `executive` (Presidential trades from OGE Form 278-T
   filings; `member.chamber` can now be `executive`). ABSENT `chamber` means the
@@ -107,6 +128,15 @@ do not consume the SSE/webhook subscription quota.
   - `GET /api/client/v1/trade/:id`
   - `GET /api/client/v1/ticker/:ticker`
   - `GET /api/client/v1/member/:memberIdOrName`
+- `GET /api/members` (public roster, origin-level — not `/api/client/v1/*`,
+  same pattern as `/api/transactions`, `auth/*`, and the logo proxy that
+  `APIClient.swift` already calls at `originURL`) returns
+  `{ members: [{ filerId, fullName, chamber, party, state, district, txCount,
+  photoUrl }], count }`. `photoUrl` (added 2026-08-09, iOS punch list #2 item
+  9) is a same-columns addition to the existing cached roster query (no new
+  join, no perf regression) — `null` when the filer has no `filers.photo_url`.
+  iOS's People directory tab renders it as a row avatar; the web directory
+  table intentionally stays photo-less.
 - Each feed item's `asset` object carries `name` (the disclosed asset text),
   `ticker`, raw disclosure `type`, `typeName`, canonical cross-chamber
   `typeCategory` / `typeCategoryLabel`, `sector`, and `marketCapBucket`, plus

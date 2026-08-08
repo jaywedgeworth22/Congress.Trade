@@ -2,7 +2,12 @@ import SwiftUI
 
 struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
-    @State private var showDisclaimerDetails = false
+    /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
+    /// dismissed/expanded state is one truth across both tabs (owner punch
+    /// list item 2b), and identical top/side insets keep its position/size
+    /// pixel-identical to Trades (item 2a).
+    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
+    @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
     @State private var selectedTicker: String?
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
@@ -11,7 +16,7 @@ struct TrendsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    DisclaimerBanner(isExpanded: $showDisclaimerDetails)
+                    DisclaimerBanner(isExpanded: $disclaimerExpanded)
 
                     // Identical shared filters as Trades (no export, no politician/asset extras).
                     FeedControlBar(showMetrics: false)
@@ -63,34 +68,48 @@ struct TrendsView: View {
                         }
                     }
                 }
-                .padding(16)
+                // Same horizontal/top/bottom insets as Trades so the
+                // disclaimer banner lands at an identical position/size on
+                // both tabs (owner punch list item 2a — was `.padding(16)`
+                // uniformly, 8pt further from the nav bar than Trades).
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // No leading placeholder — dead chrome with no action.
-                // Brand centers via .principal; info is the only trailing control.
+                // ⓘ now leads (swapped to match Trades' post-swap side —
+                // owner punch list item 3); brand centers via .principal;
+                // hamburger is the only trailing control.
+                ToolbarItem(placement: .topBarLeading) {
+                    HeaderIconButton(
+                        systemImage: "info.circle",
+                        accessibilityLabel: "About Congress.Trade"
+                    ) {
+                        withAnimation { disclaimerExpanded.toggle() }
+                    }
+                }
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation { showDisclaimerDetails.toggle() }
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.blue)
-                    }
-                    .accessibilityLabel("About Congress.Trade")
+                    HamburgerMenuButton()
                 }
             }
             .task {
                 if store.analyticsSummary == nil {
                     await store.refreshTrends()
                 }
-                showDisclaimerDetails = true
-                try? await Task.sleep(for: .seconds(4))
-                if !Task.isCancelled {
-                    withAnimation { showDisclaimerDetails = false }
+                // One-time app-lifetime intro reveal, shared with Trades via
+                // the same AppStorage keys — never re-plays on tab switch.
+                if !disclaimerIntroDone {
+                    disclaimerIntroDone = true
+                    withAnimation { disclaimerExpanded = true }
+                    try? await Task.sleep(for: .seconds(4))
+                    if !Task.isCancelled {
+                        withAnimation { disclaimerExpanded = false }
+                    }
                 }
             }
             .refreshable {

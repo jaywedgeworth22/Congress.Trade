@@ -276,6 +276,175 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "from" }))
     }
 
+    // MARK: - Trades sort + pagination (owner punch list #2, items 7-8)
+
+    @MainActor
+    func testGoToNextPageSendsOffsetAndTotalPagesReflectsAPITotal() async throws {
+        var feedURLs: [URL] = []
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURLs.append(request.url!)
+            return Self.response(for: request, json: Self.feedJSON(
+                items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
+                cursor: 110, count: 10, total: 250, limit: 100
+            ))
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.refresh()
+
+        XCTAssertEqual(store.totalPages, 3, "250 rows at 100/page rounds up to 3 pages")
+        XCTAssertTrue(store.canGoToNextPage)
+        XCTAssertFalse(store.canGoToPreviousPage)
+        // The first page must not send offset= at all (page 1, not offset=0).
+        let firstComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        XCTAssertNil(firstComponents.queryItems?.first(where: { $0.name == "offset" }))
+
+        await store.goToNextPage()
+        XCTAssertEqual(store.currentPage, 1)
+        XCTAssertTrue(store.canGoToPreviousPage)
+
+        let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "100")
+
+        await store.goToPreviousPage()
+        XCTAssertEqual(store.currentPage, 0)
+        XCTAssertFalse(store.canGoToPreviousPage)
+    }
+
+    @MainActor
+    func testSwitchingToAmountSortDoesNotRefetchButSwitchingBackToDateDoes() async throws {
+        var feedCallCount = 0
+        var lastURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedCallCount += 1
+            lastURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.refresh()
+        XCTAssertEqual(feedCallCount, 1)
+
+        // Amount has no backend sort key — selecting it must NOT refetch.
+        await store.setFeedSortKey(.amount)
+        XCTAssertEqual(store.feedSortKey, .amount)
+        XCTAssertEqual(feedCallCount, 1, "Amount sort is a local re-sort of the already-loaded page only")
+
+        // Flipping direction while on Amount is also local-only.
+        await store.toggleFeedSortDirection()
+        XCTAssertEqual(store.feedSortDirection, .ascending)
+        XCTAssertEqual(feedCallCount, 1)
+
+        // Switching back to Date DOES refetch (it's a real backend sort key)
+        // and carries over the direction set while on Amount.
+        await store.setFeedSortKey(.date)
+        XCTAssertEqual(feedCallCount, 2)
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(lastURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "sort" })?.value, "tx_date")
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "order" })?.value, "asc")
+    }
+
+    @MainActor
+    func testChangingATimeRangeResetsCurrentPageToZero() async throws {
+        var feedURLs: [URL] = []
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURLs.append(request.url!)
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 300, limit: 100))
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.refresh()
+        await store.goToNextPage()
+        XCTAssertEqual(store.currentPage, 1)
+
+        await store.setTimeRange(.thirtyDays)
+        XCTAssertEqual(store.currentPage, 0, "A filter change must not strand the user on a now-out-of-range page")
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "offset" }), "Page reset must omit offset (page 1)")
+    }
+
+    // MARK: - People directory (owner punch list #2, item 9)
+
+    func testMembersDirectoryHitsOriginLevelMembersEndpointNotClientV1() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: session
+        )
+        var requestedURL: URL?
+        MockURLProtocol.handler = { request in
+            requestedURL = request.url
+            return Self.response(
+                for: request,
+                json: """
+                {"members":[{"filerId":"P000197","fullName":"Jane Smith","chamber":"house",
+                 "party":"Republican","state":"TX","district":"10","txCount":42,
+                 "photoUrl":"https://example.test/photo.jpg"}],"count":1}
+                """
+            )
+        }
+
+        let response = try await client.membersDirectory()
+        XCTAssertEqual(requestedURL?.path, "/api/members", "Roster is origin-level, not under /api/client/v1")
+        XCTAssertEqual(response.members.first?.filerId, "P000197")
+        XCTAssertEqual(response.members.first?.photoUrl, "https://example.test/photo.jpg")
+    }
+
+    @MainActor
+    func testLoadMembersDirectoryPopulatesAndMemoizesUntilForced() async throws {
+        var hitCount = 0
+        MockURLProtocol.handler = { request in
+            hitCount += 1
+            return Self.response(
+                for: request,
+                json: #"{"members":[{"filerId":"P000197","fullName":"Jane Smith","chamber":"house","party":"Republican","state":"TX","district":null,"txCount":42,"photoUrl":null}],"count":1}"#
+            )
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+
+        await store.loadMembersDirectory()
+        XCTAssertEqual(hitCount, 1)
+        XCTAssertEqual(store.members.count, 1)
+        XCTAssertEqual(store.members.first?.filerId, "P000197")
+
+        // Repeated calls within the TTL window reuse the cached roster.
+        await store.loadMembersDirectory()
+        XCTAssertEqual(hitCount, 1, "Roster should be memoized, not re-fetched on every tab visit")
+
+        // force: true (pull-to-refresh) bypasses the cache.
+        await store.loadMembersDirectory(force: true)
+        XCTAssertEqual(hitCount, 2)
+    }
+
     @MainActor
     func testTransientServerErrorIsRetriedWithBackoffThenSucceeds() async throws {
         var feedAttempts = 0

@@ -175,6 +175,7 @@ interface MembersRosterRow {
   state: string | null;
   district: string | null;
   tx_count: number;
+  photo_url: string | null;
 }
 
 /**
@@ -210,6 +211,7 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
                 f.party     AS party,
                 f.state     AS state,
                 f.district  AS district,
+                f.photo_url AS photo_url,
                 COUNT(*)    AS tx_count
            FROM transactions t %INDEX_HINT%
            LEFT JOIN filers f ON f.bioguide_id = t.filer_id
@@ -234,6 +236,9 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
     state: row.state,
     district: row.district,
     txCount: row.tx_count,
+    // Rendered as a row avatar in the iOS People directory (owner punch list
+    // #2 item 9); the web directory table stays photo-less (unchanged).
+    photoUrl: row.photo_url ?? null,
   }));
   return { members, count: members.length };
 }

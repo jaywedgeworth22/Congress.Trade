@@ -44,10 +44,25 @@ final class CongressTradeStore: ObservableObject {
     @Published var viewLimit: Int = 100 {
         didSet {
             if oldValue != viewLimit {
+                // A different page size shifts every page boundary — stay on
+                // a page that's guaranteed to exist under the new size.
+                currentPage = 0
                 Task { await refresh() }
             }
         }
     }
+    /// 0-indexed page of the current filtered/sorted snapshot (owner punch
+    /// list #2, item 8). `refresh()` sends it as `offset = currentPage *
+    /// pageLimit`; every filter/sort/page-size change below resets it to 0
+    /// so the user is never stranded on a now-out-of-range page.
+    @Published private(set) var currentPage: Int = 0
+    /// Trades sort control (owner punch list #2, item 7).
+    @Published private(set) var feedSortKey: FeedSortKey = .date
+    @Published private(set) var feedSortDirection: SortDirection = .descending
+    /// People directory roster (owner punch list #2, item 9).
+    @Published private(set) var members: [MemberDirectoryEntry] = []
+    @Published private(set) var isLoadingMembers = false
+    @Published private(set) var membersNotice: String?
     /// Canonical chamber chip selection. Drives both the visible chips and
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     /// Empty set = no chamber filter (all branches). Mirrors the website HSP chips
@@ -58,6 +73,9 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Buy / Sell / All side filter (`type=` on feed + local cache filter).
     @Published private(set) var selectedTradeType: TradeTypeFilter = .all
+    /// $-threshold pill (`minAmount=` on feed + local cache filter). Website
+    /// parity with the shared `qMinAmt`/`trMinAmt` row, mirrored on Trends.
+    @Published private(set) var selectedAmountThreshold: AmountThresholdFilter = .any
     /// Trades-only free-text politician filter (`memberName=`).
     @Published private(set) var politicianFilter: String = ""
     /// Trades-only asset/ticker filter (`ticker=`).
@@ -93,6 +111,12 @@ final class CongressTradeStore: ObservableObject {
     private var pageLimit: Int { min(max(viewLimit, 50), 200) }
     /// Attempts (including the first) for a single page fetch before giving up.
     private static let maxAttemptsPerPage = 3
+    /// Mirrors the server's `MAX_PUBLIC_TX_OFFSET` (app/src/security/botDefense.ts)
+    /// so the pager disables "Next" before ever sending a request the public
+    /// feed would 400 — deep paging past this depth is Premium CSV export's job.
+    private static let maxPublicOffset = 2000
+    private var membersLastLoadedAt: Date?
+    private static let membersCacheTTL: TimeInterval = 5 * 60
     /// The backend's true default view when `chamber` is omitted entirely:
     /// Congressional chambers, excluding Executive (OGE 278-T) disclosures
     /// unless explicitly requested. See app/docs/client-mobile-api.md.
@@ -141,6 +165,7 @@ final class CongressTradeStore: ObservableObject {
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
         // Allow empty = all branches (website parity with unselected H/S/P).
         selectedChambers = chambers
+        currentPage = 0
         async let r1: Void = refresh()
         async let r2: Void = refreshTrends()
         _ = await (r1, r2)
@@ -149,6 +174,7 @@ final class CongressTradeStore: ObservableObject {
     func setTimeRange(_ range: TimeRange) async {
         guard range != selectedTimeRange else { return }
         selectedTimeRange = range
+        currentPage = 0
         async let r1: Void = refresh()
         async let r2: Void = refreshTrends()
         _ = await (r1, r2)
@@ -157,6 +183,20 @@ final class CongressTradeStore: ObservableObject {
     func setTradeType(_ type: TradeTypeFilter) async {
         guard type != selectedTradeType else { return }
         selectedTradeType = type
+        currentPage = 0
+        async let r1: Void = refresh()
+        async let r2: Void = refreshTrends()
+        _ = await (r1, r2)
+    }
+
+    /// $-threshold pill (server `minAmount=`). Mirrors `setTradeType`: also
+    /// pings `refreshTrends()` for shared-filter-row consistency even though
+    /// the analytics endpoints don't yet accept `minAmount` (same precedent
+    /// as the side/type filter above).
+    func setAmountThreshold(_ threshold: AmountThresholdFilter) async {
+        guard threshold != selectedAmountThreshold else { return }
+        selectedAmountThreshold = threshold
+        currentPage = 0
         async let r1: Void = refresh()
         async let r2: Void = refreshTrends()
         _ = await (r1, r2)
@@ -167,6 +207,7 @@ final class CongressTradeStore: ObservableObject {
         let next = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard next != politicianFilter else { return }
         politicianFilter = next
+        currentPage = 0
         await refresh()
     }
 
@@ -175,7 +216,72 @@ final class CongressTradeStore: ObservableObject {
         let next = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard next != assetFilter else { return }
         assetFilter = next
+        currentPage = 0
         await refresh()
+    }
+
+    // MARK: - Trades sort control (owner punch list #2, item 7)
+
+    /// Selecting Date refetches the current page with `sort=tx_date` in the
+    /// existing direction; selecting Amount is a local re-sort only (no
+    /// backend `amount` sort key — see `FeedSortKey.isServerSort`).
+    func setFeedSortKey(_ key: FeedSortKey) async {
+        guard key != feedSortKey else { return }
+        feedSortKey = key
+        guard key.isServerSort else { return }
+        currentPage = 0
+        await refresh()
+    }
+
+    /// Flips asc/desc for whichever sort key is active. Only a server-sort
+    /// key (currently Date) needs a refetch; Amount just re-renders the
+    /// already-loaded page in the new direction.
+    func toggleFeedSortDirection() async {
+        feedSortDirection = feedSortDirection.toggled
+        guard feedSortKey.isServerSort else { return }
+        currentPage = 0
+        await refresh()
+    }
+
+    // MARK: - Pagination (owner punch list #2, item 8)
+
+    /// Rows actually requested per page — already existed internally as
+    /// `pageLimit`; exposed read-only for the "N / page" pager control.
+    var pageSize: Int { pageLimit }
+
+    /// `tradeTotal` is the API's `COUNT(*)` for the active filters (never
+    /// cursor_seq — see the `tradeTotal` doc comment above), so this is
+    /// stable across pages of the same filter set.
+    var totalPages: Int {
+        guard tradeTotal > 0 else { return 1 }
+        return max(1, Int((Double(tradeTotal) / Double(pageLimit)).rounded(.up)))
+    }
+
+    var canGoToPreviousPage: Bool { currentPage > 0 }
+
+    /// Also false once the *next* page's offset would exceed the server's
+    /// public depth cap, so "Next" never dead-ends on a 400.
+    var canGoToNextPage: Bool {
+        currentPage + 1 < totalPages && (currentPage + 1) * pageLimit <= Self.maxPublicOffset
+    }
+
+    func goToNextPage() async {
+        guard canGoToNextPage else { return }
+        currentPage += 1
+        await refresh()
+    }
+
+    func goToPreviousPage() async {
+        guard canGoToPreviousPage else { return }
+        currentPage -= 1
+        await refresh()
+    }
+
+    /// Rows-per-page control. Routes through `viewLimit`'s existing `didSet`
+    /// (which already resets `currentPage` and refetches) so there is one
+    /// path for "page size changed," not two.
+    func setPageSize(_ size: Int) {
+        viewLimit = size
     }
 
     /// Applies a server-side search filter (submit path; typing alone keeps
@@ -186,6 +292,7 @@ final class CongressTradeStore: ObservableObject {
         let next = trimmed.isEmpty ? nil : trimmed
         guard next != searchTerm else { return }
         searchTerm = next
+        currentPage = 0
         await refresh()
     }
 
@@ -235,6 +342,7 @@ final class CongressTradeStore: ObservableObject {
         let to = selectedTimeRange.toDateISO
         let search = searchTerm
         let typeParam = selectedTradeType.queryValue
+        let minAmountParam = selectedAmountThreshold.queryValue
         // Dedicated fields win; legacy combined search still fills the other slot.
         let tickerParam: String? = {
             if !assetFilter.isEmpty { return assetFilter }
@@ -244,11 +352,19 @@ final class CongressTradeStore: ObservableObject {
             if !politicianFilter.isEmpty { return politicianFilter }
             return search.flatMap { Self.looksLikeTicker($0) ? nil : $0 }
         }()
+        // Date is a real backend sort key (`sort=tx_date`); its direction
+        // drives `order=`. Amount has no backend sort key, so the fetched
+        // page always stays in the stable newest-first server order and the
+        // view re-sorts what's already loaded (FeedDashboardView.sortedCached).
+        let orderParam = feedSortKey.isServerSort ? feedSortDirection.rawValue : SortDirection.descending.rawValue
+        let page = currentPage
+        let offsetParam = page > 0 ? page * pageLimit : nil
         do {
             async let bootstrapTask = api.bootstrap()
-            // Single newest-first snapshot for the visible window — not a
-            // multi-page historical crawl. Users change the window dropdown
-            // if they want a longer range; the list they see is the list we load.
+            // One page of the current window/sort — not a multi-page
+            // historical crawl. Users change the window/page-size/page
+            // controls if they want a different slice; the list they see is
+            // the list we load.
             let response = try await fetchPageWithRetry(
                 FeedQuery(
                     limit: pageLimit,
@@ -260,10 +376,12 @@ final class CongressTradeStore: ObservableObject {
                     memberName: memberNameParam,
                     chamber: chamberParam,
                     type: typeParam,
+                    minAmount: minAmountParam,
                     from: from,
                     to: to,
                     sort: "tx_date",
-                    order: "desc"
+                    order: orderParam,
+                    offset: offsetParam
                 )
             )
             try replaceCache(with: response)
@@ -310,6 +428,7 @@ final class CongressTradeStore: ObservableObject {
 
     func setPartyFilter(_ party: PartyFilter?) async {
         selectedParty = party
+        currentPage = 0
         async let r1: Void = refreshTrends()
         async let r2: Void = refresh()
         _ = await (r1, r2)
@@ -467,6 +586,33 @@ final class CongressTradeStore: ObservableObject {
         if context.hasChanges {
             try context.save()
         }
+    }
+
+    // MARK: - People directory (owner punch list #2, item 9)
+
+    /// Loads the `GET /api/members` roster. Memoized for `membersCacheTTL`
+    /// (mirrors the web's `PEOPLE_CACHE`/`PEOPLE_TTL_MS`, `dashboardHtml.ts`)
+    /// so switching to the People tab repeatedly doesn't re-fetch the whole
+    /// roster every time; pass `force: true` for pull-to-refresh.
+    func loadMembersDirectory(force: Bool = false) async {
+        if !force, let lastLoadedAt = membersLastLoadedAt,
+           Date().timeIntervalSince(lastLoadedAt) < Self.membersCacheTTL, !members.isEmpty {
+            return
+        }
+        isLoadingMembers = true
+        membersNotice = nil
+        do {
+            let response = try await api.membersDirectory()
+            members = response.members
+            membersLastLoadedAt = Date()
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation {
+                // ignore
+            } else {
+                membersNotice = error.localizedDescription
+            }
+        }
+        isLoadingMembers = false
     }
 
     func refreshSignedInState() async {
@@ -633,7 +779,8 @@ final class CongressTradeStore: ObservableObject {
             ticker: assetFilter.isEmpty ? nil : assetFilter,
             memberName: politicianFilter.isEmpty ? nil : politicianFilter,
             chamber: chamberParam,
-            type: selectedTradeType.queryValue
+            type: selectedTradeType.queryValue,
+            minAmount: selectedAmountThreshold.queryValue
         )
     }
 
