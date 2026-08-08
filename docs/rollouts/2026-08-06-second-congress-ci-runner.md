@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-08-08:** the Oracle host is decommissioned. Runners now live on the Hetzner fleet box — see `docs/rollouts/2026-08-08-runners-hetzner-migration.md` for current truth + runbook.
+
 # 2026-08-06 — Second Congress.Trade CI runner
 
 ## Summary
