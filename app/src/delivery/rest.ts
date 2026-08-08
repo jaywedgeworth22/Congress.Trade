@@ -46,7 +46,7 @@ import {
   type TxQueryParams,
 } from './rows.ts';
 import { getCurrentUserFromRequest } from '../auth/session.ts';
-import { isPremiumUser } from '../billing/entitlement.ts';
+import { isPremiumUserAsync } from '../billing/entitlement.ts';
 import { getUserById } from '../auth/users.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { formatPartyLabel } from '../shared/partyLabel.ts';
@@ -566,7 +566,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         401,
       );
     }
-    if (!isPremiumUser(user)) {
+    if (!(await isPremiumUserAsync(c.env, user))) {
       return c.json(
         { error: 'CSV export requires a Premium account', upgradeRequired: true, feature: 'export' },
         402,
@@ -1066,7 +1066,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
     const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'authentication required for durable subscriptions' }, 401);
-    if (!isPremiumUser(user)) {
+    if (!(await isPremiumUserAsync(c.env, user))) {
       return c.json({ error: `${delivery === 'webhook' ? 'Webhook' : 'SSE'} delivery requires a Premium account`, upgradeRequired: true, feature: 'alerts' }, 402);
     }
     const clientId = `user:${user.id}`;
@@ -1148,7 +1148,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const isContinuingOrChangingDelivery = body.filters !== undefined || body.targetUrl !== undefined || body.active === true;
     if (isContinuingOrChangingDelivery && existing.clientId?.startsWith('user:')) {
       const ownerUser = await getUserById(c.env, existing.clientId.slice('user:'.length));
-      if (!ownerUser || !isPremiumUser(ownerUser)) {
+      if (!ownerUser || !(await isPremiumUserAsync(c.env, ownerUser))) {
         return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
       }
     }
@@ -1209,7 +1209,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
 export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   const user = await getCurrentUserFromRequest(c);
-  if (!user || !isPremiumUser(user)) {
+  if (!user || !(await isPremiumUserAsync(c.env, user))) {
     return c.redirect('/pricing?feature=pdf', 302);
   }
 

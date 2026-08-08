@@ -100,6 +100,11 @@ function fakeEnv(opts: { plan?: 'premium' | 'free' } = {}): Env {
               plan: isPremium ? 'monthly' : null,
             };
           }
+          // Non-premium-via-Stripe users also fall through to the Apple IAP
+          // ledger check (resolveEntitlementAsync); none of these fake users
+          // have an Apple subscription, so that lookup must return null, not
+          // the generic COUNT(*) placeholder below.
+          if (/FROM apple_subscriptions/i.test(sql)) return null;
           return { total: 0 };
         },
         async all() {

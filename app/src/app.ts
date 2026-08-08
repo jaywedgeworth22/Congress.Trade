@@ -5,6 +5,7 @@ import { buildAdminRouter } from './admin/routes.ts';
 import { buildAnalyticsRouter } from './analytics/routes.ts';
 import { buildAuthRouter } from './auth/routes.ts';
 import { buildBillingRouter } from './billing/routes.ts';
+import { buildAppleWebhookRouter } from './billing/appleWebhook.ts';
 import { buildClientRouter } from './client/routes.ts';
 import { buildExportRouter } from './export/routes.ts';
 import { buildUiRouter } from './ui/routes.ts';
@@ -26,6 +27,7 @@ try { app.route('/api/export', buildExportRouter()); } catch (err) { console.war
 try { app.route('/api/ingest', buildDetectionRouter()); } catch (err) { console.warn('app.ts: failed to mount /api/ingest routes:', err); }
 try { app.route('/auth', buildAuthRouter()); } catch (err) { console.warn('app.ts: failed to mount /auth routes:', err); }
 try { app.route('/billing', buildBillingRouter()); } catch (err) { console.warn('app.ts: failed to mount /billing routes:', err); }
+try { app.route('/api/webhooks', buildAppleWebhookRouter()); } catch (err) { console.warn('app.ts: failed to mount /api/webhooks routes:', err); }
 try { app.route('/', buildUiRouter()); } catch (err) { console.warn('app.ts: failed to mount / routes:', err); }
 
 app.onError((err, c) => {

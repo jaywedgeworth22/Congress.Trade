@@ -1,10 +1,16 @@
 /**
  * Apple In-App Purchase (StoreKit 2) confirmation helpers.
  *
- * iOS sends the transaction's `jwsRepresentation`. We decode the payload and
- * optionally verify the JWS against Apple's published root certificates when
- * APPLE_IAP_REQUIRE_SIGNATURE is truthy. Product ids map to our Premium plans.
+ * iOS sends the transaction's `jwsRepresentation`. The legacy
+ * POST /billing/apple/confirm route below decodes the payload without
+ * verifying its signature. The current, recommended path is the
+ * `redeem_apple_purchase` client command (client/commands.ts), which uses
+ * appleJws.ts's full x5c chain verification against the pinned Apple root —
+ * see that module for the "why" behind the two paths coexisting.
  */
+
+import type { Env } from '../shared/types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 
 export const APPLE_PRODUCT_MONTHLY = 'trade.congress.premium.monthly';
 export const APPLE_PRODUCT_ANNUAL = 'trade.congress.premium.annual';
@@ -21,6 +27,8 @@ export interface AppleTransactionPayload {
   expiresDate?: number;
   purchaseDate?: number;
   revocationDate?: number;
+  /** 0 = refunded due to app issue, 1 = other reason (e.g. accidental purchase). Apple's JWSTransactionDecodedPayload.revocationReason. */
+  revocationReason?: number;
 }
 
 function b64urlJson(part: string): unknown {
@@ -67,4 +75,24 @@ export function assertAppleJwsShape(jws: string): AppleTransactionPayload {
   const trimmed = jws.trim();
   if (trimmed.length < 40 || trimmed.length > 200_000) throw new Error('invalid Apple JWS length');
   return decodeAppleJwsPayload(trimmed);
+}
+
+/** App Store Connect product ids (APPLE_PRODUCT_MONTHLY/ANNUAL, else the built-in defaults). */
+export async function resolveAppleProductIds(env: Env): Promise<{ monthly: string; annual: string }> {
+  const configured = await resolveSecrets(env, ['APPLE_PRODUCT_MONTHLY', 'APPLE_PRODUCT_ANNUAL']);
+  return {
+    monthly: configured.APPLE_PRODUCT_MONTHLY?.trim() || APPLE_PRODUCT_MONTHLY,
+    annual: configured.APPLE_PRODUCT_ANNUAL?.trim() || APPLE_PRODUCT_ANNUAL,
+  };
+}
+
+/** Map a StoreKit product id to a plan using the CONFIGURED product ids (env-overridable), unlike {@link planFromAppleProductId}'s hardcoded suffix match. */
+export function planFromConfiguredAppleProductId(
+  productId: string | undefined,
+  configured: { monthly: string; annual: string },
+): ApplePlan | null {
+  if (!productId) return null;
+  if (productId === configured.monthly) return 'monthly';
+  if (productId === configured.annual) return 'annual';
+  return null;
 }
