@@ -228,7 +228,7 @@ struct TrendsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(item.ticker), \(item.formattedName ?? ""), \(item.tradeCount) trades")
+                    .accessibilityLabel("\(item.ticker), \(item.formattedName ?? "—"), \(item.tradeCount) trades")
                     .accessibilityHint("Opens ticker details")
                     if idx < min(9, store.tickerLeaderboard.count - 1) {
                         Divider()
