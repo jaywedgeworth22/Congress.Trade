@@ -13,6 +13,9 @@
  *      private / thin-coverage names (SPCX, HONAV, …). Owner options, replaceable.
  *   3. davidepalazzo/ticker-logos on GitHub — last resort.
  *
+ * Empty/non-PNG "success" responses from logo.dev or GitHub are rejected so we
+ * fall through instead of caching blank images that never fire img.onerror.
+ *
  * The dashboard renders `<img src="/api/logos/ticker?symbol=AAPL">` and toggles
  * only the *framing* client-side (glass "tile" vs bare "transparent" vs "off").
  */
@@ -32,6 +35,8 @@ const LOGO_REFERER = 'https://congress.trade';
 
 const ONE_DAY_SECONDS = 86_400;
 const ONE_WEEK_SECONDS = 604_800;
+/** Below this size a "PNG" is almost certainly empty/corrupt (real logos are larger). */
+const MIN_PNG_BYTES = 64;
 
 /** Optional alias when disclosure name ≠ public ticker / logo pack filename. */
 const LOCAL_SYMBOL_ALIASES: Record<string, string> = {
@@ -78,27 +83,53 @@ export function logoDevUrl(symbol: string, token: string, theme: 'dark' | 'light
   );
 }
 
-function passThroughPng(upstream: Response, source: string): Response {
-  return new Response(upstream.body, {
-    headers: {
-      'cache-control': `public, max-age=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
-      'content-type': 'image/png',
-      'x-logo-source': source,
-    },
-  });
+/** True when bytes look like a real PNG (magic + non-trivial size). */
+export function isValidPngBytes(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < MIN_PNG_BYTES) return false;
+  // \x89PNG\r\n\x1a\n
+  return (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  );
 }
 
-function localPngResponse(bytes: Uint8Array, source: string): Response {
-  // Copy into a fresh ArrayBuffer-backed Uint8Array so Response accepts it under Deno/Node.
+function pngResponse(bytes: Uint8Array, source: string): Response {
+  // Fresh ArrayBuffer-backed copy so Response accepts it under Deno/Node.
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return new Response(copy, {
     headers: {
       'cache-control': `public, max-age=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
       'content-type': 'image/png',
+      'content-length': String(copy.byteLength),
       'x-logo-source': source,
     },
   });
+}
+
+/**
+ * Read an upstream image response and keep only non-empty valid PNGs.
+ * Rejects empty 200s / HTML error pages that would otherwise blank the UI
+ * without firing img.onerror.
+ */
+export async function readValidPng(res: Response): Promise<Uint8Array | null> {
+  if (!res.ok) return null;
+  const ct = (res.headers.get('content-type') ?? '').toLowerCase();
+  // Allow missing CT (some CDNs omit it) but reject obvious non-images.
+  if (ct && !ct.startsWith('image/') && !ct.includes('octet-stream')) return null;
+  let buf: Uint8Array;
+  try {
+    buf = new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+  return isValidPngBytes(buf) ? buf : null;
 }
 
 /** Try repo pack: `app/public/assets/ticker-logos/{SYMBOL}.png` (and candidates). */
@@ -113,10 +144,9 @@ export function tryLocalTickerLogo(symbol: string): Response | null {
     if (!existsSync(abs)) continue;
     try {
       const buf = readFileSync(abs);
-      if (buf.byteLength < 32) continue;
-      // PNG magic
-      if (buf[0] !== 0x89 || buf[1] !== 0x50) continue;
-      return localPngResponse(new Uint8Array(buf), `local:ticker-logos/${name}.png`);
+      const bytes = new Uint8Array(buf);
+      if (!isValidPngBytes(bytes)) continue;
+      return pngResponse(bytes, `local:ticker-logos/${name}.png`);
     } catch {
       continue;
     }
@@ -125,8 +155,8 @@ export function tryLocalTickerLogo(symbol: string): Response | null {
 }
 
 /**
- * Cached proxy for a single ticker logo: local pack → logo.dev → GitHub.
- * Long-lived cache headers; 404 is cacheable so a miss isn't re-fetched every render.
+ * Cached proxy for a single ticker logo: logo.dev → local pack → GitHub.
+ * Long-lived cache headers only on real PNG successes.
  */
 export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): Promise<Response> {
   const symbol = normalizeTickerLogoSymbol(url.searchParams.get('symbol'));
@@ -138,22 +168,21 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
   }
   const theme = url.searchParams.get('theme') === 'light' ? 'light' : 'dark';
 
-  // 1) logo.dev first when key is present (preferred over interim local options).
+  // 1) logo.dev first when key is present — but never accept empty/non-PNG bodies.
   if (logoDevToken) {
     try {
       const res = await trackedFetch(logoDevUrl(symbol, logoDevToken, theme), {
-        headers: { referer: LOGO_REFERER },
+        headers: { referer: LOGO_REFERER, accept: 'image/png,image/*;q=0.8,*/*;q=0.5' },
         cf: { cacheTtl: ONE_WEEK_SECONDS, cacheEverything: true },
       }, { service: 'asset-logo', operation: 'fetch-logo-primary' });
-      if (res.ok && (res.headers.get('content-type') ?? '').startsWith('image/')) {
-        return passThroughPng(res, 'logo.dev');
-      }
+      const png = await readValidPng(res);
+      if (png) return pngResponse(png, 'logo.dev');
     } catch {
       /* fall through */
     }
   }
 
-  // 2) Repo pack — gap-fill only (private names / logo.dev miss).
+  // 2) Repo pack — gap-fill (private names / logo.dev miss or empty).
   const local = tryLocalTickerLogo(symbol);
   if (local) return local;
 
@@ -162,18 +191,19 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
     let upstream: Response;
     try {
       upstream = await trackedFetch(tickerLogoRawUrl(candidate), {
+        headers: { accept: 'image/png' },
         cf: { cacheTtl: ONE_WEEK_SECONDS, cacheEverything: true },
       }, { service: 'asset-logo', operation: 'fetch-logo-fallback' });
     } catch {
       continue;
     }
-    if (!upstream.ok) continue;
-    if (!(upstream.headers.get('content-type') ?? '').startsWith('image/png')) continue; // GitHub 404s return HTML
-    return passThroughPng(upstream, 'github:davidepalazzo/ticker-logos');
+    const png = await readValidPng(upstream);
+    if (png) return pngResponse(png, 'github:davidepalazzo/ticker-logos');
   }
 
+  // Short cache on miss so a transient provider outage recovers quickly.
   return new Response(null, {
     status: 404,
-    headers: { 'cache-control': `public, max-age=${ONE_DAY_SECONDS}` },
+    headers: { 'cache-control': `public, max-age=300` },
   });
 }

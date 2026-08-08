@@ -3031,7 +3031,11 @@ function tickerLogoHtml(ticker, company) {
   var mono = esc(sym.slice(0, 2));
   return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
     '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
-    'loading="lazy" decoding="async" onerror="logoFallback(this,\\'' + mono + '\\')" />' +
+    'loading="lazy" decoding="async" ' +
+    // Empty 200 PNGs (cached blank provider bodies) never fire onerror — treat
+    // zero naturalWidth as a miss so monogram fallback still runs.
+    'onload="if(!this.naturalWidth)logoFallback(this,\\'' + mono + '\\')" ' +
+    'onerror="logoFallback(this,\\'' + mono + '\\')" />' +
   '</span>';
 }
 /* Two-letter initials from a politician name, for the avatar fallback. */
