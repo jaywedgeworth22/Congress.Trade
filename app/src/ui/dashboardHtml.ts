@@ -417,9 +417,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-top { display:flex; align-items:center; gap:10px; min-width:0; }
   .fc-top .asset-cell { flex:1 1 auto; min-width:0; }
   .fc-top .tag { flex:0 0 auto; }
-  .fc-trail { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:2px; margin-left:4px; }
+  /* Owner punch list #7: justify-content:center is belt-and-suspenders with
+     .fc-top's own align-items:center — keeps the $-range + date cluster
+     centered even if a future row grows taller than this stack. */
+  .fc-trail { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:2px; margin-left:4px; }
   .fc-trail .amount-cell { align-items:flex-end; text-align:right; }
   .fc-trail .amount-range { color:var(--text); font-weight:700; font-size:13px; }
+  /* Owner punch list #7: the amount pictograph's default 17px bars (sized for
+     the dense desktop table) made this 3-line stack the tallest thing in the
+     card's top row, inflating every mobile card. Half-height bars here only —
+     the desktop table's .amount-cell / .amount-bars are untouched. */
+  .fc-trail .amount-tier-line { height:10px; }
+  .fc-trail .amount-bars { height:10px; }
+  .fc-trail .amount-bars i:nth-child(1) { height:2px; }
+  .fc-trail .amount-bars i:nth-child(2) { height:4px; }
+  .fc-trail .amount-bars i:nth-child(3) { height:6px; }
+  .fc-trail .amount-bars i:nth-child(4) { height:7px; }
+  .fc-trail .amount-bars i:nth-child(5) { height:9px; }
+  .fc-trail .amount-bars i:nth-child(6) { height:10px; }
   .fc-date { font-size:11px; white-space:nowrap; }
   .feed-card .tkr-logo { width:36px; height:36px; border-radius:9px; }
   .feed-card .tkr-logo.transparent,
@@ -517,6 +532,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .pager-controls button { border: none !important; border-radius: 0 !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+  /* Owner punch list #6: .note's global margin-top:8px throws "Page 1 of 56"
+     off-center inside the pager control box (align-items:center centers the
+     margin box, not the text) — zero it out here so the text itself centers. */
+  .pager-controls .note { margin-top: 0; }
   .pager select { padding:5px 9px; font-size:12px; }
   /* Rows-per-page + Columns chooser live at the end of the bottom pager bar
      (moved out of the toolbar so the toolbar stays filter-only). */
@@ -700,20 +719,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .dirpill.B, .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
-  .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:19px 24px; margin-bottom:26px; }
-  .disclaimer strong { color: var(--text); }
-  /* Primary Only / All Data feed source-mode toggle, inline in the disclaimer
-     sentence that already explains the two views (issue #1453). */
+  /* Primary Only / All Data feed source-mode toggle — owner punch list #3:
+     used to live inline in the big Trends disclaimer banner (removed); now a
+     compact note directly on the Trades feed (see #feedSourceNote). */
   .source-mode-btn { display:inline; background:none; border:none; padding:0; margin:0; color:inherit; font:inherit; font-style:italic; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
   .source-mode-btn:hover { color:var(--accent); }
   .source-mode-btn.active { text-decoration:none; font-weight:700; color:var(--text); }
-  .disclaimer-toggle { display:none; }
-  .disclaimer.collapsed { padding:0; }
-  .disclaimer.collapsed .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:9px 14px; cursor:pointer; }
-  .disclaimer:not(.collapsed) .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:0 0 8px; cursor:pointer; }
-  .disclaimer.collapsed .disclaimer-body { display:none; }
-  .dt-label { font-weight:600; letter-spacing:.01em; }
-  .dt-more { font-weight:400; font-size:11px; opacity:.75; white-space:nowrap; }
   /* modal */
   /* ---- detail drawer (trade / asset / politician) ---- */
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
@@ -847,7 +858,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct .email { font-size:12px; color:var(--text-dim); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:999px; border:1px solid var(--border); color:var(--text-dim); }
   .badge.premium { color:var(--good); border-color:color-mix(in srgb,var(--good) 45%,transparent); background:color-mix(in srgb,var(--good) 12%,transparent); }
-  .acct .avatar.lg { width:28px; height:28px; cursor:pointer; }
+  /* Owner punch list #2: no ring around the Google profile photo — var(--border)
+     is a blue-tinted gray, which on a 1px circular border reads as a stray
+     blue ring around the headshot. */
+  .acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }
   .acct-menu-btn { display:flex; align-items:center; gap:7px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:999px; padding:3px 8px 3px 3px; cursor:pointer; font-family:var(--sans); max-width:230px; }
   .acct-menu-btn:hover { background:var(--panel-2); }
   .acct-menu-btn .acct-caret { color:var(--text-dim); font-size:11px; }
@@ -891,24 +905,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      (issue #1456). .acct-mobile is hidden by default and only shown under
      the mobile breakpoint (see the 720px media query near the bottom nav). */
   .acct-mobile { display:none; position:relative; }
+  /* Owner punch list #1: the hamburger glyph sits on its own — no ring/circle
+     at rest. A soft hover/open background is still fine as an affordance. */
   .acct-hamburger {
-    width:38px; height:38px; border:1px solid var(--border); border-radius: var(--radius-pill);
-    background:var(--panel); color:var(--text); font-size:18px; line-height:1;
+    width:38px; height:38px; border:none; border-radius: var(--radius-pill);
+    background:transparent; color:var(--text); font-size:18px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
-  .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); color:var(--accent); }
+  .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }
   .acct-mobile-menu {
     position:absolute; right:0; top:46px; z-index:60; min-width:220px;
     max-width:min(300px, calc(100vw - 24px)); background:var(--panel);
-    border:1px solid var(--border); border-radius:12px; padding:8px;
+    border:1px solid var(--border); border-radius:12px; padding:12px;
     box-shadow:0 14px 34px rgba(0,0,0,.4); display:none;
   }
-  .acct-mobile-menu.open { display:grid; gap:4px; }
+  /* Owner punch list #2: more vertical breathing room between rows. */
+  .acct-mobile-menu.open { display:grid; gap:10px; }
   .acct-mobile-menu .btn { width:100%; justify-content:center; }
   .acct-mobile-menu .badge { justify-self:start; margin:0 2px 2px; }
   .acct-mobile-menu .menu { width:100%; }
   .acct-mobile-menu .acct-menu-btn { width:100%; max-width:none; justify-content:space-between; }
   .acct-mobile-menu .menu-pop { position:static; box-shadow:none; border:none; padding:4px 0 0; min-width:0; max-width:none; }
+  /* Owner punch list #2: ~8px gap between the avatar photo and the email text
+     (the mobile "who" row combines both — the desktop .menu-pop .who row is
+     text-only and untouched). */
+  .acct-mobile-menu .who { display:flex; align-items:center; gap:8px; padding:2px 2px 4px; }
+  .acct-mobile-menu .footer-disclaimer { font-size:11px; line-height:1.45; color:var(--text-dim); padding:8px 2px 2px; border-top:1px solid var(--border); margin-top:2px; }
   html[data-theme="dark"] { color-scheme: dark; }
   html[data-theme="light"] { color-scheme: light; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
@@ -1036,7 +1058,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill-select.pill-amt { margin-left:auto; min-width:7.5rem; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
-  .pill-select.pill-amt::before { content:"$"; font-weight:800; }
   .pill-select-el {
     appearance:none; -webkit-appearance:none; -moz-appearance:none;
     width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
@@ -1050,13 +1071,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .pill-select-el:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
   .pill-select-el:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  /* Issue #1529: #qMember / #qTicker become rounded leading-icon fields —
-     wrapper + icon glyph, id/oninput/aria-label on the <input> untouched. */
+  /* Owner punch list #11: the collapsed pill already shows "Any $"/"$15k+" —
+     the options themselves carry the $, so the separate "$" prefix icon was
+     redundant ("$ Any $"). pill-cal keeps its 📅 icon; only pill-amt's inset
+     goes away since it no longer needs room for a glyph. */
+  .pill-select.pill-amt .pill-select-el { padding-left:14px; }
+  /* Owner punch list #8: #qMember / #qTicker are plain rounded fields now —
+     no leading icon glyph on desktop or mobile (id/oninput/aria-label on the
+     <input> untouched). */
   .icon-field { position:relative; display:inline-flex; align-items:center; min-width:0; }
-  .icon-field .icon-field-ic { position:absolute; left:12px; font-size:12px; line-height:1; color:var(--text-dim); pointer-events:none; }
-  .icon-input { padding-left:30px; border-radius:var(--radius-pill); height:var(--control-h); }
+  .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
+  .feed-source-note { margin-top:-6px; margin-bottom:12px; }
+  /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
+     toolbars onto one row — timeframe pill, segmented groups + ⓘ, the search
+     fields + Search button, then the $ pill right-aligned. display:contents
+     on both toolbar divs flattens their EXISTING direct children into this
+     flex row (no DOM nodes move, no wrapper added around them), so the
+     <=768px ID-scoped #feedExtraFilters grid (DO-NOT-BREAK) is completely
+     unaffected — this whole block simply doesn't apply there. */
+  @media (min-width: 769px) {
+    .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
+    .feed-toolbars #feedSharedFilters,
+    .feed-toolbars #feedExtraFilters { display:contents; }
+    .feed-toolbars .pill-select.pill-cal { order:1; }
+    .feed-toolbars .filter-groups { order:2; }
+    .feed-toolbars #qMemberField { order:3; }
+    .feed-toolbars #qTickerField { order:4; }
+    .feed-toolbars #searchToggle { order:5; }
+    .feed-toolbars #feedStats { order:6; }
+    /* .pill-select.pill-amt keeps its own margin-left:auto (unchanged), which
+       now pushes it to the right edge of the WHOLE merged row. */
+    .feed-toolbars .pill-select.pill-amt { order:7; }
+  }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
   #exportCsvDialog .lbl { display:inline-block; margin:8px 8px 4px 0; }
@@ -1224,15 +1272,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
-    main { max-width: none; min-width:0; overflow-x:hidden; padding: 12px; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+    /* Owner punch list #5: nav.tabs is ~60px tall (8px + 44px button + 8px
+       padding, before safe-area) — 70px leaves a sane ~10px clearance without
+       the previous 86px's dead-space overshoot. */
+    main { max-width: none; min-width:0; overflow-x:hidden; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
     .section { overflow:hidden; }
     .section p.sub { font-size:12px; line-height:1.45; }
-    .note, .disclaimer, code { overflow-wrap:anywhere; }
+    .note, code { overflow-wrap:anywhere; }
     .section p.sub { overflow-wrap:normal; }
     .section > table { display:block; max-width:100%; overflow-x:auto; }
-    .banner, .disclaimer { margin-bottom: 12px; }
-    .disclaimer { font-size:11px; line-height:1.45; padding:10px 11px; }
+    .banner { margin-bottom: 12px; }
+    /* Owner punch list #5: the footer (disclaimer + Privacy/Terms/... links)
+       is the last thing in the document — give its own bottom padding ~2
+       extra lines (~32px) on top of the base 30px so its last row is never
+       hidden behind the fixed tab bar, independent of main's own buffer. */
+    footer, footer.site-footer { padding-bottom: calc(62px + env(safe-area-inset-bottom)); }
     input, select, .btn { font-size:16px; }
     .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
     #trKpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -1242,13 +1297,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
     .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
-    /* .icon-field / .pill-select-el keep an asymmetric left inset for their
-       icon/chevron — restore it after the generic mobile shorthand above
-       (higher specificity than the desktop .icon-input/.pill-select-el rules
-       so it wins, but scoped so it doesn't touch the desktop padding). */
+    /* Owner punch list #9: nudge the mobile filter chips to the same 40px
+       touch height as every other mobile toolbar control (was the desktop
+       34px --control-h at every width) — tightens mobile-site filter chrome
+       toward the app's pill sizing. */
+    .toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }
+    /* .pill-select-el keeps an asymmetric left inset for its calendar icon —
+       restore it after the generic mobile shorthand above (higher specificity
+       than the desktop .pill-select-el rule so it wins, but scoped so it
+       doesn't touch the desktop padding). #qMember/#qTicker carry no icon
+       (owner punch list #8) so .icon-input needs no such override — the
+       generic .toolbar input/select/.btn shorthand above already fits it. */
     .toolbar .icon-field { width: 100%; }
-    .toolbar .icon-input { padding: 8px 9px 8px 30px; }
     .toolbar .pill-select-el { padding: 8px 26px 8px 30px; }
+    .toolbar .pill-select.pill-amt .pill-select-el { padding: 8px 26px 8px 9px; }
     /* Issue #1529: search-this-page button left, "N trades" count right, on
        their own row below the two full-width text fields (iOS-parity count
        placement — see .feed-stats above). */
@@ -1814,7 +1876,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px). */
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
-    main { padding: 22px 14px; }
+    /* Owner punch list #5: this shorthand used to reset ALL four sides,
+       silently clobbering the wider block's safe-area-aware padding-bottom
+       for every phone <=720px (the width nearly all phones report in
+       portrait) — footer/last content ended up hidden behind the fixed tab
+       bar. Re-assert padding-bottom explicitly so it survives here too. */
+    main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
     .toolbar .trends-filter-row { flex: 1 1 auto; }
@@ -1829,7 +1896,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .timeliness-grid { gap: 24px; }
     .cluster-grid { gap: 12px; }
     .ccard { padding: 13px 14px; }
-    .disclaimer { padding: 12px 15px; margin-bottom: 16px; }
     .feed-cards { gap: 10px; }
     .feed-card { padding: 11px 12px; gap: 8px; }
     .drawer-stack-grid { gap: 12px; }
@@ -1838,7 +1904,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .search-panel { margin: -4px 0 14px; padding: 12px 14px; }
     .diag-grid { gap: 10px; margin: 10px 0 14px; }
     .diag-card { padding: 11px 12px; }
-    footer { padding: 26px 18px; }
+    /* Owner punch list #5: same ~2-line extra bottom clearance as the wider
+       breakpoint's footer rule, scaled to this block's tighter 26px base. */
+    footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
   @media (max-width: 420px) {
     #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -1873,6 +1941,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
+    <!-- Owner punch list #9: desktop (>768px) merges #feedSharedFilters and
+         #feedExtraFilters onto one row via #feedToolbars (display:contents on
+         both children + flex order, see CSS). Neither inner div's own
+         direct-children markup changes, so the <=768px ID-scoped grid on
+         #feedExtraFilters (DO-NOT-BREAK) is untouched — this wrapper is a
+         no-op box at mobile widths. -->
+    <div class="feed-toolbars" id="feedToolbars">
     <!-- Shared filter row (mirrored on Trends) -->
     <div class="toolbar shared-filters" id="feedSharedFilters">
       <span class="pill-select pill-cal">
@@ -1941,18 +2016,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="feedExtraFilters">
       <span class="icon-field" id="qMemberField">
-        <span class="icon-field-ic" aria-hidden="true">👤</span>
-        <input id="qMember" class="icon-input" placeholder="Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
+        <input id="qMember" class="icon-input" placeholder="Name" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       </span>
       <span class="icon-field" id="qTickerField" style="min-width:140px">
-        <span class="icon-field-ic" aria-hidden="true">📈</span>
-        <input id="qTicker" class="icon-input" placeholder="Asset / ticker…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" />
+        <input id="qTicker" class="icon-input" placeholder="Asset / Ticker" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" />
       </span>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <div id="feedStats" class="feed-stats muted">
         <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
       </div>
     </div>
+    </div>
+    <!-- Owner punch list #3: the Primary Only / All Data source-mode toggle used
+         to live inside the big Trends disclaimer banner (now removed). It's a
+         real, persisted feature (not just disclaimer copy), so it moves here —
+         compact, right where it actually applies (the Trades feed). -->
+    <p class="note feed-source-note" id="feedSourceNote">Showing <button type="button" class="source-mode-btn" data-source-mode="primary" aria-pressed="false">Primary Only</button> (de-duplicated) by default &middot; <button type="button" class="source-mode-btn" data-source-mode="all" aria-pressed="false">All Data</button> can double-count trades present in both the primary and historic sets</p>
     <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
       <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
       <p class="note" style="margin:0 0 10px">Optional date range (trade date). Full-history export is Premium.</p>
@@ -2083,13 +2162,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
       </span>
     </div>
-    <div class="disclaimer" id="trDisclaimer">
-      <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
-      <div class="disclaimer-body" id="trDisclaimerBody">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. On the Trades feed, <button type="button" class="source-mode-btn" data-source-mode="all" aria-pressed="false">All Data</button> can double-count a trade present in both the primary and historic sets; <button type="button" class="source-mode-btn" data-source-mode="primary" aria-pressed="false">Primary Only</button> shows a de-duplicated view and is the default for first-time visitors — your choice is remembered. Party is known for only some politicians. Always do your own research.
-      </div>
-    </div>
-
     <!-- KPI strip -->
     <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
@@ -3172,8 +3244,11 @@ function themeSegHtml(pref) {
   }).join('');
   return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
 }
-function themeRowHtml(pref) {
-  return '<div class="theme-row"><span class="theme-row-label">Theme</span>' + themeSegHtml(pref) + '</div>';
+function themeRowHtml(pref, hideLabel) {
+  // Owner punch list #2 (hamburger popover): the Light/Dark/System control
+  // stands alone there — no "Theme" caption. The desktop menu-pop dropdown
+  // keeps the label (unchanged), so hideLabel is opt-in per call site.
+  return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
 function applyTheme(effective) {
   effective = effective === 'dark' ? 'dark' : 'light';
@@ -3351,7 +3426,7 @@ function memberCellHtml(r) {
     : 'class="member-cell"';
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
   return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
-    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
+    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
   // Prefer a real company name when the reported asset text is missing or is just
@@ -3363,7 +3438,7 @@ function assetCellHtml(r) {
   if (!r.ticker && !nm) {
     return '<div class="asset-cell"><span class="muted">—</span></div>';
   }
-  var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + (nm || '')) + '">' +
+  var inner = '<div title="' + esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || '')) + '">' +
     (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(nm || '') + '</span></div>';
   return r.ticker
@@ -3392,7 +3467,7 @@ function amountCellHtml(r) {
   var tier = amountTier(r.min, r.max);
   var text = amountText(r.min, r.max);
   if (!tier) return '<span class="amount-range fc-amt-val">' + esc(text) + '</span>';
-  return '<div class="amount-cell" title="' + esc(tier.title + ' · ' + text) + '">' +
+  return '<div class="amount-cell" title="' + esc(tier.title + '  |  ' + text) + '">' +
     '<div class="amount-tier-line">' + amountBarsHtml(tier.tier) + '</div>' +
     '<div class="amount-range fc-amt-val">' + esc(text) + '</div>' +
   '</div>';
@@ -3423,7 +3498,7 @@ function feedCardHtml(r) {
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
       '</div>' +
-      '<div class="fc-row2 muted">' + bits.join(' <span class="fc-sep">·</span> ') + '</div>' +
+      '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  |  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
   '</article>';
@@ -9333,6 +9408,13 @@ function loadMe() {
    same Sign In / account entry, theme choices, and Upgrade — flattened (no
    nested menu-in-menu) so it never duplicates the desktop menu's element ids
    (issue #1456: the old 3-button theme toggle overlapped the brand at 375px). */
+/* Owner punch list #3: the short footer disclaimer line, reused verbatim
+   inside the hamburger menu (below Sign Out / below Upgrade). Keep this in
+   sync with the <footer> markup's own copy of the same sentence. */
+var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets';
+function acctMobileDisclaimerHtml() {
+  return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
+}
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   var desktopHtml, mobileHtml;
@@ -9341,8 +9423,9 @@ function renderAccount() {
       '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
       (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
     mobileHtml = '<button class="btn ghost sm" onclick="closeAcctMobileMenu();openLogin()">Sign In</button>' +
-      themeRowHtml() +
-      (checkoutConfigured() ? '<button class="btn sm" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '');
+      themeRowHtml(null, true) +
+      (checkoutConfigured() ? '<button class="btn sm" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '') +
+      acctMobileDisclaimerHtml();
   } else {
     var ent = ME.entitlement || {};
     var badge = ent.premium
@@ -9370,12 +9453,13 @@ function renderAccount() {
       '</div>';
     mobileHtml = badge +
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
-      themeRowHtml() +
+      themeRowHtml(null, true) +
       upgrade +
       (hasBillingAccount() && portalConfigured()
         ? '<button onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
         : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
-      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>';
+      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      acctMobileDisclaimerHtml();
   }
   box.innerHTML =
     '<div class="acct-desktop">' + desktopHtml + '</div>' +
@@ -9678,29 +9762,6 @@ function handleAuthQueryParams() {
     window.history.replaceState({}, '', window.location.pathname + (qs ? ('?' + qs) : ''));
   }
 }
-
-/* Collapse / expand the Trends disclaimer to reclaim screen space. */
-var _disclaimerAutoTimer = null;
-function toggleDisclaimer() {
-  if (_disclaimerAutoTimer) { clearTimeout(_disclaimerAutoTimer); _disclaimerAutoTimer = null; }
-  var d = el('trDisclaimer'); if (!d) return;
-  var collapsed = d.classList.toggle('collapsed');
-  var btn = d.querySelector('.disclaimer-toggle');
-  if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  try { localStorage.setItem('tr-disclaimer-collapsed', collapsed ? '1' : '0'); } catch (e) {}
-}
-(function () {
-  // Start expanded; auto-collapse after 4 s.
-  _disclaimerAutoTimer = setTimeout(function () {
-    _disclaimerAutoTimer = null;
-    var d = el('trDisclaimer');
-    if (d && !d.classList.contains('collapsed')) {
-      d.classList.add('collapsed');
-      var b = d.querySelector('.disclaimer-toggle');
-      if (b) b.setAttribute('aria-expanded', 'false');
-    }
-  }, 4000);
-})();
 
 /* Tap-to-reveal tooltips: phones/tablets can't hover, so tapping any element that
    carries an info tooltip (title or .info-tip / .est-money etc.) pops the same text. */

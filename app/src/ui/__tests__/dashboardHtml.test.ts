@@ -459,7 +459,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("var pref = 'system'");
     expect(DASHBOARD_HTML).toContain("return 'system'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
-    expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref)');
+    expect(DASHBOARD_HTML).toContain('function themeRowHtml(pref, hideLabel)');
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
     expect(DASHBOARD_HTML).toContain('class="theme-seg"');
     expect(DASHBOARD_HTML).toContain('data-theme-opt');
@@ -1261,19 +1261,28 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Missing Asset Samples');
   });
 
-  it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
-    expect(DASHBOARD_HTML).toContain('estimates');
+  it('keeps the dollar-estimate + educational framing without the removed Trends banner (owner punch list #3)', () => {
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
     expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
-    // Primary Only / All Data is now a live, persisted toggle (issue #1453)
-    // embedded right in the disclaimer sentence that explains it.
+    // The big "For Educational Use, Not Investment Advice" / "More Info"
+    // expander banner is gone from the Trends view entirely.
+    expect(DASHBOARD_HTML).not.toContain('id="trDisclaimer"');
+    expect(DASHBOARD_HTML).not.toContain('For Educational Use, Not Investment Advice');
+    expect(DASHBOARD_HTML).not.toContain('function toggleDisclaimer(');
+    // Primary Only / All Data is a real, persisted toggle (issue #1453) — it
+    // used to live inline in that banner; it now lives in a compact note
+    // directly on the Trades feed instead of disappearing with the banner.
+    expect(DASHBOARD_HTML).toContain('id="feedSourceNote"');
     expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
     expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
     expect(DASHBOARD_HTML).toContain('>Primary Only<');
     expect(DASHBOARD_HTML).not.toContain('<em>Live Only</em>');
+    expect(DASHBOARD_HTML).toContain('function feedSourceMode() {');
     expect(DASHBOARD_HTML).toContain('info-tip');
-    // educational / liability framing must remain user-facing
-    expect(DASHBOARD_HTML).toContain('not investment advice');
+    // Educational / liability framing survives via the short footer line,
+    // reused verbatim in the hamburger menu.
+    expect(DASHBOARD_HTML).toContain('var FOOTER_DISCLAIMER_TEXT =');
+    expect(DASHBOARD_HTML).toContain('educational tool for public STOCK Act (2012) disclosures');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('not financial advice');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('educational');
   });
@@ -1382,12 +1391,14 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '')");
   });
 
-  it('adds a collapsible disclaimer and tap-to-reveal tooltips', () => {
-    expect(DASHBOARD_HTML).toContain('function toggleDisclaimer(');
-    expect(DASHBOARD_HTML).toContain('id="trDisclaimer"');
-    expect(DASHBOARD_HTML).toContain('_disclaimerAutoTimer');
-    expect(DASHBOARD_HTML).toContain('For Educational Use, Not Investment Advice');
-    expect(DASHBOARD_HTML).toContain('class="dt-more"');
+  it('drops the collapsible Trends disclaimer banner (owner punch list #3) but keeps tap-to-reveal tooltips', () => {
+    expect(DASHBOARD_HTML).not.toContain('function toggleDisclaimer(');
+    expect(DASHBOARD_HTML).not.toContain('id="trDisclaimer"');
+    expect(DASHBOARD_HTML).not.toContain('_disclaimerAutoTimer');
+    expect(DASHBOARD_HTML).not.toContain('For Educational Use, Not Investment Advice');
+    expect(DASHBOARD_HTML).not.toContain('class="dt-more"');
+    // The unrelated tap-to-reveal tooltip system (title / .info-tip / .est-money)
+    // is a separate feature and stays fully intact.
     expect(DASHBOARD_HTML).toContain('tip-pop');
     expect(DASHBOARD_HTML).toContain('(hover: none)');
   });
@@ -2363,7 +2374,10 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     // Fixed bottom tab bar with safe-area + body padding at the phone breakpoint.
     expect(DASHBOARD_HTML).toContain('position: fixed; left: 0; right: 0; bottom: 0');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom');
-    expect(DASHBOARD_HTML).toContain('padding-bottom: calc(86px + env(safe-area-inset-bottom))');
+    // Owner punch list #5: reduced from the old 86px overshoot to a ~10px
+    // clearance over the ~60px tab bar (see "mobile bottom clearance" below
+    // for the full main/footer safe-area regression coverage).
+    expect(DASHBOARD_HTML).toContain('padding-bottom: calc(70px + env(safe-area-inset-bottom))');
     expect(DASHBOARD_HTML).toContain('data-view="people"');
     expect(DASHBOARD_HTML).toContain('data-mobile="People"');
   });
@@ -2603,7 +2617,7 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] .pill-select-el {');
   });
 
-  it('wraps #qMember/#qTicker in rounded leading-icon fields, updates the ticker placeholder, keeps id/oninput/aria-label', () => {
+  it('keeps #qMember/#qTicker in rounded fields with NO leading icon (owner punch list #8), keeps id/oninput/aria-label', () => {
     const document = parse(DASHBOARD_HTML);
     const member = document.querySelector('#qMember');
     const ticker = document.querySelector('#qTicker');
@@ -2618,15 +2632,17 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(member!.parentNode?.tagName.toLowerCase()).toBe('span');
     expect((member!.parentNode as any).classList.contains('icon-field')).toBe(true);
     expect((ticker!.parentNode as any).classList.contains('icon-field')).toBe(true);
-    // Placeholder copy: "Asset…" -> "Asset / ticker…" (iOS-parity, copy-only).
-    expect(ticker!.getAttribute('placeholder')).toBe('Asset / ticker…');
-    expect(member!.getAttribute('placeholder')).toBe('Politician…');
+    // Placeholder copy: "Name" / "Asset / Ticker" — no ellipsis, no leading
+    // "politician" wording in the search fields themselves.
+    expect(ticker!.getAttribute('placeholder')).toBe('Asset / Ticker');
+    expect(member!.getAttribute('placeholder')).toBe('Name');
     // The old inline width:120px is gone from the input itself.
     expect(ticker!.getAttribute('style')).toBeFalsy();
-    // Icon glyphs + CSS.
-    expect(DASHBOARD_HTML).toContain('<span class="icon-field-ic" aria-hidden="true">👤</span>');
-    expect(DASHBOARD_HTML).toContain('<span class="icon-field-ic" aria-hidden="true">📈</span>');
-    expect(DASHBOARD_HTML).toContain('.icon-input { padding-left:30px; border-radius:var(--radius-pill); height:var(--control-h); }');
+    // No leading icon glyph span on either field, at any width.
+    expect(DASHBOARD_HTML).not.toContain('icon-field-ic');
+    expect(DASHBOARD_HTML).not.toContain('👤</span>');
+    expect(DASHBOARD_HTML).not.toContain('<span class="icon-field-ic"');
+    expect(DASHBOARD_HTML).toContain('.icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }');
   });
 
   it('enlarges + tile-backs the mobile feed-card logo without touching the desktop table logo size', () => {
@@ -2664,11 +2680,17 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(fn).not.toMatch(/fc-trail[^"]*"[^>]*data-(asset|member|txid)/);
   });
 
-  it('gives .acct-hamburger the same capsule radius as every other icon-only header/dialog control', () => {
+  it('keeps .acct-hamburger a capsule tap target but with NO ring/circle at rest (owner punch list #1)', () => {
     expect(DASHBOARD_HTML).toContain(
-      '.acct-hamburger {\n    width:38px; height:38px; border:1px solid var(--border); border-radius: var(--radius-pill);',
+      '.acct-hamburger {\n    width:38px; height:38px; border:none; border-radius: var(--radius-pill);',
     );
-    // Sibling circular controls it now matches stay untouched.
+    // No border color at all (was var(--border), a blue-tinted gray that read
+    // as a stray blue circle) — background stays transparent until hover/open.
+    expect(DASHBOARD_HTML).toContain('background:transparent; color:var(--text); font-size:18px; line-height:1;');
+    expect(DASHBOARD_HTML).toContain(
+      '.acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }',
+    );
+    // Sibling circular controls it used to match stay untouched.
     expect(DASHBOARD_HTML).toContain('.branch-info { width:24px; height:24px; border-radius:999px;');
     expect(DASHBOARD_HTML).toContain(
       'margin:-8px -8px -8px 0; border-radius:999px; border:1px solid transparent;\n    background:transparent; color:var(--text-dim); cursor:pointer; font-size:20px; line-height:1;',
@@ -3116,5 +3138,165 @@ describe('static UI assets (issue #1040)', () => {
       const buf = new Uint8Array(await res.arrayBuffer());
       expect(buf.byteLength, c.path).toBeGreaterThan(c.minBytes);
     }
+  });
+});
+
+/**
+ * Owner punch list — LANE W1 (web chrome/header/menu/filters/search/footer/
+ * cards). Numbered `it()` names below map 1:1 to the PR checklist items.
+ */
+describe('MONET web punch list 2 (LANE W1)', () => {
+  it('#1 removes the hamburger ring entirely (no border at rest, soft hover/open background only)', () => {
+    expect(DASHBOARD_HTML).not.toMatch(/\.acct-hamburger\s*\{[^}]*border:1px solid var\(--border\)/);
+    expect(DASHBOARD_HTML).toContain('border:none; border-radius: var(--radius-pill);');
+    expect(DASHBOARD_HTML).toContain('display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;');
+  });
+
+  it('#2 gives the hamburger popover row breathing room, drops the "Theme" label there, and spaces/de-rings the avatar', () => {
+    // More vertical gap between rows (was 4px).
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu.open { display:grid; gap:10px; }');
+    // themeRowHtml() gained an opt-in hideLabel param; only the two mobile
+    // call sites pass true — the desktop menu-pop dropdown is untouched.
+    expect(DASHBOARD_HTML).toContain(
+      "function themeRowHtml(pref, hideLabel) {\n  // Owner punch list #2 (hamburger popover): the Light/Dark/System control\n  // stands alone there — no \"Theme\" caption. The desktop menu-pop dropdown\n  // keeps the label (unchanged), so hideLabel is opt-in per call site.\n  return '<div class=\"theme-row\">' + (hideLabel ? '' : '<span class=\"theme-row-label\">Theme</span>') + themeSegHtml(pref) + '</div>';\n}",
+    );
+    const mobileCalls = DASHBOARD_HTML.match(/themeRowHtml\(null, true\)/g) || [];
+    expect(mobileCalls.length).toBe(2); // signed-out mobile + signed-in mobile
+    // Desktop dropdown still calls the bare form (keeps its "Theme" label).
+    expect(DASHBOARD_HTML).toContain(
+      "'<div class=\"who\">' + esc(ME.user.email || '') + '</div>' +\n          themeRowHtml() +",
+    );
+    // ~8px gap between the Google avatar photo and the email text (mobile
+    // "who" row only — desktop .menu-pop .who is text-only and untouched).
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu .who { display:flex; align-items:center; gap:8px;');
+    expect(DASHBOARD_HTML).not.toContain('.menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:0');
+    // No ring around the avatar (var(--border) reads blue-tinted at 1px).
+    expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
+  });
+
+  it('#3 removes the top-of-page Trends disclaimer banner and relocates its short line into the hamburger menu', () => {
+    // Banner + its JS are fully gone (see the "adds a collapsible disclaimer"
+    // rewrite above for the full negative-assertion list).
+    expect(DASHBOARD_HTML).not.toContain('id="trDisclaimer"');
+    // The SHORT footer line (not the old long paragraph) is reused verbatim
+    // inside the mobile menu, appended after Sign Out (signed in) and after
+    // Upgrade (signed out) — i.e. always the last thing in the dropdown.
+    const footerLine = 'Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets';
+    expect(DASHBOARD_HTML).toContain("var FOOTER_DISCLAIMER_TEXT = '" + footerLine + "';");
+    // Static <footer> markup carries the identical sentence (single source of truth).
+    expect(DASHBOARD_HTML).toContain('<span>' + footerLine + '</span>');
+    expect(DASHBOARD_HTML).toContain(
+      "'<button onclick=\"closeAcctMobileMenu();logout()\">Sign Out</button>' +\n      acctMobileDisclaimerHtml();",
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "(checkoutConfigured() ? '<button class=\"btn sm\" onclick=\"closeAcctMobileMenu();openPricing()\">Upgrade</button>' : '') +\n      acctMobileDisclaimerHtml();",
+    );
+    expect(DASHBOARD_HTML).toContain("function acctMobileDisclaimerHtml() {\n  return '<div class=\"footer-disclaimer\">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';\n}");
+  });
+
+  it('#5 tightens the mobile bottom clearance and guarantees the footer clears the fixed tab bar', () => {
+    // General <=768px clearance: 86px -> 70px (nav.tabs is ~60px tall).
+    expect(DASHBOARD_HTML).toContain('padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
+    // The <=720px block used a `padding:` SHORTHAND that silently reset
+    // padding-bottom to 22px for nearly every phone (a real regression, not
+    // just "overshoot") — it now re-asserts the same 70px explicitly.
+    expect(DASHBOARD_HTML).toContain('main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
+    // Footer gets its OWN extra ~2 lines (~32px) of bottom padding on top of
+    // its own base, independent of main's general buffer, at both mobile
+    // breakpoints (base 30px -> 62px total; tighter 26px block -> 58px total).
+    expect(DASHBOARD_HTML).toContain('footer, footer.site-footer { padding-bottom: calc(62px + env(safe-area-inset-bottom)); }');
+    expect(DASHBOARD_HTML).toContain('footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }');
+  });
+
+  it('#6 vertically centers the "Page 1 of 56" pagination text in its control box', () => {
+    expect(DASHBOARD_HTML).toContain('.pager-controls .note { margin-top: 0; }');
+  });
+
+  it('#7 shrinks + centers the mobile feed card\'s amount pictograph / $-range / date cluster', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '.fc-trail { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:2px; margin-left:4px; }',
+    );
+    // Half-height bars scoped to the mobile card only — the dense desktop
+    // table's own .amount-bars (17px, tier-6 top bar) is untouched.
+    expect(DASHBOARD_HTML).toContain('.fc-trail .amount-bars { height:10px; }');
+    expect(DASHBOARD_HTML).toContain('.fc-trail .amount-bars i:nth-child(6) { height:10px; }');
+    expect(DASHBOARD_HTML).toContain('.amount-bars i:nth-child(6) { height:17px; }'); // desktop table unchanged
+  });
+
+  it('#8 uses "Name" / "Asset / Ticker" placeholders with no leading icon and no "politician" wording in the search fields', () => {
+    const document = parse(DASHBOARD_HTML);
+    const member = document.querySelector('#qMember')!;
+    const ticker = document.querySelector('#qTicker')!;
+    expect(member.getAttribute('placeholder')).toBe('Name');
+    expect(ticker.getAttribute('placeholder')).toBe('Asset / Ticker');
+    expect(member.getAttribute('placeholder')).not.toMatch(/politician/i);
+    expect(member.getAttribute('placeholder')).not.toMatch(/…|\.\.\./);
+    expect(ticker.getAttribute('placeholder')).not.toMatch(/…|\.\.\./);
+    // "politician" survives in non-search contexts (aria-label, People tab, etc).
+    expect(member.getAttribute('aria-label')).toBe('Filter by politician');
+  });
+
+  it('#9 merges the Trades feed toolbars onto one desktop row (>768px) via explicit flex order, without touching the <=768px ID-scoped grid', () => {
+    // #feedToolbars wraps BOTH toolbar divs, in DOM order.
+    const wrapMatch = DASHBOARD_HTML.match(
+      /<div class="feed-toolbars" id="feedToolbars">[\s\S]*?<div class="toolbar shared-filters" id="feedSharedFilters">[\s\S]*?<div class="toolbar trades-only-filters" id="feedExtraFilters">[\s\S]*?<\/div>\s*<\/div>/,
+    );
+    expect(wrapMatch).not.toBeNull();
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedSharedFilters,\n    .feed-toolbars #feedExtraFilters { display:contents; }');
+    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats, then $ pill.
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-cal { order:1; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars .filter-groups { order:2; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars #qMemberField { order:3; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars #qTickerField { order:4; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars #searchToggle { order:5; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedStats { order:6; }');
+    expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-amt { order:7; }');
+    // DO-NOT-BREAK: the <=768px ID-scoped #feedExtraFilters grid (both the
+    // direct-child structure and its CSS) is byte-for-byte unchanged —
+    // display:contents only ever fires at >=769px, never overlapping it.
+    expect(DASHBOARD_HTML).toContain('#feedExtraFilters { display: grid;');
+    expect(DASHBOARD_HTML).toContain('#feedExtraFilters #qMemberField, #feedExtraFilters #qTickerField { grid-column: 1 / -1; }');
+    expect(DASHBOARD_HTML).toContain('#feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }');
+    const document = parse(DASHBOARD_HTML);
+    const extras = document.querySelectorAll('#feedExtraFilters > *').map((n) => n.id).filter(Boolean);
+    expect(extras).toEqual(['qMemberField', 'qTickerField', 'searchToggle', 'feedStats']);
+    // Mobile pill-chip touch sizing nudged toward the app (owner punch list
+    // #9's "tighten to match the app" mobile sub-clause).
+    expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
+  });
+
+  it('#10 keeps the timeframe pill as the first control on both the Trades and Trends shared filter rows', () => {
+    const feedRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters" id="feedSharedFilters">([\s\S]*?)<div class="filter-groups">/);
+    const trendsRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">([\s\S]*?)<div class="filter-groups">/);
+    expect(feedRow).not.toBeNull();
+    expect(trendsRow).not.toBeNull();
+    expect(feedRow![1]).toContain('pill-cal');
+    expect(feedRow![1]).toContain('id="feedGlobalWindow"');
+    expect(trendsRow![1]).toContain('pill-cal');
+    expect(trendsRow![1]).toContain('id="trGlobalWindow"');
+  });
+
+  it('#11 removes the redundant "$" prefix icon from the collapsed amount pill (options already show $)', () => {
+    expect(DASHBOARD_HTML).not.toContain('.pill-select.pill-amt::before');
+    expect(DASHBOARD_HTML).not.toMatch(/pill-amt[^{]*::before\s*\{\s*content:"\$"/);
+    // The calendar pill keeps its icon — only pill-amt's icon goes away.
+    expect(DASHBOARD_HTML).toContain('.pill-select.pill-cal::before { content:"📅"; }');
+    expect(DASHBOARD_HTML).toContain('.pill-select.pill-amt .pill-select-el { padding-left:14px; }');
+    // Options already carry their own $ (unchanged) — "Any $" reads standalone now.
+    expect(DASHBOARD_HTML).toContain('<option value="">Any $</option>');
+  });
+
+  it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators, and leaves drawer separators untouched', () => {
+    // Feed surfaces: desktop table cells (member state, asset title, amount
+    // title) and the mobile feed card's meta row.
+    expect(DASHBOARD_HTML).toContain("(r.st ? '<span class=\"muted\">  |  ' + esc(r.st) + '</span>' : '')");
+    expect(DASHBOARD_HTML).toContain("esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || ''))");
+    expect(DASHBOARD_HTML).toContain("esc(tier.title + '  |  ' + text)");
+    expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  |  </span>')");
+    // Drawers are out of scope for this lane (lane W2 owns them) — their own
+    // dot separators are untouched.
+    expect(DASHBOARD_HTML).toContain('<span class="dot-sep">·</span>');
+    expect(DASHBOARD_HTML).toContain(".drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }");
   });
 });
