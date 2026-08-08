@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-08T18:55Z — GROK — IN PROGRESS — iOS xcodeproj brand rename `CongressTrade.xcodeproj` → `Congress.Trade.xcodeproj` (display name already Congress.Trade; keep target/scheme `CongressTrade`). Branch `grok/ios-xcodeproj-brand-rename`.**
 - **2026-08-07T16:09Z — GROK — IN PROGRESS — Agreement cascade: soft free-text must not block publish (H-2026-20035035 supplementalText 1/3); ST datalist + infer Common Stock→ST.** Branch `grok/agreement-soft-fields`.
 - **2026-08-07T16:07Z — GROK — COMPLETED/DEPLOYED — Web light+dark brand lockups from owner spaced art.** PR #1511 merged `41cfb979`; light `?v=5` dark `?v=18` live on congress.trade (build sha match).
 - **2026-08-07T15:36Z — GROK — COMPLETED — Landed iOS PRs #1500/#1501/#1502/#1504; closed #1503 as dup of #1500.** iOS 17.0 deployment + MARKETING_VERSION 1.0; brand lockup +10%; compact All chips + hide APNs debug; cream AppIcon. main tip `e8c08fb7`.

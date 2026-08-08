@@ -24,7 +24,7 @@ performance, accessibility, and verification roadmap.
 ## Open In Xcode
 
 ```bash
-open clients/ios/CongressTrade.xcodeproj
+open clients/ios/Congress.Trade.xcodeproj
 ```
 
 Use the `CongressTrade` scheme and an iPhone simulator. The target is iOS 17+.
@@ -33,7 +33,7 @@ CLI build check:
 
 ```bash
 xcodebuild \
-  -project clients/ios/CongressTrade.xcodeproj \
+  -project clients/ios/Congress.Trade.xcodeproj \
   -scheme CongressTrade \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
@@ -45,7 +45,7 @@ Run them against an installed simulator device:
 
 ```bash
 xcodebuild \
-  -project clients/ios/CongressTrade.xcodeproj \
+  -project clients/ios/Congress.Trade.xcodeproj \
   -scheme CongressTrade \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   test
