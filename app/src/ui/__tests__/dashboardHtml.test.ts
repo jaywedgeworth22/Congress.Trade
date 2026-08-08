@@ -2678,6 +2678,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
   it('right-aligns the desktop "N trades" count and compacts it (total only) on mobile', () => {
     expect(DASHBOARD_HTML).toContain('.feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
     expect(DASHBOARD_HTML).toContain('.feed-stats .stat-today { display: none; }');
+    // Regression (#1533 verifier): grid must be declared on the ID selector so
+    // the later ≤720px `.toolbar { display:flex }` rule can't override it.
+    expect(DASHBOARD_HTML).toContain('#feedExtraFilters { display: grid;');
     const document = parse(DASHBOARD_HTML);
     const stats = document.querySelector('#feedStats');
     expect(stats).not.toBeNull();
