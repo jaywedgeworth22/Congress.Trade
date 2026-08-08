@@ -22,7 +22,7 @@ import type { Env } from '../shared/types.ts';
 import { all, first, get, parseJson } from '../shared/db.ts';
 import { cached, cacheKey } from '../shared/kvCache.ts';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes.ts';
-import { normalizeCompanyName } from '../shared/companyName.ts';
+import { normalizeCompanyName, resolveAssetDisplayName } from '../shared/companyName.ts';
 import {
   asChambers,
   asPartyBucket,
@@ -893,10 +893,23 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
             ipoDate: str(refRow.ipo_date),
           }
         : null;
+      // Fallback display name when securities_ref hasn't enriched this ticker
+      // yet (e.g. a recent delisting/acquisition, or simply not reached yet) —
+      // without this, the drawer showed nothing but the bare ticker (#1453).
+      // Same resolver as the feed: title-cased filing text, generic
+      // placeholders ("X Stock") reduced to the ticker itself, never invented.
+      const fallbackName = ref?.companyName
+        ? null
+        : resolveAssetDisplayName(
+            recentRows.map((row) => str(row.asset_name)).find((n) => n) ?? null,
+            tickerParam,
+            null,
+          );
       return meta(f, {
         ticker: tickerParam,
         granularity,
         ref,
+        name: ref?.companyName || fallbackName || tickerParam,
         summary: {
           totalTrades: num(s.total_trades),
           buyCount,
