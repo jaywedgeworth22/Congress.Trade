@@ -278,6 +278,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v2'");
     // HSP sits on the same row as party chips; no redundant Timeframe label / Refresh.
     expect(DASHBOARD_HTML).toMatch(/class="[^"]*trends-filter-row[^"]*"/);
+
+    // Regression (#1531 verifier): .trends-filter-row shares an element with
+    // .toolbar; an inline-flex override made the Trends row shrink-to-fit on
+    // desktop, breaking shared-row parity and the $-select right-align.
+    expect(DASHBOARD_HTML).not.toMatch(/\.trends-filter-row\s*\{[^}]*inline-flex/);
+    expect(DASHBOARD_HTML).toMatch(/\.trends-filter-row\s*\{[^}]*display:\s*flex/);
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');

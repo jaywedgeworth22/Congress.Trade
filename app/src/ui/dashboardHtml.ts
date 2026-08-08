@@ -980,7 +980,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .branch-pop-row { display:grid; grid-template-columns:16px 1fr; gap:8px; align-items:baseline; }
   .branch-pop-row .branch-icon { color:var(--accent); font-weight:700; }
   .branch-pop-note { color:var(--text-dim); font-size:11px; margin-top:2px; }
-  .trends-filter-row { display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  /* Must stay display:flex (NOT inline-flex): this class lands on the same
+     element as .toolbar, and an inline-flex override makes the Trends row
+     shrink-to-fit at desktop widths, breaking the shared-row parity with the
+     Trades tab and defeating .min-amt-select's margin-left:auto right-align. */
+  .trends-filter-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   .min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
