@@ -45,7 +45,7 @@
 		56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/PoliticianDetailView.swift; sourceTree = SOURCE_ROOT; };
 		56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/TickerDetailView.swift; sourceTree = SOURCE_ROOT; };
 		EA61E5001A55B0C1D2E30002 /* CongressTrade/Views/Components/EagleSplashView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Components/EagleSplashView.swift; sourceTree = SOURCE_ROOT; };
-		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CongressTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = CongressTrade.app; path = Congress.Trade.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5A1000010000000000000014 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
@@ -249,7 +249,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 5A1000010000000000000071 /* Build configuration list for PBXProject "CongressTrade" */;
+			buildConfigurationList = 5A1000010000000000000071 /* Build configuration list for PBXProject "Congress.Trade" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -550,7 +550,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		5A1000010000000000000071 /* Build configuration list for PBXProject "CongressTrade" */ = {
+		5A1000010000000000000071 /* Build configuration list for PBXProject "Congress.Trade" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				5A1000010000000000000072 /* Debug */,
