@@ -1252,7 +1252,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Issue #1529: search-this-page button left, "N trades" count right, on
        their own row below the two full-width text fields (iOS-parity count
        placement — see .feed-stats above). */
-    #feedExtraFilters { grid-template-columns: 1fr auto; align-items: center; }
+    /* display:grid must live on the ID selector: the ≤720px block later in
+       the sheet re-flexes .toolbar (equal class specificity, later source
+       order wins), which silently killed this row's grid placement on real
+       phone widths — found by the #1533 design-QA verifier via computed
+       layout. The ID rule outranks any .toolbar class rule at every width. */
+    #feedExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
     #feedExtraFilters #qMemberField, #feedExtraFilters #qTickerField { grid-column: 1 / -1; }
     #feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
     .feed-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
