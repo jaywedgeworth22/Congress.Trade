@@ -8,11 +8,14 @@ import SwiftUI
 struct SubscribeView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var products: [Product] = []
     @State private var isLoading = true
     @State private var purchaseError: String?
     @State private var isPurchasing = false
     @State private var notice: String?
+
+    private static let manageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
 
     var body: some View {
         NavigationStack {
@@ -23,7 +26,23 @@ struct SubscribeView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if isLoading {
+                if store.isPremium {
+                    Section("Your Subscription") {
+                        Text(
+                            store.entitlementSource == "apple"
+                                ? "You're subscribed to Premium through the App Store."
+                                : "You already have Premium access."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        Button {
+                            openURL(Self.manageSubscriptionsURL)
+                        } label: {
+                            Label("Manage on App Store", systemImage: "creditcard")
+                        }
+                        .accessibilityHint("Opens the App Store subscriptions page")
+                    }
+                } else if isLoading {
                     Section {
                         ProgressView("Loading products…")
                     }
@@ -59,6 +78,8 @@ struct SubscribeView: View {
                                 }
                             }
                             .disabled(isPurchasing)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint("Starts an App Store purchase for \(product.displayName) at \(product.displayPrice)")
                         }
                     }
                 }
@@ -83,6 +104,7 @@ struct SubscribeView: View {
                         Task { await restore() }
                     }
                     .disabled(isPurchasing)
+                    .accessibilityHint("Re-sends any active App Store subscription to Congress.Trade")
                 }
             }
             .navigationTitle("Premium")
@@ -121,7 +143,7 @@ struct SubscribeView: View {
                 let transaction = try checkVerified(verification)
                 // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
                 let jws = verification.jwsRepresentation
-                _ = try await store.api.confirmApplePurchase(signedTransaction: jws)
+                _ = try await store.api.redeemApplePurchase(signedTransaction: jws)
                 await transaction.finish()
                 await store.refresh()
                 notice = "Premium unlocked. You can create Delivery alerts now."
@@ -150,7 +172,7 @@ struct SubscribeView: View {
             for await result in Transaction.currentEntitlements {
                 guard case .verified(let transaction) = result else { continue }
                 let jws = result.jwsRepresentation
-                _ = try await store.api.confirmApplePurchase(signedTransaction: jws)
+                _ = try await store.api.redeemApplePurchase(signedTransaction: jws)
                 await transaction.finish()
                 confirmed = true
             }

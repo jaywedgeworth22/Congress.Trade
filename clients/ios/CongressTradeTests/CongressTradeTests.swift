@@ -547,6 +547,116 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<ClientTrade>()).count, 1)
     }
 
+    // MARK: - Sign in with Apple + StoreKit 2 redeem command
+
+    func testSignInWithAppleSendsIdentityTokenAndFullNameToAuthOrigin() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://example.test/auth/apple")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let body = try XCTUnwrap(Self.requestBody(request))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["identityToken"] as? String, "identity-jwt")
+            XCTAssertEqual(json["fullName"] as? String, "Ada Lovelace")
+            XCTAssertNil(json["nonce"], "nonce must be omitted when the caller didn't set one")
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "ok": true, "token": "native-session-token",
+                  "user": { "id": "user_1", "email": "ada@example.com", "name": "Ada Lovelace", "picture": null },
+                  "entitlement": { "premium": false, "status": null, "plan": null }
+                }
+                """
+            )
+        }
+
+        let response = try await client.signInWithApple(identityToken: "identity-jwt", fullName: "Ada Lovelace")
+        XCTAssertEqual(response.token, "native-session-token")
+        XCTAssertEqual(response.user.email, "ada@example.com")
+        XCTAssertEqual(response.entitlement?.premium, false)
+    }
+
+    func testRedeemApplePurchaseSendsTheSignedTransactionCommand() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            let body = try XCTUnwrap(Self.requestBody(request))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["type"] as? String, "redeem_apple_purchase")
+            let payload = try XCTUnwrap(json["payload"] as? [String: Any])
+            XCTAssertEqual(payload["signedTransaction"] as? String, "jws-blob")
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "command": {
+                    "id": "cmd_2", "userId": "user_1", "type": "redeem_apple_purchase",
+                    "status": "succeeded", "idempotencyKey": "redeem-1", "error": null,
+                    "createdAt": "2026-08-09T00:00:00Z", "updatedAt": "2026-08-09T00:00:00Z",
+                    "startedAt": "2026-08-09T00:00:00Z", "finishedAt": "2026-08-09T00:00:01Z"
+                  },
+                  "result": {
+                    "entitlement": { "premium": true, "status": "active", "plan": "monthly", "source": "apple" },
+                    "plan": "monthly", "expiresAt": "2026-09-09T00:00:00Z",
+                    "originalTransactionId": "txn_original_1"
+                  }
+                }
+                """
+            )
+        }
+
+        let response = try await client.redeemApplePurchase(signedTransaction: "jws-blob", idempotencyKey: "redeem-1")
+        XCTAssertEqual(response.result?.originalTransactionId, "txn_original_1")
+        XCTAssertEqual(response.result?.entitlement?.premium, true)
+        XCTAssertEqual(response.result?.entitlement?.source, "apple")
+    }
+
+    func testRedeemApplePurchaseSurfacesAFailedCommandAsAnError() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            Self.response(
+                for: request,
+                json: """
+                {
+                  "command": {
+                    "id": "cmd_3", "userId": "user_1", "type": "redeem_apple_purchase",
+                    "status": "failed", "idempotencyKey": "redeem-2",
+                    "error": "this Apple subscription is already linked to a different account",
+                    "createdAt": "2026-08-09T00:00:00Z", "updatedAt": "2026-08-09T00:00:00Z",
+                    "startedAt": "2026-08-09T00:00:00Z", "finishedAt": "2026-08-09T00:00:01Z"
+                  },
+                  "result": null
+                }
+                """
+            )
+        }
+
+        do {
+            _ = try await client.redeemApplePurchase(signedTransaction: "jws-blob", idempotencyKey: "redeem-2")
+            XCTFail("Expected a failed-command error")
+        } catch let error as APIError {
+            XCTAssertEqual(
+                error.errorDescription,
+                "this Apple subscription is already linked to a different account"
+            )
+        }
+    }
+
     // MARK: - UX P0: memberName search + async command result claim
 
     func testFeedQueryEmitsMemberNameNotMemberForFreeText() {
@@ -975,6 +1085,28 @@ final class CongressTradeTests: XCTestCase {
             confidence: 0.9,
             source: .primary
         )
+    }
+
+    /// The URL loading system is free to hand a POST body to `URLProtocol`
+    /// subclasses as either `httpBody` (in-memory) or `httpBodyStream`
+    /// (streamed) — which one it picks is an internal, OS-version-dependent
+    /// implementation detail, not something callers control. Read both so
+    /// `MockURLProtocol` handlers stay correct regardless of which path the
+    /// current OS took for a given request.
+    private static func requestBody(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: bufferSize)
+            guard read > 0 else { break }
+            data.append(buffer, count: read)
+        }
+        return data.isEmpty ? nil : data
     }
 
     private static func response(

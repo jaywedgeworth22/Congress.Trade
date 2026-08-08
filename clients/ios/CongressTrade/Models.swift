@@ -23,6 +23,13 @@ struct Entitlement: Decodable {
     let premium: Bool
     let status: String?
     let plan: String?
+    /// Additive/optional (`app/docs/client-mobile-api.md` "Entitlement
+    /// semantics (Stripe OR Apple)"): `"stripe" | "apple" | null`. Absent on
+    /// server responses that haven't been touched to add it yet — never
+    /// treat a missing/nil value as "not premium"; always gate UI on
+    /// `premium`, and use this only to choose which "Manage subscription"
+    /// surface (App Store vs. Stripe billing portal) to show.
+    let source: String?
 }
 
 struct ClientFeedResponse: Decodable {
@@ -647,19 +654,27 @@ struct DeliveryCredential: Identifiable, Equatable {
     let secret: String?
 }
 
-struct AppleConfirmResponse: Decodable {
+/// `POST /auth/apple` (`app/docs/client-mobile-api.md` "Sign in with Apple") —
+/// same response shape as the Google/magic-link session flows: an opaque
+/// bearer `token` (stored the same way, via `CongressTradeStore.
+/// saveSessionToken` → Keychain) plus the resolved user + entitlement so
+/// callers don't need a second round trip before showing account state.
+struct AppleSignInResponse: Decodable {
     let ok: Bool?
+    let token: String
+    let user: User
+    let entitlement: Entitlement?
+}
+
+/// Result payload of the `redeem_apple_purchase` client command
+/// (`app/docs/client-mobile-api.md` "Apple In-App Purchase (StoreKit 2)").
+/// Idempotent on Apple's `originalTransactionId` server-side — restore and
+/// first-purchase both resolve here.
+struct RedeemAppleResult: Decodable {
+    let entitlement: Entitlement?
     let plan: String?
     let expiresAt: String?
     let originalTransactionId: String?
-    let entitlement: EntitlementSnapshot?
-
-    struct EntitlementSnapshot: Decodable {
-        let premium: Bool?
-        let status: String?
-        let plan: String?
-        let trialing: Bool?
-    }
 }
 
 /// App Store product identifiers (configure matching subscriptions in App Store Connect).

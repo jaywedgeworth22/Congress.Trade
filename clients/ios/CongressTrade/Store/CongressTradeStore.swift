@@ -171,6 +171,15 @@ final class CongressTradeStore: ObservableObject {
         isPremium ? "Premium" : "Free"
     }
 
+    /// `"stripe" | "apple" | nil` — which billing surface currently backs
+    /// Premium, for choosing between the App Store subscriptions page and the
+    /// Stripe billing portal link. Additive/optional on the server
+    /// (`app/docs/client-mobile-api.md` "Entitlement semantics"); `nil` means
+    /// "unknown," not "not premium" — always gate visibility on `isPremium`.
+    var entitlementSource: String? {
+        bootstrap?.auth.entitlement.source
+    }
+
     static func parseTickers(_ text: String) -> [String] {
         text
             .split(separator: ",")
@@ -805,6 +814,13 @@ final class CongressTradeStore: ObservableObject {
             chamber: chamberParam,
             type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
         )
+    }
+
+    /// Shared account-status notice setter for sign-in flows implemented
+    /// outside this file (`Store/AppleSignIn.swift`) — `watchlistNotice`
+    /// itself stays `private(set)` so every write funnels through this file.
+    func setAccountNotice(_ text: String) {
+        watchlistNotice = text
     }
 
     @discardableResult

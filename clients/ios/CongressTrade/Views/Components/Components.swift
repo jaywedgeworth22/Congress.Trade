@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 enum AppTheme {
@@ -504,12 +505,14 @@ struct HamburgerMenuButton: View {
 /// Compact account/theme/upgrade dropdown — mobile-web parity with the
 /// hamburger's `#acctMobileMenu` content (Sign In/account, theme picker,
 /// Upgrade or Manage Subscription, Sign Out) plus the short site-footer
-/// disclaimer line. "Sign In" routes to the Settings tab (full Google +
-/// magic-link form) instead of duplicating the OAuth flow here.
+/// disclaimer line. Sign in with Apple is native (no browser hop), so it's
+/// offered right here; Google + magic-link still route to the Settings tab
+/// instead of duplicating that browser-based OAuth flow in a popover.
 struct AccountQuickMenu: View {
     @EnvironmentObject private var store: CongressTradeStore
     @EnvironmentObject private var tabRouter: TabRouter
     @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @Binding var isPresented: Bool
     @State private var showSubscribe = false
@@ -580,15 +583,29 @@ struct AccountQuickMenu: View {
             }
             .accessibilityElement(children: .combine)
         } else {
-            Button {
-                isPresented = false
-                tabRouter.selection = .settings
-            } label: {
-                Label("Sign In", systemImage: "person.crop.circle")
-                    .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                SignInWithAppleButton(.signIn) { _ in
+                    // No custom scopes — see SettingsView's identical button.
+                } onCompletion: { result in
+                    Task {
+                        await store.handleAppleSignIn(result)
+                        if store.signedIn { isPresented = false }
+                    }
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(height: 40)
+                .accessibilityLabel("Sign in with Apple")
+
+                Button {
+                    isPresented = false
+                    tabRouter.selection = .settings
+                } label: {
+                    Label("More Sign-In Options", systemImage: "person.crop.circle")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
     }
 
@@ -602,6 +619,7 @@ struct AccountQuickMenu: View {
                 Label("Manage Subscription", systemImage: "creditcard")
                     .font(.subheadline.weight(.medium))
             }
+            .accessibilityHint("Opens the App Store subscriptions page")
         } else {
             Button {
                 isPresented = false

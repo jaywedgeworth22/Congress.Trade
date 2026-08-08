@@ -16,6 +16,7 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
 struct SettingsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @EnvironmentObject private var pushManager: PushNotificationManager
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @State private var isAuthenticating = false
     @State private var magicEmail = ""
@@ -86,6 +87,17 @@ struct SettingsView: View {
                         }
                         .disabled(store.isLoggingOut)
                     } else {
+                        SignInWithAppleButton(.signIn) { _ in
+                            // No custom scopes requested — the backend reads
+                            // fullName from the request body (captured below)
+                            // and email from the verified identity token.
+                        } onCompletion: { result in
+                            Task { await store.handleAppleSignIn(result) }
+                        }
+                        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                        .frame(height: 44)
+                        .accessibilityLabel("Sign in with Apple")
+
                         Button {
                             startGoogleSignIn()
                         } label: {
