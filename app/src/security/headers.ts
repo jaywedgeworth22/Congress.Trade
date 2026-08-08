@@ -5,7 +5,9 @@
  * event handlers. The CSP therefore keeps narrowly scoped inline exceptions
  * while denying frames, objects, cross-origin connections, and other default
  * loads. Removing those two exceptions is the follow-up once the dashboard is
- * split into nonceable/static assets.
+ * split into nonceable/static assets. script-src also allows
+ * https://static.cloudflareinsights.com for Cloudflare's auto-injected Web
+ * Analytics beacon (RUM), which the zone injects into every HTML response.
  */
 
 import type { MiddlewareHandler } from 'hono';
@@ -16,7 +18,7 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: https:",
   "font-src 'self' data: https://fonts.gstatic.com",

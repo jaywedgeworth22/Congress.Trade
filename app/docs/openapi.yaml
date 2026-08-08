@@ -247,7 +247,7 @@ paths:
           description: Logo image bytes (edge-cached).
           content:
             image/*: {}
-        "404": { description: No logo available; clients should fall back to a monogram. }
+        "204": { description: No logo available (cacheable miss); clients should fall back to a monogram. }
   /api/members:
     get:
       tags: [Feed]
