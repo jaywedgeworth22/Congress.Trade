@@ -23,7 +23,7 @@ import type {
 import { first, get, parseJson, toBool } from '../shared/db.ts';
 import type { StockActStatus } from '../shared/stockAct.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
-import { normalizeCompanyName } from '../shared/companyName.ts';
+import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 
@@ -138,7 +138,13 @@ export function mapTransaction(row: TransactionRow): Transaction {
     filerId: row.filer_id,
     txDate: row.tx_date,
     owner: (row.owner as Owner | null) ?? null,
-    assetName: row.asset_name ?? '',
+    // Server-side display-name resolution (review #1453): every endpoint that
+    // serves a Transaction — feed, /filings/:docId, webhooks — shows the same
+    // cleaned-up name, not raw ALL-CAPS filing text on some paths and a
+    // title-cased name on others. No securities_ref name is available at this
+    // base-row level (see mapFeedTransaction for the ref-aware upgrade), so
+    // this only strips generic placeholders and title-cases real text.
+    assetName: resolveAssetDisplayName(row.asset_name, row.ticker, null) ?? '',
     ticker: row.ticker,
     assetType: row.asset_type,
     assetTypeName: row.asset_type_name ?? null,
@@ -185,20 +191,13 @@ export function mapTransaction(row: TransactionRow): Transaction {
 export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
   const transaction = mapTransaction(row);
 
-  // If the asset name is exactly the ticker, replace it with the rich company name from enrichment
-  if (
-    transaction.assetName.toLowerCase() === row.ticker?.toLowerCase() &&
-    row.ref_company_name
-  ) {
-    transaction.assetName = row.ref_company_name;
-  }
-
-  // Strip 'Common Stock' from all asset names served to clients
-  transaction.assetName = transaction.assetName.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '').trim();
-
-  // Normalize capitalization of the asset name
-  transaction.assetName = normalizeCompanyName(transaction.assetName, row.ticker) || transaction.assetName;
-
+  // Re-resolve from the raw filing text with the joined securities_ref name
+  // available (mapTransaction already resolved a ref-less baseline above;
+  // this is the ref-aware upgrade — prefers the canonical company name,
+  // maps "<TICKER> Stock"-style placeholders to it, and leaves genuinely
+  // unknown assets exactly as filed). See shared/companyName.ts.
+  transaction.assetName =
+    resolveAssetDisplayName(row.asset_name, row.ticker, row.ref_company_name) || transaction.assetName;
 
   return {
     ...transaction,

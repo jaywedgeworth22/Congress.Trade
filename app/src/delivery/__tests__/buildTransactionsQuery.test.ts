@@ -416,6 +416,25 @@ describe('mapFeedTransaction', () => {
     const tx = mapFeedTransaction(feedRow({ tx_type: null }));
     expect(tx.txType).toBeNull();
   });
+
+  it('maps a "<TICKER> Stock" placeholder to the securities_ref canonical name (review #1453)', () => {
+    const tx = mapFeedTransaction(
+      feedRow({ asset_name: 'UNH Stock', ticker: 'UNH', ref_company_name: 'UnitedHealth Group Incorporated' }),
+    );
+    expect(tx.assetName).toBe('UnitedHealth Group Incorporated');
+  });
+
+  it('resolves the single-letter ticker X (US Steel) to its ref company name, not a blank/raw name', () => {
+    const tx = mapFeedTransaction(
+      feedRow({ asset_name: 'X', ticker: 'X', ref_company_name: 'United States Steel Corporation' }),
+    );
+    expect(tx.assetName).toBe('United States Steel Corporation');
+  });
+
+  it('leaves a genuinely unknown asset (no ref, no useful ticker match) as its filing text', () => {
+    const tx = mapFeedTransaction(feedRow({ asset_name: 'Securities', ticker: null, ref_company_name: null }));
+    expect(tx.assetName).toBe('Securities');
+  });
 });
 
 describe('mapTransaction: honest tx_type passthrough', () => {
@@ -450,6 +469,57 @@ describe('mapTransaction: honest tx_type passthrough', () => {
 
   it('passes a NULL tx_type through as null rather than defaulting to P', () => {
     expect(mapTransaction(txRow({ tx_type: null })).txType).toBeNull();
+  });
+});
+
+describe('mapTransaction: display-name cleanup (review #1453)', () => {
+  function txRow(over: Partial<TransactionRow> = {}): TransactionRow {
+    return {
+      id: 't1',
+      doc_id: 'H-1',
+      filer_id: 'P000197',
+      tx_date: '2024-01-02',
+      owner: 'self',
+      asset_name: 'Acme',
+      ticker: 'ACME',
+      asset_type: 'stock',
+      tx_type: 'B',
+      amount_min: 1001,
+      amount_max: 15000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: '',
+      confidence: 0.9,
+      source: 'primary',
+      created_at: '2024-01-03T00:00:00Z',
+      cursor_seq: 5,
+      est_value: null,
+      ...over,
+    };
+  }
+
+  // Every endpoint that serves a Transaction (not just the joined feed) now
+  // shows the same cleaned-up name — this is the base mapper used by
+  // GET /filings/:docId and the outbound webhook, which don't join
+  // securities_ref, and previously showed raw ALL-CAPS filing text next to
+  // the normalized names the feed already showed.
+  it('title-cases raw ALL-CAPS filing names even with no securities_ref join available', () => {
+    expect(mapTransaction(txRow({ asset_name: 'CLEVELAND-CLIFFS INC.', ticker: 'CLF' })).assetName).toBe(
+      'Cleveland-Cliffs Inc.',
+    );
+    expect(mapTransaction(txRow({ asset_name: 'MICROSOFT CORP', ticker: 'MSFT' })).assetName).toBe(
+      'Microsoft Corp.',
+    );
+  });
+
+  it('degrades a "<TICKER> Stock" placeholder to the bare ticker rather than a mangled title-case', () => {
+    expect(mapTransaction(txRow({ asset_name: 'UNH Stock', ticker: 'UNH' })).assetName).toBe('UNH');
+  });
+
+  it('leaves a genuinely unknown, ticker-less asset name unchanged (never invents one)', () => {
+    expect(mapTransaction(txRow({ asset_name: 'Securities', ticker: null })).assetName).toBe(
+      'Securities',
+    );
   });
 });
 
