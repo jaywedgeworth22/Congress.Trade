@@ -203,7 +203,9 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
 
   // Short cache on miss so a transient provider outage recovers quickly.
   return new Response(null, {
-    status: 404,
+    // 204 (not 404) so a genuine miss doesn't error in the browser console;
+    // short TTL so newly added pack/provider logos show up within minutes.
+    status: 204,
     headers: { 'cache-control': `public, max-age=300` },
   });
 }
