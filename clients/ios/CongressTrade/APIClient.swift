@@ -125,6 +125,14 @@ final class CongressTradeAPIClient {
         return URL(string: "https://congress.trade/api/client/v1")!
     }
 
+    /// The App Store subscriptions page — the sole manage-subscription
+    /// surface for Apple IAP subscribers (`entitlement.source == "apple"`).
+    /// Stripe subscribers (and `nil`, the safe default for every payer that
+    /// predates Apple IAP support — it was disabled until 2026-08-09) use
+    /// `billingPortalURL()` instead; this page would show them nothing to
+    /// manage.
+    static let appStoreManageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+
     /// Site origin (scheme + host) with the `/api/client/v1` path stripped.
     /// Auth (`/auth/*`), document (`/api/documents/*`), and logo endpoints live
     /// at the origin, not under the client API prefix.
@@ -542,6 +550,24 @@ final class CongressTradeAPIClient {
                 "payload": ["signedTransaction": signedTransaction]
             ]
         )
+    }
+
+    /// Mints a short-lived Stripe-hosted Billing Portal URL for the
+    /// signed-in user's Stripe customer (`POST /billing/portal`,
+    /// `app/src/billing/routes.ts` — web parity; origin-level, not under
+    /// `/api/client/v1/*`). Callers should treat any failure (401 not signed
+    /// in, 503 portal not configured, 400 no Stripe customer yet, offline)
+    /// as "show a helpful message" rather than falling back to the App Store
+    /// URL — a Stripe subscriber has nothing to manage there.
+    func billingPortalURL(idempotencyKey: String = UUID().uuidString) async throws -> URL {
+        var request = try makeRequest(originURL.appendingPathComponent("billing/portal"))
+        request.httpMethod = "POST"
+        request.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        let response: BillingPortalResponse = try await send(request)
+        guard let url = URL(string: response.url) else {
+            throw APIError.invalidResponse
+        }
+        return url
     }
 
     func absoluteClientURL(_ value: String?) -> String? {

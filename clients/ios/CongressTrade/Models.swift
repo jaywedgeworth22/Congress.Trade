@@ -677,6 +677,14 @@ struct RedeemAppleResult: Decodable {
     let originalTransactionId: String?
 }
 
+/// `POST /billing/portal` response (`app/src/billing/routes.ts`) — a
+/// short-lived Stripe-hosted Billing Portal URL for the signed-in user's
+/// Stripe customer. Used for `entitlement.source == "stripe"` (or `nil`)
+/// subscribers; Apple IAP subscribers go straight to the App Store instead.
+struct BillingPortalResponse: Decodable {
+    let url: String
+}
+
 /// App Store product identifiers (configure matching subscriptions in App Store Connect).
 enum AppleIAPProduct: String, CaseIterable, Identifiable {
     case monthly = "trade.congress.premium.monthly"
