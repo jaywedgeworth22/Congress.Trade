@@ -13,8 +13,14 @@ const allowedRunners = new Set([
   "self-hosted",
   "ubuntu-latest",
 ]);
-// Dynamic expression: self-hosted when repo is private, cloud (ubuntu-latest) when public.
-const allowedRunnerExpression = '${{ github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}';
+// Dynamic expressions: self-hosted when repo is private (and, in the gated
+// form, only while the CT_CI_RUNNER repo variable is set — clearing the
+// variable is the documented instant fallback to GitHub-hosted runners when
+// the owned runner host is down; see docs/rollouts/2026-08-08-runners-hetzner-migration.md).
+const allowedRunnerExpressions = new Set([
+  '${{ github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
+  '${{ vars.CT_CI_RUNNER != \'\' && github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
+]);
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
 
@@ -49,7 +55,7 @@ for (const name of workflowNames) {
 
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
-    if (runner && !allowedRunners.has(runner[1]) && runner[1] !== allowedRunnerExpression) {
+    if (runner && !allowedRunners.has(runner[1]) && !allowedRunnerExpressions.has(runner[1])) {
       errors.push(`${name}:${index + 1}: runner must be an owned literal label set or the approved fallback expression`);
     }
 
