@@ -501,16 +501,47 @@ final class CongressTradeAPIClient {
         }
     }
 
-    /// Confirm a StoreKit 2 purchase with the backend (`POST /billing/apple/confirm`).
-    func confirmApplePurchase(signedTransaction: String) async throws -> AppleConfirmResponse {
-        var request = try makeRequest(originURL.appendingPathComponent("billing/apple/confirm"))
+    /// Native Sign in with Apple (`POST /auth/apple`). The client verifies
+    /// nothing itself — it forwards `ASAuthorizationAppleIDCredential
+    /// .identityToken` (UTF-8 decoded) as-is; the backend does full
+    /// RS256-against-Apple's-JWKS verification before trusting any claim.
+    /// `fullName` is only ever non-nil on the device's very first
+    /// authorization for this app (Apple never encodes it in the token
+    /// itself on later sign-ins). See `app/docs/client-mobile-api.md`.
+    func signInWithApple(
+        identityToken: String,
+        nonce: String? = nil,
+        fullName: String? = nil
+    ) async throws -> AppleSignInResponse {
+        var request = try makeRequest(originURL.appendingPathComponent("auth/apple"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["signedTransaction": signedTransaction],
-            options: []
-        )
+        var body: [String: Any] = ["identityToken": identityToken]
+        if let nonce, !nonce.isEmpty { body["nonce"] = nonce }
+        if let fullName, !fullName.isEmpty { body["fullName"] = fullName }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         return try await send(request)
+    }
+
+    /// Redeem a StoreKit 2 purchase (`redeem_apple_purchase` client command —
+    /// `app/docs/client-mobile-api.md` "Apple In-App Purchase (StoreKit 2)").
+    /// Not Premium-gated (this is how a signed-in user becomes Premium).
+    /// Idempotent server-side on Apple's `originalTransactionId`, so both a
+    /// fresh purchase and Restore Purchases call this the same way — pass a
+    /// fresh `idempotencyKey` per call (command-layer idempotency is keyed on
+    /// `userId + idempotencyKey`, distinct from the server's own
+    /// transaction-id idempotency).
+    func redeemApplePurchase(
+        signedTransaction: String,
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<RedeemAppleResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "redeem_apple_purchase",
+                "payload": ["signedTransaction": signedTransaction]
+            ]
+        )
     }
 
     func absoluteClientURL(_ value: String?) -> String? {

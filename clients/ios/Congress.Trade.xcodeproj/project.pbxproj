@@ -29,6 +29,7 @@
 		D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */; };
 		F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27BB7081F81F5E987131893 /* FeedDashboardView.swift */; };
 		97517A2B33E5482E86A318B5 /* PeopleDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D58DC901FA6490EB7CEBB28 /* PeopleDirectoryView.swift */; };
+		7F8000010000000000000007 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000006 /* AppleSignIn.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,6 +68,7 @@
 		7F8000010000000000000004 /* PushNotificationManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PushNotificationManager.swift; path = Store/PushNotificationManager.swift; sourceTree = "<group>"; };
 		7F8000010000000000000005 /* CongressTrade.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CongressTrade.entitlements; sourceTree = "<group>"; };
 		0D58DC901FA6490EB7CEBB28 /* PeopleDirectoryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PeopleDirectoryView.swift; path = Views/People/PeopleDirectoryView.swift; sourceTree = "<group>"; };
+		7F8000010000000000000006 /* AppleSignIn.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleSignIn.swift; path = Store/AppleSignIn.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,6 +94,7 @@
 			children = (
 				BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */,
 				7F8000010000000000000004 /* PushNotificationManager.swift */,
+				7F8000010000000000000006 /* AppleSignIn.swift */,
 			);
 			name = Store;
 			sourceTree = "<group>";
@@ -324,6 +327,7 @@
 				7F8000010000000000000001 /* AppDelegate.swift in Sources */,
 				7F8000010000000000000003 /* PushNotificationManager.swift in Sources */,
 				97517A2B33E5482E86A318B5 /* PeopleDirectoryView.swift in Sources */,
+				7F8000010000000000000007 /* AppleSignIn.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -208,6 +208,24 @@ is Stripe OR Apple — the shared `users` billing model this section describes
 below is realized via an independent `apple_subscriptions` ledger OR'd into
 the existing resolver, not a fork of it.
 
+**iOS client implemented (2026-08-09):** native Sign in with Apple
+(`SignInWithAppleButton`, `com.apple.developer.applesignin` entitlement) on
+both sign-in surfaces — Settings' Account section (alongside Google) and the
+header hamburger menu's `AccountQuickMenu` — storing the resulting session
+token in Keychain exactly like the Google/magic-link flows
+(`CongressTradeStore.saveSessionToken`; see `clients/ios/CongressTrade/Store/
+AppleSignIn.swift`). StoreKit 2 purchase/restore in `SubscribeView` now calls
+the `redeem_apple_purchase` command (`CongressTradeAPIClient
+.redeemApplePurchase`) instead of the older `POST /billing/apple/confirm`
+route, refreshing `bootstrap`'s entitlement on success; product ids are
+centralized in `AppleIAPProduct` (must match `APPLE_PRODUCT_MONTHLY`/
+`APPLE_PRODUCT_ANNUAL`). "Manage Subscription" deep-links to
+`https://apps.apple.com/account/subscriptions` from the hamburger menu and
+from `SubscribeView` once `entitlement.source == "apple"`. Verified: iOS
+Simulator build + unit tests (mocked network) for both new endpoints — NOT
+verified against a real device/sandbox purchase, since that needs live App
+Store Connect products (owner follow-up below).
+
 Auth should support both clients through the backend:
 
 - Sign in with Apple.
