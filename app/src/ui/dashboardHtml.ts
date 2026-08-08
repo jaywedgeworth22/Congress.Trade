@@ -39,14 +39,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
-<meta name="description" content="Track U.S. Congress stock trades in near real time. Congress.Trade parses House and Senate STOCK Act disclosures into a live, filterable feed with per-member and per-ticker analytics — plus premium webhook delivery." />
+<meta name="description" content="First-party House &amp; Senate STOCK Act ingestion — not a third-party API reskin. Congress.Trade runs its own pipeline to parse official disclosures into a live, filterable feed with member/ticker analytics and premium webhooks." />
 <link rel="canonical" href="https://congress.trade/" />
 <meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Congress.Trade" />
 <meta property="og:title" content="Congress.Trade" />
-<meta property="og:description" content="Track U.S. Congress stock trades in near real time: a live, filterable feed parsed from House &amp; Senate disclosures, with member and ticker analytics." />
+<meta property="og:description" content="We ingest and publish official House &amp; Senate STOCK Act disclosures ourselves — a live congressional stock-trade feed, not a wrapper around one third-party API." />
 <meta property="og:url" content="https://congress.trade/" />
 <meta property="og:image" content="https://congress.trade/og-image.png" />
 <meta property="og:image:type" content="image/png" />
@@ -56,7 +56,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Congress.Trade" />
-<meta name="twitter:description" content="Track U.S. Congress stock trades in near real time: live feed, member and ticker analytics, premium webhooks." />
+<meta name="twitter:description" content="First-party House &amp; Senate STOCK Act ingestion and publishing — live feed, analytics, premium webhooks. Not a single-source API reskin." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
 <link rel="icon" href="/favicon.ico?v=9" sizes="32x32" />
@@ -710,8 +710,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
   .feature-list { margin:0 0 16px; padding-left:18px; color:var(--text-dim); font-size:13px; line-height:1.55; }
   .clickable { cursor: pointer; }
-  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .drawer-title-line.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
-  .member-cell.clickable:hover { text-decoration: underline; }
+  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .drawer-title-line.clickable:hover .tkr, .tkr.clickable:hover,
+  .company-name.clickable:hover { text-decoration: underline; }
+  .member-cell.clickable:hover, .fc-member.clickable:hover, .drawer-trade-party.clickable:hover { text-decoration: underline; }
+  .face-member { display: inline-flex; border-radius: 999px; }
+  .face-member:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .drawer-trade-party.clickable { transition: border-color 0.15s ease, background 0.15s ease; }
+  .drawer-trade-party.clickable:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
   .subs-msg { flex-basis: 100%; margin-top: 10px; }
   .secret-panel { display:grid; gap:16px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:19px; color:var(--text); max-width:100%; }
   .secret-panel strong { font-size:13px; }
@@ -7778,27 +7783,7 @@ function filterPeopleDirectory() {
   }
   renderPeopleDirectory(PEOPLE_CACHE.members);
 }
-/* Click a people-directory row → open the member drawer. */
-(function () {
-  var pb = null;
-  function bindPeopleClicks() {
-    pb = el('peopleBody');
-    if (!pb || pb._peopleBound) return;
-    pb._peopleBound = true;
-    pb.addEventListener('click', function (e) {
-      if (!e.target || !e.target.closest) return;
-      var hit = e.target.closest('[data-member]');
-      if (!hit) return;
-      var id = hit.getAttribute('data-member');
-      if (id) openMember(id);
-    });
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindPeopleClicks);
-  } else {
-    bindPeopleClicks();
-  }
-})();
+/* People directory uses data-member; global handleEntityOpenEvent covers clicks. */
 
 /* ================= SPEED VS DATA PROVIDERS (provider scorecard) ================= */
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
@@ -8141,7 +8126,7 @@ function loadTrTickers() {
     var rows = d.tickers || [];
     if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
-      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+      return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
         '<td class="rank">' + (i + 1) + '</td>' +
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
@@ -8162,7 +8147,7 @@ function loadTrTrending() {
     var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
-      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+      return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
@@ -8179,14 +8164,19 @@ function loadTrClusters() {
     el('trClusterHint').textContent = '· ' + cs.length + ' found';
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
-      var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
+      var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
+        var av = memberAvatarHtml(m.fullName, m.photoUrl);
+        if (!m.filerId) return av;
+        return '<span class="clickable face-member" data-member="' + esc(m.filerId) +
+          '" title="Open ' + esc(fmtName(m.fullName || m.filerId)) + '">' + av + '</span>';
+      }).join('');
       var dir = c.txType === 'B' || c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
       // minDate can be absent on malformed/partial rows; drop the leading
       // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
       var range = c.minDate ? (compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate))) : '';
-      return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for ' + esc(c.ticker) + '" data-ticker="' + esc(c.ticker) + '">' +
+      return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company ' + esc(c.ticker) + '" data-asset="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + polWord(c.memberCount) + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
@@ -8848,24 +8838,33 @@ function memberPerfHtml(d) {
 function openTrade(row) {
   if (!row) return;
   var memberVal = row.filerId
-    ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(fmtName(row.member)) + '</span>'
+    ? '<span class="clickable" data-member="' + esc(row.filerId) + '" title="Open politician">' + esc(fmtName(row.member)) + '</span>'
     : esc(fmtName(row.member));
   var sideWord = row.type === 'B' || row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
   var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
   var displayAsset = cleanAsset(row.asset || '');
-  // A trade drawer leads with the TRANSACTION (kicker + amount), not the company —
-  // the ticker/company is demoted to a non-clickable "in …" line so it can't be
-  // mistaken for the company drawer (the ticker is intentionally NOT clickable here).
+  // Trade drawer leads with the TRANSACTION (kicker + amount). Ticker/company stay
+  // secondary but remain clickable so they open the company drawer anywhere.
   var inName = (displayTicker || displayAsset)
     ? '<p class="drawer-trade-in">in ' +
-        (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span>' : '') +
+        (displayTicker
+          ? '<span class="tkr clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayTicker) + '</span>'
+          : '') +
         (displayTicker && displayAsset ? '<span class="dot-sep">·</span>' : '') +
-        (displayAsset ? '<span class="company-name">' + esc(displayAsset) + '</span>' : '') + '</p>'
+        (displayAsset
+          ? (displayTicker
+              ? '<span class="company-name clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayAsset) + '</span>'
+              : '<span class="company-name">' + esc(displayAsset) + '</span>')
+          : '') + '</p>'
     : '';
-  var personCard = '<div class="drawer-trade-party"><span class="eyebrow">Politician</span><div class="member-cell">' +
+  var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
+    (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
+    '><span class="eyebrow">Politician</span><div class="member-cell">' +
     memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div></div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
-  var assetCard = '<div class="drawer-trade-party"><span class="eyebrow">Asset</span><div class="asset-cell">' +
+  var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
+    (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
+    '><span class="eyebrow">Asset</span><div class="asset-cell">' +
     tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + ' · ' : '') + assetLabel) + '">' +
     (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(assetLabel) + '</span></div></div></div>';
@@ -9617,18 +9616,6 @@ initSideChips();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
-(function () {
-  var v = el('view-trends');
-  if (v) v.addEventListener('click', function (e) {
-    if (!e.target.closest) return;
-    var m = e.target.closest('[data-member]');
-    if (m && m.getAttribute('data-member')) { openMember(m.getAttribute('data-member')); return; }
-    var t = e.target.closest('[data-ticker]');
-    if (t && t.getAttribute('data-ticker')) openAsset(t.getAttribute('data-ticker'));
-  });
-})();
-
-/* Feed rows open the trade drawer; the asset chip and politician open their drawers. */
 /* Map a /api/client/v1 trade envelope item into the feed-row shape openTrade expects. */
 function clientTradeToRow(item) {
   if (!item) return null;
@@ -9732,39 +9719,59 @@ function openDeepLink() {
     if (trade) openTradeById(trade);
   } catch (e) {}
 }
+/* App-wide entity open: politician / company / trade from any surface
+   (feed, Trends, People, drawers, consensus cards). Priority:
+   member → asset/ticker → trade id so nested names win over the row. */
 function handleFeedOpenEvent(e) {
-  if (!e.target.closest) return;
-  if (e.target.closest('a[href]')) return;
-  var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
-  var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
-  var row = e.target.closest('[data-txid]'); if (!row) return;
-  openTradeById(row.getAttribute('data-txid'));
+  return handleEntityOpenEvent(e);
+}
+function handleEntityOpenEvent(e) {
+  if (!e || !e.target || !e.target.closest) return false;
+  // Real navigation / form controls keep default behavior.
+  if (e.target.closest('a[href]:not(.clickable)')) return false;
+  if (e.target.closest('button, input, select, textarea, label, option')) return false;
+  if (e.target.closest('.drawer-close, .drawer-backdrop, .panel-close')) return false;
+  var m = e.target.closest('[data-member]');
+  if (m && m.getAttribute('data-member')) {
+    if (e.preventDefault) e.preventDefault();
+    openMember(m.getAttribute('data-member'));
+    return true;
+  }
+  var a = e.target.closest('[data-asset]');
+  if (a && a.getAttribute('data-asset')) {
+    if (e.preventDefault) e.preventDefault();
+    openAsset(a.getAttribute('data-asset'));
+    return true;
+  }
+  // Legacy data-ticker (same as data-asset) used by older Trends markup.
+  var t = e.target.closest('[data-ticker]');
+  if (t && t.getAttribute('data-ticker')) {
+    if (e.preventDefault) e.preventDefault();
+    openAsset(t.getAttribute('data-ticker'));
+    return true;
+  }
+  var row = e.target.closest('[data-txid]');
+  if (row && row.getAttribute('data-txid')) {
+    if (e.preventDefault) e.preventDefault();
+    openTradeById(row.getAttribute('data-txid'));
+    return true;
+  }
+  return false;
 }
 (function () {
-  var fb = el('feedBody');
-  if (fb) fb.addEventListener('click', function (e) {
-    handleFeedOpenEvent(e);
+  document.addEventListener('click', function (e) {
+    handleEntityOpenEvent(e);
   });
-  var fc = el('feedCards');
-  if (fc) {
-    fc.addEventListener('click', handleFeedOpenEvent);
-    fc.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      e.preventDefault();
-      handleFeedOpenEvent(e);
-    });
-  }
-})();
-
-/* Inside a drawer, asset/politician links drill into the next drawer. */
-(function () {
-  var db = el('detailDrawerBody');
-  if (db) db.addEventListener('click', function (e) {
-    if (!e.target.closest) return;
-    if (e.target.closest('a[href]')) return;
-    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
-    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
-    var row = e.target.closest('[data-txid]'); if (row) { openTradeById(row.getAttribute('data-txid')); return; }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var hit = e.target && e.target.closest
+      ? e.target.closest('[data-member],[data-asset],[data-ticker],[data-txid].clickable, .clickable[data-txid], article.feed-card[data-txid], .ccard[data-asset], .ccard[data-ticker]')
+      : null;
+    if (!hit) return;
+    // Only trap keyboard on explicit interactive targets (not every table cell).
+    if (!hit.classList.contains('clickable') && hit.tagName !== 'ARTICLE' && !hit.classList.contains('ccard') && !hit.classList.contains('feed-card')) return;
+    e.preventDefault();
+    handleEntityOpenEvent(e);
   });
 })();
 

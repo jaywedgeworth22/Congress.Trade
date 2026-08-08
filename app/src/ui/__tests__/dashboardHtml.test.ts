@@ -463,6 +463,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="feedCards"');
     expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
     expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
+    expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(');
+    expect(DASHBOARD_HTML).toContain("document.addEventListener('click'");
     expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
@@ -572,7 +574,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
     expect(DASHBOARD_HTML).toContain('function analyticsTradeRow(');
     expect(DASHBOARD_HTML).toContain('TRADE_BY_ID');
-    expect(DASHBOARD_HTML).toContain("e.target.closest('a[href]')");
+    expect(DASHBOARD_HTML).toContain("e.target.closest('a[href]:not(.clickable)')");
     expect(DASHBOARD_HTML).toContain('Official Filed');
   });
 
@@ -1354,8 +1356,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('drawer-trade-party');
     expect(DASHBOARD_HTML).toContain('drawer-kicker');
     expect(DASHBOARD_HTML).toContain('drawer-trade-headline');
-    // ticker shown but NOT clickable in its own trade context (no data-asset on the in-line)
     expect(DASHBOARD_HTML).toContain('drawer-trade-in');
+    // Ticker/company in the trade drawer open the company drawer (app-wide entity clicks).
+    expect(DASHBOARD_HTML).toContain('data-asset="\' + esc(displayTicker) + \'"');
   });
 
   it('compacts the company profile into a responsive definition grid', () => {
@@ -2010,7 +2013,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   // ---- 8a. Keyboard-focusable + Enter-activatable drill-down rows ----------
   it('makes Consensus Moves (cluster) cards keyboard-focusable and Enter-activatable', () => {
     expect(DASHBOARD_HTML).toContain(
-      '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for \' + esc(c.ticker) + \'" data-ticker="\' + esc(c.ticker) + \'">',
+      '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company \' + esc(c.ticker) + \'" data-asset="\' + esc(c.ticker) + \'">',
     );
   });
 
@@ -2307,7 +2310,10 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain("fetch('/api/members'");
     expect(DASHBOARD_HTML).toContain('id="peopleBody"');
     expect(DASHBOARD_HTML).toContain("b.dataset.view === 'people'");
-    expect(DASHBOARD_HTML).toContain('openMember(id)');
+    // People rows use data-member; app-wide handleEntityOpenEvent opens the drawer.
+    expect(DASHBOARD_HTML).toContain('data-member=');
+    expect(DASHBOARD_HTML).toContain('function openMember(');
+    expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(');
   });
 
   it('loads committee conflicts into #trConflicts on Trends refresh', () => {
