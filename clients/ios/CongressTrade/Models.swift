@@ -364,6 +364,26 @@ enum PartyFilter: String, CaseIterable, Identifiable {
         case .other: return "🦅"
         }
     }
+
+    /// Compact multi-select summary token (e.g. pill text "D+R") — `rawValue`
+    /// already is the single-letter form the server/analytics use.
+    var summaryLabel: String { rawValue }
+
+    /// Buckets a raw member party string (e.g. "Democratic", "R",
+    /// "Independent") the same way the server's `asPartyBucket` does
+    /// (`app/src/analytics/sql.ts`): first letter D→Democrat, R→Republican,
+    /// anything else non-empty→Other. `nil` for an empty/unresolved value.
+    /// Used for the Trades feed's client-side party filter, since
+    /// `/api/client/v1/feed` does not accept a `party=` param at all (see
+    /// `CongressTradeStore.setPartySelection` doc comment).
+    static func bucket(for raw: String?) -> PartyFilter? {
+        guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return nil }
+        switch first.uppercased() {
+        case "D": return .democrat
+        case "R": return .republican
+        default: return .other
+        }
+    }
 }
 
 enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
@@ -391,80 +411,46 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
     }
 }
 
+/// Buy / Sell / Exchange side filter. Multi-select (`CongressTradeStore.
+/// selectedTradeTypes: Set<TradeTypeFilter>`, empty = all sides) — the server's
+/// `type=` param is single-valued (`asTxType` in `app/src/client/utils.ts`),
+/// exactly mirroring the web's own `qSideGroup`/`selectedSideParam` chips,
+/// which likewise only forward `type=` when exactly one side is toggled and
+/// otherwise fall back to an unfiltered fetch narrowed client-side. See
+/// `CongressTradeStore.tradeTypeQueryValue`.
 enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
-    case all
     case buy = "B"
     case sell = "S"
+    case exchange = "E"
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .all: return "All Sides"
-        case .buy: return "Buys"
-        case .sell: return "Sells"
+        case .buy: return "Buy"
+        case .sell: return "Sell"
+        case .exchange: return "Exchange"
         }
     }
 
-    /// Server `type=` value; `nil` omits the param (all sides).
-    var queryValue: String? {
+    /// Compact multi-select summary token (e.g. pill text "Buys+Sells").
+    var summaryLabel: String {
         switch self {
-        case .all: return nil
-        case .buy, .sell: return rawValue
+        case .buy: return "Buys"
+        case .sell: return "Sells"
+        case .exchange: return "Exch"
         }
     }
 
     /// Whether a cached trade's `transaction.type` matches this filter.
+    /// Legacy form letter `P` (Purchase) is a Buy alias, mirroring the
+    /// server's ingest/API normalization.
     func matches(txType: String?) -> Bool {
+        let t = (txType ?? "").uppercased()
         switch self {
-        case .all: return true
-        case .buy:
-            let t = (txType ?? "").uppercased()
-            return t == "B" || t == "P"
-        case .sell:
-            return (txType ?? "").uppercased() == rawValue
+        case .buy: return t == "B" || t == "P"
+        case .sell, .exchange: return t == rawValue
         }
-    }
-}
-
-/// Minimum-amount threshold pill — website parity with the shared
-/// `qMinAmt`/`trMinAmt` filter row (mirrored on Trends, `app/src/ui/dashboardHtml.ts`).
-/// Values are the STOCK Act bracket floor + $1, matching the server's
-/// inclusive `minAmount=` (`amountMin >= minAmount`) filter.
-enum AmountThresholdFilter: Int, CaseIterable, Identifiable, Hashable {
-    case any = 0
-    case k1 = 1001
-    case k15 = 15001
-    case k50 = 50001
-    case k100 = 100001
-    case k250 = 250001
-    case k500 = 500001
-    case m1 = 1_000_001
-    case m5 = 5_000_001
-    case m25 = 25_000_001
-    case m50 = 50_000_001
-
-    var id: Int { rawValue }
-
-    var label: String {
-        switch self {
-        case .any: return "Any $"
-        case .k1: return "$1k+"
-        case .k15: return "$15k+"
-        case .k50: return "$50k+"
-        case .k100: return "$100k+"
-        case .k250: return "$250k+"
-        case .k500: return "$500k+"
-        case .m1: return "$1m+"
-        case .m5: return "$5m+"
-        case .m25: return "$25m+"
-        case .m50: return "$50m+"
-        }
-    }
-
-    /// Server `minAmount=` query value; `nil` omits the param (Any $).
-    var queryValue: Int? {
-        self == .any ? nil : rawValue
     }
 }
 
