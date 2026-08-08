@@ -28,7 +28,7 @@ function loadSortVal() {
   const match = DASHBOARD_HTML.match(/function sortVal\(r, key\) \{[\s\S]*?\n\}/);
   if (!match) throw new Error('sortVal was not found in DASHBOARD_HTML');
   return new Function(
-    'publishedRaw',
+    'seenRaw',
     'lagDays',
     'NUMERIC_SORT',
     'sortDir',
@@ -581,7 +581,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
     expect(DASHBOARD_HTML).toContain('feedRequestSeq');
     expect(DASHBOARD_HTML).toContain("arr.textContent = '↕'");
-    expect(DASHBOARD_HTML).toContain('function publishedDetailText(');
+    expect(DASHBOARD_HTML).toContain('function seenDetailText(');
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
     expect(DASHBOARD_HTML).toContain('function analyticsTradeRow(');
     expect(DASHBOARD_HTML).toContain('TRADE_BY_ID');
@@ -3287,16 +3287,166 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('<option value="">Any $</option>');
   });
 
-  it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators, and leaves drawer separators untouched', () => {
+  it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators', () => {
     // Feed surfaces: desktop table cells (member state, asset title, amount
     // title) and the mobile feed card's meta row.
     expect(DASHBOARD_HTML).toContain("(r.st ? '<span class=\"muted\">  |  ' + esc(r.st) + '</span>' : '')");
     expect(DASHBOARD_HTML).toContain("esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || ''))");
     expect(DASHBOARD_HTML).toContain("esc(tier.title + '  |  ' + text)");
     expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  |  </span>')");
-    // Drawers are out of scope for this lane (lane W2 owns them) — their own
-    // dot separators are untouched.
-    expect(DASHBOARD_HTML).toContain('<span class="dot-sep">·</span>');
+  });
+
+  it('#14 uses "  |  " (two spaces + pipe) for drawer separators (ticker/company, stats row, Market Cap)', () => {
+    // The old middle-dot is gone from every ticker/company pairing inside drawers.
+    expect(DASHBOARD_HTML).not.toContain('<span class="dot-sep">·</span>');
     expect(DASHBOARD_HTML).toContain(".drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }");
+    // drawerCompanyTitle (ticker drawer's own "TKR | Company" title).
+    expect(DASHBOARD_HTML).toContain("(ticker && !sameAsTicker ? '<span class=\"dot-sep\">  |  </span>' : '')");
+    // openTrade's "in TKR | Company" line.
+    expect(DASHBOARD_HTML).toContain("(displayTicker && displayAsset ? '<span class=\"dot-sep\">  |  </span>' : '')");
+    // Ticker drawer stats row: "N trades  |  N politicians  |  ~$X approx. volume".
+    expect(DASHBOARD_HTML).toContain("' trades  |  ' + (s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>'");
+    // Market Cap: "Mega  |  ~$4.8t".
+    expect(DASHBOARD_HTML).toContain("(ref.marketCap != null ? (ref.marketCapBucket ? '  |  ' : '') + estUsd(ref.marketCap) : '')");
+  });
+});
+
+describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
+  it('#13(a)/(c) drops the POLITICIAN/ASSET eyebrow labels and moves Owner up beside the name', () => {
+    expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Politician</span>');
+    expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Asset</span>');
+    expect(DASHBOARD_HTML).toContain(".drawer-trade-owner { display:inline-block; margin-left:6px;");
+    expect(DASHBOARD_HTML).toContain("var ownerBadge = ownerText ? '<span class=\"drawer-trade-owner muted\">' + esc(ownerText) + '</span>' : '';");
+    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';");
+    // Owner no longer has its own Trade Details row.
+    expect(DASHBOARD_HTML).not.toContain("kvRow('Owner', esc(ownerLabel(row.owner) || '—'))");
+  });
+
+  it('#13(b) renames the Trade Details "Politician" row to "Name" with a link chevron', () => {
+    expect(DASHBOARD_HTML).not.toContain("kvRow('Politician', memberVal)");
+    expect(DASHBOARD_HTML).toContain("var nameChevron = row.filerId ? ' <span class=\"kv-chevron\" aria-hidden=\"true\">›</span>' : '';");
+    expect(DASHBOARD_HTML).toContain("kvRow('Name', memberVal + nameChevron)");
+    expect(DASHBOARD_HTML).toContain('.kv-chevron { opacity:.55; margin-left:2px; }');
+  });
+
+  it('#13(d) drops the "est. bracket" caption next to the amount (the bracket is exact)', () => {
+    expect(DASHBOARD_HTML).not.toContain('drawer-trade-bracket');
+    expect(DASHBOARD_HTML).not.toContain('est. bracket');
+    expect(DASHBOARD_HTML).toContain("'<h2 class=\"drawer-trade-headline\">' + esc(amountText(row.min, row.max)) + '</h2>' + inName +");
+  });
+
+  it('#13(e) moves Performance above Trade Details, directly under the header block', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "var perf = '<div class=\"drawer-section first\"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id=\"tradePerf\">' + perfInit + '</div></div>';",
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "'<div class=\"drawer-section\"><h3>Trade Details</h3><dl class=\"drawer-kv\">' +",
+    );
+    expect(DASHBOARD_HTML).toContain('openDrawer(head + perf + summary + profile + notes + links, topbarTitle);');
+  });
+
+  it('#13(f) gives every drawer a useful sticky-header summary instead of an empty bar', () => {
+    expect(DASHBOARD_HTML).toContain('<span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span>');
+    expect(DASHBOARD_HTML).toContain('function openDrawer(html, topbarTitle) {');
+    expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || '';");
+    // Trade drawer: "SOLD  $1k-$15k  of  ARCC  |  Ares Capital Corp." style summary.
+    expect(DASHBOARD_HTML).toContain(
+      "var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +\n    (topbarAssetBits.length ? ' <span class=\"muted\">of</span> ' + topbarAssetBits.join('<span class=\"dot-sep\">  |  </span>') : '');",
+    );
+    // Ticker drawer: "TKR | Company".
+    expect(DASHBOARD_HTML).toContain(
+      "var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class=\"dot-sep\">  |  </span>' + esc(companyName) : '');",
+    );
+    // Member drawer: the politician's name.
+    expect(DASHBOARD_HTML).toContain("// Owner punch list #13(f): sticky-header summary — the politician's name.\n      esc(name)\n    );");
+  });
+
+  it('#15 wires the trade drawer Company section to the same ticker analytics source as the ticker drawer', () => {
+    expect(DASHBOARD_HTML).toContain('<div id="tradeCompany">');
+    expect(DASHBOARD_HTML).toContain('var hasLocalRef = !!(rowRef.sector || rowRef.marketCap != null || rowRef.marketCapBucket || rowRef.country || rowRef.exchangeShort || rowRef.assetClass);');
+    expect(DASHBOARD_HTML).toContain('if (row.ticker && !hasLocalRef) {');
+    expect(DASHBOARD_HTML).toContain("aGet('ticker/' + encodeURIComponent(row.ticker)).then(function (d) {\n      var cEl = el('tradeCompany');\n      if (cEl && d && d.ref) cEl.innerHTML = companySectionHtml(d.ref);");
+  });
+
+  it('#16 swaps a bare "Securities" asset name for the parsed asset type when cheaply available', () => {
+    expect(DASHBOARD_HTML).toContain('function assetNameFallback(nm, row) {');
+    expect(DASHBOARD_HTML).toContain("if (!nm || String(nm).trim().toLowerCase() !== 'securities') return nm;");
+    expect(DASHBOARD_HTML).toContain('nm = assetNameFallback(nm, r);'); // feed/table asset cell
+    expect(DASHBOARD_HTML).toContain('var displayAsset = assetNameFallback(cleanAsset(row.asset || \'\'), row);'); // trade drawer
+  });
+
+  it('#17 renames "Published" to "Seen" and keeps it alongside "Imported"/"Official Filed"', () => {
+    expect(DASHBOARD_HTML).toContain("function seenRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }");
+    expect(DASHBOARD_HTML).toContain('function seenDetailText(r) {');
+    expect(DASHBOARD_HTML).toContain('function seenCellHtml(r) {');
+    expect(DASHBOARD_HTML).not.toContain('function publishedRaw(');
+    expect(DASHBOARD_HTML).not.toContain('function publishedDetailText(');
+    expect(DASHBOARD_HTML).not.toContain('function publishedCellHtml(');
+    // Admin feed column: id/sort key unchanged (persisted column order/visibility), label renamed.
+    expect(DASHBOARD_HTML).toContain("{ id: 'published', label: 'Seen', sort: 'published',");
+    expect(DASHBOARD_HTML).toContain('cell: seenCellHtml }');
+    // Trade drawer shows Seen right alongside Imported and Official Filed.
+    expect(DASHBOARD_HTML).toContain("kvRow('Seen', '<em>' + esc(seenDetailText(row)) + '</em>')");
+    expect(DASHBOARD_HTML).toContain("kvRow('Official Filed', esc(filedDetailText(row)))");
+    expect(DASHBOARD_HTML).toContain("kvRow('Imported', esc(dateTimeText(row.imported)))");
+  });
+
+  it('#18(a) centers the ticker-drawer stat card values and shrinks the card height', () => {
+    expect(DASHBOARD_HTML).toContain('#detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }');
+    expect(DASHBOARD_HTML).toContain('#detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }');
+  });
+
+  it('#18(b) labels weekly chart buckets with the week-start date instead of the raw "YYYY-Wnn" bucket', () => {
+    expect(DASHBOARD_HTML).toContain('var mw = /^(\\d{4})-W(\\d{1,2})$/.exec(p);');
+    expect(DASHBOARD_HTML).toContain('var weekStart = wk <= 0 ? jan1 : new Date(firstMon.getTime() + (wk - 1) * 7 * 86400000);');
+    expect(DASHBOARD_HTML).toContain("return MONTH_ABBR[weekStart.getUTCMonth()] + ' ' + weekStart.getUTCDate();");
+    // "week of" axis caption, shown only when the series is actually weekly.
+    expect(DASHBOARD_HTML).toContain("d.granularity === 'week'");
+    expect(DASHBOARD_HTML).toContain('week-of date');
+  });
+
+  it('#18(c) lets the drawer Recent Trades table use the drawer\\u2019s full width', () => {
+    expect(DASHBOARD_HTML).toContain('#detailDrawerBody .table-wrap { padding-right:0; }');
+  });
+
+  it('#18(d) drops the "M" manual badge from the ticker drawer\\u2019s Recent Trades table only', () => {
+    expect(DASHBOARD_HTML).toContain('var actionCell = actionBadge(t.txType);'); // ticker drawer: bare, no manual badge
+    // Trade drawer detail still notes manual entries explicitly.
+    expect(DASHBOARD_HTML).toContain("(row.source === 'manual' ? kvRow('Source', 'Manual Entry') : '')");
+  });
+
+  it('#18(e) lowercases/abbreviates the mini trade-date subline and keeps the date on one line', () => {
+    expect(DASHBOARD_HTML).toContain("var sub = pub ? 'filed ' + dateText(pub) : 'filed unavailable';");
+    expect(DASHBOARD_HTML).toContain("sub = 'filed ' + Math.round(ms / 86400000) + 'd later';");
+    expect(DASHBOARD_HTML).not.toContain("'Filed ' + Math.round(ms / 86400000) + ' days later'");
+    expect(DASHBOARD_HTML).toContain('.mini-date > span:first-child { white-space:nowrap; }');
+  });
+
+  it('#19 trims the Delivery tab explainer copy to 1-2 short sentences per method, one security line', () => {
+    // The verbose per-card asides (Slack/Zapier/Make/Pipedream, "leaving the
+    // line open") and the doubled-up free-tier/security paragraph are gone.
+    expect(DASHBOARD_HTML).not.toContain('Not running a server? Point it at Slack, Zapier, Make, or Pipedream');
+    expect(DASHBOARD_HTML).not.toContain('If webhooks are us calling you, the stream is you leaving the line open.');
+    expect(DASHBOARD_HTML).not.toContain('Past speed doesn&rsquo;t guarantee future speed.');
+    // Exactly one short <p> per delivery-card now (title + one paragraph, no p.note aside).
+    const gridStart = DASHBOARD_HTML.indexOf('<div class="delivery-grid">');
+    const gridEnd = DASHBOARD_HTML.indexOf('<p class="note" style="text-align:center">', gridStart);
+    expect(gridStart).toBeGreaterThan(-1);
+    expect(gridEnd).toBeGreaterThan(gridStart);
+    const grid = DASHBOARD_HTML.slice(gridStart, gridEnd);
+    expect((grid.match(/<p>/g) || []).length).toBe(2);
+    expect(grid).not.toContain('class="note"');
+    expect(grid).toContain('We POST the full filing JSON to your URL the instant it lands, retrying automatically on failure.');
+    expect(grid).toContain('One open HTTPS connection streams each new filing as an event &mdash; a few lines of <code>EventSource</code>, no polling.');
+    // The one security line (HMAC + secrets-shown-once) survives, stated once.
+    expect(DASHBOARD_HTML).toContain('Every request is HMAC-SHA256 signed, and secrets are shown once at creation.');
+    expect(DASHBOARD_HTML).toContain('id="subsMarketing"');
+    expect(DASHBOARD_HTML).toContain('Signed Webhooks');
+    expect(DASHBOARD_HTML).toContain('HMAC-SHA256');
+    expect(DASHBOARD_HTML).toContain('Live Stream (SSE)');
+    expect(DASHBOARD_HTML).toContain('EventSource');
+    // Create-flow + table are untouched.
+    expect(DASHBOARD_HTML).toContain('id="subsManage"');
+    expect(DASHBOARD_HTML).toContain('id="subsTable"');
   });
 });

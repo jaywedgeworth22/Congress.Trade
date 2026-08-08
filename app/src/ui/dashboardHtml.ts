@@ -457,20 +457,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-head { padding: 2px 0 6px; }
   .drawer-kicker { display: inline-block; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
   .drawer-trade-headline { margin: 0 0 4px; font-size: 22px; font-weight: 700; color: var(--text); font-family: var(--mono); }
-  .drawer-trade-bracket { font-family: var(--sans); font-size: 12px; font-weight: 500; }
   .drawer-trade-in { margin: 0; font-size: 14px; color: var(--text-dim); }
   .drawer-trade-in .tkr { color: var(--accent); font-weight: 700; }
   .drawer-trade-in .company-name { color: var(--text); }
+  /* Owner punch list #14: "  |  " (two literal spaces each side, same
+     convention as .fc-sep on the feed) replaces the old "·" between ticker
+     and company name inside drawers. */
   .drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }
   .drawer-trade-identity { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
   .drawer-trade-party { min-width:0; border:1px solid var(--border); border-radius:10px; padding:9px 10px; background:color-mix(in srgb,var(--panel-2) 62%,transparent); }
-  .drawer-trade-party .eyebrow { display:block; margin-bottom:5px; color:var(--text-dim); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0; }
   .drawer-trade-party .asset-cell,
   .drawer-trade-party .member-cell { max-width:100%; overflow:hidden; }
   .drawer-trade-party .asset-cell > div,
   .drawer-trade-party .member-cell > div { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .drawer-trade-party .tkr-logo,
   .drawer-trade-party .avatar { width:30px; height:30px; }
+  /* Owner punch list #13(c): Owner (Self/Spouse/Joint) rides beside the
+     politician's name at the top of the trade drawer instead of its own row
+     further down in Trade Details. */
+  .drawer-trade-owner { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  /* Owner punch list #13(b): a small link chevron on the "Name" row in Trade
+     Details signals it opens the politician drawer (the click already worked). */
+  .kv-chevron { opacity:.55; margin-left:2px; }
   @media (max-width: 560px) { .drawer-trade-identity { grid-template-columns:1fr; } }
   .drawer-company-title { display:flex; align-items:center; gap:12px; min-width:0; }
   .drawer-company-title .tkr-logo { width:34px; height:34px; }
@@ -733,10 +741,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:0 22px 20px; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s; will-change: transform; }
   .drawer.open .drawer-panel { transform: translateX(0); }
   .drawer-topbar {
-    position:sticky; top:0; z-index:4; display:flex; justify-content:flex-end;
-    min-height:54px; margin:0 -10px; padding:8px 0 6px 44px;
-    pointer-events:none; background:linear-gradient(var(--panel) 68%, transparent);
+    position:sticky; top:0; z-index:4; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    min-height:60px; margin:0 -10px; padding:8px 0 6px 20px;
+    pointer-events:none; background:linear-gradient(var(--panel) 80%, transparent);
   }
+  /* Owner punch list #13(f): the sticky bar over every drawer used to be an
+     empty strip holding only the close button — give it a one-line summary
+     of what's inside instead (or leave it empty when a drawer type has
+     nothing meaningful to summarize there). */
+  .drawer-topbar-title {
+    flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:13px; font-weight:600; color:var(--text); opacity:.92;
+  }
+  .drawer-topbar-title .muted { font-weight:400; }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
     width:48px; height:48px; margin:0; cursor:pointer; color:var(--text-dim);
@@ -760,6 +777,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-kv dt { color:var(--text-dim); white-space:nowrap; }
   .drawer-kv dd { margin:0; text-align:right; word-break:break-word; }
   .tier-gate-note { font-size:12px; color:var(--text-dim); background:var(--panel-2); border:1px dashed var(--border); border-radius:8px; padding:9px 11px; line-height:1.5; }
+  /* Owner punch list #18(a): the ticker drawer's 5 stat cards (grid-cards
+     reused from the Trends KPI cards) left a big dead zone below each value —
+     ID-scope so it wins over the plain ".grid-cards .card" mobile rule
+     regardless of source order (see CSS-cascade note in AGENTS.md), without
+     touching #view-trends' own dedicated card styling. */
+  #detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }
+  #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }
+  /* Owner punch list #18(c): .table-wrap's padding-right:60px exists to clear
+     the big feed table's custom scrollbar gutter — pure waste in a ~440px-wide
+     drawer's mini table, so the Recent Trades table reads narrower than the
+     drawer for no reason. ID-scoped so it always wins. */
+  #detailDrawerBody .table-wrap { padding-right:0; }
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
   .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
@@ -791,6 +820,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .perf-line { font-size:15px; font-weight:700; }
   .mini-tbl td { padding:7px 6px; }
   .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
+  /* Owner punch list #18(e): give the trade date its own line so it never
+     wraps mid-date now that the table has the drawer's full width (#18c). */
+  .mini-date > span:first-child { white-space:nowrap; }
   .mini-date .subline { color:var(--text-dim); font-size:11px; }
   .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
   .colopts { display:flex; flex-direction:column; gap:6px; flex:1; overflow-y:auto; overflow-x:hidden; }
@@ -2386,21 +2418,19 @@ ${speedProofSectionHtml(false)}
          requires a signed-in Premium account. -->
     <div class="section" id="subsMarketing">
       <h3>Get the Filing First</h3>
-      <p class="sub">The dashboard and analytics stay free for everyone. Premium Delivery pushes a filing to you the moment our scout ingests it — instead of waiting for you to check the site. Two methods, both included:</p>
+      <p class="sub">Premium pushes a filing to you the moment we ingest it &mdash; two methods, both included:</p>
       <div class="speed-mini" id="alertsSpeedMini"></div>
       <div class="delivery-grid">
         <div class="delivery-card">
           <h4>&rarr; Signed Webhooks &mdash; we call you</h4>
-          <p>The instant a filing lands, we send an HTTP POST with the full filing JSON to any URL you choose. Every request is HMAC-SHA256 signed with your endpoint&rsquo;s secret, so you can verify it came from us &mdash; and failed deliveries retry automatically with backoff.</p>
-          <p class="note">Not running a server? Point it at Slack, Zapier, Make, or Pipedream &mdash; if it has a URL, it can react to a filing in seconds.</p>
+          <p>We POST the full filing JSON to your URL the instant it lands, retrying automatically on failure.</p>
         </div>
         <div class="delivery-card">
           <h4>&#8674; Live Stream (SSE) &mdash; you stay on the line</h4>
-          <p>One long-lived HTTPS connection that pushes each new filing as an event. No polling, no rate-limit dance. In a browser it&rsquo;s a few lines of <code>EventSource</code>; on a server, one open socket. Drop the connection and reconnect &mdash; the stream resumes where you left off.</p>
-          <p class="note">If webhooks are us calling you, the stream is you leaving the line open.</p>
+          <p>One open HTTPS connection streams each new filing as an event &mdash; a few lines of <code>EventSource</code>, no polling.</p>
         </div>
       </div>
-      <p class="note" style="text-align:center">Trends, Trades, People, and analytics stay free. Premium unlocks delivery (webhook / SSE) and full-history CSV export. Past speed doesn&rsquo;t guarantee future speed.</p>
+      <p class="note" style="text-align:center">Every request is HMAC-SHA256 signed, and secrets are shown once at creation. Trends, Trades, and analytics stay free.</p>
     </div>
     <div class="section" id="subsManage">
       <h3>Delivery</h3>
@@ -2639,7 +2669,7 @@ ${speedProofSectionHtml(true)}
 
 <div class="drawer" id="detailDrawer">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-  <div class="drawer-panel"><div class="drawer-topbar"><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
+  <div class="drawer-panel"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
@@ -3428,6 +3458,18 @@ function memberCellHtml(r) {
   return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
+/* Owner punch list #16: a minority of filings report the bare, unhelpful
+   placeholder "Securities" with no further detail (e.g. Max Miller's private
+   holdings). When the row already carries a parsed asset type — never an
+   extra fetch, never invented — swap in that friendlier label instead. */
+function assetNameFallback(nm, row) {
+  if (!nm || String(nm).trim().toLowerCase() !== 'securities') return nm;
+  var code = assetTypeCode(row);
+  var explicitName = cleanNoteValue(row && row.assetTypeName);
+  var categoryLabel = code ? reviewAssetTypeCategoryLabel(code) : '';
+  var fallback = explicitName || categoryLabel || (code ? assetTypeLabel(code) : '');
+  return fallback || nm;
+}
 function assetCellHtml(r) {
   // Prefer a real company name when the reported asset text is missing or is just
   // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
@@ -3435,6 +3477,7 @@ function assetCellHtml(r) {
   if (isJunkAssetString(nm)) nm = '';
   if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
   nm = fmtCompany(nm);
+  nm = assetNameFallback(nm, r);
   if (!r.ticker && !nm) {
     return '<div class="asset-cell"><span class="muted">—</span></div>';
   }
@@ -3509,9 +3552,19 @@ function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
   return 'Official filing date is not available for this row.';
 }
-function publishedRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }
-function publishedText(r) { var s = publishedRaw(r); return s ? dateText(s) : 'Unavailable'; }
-function publishedDetailText(r) { var s = publishedRaw(r); return s ? dateTimeText(s) : 'Unavailable'; }
+/* Owner punch list #17 — timestamp semantics: this was labeled "Published"
+   in the UI, which read like an editorial publish date. It is actually
+   firstSeenAt: the moment our own crawler first observed the filing at the
+   source (falling back to our import time, then the official filed date,
+   for older rows collected before that telemetry existed) — i.e. "Seen",
+   not "Published". The drawer shows this row directly alongside "Imported"
+   (when we finished storing it) and "Official Filed" (the source's own
+   disclosure date) so the three timestamps read in an unambiguous sequence
+   instead of two similarly-named dates that can look like they contradict
+   each other. */
+function seenRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }
+function seenText(r) { var s = seenRaw(r); return s ? dateText(s) : 'Unavailable'; }
+function seenDetailText(r) { var s = seenRaw(r); return s ? dateTimeText(s) : 'Unavailable'; }
 function filedDetailText(r) { return r && r.filed ? dateText(r.filed) : 'Official Filing Date Unavailable'; }
 function shortLagText(r) { return lagDays(r) == null ? 'Unavailable' : lagDays(r) + 'd'; }
 function lagDetailText(r) {
@@ -3519,8 +3572,8 @@ function lagDetailText(r) {
   if (d == null) return 'Unavailable until official filing date is collected';
   return d + ' day' + (d === 1 ? '' : 's');
 }
-function publishedCellHtml(r) {
-  var s = publishedRaw(r);
+function seenCellHtml(r) {
+  var s = seenRaw(r);
   if (!s) return '<span class="muted">Unavailable</span>';
   var title = r.filed ? 'Official filing date is available in the details drawer.' : missingFiledReason(r);
   return dateCellHtml(s, title);
@@ -3547,7 +3600,7 @@ var FEED_COLS = [
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw this filing at the source, before it was parsed and imported. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
@@ -3919,7 +3972,7 @@ function addColResizer(th) {
 function sortVal(r, key) {
   if (key === 'asset') return (r.ticker || r.asset || '');
   if (key === 'lag') { var d = lagDays(r); return d == null ? -Infinity : d; }
-  var v = key === 'published' ? publishedRaw(r) : r[key];
+  var v = key === 'published' ? seenRaw(r) : r[key];
   if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
   if (key === 'txdate' || key === 'traded' || key === 'filed' || key === 'imported' || key === 'published') {
     if (!v) return sortDir > 0 ? '\uFFFF' : '';
@@ -7938,28 +7991,31 @@ function scrollToChart(id) {
     }, 1500);
   }
 }
+/* Owner punch list #18(b): the analytics API buckets weekly series as
+   strftime('%Y-W%W', ...) — literally "2026-W19" — which this function used
+   to fall through unrecognized and print verbatim ("gibberish" x-axis
+   labels). %W counts Monday-start weeks with week 00 = the partial run of
+   days before the year's first Monday, so we rebuild that same week's
+   Monday and label the bar with its start date instead of the raw bucket. */
 function fmtPeriod(p) {
   if (!p) return '';
+  var mw = /^(\\d{4})-W(\\d{1,2})$/.exec(p);
+  if (mw) {
+    var wyr = parseInt(mw[1], 10), wk = parseInt(mw[2], 10);
+    var jan1 = new Date(Date.UTC(wyr, 0, 1));
+    var daysToFirstMon = (8 - jan1.getUTCDay()) % 7;
+    var firstMon = new Date(jan1.getTime() + daysToFirstMon * 86400000);
+    var weekStart = wk <= 0 ? jan1 : new Date(firstMon.getTime() + (wk - 1) * 7 * 86400000);
+    return MONTH_ABBR[weekStart.getUTCMonth()] + ' ' + weekStart.getUTCDate();
+  }
   var m = /^(\\d{4})-(\\d{1,2})$/.exec(p);
   if (m) {
     var yr = parseInt(m[1], 10), num = parseInt(m[2], 10);
-    if (num > 12) {
-      var jan1 = new Date(Date.UTC(yr, 0, 1));
-      var dayOfWeek = jan1.getUTCDay();
-      var daysToFirstMon = (8 - dayOfWeek) % 7;
-      var firstMon = new Date(Date.UTC(yr, 0, 1 + daysToFirstMon));
-      var weekMon = new Date(firstMon.getTime() + (num - 1) * 7 * 86400000);
-      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return months[weekMon.getUTCMonth()] + ' ' + weekMon.getUTCDate();
-    } else {
-      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return months[num - 1] + ' ' + yr;
-    }
+    return MONTH_ABBR[num - 1] + ' ' + yr;
   }
   var m2 = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(p);
   if (m2) {
-    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return months[parseInt(m2[2],10)-1] + ' ' + parseInt(m2[3],10);
+    return MONTH_ABBR[parseInt(m2[2],10)-1] + ' ' + parseInt(m2[3],10);
   }
   return p;
 }
@@ -8779,7 +8835,7 @@ document.addEventListener('keydown', function (e) {
 /* One reusable right-side drawer, filled per type: trade / asset / politician.
    Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
    quiet note until a market-data key is configured. */
-function openDrawer(html) {
+function openDrawer(html, topbarTitle) {
   closePanels();
   // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
   // again while it's already open; only capture the pre-drawer focus target
@@ -8788,6 +8844,12 @@ function openDrawer(html) {
   var drawer = el('detailDrawer');
   var wasOpen = drawer.classList.contains('open');
   el('detailDrawerBody').innerHTML = html;
+  // Owner punch list #13(f): the sticky topbar reads like "SOLD $1k-$15k of
+  // ARCC | Ares Capital Corporation" instead of sitting empty. Callers that
+  // pass nothing (loading/error states, or a drawer type with nothing
+  // meaningful to summarize) leave it blank rather than showing a stale title.
+  var titleEl = el('drawerTopbarTitle');
+  if (titleEl) titleEl.innerHTML = topbarTitle || '';
   var p = document.querySelector('#detailDrawer .drawer-panel');
   // Start off-screen, then open on the next frame so CSS transitions/animations
   // actually run (display:none → block alone does not interpolate transform).
@@ -8943,7 +9005,7 @@ function companySectionHtml(ref) {
     return '<div class="def-item"><span class="def-k">' + esc(label) + '</span><span class="def-v">' + val + '</span></div>';
   }
   var mcap = (ref.marketCapBucket ? esc(ownerLabel(ref.marketCapBucket)) : '') +
-    (ref.marketCap != null ? (ref.marketCapBucket ? ' · ' : '') + estUsd(ref.marketCap) : '');
+    (ref.marketCap != null ? (ref.marketCapBucket ? '  |  ' : '') + estUsd(ref.marketCap) : '');
   var html =
     item('Sector', ref.sector ? esc(ref.sector) : '') +
     item('Industry', ref.industry ? esc(ref.industry) : '') +
@@ -8957,22 +9019,25 @@ function companySectionHtml(ref) {
 }
 function drawerCompanyTitle(ticker, name) {
   // This is the drawer FOR this ticker — the title is not clickable (it would
-  // just reopen the same drawer). Ticker and name are separated by a dot.
+  // just reopen the same drawer). Owner punch list #14: ticker and name are
+  // separated by "  |  ", not a dot.
   var label = fmtCompany(name || ticker || 'Company');
   var sameAsTicker = label === ticker;
   return '<div class="drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
-    (ticker && !sameAsTicker ? '<span class="dot-sep">·</span>' : '') +
+    (ticker && !sameAsTicker ? '<span class="dot-sep">  |  </span>' : '') +
     (sameAsTicker ? '' : '<span class="company-name">' + esc(label) + '</span>') + '</h2></div></div>';
 }
 function miniTradeDateHtml(t) {
   var traded = dateText(t.txDate);
   var pub = t.filedDate || t.firstSeenAt || t.createdAt || '';
-  var sub = pub ? 'Filed ' + dateText(pub) : 'Filed unavailable';
+  // Owner punch list #18(e): lowercase "filed", abbreviated "Nd later" so the
+  // subline stays one line now that the table has the drawer's full width.
+  var sub = pub ? 'filed ' + dateText(pub) : 'filed unavailable';
   if (t.txDate && pub) {
     var ms = new Date(pub).getTime() - new Date(t.txDate).getTime();
     if (!isNaN(ms) && ms >= 0) {
-      sub = 'Filed ' + Math.round(ms / 86400000) + ' days later';
+      sub = 'filed ' + Math.round(ms / 86400000) + 'd later';
     }
   }
   return '<div class="mini-date"><span>' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
@@ -9035,6 +9100,12 @@ function openAsset(ticker) {
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
     var ser = d.series || [];
     var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
+    // Owner punch list #18(b): bars are one bucket wide — say so once when the
+    // buckets are weekly, since the x-axis label is now a week-start date
+    // (fmtPeriod), not the raw "2026-W19" bucket key.
+    var chartCaption = (ser.length && d.granularity === 'week')
+      ? '<p class="note" style="margin:6px 0 0">Weekly buckets — each label is the week-of date (week starts Monday).</p>'
+      : '';
     function traderList(arr, label) {
       if (!arr || !arr.length) return '<div class="note">No ' + label + '.</div>';
       return arr.map(function (m) {
@@ -9052,26 +9123,31 @@ function openAsset(ticker) {
       var member = t.filerId
         ? '<span class="member-cell clickable" data-member="' + esc(t.filerId) + '">' + pdot(t.partyBucket) + esc(name) + '</span>'
         : pdot(t.partyBucket) + esc(name);
-      var actionCell = actionBadge(t.txType) + (t.source === 'manual' ? '<span class="badge sm ghost" style="margin-left:4px" title="Manual Entry">M</span>' : '');
+      // Owner punch list #18(d): the "M" manual-entry badge is dropped from
+      // this table — the note stays put inside the trade drawer's own details.
+      var actionCell = actionBadge(t.txType);
       return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionCell + '</td>' +
         '<td>' + member + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
+    // Owner punch list #13(f): sticky-header summary for the ticker drawer.
+    var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class="dot-sep">  |  </span>' + esc(companyName) : '');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
-	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' politicians · ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
+	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades  |  ' + (s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
-        '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
+        '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + chartCaption + '</div>' +
       '<div class="drawer-section"><h3>Performance After Buys</h3><div id="assetPerf"><div class="note">Loading performance…</div></div></div>' +
       '<div class="drawer-stack-grid"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
         '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>'
+      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>',
+      topbarTitle
     );
     // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
     aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?window=' + encodeURIComponent(tickerWindow)).then(function (bt) {
@@ -9166,7 +9242,9 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>'
+      '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>',
+      // Owner punch list #13(f): sticky-header summary — the politician's name.
+      esc(name)
     );
     // Lazy-load dual-anchor buy skill (trade-date approx + filing-date copy-trade).
     aGet('member/' + encodeURIComponent(filerId) + '/performance?window=all').then(function (perf) {
@@ -9232,7 +9310,7 @@ function openTrade(row) {
     : esc(fmtName(row.member));
   var sideWord = row.type === 'B' || row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
   var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
-  var displayAsset = cleanAsset(row.asset || '');
+  var displayAsset = assetNameFallback(cleanAsset(row.asset || ''), row);
   // Trade drawer leads with the TRANSACTION (kicker + amount). Ticker/company stay
   // secondary but remain clickable so they open the company drawer anywhere.
   var inName = (displayTicker || displayAsset)
@@ -9240,48 +9318,61 @@ function openTrade(row) {
         (displayTicker
           ? '<span class="tkr clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayTicker) + '</span>'
           : '') +
-        (displayTicker && displayAsset ? '<span class="dot-sep">·</span>' : '') +
+        (displayTicker && displayAsset ? '<span class="dot-sep">  |  </span>' : '') +
         (displayAsset
           ? (displayTicker
               ? '<span class="company-name clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayAsset) + '</span>'
               : '<span class="company-name">' + esc(displayAsset) + '</span>')
           : '') + '</p>'
     : '';
+  // Owner punch list #13(a)/(c): the "POLITICIAN"/"ASSET" eyebrow labels were
+  // dropped (self-evident from the avatar+name / logo+ticker below them), and
+  // Owner (Self/Spouse/Joint) moved up beside the politician's name instead
+  // of sitting in its own row further down in Trade Details.
+  var ownerText = ownerLabel(row.owner);
+  var ownerBadge = ownerText ? '<span class="drawer-trade-owner muted">' + esc(ownerText) + '</span>' : '';
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
-    '><span class="eyebrow">Politician</span><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div></div></div>';
+    '><div class="member-cell">' +
+    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
-    '><span class="eyebrow">Asset</span><div class="asset-cell">' +
-    tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + ' · ' : '') + assetLabel) + '">' +
+    '><div class="asset-cell">' +
+    tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + '  |  ' : '') + assetLabel) + '">' +
     (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(assetLabel) + '</span></div></div></div>';
+  // Owner punch list #13(d): the STOCK Act bracket shown here is exact — only
+  // the midpoint used elsewhere is an estimate — so the old "estimated
+  // bracket" caption was misleading and is gone.
   var head =
     '<div class="drawer-trade-head">' +
       '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
-      '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) +
-        ' <span class="drawer-trade-bracket muted">est. bracket</span></h2>' + inName +
+      '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' + inName +
       '<div class="drawer-trade-identity">' + personCard + assetCard + '</div>' +
     '</div>';
+  // Owner punch list #13(b): "Politician" -> "Name", plus a chevron affordance
+  // showing the row links out (the click already worked).
+  var nameChevron = row.filerId ? ' <span class="kv-chevron" aria-hidden="true">›</span>' : '';
   var summary =
-    '<div class="drawer-section first"><h3>Trade Details</h3><dl class="drawer-kv">' +
-      kvRow('Politician', memberVal) +
+    '<div class="drawer-section"><h3>Trade Details</h3><dl class="drawer-kv">' +
+      kvRow('Name', memberVal + nameChevron) +
       kvRow('Traded', esc(dateText(row.txdate))) +
-      kvRow('Published', '<em>' + esc(publishedDetailText(row)) + '</em>') +
+      kvRow('Seen', '<em>' + esc(seenDetailText(row)) + '</em>') +
       kvRow('Official Filed', esc(filedDetailText(row))) +
       kvRow('Disclosure Lag', esc(lagDetailText(row))) +
-      kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
       kvRow('Asset Type', assetTypeDetailHtml(row)) +
       kvRow('Imported', esc(dateTimeText(row.imported))) +
       (row.source === 'manual' ? kvRow('Source', 'Manual Entry') : '') +
       (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
-  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  // Owner punch list #13(e): Performance now leads, directly under the
+  // name+asset header block, ahead of Trade Details.
+  var perf = '<div class="drawer-section first"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
-  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
+  var hasLocalRef = !!(rowRef.sector || rowRef.marketCap != null || rowRef.marketCapBucket || rowRef.country || rowRef.exchangeShort || rowRef.assetClass);
+  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3><div id="tradeCompany">' + companySectionHtml(rowRef) + '</div></div>' : '';
   var notesBody = row.rawText ? filingNotesHtml(row.rawText) : '';
   var notes = notesBody ? '<div class="drawer-section"><h3>Filing Notes</h3>' + notesBody + '</div>' : '';
   var links = '<div class="drawer-section">' +
@@ -9289,7 +9380,25 @@ function openTrade(row) {
     (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(fmtName(row.member)) + ' →</a>' : '') +
     (row.id ? copyLinkHtml('trade', row.id, 'Copy link to this trade') : '') +
     '</div>';
-  openDrawer(head + summary + perf + profile + notes + links);
+  // Owner punch list #13(f): sticky-header one-liner instead of an empty bar,
+  // e.g. "SOLD  $1k - $15k  of  ARCC  |  Ares Capital Corporation".
+  var topbarAssetBits = [];
+  if (displayTicker) topbarAssetBits.push(esc(displayTicker));
+  if (displayAsset && displayAsset !== displayTicker) topbarAssetBits.push(esc(displayAsset));
+  var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +
+    (topbarAssetBits.length ? ' <span class="muted">of</span> ' + topbarAssetBits.join('<span class="dot-sep">  |  </span>') : '');
+  openDrawer(head + perf + summary + profile + notes + links, topbarTitle);
+  // Owner punch list #15: the ticker drawer already resolves full company
+  // facts via /api/analytics/ticker/:t (ref); reuse that same source instead
+  // of leaving the placeholder up when this row's own ref fields are empty
+  // (enrichment lag, or a row that predates it) even though the SAME
+  // company's own ticker drawer has the data.
+  if (row.ticker && !hasLocalRef) {
+    aGet('ticker/' + encodeURIComponent(row.ticker)).then(function (d) {
+      var cEl = el('tradeCompany');
+      if (cEl && d && d.ref) cEl.innerHTML = companySectionHtml(d.ref);
+    }).catch(function () {});
+  }
   // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
   if (row.id && !row.isOption) {
     aGet('performance/' + encodeURIComponent(row.id)).then(function (d) {
