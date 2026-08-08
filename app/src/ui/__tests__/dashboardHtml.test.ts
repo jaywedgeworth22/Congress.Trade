@@ -2735,6 +2735,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     // Regression (#1533 verifier): grid must be declared on the ID selector so
     // the later ≤720px `.toolbar { display:flex }` rule can't override it.
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
+
+    // #1551 verifier fix-forwards: no reserved right gutter on table wraps,
+    // and the slowest-filers table must not clip (sticky header pinning).
+    expect(DASHBOARD_HTML).not.toMatch(/\.table-wrap \{[^}]*padding-right: 60px/);
+    expect(DASHBOARD_HTML).toMatch(/\.late-filers-wrap table \{[^}]*overflow: visible/);
     const document = parse(DASHBOARD_HTML);
     const stats = document.querySelector('#tradesStats');
     expect(stats).not.toBeNull();

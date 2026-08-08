@@ -189,7 +189,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   [hidden] { display: none !important; }
   /* ---- theme toggle ---- */
   /* ---- resizable feed columns ---- */
-  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); scrollbar-width: thin; scrollbar-color: var(--border) var(--panel-2); padding-right: 60px; box-sizing: border-box; }
+  /* No reserved right gutter: when a table genuinely overflows, the scrollbar
+     renders inside the wrap; a static 60px reservation is pure dead space at
+     wide windows (#1551 verifier measured it on the Trades table at 1920px). */
+  .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); scrollbar-width: thin; scrollbar-color: var(--border) var(--panel-2); padding-right: 0; box-sizing: border-box; }
   .table-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
   .table-wrap::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 4px; }
   .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid var(--panel-2); }
@@ -647,7 +650,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .lag-dist .hbar .hval { font-size: 14px; font-weight: 600; width: 120px; text-align: right; }
   
   .late-filers-wrap { max-height: 242px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; }
-  .late-filers-wrap table { margin: 0; }
+  /* The base table overflow:hidden rule (rounded-corner clip) would make the
+     table itself the sticky containing block, so the sticky header scrolls
+     away with the rows (#1551 verifier measured it). The WRAP owns the radius
+     + clipping here; the table must stay overflow-visible for sticky to pin
+     against the scrolling wrap. */
+  .late-filers-wrap table { margin: 0; overflow: visible; border-radius: 0; }
   .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; }
   .late-filers-wrap td[data-tip] { cursor: help; }
   /* Owner follow-up batch #5: Slowest Filers is the one Trends table that
