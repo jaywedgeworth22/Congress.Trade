@@ -29,6 +29,58 @@
 import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
 import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
+/**
+ * Filing Latency Comparison ("speed proof") section markup, shared between its
+ * two placements (owner decision):
+ *   - Trends tab: rendered at the BOTTOM, only when isLatencyAhead() (client
+ *     JS) says we're clearly ahead — never shown on Trades/feed.
+ *   - Admin tab: rendered at the TOP, ALWAYS (full comparison incl. BEHIND),
+ *     an operator diagnostic rather than a marketing module.
+ * Both copies are painted by the same renderSpeedProof() client function
+ * against distinct element ids so they can render independently.
+ */
+function speedProofSectionHtml(admin: boolean): string {
+  const sectionId = admin ? 'adminLatencySection' : 'trLatencySection';
+  const gridId = admin ? 'spGridAdmin' : 'spGrid';
+  const tableBodyId = admin ? 'speedTableBodyAdmin' : 'speedTableBody';
+  const updatedId = admin ? 'speedUpdatedAdmin' : 'speedUpdated';
+  const infoTip = admin
+    ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
+    : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
+  return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Trends: only when we're clearly ahead."} -->
+  <div class="section speed-proof" id="${sectionId}" style="margin-top:24px; padding:24px 20px;">
+    <div class="speed-head">
+      <div>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="${infoTip}" title="${infoTip}">ⓘ</span></h3>
+      </div>
+      <span class="note" id="${updatedId}" style="white-space:nowrap"></span>
+    </div>
+    <!-- Scorecard cards injected here by renderSpeedProof() -->
+    <div class="sp-grid" id="${gridId}">
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest Congressional trades. <strong>Lead and win rates use live new imports only</strong> &mdash; seed datasets and historical house/senate backfills are excluded. We still count a match if they listed the trade minutes or up to about two weeks before or after we did. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <details class="speed-table" style="margin-top:8px">
+      <summary>Raw data table</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <tbody id="${tableBodyId}"></tbody>
+      </table></div>
+    </details>
+    <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+  </div>
+`;
+}
+
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -718,6 +770,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
   .feature-list { margin:0 0 16px; padding-left:18px; color:var(--text-dim); font-size:13px; line-height:1.55; }
   .clickable { cursor: pointer; }
+  /* Generic focus-visible ring for every keyboard-focusable entity target
+     (member/asset/ticker/trade). More specific selectors elsewhere (e.g.
+     #view-trends tr.clickable:focus-visible) intentionally win over this via
+     specificity where a richer, row-level focus treatment already exists. */
+  .clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .drawer-title-line.clickable:hover .tkr, .tkr.clickable:hover,
   .company-name.clickable:hover { text-decoration: underline; }
   .member-cell.clickable:hover, .fc-member.clickable:hover, .drawer-trade-party.clickable:hover { text-decoration: underline; }
@@ -2094,6 +2151,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table></div>
     </details>
 
+${speedProofSectionHtml(false)}
   </section>
 
   <!-- ================= PEOPLE (politician directory) ================= -->
@@ -2215,6 +2273,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= ADMIN · CADENCE ================= -->
   <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" aria-hidden="true">
+${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
       <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
@@ -2388,38 +2447,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table>
     </div>
   </section>
-
-  <!-- Provider speed scorecard (filter-independent live latency proof). -->
-  <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
-    <div class="speed-head">
-      <div>
-        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions." title="Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.">ⓘ</span></h3>
-      </div>
-      <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
-    </div>
-    <!-- Scorecard cards injected here by renderSpeedProof() -->
-    <div class="sp-grid" id="spGrid">
-      <div class="sp-card" aria-hidden="true" style="min-height:160px">
-        <div class="sk sk-line" style="width:55%;height:14px"></div>
-        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
-        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
-      </div>
-      <div class="sp-card" aria-hidden="true" style="min-height:160px">
-        <div class="sk sk-line" style="width:55%;height:14px"></div>
-        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
-        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
-      </div>
-    </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest Congressional trades. <strong>Lead and win rates use live new imports only</strong> &mdash; seed datasets and historical house/senate backfills are excluded. We still count a match if they listed the trade minutes or up to about two weeks before or after we did. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
-    <details class="speed-table" style="margin-top:8px">
-      <summary>Raw data table</summary>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
-        <tbody id="speedTableBody"></tbody>
-      </table></div>
-    </details>
-    <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-  </div>
 
   <footer class="site-footer">
     <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
@@ -7946,6 +7973,33 @@ function speedBoastProvider(d) {
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
   return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
 }
+/* Trends-tab placement gate for the Filing Latency Comparison section (owner
+   UX work order item 1): the section renders at the BOTTOM of Trends only
+   when we are clearly ahead — at least one adequately-covered provider
+   resolves to the same definitive "Ahead" verdict spCardHtml would badge
+   (matched enough live races, non-preliminary "usable" comparisonStatus,
+   and us leading), AND no adequately-covered provider resolves to "Behind".
+   Providers still "Gathering data" (too few matches), preliminary, or with
+   limited/insufficient coverage neither qualify nor block — they're simply
+   skipped. The Admin tab ignores this gate entirely and always renders the
+   full comparison (including BEHIND) as an operator diagnostic. Never
+   rendered on the Trades/feed tab at all. */
+function isLatencyAhead(summary) {
+  if (!summary || !summary.providers) return false;
+  var anyAhead = false, anyBehind = false;
+  (summary.providers || []).forEach(function (p) {
+    if (!p || p.operationalStatus === 'off') return;
+    var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
+    var deltaSample = wins + losses + ties;
+    var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
+    var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED && deltaSample > 0 && hasLead;
+    var adequate = hasTiming && p.comparisonStatus === 'usable';
+    if (!adequate) return; // gathering / preliminary / limited coverage — no vote either way
+    if (wins > losses) anyAhead = true;
+    else if (wins < losses) anyBehind = true;
+  });
+  return anyAhead && !anyBehind;
+}
 function speedUpdatedText() {
   var d = LATENCY.data; if (!d || !d.generatedAt) return '';
   var t = Date.parse(d.generatedAt); if (!isFinite(t)) return '';
@@ -7955,7 +8009,11 @@ function speedUpdatedText() {
   return txt;
 }
 function refreshSpeedUpdated() {
-  var n = el('speedUpdated'); if (n && LATENCY.data) n.textContent = speedUpdatedText();
+  if (!LATENCY.data) return;
+  var txt = speedUpdatedText();
+  ['speedUpdated', 'speedUpdatedAdmin'].forEach(function (id) {
+    var n = el(id); if (n) n.textContent = txt;
+  });
 }
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
@@ -8061,34 +8119,60 @@ function spCardHtml(p) {
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
 }
+/* Raw data table rows shared by both placements (inside their <details>). */
+function speedTableRowsHtml(provs) {
+  return provs.map(function (p) {
+    function td(v) { return '<td>' + v + '</td>'; }
+    var strong = p.strongMatched != null ? p.strongMatched : p.matched;
+    return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
+      td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
+      td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
+      td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
+      td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
+      td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
+      td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
+      td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
+  }).join('');
+}
+function paintSpeedSection(gridId, tableBodyId, provs) {
+  var grid = el(gridId);
+  if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+  var tb = el(tableBodyId);
+  if (tb) tb.innerHTML = speedTableRowsHtml(provs);
+}
+/* Filing Latency Comparison placement (owner UX work order item 1): paints
+   BOTH copies from a single fetch —
+     - Trends (#trLatencySection, bottom of the tab): only when
+       isLatencyAhead() says we're clearly ahead; hidden otherwise.
+     - Admin (#adminLatencySection, top of the tab): always the full
+       comparison (incl. BEHIND) whenever there's any raced data — an
+       operator diagnostic, not a marketing module.
+   Never rendered on the Trades/feed tab at all (neither container exists there). */
 function renderSpeedProof() {
-  var box = el('trLatencySection'); if (!box) return;
+  var trendsBox = el('trLatencySection');
+  var adminBox = el('adminLatencySection');
+  if (!trendsBox && !adminBox) return;
   fetchLatencySummary().then(function (d) {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
-    if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-    box.hidden = false;
-    var grid = el('spGrid');
-    if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+    var hasData = !!(d.totals && d.totals.racedDisclosures && provs.length);
 
-    /* Raw data table (inside <details>) */
-    var tb = el('speedTableBody');
-    if (tb) tb.innerHTML = provs.map(function (p) {
-      function td(v) { return '<td>' + v + '</td>'; }
-      var strong = p.strongMatched != null ? p.strongMatched : p.matched;
-      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
-        td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
-        td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
-        td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
-        td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
-        td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
-        td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
-        td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
-    }).join('');
+    if (adminBox) {
+      adminBox.hidden = !hasData;
+      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', provs);
+    }
+    if (trendsBox) {
+      var ahead = hasData && isLatencyAhead(d);
+      trendsBox.hidden = !ahead;
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', provs);
+    }
+
     refreshSpeedUpdated();
     renderAlertsMini();
   }).catch(function () {
-    box.hidden = true; /* endpoint unavailable: drop the marketing module quietly */
+    /* endpoint unavailable: drop both quietly rather than show a scary error */
+    if (trendsBox) trendsBox.hidden = true;
+    if (adminBox) adminBox.hidden = true;
   });
 }
 /* Compact strip on the Alerts tab; renders only when clearly favorable —
@@ -8937,6 +9021,10 @@ function memberPerfHtml(d) {
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
       '</div>';
   }
+  // Explicit horizon phrase (#1458 note) — the endpoint already returns the
+  // requested window (d.window, e.g. "all"); name it instead of the vague
+  // "in window" so the stat line reads "12 disclosed buys (All)".
+  var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';
   return legBlock(
       'Their timing (approx.)',
       'Size-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
@@ -8950,7 +9038,7 @@ function memberPerfHtml(d) {
       false
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
-      (buyCount != null ? ' · ' + buyCount + ' disclosed buys in window' : '') +
+      (buyCount != null ? ' · ' + buyCount + ' disclosed buys' + horizonPhrase : '') +
       '</div>';
 }
 
@@ -9570,13 +9658,20 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
   };
 });
 
-/* Speed-proof section: fetch just before it scrolls into view. It sits high on
-   the default Trends view, so this fires ~immediately without blocking first
-   paint; browsers without IntersectionObserver render it right away. */
+/* Speed-proof section: fetch just before the Trends copy scrolls into view
+   (it now sits at the BOTTOM of the Trends tab — owner UX work order item 1
+   — so this defers the fetch rather than firing it during first paint).
+   observe() is safe to call even while #trLatencySection's ancestor .view
+   isn't the active tab yet (e.g. a returning visitor lands on a different
+   tab): the element still has no box until its tab becomes active, and
+   IntersectionObserver naturally starts evaluating intersection once it
+   does. Browsers without IntersectionObserver render it right away. The
+   Admin copy is independent: it renders immediately (not lazily) as soon as
+   the Admin tab opens, from the two call sites near the tab-switch handlers. */
 (function () {
   var s = el('trLatencySection'); if (!s) return;
   if (!('IntersectionObserver' in window)) { renderSpeedProof(); return; }
@@ -9936,6 +10031,41 @@ function handleEntityOpenEvent(e) {
   });
 })();
 
+/* Universal keyboard reachability for entity-open targets (owner UX work
+   order item 2): every .clickable element carrying a data-member/data-asset/
+   data-ticker/data-txid attribute — built dynamically across dozens of
+   render functions (Trends leaderboards, cluster cards, People directory,
+   drawers, the feed table) — becomes Tab-focusable with button semantics
+   the moment it lands in the DOM. The delegated keydown handler just above
+   already fires Enter/Space on any focused .clickable[data-*] target; this
+   makes sure there IS something to focus, instead of hand-adding
+   tabindex/role at every call site (and risking missing one). Native <a>/
+   <button> targets are left alone — they're already focusable and carry
+   their own semantics. Scoped to entity-open targets only: other .clickable
+   UI (copy-link, etc.) is untouched. */
+var ENTITY_FOCUSABLE_SELECTOR = '.clickable[data-member], .clickable[data-asset], .clickable[data-ticker], .clickable[data-txid]';
+function makeEntityTargetsFocusable(root) {
+  if (!root || root.nodeType !== 1) return;
+  var nodes = root.querySelectorAll ? Array.prototype.slice.call(root.querySelectorAll(ENTITY_FOCUSABLE_SELECTOR)) : [];
+  if (root.matches && root.matches(ENTITY_FOCUSABLE_SELECTOR)) nodes.push(root);
+  nodes.forEach(function (n) {
+    if (n.tagName === 'A' || n.tagName === 'BUTTON') return;
+    if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
+  });
+}
+makeEntityTargetsFocusable(document.body);
+if ('MutationObserver' in window) {
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var added = mutations[i].addedNodes;
+      for (var j = 0; j < added.length; j++) {
+        if (added[j].nodeType === 1) makeEntityTargetsFocusable(added[j]);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
 /* Escape closes transient overlays. */
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { closePanels(); closeDrawer(); closeLogin(); closePricing(); }
@@ -10052,7 +10182,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }

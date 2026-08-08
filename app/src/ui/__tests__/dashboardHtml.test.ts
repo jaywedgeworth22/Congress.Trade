@@ -2516,6 +2516,366 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
 });
 
 /**
+ * LANE A2 of the owner UX work order — continues LANE A1 on the same branch
+ * (monet/web-ux-workorder). Covers:
+ *   1. Filing Latency Comparison placement rules + the isLatencyAhead() gate.
+ *   2. Entity click-through coverage (verifying PR #1517's delegation reaches
+ *      every surface the owner named, incl. drill-in from inside drawers).
+ *   3. The member-drawer "Performance vs S&P" horizon phrase (#1458 note).
+ */
+describe('owner UX work order (LANE A2 — latency placement + entity click-through)', () => {
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+  function extractVarDecl(html: string, name: string): string {
+    const re = new RegExp('var ' + name + ' = [\\s\\S]*?;');
+    const m = re.exec(html);
+    if (!m) throw new Error('var not found in DASHBOARD_HTML: ' + name);
+    return m[0];
+  }
+
+  type ProviderFixture = Record<string, unknown>;
+  type LatencySummary = { providers: ProviderFixture[] } | null;
+
+  function loadIsLatencyAhead(): (summary: LatencySummary) => boolean {
+    const src = [
+      extractVarDecl(DASHBOARD_HTML, 'SPEED_LANE_MIN_MATCHED'),
+      extractFn(DASHBOARD_HTML, 'isLatencyAhead'),
+      'return isLatencyAhead;',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    return new Function(src)() as (summary: LatencySummary) => boolean;
+  }
+
+  function provider(overrides: ProviderFixture): ProviderFixture {
+    return {
+      label: 'Provider',
+      matched: 10,
+      usFirstCount: 0,
+      providerFirstCount: 0,
+      tieCount: 0,
+      avgLeadSec: 120,
+      medianLeadSec: 100,
+      comparisonStatus: 'usable',
+      operationalStatus: 'on',
+      ...overrides,
+    };
+  }
+
+  describe('isLatencyAhead() gating helper', () => {
+    const isLatencyAhead = loadIsLatencyAhead();
+
+    it('is true when one adequately-covered provider leads and none are behind', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          provider({ label: 'B', comparisonStatus: 'preliminary', matched: 0, avgLeadSec: null, medianLeadSec: null }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(true);
+    });
+
+    it('is false when any adequately-covered provider is behind, even if another is ahead', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          provider({ label: 'B', usFirstCount: 1, providerFirstCount: 9 }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(false);
+    });
+
+    it('is false when every provider is still gathering data (too few matched races)', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', matched: 1, usFirstCount: 1, providerFirstCount: 0 }),
+          provider({ label: 'B', matched: 0, avgLeadSec: null, medianLeadSec: null, usFirstCount: 0, providerFirstCount: 0 }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(false);
+    });
+
+    it('ignores preliminary/limited-coverage providers — they neither qualify nor block', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          // Behind on raw counts, but comparisonStatus is only 'preliminary' —
+          // not adequate coverage, so it must not veto the definitive lead.
+          provider({ label: 'B', usFirstCount: 1, providerFirstCount: 9, comparisonStatus: 'preliminary' }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(true);
+    });
+
+    it('ignores intentionally-off providers entirely', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          provider({ label: 'B', operationalStatus: 'off' }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(true);
+    });
+
+    it('is false on a tie (no provider strictly ahead)', () => {
+      const summary = { providers: [provider({ label: 'A', usFirstCount: 5, providerFirstCount: 5 })] };
+      expect(isLatencyAhead(summary)).toBe(false);
+    });
+
+    it('is false with no providers or a missing summary', () => {
+      expect(isLatencyAhead({ providers: [] })).toBe(false);
+      expect(isLatencyAhead(null)).toBe(false);
+    });
+  });
+
+  describe('Filing Latency Comparison section placement', () => {
+    it('never renders inside the Trades/feed tab', () => {
+      const feedView = DASHBOARD_HTML.match(/<section class="view" id="view-feed"[\s\S]*?\n  <section class="view/);
+      expect(feedView).not.toBeNull();
+      expect(feedView![0]).not.toContain('trLatencySection');
+      expect(feedView![0]).not.toContain('adminLatencySection');
+    });
+
+    it('renders one copy at the BOTTOM of the Trends view (gated by isLatencyAhead() at runtime)', () => {
+      const trendsView = DASHBOARD_HTML.match(/<section class="view active" id="view-trends"[\s\S]*?\n  <\/section>/);
+      expect(trendsView).not.toBeNull();
+      expect(trendsView![0]).toContain('id="trLatencySection"');
+      expect(trendsView![0]).not.toContain('id="adminLatencySection"');
+      // It's the last thing before the view closes (bottom placement) — nothing
+      // else with an id sits between the section and </section>.
+      const idx = trendsView![0].indexOf('id="trLatencySection"');
+      const rest = trendsView![0].slice(idx);
+      expect(rest.trim().endsWith('</section>')).toBe(true);
+    });
+
+    it('renders one full copy (including BEHIND) at the TOP of the Admin view, unconditionally', () => {
+      const adminView = DASHBOARD_HTML.match(/<section class="view" id="view-admin"[\s\S]*?\n  <\/section>/);
+      expect(adminView).not.toBeNull();
+      expect(adminView![0]).toContain('id="adminLatencySection"');
+      expect(adminView![0]).not.toContain('id="trLatencySection"');
+      // It's the first thing inside the view — appears before the "Admin
+      // Access" panel that used to open the tab.
+      const latencyIdx = adminView![0].indexOf('id="adminLatencySection"');
+      const accessIdx = adminView![0].indexOf('Admin Access');
+      expect(latencyIdx).toBeGreaterThan(-1);
+      expect(accessIdx).toBeGreaterThan(-1);
+      expect(latencyIdx).toBeLessThan(accessIdx);
+    });
+
+    it('paints the Admin copy unconditionally and gates only the Trends copy on isLatencyAhead()', () => {
+      expect(DASHBOARD_HTML).toContain('function renderSpeedProof() {');
+      expect(DASHBOARD_HTML).toContain("var trendsBox = el('trLatencySection');");
+      expect(DASHBOARD_HTML).toContain("var adminBox = el('adminLatencySection');");
+      expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasData;');
+      expect(DASHBOARD_HTML).toContain('var ahead = hasData && isLatencyAhead(d);');
+      expect(DASHBOARD_HTML).toContain('trendsBox.hidden = !ahead;');
+      // Admin kicks off the fetch/paint itself as soon as the tab opens (both
+      // the click handler and the boot-time restore-saved-tab path) instead
+      // of relying only on the Trends-tab intersection observer.
+      expect(DASHBOARD_HTML).toContain(
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }",
+      );
+      expect(DASHBOARD_HTML).toContain(
+        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }",
+      );
+    });
+  });
+
+  describe('entity click-through coverage (verifying PR #1517 reaches every named surface)', () => {
+    it('keeps the shared handleEntityOpenEvent delegation wired to member/asset/ticker/trade ids', () => {
+      expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(e)');
+      expect(DASHBOARD_HTML).toContain("openMember(m.getAttribute('data-member'));");
+      expect(DASHBOARD_HTML).toContain("openAsset(a.getAttribute('data-asset'));");
+      expect(DASHBOARD_HTML).toContain("openTradeById(row.getAttribute('data-txid'));");
+    });
+
+    it('makes every Trends leaderboard/list row entity-clickable', () => {
+      // What Congress Is Trading (loadTrTickers -> #trTickers) and Rising
+      // Activity (loadTrTrending -> #trTrending) share this row template.
+      expect(DASHBOARD_HTML).toContain(
+        'return \'<tr class="row clickable" data-asset="\' + esc(r.ticker) + \'" title="Open company">\' +',
+      );
+      // Top Performers (loadTrPerformers -> #trPerformers) and Most Active
+      // Politicians / member-leaderboard (loadTrMembers -> #trMembers).
+      expect(DASHBOARD_HTML).toContain(
+        'var memberAttr = r.filerId ? \' class="member-cell clickable" data-member="\' + esc(r.filerId) + \'"\' : \' class="member-cell"\';',
+      );
+      expect(DASHBOARD_HTML).toContain("aGet('member-leaderboard?'");
+      expect(DASHBOARD_HTML).toContain("aGet('member-performance?'");
+      // Consensus Moves / cluster-buys (loadTrClusters -> #trClusters): card
+      // opens the company drawer, member faces open the politician drawer.
+      expect(DASHBOARD_HTML).toContain(
+        '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company \' + esc(c.ticker) + \'" data-asset="\' + esc(c.ticker) + \'">\'',
+      );
+      expect(DASHBOARD_HTML).toContain(
+        'return \'<span class="clickable face-member" data-member="\' + esc(m.filerId) +',
+      );
+      // Committee Sector Conflicts (loadTrConflicts -> #trConflicts).
+      expect(DASHBOARD_HTML).toContain("aGet('conflicts?'");
+    });
+
+    it('keeps the People directory rows entity-clickable via data-member', () => {
+      expect(DASHBOARD_HTML).toContain('function renderPeopleDirectory(all)');
+      expect(DASHBOARD_HTML).toContain(
+        "return '<tr class=\"row\" ' + (m.filerId ? 'data-member=\"' + esc(m.filerId) + '\" style=\"cursor:pointer\"' : '') + '>' +",
+      );
+    });
+
+    it('keeps member-drawer rows (Most-Traded -> ticker drawer, Recent Trades -> trade view) entity-clickable', () => {
+      expect(DASHBOARD_HTML).toContain('function openMember(filerId)');
+      // Most-Traded rows open the ticker/asset drawer.
+      expect(DASHBOARD_HTML).toContain(
+        'return \'<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="\' + esc(t.ticker) + \'" style="width:auto;flex:1">\' +',
+      );
+      // Recent Trades rows open the trade view; the ticker chip inside each
+      // row is itself a second, nested entity link to the asset drawer.
+      expect(DASHBOARD_HTML).toContain(
+        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + miniTradeDateOnlyHtml(t) + \'</td>\' +',
+      );
+      expect(DASHBOARD_HTML).toContain(
+        '? \'<span class="tkr clickable" data-asset="\' + esc(t.ticker) + \'">\' + esc(t.ticker) + \'</span>\'',
+      );
+    });
+
+    it('keeps asset-drawer Recent Trades and Top Buyers/Sellers entity-clickable', () => {
+      expect(DASHBOARD_HTML).toContain('function openAsset(ticker)');
+      expect(DASHBOARD_HTML).toContain(
+        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + miniTradeDateHtml(t) + \'</td>\' +',
+      );
+      expect(DASHBOARD_HTML).toContain("var memberAttr = m.filerId ? ' data-member=\"' + esc(m.filerId) + '\"' : '';");
+    });
+  });
+
+  describe('entity click-through: keyboard reachability (Tab + Enter/Space)', () => {
+    // Many entity-open render sites (Trends leaderboards, member/asset
+    // drawers, People directory rows) build .clickable[data-*] elements
+    // without ever setting tabindex/role by hand, so they'd otherwise be
+    // unreachable via Tab even though the click delegation works. A single
+    // MutationObserver-backed pass (makeEntityTargetsFocusable) tags every
+    // such element with tabindex="0" + role="button" as soon as it lands in
+    // the DOM, instead of patching tabindex/role into every call site.
+    type FakeNode = {
+      tagName: string;
+      nodeType: 1;
+      _attrs: Record<string, string>;
+      hasAttribute: (name: string) => boolean;
+      setAttribute: (name: string, value: string) => void;
+      getAttribute: (name: string) => string | undefined;
+    };
+    function fakeNode(tagName: string, attrs: Record<string, string> = {}): FakeNode {
+      const a = { ...attrs };
+      return {
+        tagName,
+        nodeType: 1,
+        _attrs: a,
+        hasAttribute: (name) => Object.prototype.hasOwnProperty.call(a, name),
+        setAttribute: (name, value) => {
+          a[name] = value;
+        },
+        getAttribute: (name) => a[name],
+      };
+    }
+    function fakeRoot(children: FakeNode[], selfMatches = false) {
+      return {
+        nodeType: 1 as const,
+        tagName: 'DIV',
+        matches: () => selfMatches,
+        querySelectorAll: () => children,
+      };
+    }
+
+    function loadMakeEntityTargetsFocusable(): (root: unknown) => void {
+      const src = [
+        extractVarDecl(DASHBOARD_HTML, 'ENTITY_FOCUSABLE_SELECTOR'),
+        extractFn(DASHBOARD_HTML, 'makeEntityTargetsFocusable'),
+        'return makeEntityTargetsFocusable;',
+      ].join('\n');
+      // eslint-disable-next-line no-new-func -- executing the real shipped source
+      return new Function(src)() as (root: unknown) => void;
+    }
+
+    it('wires the MutationObserver pass into the same IIFE as the click/keydown delegation', () => {
+      expect(DASHBOARD_HTML).toContain(
+        "var ENTITY_FOCUSABLE_SELECTOR = '.clickable[data-member], .clickable[data-asset], .clickable[data-ticker], .clickable[data-txid]';",
+      );
+      expect(DASHBOARD_HTML).toContain('function makeEntityTargetsFocusable(root)');
+      expect(DASHBOARD_HTML).toContain('makeEntityTargetsFocusable(document.body);');
+      expect(DASHBOARD_HTML).toContain("if ('MutationObserver' in window) {");
+      expect(DASHBOARD_HTML).toContain('.observe(document.body, { childList: true, subtree: true });');
+      // A generic focus-visible ring backs every element this pass tags,
+      // since most call sites never had bespoke focus CSS to begin with.
+      expect(DASHBOARD_HTML).toContain(
+        '.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }',
+      );
+    });
+
+    it('tags a member-cell div with tabindex=0 and role=button', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const node = fakeNode('DIV', { class: 'member-cell clickable', 'data-member': 'P000197' });
+      makeEntityTargetsFocusable(fakeRoot([node]));
+      expect(node.getAttribute('tabindex')).toBe('0');
+      expect(node.getAttribute('role')).toBe('button');
+    });
+
+    it('does not clobber an existing tabindex/role (e.g. feed-card, ccard already ship their own)', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const node = fakeNode('ARTICLE', {
+        class: 'feed-card clickable',
+        'data-txid': 'abc',
+        tabindex: '0',
+        role: 'button',
+      });
+      makeEntityTargetsFocusable(fakeRoot([node]));
+      expect(node.getAttribute('tabindex')).toBe('0');
+      expect(node.getAttribute('role')).toBe('button');
+    });
+
+    it('leaves native <a>/<button> entity targets alone (already focusable, own semantics)', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const link = fakeNode('A', { class: 'clickable', 'data-asset': 'AAPL', href: '#' });
+      makeEntityTargetsFocusable(fakeRoot([link]));
+      expect(link.hasAttribute('tabindex')).toBe(false);
+      expect(link.hasAttribute('role')).toBe(false);
+    });
+
+    it('also tags the root node itself when it matches (MutationObserver addedNodes case)', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const node = fakeNode('DIV', { class: 'clickable', 'data-txid': 'xyz' });
+      // A MutationObserver addedNodes entry IS the element itself, not a
+      // container to search inside — exercise the root.matches() branch.
+      const rootAsNode = { ...node, querySelectorAll: () => [], matches: () => true };
+      makeEntityTargetsFocusable(rootAsNode);
+      expect(rootAsNode.getAttribute('tabindex')).toBe('0');
+      expect(rootAsNode.getAttribute('role')).toBe('button');
+    });
+  });
+
+  describe('member-drawer "Performance vs S&P" horizon phrase (#1458 note)', () => {
+    it('names the window instead of the vague "in window" once the endpoint has returned one', () => {
+      expect(DASHBOARD_HTML).not.toContain('disclosed buys in window');
+      expect(DASHBOARD_HTML).toContain("var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';");
+      expect(DASHBOARD_HTML).toContain("buyCount + ' disclosed buys' + horizonPhrase");
+    });
+  });
+});
+
+/**
  * Issue #1040 — binary brand/icon/font assets live under app/public/ and are
  * served by ui/routes.ts. assets.ts must stay a thin loader (no multi-MB base64).
  */
