@@ -21,6 +21,9 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var magicEmail = ""
     @State private var showSubscribe = false
+    /// Raw nonce for the in-flight Sign in with Apple request — see
+    /// `Store/AppleSignIn.swift` / `AccountQuickMenu`'s identical button.
+    @State private var currentAppleNonce: String?
     @FocusState private var magicEmailFocused: Bool
 
     var body: some View {
@@ -87,12 +90,18 @@ struct SettingsView: View {
                         }
                         .disabled(store.isLoggingOut)
                     } else {
-                        SignInWithAppleButton(.signIn) { _ in
+                        SignInWithAppleButton(.signIn) { request in
                             // No custom scopes requested — the backend reads
                             // fullName from the request body (captured below)
                             // and email from the verified identity token.
+                            let nonce = AppleSignInNonce.generate()
+                            currentAppleNonce = nonce
+                            request.nonce = nonce
                         } onCompletion: { result in
-                            Task { await store.handleAppleSignIn(result) }
+                            Task {
+                                await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
+                                currentAppleNonce = nil
+                            }
                         }
                         .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                         .frame(height: 44)

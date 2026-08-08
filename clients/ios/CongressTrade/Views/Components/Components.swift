@@ -516,8 +516,12 @@ struct AccountQuickMenu: View {
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @Binding var isPresented: Bool
     @State private var showSubscribe = false
-
-    private static let manageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+    /// Raw nonce for the in-flight Sign in with Apple request, set by the
+    /// button's request-configuration closure and consumed by
+    /// `handleAppleSignIn` on completion. See `Store/AppleSignIn.swift`.
+    @State private var currentAppleNonce: String?
+    @State private var isOpeningManageSubscription = false
+    @State private var manageSubscriptionError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -584,16 +588,21 @@ struct AccountQuickMenu: View {
             .accessibilityElement(children: .combine)
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                SignInWithAppleButton(.signIn) { _ in
+                SignInWithAppleButton(.signIn) { request in
                     // No custom scopes — see SettingsView's identical button.
+                    let nonce = AppleSignInNonce.generate()
+                    currentAppleNonce = nonce
+                    request.nonce = nonce
                 } onCompletion: { result in
                     Task {
-                        await store.handleAppleSignIn(result)
+                        await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
+                        currentAppleNonce = nil
                         if store.signedIn { isPresented = false }
                     }
                 }
                 .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                .frame(height: 40)
+                // 44pt HIG minimum tap target (matches SettingsView's button).
+                .frame(height: 44)
                 .accessibilityLabel("Sign in with Apple")
 
                 Button {
@@ -612,14 +621,32 @@ struct AccountQuickMenu: View {
     @ViewBuilder
     private var billingButton: some View {
         if store.isPremium {
-            Button {
-                isPresented = false
-                openURL(Self.manageSubscriptionsURL)
-            } label: {
-                Label("Manage Subscription", systemImage: "creditcard")
-                    .font(.subheadline.weight(.medium))
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Task { await openManageSubscription() }
+                } label: {
+                    HStack {
+                        Label("Manage Subscription", systemImage: "creditcard")
+                            .font(.subheadline.weight(.medium))
+                        if isOpeningManageSubscription {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isOpeningManageSubscription)
+                .accessibilityHint(
+                    store.entitlementSource == "apple"
+                        ? "Opens the App Store subscriptions page"
+                        : "Opens the Congress.Trade billing portal"
+                )
+                if let manageSubscriptionError {
+                    Text(manageSubscriptionError)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .accessibilityHint("Opens the App Store subscriptions page")
         } else {
             Button {
                 isPresented = false
@@ -628,6 +655,23 @@ struct AccountQuickMenu: View {
                 Label("Upgrade to Premium", systemImage: "sparkles")
                     .font(.subheadline.weight(.medium))
             }
+        }
+    }
+
+    /// Routes by `entitlementSource` — see `Store/ManageSubscription.swift`.
+    /// Only dismisses the popover once a URL is actually opened; a failure
+    /// stays put and shows `manageSubscriptionError` inline instead of
+    /// silently closing on a dead link.
+    private func openManageSubscription() async {
+        manageSubscriptionError = nil
+        isOpeningManageSubscription = true
+        defer { isOpeningManageSubscription = false }
+        switch await store.resolveManageSubscriptionURL() {
+        case .url(let url):
+            isPresented = false
+            openURL(url)
+        case .failed(let message):
+            manageSubscriptionError = message
         }
     }
 }

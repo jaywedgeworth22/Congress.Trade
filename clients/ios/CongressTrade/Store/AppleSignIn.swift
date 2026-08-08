@@ -1,5 +1,27 @@
 import AuthenticationServices
+import CryptoKit
 import Foundation
+import Security
+
+/// Generates the replay-protection nonce for Sign in with Apple
+/// (`ASAuthorizationAppleIDRequest.nonce`). The backend verifies the
+/// identity token's `nonce` claim against the exact string the client sends
+/// with plain string equality (`app/src/auth/appleIdentity.ts`:
+/// `payload.nonce !== opts.nonce`) — so the SAME SHA256 digest generated
+/// here is set as `request.nonce` (which Apple embeds unmodified into the
+/// returned identity token's `nonce` claim) AND forwarded verbatim as
+/// `signInWithApple`'s `nonce` argument, rather than the two-value
+/// raw-vs-hashed split some (e.g. Firebase-fronted) Apple integrations use.
+enum AppleSignInNonce {
+    /// A fresh cryptographically random nonce, one per sign-in attempt.
+    static func generate(byteCount: Int = 32) -> String {
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        precondition(status == errSecSuccess, "Unable to generate a secure Sign in with Apple nonce")
+        let digest = SHA256.hash(data: Data(bytes))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
 
 /// Sign in with Apple completion handling, shared by every sign-in surface
 /// (Settings' Account section + the header hamburger menu's `AccountQuickMenu`
@@ -13,10 +35,16 @@ extension CongressTradeStore {
     /// stores the returned session the same way the Google/magic-link flows
     /// do (`saveSessionToken` → Keychain via `KeychainTokenStore`).
     ///
+    /// - Parameter rawNonce: The exact string the button's request builder
+    ///   set as `request.nonce` via `AppleSignInNonce.generate()` (nil only
+    ///   if a caller skipped the request-configuration closure, which no
+    ///   in-app surface does — the backend simply skips nonce verification
+    ///   in that case).
+    ///
     /// Cancel is handled quietly (no notice); any other failure surfaces
     /// through `watchlistNotice`, the same account-status notice channel the
     /// Google/email flows already use in `SettingsView`.
-    func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) async {
+    func handleAppleSignIn(_ result: Result<ASAuthorization, Error>, rawNonce: String? = nil) async {
         switch result {
         case .failure(let error):
             if let authError = error as? ASAuthorizationError, authError.code == .canceled {
@@ -41,6 +69,7 @@ extension CongressTradeStore {
             do {
                 let response = try await api.signInWithApple(
                     identityToken: identityToken,
+                    nonce: rawNonce,
                     fullName: fullName
                 )
                 _ = saveSessionToken(response.token)

@@ -14,8 +14,8 @@ struct SubscribeView: View {
     @State private var purchaseError: String?
     @State private var isPurchasing = false
     @State private var notice: String?
-
-    private static let manageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+    @State private var isOpeningManageSubscription = false
+    @State private var manageSubscriptionError: String?
 
     var body: some View {
         NavigationStack {
@@ -36,11 +36,30 @@ struct SubscribeView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         Button {
-                            openURL(Self.manageSubscriptionsURL)
+                            Task { await openManageSubscription() }
                         } label: {
-                            Label("Manage on App Store", systemImage: "creditcard")
+                            HStack {
+                                Label(
+                                    store.entitlementSource == "apple" ? "Manage on App Store" : "Manage Subscription",
+                                    systemImage: "creditcard"
+                                )
+                                if isOpeningManageSubscription {
+                                    Spacer()
+                                    ProgressView()
+                                }
+                            }
                         }
-                        .accessibilityHint("Opens the App Store subscriptions page")
+                        .disabled(isOpeningManageSubscription)
+                        .accessibilityHint(
+                            store.entitlementSource == "apple"
+                                ? "Opens the App Store subscriptions page"
+                                : "Opens the Congress.Trade billing portal"
+                        )
+                        if let manageSubscriptionError {
+                            Text(manageSubscriptionError)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
                     }
                 } else if isLoading {
                     Section {
@@ -115,6 +134,21 @@ struct SubscribeView: View {
                 }
             }
             .task { await loadProducts() }
+        }
+    }
+
+    /// Routes by `entitlementSource` — see `Store/ManageSubscription.swift`.
+    /// On failure, shows a helpful inline message rather than ever falling
+    /// back to the App Store link for a Stripe subscriber.
+    private func openManageSubscription() async {
+        manageSubscriptionError = nil
+        isOpeningManageSubscription = true
+        defer { isOpeningManageSubscription = false }
+        switch await store.resolveManageSubscriptionURL() {
+        case .url(let url):
+            openURL(url)
+        case .failed(let message):
+            manageSubscriptionError = message
         }
     }
 
