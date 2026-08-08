@@ -156,7 +156,8 @@ export function tryLocalTickerLogo(symbol: string): Response | null {
 
 /**
  * Cached proxy for a single ticker logo: logo.dev → local pack → GitHub.
- * Long-lived cache headers only on real PNG successes.
+ * Long-lived cache headers only on real PNG successes; a genuine miss returns
+ * a short-lived cacheable 204 so it doesn't error in the browser console.
  */
 export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): Promise<Response> {
   const symbol = normalizeTickerLogoSymbol(url.searchParams.get('symbol'));

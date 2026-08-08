@@ -117,8 +117,9 @@ do not consume the SSE/webhook subscription quota.
   - `logoUrl` — a same-origin path to the cached logo proxy, e.g.
     `/api/logos/ticker?symbol=AAPL` (`null` when no ticker resolves). Clients
     render `<img>` against this URL directly; the proxy handles the logo
-    provider key and edge caching server-side and 404s on a true miss so the
-    client can fall back to a monogram.
+    provider key and edge caching server-side and returns 204 No Content on a
+    true miss (cacheable, no console error) so the client can fall back to a
+    monogram.
 - Each feed item's `transaction.type` (`B`/`S`/`E`) can be `null` for a filing
   row whose disclosed side didn't parse (malformed/partial source text). This
   is an honest passthrough, not a silent default to Buy: a transaction with no
