@@ -259,12 +259,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*title="Executive Branch trades — OGE Form 278-T">P</);
     expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*title="House trades — House Clerk PTR filings">H</);
     expect(DASHBOARD_HTML).toMatch(/data-ch="senate"[^>]*title="Senate trades — Senate eFD PTR filings">S</);
-    // One grouped tap-friendly explainer per strip (mobile can't hover),
-    // wired for hover-open on pointer devices and click-toggle everywhere.
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="qChamberInfo"');
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="trChamberInfo"');
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('qChamber')");
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('trChamber')");
+    // A single combined ⓘ per shared filter row (not one per H/S/P /
+    // party / type group) explains every pictograph at once — tap-friendly
+    // (mobile can't hover), wired for hover-open on pointer devices and
+    // click-toggle everywhere.
+    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop"');
+    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop"');
+    expect(DASHBOARD_HTML).toContain("initBranchInfo('qFiltersInfo')");
+    expect(DASHBOARD_HTML).toContain("initBranchInfo('trFiltersInfo')");
+    expect(DASHBOARD_HTML).not.toContain('aria-controls="qChamberInfo"');
+    expect(DASHBOARD_HTML).not.toContain('aria-controls="trChamberInfo"');
+    expect(DASHBOARD_HTML).not.toContain('aria-controls="trPartyInfo"');
     expect(DASHBOARD_HTML).toContain("window.matchMedia('(hover: hover)').matches");
     // No selection = all chambers (no param); partial selection sends a CSV.
     expect(DASHBOARD_HTML).toContain("var CHAMBER_ALL = ['house', 'senate', 'executive']");
@@ -1252,7 +1257,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
     expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
-    expect(DASHBOARD_HTML).toContain('<em>Primary Only</em>');
+    // Primary Only / All Data is now a live, persisted toggle (issue #1453)
+    // embedded right in the disclaimer sentence that explains it.
+    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
+    expect(DASHBOARD_HTML).toContain('>Primary Only<');
     expect(DASHBOARD_HTML).not.toContain('<em>Live Only</em>');
     expect(DASHBOARD_HTML).toContain('info-tip');
     // educational / liability framing must remain user-facing
@@ -2274,7 +2283,11 @@ describe('UX P0 review fixes (web)', () => {
     expect(DASHBOARD_HTML).toContain('Sign in to export CSV');
     expect(DASHBOARD_HTML).not.toContain('CSV export is free (full history)');
     expect(DASHBOARD_HTML).not.toContain('free CSV export');
-    expect(DASHBOARD_HTML).toContain("!isPremium() && checkoutConfigured()");
+    // The CSV button now lives in the bottom gate-note area (moved out of the
+    // toolbar) beside Start Free Trial; only the pitch text + trial button
+    // hide once premium (data-premium-cue), so Premium users still see CSV.
+    expect(DASHBOARD_HTML).toContain('<span class="gate-note" data-premium-cue="export">');
+    expect(DASHBOARD_HTML).toContain('node.hidden = unlocked || !checkoutConfigured();');
   });
 
   it('lazy-loads asset drawer backtest instead of a hard PERF_GATE', () => {
@@ -2341,6 +2354,158 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('padding-bottom: calc(86px + env(safe-area-inset-bottom))');
     expect(DASHBOARD_HTML).toContain('data-view="people"');
     expect(DASHBOARD_HTML).toContain('data-mobile="People"');
+  });
+});
+
+describe('web toolbar/filter/chrome work order (LANE A1)', () => {
+  it('replaces the All Types select with an Exchange toggle merged into the buy/sell chips', () => {
+    // <select id="qType"> is gone entirely — merged into the segmented
+    // buy/sell/exchange toggle, exactly like the H/S/P chips behave.
+    expect(DASHBOARD_HTML).not.toContain('id="qType"');
+    expect(DASHBOARD_HTML).not.toContain('>All Types</option>');
+    expect(DASHBOARD_HTML).not.toContain("el('qType')");
+    // Exchange toggle: ⇄ symbol, dedicated aria-label, wired into the shared
+    // side-chip group on BOTH the Trades and Trends shared filter rows.
+    expect(DASHBOARD_HTML).toMatch(/data-side="E"[^>]*aria-label="Exchange trades"/);
+    expect(DASHBOARD_HTML).toContain('<span class="side-ex" aria-hidden="true">⇄</span>');
+    expect(DASHBOARD_HTML).toMatch(/id="qSideGroup"[\s\S]*?data-side="E"/);
+    expect(DASHBOARD_HTML).toMatch(/id="trSideGroup"[\s\S]*?data-side="E"/);
+    // Every pictographic toggle keeps an aria-label.
+    expect(DASHBOARD_HTML).toMatch(/data-side="B"[^>]*aria-label="Buys"/);
+    expect(DASHBOARD_HTML).toMatch(/data-side="S"[^>]*aria-label="Sells"/);
+    // Client + query-param + URL-sync + CSV export + restore-from-URL paths
+    // all read the toggle via selectedSideParam(), not a select value.
+    expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
+    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
+    expect(DASHBOARD_HTML).toContain("['fty', selectedSideParam('qSideGroup')]");
+    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);");
+  });
+
+  it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
+    expect(DASHBOARD_HTML).toContain('class="filter-groups"');
+    // Party + side chips now share the exact joined-segment treatment as the
+    // H/S/P strip: one outer border/radius per group, no gaps between chips.
+    expect(DASHBOARD_HTML).toContain('.branch-seg, .party-chips, .side-chips { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:9px; overflow:hidden; }');
+    expect(DASHBOARD_HTML).toContain('.branch-toggle, .party-chip, .side-chip {');
+    expect(DASHBOARD_HTML).toContain('.branch-toggle + .branch-toggle, .party-chip + .party-chip, .side-chip + .side-chip { border-left:1px solid var(--border); }');
+  });
+
+  it('collapses every per-group ⓘ into one combined popover per shared filter row', () => {
+    expect(DASHBOARD_HTML).toContain('id="qFiltersInfo"');
+    expect(DASHBOARD_HTML).toContain('id="trFiltersInfo"');
+    expect(DASHBOARD_HTML).toContain('id="qFiltersInfoPop"');
+    expect(DASHBOARD_HTML).toContain('id="trFiltersInfoPop"');
+    // Old per-group anchors are gone.
+    expect(DASHBOARD_HTML).not.toContain('id="qChamberInfo"');
+    expect(DASHBOARD_HTML).not.toContain('id="trChamberInfo"');
+    expect(DASHBOARD_HTML).not.toContain('id="trPartyInfo"');
+    // The combined popover explains every pictograph: branch, party, and type.
+    const qPop = DASHBOARD_HTML.match(/<div class="branch-pop" id="qFiltersInfoPop"[\s\S]*?<\/div>\s*<\/div>/);
+    expect(qPop).not.toBeNull();
+    for (const glyph of ['H', 'S', 'P', '🫏', '🐘', '🦅', '▲', '▼', '⇄']) {
+      expect(qPop![0]).toContain('>' + glyph + '<');
+    }
+    // A little larger than a plain per-group ⓘ since it now carries more info.
+    expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
+  });
+
+  it('right-aligns the $ threshold select and relabels it with k/m suffixes (values unchanged)', () => {
+    expect(DASHBOARD_HTML).toContain('.min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }');
+    const labels = ['Any $', '$1k+', '$15k+', '$50k+', '$100k+', '$250k+', '$500k+', '$1m+', '$5m+', '$25m+', '$50m+'];
+    const values = ['', '1001', '15001', '50001', '100001', '250001', '500001', '1000001', '5000001', '25000001', '50000001'];
+    for (const id of ['qMinAmt', 'trMinAmt']) {
+      const block = DASHBOARD_HTML.match(new RegExp('<select id="' + id + '"[\\s\\S]*?</select>'));
+      expect(block, id).not.toBeNull();
+      labels.forEach((label, i) => {
+        expect(block![0], id + ' -> ' + label).toContain('<option value="' + values[i] + '">' + label + '</option>');
+      });
+      // Old $1,001+ style labels are gone.
+      expect(block![0]).not.toMatch(/\$\d{1,3},\d{3}/);
+    }
+  });
+
+  it('moves Columns/Rows to the pager bar and the CSV button to the gate-note area', () => {
+    // Toolbar no longer carries them.
+    const extraFilters = DASHBOARD_HTML.match(/<div class="toolbar trades-only-filters" id="feedExtraFilters">[\s\S]*?<\/div>/);
+    expect(extraFilters).not.toBeNull();
+    expect(extraFilters![0]).not.toContain('id="colsBtn"');
+    expect(extraFilters![0]).not.toContain('id="pageSize"');
+    expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
+    expect(extraFilters![0]).toContain('id="qMember"');
+    expect(extraFilters![0]).toContain('id="qTicker"');
+    expect(extraFilters![0]).toContain('id="searchToggle"');
+    expect(extraFilters![0]).toContain('id="feedStats"');
+    // Pager bar carries Rows (relabeled "N rows") + Columns.
+    const pager = DASHBOARD_HTML.match(/<div class="row-flex pager">[\s\S]*?<\/div>\s*<\/div>/);
+    expect(pager).not.toBeNull();
+    expect(pager![0]).toContain('id="pageSize"');
+    expect(pager![0]).toContain('<option value="25">25 rows</option>');
+    expect(pager![0]).toContain('<option value="50" selected>50 rows</option>');
+    expect(pager![0]).toContain('<option value="100">100 rows</option>');
+    expect(pager![0]).toContain('<option value="250">250 rows</option>');
+    expect(pager![0]).toContain('id="colsBtn"');
+    // Gate-note area: CSV sits beside Start Free Trial; only the pitch text
+    // hides once premium, so Premium visitors still see the CSV button.
+    const gateRow = DASHBOARD_HTML.match(/<div class="row-flex" id="gateRow"[\s\S]*?<\/div>\s*<\/div>/);
+    expect(gateRow).not.toBeNull();
+    expect(gateRow![0]).toContain('id="exportCsvBtn"');
+    expect(gateRow![0]).toContain('Start Free Trial');
+    expect(gateRow![0]).toContain('data-premium-cue="export"');
+  });
+
+  it('formats the bottom pagination string without the word "Showing" and with thousands separators', () => {
+    expect(DASHBOARD_HTML).not.toContain('Showing <span');
+    expect(DASHBOARD_HTML).not.toMatch(/>Showing</);
+    expect(DASHBOARD_HTML).toContain(
+      "msg.innerHTML = '<span class=\"tick-num\">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class=\"tick-num\">' + total.toLocaleString() + '</span> trades';",
+    );
+  });
+
+  it('gives mobile (<=720px) a hamburger menu instead of the theme-toggle/Sign-In/Upgrade cluster', () => {
+    expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
+    expect(DASHBOARD_HTML).toContain('class="acct-desktop"');
+    expect(DASHBOARD_HTML).toContain('class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu"');
+    expect(DASHBOARD_HTML).toContain('id="acctMobileMenu"');
+    expect(DASHBOARD_HTML).toContain('function toggleAcctMobileMenu()');
+    // Mobile dropdown reuses the exact same theme handlers (themeRowHtml()),
+    // never duplicating the desktop menu's element ids.
+    expect(DASHBOARD_HTML).toContain('mobileHtml = ');
+    expect(DASHBOARD_HTML).toContain('themeRowHtml()');
+  });
+
+  it('gates /api/admin/poll-config behind an admin session/token instead of firing on every load', () => {
+    expect(DASHBOARD_HTML).not.toMatch(/\n\s*loadPollConfig\(\);\s*\/\/ for the poll-mode KPI/);
+    expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) loadPollConfig();');
+    expect(DASHBOARD_HTML).toContain('function adminHeaders(extra)');
+  });
+
+  it('skips the guaranteed-404 EventSource probe behind a PUBLIC_STREAM_ENABLED const', () => {
+    expect(DASHBOARD_HTML).toContain('var PUBLIC_STREAM_ENABLED = false;');
+    expect(DASHBOARD_HTML).toContain('if (!PUBLIC_STREAM_ENABLED || typeof EventSource === \'undefined\') { startPolling(); return; }');
+  });
+
+  it('defaults the Trades feed to the de-duplicated Primary Only source mode, persisting an explicit choice', () => {
+    expect(DASHBOARD_HTML).toContain("function feedSourceMode() {");
+    expect(DASHBOARD_HTML).toContain("return 'primary';");
+    expect(DASHBOARD_HTML).toContain("var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';");
+    expect(DASHBOARD_HTML).toContain("if (primaryOnly && r.source === 'seed_dataset') return false;");
+    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
+    expect(DASHBOARD_HTML).toContain('function setFeedSourceMode(mode)');
+  });
+
+  it('accepts visible tab names as ?view= aliases and falls back to Trends (not last-viewed) on unknown values', () => {
+    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { trades: 'feed', delivery: 'subs' };");
+    expect(DASHBOARD_HTML).toContain('VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl');
+    // Unknown/garbage values resolve straight to 'trends' inside the same
+    // branch that handles ?view= — never falling through to localStorage's
+    // last-viewed tab (issue #1458).
+    expect(DASHBOARD_HTML).toContain(
+      "initialView = document.querySelector('nav.tabs button[data-view=\"' + canonicalView + '\"]') ? canonicalView : 'trends';",
+    );
+    // The URL is rewritten to the canonical id, not the alias.
+    expect(DASHBOARD_HTML).toContain("u0.searchParams.set('view', initialView);");
   });
 });
 
