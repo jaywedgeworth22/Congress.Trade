@@ -33,7 +33,7 @@ import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
  * Filing Latency Comparison ("speed proof") section markup, shared between its
  * two placements (owner decision):
  *   - Trends tab: rendered at the BOTTOM, only when isLatencyAhead() (client
- *     JS) says we're clearly ahead — never shown on Trades/feed.
+ *     JS) says we're clearly ahead — never shown on the Trades tab.
  *   - Admin tab: rendered at the TOP, ALWAYS (full comparison incl. BEHIND),
  *     an operator diagnostic rather than a marketing module.
  * Both copies are painted by the same renderSpeedProof() client function
@@ -194,19 +194,48 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .table-wrap::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 4px; }
   .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid var(--panel-2); }
   .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
-  #feedTable.resizable { table-layout: fixed; min-width: 100%; }
-  #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #feedTable.resizable th.c-latency, #feedTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
-  #feedTable.resizable th { text-align: center; padding-right: 18px; }
-  #feedTable.resizable td > * { max-width: 100%; min-width: 0; }
-  #feedTable.resizable .asset-cell,
-  #feedTable.resizable .member-cell { overflow: hidden; max-width: 100%; }
-  #feedTable.resizable .asset-cell > div,
-  #feedTable.resizable .member-cell > div { flex: 1 1 auto; }
-  #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
-  #feedTable th:first-child, #feedTable td:first-child { position: sticky; left: 0; z-index: 5; background: var(--panel); }
-  #feedTable th:first-child { z-index: 6; }
-  #feedHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
+  /* Owner follow-up batch #5: Trends tables show their content in full — no
+     vertical scroll/clipping. The shared .table-wrap max-height (built for
+     the paginated Trades feed table, out of scope here) forces a vertical
+     scrollbar once content exceeds it (overflow-x:auto pairs with an implicit
+     overflow-y:auto per spec), which clipped every Trends table using this
+     wrapper. #view-trends's own ID-scoped rule outranks the shared class rule
+     regardless of source order. Slowest Filers is exempt — it uses the
+     separate .late-filers-wrap class (see above), not .table-wrap, and keeps
+     its own scroll + sticky header.
+     Owner follow-up batch #8: same root cause as the drawer's own
+     #detailDrawerBody .table-wrap fix below — the 60px padding-right exists
+     to clear the big feed table's custom scrollbar gutter, which is pure
+     waste on simple Trends tables (Most Active Politicians, Top Performers,
+     etc.) and reads as an oddly narrow table, worst on mobile where 60px is a
+     big fraction of the viewport. */
+  #view-trends .table-wrap { max-height: none; padding-right: 0; }
+  /* Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
+     ~1920px) the small Trends table cards (What Congress Is Trading, Rising
+     Activity, Top Performers, Most Active Politicians, …) used to stretch to
+     fill their full grid column, showing a right-side drop shadow and a wall
+     of empty space after the table's last column. The main feed table
+     absorbs its own leftover width instead (syncTradesTableWidth, #13); these
+     small cards just shrink to their content and stay left-aligned. Scoped
+     to sections that directly wrap a .table-wrap so chart/cluster-grid/
+     flow-chip sections are unaffected, and only above a wide-desktop
+     threshold so mobile/tablet keep the full-bleed card look. */
+  @media (min-width: 1300px) {
+    #view-trends .section:has(> .table-wrap) { width: fit-content; max-width: 100%; }
+  }
+  #tradesTable.resizable { table-layout: fixed; min-width: 100%; }
+  #tradesTable.resizable th, #tradesTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #tradesTable.resizable th.c-latency, #tradesTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
+  #tradesTable.resizable th { text-align: center; padding-right: 18px; }
+  #tradesTable.resizable td > * { max-width: 100%; min-width: 0; }
+  #tradesTable.resizable .asset-cell,
+  #tradesTable.resizable .member-cell { overflow: hidden; max-width: 100%; }
+  #tradesTable.resizable .asset-cell > div,
+  #tradesTable.resizable .member-cell > div { flex: 1 1 auto; }
+  #tradesHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
+  #tradesTable th:first-child, #tradesTable td:first-child { position: sticky; left: 0; z-index: 5; background: var(--panel); }
+  #tradesTable th:first-child { z-index: 6; }
+  #tradesHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
   .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
   .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
   /* ---- monogram backup logo (shown when a ticker's real logo is missing) ---- */
@@ -263,9 +292,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 19px; margin-bottom: 32px; }
-  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
+  /* Owner follow-up batch #4 (+ #12, which shares this class): .v already
+     declared flex:1 but .card was never a flex container, so it silently did
+     nothing — grid row-stretch (the default align-items:stretch on
+     .grid-cards) left the value hugging the title with dead space below it
+     (where the absolutely-positioned sparkline sits, unaffected by this).
+     display:flex;flex-direction:column makes flex:1 actually apply, and
+     align-content:center on .v centers the (possibly-wrapping) value line
+     within whatever height the row stretches it to. */
+  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
@@ -361,27 +398,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .member-cell > div { min-width:0; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .member-cell .fit-sm { font-size:12px; }
   .member-cell .fit-xs { font-size:11px; }
-  #feedTable .c-member,
-  #feedTable .c-asset { text-align: left; }
-  #feedTable.resizable .c-member > *,
-  #feedTable.resizable .c-asset > * { min-width: 0; }
+  #tradesTable .c-member,
+  #tradesTable .c-asset { text-align: left; }
+  #tradesTable.resizable .c-member > *,
+  #tradesTable.resizable .c-asset > * { min-width: 0; }
   .date-short { display:none; }
   .date-time-cell { display:inline-flex; flex-direction:column; align-items:center; justify-content:center; max-width:100%; line-height:1.08; vertical-align:middle; }
   .date-time-cell .date-main { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; font-weight:650; color:var(--text); }
   .date-time-cell .date-sub { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; margin-top:3px; font-size:11px; color:var(--text-dim); font-family:var(--mono); }
-  #feedTable.narrow-published .c-published .date-full,
-  #feedTable.narrow-traded .c-traded .date-full,
-  #feedTable.narrow-filed .c-filed .date-full,
-  #feedTable.narrow-imported .c-imported .date-full { display:none; }
-  #feedTable.narrow-published .c-published .date-short,
-  #feedTable.narrow-traded .c-traded .date-short,
-  #feedTable.narrow-filed .c-filed .date-short,
-  #feedTable.narrow-imported .c-imported .date-short { display:inline; }
-  #feedTable.tiny-published .c-published,
-  #feedTable.tiny-traded .c-traded,
-  #feedTable.tiny-filed .c-filed,
-  #feedTable.tiny-imported .c-imported { font-size:12px; }
-  #feedTable .c-traded { font-weight: 600; color: var(--text); }
+  #tradesTable.narrow-published .c-published .date-full,
+  #tradesTable.narrow-traded .c-traded .date-full,
+  #tradesTable.narrow-filed .c-filed .date-full,
+  #tradesTable.narrow-imported .c-imported .date-full { display:none; }
+  #tradesTable.narrow-published .c-published .date-short,
+  #tradesTable.narrow-traded .c-traded .date-short,
+  #tradesTable.narrow-filed .c-filed .date-short,
+  #tradesTable.narrow-imported .c-imported .date-short { display:inline; }
+  #tradesTable.tiny-published .c-published,
+  #tradesTable.tiny-traded .c-traded,
+  #tradesTable.tiny-filed .c-filed,
+  #tradesTable.tiny-imported .c-imported { font-size:12px; }
+  #tradesTable .c-traded { font-weight: 600; color: var(--text); }
   /* The avatar shows initials by default; a successful headshot <img> overlays
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -394,11 +431,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
   .mobile-only { display: none; }
-  .feed-cards { display: none; gap: 16px; min-width: 0; max-width: 100%; }
+  .trades-cards { display: none; gap: 16px; min-width: 0; max-width: 100%; }
   /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
-  .feed-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 19px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
-  .feed-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .feed-card:active { background: var(--panel-2); }
+  .trades-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 19px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
+  .trades-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .trades-card:active { background: var(--panel-2); }
   .fc-main { grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
   .fc-row1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .fc-row1 .asset-cell { flex: 1 1 auto; min-width: 0; }
@@ -411,7 +448,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
      bold trailing amount+date stack, tighter identity-first meta line.
-     Replaces .fc-row1 (kept above, unused, harmless) as feedCardHtml()'s
+     Replaces .fc-row1 (kept above, unused, harmless) as tradesCardHtml()'s
      top row wrapper; card-scoped only, does not touch the dense desktop
      table's 22px .tkr-logo. */
   .fc-top { display:flex; align-items:center; gap:10px; min-width:0; }
@@ -436,13 +473,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-trail .amount-bars i:nth-child(5) { height:9px; }
   .fc-trail .amount-bars i:nth-child(6) { height:10px; }
   .fc-date { font-size:11px; white-space:nowrap; }
-  .feed-card .tkr-logo { width:36px; height:36px; border-radius:9px; }
-  .feed-card .tkr-logo.transparent,
-  .feed-card .tkr-logo.mono,
-  .feed-card .tkr-logo.glyph { background: var(--panel-2); border:1px solid var(--border); padding:5px; }
-  html[data-theme="light"] .feed-card .tkr-logo.transparent,
-  html[data-theme="light"] .feed-card .tkr-logo.mono,
-  html[data-theme="light"] .feed-card .tkr-logo.glyph { background:#fff; }
+  .trades-card .tkr-logo { width:36px; height:36px; border-radius:9px; }
+  .trades-card .tkr-logo.transparent,
+  .trades-card .tkr-logo.mono,
+  .trades-card .tkr-logo.glyph { background: var(--panel-2); border:1px solid var(--border); padding:5px; }
+  html[data-theme="light"] .trades-card .tkr-logo.transparent,
+  html[data-theme="light"] .trades-card .tkr-logo.mono,
+  html[data-theme="light"] .trades-card .tkr-logo.glyph { background:#fff; }
   /* Asset-cell ticker→name spacing (the user asked for a clear gap). */
   .tkr-gap { display: inline-block; width: .65em; }
   /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
@@ -475,7 +512,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Owner punch list #13(c): Owner (Self/Spouse/Joint) rides beside the
      politician's name at the top of the trade drawer instead of its own row
      further down in Trade Details. */
-  .drawer-trade-owner { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .drawer-trade-owner { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
   /* Owner punch list #13(b): a small link chevron on the "Name" row in Trade
      Details signals it opens the politician drawer (the click already worked). */
   .kv-chevron { opacity:.55; margin-left:2px; }
@@ -505,10 +542,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .seg button:first-child { border-left: 0; }
   .seg button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
   .seg button:hover:not(.on) { color: var(--text); }
-  .feed-card-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; min-width: 0; }
-  .feed-card-meta > div { min-width: 0; }
-  .feed-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
-  .feed-card-meta .mval { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .trades-card-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; min-width: 0; }
+  .trades-card-meta > div { min-width: 0; }
+  .trades-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+  .trades-card-meta .mval { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .latency { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
   .amount-cell { display:flex; flex-direction:column; gap:2px; align-items:center; min-width:0; line-height:1.15; text-align:center; }
   .amount-tier-line { display:inline-flex; align-items:center; justify-content:center; color:var(--text); white-space:nowrap; }
@@ -613,6 +650,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .late-filers-wrap table { margin: 0; }
   .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; }
   .late-filers-wrap td[data-tip] { cursor: help; }
+  /* Owner follow-up batch #5: Slowest Filers is the one Trends table that
+     stays genuinely scrollable (it can run to 50 rows) — give it a sticky
+     column-header row, same idiom as the Trades feed's own #tradesHead th. */
+  .late-filers-wrap thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); }
   @media (max-width: 760px) {
     .timeliness-grid { grid-template-columns: 1fr; gap: 48px; }
     .lag-dist { min-height: auto; }
@@ -700,24 +741,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
-  /* "politicians" spelled out where there's room; "pol(s)" only when space is tight
-     (dense table columns, narrow cards, phones). See polCell / polWord. */
-  .u-full { display: inline; }
-  .u-abbr { display: none; }
-  /* Dense Trends tables: prefer short form once columns compete (still spell out on roomy desktops). */
-  @media (max-width: 1100px) {
-    #view-trends table .u-full { display: none; }
-    #view-trends table .u-abbr { display: inline; }
-  }
-  /* cluster cards — container query so a narrow card abbreviates even on wide screens */
+  /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
+  /* Owner follow-up batch #14: desktop keeps the full party name; mobile
+     (<=768px, see the .cluster-grid override below) swaps to the abbreviated
+     span instead so two cards fit per row. CSS-only, not JS branching. */
+  .party-abbr { display: none; }
   .ccard {
     background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:21px 22px;
-    container-type: inline-size; container-name: ccard;
-  }
-  @container ccard (max-width: 280px) {
-    .u-full { display: none; }
-    .u-abbr { display: inline; }
   }
   .ccard .chead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .ccard .big { font-size:18px; font-weight:700; }
@@ -727,12 +758,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .dirpill.B, .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
-  /* Primary Only / All Data feed source-mode toggle — owner punch list #3:
-     used to live inline in the big Trends disclaimer banner (removed); now a
-     compact note directly on the Trades feed (see #feedSourceNote). */
-  .source-mode-btn { display:inline; background:none; border:none; padding:0; margin:0; color:inherit; font:inherit; font-style:italic; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
-  .source-mode-btn:hover { color:var(--accent); }
-  .source-mode-btn.active { text-decoration:none; font-weight:700; color:var(--text); }
   /* modal */
   /* ---- detail drawer (trade / asset / politician) ---- */
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
@@ -785,7 +810,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }
   #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }
   /* Owner punch list #18(c): .table-wrap's padding-right:60px exists to clear
-     the big feed table's custom scrollbar gutter — pure waste in a ~440px-wide
+     the big Trades table's custom scrollbar gutter — pure waste in a ~440px-wide
      drawer's mini table, so the Recent Trades table reads narrower than the
      drawer for no reason. ID-scoped so it always wins. */
   #detailDrawerBody .table-wrap { padding-right:0; }
@@ -1080,14 +1105,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Must stay display:flex (NOT inline-flex): this class lands on the same
      element as .toolbar, and an inline-flex override makes the Trends row
      shrink-to-fit at desktop widths, breaking the shared-row parity with the
-     Trades tab and defeating .min-amt-select's margin-left:auto right-align. */
+     Trades tab. */
   .trends-filter-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-  .min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }
-  /* Issue #1529: Timeframe + $ Minimum become icon+value+chevron pills that
-     still open the native <select> option list — CSS-only wrapper around
-     the existing element, id/onchange/<option>s untouched. */
+  /* Issue #1529: Timeframe becomes an icon+value+chevron pill that still
+     opens the native <select> option list — CSS-only wrapper around the
+     existing element, id/onchange/<option>s untouched. (Owner follow-up
+     batch #21: the $ Minimum pill/select was removed entirely — no $/size
+     dropdown on any platform. The server-side minAmount query param still
+     exists for direct API consumers.) */
   .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
-  .pill-select.pill-amt { margin-left:auto; min-width:7.5rem; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
   .pill-select-el {
@@ -1103,11 +1129,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .pill-select-el:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
   .pill-select-el:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  /* Owner punch list #11: the collapsed pill already shows "Any $"/"$15k+" —
-     the options themselves carry the $, so the separate "$" prefix icon was
-     redundant ("$ Any $"). pill-cal keeps its 📅 icon; only pill-amt's inset
-     goes away since it no longer needs room for a glyph. */
-  .pill-select.pill-amt .pill-select-el { padding-left:14px; }
   /* Owner punch list #8: #qMember / #qTicker are plain rounded fields now —
      no leading icon glyph on desktop or mobile (id/oninput/aria-label on the
      <input> untouched). */
@@ -1115,27 +1136,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
-  .feed-source-note { margin-top:-6px; margin-bottom:12px; }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
-     toolbars onto one row — timeframe pill, segmented groups + ⓘ, the search
-     fields + Search button, then the $ pill right-aligned. display:contents
-     on both toolbar divs flattens their EXISTING direct children into this
-     flex row (no DOM nodes move, no wrapper added around them), so the
-     <=768px ID-scoped #feedExtraFilters grid (DO-NOT-BREAK) is completely
-     unaffected — this whole block simply doesn't apply there. */
+     toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
+     search fields + Search button. display:contents on both toolbar divs
+     flattens their EXISTING direct children into this flex row (no DOM nodes
+     move, no wrapper added around them), so the <=768px ID-scoped
+     #tradesExtraFilters grid (DO-NOT-BREAK) is completely unaffected — this
+     whole block simply doesn't apply there. (Owner follow-up batch #21/#23:
+     the $ pill that used to close this row is gone — no orphaned auto-margin
+     or trailing gap left behind; #tradesStats is now the last item.) */
   @media (min-width: 769px) {
-    .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
-    .feed-toolbars #feedSharedFilters,
-    .feed-toolbars #feedExtraFilters { display:contents; }
-    .feed-toolbars .pill-select.pill-cal { order:1; }
-    .feed-toolbars .filter-groups { order:2; }
-    .feed-toolbars #qMemberField { order:3; }
-    .feed-toolbars #qTickerField { order:4; }
-    .feed-toolbars #searchToggle { order:5; }
-    .feed-toolbars #feedStats { order:6; }
-    /* .pill-select.pill-amt keeps its own margin-left:auto (unchanged), which
-       now pushes it to the right edge of the WHOLE merged row. */
-    .feed-toolbars .pill-select.pill-amt { order:7; }
+    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
+    .trades-toolbars #tradesSharedFilters,
+    .trades-toolbars #tradesExtraFilters { display:contents; }
+    .trades-toolbars .pill-select.pill-cal { order:1; }
+    .trades-toolbars .filter-groups { order:2; }
+    .trades-toolbars #qMemberField { order:3; }
+    .trades-toolbars #qTickerField { order:4; }
+    .trades-toolbars #searchToggle { order:5; }
+    .trades-toolbars #tradesStats { order:6; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1165,17 +1184,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .tick-animate .tick-num { display: inline-block; animation: tickPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
   dialog.search-panel[open] { animation: dialogPopSpring 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
-  tr.row, .feed-card { animation: slideUpFade 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
-  tr.row:nth-child(1), .feed-card:nth-child(1) { animation-delay: 0.05s; }
-  tr.row:nth-child(2), .feed-card:nth-child(2) { animation-delay: 0.10s; }
-  tr.row:nth-child(3), .feed-card:nth-child(3) { animation-delay: 0.15s; }
-  tr.row:nth-child(4), .feed-card:nth-child(4) { animation-delay: 0.20s; }
-  tr.row:nth-child(5), .feed-card:nth-child(5) { animation-delay: 0.25s; }
-  tr.row:nth-child(6), .feed-card:nth-child(6) { animation-delay: 0.30s; }
-  tr.row:nth-child(7), .feed-card:nth-child(7) { animation-delay: 0.35s; }
-  tr.row:nth-child(8), .feed-card:nth-child(8) { animation-delay: 0.40s; }
-  tr.row:nth-child(9), .feed-card:nth-child(9) { animation-delay: 0.45s; }
-  tr.row:nth-child(10), .feed-card:nth-child(10) { animation-delay: 0.50s; }
+  tr.row, .trades-card { animation: slideUpFade 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
+  tr.row:nth-child(1), .trades-card:nth-child(1) { animation-delay: 0.05s; }
+  tr.row:nth-child(2), .trades-card:nth-child(2) { animation-delay: 0.10s; }
+  tr.row:nth-child(3), .trades-card:nth-child(3) { animation-delay: 0.15s; }
+  tr.row:nth-child(4), .trades-card:nth-child(4) { animation-delay: 0.20s; }
+  tr.row:nth-child(5), .trades-card:nth-child(5) { animation-delay: 0.25s; }
+  tr.row:nth-child(6), .trades-card:nth-child(6) { animation-delay: 0.30s; }
+  tr.row:nth-child(7), .trades-card:nth-child(7) { animation-delay: 0.35s; }
+  tr.row:nth-child(8), .trades-card:nth-child(8) { animation-delay: 0.40s; }
+  tr.row:nth-child(9), .trades-card:nth-child(9) { animation-delay: 0.45s; }
+  tr.row:nth-child(10), .trades-card:nth-child(10) { animation-delay: 0.50s; }
   /* These entrance/pop animations (row stagger, drawer slide-up, dialog pop,
      ticking-number bump) are purely decorative flourish, not functional
      feedback — honor the OS-level motion opt-out and skip them outright
@@ -1184,7 +1203,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      specificity) — without it, source order would let those re-enable the
      animation for reduced-motion users on narrow viewports. */
   @media (prefers-reduced-motion: reduce) {
-    tr.row, .feed-card,
+    tr.row, .trades-card,
     .drawer.open .drawer-panel,
     dialog.search-panel[open],
     .tick-animate .tick-num {
@@ -1266,11 +1285,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .delivery-card p { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--text); }
   .delivery-card p.note { margin-bottom:0; }
   /* Issue #1529: right-align the "N trades" count on desktop (iOS-parity). */
-  .feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
+  .trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
   /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
-     shown under the mobile breakpoint via the higher-specificity #view-feed rule. */
-  .feed-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
-  .feed-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
+     shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
+  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
@@ -1342,30 +1361,54 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        generic .toolbar input/select/.btn shorthand above already fits it. */
     .toolbar .icon-field { width: 100%; }
     .toolbar .pill-select-el { padding: 8px 26px 8px 30px; }
-    .toolbar .pill-select.pill-amt .pill-select-el { padding: 8px 26px 8px 9px; }
     /* Issue #1529: search-this-page button left, "N trades" count right, on
        their own row below the two full-width text fields (iOS-parity count
-       placement — see .feed-stats above). */
+       placement — see .trades-stats above). */
     /* display:grid must live on the ID selector: the ≤720px block later in
        the sheet re-flexes .toolbar (equal class specificity, later source
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #feedExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-    #feedExtraFilters #qMemberField, #feedExtraFilters #qTickerField { grid-column: 1 / -1; }
-    #feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
-    .feed-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
-    .feed-stats .stat-today { display: none; }
+    #tradesExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+    #tradesExtraFilters #qMemberField, #tradesExtraFilters #qTickerField { grid-column: 1 / -1; }
+    #tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
+    .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
+    .trades-stats .stat-today { display: none; }
+    /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
+       party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
+       (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
+       2 direct children remain: the timeframe pill and .filter-groups. ID
+       selectors (not .toolbar/.shared-filters classes) so this reliably wins
+       regardless of source order against the ≤720px .toolbar re-flex below
+       (the CSS-cascade invariant every mobile rule here must respect). Line
+       1 = timeframe pill; .filter-groups is forced flex-basis:100% so it
+       always wraps to its own line 2, and its own children stay nowrap so
+       the 3 segmented groups + ⓘ never wrap further. */
+    #tradesSharedFilters, #trendsSharedFilters {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 1 auto; }
+    #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
+      flex: 1 1 100%; width: 100%; display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 4px;
+    }
+    #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
+    #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
+    #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
+      min-width: 30px; padding: 0 6px;
+    }
+    #tradesSharedFilters .filters-info-wrap .branch-info, #trendsSharedFilters .filters-info-wrap .branch-info {
+      width: 26px; height: 26px; font-size: 15px;
+    }
     .search-panel.open {
       position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
       display: grid; grid-template-columns: 1fr; z-index: 44; max-height: 58vh; overflow:auto;
       box-shadow: 0 18px 44px rgba(0,0,0,.45);
     }
     .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
-    #view-feed .table-wrap { display: none; }
-    #view-feed .feed-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-feed .feed-sort-mobile { display: flex; }
-    /* The Columns chooser only affects the (hidden) table's field set — feedCardHtml()
+    #view-trades .table-wrap { display: none; }
+    #view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
+    #view-trades .trades-sort-mobile { display: flex; }
+    /* The Columns chooser only affects the (hidden) table's field set — tradesCardHtml()
        renders a fixed field set, so the control has no visible effect on phones. */
     #colsBtn { display: none; }
     .col-resizer { display: none; }
@@ -1394,14 +1437,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
-    /* Phones: abbreviate politician counts everywhere in Trends (tables + cards). */
-    #view-trends .u-full { display: none; }
-    #view-trends .u-abbr { display: inline; }
     /* "What Congress Is Trading" is the densest row; on phones drop the gross
        Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
        signed net-flow column isn't clipped. Other tables keep their volume. */
     #trTickers td.est, #tableTrTickers th.est { display: none; }
-    .cluster-grid { grid-template-columns: 1fr; }
+    /* Owner follow-up batch #14: 2-up (not 1fr) so two Consensus Moves cards
+       fit side-by-side on mobile — paired with the party-name abbreviation
+       swap below (Democrats->Dems, Republicans->Reps) that frees the width. */
+    .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .party-full { display: none; }
+    .party-abbr { display: inline; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -1414,7 +1459,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
   }
   @media (max-width: 460px) {
-    .feed-card-meta { grid-template-columns: 1fr; }
+    .trades-card-meta { grid-template-columns: 1fr; }
   }
   @media (max-width: 420px) {
     .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -1429,7 +1474,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .section p.sub { font-size:11px; line-height:1.35; }
     .toolbar { grid-template-columns: 1.45fr .65fr 1fr 1fr; }
     .toolbar #qMember { grid-column:auto; }
-    .feed-card-meta { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .trades-card-meta { grid-template-columns:repeat(3,minmax(0,1fr)); }
     .drawer-panel { height:92vh; }
     nav.tabs { padding-top:6px; padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
   }
@@ -1500,7 +1545,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: var(--text);
 }
 #view-trends details.trends-fold > summary::-webkit-details-marker { display: none; }
-#view-trends details.trends-fold > summary::before {
+#view-trends details.trends-fold > summary::marker { content: ''; }
+/* Owner follow-up batch #11: the chevron used to be a ::before, which shifted
+   the title text itself ~18px right of its sibling h3.tf-h headings (the
+   "stray disclosure bullet [that] indents the heading oddly"). Moving it to
+   ::after keeps the expand/collapse affordance but puts it AFTER the title
+   text, so the text itself starts flush with every other section heading. */
+#view-trends details.trends-fold > summary::after {
   content: '▸';
   display: inline-block;
   font-size: 12px;
@@ -1508,7 +1559,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   transition: transform 0.15s ease;
   flex: 0 0 auto;
 }
-#view-trends details.trends-fold[open] > summary::before { transform: rotate(90deg); }
+#view-trends details.trends-fold[open] > summary::after { transform: rotate(90deg); }
 #view-trends h3.tf-h .chip,
 #view-trends h3.tf-h .tf-chip,
 #view-trends h3.tf-h .info-tip,
@@ -1928,8 +1979,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .timeliness-grid { gap: 24px; }
     .cluster-grid { gap: 12px; }
     .ccard { padding: 13px 14px; }
-    .feed-cards { gap: 10px; }
-    .feed-card { padding: 11px 12px; gap: 8px; }
+    .trades-cards { gap: 10px; }
+    .trades-card { padding: 11px 12px; gap: 8px; }
     .drawer-stack-grid { gap: 12px; }
     .drawer-stack-grid .drawer-section { padding: 12px; }
     .benchmark-panel { padding: 14px; margin-top: 14px; }
@@ -1956,10 +2007,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=5" data-src-dark="/assets/brand-logo-dark.png?v=18" data-src-light="/assets/brand-logo-light.png?v=5" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=19" data-src-dark="/assets/brand-logo-dark.png?v=18" data-src-light="/assets/brand-logo-light.png?v=19" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
-    <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
+    <button data-view="trades" data-mobile="Trades" data-icon="▦" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
     <button data-view="people" data-mobile="People" data-icon="◎" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">People</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs" data-mobile="Delivery" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
@@ -1972,18 +2023,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="banner" id="banner">Connecting to the live feed…</div>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
-  <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
-    <!-- Owner punch list #9: desktop (>768px) merges #feedSharedFilters and
-         #feedExtraFilters onto one row via #feedToolbars (display:contents on
+  <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
+    <!-- Owner punch list #9: desktop (>768px) merges #tradesSharedFilters and
+         #tradesExtraFilters onto one row via #tradesToolbars (display:contents on
          both children + flex order, see CSS). Neither inner div's own
          direct-children markup changes, so the <=768px ID-scoped grid on
-         #feedExtraFilters (DO-NOT-BREAK) is untouched — this wrapper is a
+         #tradesExtraFilters (DO-NOT-BREAK) is untouched — this wrapper is a
          no-op box at mobile widths. -->
-    <div class="feed-toolbars" id="feedToolbars">
+    <div class="trades-toolbars" id="tradesToolbars">
     <!-- Shared filter row (mirrored on Trends) -->
-    <div class="toolbar shared-filters" id="feedSharedFilters">
+    <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
-        <select id="feedGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
+        <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
           <option value="1d">Past Day</option>
           <option value="7d">Past Week</option>
           <option value="30d">Past Month</option>
@@ -2029,41 +2080,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <span class="pill-select pill-amt">
-        <select id="qMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();">
-          <option value="">Any $</option>
-          <option value="1001">$1k+</option>
-          <option value="15001">$15k+</option>
-          <option value="50001">$50k+</option>
-          <option value="100001">$100k+</option>
-          <option value="250001">$250k+</option>
-          <option value="500001">$500k+</option>
-          <option value="1000001">$1m+</option>
-          <option value="5000001">$5m+</option>
-          <option value="25000001">$25m+</option>
-          <option value="50000001">$50m+</option>
-        </select>
-      </span>
     </div>
     <!-- Trades-only extras -->
-    <div class="toolbar trades-only-filters" id="feedExtraFilters">
+    <div class="toolbar trades-only-filters" id="tradesExtraFilters">
       <span class="icon-field" id="qMemberField">
-        <input id="qMember" class="icon-input" placeholder="Name" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
+        <input id="qMember" class="icon-input" placeholder="Name" aria-label="Filter by politician" oninput="handleTradesTextFilter()" />
       </span>
       <span class="icon-field" id="qTickerField" style="min-width:140px">
-        <input id="qTicker" class="icon-input" placeholder="Asset / Ticker" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" />
+        <input id="qTicker" class="icon-input" placeholder="Asset / Ticker" aria-label="Filter by asset ticker" oninput="handleTradesTextFilter()" />
       </span>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
-      <div id="feedStats" class="feed-stats muted">
+      <div id="tradesStats" class="trades-stats muted">
         <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
       </div>
     </div>
     </div>
-    <!-- Owner punch list #3: the Primary Only / All Data source-mode toggle used
-         to live inside the big Trends disclaimer banner (now removed). It's a
-         real, persisted feature (not just disclaimer copy), so it moves here —
-         compact, right where it actually applies (the Trades feed). -->
-    <p class="note feed-source-note" id="feedSourceNote">Showing <button type="button" class="source-mode-btn" data-source-mode="primary" aria-pressed="false">Primary Only</button> (de-duplicated) by default &middot; <button type="button" class="source-mode-btn" data-source-mode="all" aria-pressed="false">All Data</button> can double-count trades present in both the primary and historic sets</p>
     <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
       <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
       <p class="note" style="margin:0 0 10px">Optional date range (trade date). Full-history export is Premium.</p>
@@ -2076,8 +2107,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
          is hidden below the 768px breakpoint along with .table-wrap, so this is
          the only sort affordance on phones. Shares sortKey/sortDir + the
-         setSort()/feedQueryParams() refetch path with the desktop headers. -->
-    <div class="feed-sort-mobile" id="feedSortMobile">
+         setSort()/tradesQueryParams() refetch path with the desktop headers. -->
+    <div class="trades-sort-mobile" id="tradesSortMobile">
       <label class="lbl" for="mobileSortKey">Sort</label>
       <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
       <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
@@ -2091,27 +2122,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="panel-head"><span class="panel-title">Filter this page</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
       <p class="note" style="margin:0 0 8px">Filters the rows already loaded on this page only. Use the Ticker / Politician toolbar fields to query the full feed.</p>
       <span class="lbl">Search this page</span>
-      <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
+      <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderTrades()" />
       <span class="lbl">Min $ (this page)</span>
-      <input id="qPageMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
+      <input id="qPageMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderTrades()" />
       <span class="lbl">Max $ (this page)</span>
-      <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
+      <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderTrades()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </dialog>
     <div class="table-wrap">
-    <table id="feedTable">
-      <colgroup id="feedCols"></colgroup>
-      <thead><tr id="feedHead"></tr></thead>
-      <tbody id="feedBody"></tbody>
+    <table id="tradesTable">
+      <colgroup id="tradesCols"></colgroup>
+      <thead><tr id="tradesHead"></tr></thead>
+      <tbody id="tradesBody"></tbody>
     </table>
     </div>
-    <div id="feedCards" class="feed-cards mobile-only" aria-live="polite"></div>
+    <div id="tradesCards" class="trades-cards mobile-only" aria-live="polite"></div>
     <div class="row-flex pager">
-      <span class="note" id="feedCountMsg"></span>
+      <span class="note" id="tradesCountMsg"></span>
       <div class="pager-controls">
-        <button class="btn ghost sm" id="prevPageBtn" onclick="prevFeedPage()" title="Previous page">&lt;</button>
-        <span class="note" id="feedPageMsg"></span>
-        <button class="btn ghost sm" id="nextPageBtn" onclick="nextFeedPage()" title="Next page">&gt;</button>
+        <button class="btn ghost sm" id="prevPageBtn" onclick="prevTradesPage()" title="Previous page">&lt;</button>
+        <span class="note" id="tradesPageMsg"></span>
+        <button class="btn ghost sm" id="nextPageBtn" onclick="nextTradesPage()" title="Next page">&gt;</button>
       </div>
       <div class="pager-tools">
         <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
@@ -2178,21 +2209,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <span class="pill-select pill-amt">
-        <select id="trMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)">
-          <option value="">Any $</option>
-          <option value="1001">$1k+</option>
-          <option value="15001">$15k+</option>
-          <option value="50001">$50k+</option>
-          <option value="100001">$100k+</option>
-          <option value="250001">$250k+</option>
-          <option value="500001">$500k+</option>
-          <option value="1000001">$1m+</option>
-          <option value="5000001">$5m+</option>
-          <option value="25000001">$25m+</option>
-          <option value="50000001">$50m+</option>
-        </select>
-      </span>
     </div>
     <!-- KPI strip -->
     <div class="tf-cap">Snapshot</div>
@@ -2212,7 +2228,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <option value="trades">Trades</option>
             <option value="members">Distinct Politicians</option>
 	            <option value="volume">Est. Volume</option>
-            <option value="netflow">Net $ Flow</option>
+            <option value="netflow">Net Flow</option>
           </select>
           <label class="lbl" style="margin-left:8px">Asset Type</label>
           <select id="trTickerAsset" title="Filter by Asset Type">
@@ -2229,7 +2245,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                 <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
                 <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
@@ -2264,15 +2280,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
+      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em>  <span class="chip" id="trClusterHint"></span></h3>
+      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
     <!-- Buys vs sells over time -->
     <div class="section">
       <div class="tchart-head">
-        <h3 class="tf-h" style="margin:0">Buys vs Sells Over Time</h3>
+        <h3 class="tf-h" style="margin:0">Buys vs Sells</h3>
         <div class="tchart-controls">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
             <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
@@ -2285,7 +2301,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <p class="sub" id="trTimeSub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
+      <p class="sub" id="trTimeSub">The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
     </div>
@@ -2294,12 +2310,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="trend-grid2">
       <div class="section">
         <h3 class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
+        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data).</p>
         <div id="trSectorFlow"></div>
       </div>
       <div class="section">
         <h3 class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
         <div id="trCapFlow"></div>
       </div>
     </div>
@@ -2307,7 +2322,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
       <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>average</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <em>disclosed</em>, shown as an <strong>average</strong> relative return <strong>(if returns equal the S&amp;P then 0%)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
@@ -2321,7 +2336,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="trend-side-stack">
         <div class="section">
           <h3 class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-          <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
+          <p class="sub">Buy / sell mix and estimated net flow per party.</p>
           <div id="trParties"></div>
         </div>
         <div class="section">
@@ -2345,7 +2360,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
         <div class="timeliness-panel">
           <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Avg Lag)</h3>
-          <div class="late-filers-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
+          <div class="late-filers-wrap"><table>
+            <thead><tr><th>Politician</th><th>Avg</th><th>Max</th><th>Late</th></tr></thead>
+            <tbody id="trLateFilers"></tbody>
+          </table></div>
         </div>
       </div>
     </details>
@@ -2741,47 +2759,21 @@ var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
 var totalRows = 0;        // server-reported total matching rows (for "X of N")
 var filingsImportedToday = 0;
-var feedPage = 0;         // zero-based page in newest-first snapshot mode
-var feedPageSize = Number(localStorage.getItem('feed-page-size') || 50);
+var tradesPage = 0;         // zero-based page in newest-first snapshot mode
+var tradesPageSize = Number(localStorage.getItem('feed-page-size') || 50);
 var loadingPage = false;  // guards against overlapping page fetches
-var feedRequestSeq = 0;
-var feedAbort = null;
-var feedSearchTimer = null;
+var tradesRequestSeq = 0;
+var tradesAbort = null;
+var tradesSearchTimer = null;
 var realDataLoaded = false;
-var feedGated = false;     // server says this visitor sees the limited free window
-/* Feed source mode ("Primary Only" vs "All Data") — issue #1453: the corpus
-   holds both live "primary" rows and historic "seed_dataset" backfill rows,
-   which can double-count the same real-world trade. Primary Only (the
-   de-duplicated view) is now the default for first-time visitors; an
-   explicit choice — made via the toggle embedded in the Trends disclaimer —
-   is persisted and always wins over the default. Filters the client-side
-   Trades feed (TRADES) only; server totals/KPIs are unaffected. */
-var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';
-function feedSourceMode() {
-  try {
-    var v = localStorage.getItem(FEED_SOURCE_MODE_KEY);
-    if (v === 'all' || v === 'primary') return v;
-  } catch (e) {}
+var tradesGated = false;     // server says this visitor sees the limited free window
+/* Trades source mode — owner follow-up batch #2: the "Primary Only" / "All
+   Data" toggle and its disclaimer note were removed (dedup is the only
+   sensible view). tradesSourceMode() is kept so existing fetch call sites
+   stay untouched, but it now always returns the de-duplicated default. */
+function tradesSourceMode() {
   return 'primary';
 }
-function setFeedSourceMode(mode) {
-  mode = mode === 'all' ? 'all' : 'primary';
-  try { localStorage.setItem(FEED_SOURCE_MODE_KEY, mode); } catch (e) {}
-  syncFeedSourceModeUI();
-  renderFeed();
-}
-function syncFeedSourceModeUI() {
-  var mode = feedSourceMode();
-  document.querySelectorAll('.source-mode-btn[data-source-mode]').forEach(function (btn) {
-    var on = btn.getAttribute('data-source-mode') === mode;
-    btn.classList.toggle('active', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-document.addEventListener('click', function (e) {
-  var srcBtn = e.target && e.target.closest ? e.target.closest('.source-mode-btn[data-source-mode]') : null;
-  if (srcBtn) setFeedSourceMode(srcBtn.getAttribute('data-source-mode'));
-});
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
@@ -3406,7 +3398,7 @@ function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
 }
 function stateCards(text) {
-  return '<div class="feed-card state">' + esc(text) + '</div>';
+  return '<div class="trades-card state">' + esc(text) + '</div>';
 }
 /* Skeleton-shimmer loading placeholders (shape-matched, no layout shift). */
 function skCards(n) {
@@ -3446,7 +3438,7 @@ function okOrThrow(r) {
 }
 function isAuthError(e) { return !!(e && e.isAuth); }
 
-/* ============================ FEED ============================ */
+/* ============================ TRADES ============================ */
 /* Column registry — single source of truth for the header, body cells, sorting,
    and the column chooser. def:true columns are visible by default; lock:true
    columns can't be hidden. Each cell(r) returns the inner HTML for that td. */
@@ -3515,13 +3507,13 @@ function amountCellHtml(r) {
     '<div class="amount-range fc-amt-val">' + esc(text) + '</div>' +
   '</div>';
 }
-function feedCardHtml(r) {
+function tradesCardHtml(r) {
   var traded = dateText(r.txdate);
   var lag = shortLagText(r);
   var chamber = chamberLabel(r.chamber);
   var member = fmtName(r.member);
   // Politician name is its own tappable chip; the rest of row 2 (and the chevron)
-  // falls through to the trade drawer via handleFeedOpenEvent's delegation order.
+  // falls through to the trade drawer via handleTradesOpenEvent's delegation order.
   var memberHtml = r.filerId
     ? '<span class="fc-member clickable" data-member="' + esc(r.filerId) + '">' + esc(member) + (r.st ? ', ' + esc(r.st) : '') + '</span>'
     : esc(member) + (r.st ? ', ' + esc(r.st) : '');
@@ -3536,7 +3528,7 @@ function feedCardHtml(r) {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
   }
-  return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
     '<div class="fc-main">' +
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
@@ -3588,14 +3580,13 @@ function lagCellHtml(r) {
   var over = d > 45 ? ' style="color:var(--sell)"' : '';
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
-var FEED_COLS = [
+var TRADES_COLS = [
   { id: 'traded', label: 'Date', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Size', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
@@ -3625,58 +3616,85 @@ function orderedCols(cols) {
   colOrder.forEach(function (id, i) { pos[id] = i; });
   return cols.slice().sort(function (a, b) {
     var ai = pos[a.id], bi = pos[b.id];
-    if (ai == null && bi == null) return FEED_COLS.indexOf(a) - FEED_COLS.indexOf(b);
+    if (ai == null && bi == null) return TRADES_COLS.indexOf(a) - TRADES_COLS.indexOf(b);
     if (ai == null) return 1;
     if (bi == null) return -1;
     return ai - bi;
   });
 }
 function chooserCols() {
-  return orderedCols(FEED_COLS.filter(function (c) {
+  return orderedCols(TRADES_COLS.filter(function (c) {
     if (c.lock) return false;
     if (c.tier === 'admin' && !isAdminView()) return false;
     return true;
   }));
 }
-function availableCols() { return orderedCols(FEED_COLS.filter(canUseColumn)); }
+function availableCols() { return orderedCols(TRADES_COLS.filter(canUseColumn)); }
 function defaultHidden() { return availableCols().filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
 function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
 function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
 var hiddenCols = loadHiddenCols();
 function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
 function visibleCols() { return availableCols().filter(function (c) { return isColVisible(c.id); }); }
-function renderFeedColGroup() {
-  var cg = el('feedCols'); if (!cg) return;
+function renderTradesColGroup() {
+  var cg = el('tradesCols'); if (!cg) return;
   cg.innerHTML = visibleCols().map(function (c) { return '<col data-col="' + esc(c.id) + '">'; }).join('');
 }
 function parsePx(v) {
   var n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 }
-function syncFeedTableWidth() {
-  var table = el('feedTable'); if (!table) return;
-  var ths = Array.prototype.slice.call(document.querySelectorAll('#feedHead th'));
-  var cols = Array.prototype.slice.call(document.querySelectorAll('#feedCols col'));
+/* Columns that should absorb leftover width at wide desktop viewports instead
+   of leaving dead space after the last column (owner follow-up batch #15,
+   consistent with #13's "Politician/Asset get the flexible majority"). */
+var TRADES_FLEX_COLS = ['member', 'asset'];
+function syncTradesTableWidth() {
+  var table = el('tradesTable'); if (!table) return;
+  var ths = Array.prototype.slice.call(document.querySelectorAll('#tradesHead th'));
+  var cols = Array.prototype.slice.call(document.querySelectorAll('#tradesCols col'));
   if (!ths.length) return;
   var total = 0;
   for (var i = 0; i < ths.length; i++) {
     var w = parsePx(ths[i].style.width) || ths[i].offsetWidth || minColWidth(ths[i].dataset.col);
     w = Math.max(minColWidth(ths[i].dataset.col), Math.round(w));
     ths[i].style.width = w + 'px';
-    if (cols[i]) cols[i].style.width = w + 'px';
     total += w;
   }
   var wrap = table.closest ? table.closest('.table-wrap') : null;
   // Subtract the 60px padding-right so the table doesn't bleed into the padding space.
-  var min = wrap ? (wrap.clientWidth - 60) : 0;
-  table.style.width = Math.max(total, min) + 'px';
+  var avail = wrap ? (wrap.clientWidth - 60) : 0;
+  // Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
+  // ~1920px) the compact fixed-width columns (#13) no longer sum to the
+  // card's full width, which used to show up as a dead strip of empty space
+  // (plus the card's own drop shadow) after the last column. Give any
+  // leftover width to the flexible columns — Politician/Asset — instead.
+  // Idempotent: once total==avail this no-ops on the next call (window
+  // resize, re-render), so it never runs away.
+  if (avail > total) {
+    var extra = avail - total;
+    var flexThs = ths.filter(function (th) { return TRADES_FLEX_COLS.indexOf(th.dataset.col) >= 0; });
+    if (flexThs.length) {
+      var each = Math.floor(extra / flexThs.length);
+      var remainder = extra - each * flexThs.length;
+      for (var j = 0; j < flexThs.length; j++) {
+        var add = each + (j === 0 ? remainder : 0);
+        var nw = parsePx(flexThs[j].style.width) + add;
+        flexThs[j].style.width = nw + 'px';
+      }
+      total = avail;
+    }
+  }
+  for (var k = 0; k < ths.length; k++) {
+    if (cols[k]) cols[k].style.width = ths[k].style.width;
+  }
+  table.style.width = Math.max(total, avail) + 'px';
 }
 
 /* Render the header from the registry, (re)attach sort handlers, and reset the
    resize state so widths re-freeze for the now-visible columns. */
-function renderFeedHeader() {
-  var head = el('feedHead'); if (!head) return;
-  renderFeedColGroup();
+function renderTradesHeader() {
+  var head = el('tradesHead'); if (!head) return;
+  renderTradesColGroup();
   head.innerHTML = visibleCols().map(function (c) {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
@@ -3689,7 +3707,7 @@ function renderFeedHeader() {
     (function (th) {
       th.onclick = function () { setSort(th.dataset.sort); };
       // Sort headers are keyboard-focusable (tabindex+role=button above); Enter/Space
-      // activates them the same as a click, matching the feed-card keyboard pattern.
+      // activates them the same as a click, matching the trades-card keyboard pattern.
       th.onkeydown = function (e) {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         e.preventDefault();
@@ -3698,7 +3716,7 @@ function renderFeedHeader() {
     })(ths[i]);
   }
   // Re-init the resizable columns for the new header.
-  var table = el('feedTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
+  var table = el('tradesTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
   colResizeInit = false;
   updateSortIndicators();
 }
@@ -3751,7 +3769,7 @@ function onColToggle(id, visible) {
   if (visible && i >= 0) hiddenCols.splice(i, 1);
   else if (!visible && i < 0) hiddenCols.push(id);
   saveHiddenCols(hiddenCols);
-  renderFeedHeader(); renderFeed();
+  renderTradesHeader(); renderTrades();
 }
 function moveColumn(dragId, targetId) {
   if (!dragId || !targetId || dragId === targetId) return;
@@ -3762,17 +3780,17 @@ function moveColumn(dragId, targetId) {
   ids.splice(idx, 0, dragId);
   colOrder = ids;
   saveColOrder(colOrder);
-  renderColChooser(); renderFeedHeader(); renderFeed();
+  renderColChooser(); renderTradesHeader(); renderTrades();
 }
 function resetCols() {
   hiddenCols = defaultHidden();
   colOrder = [];
   saveHiddenCols(hiddenCols);
   saveColOrder(colOrder);
-  renderColChooser(); renderFeedHeader(); renderFeed();
+  renderColChooser(); renderTradesHeader(); renderTrades();
 }
 
-function renderFeed() {
+function renderTrades() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
       ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
   // Mirror the server's semantics: no HSP selection (empty param) = all
@@ -3786,20 +3804,20 @@ function renderFeed() {
   var qa = (el('qAll') && el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qPageMinAmt') && el('qPageMinAmt').value);
   var maxAmt = parseFloat(el('qMaxAmt') && el('qMaxAmt').value);
-  var body = el('feedBody');
-  var cards = el('feedCards');
+  var body = el('tradesBody');
+  var cards = el('tradesCards');
   var cols = visibleCols();
   if (!cols.length) {
     body.innerHTML = stateRow(1, 'No columns are visible. Open Columns and enable at least one column.');
     if (cards) cards.innerHTML = stateCards('No columns are visible. Open Columns and enable at least one column.');
-    updateFeedCountMsg(0); return;
+    updateTradesCountMsg(0); return;
   }
   if (!realDataLoaded) {
     body.innerHTML = stateRow(cols.length, 'Loading live feed…');
     if (cards) cards.innerHTML = stateCards('Loading live feed…');
     return;
   }
-  var primaryOnly = feedSourceMode() === 'primary';
+  var primaryOnly = tradesSourceMode() === 'primary';
   var rows = TRADES.filter(function (r) {
     // De-duplicated default (#1453): primary + historic seed rows can double
     // count the same real-world trade — Primary Only hides the seed copies.
@@ -3820,7 +3838,7 @@ function renderFeed() {
   if (rows.length === 0) {
     body.innerHTML = stateRow(cols.length, 'No transactions match these filters.');
     if (cards) cards.innerHTML = stateCards('No transactions match these filters.');
-    updateFeedCountMsg(0); maybeInitResize(); syncFeedTableWidth(); return;
+    updateTradesCountMsg(0); maybeInitResize(); syncTradesTableWidth(); return;
   }
   body.innerHTML = rows.map(function (r) {
     var tds = cols.map(function (c) {
@@ -3828,16 +3846,16 @@ function renderFeed() {
     }).join('');
     return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
-  if (cards) cards.innerHTML = rows.map(feedCardHtml).join('');
-  updateFeedCountMsg(rows.length);
+  if (cards) cards.innerHTML = rows.map(tradesCardHtml).join('');
+  updateTradesCountMsg(rows.length);
   maybeInitResize();
-  syncFeedTableWidth();
+  syncTradesTableWidth();
 }
 
 /* "Showing X-Y of N" + previous/next controls for the bounded table page. */
-function updateFeedCountMsg(shown) {
-  var msg = el('feedCountMsg');
-  var pageMsg = el('feedPageMsg');
+function updateTradesCountMsg(shown) {
+  var msg = el('tradesCountMsg');
+  var pageMsg = el('tradesPageMsg');
   var prev = el('prevPageBtn');
   var next = el('nextPageBtn');
   if (!realDataLoaded) {
@@ -3848,21 +3866,26 @@ function updateFeedCountMsg(shown) {
     return;
   }
   var total = totalRows || shown;
-  var start = total === 0 ? 0 : feedPage * feedPageSize + 1;
-  var end = Math.min(feedPage * feedPageSize + shown, total);
+  var start = total === 0 ? 0 : tradesPage * tradesPageSize + 1;
+  var end = Math.min(tradesPage * tradesPageSize + shown, total);
   if (msg) {
     msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span> trades';
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
   }
-  if (pageMsg) pageMsg.textContent = 'Page ' + (feedPage + 1) + ' of ' + Math.max(1, Math.ceil(total / feedPageSize));
-  if (prev) prev.disabled = feedPage <= 0 || loadingPage;
-  if (next) next.disabled = end >= total || loadingPage || (feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET;
+  if (pageMsg) pageMsg.textContent = 'Page ' + (tradesPage + 1) + ' of ' + Math.max(1, Math.ceil(total / tradesPageSize));
+  if (prev) prev.disabled = tradesPage <= 0 || loadingPage;
+  if (next) next.disabled = end >= total || loadingPage || (tradesPage + 1) * tradesPageSize > MAX_PUBLIC_TRADES_OFFSET;
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths-v8';
+/* Owner follow-up batch #13: version-bumped v8->v9 so the rebalanced desktop
+   column defaults (Politician/Asset flexible, Date/Type/Amount/Country
+   compact, Size column removed — #22/#24) actually take effect for every
+   visitor who never intentionally dragged a column; the resizable feature
+   itself (drag-to-resize, per-column persistence) is otherwise unchanged. */
+var COL_WIDTH_KEY = 'feed-col-widths-v9';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -3870,9 +3893,9 @@ function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeIn
 function clampNum(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function estimatedColWidth(key, fallback, min, max) {
   var selector = key === 'asset'
-    ? '#feedBody .c-asset .asset-cell > div'
+    ? '#tradesBody .c-asset .asset-cell > div'
     : key === 'member'
-      ? '#feedBody .c-member .member-cell > div'
+      ? '#tradesBody .c-member .member-cell > div'
       : '';
   if (!selector) return fallback;
   var nodes = Array.prototype.slice.call(document.querySelectorAll(selector), 0, 80);
@@ -3896,7 +3919,6 @@ function minColWidth(key) {
     owner: 50,
     chamber: 54,
     sector: 58,
-    marketcap: 66,
     country: 54,
     conf: 56,
     latency: 44
@@ -3904,12 +3926,12 @@ function minColWidth(key) {
   return map[key] || 46;
 }
 function applyColumnWidthClasses() {
-  var table = el('feedTable'); if (!table) return;
+  var table = el('tradesTable'); if (!table) return;
   var keys = ['published', 'traded', 'filed', 'imported'];
   for (var i = 0; i < keys.length; i++) {
     table.classList.remove('narrow-' + keys[i], 'tiny-' + keys[i]);
   }
-  var ths = document.querySelectorAll('#feedHead th');
+  var ths = document.querySelectorAll('#tradesHead th');
   for (var j = 0; j < ths.length; j++) {
     var key = ths[j].dataset.col, w = ths[j].offsetWidth;
     if (keys.indexOf(key) < 0) continue;
@@ -3918,16 +3940,28 @@ function applyColumnWidthClasses() {
   }
 }
 function initColumnResize() {
-  var table = el('feedTable'); if (!table) return;
-  var ths = document.querySelectorAll('#feedHead th');
+  var table = el('tradesTable'); if (!table) return;
+  var ths = document.querySelectorAll('#tradesHead th');
   var saved = loadColWidths();
   // Freeze current auto widths (or restore saved ones) so switching the table to
-  // fixed layout doesn't visually jump. Wide auto-sized columns are capped to a
-  // compact default (Asset fits the longest name otherwise) — short entries then
-  // show in full, long ones clip to an ellipsis, and any column stays draggable.
+  // fixed layout doesn't visually jump. Owner follow-up batch #13/#24: the old
+  // asset cap (40-54px) was a bug — it sat BELOW asset's own 140px floor
+  // (minColWidth), so Asset was silently pinned to exactly 140px regardless of
+  // content, which is nowhere near enough for a ticker + company name. Fixed
+  // by giving Politician/Asset a genuinely content-responsive range (with a
+  // floor high enough that real names — "Shelley Moore Capito", "David H.
+  // McCormick" — never ellipsize at typical desktop widths), while Date/Type/
+  // Amount/Country (content is short and uniform) get tight compact-fit caps
+  // so they stop stealing width from the two columns that actually need it.
+  // The (now-removed, #22) Size column's share folds into this too. Any column
+  // stays draggable regardless of these defaults.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 48, 40, 54),
-    member: estimatedColWidth('member', 220, 160, 286),
+    asset: estimatedColWidth('asset', 220, 190, 320),
+    member: estimatedColWidth('member', 240, 210, 320),
+    traded: 96,
+    type: 60,
+    amount: 130,
+    country: 90,
     latency: 140
   };
   for (var i = 0; i < ths.length; i++) {
@@ -3938,7 +3972,7 @@ function initColumnResize() {
   }
   table.classList.add('resizable');
   for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
-  syncFeedTableWidth();
+  syncTradesTableWidth();
   applyColumnWidthClasses();
 }
 function addColResizer(th) {
@@ -3950,7 +3984,7 @@ function addColResizer(th) {
     var startX = e.pageX, startW = th.offsetWidth;
     function move(ev) {
       th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px';
-      syncFeedTableWidth();
+      syncTradesTableWidth();
       applyColumnWidthClasses();
     }
     function up() {
@@ -3958,7 +3992,7 @@ function addColResizer(th) {
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
       var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
-      syncFeedTableWidth();
+      syncTradesTableWidth();
       applyColumnWidthClasses();
     }
     document.addEventListener('mousemove', move);
@@ -3999,15 +4033,15 @@ function setSort(key) {
   
   var isBackendSort = (key === 'published' || key === 'imported' || key === 'txdate' || key === 'traded');
   if (isBackendSort) {
-    feedPage = 0;
+    tradesPage = 0;
     cursor = 0;
     fetchPage();
   } else {
-    renderFeed();
+    renderTrades();
   }
 }
 function updateSortIndicators() {
-  var ths = document.querySelectorAll('#feedHead th.sortable');
+  var ths = document.querySelectorAll('#tradesHead th.sortable');
   for (var i = 0; i < ths.length; i++) {
     var th = ths[i], arr = th.querySelector('.arr');
     if (th.dataset.sort === sortKey) {
@@ -4026,7 +4060,7 @@ function updateSortIndicators() {
    headers (visibleCols() already applies tier/hidden-column rules), so this stays
    in sync whenever columns change and never offers a column the user can't see.
    Selecting a key or flipping direction both go through setSort(), the same
-   sortKey/sortDir state + feedQueryParams()/fetchPage() refetch path the desktop
+   sortKey/sortDir state + tradesQueryParams()/fetchPage() refetch path the desktop
    headers use. */
 function mobileSortableCols() {
   return visibleCols().filter(function (c) { return !!c.sort; });
@@ -4062,7 +4096,7 @@ function clearSearch() {
   if (el('qAll')) el('qAll').value = '';
   if (el('qPageMinAmt')) el('qPageMinAmt').value = '';
   if (el('qMaxAmt')) el('qMaxAmt').value = '';
-  renderFeed();
+  renderTrades();
 }
 
 /* Friendly, human-readable label for a transaction's provenance. The raw value
@@ -4155,14 +4189,14 @@ function rowLatencyHtml(r) {
 }
 
 function currentPageSize() {
-  var n = Number(feedPageSize);
+  var n = Number(tradesPageSize);
   return [25, 50, 100, 250].indexOf(n) >= 0 ? n : 50;
 }
 function syncPageSizeControl() {
-  feedPageSize = currentPageSize();
-  var s = el('pageSize'); if (s) s.value = String(feedPageSize);
+  tradesPageSize = currentPageSize();
+  var s = el('pageSize'); if (s) s.value = String(tradesPageSize);
 }
-function feedQueryParams() {
+function tradesQueryParams() {
   var p = new URLSearchParams();
   p.set('since', '0');
   var apiSort = 'tx_date';
@@ -4176,8 +4210,8 @@ function feedQueryParams() {
   }
   p.set('sort', apiSort);
   p.set('order', apiOrder);
-  p.set('limit', String(feedPageSize));
-  p.set('offset', String(feedPage * feedPageSize));
+  p.set('limit', String(tradesPageSize));
+  p.set('offset', String(tradesPage * tradesPageSize));
   var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
   // Buy/sell/exchange toggle: only filters when exactly one of the three is
@@ -4185,12 +4219,12 @@ function feedQueryParams() {
   var ty = selectedSideParam('qSideGroup');
   if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var amtEl = el('qMinAmt');
-  var amt = amtEl ? String(amtEl.value || '').trim() : '';
-  if (amt) p.set('minAmount', amt);
+  // Owner follow-up batch #21: the $ threshold UI pill is gone (no $/size
+  // dropdown on any platform) — minAmount is no longer sent from here. The
+  // server still accepts ?minAmount= for direct API consumers.
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
   // Shared timeframe → from/to when calendar year (export dialog dates win if set)
-  var winEl = el('feedGlobalWindow') || el('trGlobalWindow');
+  var winEl = el('tradesGlobalWindow') || el('trGlobalWindow');
   var win = winEl && winEl.value;
   if (!from && win === 'this_cy') p.set('from', new Date().getUTCFullYear() + '-01-01');
   if (!from && win === 'last_cy') {
@@ -4211,34 +4245,34 @@ function feedQueryParams() {
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   return p;
 }
-function setFeedKpis() {
+function setTradesKpis() {
   el('kpiTotal').textContent = totalRows || TRADES.length;
   el('kpiToday').textContent = filingsImportedToday;
 }
 /* Fetch one bounded newest-first feed page. */
 function fetchPage() {
-  if (loadingPage && feedAbort) feedAbort.abort();
+  if (loadingPage && tradesAbort) tradesAbort.abort();
   loadingPage = true;
-  var seq = ++feedRequestSeq;
-  feedAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  updateFeedCountMsg(TRADES.length);
+  var seq = ++tradesRequestSeq;
+  tradesAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  updateTradesCountMsg(TRADES.length);
   // API HOOK: GET /api/transactions?order=desc&limit=<pageSize>&offset=<pageOffset>
-  return fetch('/api/transactions?' + feedQueryParams().toString(), feedAbort ? { signal: feedAbort.signal } : undefined)
+  return fetch('/api/transactions?' + tradesQueryParams().toString(), tradesAbort ? { signal: tradesAbort.signal } : undefined)
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
-      if (seq !== feedRequestSeq) return 0;
+      if (seq !== tradesRequestSeq) return 0;
       var txs = (data.transactions || []).map(txToRow);
       txs.forEach(rememberTradeRow);
       TRADES = txs;
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
       if (typeof data.total === 'number') totalRows = data.total;
       if (typeof data.filingsImportedToday === 'number') filingsImportedToday = data.filingsImportedToday;
-      feedGated = !!data.gated;             // freemium: limited recent window
+      tradesGated = !!data.gated;             // freemium: limited recent window
       updateGateRow();
       realDataLoaded = true;
       setBanner('');                       // drop the illustrative banner
-      setFeedKpis();
-      renderFeed();
+      setTradesKpis();
+      renderTrades();
       return txs.length;
     })
     .catch(function (e) {
@@ -4247,23 +4281,23 @@ function fetchPage() {
       return 0;
     })
     .then(function (n) {
-      if (seq === feedRequestSeq) {
+      if (seq === tradesRequestSeq) {
         loadingPage = false;
-        feedAbort = null;
-        updateFeedCountMsg(TRADES.length);
+        tradesAbort = null;
+        updateTradesCountMsg(TRADES.length);
       }
       return n;
     });
 }
 
 /* Initial / full reload: fetches the first page from the current cursor. */
-function loadFeed() { syncPageSizeControl(); return fetchPage(); }
+function loadTrades() { syncPageSizeControl(); return fetchPage(); }
 
 function setPageSize(value) {
   var n = Number(value);
-  feedPageSize = [25, 50, 100, 250].indexOf(n) >= 0 ? n : 50;
-  try { localStorage.setItem('feed-page-size', String(feedPageSize)); } catch (e) {}
-  feedPage = 0;
+  tradesPageSize = [25, 50, 100, 250].indexOf(n) >= 0 ? n : 50;
+  try { localStorage.setItem('feed-page-size', String(tradesPageSize)); } catch (e) {}
+  tradesPage = 0;
   return fetchPage();
 }
 
@@ -4283,11 +4317,11 @@ document.addEventListener('change', function(e) {
   }
 });
 
-function handleFeedTextFilter() {
-  feedPage = 0;
-  renderFeed();
-  if (feedSearchTimer) clearTimeout(feedSearchTimer);
-  feedSearchTimer = setTimeout(function () { fetchPage(); syncFilterUrl(); }, 250);
+function handleTradesTextFilter() {
+  tradesPage = 0;
+  renderTrades();
+  if (tradesSearchTimer) clearTimeout(tradesSearchTimer);
+  tradesSearchTimer = setTimeout(function () { fetchPage(); syncFilterUrl(); }, 250);
 }
 
 /* Mirror the feed filters + Trends window into the URL so a refresh or a
@@ -4350,28 +4384,28 @@ function restoreFiltersFromUrl() {
   } catch (e) {}
 }
 
-function resetFeedPage() { feedPage = 0; syncFilterUrl(); return fetchPage(); }
-function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage(); }
+function resetTradesPage() { tradesPage = 0; syncFilterUrl(); return fetchPage(); }
+function prevTradesPage() { if (tradesPage <= 0) return; tradesPage -= 1; fetchPage(); }
 /* The server rejects public offsets beyond this depth (see
    MAX_PUBLIC_TX_OFFSET in src/security/botDefense.ts, enforced
    unconditionally in delivery/rest.ts). Interpolated, not hand-copied, so
    the pager can never 400. Deeper history is the Premium CSV export. */
-var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
-function nextFeedPage() {
-  if ((feedPage + 1) * feedPageSize >= totalRows) return;
-  if ((feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET) {
+var MAX_PUBLIC_TRADES_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
+function nextTradesPage() {
+  if ((tradesPage + 1) * tradesPageSize >= totalRows) return;
+  if ((tradesPage + 1) * tradesPageSize > MAX_PUBLIC_TRADES_OFFSET) {
     showToast('Deeper history is available with Premium CSV export — use ⤓ Export CSV.');
     return;
   }
-  feedPage += 1;
+  tradesPage += 1;
   fetchPage();
 }
 
 /* Incremental poll path: fetch only rows newer than the latest cursor and fold
    them into page 1 without changing the user's current page. */
 function fetchUpdates() {
-  if (loadingPage || feedPage !== 0) return Promise.resolve(0);
-  return fetch('/api/transactions?since=' + cursor + '&limit=' + feedPageSize)
+  if (loadingPage || tradesPage !== 0) return Promise.resolve(0);
+  return fetch('/api/transactions?since=' + cursor + '&limit=' + tradesPageSize)
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
       var txs = (data.transactions || []).map(txToRow);
@@ -4387,11 +4421,11 @@ function fetchUpdates() {
           seenDocs[r.docId] = true;
         }
       });
-      TRADES = sortRows(txs.concat(TRADES)).slice(0, feedPageSize);
+      TRADES = sortRows(txs.concat(TRADES)).slice(0, tradesPageSize);
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
       if (totalRows) totalRows += txs.length;
-      setFeedKpis();
-      renderFeed();
+      setTradesKpis();
+      renderTrades();
       return txs.length;
     })
     .catch(function () { return 0; });
@@ -4446,20 +4480,20 @@ function startStream() {
           var tx = trades[ti];
           if (!tx || !tx.id) continue;
           if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
-          if (feedPage !== 0) continue;
+          if (tradesPage !== 0) continue;
           var row = txToRow(tx);
           rememberTradeRow(row);
           var today = new Date().toISOString().slice(0, 10);
           var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
           if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
           TRADES.unshift(row);
-          TRADES = sortRows(TRADES).slice(0, feedPageSize);
+          TRADES = sortRows(TRADES).slice(0, tradesPageSize);
           if (totalRows) totalRows += 1;
           changed = true;
         }
         if (changed) {
-          setFeedKpis();
-          renderFeed();
+          setTradesKpis();
+          renderTrades();
           setLivePill('live', 'Updated');
           setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Live'); }, 1800);
         }
@@ -5093,7 +5127,7 @@ function resolveReview(docId, decision) {
     .then(function () {
       if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
       else { loadReview(); }
-      loadFeed();
+      loadTrades();
     })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
@@ -5409,7 +5443,7 @@ function meSubmit(docId) {
     })
   })
     .then(okOrThrow)
-    .then(function () { loadReview(); loadFeed(); })
+    .then(function () { loadReview(); loadTrades(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       showToast(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message), true);
@@ -5813,7 +5847,7 @@ function saveAdminToken() {
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
   applyAdminVisibility();
-  renderFeedHeader(); renderColChooser(); renderFeed();
+  renderTradesHeader(); renderColChooser(); renderTrades();
   if (v) loadReview();
   loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
 }
@@ -5823,7 +5857,7 @@ function clearAdminToken() {
   el('adminTokenMsg').textContent = 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
   applyAdminVisibility();
-  renderFeedHeader(); renderColChooser(); renderFeed();
+  renderTradesHeader(); renderColChooser(); renderTrades();
 }
 // Populate the field from storage when the Admin tab opens.
 function initAdminToken() {
@@ -5839,7 +5873,7 @@ function loadLogoSetting() {
     .then(function (j) {
       logoDisplay = normalizeLogoDisplay(j.logoDisplay);
       if (el('adminLogo')) el('adminLogo').value = logoDisplay;
-      renderFeed();
+      renderTrades();
     })
     .catch(function (e) { if (el('logoMsg')) el('logoMsg').textContent = 'Could not load: ' + e.message; });
 }
@@ -5854,7 +5888,7 @@ function saveLogoDisplay() {
     .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
     .then(function (j) {
       logoDisplay = normalizeLogoDisplay(j.logoDisplay);
-      renderFeed();
+      renderTrades();
       el('logoMsg').textContent = 'Saved — applies to all visitors.';
       setTimeout(function () { el('logoMsg').textContent = ''; }, 3000);
     })
@@ -5924,7 +5958,7 @@ function runBackfill(dryRun) {
       var msg = verb + ' ' + j.inserted + ', skipped ' + j.skipped + '.';
       if (j.errors && j.errors.length) msg += ' Errors: ' + j.errors.join('; ');
       el('bfMsg').textContent = msg;
-      if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; totalRows = 0; realDataLoaded = false; loadFeed(); }
+      if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; totalRows = 0; realDataLoaded = false; loadTrades(); }
     })
     .catch(function (e) { el('bfMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
@@ -7907,6 +7941,17 @@ function splitBar(buys, sells) {
 }
 /* "1 Democrat" / "2 Democrats" — pluralize a count + noun for party breakdowns. */
 function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n === 1 ? '' : 's'); }
+/* Owner follow-up batch #14: Consensus Moves cards abbreviate "Democrats"/
+   "Republicans" to "Dems"/"Reps" on mobile (so two cards fit per row) while
+   desktop keeps the full word — a responsive full/abbr span pair (CSS-only
+   toggle, see .party-full/.party-abbr), never JS branching, so it stays
+   correct across a live resize. full/abbr are static strings we control, so
+   this is safe to inline without esc(). */
+function partyCountHtml(n, full, abbr) {
+  n = Number(n || 0);
+  var suf = n === 1 ? '' : 's';
+  return n + ' <span class="party-full">' + full + suf + '</span><span class="party-abbr">' + abbr + suf + '</span>';
+}
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
 /* Spacious surfaces (KPI strip, flow chips, drawers): always spell out. */
@@ -7916,13 +7961,6 @@ function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
   return buys + ' buy' + (buys === 1 ? '' : 's') + ' / ' + sells + ' sell' + (sells === 1 ? '' : 's');
 }
-/* Word only — CSS .u-full / .u-abbr picks "politicians" vs "pols" by available space. */
-function polWord(n) {
-  n = Number(n || 0);
-  return '<span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">' + (n === 1 ? 'pol' : 'pols') + '</span>';
-}
-/* Table / count cell: "3 politicians" with room, "3 pols" when the column is tight. */
-function polCell(n) { n = Number(n || 0); return n + ' ' + polWord(n); }
 	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
@@ -8221,7 +8259,7 @@ function speedBoastProvider(d) {
    limited/insufficient coverage neither qualify nor block — they're simply
    skipped. The Admin tab ignores this gate entirely and always renders the
    full comparison (including BEHIND) as an operator diagnostic. Never
-   rendered on the Trades/feed tab at all. */
+   rendered on the Trades tab at all. */
 function isLatencyAhead(summary) {
   if (!summary || !summary.providers) return false;
   var anyAhead = false, anyBehind = false;
@@ -8385,7 +8423,7 @@ function paintSpeedSection(gridId, tableBodyId, provs) {
      - Admin (#adminLatencySection, top of the tab): always the full
        comparison (incl. BEHIND) whenever there's any raced data — an
        operator diagnostic, not a marketing module.
-   Never rendered on the Trades/feed tab at all (neither container exists there). */
+   Never rendered on the Trades tab at all (neither container exists there). */
 function renderSpeedProof() {
   var trendsBox = el('trLatencySection');
   var adminBox = el('adminLatencySection');
@@ -8573,7 +8611,7 @@ function loadTrTickers() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
-        '<td class="muted">' + polCell(r.memberCount) + '</td>' +
+        '<td class="muted">' + (r.memberCount || 0) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
@@ -8593,7 +8631,7 @@ function loadTrTrending() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
-        '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
+        '<td class="muted">' + (r.recentMembers || 0) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
 }
@@ -8603,7 +8641,7 @@ function loadTrClusters() {
   box.innerHTML = '<div class="chip">Loading…</div>';
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
-    el('trClusterHint').textContent = '· ' + cs.length + ' found';
+    el('trClusterHint').textContent = cs.length + ' found';
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
@@ -8613,7 +8651,7 @@ function loadTrClusters() {
           '" title="Open ' + esc(fmtName(m.fullName || m.filerId)) + '">' + av + '</span>';
       }).join('');
       var dir = c.txType === 'B' || c.txType === 'P' ? 'BOUGHT' : 'SOLD';
-      var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
+      var parties = partyCountHtml(c.parties.D, 'Democrat', 'Dem') + ', ' + partyCountHtml(c.parties.R, 'Republican', 'Rep') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
       // minDate can be absent on malformed/partial rows; drop the leading
       // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
@@ -8621,8 +8659,8 @@ function loadTrClusters() {
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company ' + esc(c.ticker) + '" data-asset="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> ' + polWord(c.memberCount) + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
-        '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
+        '<div><strong>' + c.memberCount + '</strong> politician' + (c.memberCount === 1 ? '' : 's') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + parties + '</div>' +
         '<div class="muted" style="margin-top:2px">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
     }).join('');
@@ -8635,8 +8673,8 @@ function loadTrClusters() {
 var trTimeWindow = '1825d';
 var trTimeMetric = 'count';
 var TR_TIME_SUB = {
-  count: 'Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
-  dollars: 'Estimated dollar volume (STOCK Act bracket midpoints) bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
+  count: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
+  dollars: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
 };
 function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
 function setTrTimeWin(w) {
@@ -9331,10 +9369,13 @@ function openTrade(row) {
   // of sitting in its own row further down in Trade Details.
   var ownerText = ownerLabel(row.owner);
   var ownerBadge = ownerText ? '<span class="drawer-trade-owner muted">' + esc(ownerText) + '</span>' : '';
+  // Owner follow-up batch #1 (P1 regression): the badge must be a flex SIBLING
+  // after the ellipsized name div, not appended inside it — otherwise a long
+  // name (e.g. "David H. McCormick") ellipsizes and swallows the badge.
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -9504,9 +9545,9 @@ function loadMe() {
       hiddenCols = hiddenCols.filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
       });
-      renderFeedHeader();
+      renderTradesHeader();
       renderColChooser();
-      renderFeed();
+      renderTrades();
     })
     .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
 }
@@ -9762,15 +9803,7 @@ function onSharedWindowChange(src) {
   });
   if (typeof updateTrWindowLabels === 'function') updateTrWindowLabels();
   if (typeof loadTrends === 'function') loadTrends();
-  if (typeof resetFeedPage === 'function') resetFeedPage();
-}
-function onSharedMinAmtChange(src) {
-  var v = src && src.value != null ? src.value : '';
-  ['qMinAmt', 'trMinAmt'].forEach(function (id) {
-    var n = el(id);
-    if (n && n !== src) n.value = v;
-  });
-  if (typeof loadTrends === 'function') loadTrends();
+  if (typeof resetTradesPage === 'function') resetTradesPage();
 }
 function openExportCsvDialog() {
   if (!ME.user) {
@@ -9803,11 +9836,10 @@ function exportCsv() {
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var minAmt = el('qMinAmt') && el('qMinAmt').value; if (minAmt) p.set('minAmount', minAmt);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   // Map shared timeframe into from when calendar year selected and no explicit from
-  var win = (el('feedGlobalWindow') || el('trGlobalWindow') || {}).value;
+  var win = (el('tradesGlobalWindow') || el('trGlobalWindow') || {}).value;
   if (!from && win === 'this_cy') {
     p.set('from', new Date().getUTCFullYear() + '-01-01');
   } else if (!from && win === 'last_cy') {
@@ -9926,7 +9958,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
-    if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (b.dataset.view === 'trades') window.scrollTo({ top: 0, behavior: 'auto' });
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'people') loadPeopleDirectory();
     if (b.dataset.view === 'review') loadReview();
@@ -10034,7 +10066,7 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
     onChange();
   });
 }
-initChamberChips('qChamber', 'feed-chambers-v2', function () { resetFeedPage(); }, 'trChamber');
+initChamberChips('qChamber', 'feed-chambers-v2', function () { resetTradesPage(); }, 'trChamber');
 initChamberChips('trChamber', 'trends-chambers-v2', function () { loadTrends(); }, 'qChamber');
 restoreFiltersFromUrl(); // URL-mirrored filters (ft/fm/fty/fch/fw) win over localStorage
 
@@ -10114,7 +10146,7 @@ function initPartyChips() {
     applyPartySelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
     if (typeof loadTrends === 'function') loadTrends();
-    if (typeof resetFeedPage === 'function') resetFeedPage();
+    if (typeof resetTradesPage === 'function') resetTradesPage();
   }
   ['qPartyGroup', 'trPartyGroup'].forEach(function (id) {
     var g = el(id); if (g) g.addEventListener('click', onPartyClick);
@@ -10137,7 +10169,7 @@ function initSideChips() {
     applySideSelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
     if (typeof loadTrends === 'function') loadTrends();
-    if (typeof resetFeedPage === 'function') resetFeedPage();
+    if (typeof resetTradesPage === 'function') resetTradesPage();
   }
   ['qSideGroup', 'trSideGroup'].forEach(function (id) {
     var g = el(id); if (g) g.addEventListener('click', onSideClick);
@@ -10145,11 +10177,10 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
-syncFeedSourceModeUI();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
-/* Map a /api/client/v1 trade envelope item into the feed-row shape openTrade expects. */
+/* Map a /api/client/v1 trade envelope item into the trades-row shape openTrade expects. */
 function clientTradeToRow(item) {
   if (!item) return null;
   var m = item.member || {};
@@ -10255,7 +10286,7 @@ function openDeepLink() {
 /* App-wide entity open: politician / company / trade from any surface
    (feed, Trends, People, drawers, consensus cards). Priority:
    member → asset/ticker → trade id so nested names win over the row. */
-function handleFeedOpenEvent(e) {
+function handleTradesOpenEvent(e) {
   return handleEntityOpenEvent(e);
 }
 function handleEntityOpenEvent(e) {
@@ -10298,11 +10329,11 @@ function handleEntityOpenEvent(e) {
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     var hit = e.target && e.target.closest
-      ? e.target.closest('[data-member],[data-asset],[data-ticker],[data-txid].clickable, .clickable[data-txid], article.feed-card[data-txid], .ccard[data-asset], .ccard[data-ticker]')
+      ? e.target.closest('[data-member],[data-asset],[data-ticker],[data-txid].clickable, .clickable[data-txid], article.trades-card[data-txid], .ccard[data-asset], .ccard[data-ticker]')
       : null;
     if (!hit) return;
     // Only trap keyboard on explicit interactive targets (not every table cell).
-    if (!hit.classList.contains('clickable') && hit.tagName !== 'ARTICLE' && !hit.classList.contains('ccard') && !hit.classList.contains('feed-card')) return;
+    if (!hit.classList.contains('clickable') && hit.tagName !== 'ARTICLE' && !hit.classList.contains('ccard') && !hit.classList.contains('trades-card')) return;
     e.preventDefault();
     handleEntityOpenEvent(e);
   });
@@ -10349,7 +10380,7 @@ document.addEventListener('keydown', function (e) {
 });
 
 // Build the feed header from the column registry (also attaches sort handlers).
-renderFeedHeader();
+renderTradesHeader();
 
 // Column chooser: toggle a column's visibility when its checkbox changes.
 (function () {
@@ -10391,13 +10422,13 @@ renderFeedHeader();
   });
 })();
 
-window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
+window.addEventListener('resize', function () { syncTradesTableWidth(); applyColumnWidthClasses(); });
 
 // Apply resolved theme (default system; respects light|dark|system pref).
 applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.
-el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
+el('tradesBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(9, 'Loading…');
@@ -10409,10 +10440,12 @@ el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
-// ?view= aliases the visible tab names to their internal data-view ids
-// (issue #1458): "trades" is the Trades tab's feed view, "delivery" is the
-// Delivery tab's subs view. trends/people/admin already match their ids.
-var VIEW_ALIASES = { trades: 'feed', delivery: 'subs' };
+// ?view= aliases: "delivery" is the Delivery tab's subs view; "feed" is the
+// Trades tab's PRE-RENAME canonical id (owner follow-up batch #25 — "trades"
+// is now canonical, both in the URL and in localStorage's last-viewed tab;
+// "feed" is kept as a silent legacy alias forever so old bookmarked/shared
+// links never break). trends/people/admin already match their ids.
+var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };
 
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 loadMe().then(function () {
@@ -10422,16 +10455,25 @@ loadMe().then(function () {
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
     if (fromUrl) {
-      // ?view= accepts the visible tab names as aliases (issue #1458) —
-      // "trades" for the feed view id, "delivery" for the subs view id.
-      // Everything else (including the canonical ids) matches as-is.
+      // ?view= accepts legacy ids as aliases (issue #1458, batch #25) —
+      // "feed" resolves to the Trades tab's canonical "trades", "delivery"
+      // resolves to "subs". Everything else (including canonical ids)
+      // matches as-is.
       var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
       // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
       // or stale ?view= should never silently resurrect an old session.
       initialView = document.querySelector('nav.tabs button[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
-      if (saved && document.querySelector('nav.tabs button[data-view="' + saved + '"]')) initialView = saved;
+      // Same legacy-alias resolution applies to a stored last-viewed tab —
+      // visitors with "feed" persisted from before batch #25 still land back
+      // on the Trades tab, and the stored value is migrated to the canonical
+      // id in place so every later load reads it directly.
+      var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;
+      if (canonicalSaved && document.querySelector('nav.tabs button[data-view="' + canonicalSaved + '"]')) {
+        initialView = canonicalSaved;
+        if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }
+      }
     }
   } catch (e) {}
   try {
@@ -10451,7 +10493,7 @@ loadMe().then(function () {
     var view = el('view-' + initialView);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     
-    if (initialView === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (initialView === 'trades') window.scrollTo({ top: 0, behavior: 'auto' });
     if (initialView === 'people') loadPeopleDirectory();
     if (initialView === 'review' && canUseAdmin()) loadReview();
     if (initialView === 'subs') {
@@ -10466,7 +10508,7 @@ loadMe().then(function () {
 });
 
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
-loadFeed().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
+loadTrades().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
 // /api/admin/poll-config 401s for every anonymous visitor (console noise —
 // issue #1457). It now only loads from inside loadMe().then() above, gated
 // on canUseAdmin() (session admin OR a saved bearer token) — never fired

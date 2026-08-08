@@ -142,7 +142,7 @@ describe('DASHBOARD_HTML', () => {
     const main = document.querySelector('main');
     expect(main).not.toBeNull();
 
-    const viewIds = ['view-feed', 'view-trends', 'view-people', 'view-review', 'view-subs', 'view-admin'];
+    const viewIds = ['view-trades', 'view-trends', 'view-people', 'view-review', 'view-subs', 'view-admin'];
     expect(document.querySelectorAll('section.view').map((view) => view.id)).toEqual(viewIds);
 
     for (const id of viewIds) {
@@ -189,23 +189,24 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('makes Trends the first, default-active view and renames Live Feed to Trades', () => {
-    // Trends nav button comes before the feed (Trades) button and is the active one.
+    // Trends nav button comes before the Trades button and is the active one.
     const trendsIdx = DASHBOARD_HTML.indexOf('data-view="trends"');
-    const feedIdx = DASHBOARD_HTML.indexOf('data-view="feed"');
+    const tradesIdx = DASHBOARD_HTML.indexOf('data-view="trades"');
     expect(trendsIdx).toBeGreaterThan(0);
-    expect(trendsIdx).toBeLessThan(feedIdx);
+    expect(trendsIdx).toBeLessThan(tradesIdx);
     expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends" data-icon="⌁" class="active"');
     expect(DASHBOARD_HTML).toContain('<nav class="tabs" role="tablist" aria-label="Primary views">');
     expect(DASHBOARD_HTML).toContain('role="tab" aria-selected="true" aria-controls="view-trends"');
     expect(DASHBOARD_HTML).toContain('role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false"');
     expect(DASHBOARD_HTML).toContain("x.setAttribute('aria-selected', 'false')");
     expect(DASHBOARD_HTML).toContain("view.setAttribute('aria-hidden', 'false')");
-    // The Trends section is the default-active view; the feed section is not.
+    // The Trends section is the default-active view; the Trades section is not.
     expect(DASHBOARD_HTML).toContain('<section class="view active" id="view-trends" role="tabpanel"');
-    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-feed" role="tabpanel"');
-    // The former "Live Feed" tab is now labelled "Trades".
-    expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-feed">Trades</button>');
+    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-trades" role="tabpanel"');
+    // The former "Live Feed" tab is now labelled "Trades" — canonical id is
+    // now "trades" too (owner follow-up batch #25), not the pre-rename "feed".
+    expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades" data-icon="▦"');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</button>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
@@ -319,7 +320,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("p.operationalStatus === 'off'");
     expect(DASHBOARD_HTML).toContain('FMP_LATENCY_PROBE_ENABLED');
     // The public pager mirrors the server's anti-scrape offset cap.
-    expect(DASHBOARD_HTML).toContain(`var MAX_PUBLIC_FEED_OFFSET = ${MAX_PUBLIC_TX_OFFSET}`);
+    expect(DASHBOARD_HTML).toContain(`var MAX_PUBLIC_TRADES_OFFSET = ${MAX_PUBLIC_TX_OFFSET}`);
   });
 
   it('requires explicit review type/date and preserves an unknown owner', () => {
@@ -350,8 +351,8 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('wires the configurable column registry + chooser', () => {
-    expect(DASHBOARD_HTML).toContain('var FEED_COLS');
-    expect(DASHBOARD_HTML).toContain('function renderFeedHeader(');
+    expect(DASHBOARD_HTML).toContain('var TRADES_COLS');
+    expect(DASHBOARD_HTML).toContain('function renderTradesHeader(');
     expect(DASHBOARD_HTML).toContain('id="colChooser"');
     expect(DASHBOARD_HTML).toContain('id="colChooserBody"');
     expect(DASHBOARD_HTML).toContain('function resetCols(');
@@ -370,7 +371,7 @@ describe('DASHBOARD_HTML', () => {
   it('gives mobile a compact sort control and hides the dead Columns chooser', () => {
     // The mobile-only sort select/direction toggle sits near the other feed filter
     // controls and shares sortKey/sortDir + the setSort() refetch path.
-    expect(DASHBOARD_HTML).toContain('id="feedSortMobile"');
+    expect(DASHBOARD_HTML).toContain('id="tradesSortMobile"');
     expect(DASHBOARD_HTML).toContain('id="mobileSortKey"');
     expect(DASHBOARD_HTML).toContain('onchange="handleMobileSortKeyChange()"');
     expect(DASHBOARD_HTML).toContain('id="mobileSortDirBtn"');
@@ -381,12 +382,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function toggleMobileSortDir(');
     expect(DASHBOARD_HTML).toContain('setSort(sel.value)');
     expect(DASHBOARD_HTML).toContain('setSort(sortKey); // same key -> setSort() flips sortDir');
-    // updateSortIndicators() is the single hook both setSort() and renderFeedHeader()
+    // updateSortIndicators() is the single hook both setSort() and renderTradesHeader()
     // already call, so the mobile control resyncs from state restored/changed elsewhere.
     expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
-    expect(DASHBOARD_HTML).toContain('.feed-sort-mobile { display: none;');
-    expect(DASHBOARD_HTML).toContain('#view-feed .feed-sort-mobile { display: flex; }');
-    // Columns chooser stays wired for desktop but is CSS-hidden on mobile — feedCardHtml()
+    expect(DASHBOARD_HTML).toContain('.trades-sort-mobile { display: none;');
+    expect(DASHBOARD_HTML).toContain('#view-trades .trades-sort-mobile { display: flex; }');
+    // Columns chooser stays wired for desktop but is CSS-hidden on mobile — tradesCardHtml()
     // renders a fixed field set, so the chooser has no visible effect on phones.
     expect(DASHBOARD_HTML).toContain('id="colsBtn"');
     expect(DASHBOARD_HTML).toContain('#colsBtn { display: none; }');
@@ -443,16 +444,27 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
-  it('spells out politicians with room and allows pol/pols when space is tight', () => {
-    expect(DASHBOARD_HTML).toContain('function polWord(n)');
-    expect(DASHBOARD_HTML).toContain('function polCell(n)');
-    expect(DASHBOARD_HTML).toContain('class="u-full"');
-    expect(DASHBOARD_HTML).toContain('class="u-abbr"');
-    expect(DASHBOARD_HTML).toContain("n === 1 ? 'pol' : 'pols'");
-    expect(DASHBOARD_HTML).toContain('polWord(c.memberCount)');
-    // Dense tables / narrow cards / phones flip to abbr; spacious defaults keep full.
-    expect(DASHBOARD_HTML).toContain('@container ccard (max-width: 280px)');
-    expect(DASHBOARD_HTML).toContain('#view-trends table .u-abbr');
+  it('owner follow-up batch #6: removes the "pols" abbreviation — bare numbers in Politicians-headed table columns, full word only in prose', () => {
+    // The u-full/u-abbr responsive-word mechanism and its polWord/polCell
+    // helpers are gone entirely — dead once nothing renders "pol(s)" anymore.
+    expect(DASHBOARD_HTML).not.toContain('function polWord(n)');
+    expect(DASHBOARD_HTML).not.toContain('function polCell(n)');
+    expect(DASHBOARD_HTML).not.toContain('class="u-full"');
+    expect(DASHBOARD_HTML).not.toContain('class="u-abbr"');
+    expect(DASHBOARD_HTML).not.toContain("n === 1 ? 'pol' : 'pols'");
+    expect(DASHBOARD_HTML).not.toContain('@container ccard (max-width: 280px)');
+    expect(DASHBOARD_HTML).not.toContain('.u-full {');
+    expect(DASHBOARD_HTML).not.toContain('.u-abbr {');
+    // tableTrTickers' "Politicians" column and tableTrTrending's "Recent
+    // Politicians" column now render a bare number — no word, no abbr.
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.memberCount || 0) + '</td>' +");
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.recentMembers || 0) + '</td></tr>';");
+    // Consensus Moves cluster cards are a prose/sub-caption context — the
+    // full word "politicians" always spells out, never abbreviates.
+    expect(DASHBOARD_HTML).toContain("politician' + (c.memberCount === 1 ? '' : 's') + ' · '");
+    // Spacious surfaces (KPI strip, flow chips, drawers) keep their own
+    // always-spell-out helper untouched.
+    expect(DASHBOARD_HTML).toContain("function polFull(n)");
   });
 
   it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
@@ -471,9 +483,9 @@ describe('DASHBOARD_HTML', () => {
 
   it('contains mobile-first feed and navigation hooks', () => {
     expect(DASHBOARD_HTML).toContain('data-mobile="Trades"');
-    expect(DASHBOARD_HTML).toContain('id="feedCards"');
-    expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
-    expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
+    expect(DASHBOARD_HTML).toContain('id="tradesCards"');
+    expect(DASHBOARD_HTML).toContain('function tradesCardHtml(');
+    expect(DASHBOARD_HTML).toContain('function handleTradesOpenEvent(');
     expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(');
     expect(DASHBOARD_HTML).toContain("document.addEventListener('click'");
     expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
@@ -569,17 +581,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v3'");
     expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v3'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
+    // Owner follow-up batch #13: the old asset cap (40-54px) sat below
+    // asset's own 140px floor, silently pinning it there regardless of
+    // content — replaced with a genuinely content-responsive range.
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 220, 190, 320)");
     expect(DASHBOARD_HTML).not.toContain('width: max-content');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v8');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
-    expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
+    expect(DASHBOARD_HTML).toContain('#tradesTable.resizable th { text-align: center;');
     expect(DASHBOARD_HTML).toContain('minColWidth(key)');
     expect(DASHBOARD_HTML).toContain("p.set('sort', apiSort)");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
-    expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
-    expect(DASHBOARD_HTML).toContain('feedRequestSeq');
+    expect(DASHBOARD_HTML).toContain('function handleTradesTextFilter(');
+    expect(DASHBOARD_HTML).toContain('tradesRequestSeq');
     expect(DASHBOARD_HTML).toContain("arr.textContent = '↕'");
     expect(DASHBOARD_HTML).toContain('function seenDetailText(');
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
@@ -590,12 +606,12 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('keeps the polished table, drawer, and trends layout hooks', () => {
-    expect(DASHBOARD_HTML).toContain('#feedHead th { position: sticky');
+    expect(DASHBOARD_HTML).toContain('#tradesHead th { position: sticky');
     expect(DASHBOARD_HTML).toContain('border-right: 1px solid color-mix');
-    expect(DASHBOARD_HTML).toContain('#feedTable .c-member');
-    expect(DASHBOARD_HTML).toContain('#feedTable .c-asset');
-    expect(DASHBOARD_HTML).toContain('<colgroup id="feedCols"></colgroup>');
-    expect(DASHBOARD_HTML).toContain('function syncFeedTableWidth(');
+    expect(DASHBOARD_HTML).toContain('#tradesTable .c-member');
+    expect(DASHBOARD_HTML).toContain('#tradesTable .c-asset');
+    expect(DASHBOARD_HTML).toContain('<colgroup id="tradesCols"></colgroup>');
+    expect(DASHBOARD_HTML).toContain('function syncTradesTableWidth(');
     expect(DASHBOARD_HTML).toContain('.clip-text { display:block;');
     expect(DASHBOARD_HTML).toContain('drawer-company-title');
     expect(DASHBOARD_HTML).toContain('drawer-stack-grid');
@@ -668,7 +684,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('REVIEW_TOTALS = data.totals || null');
     expect(DASHBOARD_HTML).toContain('typeof REVIEW_TOTALS.unresolved === \'number\'');
     expect(DASHBOARD_HTML).toContain("else { loadReview(); }");
-    expect(DASHBOARD_HTML).toContain('.then(function () { loadReview(); loadFeed(); })');
+    expect(DASHBOARD_HTML).toContain('.then(function () { loadReview(); loadTrades(); })');
   });
 
   it('wires a per-doc "Re-read with model…" bake-off control with multi-select', () => {
@@ -1269,15 +1285,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('id="trDisclaimer"');
     expect(DASHBOARD_HTML).not.toContain('For Educational Use, Not Investment Advice');
     expect(DASHBOARD_HTML).not.toContain('function toggleDisclaimer(');
-    // Primary Only / All Data is a real, persisted toggle (issue #1453) — it
-    // used to live inline in that banner; it now lives in a compact note
-    // directly on the Trades feed instead of disappearing with the banner.
-    expect(DASHBOARD_HTML).toContain('id="feedSourceNote"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
-    expect(DASHBOARD_HTML).toContain('>Primary Only<');
+    // Owner follow-up batch #2: the Primary Only / All Data source-mode note
+    // and toggle are gone entirely — dedup is the only sensible view.
+    expect(DASHBOARD_HTML).not.toContain('id="feedSourceNote"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="all"');
     expect(DASHBOARD_HTML).not.toContain('<em>Live Only</em>');
-    expect(DASHBOARD_HTML).toContain('function feedSourceMode() {');
+    expect(DASHBOARD_HTML).toContain('function tradesSourceMode() {');
     expect(DASHBOARD_HTML).toContain('info-tip');
     // Educational / liability framing survives via the short footer line,
     // reused verbatim in the hamburger menu.
@@ -1371,7 +1385,7 @@ describe('DASHBOARD_HTML', () => {
     for (const s of ['fc-main', 'fc-row1', 'fc-row2', 'fc-amt-val', 'fc-chevron']) {
       expect(DASHBOARD_HTML).toContain(s);
     }
-    expect(DASHBOARD_HTML).not.toContain('feed-card-top');
+    expect(DASHBOARD_HTML).not.toContain('trades-card-top');
   });
 
   it('differentiates the trade drawer from the company drawer', () => {
@@ -1962,11 +1976,27 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(pluralCount(1, 'Other')).toBe('1 Other');
   });
 
-  it('builds cluster-card party breakdowns from pluralCount instead of hardcoded plurals', () => {
+  it('builds cluster-card party breakdowns from partyCountHtml/pluralCount instead of hardcoded plurals', () => {
+    // Owner follow-up batch #14: Democrat/Republican now render through the
+    // responsive full/abbr helper (Dems/Reps on mobile — see its own test);
+    // Other stays on the plain always-full pluralCount helper.
     expect(DASHBOARD_HTML).toContain(
-      "var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');",
+      "var parties = partyCountHtml(c.parties.D, 'Democrat', 'Dem') + ', ' + partyCountHtml(c.parties.R, 'Republican', 'Rep') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');",
     );
     expect(DASHBOARD_HTML).not.toContain("c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans'");
+  });
+
+  it('owner follow-up batch #14: Consensus Moves cards abbreviate Democrats/Republicans to Dems/Reps on mobile (2-up), full word on desktop', () => {
+    expect(DASHBOARD_HTML).toContain('function partyCountHtml(n, full, abbr) {');
+    expect(DASHBOARD_HTML).toContain(
+      "return n + ' <span class=\"party-full\">' + full + suf + '</span><span class=\"party-abbr\">' + abbr + suf + '</span>';",
+    );
+    // Desktop default: full word shown, abbreviation hidden.
+    expect(DASHBOARD_HTML).toContain('.party-abbr { display: none; }');
+    // Mobile (<=768px, same breakpoint as the 2-up grid change): swap.
+    expect(DASHBOARD_HTML).toContain('.cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }');
+    expect(DASHBOARD_HTML).toContain('.party-full { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.party-abbr { display: inline; }');
   });
 
   // ---- 3. Timeframe label rendering -----
@@ -2435,24 +2465,22 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
   });
 
-  it('right-aligns the $ threshold select and relabels it with k/m suffixes (values unchanged)', () => {
-    expect(DASHBOARD_HTML).toContain('.min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }');
-    const labels = ['Any $', '$1k+', '$15k+', '$50k+', '$100k+', '$250k+', '$500k+', '$1m+', '$5m+', '$25m+', '$50m+'];
-    const values = ['', '1001', '15001', '50001', '100001', '250001', '500001', '1000001', '5000001', '25000001', '50000001'];
-    for (const id of ['qMinAmt', 'trMinAmt']) {
-      const block = DASHBOARD_HTML.match(new RegExp('<select id="' + id + '"[\\s\\S]*?</select>'));
-      expect(block, id).not.toBeNull();
-      labels.forEach((label, i) => {
-        expect(block![0], id + ' -> ' + label).toContain('<option value="' + values[i] + '">' + label + '</option>');
-      });
-      // Old $1,001+ style labels are gone.
-      expect(block![0]).not.toMatch(/\$\d{1,3},\d{3}/);
-    }
+  it('owner follow-up batch #21: deletes the $-threshold filter pill entirely (no $/size dropdown on any platform)', () => {
+    expect(DASHBOARD_HTML).not.toContain('.min-amt-select');
+    expect(DASHBOARD_HTML).not.toContain('id="qMinAmt"');
+    expect(DASHBOARD_HTML).not.toContain('id="trMinAmt"');
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
+    expect(DASHBOARD_HTML).not.toContain('function onSharedMinAmtChange');
+    expect(DASHBOARD_HTML).not.toContain('Any $');
+    // The server-side query param can remain for direct API consumers — the
+    // client just never sends it anymore since there's no UI control.
+    expect(DASHBOARD_HTML).not.toContain("p.set('minAmount', amt)");
+    expect(DASHBOARD_HTML).not.toContain("p.set('minAmount', minAmt)");
   });
 
   it('moves Columns/Rows to the pager bar and the CSV button to the gate-note area', () => {
     // Toolbar no longer carries them.
-    const extraFilters = DASHBOARD_HTML.match(/<div class="toolbar trades-only-filters" id="feedExtraFilters">[\s\S]*?<\/div>/);
+    const extraFilters = DASHBOARD_HTML.match(/<div class="toolbar trades-only-filters" id="tradesExtraFilters">[\s\S]*?<\/div>/);
     expect(extraFilters).not.toBeNull();
     expect(extraFilters![0]).not.toContain('id="colsBtn"');
     expect(extraFilters![0]).not.toContain('id="pageSize"');
@@ -2460,7 +2488,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).toContain('id="qMember"');
     expect(extraFilters![0]).toContain('id="qTicker"');
     expect(extraFilters![0]).toContain('id="searchToggle"');
-    expect(extraFilters![0]).toContain('id="feedStats"');
+    expect(extraFilters![0]).toContain('id="tradesStats"');
     // Pager bar carries Rows (relabeled "N rows") + Columns.
     const pager = DASHBOARD_HTML.match(/<div class="row-flex pager">[\s\S]*?<\/div>\s*<\/div>/);
     expect(pager).not.toBeNull();
@@ -2511,18 +2539,22 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('if (!PUBLIC_STREAM_ENABLED || typeof EventSource === \'undefined\') { startPolling(); return; }');
   });
 
-  it('defaults the Trades feed to the de-duplicated Primary Only source mode, persisting an explicit choice', () => {
-    expect(DASHBOARD_HTML).toContain("function feedSourceMode() {");
+  it('always shows the de-duplicated Primary Only source mode — the All Data toggle is gone (owner follow-up batch #2)', () => {
+    expect(DASHBOARD_HTML).toContain("function tradesSourceMode() {");
     expect(DASHBOARD_HTML).toContain("return 'primary';");
-    expect(DASHBOARD_HTML).toContain("var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';");
     expect(DASHBOARD_HTML).toContain("if (primaryOnly && r.source === 'seed_dataset') return false;");
-    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
-    expect(DASHBOARD_HTML).toContain('function setFeedSourceMode(mode)');
+    expect(DASHBOARD_HTML).not.toContain('FEED_SOURCE_MODE_KEY');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="all"');
+    expect(DASHBOARD_HTML).not.toContain('function setFeedSourceMode(mode)');
+    expect(DASHBOARD_HTML).not.toContain('function syncFeedSourceModeUI(');
+    expect(DASHBOARD_HTML).not.toContain('.source-mode-btn');
   });
 
   it('accepts visible tab names as ?view= aliases and falls back to Trends (not last-viewed) on unknown values', () => {
-    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { trades: 'feed', delivery: 'subs' };");
+    // Owner follow-up batch #25: "trades" is now the canonical id (the URL
+    // writes ?view=trades); "feed" is kept as a silent legacy alias forever.
+    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };");
     expect(DASHBOARD_HTML).toContain('VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl');
     // Unknown/garbage values resolve straight to 'trends' inside the same
     // branch that handles ?view= — never falling through to localStorage's
@@ -2532,6 +2564,12 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     );
     // The URL is rewritten to the canonical id, not the alias.
     expect(DASHBOARD_HTML).toContain("u0.searchParams.set('view', initialView);");
+    // A stored last-viewed tab ("ct-active-tab") runs through the SAME alias
+    // table — an old "feed" value still resolves to the Trades tab and gets
+    // migrated to the canonical "trades" string in place, so links/last-tab
+    // state made before the rename keep working.
+    expect(DASHBOARD_HTML).toContain("var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;");
+    expect(DASHBOARD_HTML).toContain("if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }");
   });
 });
 
@@ -2539,7 +2577,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
  * Issue #1529 — design convergence: filter-chrome restyle + per-surface feed
  * presentation + header/search convergence. Restyle-only pass on top of LANE
  * A1/A2: verifies the new capsule-pill chrome, icon search fields, mobile
- * feed-card layout, and header hamburger radius, while confirming every
+ * trades-card layout, and header hamburger radius, while confirming every
  * DO-NOT-BREAK id/handler/attribute from the spec survives unchanged.
  */
 describe('design convergence — filter chrome + card restyle (issue #1529)', () => {
@@ -2585,13 +2623,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('function initSideChips(');
   });
 
-  it('wraps Timeframe + $ Minimum selects in icon+chevron pills without touching id/onchange/options', () => {
+  it('wraps the Timeframe select in an icon+chevron pill without touching id/onchange/options (owner follow-up batch #21 removed the $ Minimum pill entirely)', () => {
     const document = parse(DASHBOARD_HTML);
     for (const [selectId, wrapperClass] of [
-      ['feedGlobalWindow', 'pill-cal'],
+      ['tradesGlobalWindow', 'pill-cal'],
       ['trGlobalWindow', 'pill-cal'],
-      ['qMinAmt', 'pill-amt'],
-      ['trMinAmt', 'pill-amt'],
     ] as const) {
       const select = document.querySelector('#' + selectId);
       expect(select, selectId).not.toBeNull();
@@ -2602,15 +2638,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
       expect((wrapper as any).classList.contains('pill-select'), selectId).toBe(true);
       expect((wrapper as any).classList.contains(wrapperClass), selectId).toBe(true);
     }
-    // onchange handlers + id-based wiring (getTrWindow/onSharedMinAmtChange/etc.)
-    // are byte-for-byte unchanged.
+    // onchange handler + id-based wiring is byte-for-byte unchanged.
     expect(DASHBOARD_HTML).toContain('onchange="onSharedWindowChange(this)"');
-    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this); resetFeedPage();"');
-    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this)"');
-    // .tr-window-select / .shared-window / .min-amt-select stay on the <select>
-    // itself (still queried directly by JS) — pill-select-el is additive.
+    // .tr-window-select / .shared-window stay on the <select> itself (still
+    // queried directly by JS) — pill-select-el is additive.
     expect(DASHBOARD_HTML).toContain('class="tr-window-select shared-window pill-select-el"');
-    expect(DASHBOARD_HTML).toContain('class="min-amt-select pill-select-el"');
     // New pill CSS resolves through the shared tokens, with a dark-mode chevron swap.
     expect(DASHBOARD_HTML).toContain('.pill-select-el {');
     expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-pill); font:600 12px var(--sans);');
@@ -2623,8 +2655,8 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     const ticker = document.querySelector('#qTicker');
     expect(member).not.toBeNull();
     expect(ticker).not.toBeNull();
-    expect(member!.getAttribute('oninput')).toBe('handleFeedTextFilter()');
-    expect(ticker!.getAttribute('oninput')).toBe('handleFeedTextFilter()');
+    expect(member!.getAttribute('oninput')).toBe('handleTradesTextFilter()');
+    expect(ticker!.getAttribute('oninput')).toBe('handleTradesTextFilter()');
     expect(member!.getAttribute('aria-label')).toBe('Filter by politician');
     expect(ticker!.getAttribute('aria-label')).toBe('Filter by asset ticker');
     expect(member!.classList.contains('icon-input')).toBe(true);
@@ -2645,17 +2677,17 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('.icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }');
   });
 
-  it('enlarges + tile-backs the mobile feed-card logo without touching the desktop table logo size', () => {
-    expect(DASHBOARD_HTML).toContain('.feed-card .tkr-logo { width:36px; height:36px; border-radius:9px; }');
+  it('enlarges + tile-backs the mobile trades-card logo without touching the desktop table logo size', () => {
+    expect(DASHBOARD_HTML).toContain('.trades-card .tkr-logo { width:36px; height:36px; border-radius:9px; }');
     // Desktop/table-wide default logo size (22px) is untouched by this pass.
     expect(DASHBOARD_HTML).toContain('.tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }');
     expect(DASHBOARD_HTML).toContain(
-      'html[data-theme="light"] .feed-card .tkr-logo.transparent,\n  html[data-theme="light"] .feed-card .tkr-logo.mono,\n  html[data-theme="light"] .feed-card .tkr-logo.glyph { background:#fff; }',
+      'html[data-theme="light"] .trades-card .tkr-logo.transparent,\n  html[data-theme="light"] .trades-card .tkr-logo.mono,\n  html[data-theme="light"] .trades-card .tkr-logo.glyph { background:#fff; }',
     );
   });
 
-  it('restructures feedCardHtml() into a trailing amount/date stack, dropping the duplicate "Traded" fragment from row 2', () => {
-    const start = DASHBOARD_HTML.indexOf('function feedCardHtml(');
+  it('restructures tradesCardHtml() into a trailing amount/date stack, dropping the duplicate "Traded" fragment from row 2', () => {
+    const start = DASHBOARD_HTML.indexOf('function tradesCardHtml(');
     expect(start).toBeGreaterThan(-1);
     const end = DASHBOARD_HTML.indexOf('\nfunction lagBasisDate(');
     expect(end).toBeGreaterThan(start);
@@ -2676,7 +2708,7 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(fn).toContain("r.stockActStatus === 'late' || r.stockActStatus === 'severely_late'");
     // Click-scoping: the trailing amount/date block carries no data-asset/
     // data-member/data-txid of its own — it falls through to the card's own
-    // data-txid via handleFeedOpenEvent's delegation order (DO-NOT-BREAK #4).
+    // data-txid via handleTradesOpenEvent's delegation order (DO-NOT-BREAK #4).
     expect(fn).not.toMatch(/fc-trail[^"]*"[^>]*data-(asset|member|txid)/);
   });
 
@@ -2698,13 +2730,13 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
   });
 
   it('right-aligns the desktop "N trades" count and compacts it (total only) on mobile', () => {
-    expect(DASHBOARD_HTML).toContain('.feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
-    expect(DASHBOARD_HTML).toContain('.feed-stats .stat-today { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
+    expect(DASHBOARD_HTML).toContain('.trades-stats .stat-today { display: none; }');
     // Regression (#1533 verifier): grid must be declared on the ID selector so
     // the later ≤720px `.toolbar { display:flex }` rule can't override it.
-    expect(DASHBOARD_HTML).toContain('#feedExtraFilters { display: grid;');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
     const document = parse(DASHBOARD_HTML);
-    const stats = document.querySelector('#feedStats');
+    const stats = document.querySelector('#tradesStats');
     expect(stats).not.toBeNull();
     const statToday = stats!.querySelector('.stat-today');
     expect(statToday).not.toBeNull();
@@ -2719,8 +2751,8 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
     expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {');
-    expect(DASHBOARD_HTML).toContain('#view-feed .table-wrap { display: none; }');
-    expect(DASHBOARD_HTML).toContain('#view-feed .feed-cards { display: grid; grid-template-columns: minmax(0, 1fr); }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .table-wrap { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }');
   });
 });
 
@@ -2855,7 +2887,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
 
   describe('Filing Latency Comparison section placement', () => {
     it('never renders inside the Trades/feed tab', () => {
-      const feedView = DASHBOARD_HTML.match(/<section class="view" id="view-feed"[\s\S]*?\n  <section class="view/);
+      const feedView = DASHBOARD_HTML.match(/<section class="view" id="view-trades"[\s\S]*?\n  <section class="view/);
       expect(feedView).not.toBeNull();
       expect(feedView![0]).not.toContain('trLatencySection');
       expect(feedView![0]).not.toContain('adminLatencySection');
@@ -3042,10 +3074,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(node.getAttribute('role')).toBe('button');
     });
 
-    it('does not clobber an existing tabindex/role (e.g. feed-card, ccard already ship their own)', () => {
+    it('does not clobber an existing tabindex/role (e.g. trades-card, ccard already ship their own)', () => {
       const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
       const node = fakeNode('ARTICLE', {
-        class: 'feed-card clickable',
+        class: 'trades-card clickable',
         'data-txid': 'abc',
         tabindex: '0',
         role: 'button',
@@ -3237,54 +3269,55 @@ describe('MONET web punch list 2 (LANE W1)', () => {
   });
 
   it('#9 merges the Trades feed toolbars onto one desktop row (>768px) via explicit flex order, without touching the <=768px ID-scoped grid', () => {
-    // #feedToolbars wraps BOTH toolbar divs, in DOM order.
+    // #tradesToolbars wraps BOTH toolbar divs, in DOM order.
     const wrapMatch = DASHBOARD_HTML.match(
-      /<div class="feed-toolbars" id="feedToolbars">[\s\S]*?<div class="toolbar shared-filters" id="feedSharedFilters">[\s\S]*?<div class="toolbar trades-only-filters" id="feedExtraFilters">[\s\S]*?<\/div>\s*<\/div>/,
+      /<div class="trades-toolbars" id="tradesToolbars">[\s\S]*?<div class="toolbar shared-filters" id="tradesSharedFilters">[\s\S]*?<div class="toolbar trades-only-filters" id="tradesExtraFilters">[\s\S]*?<\/div>\s*<\/div>/,
     );
     expect(wrapMatch).not.toBeNull();
-    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedSharedFilters,\n    .feed-toolbars #feedExtraFilters { display:contents; }');
-    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats, then $ pill.
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-cal { order:1; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars .filter-groups { order:2; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars #qMemberField { order:3; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars #qTickerField { order:4; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars #searchToggle { order:5; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedStats { order:6; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-amt { order:7; }');
-    // DO-NOT-BREAK: the <=768px ID-scoped #feedExtraFilters grid (both the
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesSharedFilters,\n    .trades-toolbars #tradesExtraFilters { display:contents; }');
+    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats. (The
+    // $ pill that used to close this row is gone — owner follow-up batch
+    // #21/#23 — #tradesStats is now the last item, no orphaned order/gap.)
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qMemberField { order:3; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qTickerField { order:4; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #searchToggle { order:5; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:6; }');
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
+    // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid (both the
     // direct-child structure and its CSS) is byte-for-byte unchanged —
     // display:contents only ever fires at >=769px, never overlapping it.
-    expect(DASHBOARD_HTML).toContain('#feedExtraFilters { display: grid;');
-    expect(DASHBOARD_HTML).toContain('#feedExtraFilters #qMemberField, #feedExtraFilters #qTickerField { grid-column: 1 / -1; }');
-    expect(DASHBOARD_HTML).toContain('#feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qMemberField, #tradesExtraFilters #qTickerField { grid-column: 1 / -1; }');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }');
     const document = parse(DASHBOARD_HTML);
-    const extras = document.querySelectorAll('#feedExtraFilters > *').map((n) => n.id).filter(Boolean);
-    expect(extras).toEqual(['qMemberField', 'qTickerField', 'searchToggle', 'feedStats']);
+    const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
+    expect(extras).toEqual(['qMemberField', 'qTickerField', 'searchToggle', 'tradesStats']);
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
     // #9's "tighten to match the app" mobile sub-clause).
     expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
   });
 
   it('#10 keeps the timeframe pill as the first control on both the Trades and Trends shared filter rows', () => {
-    const feedRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters" id="feedSharedFilters">([\s\S]*?)<div class="filter-groups">/);
+    const feedRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters" id="tradesSharedFilters">([\s\S]*?)<div class="filter-groups">/);
     const trendsRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">([\s\S]*?)<div class="filter-groups">/);
     expect(feedRow).not.toBeNull();
     expect(trendsRow).not.toBeNull();
     expect(feedRow![1]).toContain('pill-cal');
-    expect(feedRow![1]).toContain('id="feedGlobalWindow"');
+    expect(feedRow![1]).toContain('id="tradesGlobalWindow"');
     expect(trendsRow![1]).toContain('pill-cal');
     expect(trendsRow![1]).toContain('id="trGlobalWindow"');
   });
 
-  it('#11 removes the redundant "$" prefix icon from the collapsed amount pill (options already show $)', () => {
+  it('#11 the amount pill (and its "$" prefix icon) is gone entirely — owner follow-up batch #21 removed the $ Minimum control altogether', () => {
     expect(DASHBOARD_HTML).not.toContain('.pill-select.pill-amt::before');
     expect(DASHBOARD_HTML).not.toMatch(/pill-amt[^{]*::before\s*\{\s*content:"\$"/);
-    // The calendar pill keeps its icon — only pill-amt's icon goes away.
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
+    // The calendar pill keeps its icon.
     expect(DASHBOARD_HTML).toContain('.pill-select.pill-cal::before { content:"📅"; }');
-    expect(DASHBOARD_HTML).toContain('.pill-select.pill-amt .pill-select-el { padding-left:14px; }');
-    // Options already carry their own $ (unchanged) — "Any $" reads standalone now.
-    expect(DASHBOARD_HTML).toContain('<option value="">Any $</option>');
+    expect(DASHBOARD_HTML).not.toContain('<option value="">Any $</option>');
   });
 
   it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators', () => {
@@ -3315,11 +3348,38 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   it('#13(a)/(c) drops the POLITICIAN/ASSET eyebrow labels and moves Owner up beside the name', () => {
     expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Politician</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Asset</span>');
-    expect(DASHBOARD_HTML).toContain(".drawer-trade-owner { display:inline-block; margin-left:6px;");
+    expect(DASHBOARD_HTML).toContain(".drawer-trade-owner { display:inline-block; flex:0 0 auto;");
     expect(DASHBOARD_HTML).toContain("var ownerBadge = ownerText ? '<span class=\"drawer-trade-owner muted\">' + esc(ownerText) + '</span>' : '';");
-    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';");
     // Owner no longer has its own Trade Details row.
     expect(DASHBOARD_HTML).not.toContain("kvRow('Owner', esc(ownerLabel(row.owner) || '—'))");
+  });
+
+  it('owner follow-up batch #1 (P1 regression): the owner badge is a flex SIBLING after the ellipsized name div, not appended inside it — a long name must not hide it', () => {
+    // The old shipped bug appended ownerBadge INSIDE the ellipsized <div>,
+    // so any longish name (e.g. "David H. McCormick") clipped the badge
+    // entirely. It must now sit as its own element after that div closes,
+    // inside .member-cell (a flex row with gap — see the CSS rule below).
+    expect(DASHBOARD_HTML).not.toContain(
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';"
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
+    );
+    // Structural check: inside the generated personCard markup, the name div
+    // (which carries the ellipsis) must fully close with </div> BEFORE the
+    // <span class="drawer-trade-owner ...> badge opens — i.e. the badge is
+    // outside, not nested inside, the ellipsized div.
+    const personCardMatch = DASHBOARD_HTML.match(
+      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
+    );
+    expect(personCardMatch).toBeTruthy();
+    const nameDivCloseIdx = DASHBOARD_HTML.indexOf("memberVal + '</div>'");
+    const ownerBadgeUseIdx = DASHBOARD_HTML.indexOf('+ ownerBadge +', nameDivCloseIdx);
+    expect(nameDivCloseIdx).toBeGreaterThan(-1);
+    expect(ownerBadgeUseIdx).toBeGreaterThan(nameDivCloseIdx);
+    // .drawer-trade-owner must be flex:0 0 auto (never shrinks/wraps) so the
+    // name div (flex:1 1 auto + ellipsis) is what shrinks instead.
+    expect(DASHBOARD_HTML).toMatch(/\.drawer-trade-owner\s*\{[^}]*flex:0 0 auto;[^}]*\}/);
   });
 
   it('#13(b) renames the Trade Details "Politician" row to "Name" with a link chevron', () => {
