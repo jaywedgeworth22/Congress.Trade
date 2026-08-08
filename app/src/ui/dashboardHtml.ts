@@ -194,6 +194,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .table-wrap::-webkit-scrollbar-track { background: var(--panel-2); border-radius: 4px; }
   .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid var(--panel-2); }
   .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+  /* Owner follow-up batch #5: Trends tables show their content in full — no
+     vertical scroll/clipping. The shared .table-wrap max-height (built for
+     the paginated Trades feed table, out of scope here) forces a vertical
+     scrollbar once content exceeds it (overflow-x:auto pairs with an implicit
+     overflow-y:auto per spec), which clipped every Trends table using this
+     wrapper. #view-trends's own ID-scoped rule outranks the shared class rule
+     regardless of source order. Slowest Filers is exempt — it uses the
+     separate .late-filers-wrap class (see above), not .table-wrap, and keeps
+     its own scroll + sticky header.
+     Owner follow-up batch #8: same root cause as the drawer's own
+     #detailDrawerBody .table-wrap fix below — the 60px padding-right exists
+     to clear the big feed table's custom scrollbar gutter, which is pure
+     waste on simple Trends tables (Most Active Politicians, Top Performers,
+     etc.) and reads as an oddly narrow table, worst on mobile where 60px is a
+     big fraction of the viewport. */
+  #view-trends .table-wrap { max-height: none; padding-right: 0; }
+  /* Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
+     ~1920px) the small Trends table cards (What Congress Is Trading, Rising
+     Activity, Top Performers, Most Active Politicians, …) used to stretch to
+     fill their full grid column, showing a right-side drop shadow and a wall
+     of empty space after the table's last column. The main feed table
+     absorbs its own leftover width instead (syncFeedTableWidth, #13); these
+     small cards just shrink to their content and stay left-aligned. Scoped
+     to sections that directly wrap a .table-wrap so chart/cluster-grid/
+     flow-chip sections are unaffected, and only above a wide-desktop
+     threshold so mobile/tablet keep the full-bleed card look. */
+  @media (min-width: 1300px) {
+    #view-trends .section:has(> .table-wrap) { width: fit-content; max-width: 100%; }
+  }
   #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #feedTable.resizable th.c-latency, #feedTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
@@ -263,9 +292,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 19px; margin-bottom: 32px; }
-  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
+  /* Owner follow-up batch #4 (+ #12, which shares this class): .v already
+     declared flex:1 but .card was never a flex container, so it silently did
+     nothing — grid row-stretch (the default align-items:stretch on
+     .grid-cards) left the value hugging the title with dead space below it
+     (where the absolutely-positioned sparkline sits, unaffected by this).
+     display:flex;flex-direction:column makes flex:1 actually apply, and
+     align-content:center on .v centers the (possibly-wrapping) value line
+     within whatever height the row stretches it to. */
+  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
@@ -475,7 +512,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Owner punch list #13(c): Owner (Self/Spouse/Joint) rides beside the
      politician's name at the top of the trade drawer instead of its own row
      further down in Trade Details. */
-  .drawer-trade-owner { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .drawer-trade-owner { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
   /* Owner punch list #13(b): a small link chevron on the "Name" row in Trade
      Details signals it opens the politician drawer (the click already worked). */
   .kv-chevron { opacity:.55; margin-left:2px; }
@@ -613,6 +650,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .late-filers-wrap table { margin: 0; }
   .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; }
   .late-filers-wrap td[data-tip] { cursor: help; }
+  /* Owner follow-up batch #5: Slowest Filers is the one Trends table that
+     stays genuinely scrollable (it can run to 50 rows) — give it a sticky
+     column-header row, same idiom as the Trades feed's own #feedHead th. */
+  .late-filers-wrap thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); }
   @media (max-width: 760px) {
     .timeliness-grid { grid-template-columns: 1fr; gap: 48px; }
     .lag-dist { min-height: auto; }
@@ -700,24 +741,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
-  /* "politicians" spelled out where there's room; "pol(s)" only when space is tight
-     (dense table columns, narrow cards, phones). See polCell / polWord. */
-  .u-full { display: inline; }
-  .u-abbr { display: none; }
-  /* Dense Trends tables: prefer short form once columns compete (still spell out on roomy desktops). */
-  @media (max-width: 1100px) {
-    #view-trends table .u-full { display: none; }
-    #view-trends table .u-abbr { display: inline; }
-  }
-  /* cluster cards — container query so a narrow card abbreviates even on wide screens */
+  /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
+  /* Owner follow-up batch #14: desktop keeps the full party name; mobile
+     (<=768px, see the .cluster-grid override below) swaps to the abbreviated
+     span instead so two cards fit per row. CSS-only, not JS branching. */
+  .party-abbr { display: none; }
   .ccard {
     background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:21px 22px;
-    container-type: inline-size; container-name: ccard;
-  }
-  @container ccard (max-width: 280px) {
-    .u-full { display: none; }
-    .u-abbr { display: inline; }
   }
   .ccard .chead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .ccard .big { font-size:18px; font-weight:700; }
@@ -727,12 +758,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .dirpill.B, .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
-  /* Primary Only / All Data feed source-mode toggle — owner punch list #3:
-     used to live inline in the big Trends disclaimer banner (removed); now a
-     compact note directly on the Trades feed (see #feedSourceNote). */
-  .source-mode-btn { display:inline; background:none; border:none; padding:0; margin:0; color:inherit; font:inherit; font-style:italic; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
-  .source-mode-btn:hover { color:var(--accent); }
-  .source-mode-btn.active { text-decoration:none; font-weight:700; color:var(--text); }
   /* modal */
   /* ---- detail drawer (trade / asset / politician) ---- */
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
@@ -1080,14 +1105,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Must stay display:flex (NOT inline-flex): this class lands on the same
      element as .toolbar, and an inline-flex override makes the Trends row
      shrink-to-fit at desktop widths, breaking the shared-row parity with the
-     Trades tab and defeating .min-amt-select's margin-left:auto right-align. */
+     Trades tab. */
   .trends-filter-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-  .min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }
-  /* Issue #1529: Timeframe + $ Minimum become icon+value+chevron pills that
-     still open the native <select> option list — CSS-only wrapper around
-     the existing element, id/onchange/<option>s untouched. */
+  /* Issue #1529: Timeframe becomes an icon+value+chevron pill that still
+     opens the native <select> option list — CSS-only wrapper around the
+     existing element, id/onchange/<option>s untouched. (Owner follow-up
+     batch #21: the $ Minimum pill/select was removed entirely — no $/size
+     dropdown on any platform. The server-side minAmount query param still
+     exists for direct API consumers.) */
   .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
-  .pill-select.pill-amt { margin-left:auto; min-width:7.5rem; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
   .pill-select-el {
@@ -1103,11 +1129,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .pill-select-el:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
   .pill-select-el:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  /* Owner punch list #11: the collapsed pill already shows "Any $"/"$15k+" —
-     the options themselves carry the $, so the separate "$" prefix icon was
-     redundant ("$ Any $"). pill-cal keeps its 📅 icon; only pill-amt's inset
-     goes away since it no longer needs room for a glyph. */
-  .pill-select.pill-amt .pill-select-el { padding-left:14px; }
   /* Owner punch list #8: #qMember / #qTicker are plain rounded fields now —
      no leading icon glyph on desktop or mobile (id/oninput/aria-label on the
      <input> untouched). */
@@ -1115,14 +1136,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
-  .feed-source-note { margin-top:-6px; margin-bottom:12px; }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
-     toolbars onto one row — timeframe pill, segmented groups + ⓘ, the search
-     fields + Search button, then the $ pill right-aligned. display:contents
-     on both toolbar divs flattens their EXISTING direct children into this
-     flex row (no DOM nodes move, no wrapper added around them), so the
-     <=768px ID-scoped #feedExtraFilters grid (DO-NOT-BREAK) is completely
-     unaffected — this whole block simply doesn't apply there. */
+     toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
+     search fields + Search button. display:contents on both toolbar divs
+     flattens their EXISTING direct children into this flex row (no DOM nodes
+     move, no wrapper added around them), so the <=768px ID-scoped
+     #feedExtraFilters grid (DO-NOT-BREAK) is completely unaffected — this
+     whole block simply doesn't apply there. (Owner follow-up batch #21/#23:
+     the $ pill that used to close this row is gone — no orphaned auto-margin
+     or trailing gap left behind; #feedStats is now the last item.) */
   @media (min-width: 769px) {
     .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
     .feed-toolbars #feedSharedFilters,
@@ -1133,9 +1155,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .feed-toolbars #qTickerField { order:4; }
     .feed-toolbars #searchToggle { order:5; }
     .feed-toolbars #feedStats { order:6; }
-    /* .pill-select.pill-amt keeps its own margin-left:auto (unchanged), which
-       now pushes it to the right edge of the WHOLE merged row. */
-    .feed-toolbars .pill-select.pill-amt { order:7; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1342,7 +1361,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        generic .toolbar input/select/.btn shorthand above already fits it. */
     .toolbar .icon-field { width: 100%; }
     .toolbar .pill-select-el { padding: 8px 26px 8px 30px; }
-    .toolbar .pill-select.pill-amt .pill-select-el { padding: 8px 26px 8px 9px; }
     /* Issue #1529: search-this-page button left, "N trades" count right, on
        their own row below the two full-width text fields (iOS-parity count
        placement — see .feed-stats above). */
@@ -1356,6 +1374,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
     .feed-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .feed-stats .stat-today { display: none; }
+    /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
+       party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
+       (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
+       2 direct children remain: the timeframe pill and .filter-groups. ID
+       selectors (not .toolbar/.shared-filters classes) so this reliably wins
+       regardless of source order against the ≤720px .toolbar re-flex below
+       (the CSS-cascade invariant every mobile rule here must respect). Line
+       1 = timeframe pill; .filter-groups is forced flex-basis:100% so it
+       always wraps to its own line 2, and its own children stay nowrap so
+       the 3 segmented groups + ⓘ never wrap further. */
+    #feedSharedFilters, #trendsSharedFilters {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    }
+    #feedSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 1 auto; }
+    #feedSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
+      flex: 1 1 100%; width: 100%; display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 4px;
+    }
+    #feedSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
+    #feedSharedFilters .branch-toggle, #feedSharedFilters .party-chip, #feedSharedFilters .side-chip,
+    #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
+      min-width: 30px; padding: 0 6px;
+    }
+    #feedSharedFilters .filters-info-wrap .branch-info, #trendsSharedFilters .filters-info-wrap .branch-info {
+      width: 26px; height: 26px; font-size: 15px;
+    }
     .search-panel.open {
       position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
       display: grid; grid-template-columns: 1fr; z-index: 44; max-height: 58vh; overflow:auto;
@@ -1394,14 +1437,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
-    /* Phones: abbreviate politician counts everywhere in Trends (tables + cards). */
-    #view-trends .u-full { display: none; }
-    #view-trends .u-abbr { display: inline; }
     /* "What Congress Is Trading" is the densest row; on phones drop the gross
        Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
        signed net-flow column isn't clipped. Other tables keep their volume. */
     #trTickers td.est, #tableTrTickers th.est { display: none; }
-    .cluster-grid { grid-template-columns: 1fr; }
+    /* Owner follow-up batch #14: 2-up (not 1fr) so two Consensus Moves cards
+       fit side-by-side on mobile — paired with the party-name abbreviation
+       swap below (Democrats->Dems, Republicans->Reps) that frees the width. */
+    .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .party-full { display: none; }
+    .party-abbr { display: inline; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -1500,7 +1545,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: var(--text);
 }
 #view-trends details.trends-fold > summary::-webkit-details-marker { display: none; }
-#view-trends details.trends-fold > summary::before {
+#view-trends details.trends-fold > summary::marker { content: ''; }
+/* Owner follow-up batch #11: the chevron used to be a ::before, which shifted
+   the title text itself ~18px right of its sibling h3.tf-h headings (the
+   "stray disclosure bullet [that] indents the heading oddly"). Moving it to
+   ::after keeps the expand/collapse affordance but puts it AFTER the title
+   text, so the text itself starts flush with every other section heading. */
+#view-trends details.trends-fold > summary::after {
   content: '▸';
   display: inline-block;
   font-size: 12px;
@@ -1508,7 +1559,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   transition: transform 0.15s ease;
   flex: 0 0 auto;
 }
-#view-trends details.trends-fold[open] > summary::before { transform: rotate(90deg); }
+#view-trends details.trends-fold[open] > summary::after { transform: rotate(90deg); }
 #view-trends h3.tf-h .chip,
 #view-trends h3.tf-h .tf-chip,
 #view-trends h3.tf-h .info-tip,
@@ -1956,7 +2007,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=5" data-src-dark="/assets/brand-logo-dark.png?v=18" data-src-light="/assets/brand-logo-light.png?v=5" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=19" data-src-dark="/assets/brand-logo-dark.png?v=18" data-src-light="/assets/brand-logo-light.png?v=19" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -2029,21 +2080,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <span class="pill-select pill-amt">
-        <select id="qMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();">
-          <option value="">Any $</option>
-          <option value="1001">$1k+</option>
-          <option value="15001">$15k+</option>
-          <option value="50001">$50k+</option>
-          <option value="100001">$100k+</option>
-          <option value="250001">$250k+</option>
-          <option value="500001">$500k+</option>
-          <option value="1000001">$1m+</option>
-          <option value="5000001">$5m+</option>
-          <option value="25000001">$25m+</option>
-          <option value="50000001">$50m+</option>
-        </select>
-      </span>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="feedExtraFilters">
@@ -2059,11 +2095,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     </div>
-    <!-- Owner punch list #3: the Primary Only / All Data source-mode toggle used
-         to live inside the big Trends disclaimer banner (now removed). It's a
-         real, persisted feature (not just disclaimer copy), so it moves here —
-         compact, right where it actually applies (the Trades feed). -->
-    <p class="note feed-source-note" id="feedSourceNote">Showing <button type="button" class="source-mode-btn" data-source-mode="primary" aria-pressed="false">Primary Only</button> (de-duplicated) by default &middot; <button type="button" class="source-mode-btn" data-source-mode="all" aria-pressed="false">All Data</button> can double-count trades present in both the primary and historic sets</p>
     <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
       <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
       <p class="note" style="margin:0 0 10px">Optional date range (trade date). Full-history export is Premium.</p>
@@ -2178,21 +2209,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <span class="pill-select pill-amt">
-        <select id="trMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)">
-          <option value="">Any $</option>
-          <option value="1001">$1k+</option>
-          <option value="15001">$15k+</option>
-          <option value="50001">$50k+</option>
-          <option value="100001">$100k+</option>
-          <option value="250001">$250k+</option>
-          <option value="500001">$500k+</option>
-          <option value="1000001">$1m+</option>
-          <option value="5000001">$5m+</option>
-          <option value="25000001">$25m+</option>
-          <option value="50000001">$50m+</option>
-        </select>
-      </span>
     </div>
     <!-- KPI strip -->
     <div class="tf-cap">Snapshot</div>
@@ -2212,7 +2228,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <option value="trades">Trades</option>
             <option value="members">Distinct Politicians</option>
 	            <option value="volume">Est. Volume</option>
-            <option value="netflow">Net $ Flow</option>
+            <option value="netflow">Net Flow</option>
           </select>
           <label class="lbl" style="margin-left:8px">Asset Type</label>
           <select id="trTickerAsset" title="Filter by Asset Type">
@@ -2229,7 +2245,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                 <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
                 <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
@@ -2264,15 +2280,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
+      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em>  <span class="chip" id="trClusterHint"></span></h3>
+      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
     <!-- Buys vs sells over time -->
     <div class="section">
       <div class="tchart-head">
-        <h3 class="tf-h" style="margin:0">Buys vs Sells Over Time</h3>
+        <h3 class="tf-h" style="margin:0">Buys vs Sells</h3>
         <div class="tchart-controls">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
             <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
@@ -2285,7 +2301,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <p class="sub" id="trTimeSub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
+      <p class="sub" id="trTimeSub">The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
     </div>
@@ -2294,12 +2310,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="trend-grid2">
       <div class="section">
         <h3 class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
+        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data).</p>
         <div id="trSectorFlow"></div>
       </div>
       <div class="section">
         <h3 class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
         <div id="trCapFlow"></div>
       </div>
     </div>
@@ -2307,7 +2322,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
       <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>average</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <em>disclosed</em>, shown as an <strong>average</strong> relative return <strong>(if returns equal the S&amp;P then 0%)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
@@ -2321,7 +2336,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="trend-side-stack">
         <div class="section">
           <h3 class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-          <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
+          <p class="sub">Buy / sell mix and estimated net flow per party.</p>
           <div id="trParties"></div>
         </div>
         <div class="section">
@@ -2345,7 +2360,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
         <div class="timeliness-panel">
           <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Avg Lag)</h3>
-          <div class="late-filers-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
+          <div class="late-filers-wrap"><table>
+            <thead><tr><th>Politician</th><th>Avg</th><th>Max</th><th>Late</th></tr></thead>
+            <tbody id="trLateFilers"></tbody>
+          </table></div>
         </div>
       </div>
     </details>
@@ -2749,39 +2767,13 @@ var feedAbort = null;
 var feedSearchTimer = null;
 var realDataLoaded = false;
 var feedGated = false;     // server says this visitor sees the limited free window
-/* Feed source mode ("Primary Only" vs "All Data") — issue #1453: the corpus
-   holds both live "primary" rows and historic "seed_dataset" backfill rows,
-   which can double-count the same real-world trade. Primary Only (the
-   de-duplicated view) is now the default for first-time visitors; an
-   explicit choice — made via the toggle embedded in the Trends disclaimer —
-   is persisted and always wins over the default. Filters the client-side
-   Trades feed (TRADES) only; server totals/KPIs are unaffected. */
-var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';
+/* Feed source mode — owner follow-up batch #2: the "Primary Only" / "All
+   Data" toggle and its disclaimer note were removed (dedup is the only
+   sensible view). feedSourceMode() is kept so existing fetch call sites
+   stay untouched, but it now always returns the de-duplicated default. */
 function feedSourceMode() {
-  try {
-    var v = localStorage.getItem(FEED_SOURCE_MODE_KEY);
-    if (v === 'all' || v === 'primary') return v;
-  } catch (e) {}
   return 'primary';
 }
-function setFeedSourceMode(mode) {
-  mode = mode === 'all' ? 'all' : 'primary';
-  try { localStorage.setItem(FEED_SOURCE_MODE_KEY, mode); } catch (e) {}
-  syncFeedSourceModeUI();
-  renderFeed();
-}
-function syncFeedSourceModeUI() {
-  var mode = feedSourceMode();
-  document.querySelectorAll('.source-mode-btn[data-source-mode]').forEach(function (btn) {
-    var on = btn.getAttribute('data-source-mode') === mode;
-    btn.classList.toggle('active', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-document.addEventListener('click', function (e) {
-  var srcBtn = e.target && e.target.closest ? e.target.closest('.source-mode-btn[data-source-mode]') : null;
-  if (srcBtn) setFeedSourceMode(srcBtn.getAttribute('data-source-mode'));
-});
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
@@ -3595,7 +3587,6 @@ var FEED_COLS = [
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Size', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
@@ -3653,6 +3644,10 @@ function parsePx(v) {
   var n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 }
+/* Columns that should absorb leftover width at wide desktop viewports instead
+   of leaving dead space after the last column (owner follow-up batch #15,
+   consistent with #13's "Politician/Asset get the flexible majority"). */
+var FEED_FLEX_COLS = ['member', 'asset'];
 function syncFeedTableWidth() {
   var table = el('feedTable'); if (!table) return;
   var ths = Array.prototype.slice.call(document.querySelectorAll('#feedHead th'));
@@ -3663,13 +3658,36 @@ function syncFeedTableWidth() {
     var w = parsePx(ths[i].style.width) || ths[i].offsetWidth || minColWidth(ths[i].dataset.col);
     w = Math.max(minColWidth(ths[i].dataset.col), Math.round(w));
     ths[i].style.width = w + 'px';
-    if (cols[i]) cols[i].style.width = w + 'px';
     total += w;
   }
   var wrap = table.closest ? table.closest('.table-wrap') : null;
   // Subtract the 60px padding-right so the table doesn't bleed into the padding space.
-  var min = wrap ? (wrap.clientWidth - 60) : 0;
-  table.style.width = Math.max(total, min) + 'px';
+  var avail = wrap ? (wrap.clientWidth - 60) : 0;
+  // Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
+  // ~1920px) the compact fixed-width columns (#13) no longer sum to the
+  // card's full width, which used to show up as a dead strip of empty space
+  // (plus the card's own drop shadow) after the last column. Give any
+  // leftover width to the flexible columns — Politician/Asset — instead.
+  // Idempotent: once total==avail this no-ops on the next call (window
+  // resize, re-render), so it never runs away.
+  if (avail > total) {
+    var extra = avail - total;
+    var flexThs = ths.filter(function (th) { return FEED_FLEX_COLS.indexOf(th.dataset.col) >= 0; });
+    if (flexThs.length) {
+      var each = Math.floor(extra / flexThs.length);
+      var remainder = extra - each * flexThs.length;
+      for (var j = 0; j < flexThs.length; j++) {
+        var add = each + (j === 0 ? remainder : 0);
+        var nw = parsePx(flexThs[j].style.width) + add;
+        flexThs[j].style.width = nw + 'px';
+      }
+      total = avail;
+    }
+  }
+  for (var k = 0; k < ths.length; k++) {
+    if (cols[k]) cols[k].style.width = ths[k].style.width;
+  }
+  table.style.width = Math.max(total, avail) + 'px';
 }
 
 /* Render the header from the registry, (re)attach sort handlers, and reset the
@@ -3862,7 +3880,12 @@ function updateFeedCountMsg(shown) {
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths-v8';
+/* Owner follow-up batch #13: version-bumped v8->v9 so the rebalanced desktop
+   column defaults (Politician/Asset flexible, Date/Type/Amount/Country
+   compact, Size column removed — #22/#24) actually take effect for every
+   visitor who never intentionally dragged a column; the resizable feature
+   itself (drag-to-resize, per-column persistence) is otherwise unchanged. */
+var COL_WIDTH_KEY = 'feed-col-widths-v9';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -3896,7 +3919,6 @@ function minColWidth(key) {
     owner: 50,
     chamber: 54,
     sector: 58,
-    marketcap: 66,
     country: 54,
     conf: 56,
     latency: 44
@@ -3922,12 +3944,24 @@ function initColumnResize() {
   var ths = document.querySelectorAll('#feedHead th');
   var saved = loadColWidths();
   // Freeze current auto widths (or restore saved ones) so switching the table to
-  // fixed layout doesn't visually jump. Wide auto-sized columns are capped to a
-  // compact default (Asset fits the longest name otherwise) — short entries then
-  // show in full, long ones clip to an ellipsis, and any column stays draggable.
+  // fixed layout doesn't visually jump. Owner follow-up batch #13/#24: the old
+  // asset cap (40-54px) was a bug — it sat BELOW asset's own 140px floor
+  // (minColWidth), so Asset was silently pinned to exactly 140px regardless of
+  // content, which is nowhere near enough for a ticker + company name. Fixed
+  // by giving Politician/Asset a genuinely content-responsive range (with a
+  // floor high enough that real names — "Shelley Moore Capito", "David H.
+  // McCormick" — never ellipsize at typical desktop widths), while Date/Type/
+  // Amount/Country (content is short and uniform) get tight compact-fit caps
+  // so they stop stealing width from the two columns that actually need it.
+  // The (now-removed, #22) Size column's share folds into this too. Any column
+  // stays draggable regardless of these defaults.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 48, 40, 54),
-    member: estimatedColWidth('member', 220, 160, 286),
+    asset: estimatedColWidth('asset', 220, 190, 320),
+    member: estimatedColWidth('member', 240, 210, 320),
+    traded: 96,
+    type: 60,
+    amount: 130,
+    country: 90,
     latency: 140
   };
   for (var i = 0; i < ths.length; i++) {
@@ -4185,9 +4219,9 @@ function feedQueryParams() {
   var ty = selectedSideParam('qSideGroup');
   if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var amtEl = el('qMinAmt');
-  var amt = amtEl ? String(amtEl.value || '').trim() : '';
-  if (amt) p.set('minAmount', amt);
+  // Owner follow-up batch #21: the $ threshold UI pill is gone (no $/size
+  // dropdown on any platform) — minAmount is no longer sent from here. The
+  // server still accepts ?minAmount= for direct API consumers.
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
   // Shared timeframe → from/to when calendar year (export dialog dates win if set)
   var winEl = el('feedGlobalWindow') || el('trGlobalWindow');
@@ -7907,6 +7941,17 @@ function splitBar(buys, sells) {
 }
 /* "1 Democrat" / "2 Democrats" — pluralize a count + noun for party breakdowns. */
 function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n === 1 ? '' : 's'); }
+/* Owner follow-up batch #14: Consensus Moves cards abbreviate "Democrats"/
+   "Republicans" to "Dems"/"Reps" on mobile (so two cards fit per row) while
+   desktop keeps the full word — a responsive full/abbr span pair (CSS-only
+   toggle, see .party-full/.party-abbr), never JS branching, so it stays
+   correct across a live resize. full/abbr are static strings we control, so
+   this is safe to inline without esc(). */
+function partyCountHtml(n, full, abbr) {
+  n = Number(n || 0);
+  var suf = n === 1 ? '' : 's';
+  return n + ' <span class="party-full">' + full + suf + '</span><span class="party-abbr">' + abbr + suf + '</span>';
+}
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
 /* Spacious surfaces (KPI strip, flow chips, drawers): always spell out. */
@@ -7916,13 +7961,6 @@ function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
   return buys + ' buy' + (buys === 1 ? '' : 's') + ' / ' + sells + ' sell' + (sells === 1 ? '' : 's');
 }
-/* Word only — CSS .u-full / .u-abbr picks "politicians" vs "pols" by available space. */
-function polWord(n) {
-  n = Number(n || 0);
-  return '<span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">' + (n === 1 ? 'pol' : 'pols') + '</span>';
-}
-/* Table / count cell: "3 politicians" with room, "3 pols" when the column is tight. */
-function polCell(n) { n = Number(n || 0); return n + ' ' + polWord(n); }
 	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
@@ -8573,7 +8611,7 @@ function loadTrTickers() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
-        '<td class="muted">' + polCell(r.memberCount) + '</td>' +
+        '<td class="muted">' + (r.memberCount || 0) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
@@ -8593,7 +8631,7 @@ function loadTrTrending() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
-        '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
+        '<td class="muted">' + (r.recentMembers || 0) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
 }
@@ -8603,7 +8641,7 @@ function loadTrClusters() {
   box.innerHTML = '<div class="chip">Loading…</div>';
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
-    el('trClusterHint').textContent = '· ' + cs.length + ' found';
+    el('trClusterHint').textContent = cs.length + ' found';
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
@@ -8613,7 +8651,7 @@ function loadTrClusters() {
           '" title="Open ' + esc(fmtName(m.fullName || m.filerId)) + '">' + av + '</span>';
       }).join('');
       var dir = c.txType === 'B' || c.txType === 'P' ? 'BOUGHT' : 'SOLD';
-      var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
+      var parties = partyCountHtml(c.parties.D, 'Democrat', 'Dem') + ', ' + partyCountHtml(c.parties.R, 'Republican', 'Rep') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
       // minDate can be absent on malformed/partial rows; drop the leading
       // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
@@ -8621,8 +8659,8 @@ function loadTrClusters() {
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company ' + esc(c.ticker) + '" data-asset="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> ' + polWord(c.memberCount) + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
-        '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
+        '<div><strong>' + c.memberCount + '</strong> politician' + (c.memberCount === 1 ? '' : 's') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + parties + '</div>' +
         '<div class="muted" style="margin-top:2px">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
     }).join('');
@@ -8635,8 +8673,8 @@ function loadTrClusters() {
 var trTimeWindow = '1825d';
 var trTimeMetric = 'count';
 var TR_TIME_SUB = {
-  count: 'Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
-  dollars: 'Estimated dollar volume (STOCK Act bracket midpoints) bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
+  count: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
+  dollars: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
 };
 function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
 function setTrTimeWin(w) {
@@ -9331,10 +9369,13 @@ function openTrade(row) {
   // of sitting in its own row further down in Trade Details.
   var ownerText = ownerLabel(row.owner);
   var ownerBadge = ownerText ? '<span class="drawer-trade-owner muted">' + esc(ownerText) + '</span>' : '';
+  // Owner follow-up batch #1 (P1 regression): the badge must be a flex SIBLING
+  // after the ellipsized name div, not appended inside it — otherwise a long
+  // name (e.g. "David H. McCormick") ellipsizes and swallows the badge.
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -9764,14 +9805,6 @@ function onSharedWindowChange(src) {
   if (typeof loadTrends === 'function') loadTrends();
   if (typeof resetFeedPage === 'function') resetFeedPage();
 }
-function onSharedMinAmtChange(src) {
-  var v = src && src.value != null ? src.value : '';
-  ['qMinAmt', 'trMinAmt'].forEach(function (id) {
-    var n = el(id);
-    if (n && n !== src) n.value = v;
-  });
-  if (typeof loadTrends === 'function') loadTrends();
-}
 function openExportCsvDialog() {
   if (!ME.user) {
     openLogin();
@@ -9803,7 +9836,6 @@ function exportCsv() {
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var minAmt = el('qMinAmt') && el('qMinAmt').value; if (minAmt) p.set('minAmount', minAmt);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
   // Map shared timeframe into from when calendar year selected and no explicit from
@@ -10145,7 +10177,6 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
-syncFeedSourceModeUI();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();

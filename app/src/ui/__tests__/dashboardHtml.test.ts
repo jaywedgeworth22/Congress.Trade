@@ -443,16 +443,27 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
-  it('spells out politicians with room and allows pol/pols when space is tight', () => {
-    expect(DASHBOARD_HTML).toContain('function polWord(n)');
-    expect(DASHBOARD_HTML).toContain('function polCell(n)');
-    expect(DASHBOARD_HTML).toContain('class="u-full"');
-    expect(DASHBOARD_HTML).toContain('class="u-abbr"');
-    expect(DASHBOARD_HTML).toContain("n === 1 ? 'pol' : 'pols'");
-    expect(DASHBOARD_HTML).toContain('polWord(c.memberCount)');
-    // Dense tables / narrow cards / phones flip to abbr; spacious defaults keep full.
-    expect(DASHBOARD_HTML).toContain('@container ccard (max-width: 280px)');
-    expect(DASHBOARD_HTML).toContain('#view-trends table .u-abbr');
+  it('owner follow-up batch #6: removes the "pols" abbreviation — bare numbers in Politicians-headed table columns, full word only in prose', () => {
+    // The u-full/u-abbr responsive-word mechanism and its polWord/polCell
+    // helpers are gone entirely — dead once nothing renders "pol(s)" anymore.
+    expect(DASHBOARD_HTML).not.toContain('function polWord(n)');
+    expect(DASHBOARD_HTML).not.toContain('function polCell(n)');
+    expect(DASHBOARD_HTML).not.toContain('class="u-full"');
+    expect(DASHBOARD_HTML).not.toContain('class="u-abbr"');
+    expect(DASHBOARD_HTML).not.toContain("n === 1 ? 'pol' : 'pols'");
+    expect(DASHBOARD_HTML).not.toContain('@container ccard (max-width: 280px)');
+    expect(DASHBOARD_HTML).not.toContain('.u-full {');
+    expect(DASHBOARD_HTML).not.toContain('.u-abbr {');
+    // tableTrTickers' "Politicians" column and tableTrTrending's "Recent
+    // Politicians" column now render a bare number — no word, no abbr.
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.memberCount || 0) + '</td>' +");
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.recentMembers || 0) + '</td></tr>';");
+    // Consensus Moves cluster cards are a prose/sub-caption context — the
+    // full word "politicians" always spells out, never abbreviates.
+    expect(DASHBOARD_HTML).toContain("politician' + (c.memberCount === 1 ? '' : 's') + ' · '");
+    // Spacious surfaces (KPI strip, flow chips, drawers) keep their own
+    // always-spell-out helper untouched.
+    expect(DASHBOARD_HTML).toContain("function polFull(n)");
   });
 
   it('defaults theme to system and offers Light/Dark/System controls like Socratic.Trade', () => {
@@ -569,9 +580,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v3'");
     expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v3'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
+    // Owner follow-up batch #13: the old asset cap (40-54px) sat below
+    // asset's own 140px floor, silently pinning it there regardless of
+    // content — replaced with a genuinely content-responsive range.
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 220, 190, 320)");
     expect(DASHBOARD_HTML).not.toContain('width: max-content');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v8');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
@@ -1269,13 +1284,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('id="trDisclaimer"');
     expect(DASHBOARD_HTML).not.toContain('For Educational Use, Not Investment Advice');
     expect(DASHBOARD_HTML).not.toContain('function toggleDisclaimer(');
-    // Primary Only / All Data is a real, persisted toggle (issue #1453) — it
-    // used to live inline in that banner; it now lives in a compact note
-    // directly on the Trades feed instead of disappearing with the banner.
-    expect(DASHBOARD_HTML).toContain('id="feedSourceNote"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
-    expect(DASHBOARD_HTML).toContain('>Primary Only<');
+    // Owner follow-up batch #2: the Primary Only / All Data source-mode note
+    // and toggle are gone entirely — dedup is the only sensible view.
+    expect(DASHBOARD_HTML).not.toContain('id="feedSourceNote"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="all"');
     expect(DASHBOARD_HTML).not.toContain('<em>Live Only</em>');
     expect(DASHBOARD_HTML).toContain('function feedSourceMode() {');
     expect(DASHBOARD_HTML).toContain('info-tip');
@@ -1962,11 +1975,27 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(pluralCount(1, 'Other')).toBe('1 Other');
   });
 
-  it('builds cluster-card party breakdowns from pluralCount instead of hardcoded plurals', () => {
+  it('builds cluster-card party breakdowns from partyCountHtml/pluralCount instead of hardcoded plurals', () => {
+    // Owner follow-up batch #14: Democrat/Republican now render through the
+    // responsive full/abbr helper (Dems/Reps on mobile — see its own test);
+    // Other stays on the plain always-full pluralCount helper.
     expect(DASHBOARD_HTML).toContain(
-      "var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');",
+      "var parties = partyCountHtml(c.parties.D, 'Democrat', 'Dem') + ', ' + partyCountHtml(c.parties.R, 'Republican', 'Rep') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');",
     );
     expect(DASHBOARD_HTML).not.toContain("c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans'");
+  });
+
+  it('owner follow-up batch #14: Consensus Moves cards abbreviate Democrats/Republicans to Dems/Reps on mobile (2-up), full word on desktop', () => {
+    expect(DASHBOARD_HTML).toContain('function partyCountHtml(n, full, abbr) {');
+    expect(DASHBOARD_HTML).toContain(
+      "return n + ' <span class=\"party-full\">' + full + suf + '</span><span class=\"party-abbr\">' + abbr + suf + '</span>';",
+    );
+    // Desktop default: full word shown, abbreviation hidden.
+    expect(DASHBOARD_HTML).toContain('.party-abbr { display: none; }');
+    // Mobile (<=768px, same breakpoint as the 2-up grid change): swap.
+    expect(DASHBOARD_HTML).toContain('.cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }');
+    expect(DASHBOARD_HTML).toContain('.party-full { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.party-abbr { display: inline; }');
   });
 
   // ---- 3. Timeframe label rendering -----
@@ -2435,19 +2464,17 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
   });
 
-  it('right-aligns the $ threshold select and relabels it with k/m suffixes (values unchanged)', () => {
-    expect(DASHBOARD_HTML).toContain('.min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }');
-    const labels = ['Any $', '$1k+', '$15k+', '$50k+', '$100k+', '$250k+', '$500k+', '$1m+', '$5m+', '$25m+', '$50m+'];
-    const values = ['', '1001', '15001', '50001', '100001', '250001', '500001', '1000001', '5000001', '25000001', '50000001'];
-    for (const id of ['qMinAmt', 'trMinAmt']) {
-      const block = DASHBOARD_HTML.match(new RegExp('<select id="' + id + '"[\\s\\S]*?</select>'));
-      expect(block, id).not.toBeNull();
-      labels.forEach((label, i) => {
-        expect(block![0], id + ' -> ' + label).toContain('<option value="' + values[i] + '">' + label + '</option>');
-      });
-      // Old $1,001+ style labels are gone.
-      expect(block![0]).not.toMatch(/\$\d{1,3},\d{3}/);
-    }
+  it('owner follow-up batch #21: deletes the $-threshold filter pill entirely (no $/size dropdown on any platform)', () => {
+    expect(DASHBOARD_HTML).not.toContain('.min-amt-select');
+    expect(DASHBOARD_HTML).not.toContain('id="qMinAmt"');
+    expect(DASHBOARD_HTML).not.toContain('id="trMinAmt"');
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
+    expect(DASHBOARD_HTML).not.toContain('function onSharedMinAmtChange');
+    expect(DASHBOARD_HTML).not.toContain('Any $');
+    // The server-side query param can remain for direct API consumers — the
+    // client just never sends it anymore since there's no UI control.
+    expect(DASHBOARD_HTML).not.toContain("p.set('minAmount', amt)");
+    expect(DASHBOARD_HTML).not.toContain("p.set('minAmount', minAmt)");
   });
 
   it('moves Columns/Rows to the pager bar and the CSV button to the gate-note area', () => {
@@ -2511,14 +2538,16 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('if (!PUBLIC_STREAM_ENABLED || typeof EventSource === \'undefined\') { startPolling(); return; }');
   });
 
-  it('defaults the Trades feed to the de-duplicated Primary Only source mode, persisting an explicit choice', () => {
+  it('always shows the de-duplicated Primary Only source mode — the All Data toggle is gone (owner follow-up batch #2)', () => {
     expect(DASHBOARD_HTML).toContain("function feedSourceMode() {");
     expect(DASHBOARD_HTML).toContain("return 'primary';");
-    expect(DASHBOARD_HTML).toContain("var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';");
     expect(DASHBOARD_HTML).toContain("if (primaryOnly && r.source === 'seed_dataset') return false;");
-    expect(DASHBOARD_HTML).toContain('data-source-mode="primary"');
-    expect(DASHBOARD_HTML).toContain('data-source-mode="all"');
-    expect(DASHBOARD_HTML).toContain('function setFeedSourceMode(mode)');
+    expect(DASHBOARD_HTML).not.toContain('FEED_SOURCE_MODE_KEY');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="primary"');
+    expect(DASHBOARD_HTML).not.toContain('data-source-mode="all"');
+    expect(DASHBOARD_HTML).not.toContain('function setFeedSourceMode(mode)');
+    expect(DASHBOARD_HTML).not.toContain('function syncFeedSourceModeUI(');
+    expect(DASHBOARD_HTML).not.toContain('.source-mode-btn');
   });
 
   it('accepts visible tab names as ?view= aliases and falls back to Trends (not last-viewed) on unknown values', () => {
@@ -2585,13 +2614,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('function initSideChips(');
   });
 
-  it('wraps Timeframe + $ Minimum selects in icon+chevron pills without touching id/onchange/options', () => {
+  it('wraps the Timeframe select in an icon+chevron pill without touching id/onchange/options (owner follow-up batch #21 removed the $ Minimum pill entirely)', () => {
     const document = parse(DASHBOARD_HTML);
     for (const [selectId, wrapperClass] of [
       ['feedGlobalWindow', 'pill-cal'],
       ['trGlobalWindow', 'pill-cal'],
-      ['qMinAmt', 'pill-amt'],
-      ['trMinAmt', 'pill-amt'],
     ] as const) {
       const select = document.querySelector('#' + selectId);
       expect(select, selectId).not.toBeNull();
@@ -2602,15 +2629,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
       expect((wrapper as any).classList.contains('pill-select'), selectId).toBe(true);
       expect((wrapper as any).classList.contains(wrapperClass), selectId).toBe(true);
     }
-    // onchange handlers + id-based wiring (getTrWindow/onSharedMinAmtChange/etc.)
-    // are byte-for-byte unchanged.
+    // onchange handler + id-based wiring is byte-for-byte unchanged.
     expect(DASHBOARD_HTML).toContain('onchange="onSharedWindowChange(this)"');
-    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this); resetFeedPage();"');
-    expect(DASHBOARD_HTML).toContain('onchange="onSharedMinAmtChange(this)"');
-    // .tr-window-select / .shared-window / .min-amt-select stay on the <select>
-    // itself (still queried directly by JS) — pill-select-el is additive.
+    // .tr-window-select / .shared-window stay on the <select> itself (still
+    // queried directly by JS) — pill-select-el is additive.
     expect(DASHBOARD_HTML).toContain('class="tr-window-select shared-window pill-select-el"');
-    expect(DASHBOARD_HTML).toContain('class="min-amt-select pill-select-el"');
     // New pill CSS resolves through the shared tokens, with a dark-mode chevron swap.
     expect(DASHBOARD_HTML).toContain('.pill-select-el {');
     expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-pill); font:600 12px var(--sans);');
@@ -3244,14 +3267,16 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(wrapMatch).not.toBeNull();
     expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .feed-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedSharedFilters,\n    .feed-toolbars #feedExtraFilters { display:contents; }');
-    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats, then $ pill.
+    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats. (The
+    // $ pill that used to close this row is gone — owner follow-up batch
+    // #21/#23 — #feedStats is now the last item, no orphaned order/gap.)
     expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars .filter-groups { order:2; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars #qMemberField { order:3; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars #qTickerField { order:4; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars #searchToggle { order:5; }');
     expect(DASHBOARD_HTML).toContain('.feed-toolbars #feedStats { order:6; }');
-    expect(DASHBOARD_HTML).toContain('.feed-toolbars .pill-select.pill-amt { order:7; }');
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #feedExtraFilters grid (both the
     // direct-child structure and its CSS) is byte-for-byte unchanged —
     // display:contents only ever fires at >=769px, never overlapping it.
@@ -3277,14 +3302,13 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(trendsRow![1]).toContain('id="trGlobalWindow"');
   });
 
-  it('#11 removes the redundant "$" prefix icon from the collapsed amount pill (options already show $)', () => {
+  it('#11 the amount pill (and its "$" prefix icon) is gone entirely — owner follow-up batch #21 removed the $ Minimum control altogether', () => {
     expect(DASHBOARD_HTML).not.toContain('.pill-select.pill-amt::before');
     expect(DASHBOARD_HTML).not.toMatch(/pill-amt[^{]*::before\s*\{\s*content:"\$"/);
-    // The calendar pill keeps its icon — only pill-amt's icon goes away.
+    expect(DASHBOARD_HTML).not.toContain('pill-amt');
+    // The calendar pill keeps its icon.
     expect(DASHBOARD_HTML).toContain('.pill-select.pill-cal::before { content:"📅"; }');
-    expect(DASHBOARD_HTML).toContain('.pill-select.pill-amt .pill-select-el { padding-left:14px; }');
-    // Options already carry their own $ (unchanged) — "Any $" reads standalone now.
-    expect(DASHBOARD_HTML).toContain('<option value="">Any $</option>');
+    expect(DASHBOARD_HTML).not.toContain('<option value="">Any $</option>');
   });
 
   it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators', () => {
@@ -3315,11 +3339,38 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   it('#13(a)/(c) drops the POLITICIAN/ASSET eyebrow labels and moves Owner up beside the name', () => {
     expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Politician</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="eyebrow">Asset</span>');
-    expect(DASHBOARD_HTML).toContain(".drawer-trade-owner { display:inline-block; margin-left:6px;");
+    expect(DASHBOARD_HTML).toContain(".drawer-trade-owner { display:inline-block; flex:0 0 auto;");
     expect(DASHBOARD_HTML).toContain("var ownerBadge = ownerText ? '<span class=\"drawer-trade-owner muted\">' + esc(ownerText) + '</span>' : '';");
-    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';");
     // Owner no longer has its own Trade Details row.
     expect(DASHBOARD_HTML).not.toContain("kvRow('Owner', esc(ownerLabel(row.owner) || '—'))");
+  });
+
+  it('owner follow-up batch #1 (P1 regression): the owner badge is a flex SIBLING after the ellipsized name div, not appended inside it — a long name must not hide it', () => {
+    // The old shipped bug appended ownerBadge INSIDE the ellipsized <div>,
+    // so any longish name (e.g. "David H. McCormick") clipped the badge
+    // entirely. It must now sit as its own element after that div closes,
+    // inside .member-cell (a flex row with gap — see the CSS rule below).
+    expect(DASHBOARD_HTML).not.toContain(
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';"
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
+    );
+    // Structural check: inside the generated personCard markup, the name div
+    // (which carries the ellipsis) must fully close with </div> BEFORE the
+    // <span class="drawer-trade-owner ...> badge opens — i.e. the badge is
+    // outside, not nested inside, the ellipsized div.
+    const personCardMatch = DASHBOARD_HTML.match(
+      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
+    );
+    expect(personCardMatch).toBeTruthy();
+    const nameDivCloseIdx = DASHBOARD_HTML.indexOf("memberVal + '</div>'");
+    const ownerBadgeUseIdx = DASHBOARD_HTML.indexOf('+ ownerBadge +', nameDivCloseIdx);
+    expect(nameDivCloseIdx).toBeGreaterThan(-1);
+    expect(ownerBadgeUseIdx).toBeGreaterThan(nameDivCloseIdx);
+    // .drawer-trade-owner must be flex:0 0 auto (never shrinks/wraps) so the
+    // name div (flex:1 1 auto + ellipsis) is what shrinks instead.
+    expect(DASHBOARD_HTML).toMatch(/\.drawer-trade-owner\s*\{[^}]*flex:0 0 auto;[^}]*\}/);
   });
 
   it('#13(b) renames the Trade Details "Politician" row to "Name" with a link chevron', () => {
