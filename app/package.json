@@ -1,6 +1,6 @@
 {
-  "name": "congress-feed",
-  "version": "0.1.0",
+  "name": "congress-trade",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "src/deno/main.ts",
