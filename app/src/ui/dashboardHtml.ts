@@ -29,6 +29,58 @@
 import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
 import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
+/**
+ * Filing Latency Comparison ("speed proof") section markup, shared between its
+ * two placements (owner decision):
+ *   - Trends tab: rendered at the BOTTOM, only when isLatencyAhead() (client
+ *     JS) says we're clearly ahead — never shown on Trades/feed.
+ *   - Admin tab: rendered at the TOP, ALWAYS (full comparison incl. BEHIND),
+ *     an operator diagnostic rather than a marketing module.
+ * Both copies are painted by the same renderSpeedProof() client function
+ * against distinct element ids so they can render independently.
+ */
+function speedProofSectionHtml(admin: boolean): string {
+  const sectionId = admin ? 'adminLatencySection' : 'trLatencySection';
+  const gridId = admin ? 'spGridAdmin' : 'spGrid';
+  const tableBodyId = admin ? 'speedTableBodyAdmin' : 'speedTableBody';
+  const updatedId = admin ? 'speedUpdatedAdmin' : 'speedUpdated';
+  const infoTip = admin
+    ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
+    : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
+  return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Trends: only when we're clearly ahead."} -->
+  <div class="section speed-proof" id="${sectionId}" style="margin-top:24px; padding:24px 20px;">
+    <div class="speed-head">
+      <div>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="${infoTip}" title="${infoTip}">ⓘ</span></h3>
+      </div>
+      <span class="note" id="${updatedId}" style="white-space:nowrap"></span>
+    </div>
+    <!-- Scorecard cards injected here by renderSpeedProof() -->
+    <div class="sp-grid" id="${gridId}">
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest Congressional trades. <strong>Lead and win rates use live new imports only</strong> &mdash; seed datasets and historical house/senate backfills are excluded. We still count a match if they listed the trade minutes or up to about two weeks before or after we did. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
+    <details class="speed-table" style="margin-top:8px">
+      <summary>Raw data table</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <tbody id="${tableBodyId}"></tbody>
+      </table></div>
+    </details>
+    <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+  </div>
+`;
+}
+
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -441,6 +493,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pager-controls button { border: none !important; border-radius: 0 !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   .pager select { padding:5px 9px; font-size:12px; }
+  /* Rows-per-page + Columns chooser live at the end of the bottom pager bar
+     (moved out of the toolbar so the toolbar stays filter-only). */
+  .pager-tools { display:flex; align-items:center; gap:8px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
   .switch span { position:absolute; inset:0; background: var(--panel-2); border:1px solid var(--border); border-radius:999px; cursor:pointer; transition:.2s; }
@@ -622,6 +677,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .chip { font-size:11px; color: var(--text-dim); }
   .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:19px 24px; margin-bottom:26px; }
   .disclaimer strong { color: var(--text); }
+  /* Primary Only / All Data feed source-mode toggle, inline in the disclaimer
+     sentence that already explains the two views (issue #1453). */
+  .source-mode-btn { display:inline; background:none; border:none; padding:0; margin:0; color:inherit; font:inherit; font-style:italic; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+  .source-mode-btn:hover { color:var(--accent); }
+  .source-mode-btn.active { text-decoration:none; font-weight:700; color:var(--text); }
   .disclaimer-toggle { display:none; }
   .disclaimer.collapsed { padding:0; }
   .disclaimer.collapsed .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:9px 14px; cursor:pointer; }
@@ -710,6 +770,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
   .feature-list { margin:0 0 16px; padding-left:18px; color:var(--text-dim); font-size:13px; line-height:1.55; }
   .clickable { cursor: pointer; }
+  /* Generic focus-visible ring for every keyboard-focusable entity target
+     (member/asset/ticker/trade). More specific selectors elsewhere (e.g.
+     #view-trends tr.clickable:focus-visible) intentionally win over this via
+     specificity where a richer, row-level focus treatment already exists. */
+  .clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .drawer-title-line.clickable:hover .tkr, .tkr.clickable:hover,
   .company-name.clickable:hover { text-decoration: underline; }
   .member-cell.clickable:hover, .fc-member.clickable:hover, .drawer-trade-party.clickable:hover { text-decoration: underline; }
@@ -753,6 +818,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   footer .footer-links a:hover { color: var(--accent); }
   /* ---- account control + auth/billing modals ---- */
   .acct { display:flex; align-items:center; gap:8px; }
+  .acct-desktop { display:flex; align-items:center; gap:8px; }
   .acct .email { font-size:12px; color:var(--text-dim); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:999px; border:1px solid var(--border); color:var(--text-dim); }
   .badge.premium { color:var(--good); border-color:color-mix(in srgb,var(--good) 45%,transparent); background:color-mix(in srgb,var(--good) 12%,transparent); }
@@ -792,6 +858,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Guest header theme control (signed-out) */
   .theme-guest { display:inline-flex; align-items:center; }
   .theme-guest .theme-seg { background:var(--panel-2); }
+  /* ---- Mobile header menu (<=720px) ----
+     Desktop keeps the full theme-toggle / Sign In / Upgrade cluster
+     (.acct-desktop). At <=720px that cluster is replaced by a single
+     hamburger button (.acct-hamburger) opening a dropdown with the same
+     controls, so the brand lockup never overlaps the header chrome
+     (issue #1456). .acct-mobile is hidden by default and only shown under
+     the mobile breakpoint (see the 720px media query near the bottom nav). */
+  .acct-mobile { display:none; position:relative; }
+  .acct-hamburger {
+    width:38px; height:38px; border:1px solid var(--border); border-radius:10px;
+    background:var(--panel); color:var(--text); font-size:18px; line-height:1;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+  }
+  .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); color:var(--accent); }
+  .acct-mobile-menu {
+    position:absolute; right:0; top:46px; z-index:60; min-width:220px;
+    max-width:min(300px, calc(100vw - 24px)); background:var(--panel);
+    border:1px solid var(--border); border-radius:12px; padding:8px;
+    box-shadow:0 14px 34px rgba(0,0,0,.4); display:none;
+  }
+  .acct-mobile-menu.open { display:grid; gap:4px; }
+  .acct-mobile-menu .btn { width:100%; justify-content:center; }
+  .acct-mobile-menu .badge { justify-self:start; margin:0 2px 2px; }
+  .acct-mobile-menu .menu { width:100%; }
+  .acct-mobile-menu .acct-menu-btn { width:100%; max-width:none; justify-content:space-between; }
+  .acct-mobile-menu .menu-pop { position:static; box-shadow:none; border:none; padding:4px 0 0; min-width:0; max-width:none; }
   html[data-theme="dark"] { color-scheme: dark; }
   html[data-theme="light"] { color-scheme: light; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
@@ -849,17 +941,39 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
-  /* ---- Branch and Party chip multi-select ---- */
-  /* Branch filter: one segmented H·S·P strip + a grouped info popover.
-     P = President (Executive). Per-letter titles cover desktop hover; the
-     popover is the tap-friendly explanation shared by mobile AND desktop. */
+  /* ---- Branch / Party / Type chip multi-select ---- */
+  /* Three segmented strips sit adjacent on the shared filter row: H·S·P
+     (branch), 🫏🐘🦅 (party), ▲▼⇄ (buy/sell/exchange). All three share the
+     exact same joined-segment treatment (single outer border, no internal
+     gaps, divider between buttons) so the row reads as one filter cluster.
+     One combined ⓘ (.filters-info-wrap) sits after them explaining every
+     pictograph — see qFiltersInfo / trFiltersInfo below. */
   .branch-filters { position:relative; display:flex; align-items:center; gap:6px; margin:0 4px; }
-  .branch-seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
-  .branch-toggle { min-width:34px; height:30px; border:none; background:transparent; color:var(--text-dim); font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; line-height:1; padding:0 10px; }
-  .branch-toggle + .branch-toggle { border-left:1px solid var(--border); }
-  .branch-toggle:hover { background:var(--panel-2); color:var(--text); }
-  .branch-toggle.on { background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--text); box-shadow:inset 0 0 0 1px var(--accent); }
-  .branch-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .branch-seg, .party-chips, .side-chips { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
+  .branch-toggle, .party-chip, .side-chip {
+    min-width:34px; height:30px; border:none; background:transparent; color:var(--text-dim);
+    font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center;
+    justify-content:center; transition:background .15s, color .15s; line-height:1; padding:0 10px;
+  }
+  .branch-toggle + .branch-toggle, .party-chip + .party-chip, .side-chip + .side-chip { border-left:1px solid var(--border); }
+  .branch-toggle:hover, .party-chip:hover, .side-chip:hover { background:var(--panel-2); color:var(--text); }
+  .branch-toggle.on, .party-chip.on, .side-chip.on { background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--text); box-shadow:inset 0 0 0 1px var(--accent); }
+  .branch-toggle:focus-visible, .party-chip:focus-visible, .side-chip:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .party-chip { font-size:14px; }
+  .party-chip.on[data-party="D"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
+  .party-chip.on[data-party="R"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
+  .side-chip .side-up { color:var(--buy); font-size:11px; }
+  .side-chip .side-dn { color:var(--sell); font-size:11px; }
+  .side-chip .side-ex { color:var(--exch); font-size:12px; }
+  .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
+  .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
+  .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
+  .filter-groups { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* Single combined info popover replacing the old per-group ⓘs — a little
+     larger than a plain .branch-info since it now carries every pictograph. */
+  .filters-info-wrap { position:relative; display:inline-flex; align-items:center; }
+  .filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }
+  .filters-info-wrap .branch-pop { min-width:250px; }
   .branch-info { width:24px; height:24px; border-radius:999px; border:none; background:transparent; color:var(--text-dim); font-size:15px; line-height:1; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; }
   .branch-info:hover, .branch-info:focus-visible, .branch-info[aria-expanded="true"] { color:var(--accent); outline:none; }
   .branch-pop { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px; max-width:min(340px, 92vw); background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:6px; font-size:12px; color:var(--text); box-shadow:0 10px 30px rgba(0,0,0,.35); }
@@ -867,19 +981,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .branch-pop-row .branch-icon { color:var(--accent); font-weight:700; }
   .branch-pop-note { color:var(--text-dim); font-size:11px; margin-top:2px; }
   .trends-filter-row { display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .party-chips { display:flex; gap:4px; align-items:center; }
-  .party-chip { padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); font-size:14px; cursor:pointer; transition:all .15s; display:flex; align-items:center; justify-content:center; }
-  .party-chip:hover { border-color:color-mix(in srgb,var(--accent) 50%,var(--border)); color:var(--text); }
-  .party-chip.on { background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:var(--accent); color:var(--text); }
-  .party-chip.on[data-party="D"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
-  .party-chip.on[data-party="R"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
-  .side-chips { display:flex; gap:4px; align-items:center; }
-  .side-chip { padding:3px 9px; border-radius:6px; border:1px solid var(--border); background:transparent; cursor:pointer; font-size:12px; line-height:1; color:var(--text-dim); }
-  .side-chip .side-up { color:var(--buy); font-size:11px; }
-  .side-chip .side-dn { color:var(--sell); font-size:11px; }
-  .side-chip.on { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent); }
-  .side-chip.on[data-side="B"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
-  .side-chip.on[data-side="S"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
+  .min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
@@ -1616,6 +1718,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   @media (max-width: 720px) {
     header.top { padding: 14px 22px; }
+    /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
+       hamburger button so the brand lockup is never squeezed off-screen
+       (issue #1456 — brand hidden behind a 3-button theme toggle at 375px). */
+    .acct-desktop { display: none; }
+    .acct-mobile { display: inline-flex; }
     main { padding: 22px 14px; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
@@ -1688,61 +1795,62 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="this_cy">This calendar year</option>
         <option value="last_cy">Last calendar year</option>
       </select>
-      <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
-        <div class="branch-seg">
-          <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" title="House trades — House Clerk PTR filings">H</button>
-          <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+      <div class="filter-groups">
+        <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
+            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+          </div>
         </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
-        <div class="branch-pop" id="qChamberInfo" role="note" hidden>
-          <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
-          <div class="branch-pop-note">Tap a letter to include or exclude that branch.</div>
+        <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+        </div>
+        <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by trade type">
+          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
+          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
+          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
+        </div>
+        <div class="filters-info-wrap" id="qFiltersInfo">
+          <button type="button" class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
+          <div class="branch-pop" id="qFiltersInfoPop" role="note" hidden>
+            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">▲</span><span>Buys</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">▼</span><span>Sells</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">⇄</span><span>Exchanges</span></div>
+            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+          </div>
         </div>
       </div>
-      <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
-        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
-        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
-        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
-      </div>
-      <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by side">
-        <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-        <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-      </div>
-      <select id="qMinAmt" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();" style="width:auto;min-width:7.5rem">
+      <select id="qMinAmt" class="min-amt-select" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();">
         <option value="">Any $</option>
-        <option value="1001">$1,001+</option>
-        <option value="15001">$15,001+</option>
-        <option value="50001">$50,001+</option>
-        <option value="100001">$100,001+</option>
-        <option value="250001">$250,001+</option>
-        <option value="500001">$500,001+</option>
-        <option value="1000001">$1,000,001+</option>
-        <option value="5000001">$5,000,001+</option>
-        <option value="25000001">$25,000,001+</option>
-        <option value="50000001">$50,000,001+</option>
+        <option value="1001">$1k+</option>
+        <option value="15001">$15k+</option>
+        <option value="50001">$50k+</option>
+        <option value="100001">$100k+</option>
+        <option value="250001">$250k+</option>
+        <option value="500001">$500k+</option>
+        <option value="1000001">$1m+</option>
+        <option value="5000001">$5m+</option>
+        <option value="25000001">$25m+</option>
+        <option value="50000001">$50m+</option>
       </select>
-      <button class="btn ghost sm" id="exportCsvBtn" onclick="openExportCsvDialog()" title="Export CSV (Premium)">⤓ CSV <span class="premium-mark" title="Premium">Pro</span></button>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="feedExtraFilters">
       <input id="qMember" placeholder="Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
-      <select id="qType" onchange="resetFeedPage()">
-        <option value="">All Types</option><option value="B">Buy</option>
-        <option value="S">Sell</option><option value="E">Exchange</option>
-      </select>
+      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <div id="feedStats" class="feed-stats muted">
         <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
       </div>
-      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
-      <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
-      <label class="lbl" for="pageSize">Rows</label>
-      <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
-        <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
-      </select>
     </div>
     <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
       <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
@@ -1793,10 +1901,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span class="note" id="feedPageMsg"></span>
         <button class="btn ghost sm" id="nextPageBtn" onclick="nextFeedPage()" title="Next page">&gt;</button>
       </div>
+      <div class="pager-tools">
+        <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
+          <option value="25">25 rows</option><option value="50" selected>50 rows</option><option value="100">100 rows</option><option value="250">250 rows</option>
+        </select>
+        <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns" aria-label="Show or hide columns">⚙ Columns</button>
+      </div>
     </div>
-    <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center" data-premium-cue="export">
-      <span class="gate-note">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
+    <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center">
+      <span class="gate-note" data-premium-cue="export">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
         <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
+      <button class="btn ghost sm" id="exportCsvBtn" onclick="openExportCsvDialog()" title="Export CSV (Premium)">⤓ CSV <span class="premium-mark" title="Premium">Pro</span></button>
     </div>
 
   </section>
@@ -1815,54 +1930,58 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="this_cy">This calendar year</option>
         <option value="last_cy">Last calendar year</option>
       </select>
-      <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
-        <div class="branch-seg">
-          <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" title="House trades — House Clerk PTR filings">H</button>
-          <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+      <div class="filter-groups">
+        <div class="branch-filters" id="trChamber" role="group" aria-label="Filter by branch">
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
+            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+          </div>
         </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
-        <div class="branch-pop" id="trChamberInfo" role="note" hidden>
-          <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
-          <div class="branch-pop-note">No selection = all branches. Tap a letter to filter to that branch.</div>
+        <div class="party-chips" id="trPartyGroup" role="group" aria-label="Filter by party">
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+        </div>
+        <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by trade type">
+          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
+          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
+          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
+        </div>
+        <div class="filters-info-wrap" id="trFiltersInfo">
+          <button type="button" class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
+          <div class="branch-pop" id="trFiltersInfoPop" role="note" hidden>
+            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">▲</span><span>Buys</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">▼</span><span>Sells</span></div>
+            <div class="branch-pop-row"><span class="branch-icon">⇄</span><span>Exchanges</span></div>
+            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+          </div>
         </div>
       </div>
-      <div class="party-chips" id="trPartyGroup" style="position:relative;">
-        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
-        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
-        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
-        <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
-          <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
-          <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (Independent, etc.)</span></div>
-          <div class="branch-pop-note">No selection = all parties. Tap an emoji to filter.</div>
-        </div>
-      </div>
-      <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by side">
-        <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-        <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-      </div>
-      <select id="trMinAmt" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)" style="width:auto;min-width:7.5rem">
+      <select id="trMinAmt" class="min-amt-select" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)">
         <option value="">Any $</option>
-        <option value="1001">$1,001+</option>
-        <option value="15001">$15,001+</option>
-        <option value="50001">$50,001+</option>
-        <option value="100001">$100,001+</option>
-        <option value="250001">$250,001+</option>
-        <option value="500001">$500,001+</option>
-        <option value="1000001">$1,000,001+</option>
-        <option value="5000001">$5,000,001+</option>
-        <option value="25000001">$25,000,001+</option>
-        <option value="50000001">$50,000,001+</option>
+        <option value="1001">$1k+</option>
+        <option value="15001">$15k+</option>
+        <option value="50001">$50k+</option>
+        <option value="100001">$100k+</option>
+        <option value="250001">$250k+</option>
+        <option value="500001">$500k+</option>
+        <option value="1000001">$1m+</option>
+        <option value="5000001">$5m+</option>
+        <option value="25000001">$25m+</option>
+        <option value="50000001">$50m+</option>
       </select>
     </div>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
       <div class="disclaimer-body" id="trDisclaimerBody">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
+      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. On the Trades feed, <button type="button" class="source-mode-btn" data-source-mode="all" aria-pressed="false">All Data</button> can double-count a trade present in both the primary and historic sets; <button type="button" class="source-mode-btn" data-source-mode="primary" aria-pressed="false">Primary Only</button> shows a de-duplicated view and is the default for first-time visitors — your choice is remembered. Party is known for only some politicians. Always do your own research.
       </div>
     </div>
 
@@ -2032,6 +2151,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table></div>
     </details>
 
+${speedProofSectionHtml(false)}
   </section>
 
   <!-- ================= PEOPLE (politician directory) ================= -->
@@ -2153,6 +2273,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= ADMIN · CADENCE ================= -->
   <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" aria-hidden="true">
+${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
       <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
@@ -2327,38 +2448,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- Provider speed scorecard (filter-independent live latency proof). -->
-  <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
-    <div class="speed-head">
-      <div>
-        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions." title="Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.">ⓘ</span></h3>
-      </div>
-      <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
-    </div>
-    <!-- Scorecard cards injected here by renderSpeedProof() -->
-    <div class="sp-grid" id="spGrid">
-      <div class="sp-card" aria-hidden="true" style="min-height:160px">
-        <div class="sk sk-line" style="width:55%;height:14px"></div>
-        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
-        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
-      </div>
-      <div class="sp-card" aria-hidden="true" style="min-height:160px">
-        <div class="sk sk-line" style="width:55%;height:14px"></div>
-        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
-        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
-      </div>
-    </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest Congressional trades. <strong>Lead and win rates use live new imports only</strong> &mdash; seed datasets and historical house/senate backfills are excluded. We still count a match if they listed the trade minutes or up to about two weeks before or after we did. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
-    <details class="speed-table" style="margin-top:8px">
-      <summary>Raw data table</summary>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
-        <tbody id="speedTableBody"></tbody>
-      </table></div>
-    </details>
-    <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-  </div>
-
   <footer class="site-footer">
     <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
     <span class="footer-links">
@@ -2453,9 +2542,47 @@ var feedAbort = null;
 var feedSearchTimer = null;
 var realDataLoaded = false;
 var feedGated = false;     // server says this visitor sees the limited free window
+/* Feed source mode ("Primary Only" vs "All Data") — issue #1453: the corpus
+   holds both live "primary" rows and historic "seed_dataset" backfill rows,
+   which can double-count the same real-world trade. Primary Only (the
+   de-duplicated view) is now the default for first-time visitors; an
+   explicit choice — made via the toggle embedded in the Trends disclaimer —
+   is persisted and always wins over the default. Filters the client-side
+   Trades feed (TRADES) only; server totals/KPIs are unaffected. */
+var FEED_SOURCE_MODE_KEY = 'feed-source-mode-v1';
+function feedSourceMode() {
+  try {
+    var v = localStorage.getItem(FEED_SOURCE_MODE_KEY);
+    if (v === 'all' || v === 'primary') return v;
+  } catch (e) {}
+  return 'primary';
+}
+function setFeedSourceMode(mode) {
+  mode = mode === 'all' ? 'all' : 'primary';
+  try { localStorage.setItem(FEED_SOURCE_MODE_KEY, mode); } catch (e) {}
+  syncFeedSourceModeUI();
+  renderFeed();
+}
+function syncFeedSourceModeUI() {
+  var mode = feedSourceMode();
+  document.querySelectorAll('.source-mode-btn[data-source-mode]').forEach(function (btn) {
+    var on = btn.getAttribute('data-source-mode') === mode;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+document.addEventListener('click', function (e) {
+  var srcBtn = e.target && e.target.closest ? e.target.closest('.source-mode-btn[data-source-mode]') : null;
+  if (srcBtn) setFeedSourceMode(srcBtn.getAttribute('data-source-mode'));
+});
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
+// /api/stream?subscription=dashboard is not served on the public site yet
+// (webhooks/SSE are a future paid feature) — probing it is a guaranteed 404
+// on every anonymous load (issue #1457 console noise). Flip this to true
+// once a public stream ships; startStream() re-checks it every call.
+var PUBLIC_STREAM_ENABLED = false;
 var sortKey = 'txdate'; // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
 var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared numerically
@@ -3412,7 +3539,7 @@ function resetCols() {
 
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
-      ty = el('qType').value, chs = chipSel('qChamber');
+      ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
   // Mirror the server's semantics: no HSP selection (empty param) = all
   // branches, including unresolved-chamber rows. Explicit chips filter exactly.
   var chDefault = chamberParam('qChamber') === '';
@@ -3437,7 +3564,11 @@ function renderFeed() {
     if (cards) cards.innerHTML = stateCards('Loading live feed…');
     return;
   }
+  var primaryOnly = feedSourceMode() === 'primary';
   var rows = TRADES.filter(function (r) {
+    // De-duplicated default (#1453): primary + historic seed rows can double
+    // count the same real-world trade — Primary Only hides the seed copies.
+    if (primaryOnly && r.source === 'seed_dataset') return false;
     if (qa) {
       var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
                  (r.source || '') + ' ' + (r.owner || '') + ' ' + (r.st || '')).toLowerCase();
@@ -3485,7 +3616,7 @@ function updateFeedCountMsg(shown) {
   var start = total === 0 ? 0 : feedPage * feedPageSize + 1;
   var end = Math.min(feedPage * feedPageSize + shown, total);
   if (msg) {
-    msg.innerHTML = 'Showing <span class="tick-num">' + start + '-' + end + '</span> of <span class="tick-num">' + total + '</span> trades';
+    msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span> trades';
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
@@ -3814,10 +3945,9 @@ function feedQueryParams() {
   p.set('offset', String(feedPage * feedPageSize));
   var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
-  var ty = el('qType') && el('qType').value;
-  // Side chips override type select when exactly one side is pressed.
-  var sideSel = selectedSideParam('qSideGroup');
-  if (sideSel) ty = sideSel;
+  // Buy/sell/exchange toggle: only filters when exactly one of the three is
+  // pressed (multi-select, like the H/S/P chips — nothing on = all types).
+  var ty = selectedSideParam('qSideGroup');
   if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var amtEl = el('qMinAmt');
@@ -3935,7 +4065,7 @@ function syncFilterUrl() {
     var pairs = [
       ['ft', el('qTicker') ? el('qTicker').value.trim() : ''],
       ['fm', el('qMember') ? el('qMember').value.trim() : ''],
-      ['fty', el('qType') ? el('qType').value : ''],
+      ['fty', selectedSideParam('qSideGroup')],
       ['fch', chamberParam('qChamber')],
       ['fw', getTrWindow()],
     ];
@@ -3951,7 +4081,17 @@ function restoreFiltersFromUrl() {
     var sp = new URLSearchParams(window.location.search);
     if (sp.get('ft') && el('qTicker')) el('qTicker').value = sp.get('ft');
     if (sp.get('fm') && el('qMember')) el('qMember').value = sp.get('fm');
-    if (sp.get('fty') && el('qType')) el('qType').value = sp.get('fty');
+    var fty = sp.get('fty');
+    if (fty) {
+      ['qSideGroup', 'trSideGroup'].forEach(function (gid) {
+        var g = el(gid); if (!g) return;
+        g.querySelectorAll('.side-chip').forEach(function (b) {
+          var on = b.getAttribute('data-side') === fty;
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
+    }
     var fch = sp.get('fch');
     if (fch) {
       var sel = fch.split(',');
@@ -4052,8 +4192,11 @@ function stopStream() {
 }
 
 function startStream() {
-  // EventSource is optional; if unavailable, poll immediately.
-  if (typeof EventSource === 'undefined') { startPolling(); return; }
+  // The public site has no live stream yet — go straight to calm polling
+  // instead of opening an EventSource that's guaranteed to 404 (see
+  // PUBLIC_STREAM_ENABLED above). EventSource is also optional generally;
+  // if unavailable, poll immediately.
+  if (!PUBLIC_STREAM_ENABLED || typeof EventSource === 'undefined') { startPolling(); return; }
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
     es.onopen = function () { setLivePill('live', 'Live'); };
@@ -7830,6 +7973,33 @@ function speedBoastProvider(d) {
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
   return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
 }
+/* Trends-tab placement gate for the Filing Latency Comparison section (owner
+   UX work order item 1): the section renders at the BOTTOM of Trends only
+   when we are clearly ahead — at least one adequately-covered provider
+   resolves to the same definitive "Ahead" verdict spCardHtml would badge
+   (matched enough live races, non-preliminary "usable" comparisonStatus,
+   and us leading), AND no adequately-covered provider resolves to "Behind".
+   Providers still "Gathering data" (too few matches), preliminary, or with
+   limited/insufficient coverage neither qualify nor block — they're simply
+   skipped. The Admin tab ignores this gate entirely and always renders the
+   full comparison (including BEHIND) as an operator diagnostic. Never
+   rendered on the Trades/feed tab at all. */
+function isLatencyAhead(summary) {
+  if (!summary || !summary.providers) return false;
+  var anyAhead = false, anyBehind = false;
+  (summary.providers || []).forEach(function (p) {
+    if (!p || p.operationalStatus === 'off') return;
+    var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
+    var deltaSample = wins + losses + ties;
+    var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
+    var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED && deltaSample > 0 && hasLead;
+    var adequate = hasTiming && p.comparisonStatus === 'usable';
+    if (!adequate) return; // gathering / preliminary / limited coverage — no vote either way
+    if (wins > losses) anyAhead = true;
+    else if (wins < losses) anyBehind = true;
+  });
+  return anyAhead && !anyBehind;
+}
 function speedUpdatedText() {
   var d = LATENCY.data; if (!d || !d.generatedAt) return '';
   var t = Date.parse(d.generatedAt); if (!isFinite(t)) return '';
@@ -7839,7 +8009,11 @@ function speedUpdatedText() {
   return txt;
 }
 function refreshSpeedUpdated() {
-  var n = el('speedUpdated'); if (n && LATENCY.data) n.textContent = speedUpdatedText();
+  if (!LATENCY.data) return;
+  var txt = speedUpdatedText();
+  ['speedUpdated', 'speedUpdatedAdmin'].forEach(function (id) {
+    var n = el(id); if (n) n.textContent = txt;
+  });
 }
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
@@ -7945,34 +8119,60 @@ function spCardHtml(p) {
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
 }
+/* Raw data table rows shared by both placements (inside their <details>). */
+function speedTableRowsHtml(provs) {
+  return provs.map(function (p) {
+    function td(v) { return '<td>' + v + '</td>'; }
+    var strong = p.strongMatched != null ? p.strongMatched : p.matched;
+    return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
+      td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
+      td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
+      td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
+      td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
+      td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
+      td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
+      td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
+  }).join('');
+}
+function paintSpeedSection(gridId, tableBodyId, provs) {
+  var grid = el(gridId);
+  if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+  var tb = el(tableBodyId);
+  if (tb) tb.innerHTML = speedTableRowsHtml(provs);
+}
+/* Filing Latency Comparison placement (owner UX work order item 1): paints
+   BOTH copies from a single fetch —
+     - Trends (#trLatencySection, bottom of the tab): only when
+       isLatencyAhead() says we're clearly ahead; hidden otherwise.
+     - Admin (#adminLatencySection, top of the tab): always the full
+       comparison (incl. BEHIND) whenever there's any raced data — an
+       operator diagnostic, not a marketing module.
+   Never rendered on the Trades/feed tab at all (neither container exists there). */
 function renderSpeedProof() {
-  var box = el('trLatencySection'); if (!box) return;
+  var trendsBox = el('trLatencySection');
+  var adminBox = el('adminLatencySection');
+  if (!trendsBox && !adminBox) return;
   fetchLatencySummary().then(function (d) {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
-    if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-    box.hidden = false;
-    var grid = el('spGrid');
-    if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+    var hasData = !!(d.totals && d.totals.racedDisclosures && provs.length);
 
-    /* Raw data table (inside <details>) */
-    var tb = el('speedTableBody');
-    if (tb) tb.innerHTML = provs.map(function (p) {
-      function td(v) { return '<td>' + v + '</td>'; }
-      var strong = p.strongMatched != null ? p.strongMatched : p.matched;
-      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
-        td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
-        td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
-        td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
-        td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
-        td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
-        td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
-        td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
-    }).join('');
+    if (adminBox) {
+      adminBox.hidden = !hasData;
+      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', provs);
+    }
+    if (trendsBox) {
+      var ahead = hasData && isLatencyAhead(d);
+      trendsBox.hidden = !ahead;
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', provs);
+    }
+
     refreshSpeedUpdated();
     renderAlertsMini();
   }).catch(function () {
-    box.hidden = true; /* endpoint unavailable: drop the marketing module quietly */
+    /* endpoint unavailable: drop both quietly rather than show a scary error */
+    if (trendsBox) trendsBox.hidden = true;
+    if (adminBox) adminBox.hidden = true;
   });
 }
 /* Compact strip on the Alerts tab; renders only when clearly favorable —
@@ -8821,6 +9021,10 @@ function memberPerfHtml(d) {
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
       '</div>';
   }
+  // Explicit horizon phrase (#1458 note) — the endpoint already returns the
+  // requested window (d.window, e.g. "all"); name it instead of the vague
+  // "in window" so the stat line reads "12 disclosed buys (All)".
+  var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';
   return legBlock(
       'Their timing (approx.)',
       'Size-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
@@ -8834,7 +9038,7 @@ function memberPerfHtml(d) {
       false
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
-      (buyCount != null ? ' · ' + buyCount + ' disclosed buys in window' : '') +
+      (buyCount != null ? ' · ' + buyCount + ' disclosed buys' + horizonPhrase : '') +
       '</div>';
 }
 
@@ -9016,44 +9220,85 @@ function loadMe() {
     .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
 }
 
+/* Header account control: .acct-desktop is the full theme-toggle / Sign In /
+   Upgrade (or avatar menu) cluster shown on desktop, unchanged. .acct-mobile
+   is a single hamburger button (<=720px, see CSS) whose dropdown carries the
+   same Sign In / account entry, theme choices, and Upgrade — flattened (no
+   nested menu-in-menu) so it never duplicates the desktop menu's element ids
+   (issue #1456: the old 3-button theme toggle overlapped the brand at 375px). */
 function renderAccount() {
   var box = el('acct'); if (!box) return;
+  var desktopHtml, mobileHtml;
   if (!ME.user) {
-    box.innerHTML = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' +
+    desktopHtml = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' +
       '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
       (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
-    return;
+    mobileHtml = '<button class="btn ghost sm" onclick="closeAcctMobileMenu();openLogin()">Sign In</button>' +
+      themeRowHtml() +
+      (checkoutConfigured() ? '<button class="btn sm" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '');
+  } else {
+    var ent = ME.entitlement || {};
+    var badge = ent.premium
+      ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
+      : '';
+    var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
+    var label = ME.user.name || ME.user.email || 'Account';
+    var avatarHtml = '<span class="avatar lg" title="' + esc(label) + '">' + esc(initials(label)) +
+      (ME.user.picture ? '<img src="' + esc(ME.user.picture) + '" alt="" onerror="this.remove()"/>' : '') +
+      '</span>';
+    desktopHtml = badge + upgrade +
+      '<div class="menu">' +
+        '<button class="acct-menu-btn" id="acctMenuBtn" title="Account menu" onclick="toggleAcctMenu()">' +
+          avatarHtml +
+          '<span class="acct-label">Account</span><span class="acct-caret">▾</span>' +
+        '</button>' +
+        '<div class="menu-pop" id="acctMenu">' +
+          '<div class="who">' + esc(ME.user.email || '') + '</div>' +
+          themeRowHtml() +
+          (hasBillingAccount() && portalConfigured()
+            ? '<button onclick="manageBilling()">Manage Subscription</button>'
+            : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+          '<button onclick="logout()">Sign Out</button>' +
+        '</div>' +
+      '</div>';
+    mobileHtml = badge +
+      '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
+      themeRowHtml() +
+      upgrade +
+      (hasBillingAccount() && portalConfigured()
+        ? '<button onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
+        : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>';
   }
-  var ent = ME.entitlement || {};
-  var badge = ent.premium
-    ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
-    : '';
-  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
-  var label = ME.user.name || ME.user.email || 'Account';
-  box.innerHTML = badge + upgrade +
-    '<div class="menu">' +
-      '<button class="acct-menu-btn" id="acctMenuBtn" title="Account menu" onclick="toggleAcctMenu()">' +
-        '<span class="avatar lg" title="' + esc(label) + '">' + esc(initials(label)) +
-          (ME.user.picture ? '<img src="' + esc(ME.user.picture) + '" alt="" onerror="this.remove()"/>' : '') +
-        '</span>' +
-        '<span class="acct-label">Account</span><span class="acct-caret">▾</span>' +
-      '</button>' +
-      '<div class="menu-pop" id="acctMenu">' +
-        '<div class="who">' + esc(ME.user.email || '') + '</div>' +
-        themeRowHtml() +
-        (hasBillingAccount() && portalConfigured()
-          ? '<button onclick="manageBilling()">Manage Subscription</button>'
-          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
-        '<button onclick="logout()">Sign Out</button>' +
-      '</div>' +
+  box.innerHTML =
+    '<div class="acct-desktop">' + desktopHtml + '</div>' +
+    '<div class="acct-mobile">' +
+      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu" onclick="toggleAcctMobileMenu()">&#9776;</button>' +
+      '<div class="acct-mobile-menu" id="acctMobileMenu">' + mobileHtml + '</div>' +
     '</div>';
 }
 function toggleAcctMenu() { var m = el('acctMenu'); if (m) m.classList.toggle('open'); }
 function closeAcctMenu() { var m = el('acctMenu'); if (m) m.classList.remove('open'); }
+function toggleAcctMobileMenu() {
+  var m = el('acctMobileMenu'); var btn = el('acctHamburgerBtn');
+  if (!m) return;
+  var open = !m.classList.contains('open');
+  m.classList.toggle('open', open);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeAcctMobileMenu() {
+  var m = el('acctMobileMenu'); var btn = el('acctHamburgerBtn');
+  if (m) m.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
 document.addEventListener('click', function (e) {
   var menu = el('acctMenu'), btn = el('acctMenuBtn');
   if (menu && menu.classList.contains('open') && !menu.contains(e.target) && !(btn && btn.contains(e.target))) {
     menu.classList.remove('open');
+  }
+  var mmenu = el('acctMobileMenu'), mbtn = el('acctHamburgerBtn');
+  if (mmenu && mmenu.classList.contains('open') && !mmenu.contains(e.target) && !(mbtn && mbtn.contains(e.target))) {
+    closeAcctMobileMenu();
   }
 });
 
@@ -9256,7 +9501,7 @@ function exportCsv() {
   var p = new URLSearchParams();
   var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
-  var ty = el('qType') && el('qType').value; if (ty) p.set('type', ty);
+  var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var minAmt = el('qMinAmt') && el('qMinAmt').value; if (minAmt) p.set('minAmount', minAmt);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
@@ -9277,12 +9522,15 @@ function exportCsv() {
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
 
-/* ---- Premium CSV / delivery CTA under the feed pager ---- */
+/* ---- Premium CSV / delivery CTA under the feed pager ----
+   #gateRow itself always renders — it holds the CSV export button, which is
+   useful (Pro-gated) regardless of plan. Only the "Premium unlocks…" pitch +
+   Start Free Trial button (the .gate-note span, data-premium-cue="export")
+   hide once premium via updatePremiumCues(), leaving just the CSV button. */
 function updateGateRow() {
   var g = el('gateRow');
   if (!g) return;
-  // Show export Premium CTA when not premium and checkout is configured.
-  g.style.display = (!isPremium() && checkoutConfigured()) ? '' : 'none';
+  g.style.display = '';
 }
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
@@ -9410,13 +9658,20 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
   };
 });
 
-/* Speed-proof section: fetch just before it scrolls into view. It sits high on
-   the default Trends view, so this fires ~immediately without blocking first
-   paint; browsers without IntersectionObserver render it right away. */
+/* Speed-proof section: fetch just before the Trends copy scrolls into view
+   (it now sits at the BOTTOM of the Trends tab — owner UX work order item 1
+   — so this defers the fetch rather than firing it during first paint).
+   observe() is safe to call even while #trLatencySection's ancestor .view
+   isn't the active tab yet (e.g. a returning visitor lands on a different
+   tab): the element still has no box until its tab becomes active, and
+   IntersectionObserver naturally starts evaluating intersection once it
+   does. Browsers without IntersectionObserver render it right away. The
+   Admin copy is independent: it renders immediately (not lazily) as soon as
+   the Admin tab opens, from the two call sites near the tab-switch handlers. */
 (function () {
   var s = el('trLatencySection'); if (!s) return;
   if (!('IntersectionObserver' in window)) { renderSpeedProof(); return; }
@@ -9528,9 +9783,8 @@ function initBranchInfo(groupId) {
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
 }
-initBranchInfo('qChamber');
-initBranchInfo('trChamber');
-initBranchInfo('trPartyGroup');
+initBranchInfo('qFiltersInfo');
+initBranchInfo('trFiltersInfo');
 
 function selectedSideParam(groupId) {
   var g = el(groupId); if (!g) return '';
@@ -9605,9 +9859,6 @@ function initSideChips() {
     if (g) g.querySelectorAll('.side-chip.on').forEach(function (c) { on.push(c.getAttribute('data-side')); });
     applySideSelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
-    // Mirror into type select when single side
-    var ty = el('qType');
-    if (ty) ty.value = on.length === 1 ? on[0] : '';
     if (typeof loadTrends === 'function') loadTrends();
     if (typeof resetFeedPage === 'function') resetFeedPage();
   }
@@ -9617,6 +9868,7 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+syncFeedSourceModeUI();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
@@ -9779,6 +10031,41 @@ function handleEntityOpenEvent(e) {
   });
 })();
 
+/* Universal keyboard reachability for entity-open targets (owner UX work
+   order item 2): every .clickable element carrying a data-member/data-asset/
+   data-ticker/data-txid attribute — built dynamically across dozens of
+   render functions (Trends leaderboards, cluster cards, People directory,
+   drawers, the feed table) — becomes Tab-focusable with button semantics
+   the moment it lands in the DOM. The delegated keydown handler just above
+   already fires Enter/Space on any focused .clickable[data-*] target; this
+   makes sure there IS something to focus, instead of hand-adding
+   tabindex/role at every call site (and risking missing one). Native <a>/
+   <button> targets are left alone — they're already focusable and carry
+   their own semantics. Scoped to entity-open targets only: other .clickable
+   UI (copy-link, etc.) is untouched. */
+var ENTITY_FOCUSABLE_SELECTOR = '.clickable[data-member], .clickable[data-asset], .clickable[data-ticker], .clickable[data-txid]';
+function makeEntityTargetsFocusable(root) {
+  if (!root || root.nodeType !== 1) return;
+  var nodes = root.querySelectorAll ? Array.prototype.slice.call(root.querySelectorAll(ENTITY_FOCUSABLE_SELECTOR)) : [];
+  if (root.matches && root.matches(ENTITY_FOCUSABLE_SELECTOR)) nodes.push(root);
+  nodes.forEach(function (n) {
+    if (n.tagName === 'A' || n.tagName === 'BUTTON') return;
+    if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
+  });
+}
+makeEntityTargetsFocusable(document.body);
+if ('MutationObserver' in window) {
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var added = mutations[i].addedNodes;
+      for (var j = 0; j < added.length; j++) {
+        if (added[j].nodeType === 1) makeEntityTargetsFocusable(added[j]);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
 /* Escape closes transient overlays. */
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { closePanels(); closeDrawer(); closeLogin(); closePricing(); }
@@ -9845,14 +10132,27 @@ el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
+// ?view= aliases the visible tab names to their internal data-view ids
+// (issue #1458): "trades" is the Trades tab's feed view, "delivery" is the
+// Delivery tab's subs view. trends/people/admin already match their ids.
+var VIEW_ALIASES = { trades: 'feed', delivery: 'subs' };
+
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 loadMe().then(function () {
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
+  if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
   var initialView = 'trends';
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
-    if (fromUrl && document.querySelector('nav.tabs button[data-view="' + fromUrl + '"]')) initialView = fromUrl;
-    else {
+    if (fromUrl) {
+      // ?view= accepts the visible tab names as aliases (issue #1458) —
+      // "trades" for the feed view id, "delivery" for the subs view id.
+      // Everything else (including the canonical ids) matches as-is.
+      var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
+      // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
+      // or stale ?view= should never silently resurrect an old session.
+      initialView = document.querySelector('nav.tabs button[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
+    } else {
       var saved = localStorage.getItem('ct-active-tab');
       if (saved && document.querySelector('nav.tabs button[data-view="' + saved + '"]')) initialView = saved;
     }
@@ -9882,7 +10182,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }
@@ -9890,7 +10190,10 @@ loadMe().then(function () {
 
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
 loadFeed().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
-loadPollConfig();  // for the poll-mode KPI
+// /api/admin/poll-config 401s for every anonymous visitor (console noise —
+// issue #1457). It now only loads from inside loadMe().then() above, gated
+// on canUseAdmin() (session admin OR a saved bearer token) — never fired
+// unconditionally at boot.
 
 /* Global interactive chart tooltip */
 var chartTt = document.createElement('div');
