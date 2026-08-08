@@ -58,6 +58,9 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Buy / Sell / All side filter (`type=` on feed + local cache filter).
     @Published private(set) var selectedTradeType: TradeTypeFilter = .all
+    /// $-threshold pill (`minAmount=` on feed + local cache filter). Website
+    /// parity with the shared `qMinAmt`/`trMinAmt` row, mirrored on Trends.
+    @Published private(set) var selectedAmountThreshold: AmountThresholdFilter = .any
     /// Trades-only free-text politician filter (`memberName=`).
     @Published private(set) var politicianFilter: String = ""
     /// Trades-only asset/ticker filter (`ticker=`).
@@ -162,6 +165,18 @@ final class CongressTradeStore: ObservableObject {
         _ = await (r1, r2)
     }
 
+    /// $-threshold pill (server `minAmount=`). Mirrors `setTradeType`: also
+    /// pings `refreshTrends()` for shared-filter-row consistency even though
+    /// the analytics endpoints don't yet accept `minAmount` (same precedent
+    /// as the side/type filter above).
+    func setAmountThreshold(_ threshold: AmountThresholdFilter) async {
+        guard threshold != selectedAmountThreshold else { return }
+        selectedAmountThreshold = threshold
+        async let r1: Void = refresh()
+        async let r2: Void = refreshTrends()
+        _ = await (r1, r2)
+    }
+
     /// Trades-only politician name filter (server `memberName=`).
     func setPoliticianFilter(_ text: String) async {
         let next = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -235,6 +250,7 @@ final class CongressTradeStore: ObservableObject {
         let to = selectedTimeRange.toDateISO
         let search = searchTerm
         let typeParam = selectedTradeType.queryValue
+        let minAmountParam = selectedAmountThreshold.queryValue
         // Dedicated fields win; legacy combined search still fills the other slot.
         let tickerParam: String? = {
             if !assetFilter.isEmpty { return assetFilter }
@@ -260,6 +276,7 @@ final class CongressTradeStore: ObservableObject {
                     memberName: memberNameParam,
                     chamber: chamberParam,
                     type: typeParam,
+                    minAmount: minAmountParam,
                     from: from,
                     to: to,
                     sort: "tx_date",
@@ -633,7 +650,8 @@ final class CongressTradeStore: ObservableObject {
             ticker: assetFilter.isEmpty ? nil : assetFilter,
             memberName: politicianFilter.isEmpty ? nil : politicianFilter,
             chamber: chamberParam,
-            type: selectedTradeType.queryValue
+            type: selectedTradeType.queryValue,
+            minAmount: selectedAmountThreshold.queryValue
         )
     }
 

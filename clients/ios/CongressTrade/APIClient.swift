@@ -46,6 +46,9 @@ struct FeedQuery: Equatable {
     var memberName: String?
     var chamber: String?
     var type: String?
+    /// Minimum transaction amount (bracket floor + $1); website parity with
+    /// the shared `qMinAmt`/`trMinAmt` pill. `nil`/`0` omits the param.
+    var minAmount: Int?
     var from: String?
     var to: String?
     /// Backend sort key: `tx_date` | `published` | cursor (default). Prefer
@@ -62,6 +65,7 @@ struct FeedQuery: Equatable {
         if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let minAmount, minAmount > 0 { items.append(URLQueryItem(name: "minAmount", value: String(minAmount))) }
         if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
         if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
         if let sort, !sort.isEmpty { items.append(URLQueryItem(name: "sort", value: sort)) }
@@ -430,7 +434,8 @@ final class CongressTradeAPIClient {
         ticker: String? = nil,
         memberName: String? = nil,
         chamber: String? = nil,
-        type: String? = nil
+        type: String? = nil,
+        minAmount: Int? = nil
     ) async throws -> Data {
         guard var components = URLComponents(
             url: originURL.appendingPathComponent("api/export/transactions.csv"),
@@ -443,6 +448,7 @@ final class CongressTradeAPIClient {
         if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let minAmount, minAmount > 0 { items.append(URLQueryItem(name: "minAmount", value: String(minAmount))) }
         if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
         var request = try makeRequest(url)

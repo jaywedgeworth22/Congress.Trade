@@ -1,11 +1,26 @@
 import SwiftUI
 import SwiftData
 
+/// Tab identity shared with `TabRouter` so any screen (e.g. the header
+/// hamburger menu's "Sign In" entry) can programmatically switch tabs.
+enum AppTab: Hashable {
+    case trends, trades, delivery, settings
+}
+
+/// Cross-tab navigation used by the header hamburger menu (`AccountQuickMenu`)
+/// to jump to Settings for sign-in, without duplicating the OAuth flow.
+/// Trends is the default/leftmost tab (owner punch list item 1).
+@MainActor
+final class TabRouter: ObservableObject {
+    @Published var selection: AppTab = .trends
+}
+
 @main
 struct CongressTradeApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
     @StateObject private var pushManager = PushNotificationManager.shared
+    @StateObject private var tabRouter = TabRouter()
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
 
     var body: some Scene {
@@ -13,6 +28,7 @@ struct CongressTradeApp: App {
             MainTabView()
                 .environmentObject(store)
                 .environmentObject(pushManager)
+                .environmentObject(tabRouter)
                 .preferredColorScheme(colorScheme)
                 .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
         }
@@ -30,30 +46,37 @@ struct CongressTradeApp: App {
 
 struct MainTabView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var tabRouter: TabRouter
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TabView {
-            FeedDashboardView()
-                .tabItem {
-                    Label("Trades", systemImage: "list.bullet.rectangle")
-                }
-
+        TabView(selection: $tabRouter.selection) {
+            // Trends is first/leftmost and the default tab on launch
+            // (TabRouter.selection starts at .trends).
             TrendsView()
                 .tabItem {
                     Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                 }
+                .tag(AppTab.trends)
+
+            FeedDashboardView()
+                .tabItem {
+                    Label("Trades", systemImage: "list.bullet.rectangle")
+                }
+                .tag(AppTab.trades)
 
             DeliveryView()
                 .tabItem {
                     Label("Delivery", systemImage: "bell.badge")
                 }
+                .tag(AppTab.delivery)
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
                 }
+                .tag(AppTab.settings)
         }
         .tint(.blue)
         .task {

@@ -75,8 +75,13 @@ do not consume the SSE/webhook subscription quota.
 - `bootstrap` currently returns `serverTime`, `auth`, `capabilities`, and an
   `endpoints` map for the current client surface.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
-  `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
-  cursor/count/total metadata used by polling clients.
+  `memberName`, `chamber`, `type`, `minAmount`, `from`, `to`, `sort`, `order`,
+  and `limit`, and returns the cursor/count/total metadata used by polling
+  clients. `minAmount` (server-side `filtersFromQuery`/`TxQueryParams`, same
+  as the website's shared `qMinAmt`/`trMinAmt` pill) filters to
+  `amountMin >= minAmount`; iOS wires it as the `$`-threshold filter pill
+  (2026-08-09, iOS punch list). `GET /api/export/transactions.csv` accepts
+  the same filter set (including `minAmount`) for Premium CSV export.
 - Chamber filter: `chamber` accepts a CSV multi-selection over
   `house`, `senate`, and `executive` (Presidential trades from OGE Form 278-T
   filings; `member.chamber` can now be `executive`). ABSENT `chamber` means the

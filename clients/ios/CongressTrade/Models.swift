@@ -403,6 +403,47 @@ enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Minimum-amount threshold pill — website parity with the shared
+/// `qMinAmt`/`trMinAmt` filter row (mirrored on Trends, `app/src/ui/dashboardHtml.ts`).
+/// Values are the STOCK Act bracket floor + $1, matching the server's
+/// inclusive `minAmount=` (`amountMin >= minAmount`) filter.
+enum AmountThresholdFilter: Int, CaseIterable, Identifiable, Hashable {
+    case any = 0
+    case k1 = 1001
+    case k15 = 15001
+    case k50 = 50001
+    case k100 = 100001
+    case k250 = 250001
+    case k500 = 500001
+    case m1 = 1_000_001
+    case m5 = 5_000_001
+    case m25 = 25_000_001
+    case m50 = 50_000_001
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .any: return "Any $"
+        case .k1: return "$1k+"
+        case .k15: return "$15k+"
+        case .k50: return "$50k+"
+        case .k100: return "$100k+"
+        case .k250: return "$250k+"
+        case .k500: return "$500k+"
+        case .m1: return "$1m+"
+        case .m5: return "$5m+"
+        case .m25: return "$25m+"
+        case .m50: return "$50m+"
+        }
+    }
+
+    /// Server `minAmount=` query value; `nil` omits the param (Any $).
+    var queryValue: Int? {
+        self == .any ? nil : rawValue
+    }
+}
+
 /// `GET /api/analytics/performance/:txId` — asset return, S&P return, excess.
 struct TradePerformanceResponse: Decodable {
     let available: Bool

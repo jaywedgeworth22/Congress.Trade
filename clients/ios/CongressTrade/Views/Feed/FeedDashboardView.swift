@@ -16,7 +16,11 @@ struct FeedDashboardView: View {
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
     @State private var selectedTicker: String?
-    @State private var showDisclaimerDetails = false
+    /// Shared with Trends via the same `@AppStorage` keys so the disclaimer's
+    /// dismissed/expanded state is one truth across both tabs (owner punch
+    /// list item 2b) — never a per-view `@State` that resets on tab switch.
+    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
+    @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
     @State private var showExportSheet = false
     @FocusState private var focusedField: TradeFilterField?
 
@@ -43,6 +47,7 @@ struct FeedDashboardView: View {
         let fromISO = store.selectedTimeRange.fromDateISO
         let toISO = store.selectedTimeRange.toDateISO
         let typeFilter = store.selectedTradeType
+        let minAmount = store.selectedAmountThreshold.queryValue
 
         return sortedCached.filter { trade in
             if let fromISO {
@@ -64,6 +69,12 @@ struct FeedDashboardView: View {
             }
 
             if !typeFilter.matches(txType: trade.transaction.type) {
+                return false
+            }
+
+            // Null amountMin counts as 0 against the threshold (matches the
+            // server's `matchesFilters` semantics for `minAmount`).
+            if let minAmount, (trade.transaction.amountMin ?? 0) < minAmount {
                 return false
             }
 
@@ -95,7 +106,7 @@ struct FeedDashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    DisclaimerBanner(isExpanded: $showDisclaimerDetails)
+                    DisclaimerBanner(isExpanded: $disclaimerExpanded)
 
                     // Shared filters (also on Trends) — chamber / party / sides / timeframe.
                     FeedControlBar()
@@ -184,26 +195,28 @@ struct FeedDashboardView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Swapped vs the old layout (owner punch list item 3): ⓘ now
+                // leads (where the export arrow used to be), arrow trails —
+                // matching Trends' ⓘ side after its own swap below.
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showExportSheet = true
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .foregroundStyle(.primary)
+                    HeaderIconButton(
+                        systemImage: "info.circle",
+                        accessibilityLabel: "About Congress.Trade"
+                    ) {
+                        withAnimation { disclaimerExpanded.toggle() }
                     }
-                    .accessibilityLabel("Export CSV")
                 }
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation { showDisclaimerDetails.toggle() }
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.blue)
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    HeaderIconButton(
+                        systemImage: "arrow.down.circle",
+                        accessibilityLabel: "Export CSV"
+                    ) {
+                        showExportSheet = true
                     }
-                    .accessibilityLabel("About Congress.Trade")
+                    HamburgerMenuButton()
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -212,10 +225,15 @@ struct FeedDashboardView: View {
             }
             .refreshable { await store.refresh() }
             .task {
-                showDisclaimerDetails = true
-                try? await Task.sleep(for: .seconds(4))
-                if !Task.isCancelled {
-                    withAnimation { showDisclaimerDetails = false }
+                // One-time app-lifetime intro reveal, shared with Trends via
+                // the same AppStorage keys — never re-plays on tab switch.
+                if !disclaimerIntroDone {
+                    disclaimerIntroDone = true
+                    withAnimation { disclaimerExpanded = true }
+                    try? await Task.sleep(for: .seconds(4))
+                    if !Task.isCancelled {
+                        withAnimation { disclaimerExpanded = false }
+                    }
                 }
             }
             .overlay {
@@ -323,6 +341,55 @@ struct FeedControlBar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                // Timeframe Filter — stays fully visible (icon+value) at all
+                // times and sits first/top-left (owner punch list item 5).
+                Menu {
+                    ForEach(TimeRange.allCases) { range in
+                        Button {
+                            Task { await store.setTimeRange(range) }
+                        } label: {
+                            HStack {
+                                Text(range.label)
+                                if store.selectedTimeRange == range {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.selectedTimeRange.label,
+                        icon: "calendar",
+                        isActive: store.selectedTimeRange != .ninetyDays,
+                        alwaysShowLabel: true,
+                        accessibilityLabel: "Time range, \(store.selectedTimeRange.label)"
+                    )
+                }
+
+                // $-threshold Filter — icon-only "$" when unset ("Any $"),
+                // immediately after Timeframe per the punch list resolution.
+                Menu {
+                    ForEach(AmountThresholdFilter.allCases) { threshold in
+                        Button {
+                            Task { await store.setAmountThreshold(threshold) }
+                        } label: {
+                            HStack {
+                                Text(threshold.label)
+                                if store.selectedAmountThreshold == threshold {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.selectedAmountThreshold.label,
+                        icon: "dollarsign",
+                        isActive: store.selectedAmountThreshold != .any,
+                        accessibilityLabel: "Minimum amount, \(store.selectedAmountThreshold.label)"
+                    )
+                }
+
                 // Branch/Chamber Filter
                 Menu {
                     Button("All Branches") {
@@ -342,12 +409,13 @@ struct FeedControlBar: View {
                     }
                 } label: {
                     FilterMenuLabel(
-                        // Compact "All" when default so all four filters fit on one row.
+                        // Compact "All" when default so all pills fit on one row.
                         title: store.selectedChambers.isEmpty
                             ? "All"
                             : store.selectedChambers.map { $0.shortLabel }.joined(separator: ", "),
                         icon: "building.columns",
-                        isActive: !store.selectedChambers.isEmpty
+                        isActive: !store.selectedChambers.isEmpty,
+                        accessibilityLabel: "Branch filter, \(store.selectedChambers.isEmpty ? "all" : store.selectedChambers.map { $0.label }.joined(separator: ", "))"
                     )
                 }
 
@@ -372,7 +440,8 @@ struct FeedControlBar: View {
                     FilterMenuLabel(
                         title: store.selectedParty?.label ?? "All",
                         icon: "person.2.fill",
-                        isActive: store.selectedParty != nil
+                        isActive: store.selectedParty != nil,
+                        accessibilityLabel: "Party filter, \(store.selectedParty?.label ?? "all")"
                     )
                 }
 
@@ -397,28 +466,6 @@ struct FeedControlBar: View {
                         selected: store.selectedTradeType
                     )
                 }
-
-                // Timeframe Filter
-                Menu {
-                    ForEach(TimeRange.allCases) { range in
-                        Button {
-                            Task { await store.setTimeRange(range) }
-                        } label: {
-                            HStack {
-                                Text(range.label)
-                                if store.selectedTimeRange == range {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    FilterMenuLabel(
-                        title: store.selectedTimeRange.label,
-                        icon: "calendar",
-                        isActive: store.selectedTimeRange != .ninetyDays
-                    )
-                }
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
@@ -436,7 +483,9 @@ struct FeedControlBar: View {
     }
 }
 
-/// Tiny green up + red down arrows for the shared Sides control.
+/// Tiny green up + red down arrows for the shared Sides control. Icon-only
+/// (compact) at the default "All" state; expands to icon+value once a side
+/// is selected (owner punch list item 5).
 struct SidesFilterMenuLabel: View {
     let title: String
     let isActive: Bool
@@ -452,14 +501,16 @@ struct SidesFilterMenuLabel: View {
                     .font(.system(size: 9, weight: .heavy))
                     .foregroundStyle(selected == .buy ? (isActive ? .white : .secondary) : Color.red)
             }
-            Text(title)
-                .font(.caption.weight(.semibold))
+            if isActive {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .opacity(0.5)
                 .padding(.leading, 2)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, isActive ? 12 : 10)
         .padding(.vertical, 8)
         .foregroundStyle(isActive ? .white : .primary)
         .background(
@@ -467,26 +518,37 @@ struct SidesFilterMenuLabel: View {
             in: Capsule()
         )
         .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+        .accessibilityLabel("Trade side filter, \(title)")
     }
 }
 
+/// Filter pill shared by Branch/Party/$/Timeframe. Icon-only (compact) when
+/// at the default/unmodified state; expands to icon+value once active —
+/// except `alwaysShowLabel` (Timeframe), which stays icon+value always
+/// (owner punch list item 5).
 struct FilterMenuLabel: View {
     let title: String
     let icon: String
     let isActive: Bool
+    var alwaysShowLabel: Bool = false
+    var accessibilityLabel: String? = nil
+
+    private var showsLabel: Bool { alwaysShowLabel || isActive }
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.caption.weight(.bold))
-            Text(title)
-                .font(.caption.weight(.semibold))
+            if showsLabel {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .opacity(0.5)
                 .padding(.leading, 2)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, showsLabel ? 12 : 10)
         .padding(.vertical, 8)
         .foregroundStyle(isActive ? .white : .primary)
         .background(
@@ -494,10 +556,13 @@ struct FilterMenuLabel: View {
             in: Capsule()
         )
         .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+        .accessibilityLabel(accessibilityLabel ?? title)
     }
 }
 
-/// Trades-only politician + asset fields under the shared filter bar.
+/// Trades-only Name + Asset/Ticker fields under the shared filter bar —
+/// side-by-side on one row, each just under half width, no leading symbols
+/// (owner punch list item 4).
 struct TradesExtraFilters: View {
     @Binding var politicianText: String
     @Binding var assetText: String
@@ -508,26 +573,26 @@ struct TradesExtraFilters: View {
     var onAssetClear: () -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 8) {
             CompactFilterField(
                 text: $politicianText,
-                placeholder: "Politician…",
-                systemImage: "person",
+                placeholder: "Name",
                 focused: focusedField,
                 field: .politician,
                 onSubmit: onPoliticianSubmit,
                 onClear: onPoliticianClear
             )
+            .accessibilityLabel("Filter by politician name")
             CompactFilterField(
                 text: $assetText,
-                placeholder: "Asset / ticker…",
-                systemImage: "chart.bar",
+                placeholder: "Asset / Ticker",
                 focused: focusedField,
                 field: .asset,
                 autocap: true,
                 onSubmit: onAssetSubmit,
                 onClear: onAssetClear
             )
+            .accessibilityLabel("Filter by asset or ticker")
         }
     }
 }
@@ -535,7 +600,6 @@ struct TradesExtraFilters: View {
 struct CompactFilterField: View {
     @Binding var text: String
     let placeholder: String
-    let systemImage: String
     var focused: FocusState<TradeFilterField?>.Binding
     let field: TradeFilterField
     var autocap: Bool = false
@@ -543,10 +607,7 @@ struct CompactFilterField: View {
     var onClear: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        HStack(spacing: 6) {
             Group {
                 if autocap {
                     TextField(placeholder, text: $text)
@@ -574,6 +635,7 @@ struct CompactFilterField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
         .overlay(AppTheme.border(cornerRadius: 12))
