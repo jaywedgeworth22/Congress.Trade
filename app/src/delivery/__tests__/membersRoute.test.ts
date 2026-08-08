@@ -26,13 +26,14 @@ afterEach(() => {
   db.close();
 });
 
-function insertFiler(row: { id: string; fullName: string; chamber: string; state: string; party?: string | null }) {
-  db.prepare(`INSERT INTO filers (bioguide_id, chamber, full_name, party, state) VALUES (?, ?, ?, ?, ?)`).run(
+function insertFiler(row: { id: string; fullName: string; chamber: string; state: string; party?: string | null; photoUrl?: string | null }) {
+  db.prepare(`INSERT INTO filers (bioguide_id, chamber, full_name, party, state, photo_url) VALUES (?, ?, ?, ?, ?, ?)`).run(
     row.id,
     row.chamber,
     row.fullName,
     row.party ?? null,
     row.state,
+    row.photoUrl ?? null,
   );
 }
 
@@ -51,7 +52,10 @@ async function getMembers() {
   const app = buildRestRouter();
   const res = await app.request('http://localhost/members', {}, env);
   expect(res.status).toBe(200);
-  return (await res.json()) as { members: Array<{ filerId: string; fullName: string | null; party: string | null; txCount: number }>; count: number };
+  return (await res.json()) as {
+    members: Array<{ filerId: string; fullName: string | null; party: string | null; txCount: number; photoUrl: string | null }>;
+    count: number;
+  };
 }
 
 describe('GET /members', () => {
@@ -104,6 +108,24 @@ describe('GET /members', () => {
     expect(mccaulRows).toHaveLength(1);
     expect(mccaulRows[0].txCount).toBe(7);
     expect(after.members.find((m) => m.filerId === 'house-tx10-michael-mccaul')).toBeUndefined();
+  });
+
+  it('carries a photoUrl per row for the iOS People directory avatar (owner punch list #2, item 9)', async () => {
+    insertFiler({
+      id: 'house-tx10-jane-smith',
+      fullName: 'Jane Smith',
+      chamber: 'house',
+      state: 'TX',
+      photoUrl: 'https://example.test/photos/jane-smith.jpg',
+    });
+    insertFiler({ id: 'house-tx10-no-photo', fullName: 'No Photo', chamber: 'house', state: 'TX' });
+    insertTx('house-tx10-jane-smith');
+    insertTx('house-tx10-no-photo');
+
+    const body = await getMembers();
+    const byId = new Map(body.members.map((m) => [m.filerId, m]));
+    expect(byId.get('house-tx10-jane-smith')?.photoUrl).toBe('https://example.test/photos/jane-smith.jpg');
+    expect(byId.get('house-tx10-no-photo')?.photoUrl).toBeNull();
   });
 
   it('carries the stable-cache header', async () => {

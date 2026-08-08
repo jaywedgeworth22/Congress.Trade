@@ -52,7 +52,7 @@ import {
   tickerSummarySql,
 } from './queries.ts';
 import { commandType, mergeClaimedSecret, normalizePreferencePatch } from './commands.ts';
-import { checkRowBudget, spendRowBudget } from '../security/botDefense.ts';
+import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
 import { buildMemberPerformanceQuery } from '../analytics/builders.ts';
@@ -102,6 +102,17 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
+    // Same public offset depth cap as /api/transactions (src/delivery/rest.ts)
+    // — deep offset walks are Premium CSV export's job, not a free scrape path.
+    if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
+      return c.json(
+        {
+          error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
+          hint: 'Premium CSV export: GET /api/export/transactions.csv (authenticated Premium session).',
+        },
+        400,
+      );
+    }
     // Same anti-scrape daily row budget as /api/transactions — both pagers
     // walk the identical corpus, so they draw on one shared per-IP budget.
     const ip = clientIp(c.req.raw);

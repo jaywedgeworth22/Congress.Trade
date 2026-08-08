@@ -80,7 +80,12 @@ export function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
 }
 
 export function asSort(v: string | undefined): TxQueryParams['sort'] {
-  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : undefined;
+  // 'tx_date' was already a valid backend sort key (see `TxQueryParams.sort`
+  // in delivery/rows.ts and /transactions' own `asTxSort`) but was missing
+  // from this client-facing parser, so `GET /api/client/v1/feed?sort=tx_date`
+  // silently fell back to cursor order. iOS sends `sort=tx_date` for its
+  // Date sort control (owner punch list #2, item 7) — parse it here too.
+  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : v === 'tx_date' ? 'tx_date' : undefined;
 }
 
 export function asNonNegativeNumber(v: string | undefined): number | undefined {
@@ -147,6 +152,10 @@ export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     sort: asSort(q.sort),
     order: asOrder(q.order),
     limit: parseIntOrUndef(q.limit),
+    // Offset-paged snapshot reads (iOS "Page X of Y", owner punch list #2 item
+    // 8). Mirrors `/api/transactions`' own `offset=` param; guarded by the
+    // same `MAX_PUBLIC_TX_OFFSET` depth cap in the `/feed` route below.
+    offset: parseIntOrUndef(q.offset),
   };
 }
 

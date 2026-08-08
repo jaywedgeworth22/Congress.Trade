@@ -449,6 +449,171 @@ extension View {
     }
 }
 
+// MARK: - Header chrome (subtle icon buttons + hamburger account menu)
+
+/// Subtle header circle button used for the ⓘ / export-arrow controls on
+/// Trades and Trends: no tinted stroke (the SF Symbol's own `.circle` glyph
+/// already reads as a circle), grey secondary color, a slightly larger glyph,
+/// and a tap target smaller than the default ~44pt toolbar hit area.
+struct HeaderIconButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                // `.title3` (not a fixed point size) so the "slightly larger"
+                // glyph still scales with Dynamic Type.
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+                // minWidth/minHeight (not a fixed frame) so the tap target can
+                // grow past 34pt for large Dynamic Type sizes instead of
+                // clipping the glyph.
+                .frame(minWidth: 34, minHeight: 34)
+                .contentShape(Circle())
+        }
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Header hamburger button (top-right on Trades/Trends) opening
+/// `AccountQuickMenu` — mobile-web parity with `.acct-hamburger` /
+/// `#acctMobileMenu` in `app/src/ui/dashboardHtml.ts`.
+struct HamburgerMenuButton: View {
+    @State private var showMenu = false
+
+    var body: some View {
+        Button {
+            showMenu = true
+        } label: {
+            Image(systemName: "line.3.horizontal")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 34, minHeight: 34)
+                .contentShape(Circle())
+        }
+        .accessibilityLabel("Menu")
+        .popover(isPresented: $showMenu) {
+            AccountQuickMenu(isPresented: $showMenu)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// Compact account/theme/upgrade dropdown — mobile-web parity with the
+/// hamburger's `#acctMobileMenu` content (Sign In/account, theme picker,
+/// Upgrade or Manage Subscription, Sign Out) plus the short site-footer
+/// disclaimer line. "Sign In" routes to the Settings tab (full Google +
+/// magic-link form) instead of duplicating the OAuth flow here.
+struct AccountQuickMenu: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var tabRouter: TabRouter
+    @Environment(\.openURL) private var openURL
+    @AppStorage("app_color_scheme") private var appColorScheme = "system"
+    @Binding var isPresented: Bool
+    @State private var showSubscribe = false
+
+    private static let manageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            accountSection
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Theme")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ThemeSegmentControl(selection: $appColorScheme)
+            }
+
+            if store.signedIn {
+                Divider()
+                billingButton
+                Divider()
+                Button(role: .destructive) {
+                    isPresented = false
+                    Task { await store.signOut() }
+                } label: {
+                    Label(
+                        store.isLoggingOut ? "Signing Out…" : "Sign Out",
+                        systemImage: "rectangle.portrait.and.arrow.right"
+                    )
+                    .font(.subheadline.weight(.medium))
+                }
+                .disabled(store.isLoggingOut)
+            }
+
+            Divider()
+
+            // Short disclaimer line — mobile-web parity with `.site-footer`.
+            Text("Congress.Trade is an educational tool for public STOCK Act disclosures. Not financial advice — dollar figures are estimates from disclosed brackets.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(width: 290)
+        .sheet(isPresented: $showSubscribe) {
+            SubscribeView()
+                .environmentObject(store)
+        }
+    }
+
+    @ViewBuilder
+    private var accountSection: some View {
+        if store.signedIn, let user = store.signedInUser {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(user.name?.isEmpty == false ? user.name! : user.email)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(store.entitlementLabel)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            Button {
+                isPresented = false
+                tabRouter.selection = .settings
+            } label: {
+                Label("Sign In", systemImage: "person.crop.circle")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var billingButton: some View {
+        if store.isPremium {
+            Button {
+                isPresented = false
+                openURL(Self.manageSubscriptionsURL)
+            } label: {
+                Label("Manage Subscription", systemImage: "creditcard")
+                    .font(.subheadline.weight(.medium))
+            }
+        } else {
+            Button {
+                isPresented = false
+                showSubscribe = true
+            } label: {
+                Label("Upgrade to Premium", systemImage: "sparkles")
+                    .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+}
+
 // MARK: - Theme segment (pictographic, matches web + ST console)
 
 /// Light / Dark / System control with SF Symbol icons — same pattern as

@@ -58,9 +58,7 @@ struct DeliveryView: View {
                 Section("Create Delivery") {
                     if !store.signedIn {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Delivery alerts push new filings to your devices the moment Congress.Trade sees them. Supports Webhook integration and Server-Sent Events (SSE) streaming.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            DeliveryMethodExplainer()
                             Text("Sign in to create delivery alerts.")
                                 .foregroundStyle(.primary)
                         }
@@ -97,6 +95,9 @@ struct DeliveryView: View {
                         }
                         .padding(.vertical, 4)
                     } else {
+                        DeliveryMethodExplainer()
+                            .padding(.bottom, 2)
+
                         Picker("Mode", selection: $deliveryMode) {
                             ForEach(DeliveryMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
@@ -272,6 +273,21 @@ struct DeliveryView: View {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+}
+
+/// One-line-each Webhook/SSE explainer (owner punch list #2, item 10) —
+/// mirrors the web's shortened Delivery copy (lane W2, `app/src/ui/dashboardHtml.ts`),
+/// replacing the old single long paragraph that tried to cover both methods
+/// at once.
+struct DeliveryMethodExplainer: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Webhooks: we POST each new filing to your URL, HMAC-signed.")
+            Text("Live stream (SSE): one open connection that pushes filings as they land.")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }
 
