@@ -14,9 +14,67 @@
 import { parseCertificate, verifyCertSignedBy, type ParsedCert } from './appleCrypto.ts';
 import { APPLE_ROOT_CA_G3_DER_B64 } from './appleRootCert.ts';
 
-const MAX_CHAIN_LENGTH = 5;
+/**
+ * Apple structures the StoreKit 2 / App Store Server Notifications V2 x5c chain
+ * as EXACTLY three certificates — [leaf, WWDR intermediate, Apple Root CA - G3]
+ * — the same length Apple's own app-store-server-library enforces
+ * (`ChainVerifier`, EXPECTED_CHAIN_LENGTH = 3). Anything else is rejected before
+ * any cryptography runs.
+ */
+const REQUIRED_CHAIN_LENGTH = 3;
+
+/**
+ * Apple's custom marker OIDs that bind a certificate to a specific branch of
+ * Apple's PKI. The WWDR intermediate that issues App Store signing leaves
+ * carries 1.2.840.113635.100.6.2.1; the leaf itself carries
+ * 1.2.840.113635.100.6.11.1. Their mere presence is the signal — the same two
+ * OIDs app-store-server-library checks. Requiring them stops an attacker from
+ * substituting some *other* Apple-issued end-entity cert (e.g. a $99 developer
+ * cert) into the intermediate/leaf position.
+ */
+const APPLE_INTERMEDIATE_MARKER_OID = '1.2.840.113635.100.6.2.1';
+const APPLE_LEAF_MARKER_OID = '1.2.840.113635.100.6.11.1';
 
 export class AppleJwsVerificationError extends Error {}
+
+/** Length-safe byte comparison (public trust-anchor material — no secrecy need). */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/**
+ * Enforce the X.509 path-validation *policy* Apple's chain uses, beyond the raw
+ * signature links: end-entity vs. CA roles (basicConstraints), certificate-
+ * signing capability (keyUsage keyCertSign) on every issuer, and the Apple
+ * marker OIDs on the leaf and intermediate. This is what distinguishes a
+ * genuine Apple signing leaf from a forged leaf chained through an unrelated
+ * Apple-issued certificate.
+ */
+function assertAppleChainConstraints(leaf: ParsedCert, intermediate: ParsedCert, root: ParsedCert): void {
+  // The leaf must be an end-entity certificate — never permitted to act as a CA.
+  if (leaf.isCa) {
+    throw new AppleJwsVerificationError('leaf certificate asserts basicConstraints CA:TRUE (a signing leaf must be an end-entity certificate)');
+  }
+  // Every issuing (non-leaf) certificate must be a CA that is allowed to sign certificates.
+  for (const [label, ca] of [['intermediate', intermediate], ['root', root]] as const) {
+    if (!ca.isCa) {
+      throw new AppleJwsVerificationError(`${label} certificate is missing basicConstraints CA:TRUE`);
+    }
+    if (!ca.keyCertSign) {
+      throw new AppleJwsVerificationError(`${label} certificate is missing keyUsage keyCertSign`);
+    }
+  }
+  // Apple marker OIDs must be present on the intermediate and the leaf.
+  if (!intermediate.extensionOids.includes(APPLE_INTERMEDIATE_MARKER_OID)) {
+    throw new AppleJwsVerificationError(`intermediate certificate is missing the Apple WWDR marker extension (${APPLE_INTERMEDIATE_MARKER_OID})`);
+  }
+  if (!leaf.extensionOids.includes(APPLE_LEAF_MARKER_OID)) {
+    throw new AppleJwsVerificationError(`leaf certificate is missing the Apple App Store signing marker extension (${APPLE_LEAF_MARKER_OID})`);
+  }
+}
 
 function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -59,10 +117,25 @@ function assertCertsInWindow(certs: ParsedCert[], nowMs: number): void {
 }
 
 /**
- * Verify an Apple ES256 x5c-chained JWS end to end and return the decoded
- * JSON payload. Throws {@link AppleJwsVerificationError} on any failure —
- * malformed input, an unanchored/broken chain, an expired certificate, or an
- * invalid signature. Never returns a payload without a fully verified chain.
+ * Verify an Apple ES256 x5c-chained JWS end to end and return the decoded JSON
+ * payload. Performs full X.509 path validation, not merely signature linking:
+ *
+ *   1. x5c length is EXACTLY 3 (leaf, intermediate, root).
+ *   2. Every certificate is within its validity window at `now`.
+ *   3. The supplied root (x5c[2]) IS our pinned Apple Root CA - G3 (public-key
+ *      match) — the chain must terminate at exactly that trust anchor.
+ *   4. Role/usage policy: the leaf is an end-entity cert (not a CA); the
+ *      intermediate and root are CAs with keyUsage keyCertSign; the Apple
+ *      marker OIDs are present on the leaf and intermediate.
+ *   5. Signature links, each verified against a key WE derived: root self-
+ *      signed by the pin, intermediate by the root, leaf by the intermediate.
+ *   6. The outer JWS ES256 signature verifies under the leaf key.
+ *
+ * Throws {@link AppleJwsVerificationError} on any failure. Never returns a
+ * payload without a fully validated chain. This closes the forged-leaf exploit
+ * whereby anyone holding an Apple-issued end-entity certificate (which chains
+ * to the same root) could mint a leaf, sign an arbitrary payload, and have it
+ * accepted: such a chain fails the role/usage, marker-OID, and exact-pin checks.
  */
 export async function verifyAppleSignedJws<T = unknown>(
   jws: string,
@@ -86,45 +159,59 @@ export async function verifyAppleSignedJws<T = unknown>(
     throw new AppleJwsVerificationError(`unsupported JWS alg ${String(header.alg)}; only ES256 is accepted`);
   }
   const x5c = header.x5c;
-  if (!Array.isArray(x5c) || x5c.length === 0 || x5c.length > MAX_CHAIN_LENGTH) {
-    throw new AppleJwsVerificationError('missing or invalid x5c certificate chain');
+  if (!Array.isArray(x5c) || x5c.length !== REQUIRED_CHAIN_LENGTH) {
+    throw new AppleJwsVerificationError(
+      `x5c certificate chain must contain exactly ${REQUIRED_CHAIN_LENGTH} certificates (leaf, intermediate, root)`,
+    );
   }
   if (!x5c.every((c) => typeof c === 'string' && c.length > 0)) {
     throw new AppleJwsVerificationError('x5c chain entries must be non-empty strings');
   }
 
   const chain = parseChain(x5c);
+  const [leaf, intermediate, suppliedRoot] = chain;
   const nowMs = opts.now ?? Date.now();
   assertCertsInWindow(chain, nowMs);
 
-  let root: ParsedCert;
+  let pinnedRoot: ParsedCert;
   try {
-    root = parseCertificate(b64ToBytes(opts.pinnedRootB64 ?? APPLE_ROOT_CA_G3_DER_B64));
+    pinnedRoot = parseCertificate(b64ToBytes(opts.pinnedRootB64 ?? APPLE_ROOT_CA_G3_DER_B64));
   } catch (err) {
     throw new AppleJwsVerificationError(`invalid pinned root certificate: ${(err as Error).message}`);
   }
-  if (nowMs < root.notBefore.getTime() || nowMs > root.notAfter.getTime()) {
+  if (nowMs < pinnedRoot.notBefore.getTime() || nowMs > pinnedRoot.notAfter.getTime()) {
     throw new AppleJwsVerificationError('the pinned root certificate is outside its validity window');
   }
 
-  // Anchor: the topmost certificate the peer supplied must be signed by our
-  // pinned root's key. This holds whether Apple included the root itself in
-  // x5c (a self-signature check against the pin — a no-op given the pin IS
-  // that root) or stopped at the intermediate (the documented common case).
-  const top = chain[chain.length - 1];
-  const anchored = await verifyCertSignedBy(top, root.spkiRaw, root.spkiCurve);
-  if (!anchored) throw new AppleJwsVerificationError('certificate chain does not anchor to the pinned Apple root');
+  // Trust-anchor pin: the root the peer supplied at x5c[2] must BE our pinned
+  // Apple Root CA - G3, matched by public key (SPKI). This is what stops the
+  // forged-leaf exploit at its root — an attacker's chain that terminates at
+  // some other Apple-issued cert (even one legitimately signed by the real
+  // Apple root) never presents *this exact* root at x5c[2].
+  if (!bytesEqual(suppliedRoot.spkiRaw, pinnedRoot.spkiRaw)) {
+    throw new AppleJwsVerificationError('certificate chain does not terminate at the pinned Apple Root CA - G3');
+  }
 
-  // Walk down: each certificate is signed by the NEXT certificate's key
-  // (leaf <- intermediate <- ... ), i.e. x5c[i] signed by x5c[i+1].
-  for (let i = 0; i < chain.length - 1; i++) {
-    const issuer = chain[i + 1];
-    const ok = await verifyCertSignedBy(chain[i], issuer.spkiRaw, issuer.spkiCurve);
-    if (!ok) throw new AppleJwsVerificationError('certificate chain link failed to verify');
+  // X.509 role/usage policy (basicConstraints, keyUsage, Apple marker OIDs).
+  assertAppleChainConstraints(leaf, intermediate, suppliedRoot);
+
+  // Signature links, verified top-down, each against a key WE derived: the
+  // supplied root against the pinned key (a self-signature since they match),
+  // the intermediate against the root, and the leaf against the intermediate.
+  const rootAnchored = await verifyCertSignedBy(suppliedRoot, pinnedRoot.spkiRaw, pinnedRoot.spkiCurve);
+  if (!rootAnchored) {
+    throw new AppleJwsVerificationError('supplied root certificate is not signed by the pinned Apple root key');
+  }
+  const intermediateSigned = await verifyCertSignedBy(intermediate, suppliedRoot.spkiRaw, suppliedRoot.spkiCurve);
+  if (!intermediateSigned) {
+    throw new AppleJwsVerificationError('intermediate certificate is not signed by the root');
+  }
+  const leafSigned = await verifyCertSignedBy(leaf, intermediate.spkiRaw, intermediate.spkiCurve);
+  if (!leafSigned) {
+    throw new AppleJwsVerificationError('leaf certificate is not signed by the intermediate');
   }
 
   // Outer JWS signature: ES256 = ECDSA P-256 + SHA-256, raw r||s (RFC 7518 §3.4).
-  const leaf = chain[0];
   if (leaf.spkiCurve !== 'P-256') {
     throw new AppleJwsVerificationError('leaf certificate is not a P-256 key required for ES256');
   }

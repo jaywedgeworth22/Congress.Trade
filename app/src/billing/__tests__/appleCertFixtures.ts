@@ -72,6 +72,67 @@ function derBitString(raw: Uint8Array): Uint8Array {
   return tlv(0x03, concatBytes([new Uint8Array([0x00]), raw]));
 }
 
+function derBool(v: boolean): Uint8Array {
+  return tlv(0x01, new Uint8Array([v ? 0xff : 0x00]));
+}
+
+function derOctetString(content: Uint8Array): Uint8Array {
+  return tlv(0x04, content);
+}
+
+function derNull(): Uint8Array {
+  return tlv(0x05, new Uint8Array([]));
+}
+
+// ---- X.509 v3 extension builders (encoder side of appleCrypto's parser) -----
+
+/** Apple's custom marker OIDs, mirrored from appleJws for fixture construction. */
+export const APPLE_INTERMEDIATE_MARKER_OID = '1.2.840.113635.100.6.2.1';
+export const APPLE_LEAF_MARKER_OID = '1.2.840.113635.100.6.11.1';
+
+/** Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE, extnValue OCTET STRING } */
+function ext(oid: string, critical: boolean, valueDer: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [derOid(oid)];
+  if (critical) parts.push(derBool(true));
+  parts.push(derOctetString(valueDer));
+  return seq(...parts);
+}
+
+/** basicConstraints: CA:TRUE -> SEQUENCE{cA=TRUE}; CA:FALSE -> empty SEQUENCE (cA defaults FALSE). */
+function extBasicConstraints(isCa: boolean): Uint8Array {
+  return ext('2.5.29.19', true, isCa ? seq(derBool(true)) : seq());
+}
+
+/** keyUsage BIT STRING with keyCertSign(bit5)+cRLSign(bit6) set — byte 0x06, 1 unused bit (matches Apple's CAs). */
+function extKeyUsageKeyCertSign(): Uint8Array {
+  return ext('2.5.29.15', true, tlv(0x03, new Uint8Array([0x01, 0x06])));
+}
+
+/** A non-critical marker extension whose extnID *is* the signal (extnValue = DER NULL). */
+function extMarker(oid: string): Uint8Array {
+  return ext(oid, false, derNull());
+}
+
+export interface CertExtensionShape {
+  /** basicConstraints: true -> CA:TRUE, false -> CA:FALSE, undefined/'omit' -> extension absent. */
+  basicConstraints?: boolean | 'omit';
+  /** include a keyUsage extension asserting keyCertSign. */
+  keyCertSign?: boolean;
+  /** custom marker OID extensions to attach. */
+  markerOids?: string[];
+}
+
+function buildExtensionsBlock(shape: CertExtensionShape): Uint8Array | null {
+  const exts: Uint8Array[] = [];
+  if (shape.basicConstraints === true) exts.push(extBasicConstraints(true));
+  else if (shape.basicConstraints === false) exts.push(extBasicConstraints(false));
+  if (shape.keyCertSign) exts.push(extKeyUsageKeyCertSign());
+  for (const oid of shape.markerOids ?? []) exts.push(extMarker(oid));
+  if (exts.length === 0) return null;
+  // [3] EXPLICIT Extensions ::= SEQUENCE OF Extension
+  return tlv(0xa3, seq(...exts));
+}
+
 function derGeneralizedTime(iso: string): Uint8Array {
   const d = new Date(iso);
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');
@@ -127,19 +188,26 @@ export async function buildCert(opts: {
   notBefore: string;
   notAfter: string;
   serial?: number;
+  /** X.509 v3 extensions to embed (basicConstraints/keyUsage/marker OIDs). */
+  extensions?: CertExtensionShape;
 }): Promise<TestCert> {
   // exportKey('spki', ...) already returns the COMPLETE, correctly-formed
   // SubjectPublicKeyInfo SEQUENCE (AlgorithmIdentifier + BIT STRING) — use it
   // verbatim as the TBSCertificate's spki field; do not re-wrap it.
   const spkiField = new Uint8Array(await crypto.subtle.exportKey('spki', opts.subjectKeyPair.publicKey));
 
+  const version = tlv(0xa0, derInt(new Uint8Array([0x02]))); // [0] EXPLICIT INTEGER 2 (v3)
   const serial = derInt(new Uint8Array([0x01, opts.serial ?? 1]));
   const sigAlgId = seq(derOid(SIG_ALG_OID[opts.sigHash]));
   const issuer = derName(opts.issuerCn);
   const validity = seq(derGeneralizedTime(opts.notBefore), derGeneralizedTime(opts.notAfter));
   const subject = derName(opts.subjectCn);
 
-  const tbs = seq(serial, sigAlgId, issuer, validity, subject, spkiField);
+  const tbsParts = [version, serial, sigAlgId, issuer, validity, subject, spkiField];
+  const extBlock = opts.extensions ? buildExtensionsBlock(opts.extensions) : null;
+  if (extBlock) tbsParts.push(extBlock);
+
+  const tbs = seq(...tbsParts);
   const signature = await signTbs(tbs, opts.issuerPrivateKey, opts.sigHash);
   const der = seq(tbs, sigAlgId, derBitString(signature));
 
@@ -158,10 +226,33 @@ export interface AppleLikeChain {
   leaf: TestCert;
 }
 
-/** Build a root(P-384)->intermediate(P-384)->leaf(P-256) chain mirroring Apple's real shape. */
+// Default Apple-shaped extension sets. A genuine chain has: a CA root, a CA
+// intermediate carrying the WWDR marker OID, and an end-entity (non-CA) leaf
+// carrying the App Store leaf marker OID. Negative fixtures override these.
+const DEFAULT_ROOT_SHAPE: CertExtensionShape = { basicConstraints: true, keyCertSign: true };
+const DEFAULT_INTERMEDIATE_SHAPE: CertExtensionShape = {
+  basicConstraints: true,
+  keyCertSign: true,
+  markerOids: [APPLE_INTERMEDIATE_MARKER_OID],
+};
+const DEFAULT_LEAF_SHAPE: CertExtensionShape = {
+  basicConstraints: false,
+  markerOids: [APPLE_LEAF_MARKER_OID],
+};
+
+/**
+ * Build a root(P-384)->intermediate(P-384)->leaf(P-256) chain mirroring Apple's
+ * real shape, including the v3 extensions (basicConstraints, keyUsage, marker
+ * OIDs) that path validation now requires. Per-cert `*Shape` overrides let a
+ * test synthesize a specific malformed chain (e.g. a CA:TRUE leaf, a missing
+ * marker OID, or a non-CA in the intermediate slot).
+ */
 export async function buildAppleLikeChain(opts: {
   notBefore?: string;
   notAfter?: string;
+  rootShape?: CertExtensionShape;
+  intermediateShape?: CertExtensionShape;
+  leafShape?: CertExtensionShape;
 } = {}): Promise<AppleLikeChain> {
   const notBefore = opts.notBefore ?? '2024-01-01T00:00:00Z';
   const notAfter = opts.notAfter ?? '2034-01-01T00:00:00Z';
@@ -176,6 +267,7 @@ export async function buildAppleLikeChain(opts: {
     sigHash: 'SHA-384',
     notBefore,
     notAfter,
+    extensions: opts.rootShape ?? DEFAULT_ROOT_SHAPE,
   });
 
   const interKeyPair = await generateEcKeyPair('P-384');
@@ -188,6 +280,7 @@ export async function buildAppleLikeChain(opts: {
     sigHash: 'SHA-384',
     notBefore,
     notAfter,
+    extensions: opts.intermediateShape ?? DEFAULT_INTERMEDIATE_SHAPE,
   });
 
   const leafKeyPair = await generateEcKeyPair('P-256');
@@ -200,6 +293,7 @@ export async function buildAppleLikeChain(opts: {
     sigHash: 'SHA-256',
     notBefore,
     notAfter,
+    extensions: opts.leafShape ?? DEFAULT_LEAF_SHAPE,
   });
 
   return { root, intermediate, leaf };
@@ -219,7 +313,8 @@ export async function signAppleJws(
 ): Promise<string> {
   const header = {
     alg: opts.alg ?? 'ES256',
-    x5c: opts.x5c ?? [chain.leaf.b64, chain.intermediate.b64],
+    // Apple's real x5c is length 3: [leaf, intermediate, root].
+    x5c: opts.x5c ?? [chain.leaf.b64, chain.intermediate.b64, chain.root.b64],
   };
   const headerB64 = b64urlFromBytes(new TextEncoder().encode(JSON.stringify(header)));
   const payloadB64 = b64urlFromBytes(new TextEncoder().encode(JSON.stringify(payload)));

@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { parseCertificate, derEcdsaSignatureToRaw, verifyCertSignedBy, curveByteSize } from '../appleCrypto.ts';
-import { buildAppleLikeChain } from './appleCertFixtures.ts';
+import {
+  buildAppleLikeChain,
+  APPLE_INTERMEDIATE_MARKER_OID,
+  APPLE_LEAF_MARKER_OID,
+} from './appleCertFixtures.ts';
 
 describe('parseCertificate', () => {
   it('extracts curve, validity window, and importable SPKI bytes for a P-384 root', async () => {
@@ -19,6 +23,45 @@ describe('parseCertificate', () => {
     const { leaf } = await buildAppleLikeChain();
     const parsed = parseCertificate(leaf.der);
     expect(parsed.spkiCurve).toBe('P-256');
+  });
+
+  it('parses v3 extensions: CA certs expose isCa+keyCertSign, the leaf does not, and marker OIDs are surfaced', async () => {
+    const { root, intermediate, leaf } = await buildAppleLikeChain();
+
+    const parsedRoot = parseCertificate(root.der);
+    expect(parsedRoot.isCa).toBe(true);
+    expect(parsedRoot.keyCertSign).toBe(true);
+
+    const parsedIntermediate = parseCertificate(intermediate.der);
+    expect(parsedIntermediate.isCa).toBe(true);
+    expect(parsedIntermediate.keyCertSign).toBe(true);
+    expect(parsedIntermediate.hasKeyUsage).toBe(true);
+    expect(parsedIntermediate.extensionOids).toContain(APPLE_INTERMEDIATE_MARKER_OID);
+
+    const parsedLeaf = parseCertificate(leaf.der);
+    expect(parsedLeaf.isCa).toBe(false); // end-entity: basicConstraints CA:FALSE
+    expect(parsedLeaf.keyCertSign).toBe(false);
+    expect(parsedLeaf.extensionOids).toContain(APPLE_LEAF_MARKER_OID);
+    expect(parsedLeaf.extensionOids).not.toContain(APPLE_INTERMEDIATE_MARKER_OID);
+  });
+
+  it('treats a CA:TRUE basicConstraints leaf as a CA (so the chain verifier can reject it)', async () => {
+    const { leaf } = await buildAppleLikeChain({
+      leafShape: { basicConstraints: true, keyCertSign: true, markerOids: [APPLE_LEAF_MARKER_OID] },
+    });
+    const parsed = parseCertificate(leaf.der);
+    expect(parsed.isCa).toBe(true);
+    expect(parsed.keyCertSign).toBe(true);
+  });
+
+  it('defaults isCa/keyCertSign to false when a cert carries no such extensions', async () => {
+    // A leaf built with no extensions at all — parser must not throw and must default safely.
+    const { leaf } = await buildAppleLikeChain({ leafShape: {} });
+    const parsed = parseCertificate(leaf.der);
+    expect(parsed.isCa).toBe(false);
+    expect(parsed.keyCertSign).toBe(false);
+    expect(parsed.hasKeyUsage).toBe(false);
+    expect(parsed.extensionOids).toEqual([]);
   });
 
   it('throws on truncated/garbage input', () => {

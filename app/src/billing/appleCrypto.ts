@@ -31,13 +31,25 @@ export interface Tlv {
   end: number;
 }
 
-const TAG_SEQUENCE = 0x30;
+const TAG_BOOLEAN = 0x01;
 const TAG_INTEGER = 0x02;
 const TAG_BIT_STRING = 0x03;
+const TAG_OCTET_STRING = 0x04;
 const TAG_OID = 0x06;
+const TAG_SEQUENCE = 0x30;
 const TAG_UTC_TIME = 0x17;
 const TAG_GENERALIZED_TIME = 0x18;
 const TAG_CONTEXT_0 = 0xa0;
+/** `[3] EXPLICIT Extensions` — the TBSCertificate v3 extensions wrapper. */
+const TAG_CONTEXT_3 = 0xa3;
+
+// Standard X.509 v3 extension OIDs (RFC 5280).
+const OID_BASIC_CONSTRAINTS = '2.5.29.19';
+const OID_KEY_USAGE = '2.5.29.15';
+const OID_EXT_KEY_USAGE = '2.5.29.37';
+
+/** keyUsage bit index 5 (keyCertSign) — mask 0x04 in the BIT STRING's first data octet. */
+const KEY_USAGE_KEY_CERT_SIGN_MASK = 0x04;
 
 function readLength(buf: Uint8Array, offset: number): { length: number; next: number } {
   if (offset >= buf.length) throw new Error('DER: unexpected end of buffer reading length');
@@ -146,6 +158,107 @@ export interface ParsedCert {
   spkiCurve: EcCurve;
   notBefore: Date;
   notAfter: Date;
+  /**
+   * basicConstraints `cA` boolean — `true` only when the certificate carries a
+   * basicConstraints extension asserting `CA:TRUE`. `false` when the extension
+   * is absent or `cA` is not set (RFC 5280 default). An end-entity (leaf) cert
+   * MUST be `false`; every issuing cert MUST be `true`.
+   */
+  isCa: boolean;
+  /** True when a keyUsage extension is present at all (regardless of which bits). */
+  hasKeyUsage: boolean;
+  /** keyUsage `keyCertSign` bit — required on every certificate that signs another. */
+  keyCertSign: boolean;
+  /**
+   * Dotted OIDs of every X.509 v3 extension the certificate carries (in order).
+   * Used to assert presence of Apple's custom marker extensions, whose OID *is*
+   * the signal (their extnValue is not otherwise inspected).
+   */
+  extensionOids: string[];
+  /** extendedKeyUsage purpose OIDs (empty when the extension is absent). */
+  extKeyUsageOids: string[];
+}
+
+interface ParsedExtensions {
+  isCa: boolean;
+  hasKeyUsage: boolean;
+  keyCertSign: boolean;
+  oids: string[];
+  extKeyUsageOids: string[];
+}
+
+/** basicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLen INTEGER OPTIONAL } */
+function parseBasicConstraintsCa(value: Uint8Array): boolean {
+  const seqTlv = readTlv(value, 0);
+  if (seqTlv.tag !== TAG_SEQUENCE) throw new Error('cert: malformed basicConstraints extension');
+  const children = readChildren(value, seqTlv);
+  const first = children[0];
+  if (first && first.tag === TAG_BOOLEAN) {
+    const b = contentBytes(value, first);
+    return b.length > 0 && b[0] !== 0x00;
+  }
+  return false; // cA defaults to FALSE
+}
+
+/** keyUsage ::= BIT STRING — returns whether the keyCertSign bit (index 5) is set. */
+function parseKeyUsageKeyCertSign(value: Uint8Array): boolean {
+  const bitsTlv = readTlv(value, 0);
+  if (bitsTlv.tag !== TAG_BIT_STRING) throw new Error('cert: malformed keyUsage extension');
+  const content = contentBytes(value, bitsTlv);
+  // content[0] = number of unused trailing bits; content[1..] = the bit octets.
+  if (content.length < 2) return false;
+  return (content[1] & KEY_USAGE_KEY_CERT_SIGN_MASK) !== 0;
+}
+
+/** extendedKeyUsage ::= SEQUENCE OF KeyPurposeId (OID) */
+function parseExtKeyUsage(value: Uint8Array): string[] {
+  const seqTlv = readTlv(value, 0);
+  if (seqTlv.tag !== TAG_SEQUENCE) throw new Error('cert: malformed extendedKeyUsage extension');
+  return readChildren(value, seqTlv)
+    .filter((c) => c.tag === TAG_OID)
+    .map((c) => decodeOid(contentBytes(value, c)));
+}
+
+/**
+ * Parse the `[3] EXPLICIT Extensions` block of a TBSCertificate. `wrapper` is
+ * the context-[3] TLV; its single child is `Extensions ::= SEQUENCE OF
+ * Extension`, and each `Extension ::= SEQUENCE { extnID OID, critical BOOLEAN
+ * DEFAULT FALSE, extnValue OCTET STRING }`.
+ */
+function parseExtensions(buf: Uint8Array, wrapper: Tlv): ParsedExtensions {
+  const [seqOf] = readChildren(buf, wrapper);
+  if (!seqOf || seqOf.tag !== TAG_SEQUENCE) throw new Error('cert: malformed extensions block');
+
+  const result: ParsedExtensions = {
+    isCa: false,
+    hasKeyUsage: false,
+    keyCertSign: false,
+    oids: [],
+    extKeyUsageOids: [],
+  };
+
+  for (const ext of readChildren(buf, seqOf)) {
+    if (ext.tag !== TAG_SEQUENCE) throw new Error('cert: malformed extension entry');
+    const children = readChildren(buf, ext);
+    if (!children[0] || children[0].tag !== TAG_OID) throw new Error('cert: extension missing OID');
+    const oid = decodeOid(contentBytes(buf, children[0]));
+    result.oids.push(oid);
+
+    // extnValue is the final OCTET STRING (an optional BOOLEAN `critical` may sit between).
+    const valueTlv = children[children.length - 1];
+    if (!valueTlv || valueTlv.tag !== TAG_OCTET_STRING) throw new Error('cert: extension missing extnValue');
+    const value = contentBytes(buf, valueTlv);
+
+    if (oid === OID_BASIC_CONSTRAINTS) {
+      result.isCa = parseBasicConstraintsCa(value);
+    } else if (oid === OID_KEY_USAGE) {
+      result.hasKeyUsage = true;
+      result.keyCertSign = parseKeyUsageKeyCertSign(value);
+    } else if (oid === OID_EXT_KEY_USAGE) {
+      result.extKeyUsageOids = parseExtKeyUsage(value);
+    }
+  }
+  return result;
 }
 
 function decodeTime(buf: Uint8Array, tlv: Tlv): Date {
@@ -200,6 +313,25 @@ export function parseCertificate(der: Uint8Array): ParsedCert {
   const subject = tbsChildren[idx++];
   const spki = tbsChildren[idx++];
   if (!issuer || !validity || !subject || !spki) throw new Error('cert: malformed TBSCertificate');
+
+  // After spki come the optional issuerUniqueID [1] / subjectUniqueID [2] and
+  // the v3 extensions [3]. Scan the remainder for the [3] EXPLICIT Extensions
+  // wrapper; anything else at this position is skipped. Absent extensions leave
+  // the defaults below (not a CA, no keyUsage, no marker OIDs) — which the chain
+  // verifier then rejects for any cert that structurally needs them.
+  let extensions: ParsedExtensions = {
+    isCa: false,
+    hasKeyUsage: false,
+    keyCertSign: false,
+    oids: [],
+    extKeyUsageOids: [],
+  };
+  for (let j = idx; j < tbsChildren.length; j++) {
+    if (tbsChildren[j].tag === TAG_CONTEXT_3) {
+      extensions = parseExtensions(der, tbsChildren[j]);
+      break;
+    }
+  }
   if (validity.tag !== TAG_SEQUENCE || spki.tag !== TAG_SEQUENCE) {
     throw new Error('cert: unexpected TBSCertificate field tag shape');
   }
@@ -229,6 +361,11 @@ export function parseCertificate(der: Uint8Array): ParsedCert {
     spkiCurve,
     notBefore,
     notAfter,
+    isCa: extensions.isCa,
+    hasKeyUsage: extensions.hasKeyUsage,
+    keyCertSign: extensions.keyCertSign,
+    extensionOids: extensions.oids,
+    extKeyUsageOids: extensions.extKeyUsageOids,
   };
 }
 
