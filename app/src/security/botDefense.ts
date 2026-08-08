@@ -58,8 +58,11 @@ export const MAX_PUBLIC_TX_OFFSET = 2_000;
  * residential scout, sibling-app integrations, ops scripts). Health stays open
  * for uptime monitors; logos are cheap cache-friendly images; the SSE stream
  * carries its own per-subscription and per-IP limits in delivery/sse.ts.
+ * Webhooks are Apple/Stripe-style server-to-server callbacks: they carry no
+ * browser-shaped user agent and are authenticated by signature verification
+ * (JWS chain / HMAC), not by looking human.
  */
-const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos'];
+const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos', '/api/webhooks'];
 
 /**
  * Paths under an EXEMPT_PREFIXES prefix that are NOT token-gated and must

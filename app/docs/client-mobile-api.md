@@ -47,9 +47,9 @@ Command writes must validate account ownership and entitlement before queueing,
 be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
 The current router implements `update_preferences`, `create_subscription`,
-`update_subscription`, `delete_subscription`, `register_device`, and
-`unregister_device`; `start_checkout` and `request_export` are defined in the
-shared type set but still return `501`.
+`update_subscription`, `delete_subscription`, `register_device`,
+`unregister_device`, and `redeem_apple_purchase`; `start_checkout` and
+`request_export` are defined in the shared type set but still return `501`.
 
 ### Device registration (APNs / web push)
 
@@ -67,7 +67,102 @@ do not consume the SSE/webhook subscription quota.
   so those clients stop failing with `delivery must be 'sse' or 'webhook'`.
 - Actual APNs HTTP/2 trade fan-out is a follow-up (needs Apple `.p8` credentials).
 
-## Initial Surface
+### Sign in with Apple (2026-08-09)
+
+`POST /auth/apple` — native `ASAuthorizationAppleIDProvider` flow. The client
+verifies nothing itself; it forwards the identity token JWS as-is and the
+backend does full RS256-against-Apple's-published-JWKS verification
+(`src/auth/appleIdentity.ts`, JWKS cached ~1h) before trusting any claim.
+Env-gated by `APPLE_SIGNIN_ENABLED` (`503` while unset) + `APPLE_BUNDLE_ID`
+(default `trade.congress.ios`).
+
+Request:
+
+```json
+{
+  "identityToken": "<ASAuthorizationAppleIDCredential.identityToken, UTF-8 decoded>",
+  "nonce": "<optional, only if the client set one on the request>",
+  "fullName": "<optional, ONLY present on the very first authorization — Apple never encodes it in the JWT at all>"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "ok": true,
+  "token": "<opaque session token — same shape/lifetime as the Google flow's>",
+  "user": { "id": "...", "email": "...", "name": "...", "picture": null },
+  "entitlement": { "premium": false, "status": null, "plan": null, "...": "see Entitlement semantics below" }
+}
+```
+
+`401` on a failed/expired/malformed identity token, `503` when Apple sign-in
+isn't enabled yet, `429` per-IP rate limit. A session cookie is also set (web
+parity); iOS should use the `token` as a `Bearer` credential going forward,
+matching the existing Google/magic-link session model — same cookie-or-bearer
+resolution, same 30-day TTL, same `POST /auth/logout`.
+
+Account linking: keyed by the stable Apple `sub` claim, constant across every
+future sign-in for this app even once Apple stops returning `email`/name on
+later calls. A verified email that matches an existing account (e.g. a prior
+Google/magic-link signup) links to it instead of creating a duplicate; an
+**unverified** email is never used to link OR to name a new account (mirrors
+the Google callback's account-takeover guard) — falls back to a synthetic
+placeholder address in that edge case.
+
+### Apple In-App Purchase (StoreKit 2) — `redeem_apple_purchase` (2026-08-09)
+
+- `POST /api/client/v1/commands` `{ type: "redeem_apple_purchase", payload: { signedTransaction: "<Transaction.jwsRepresentation>" } }`
+  - Signed-in required (NOT Premium-gated — this is how you become Premium).
+  - Env-gated by `APPLE_IAP_ENABLED` (command fails with `"Apple in-app
+    purchases are not enabled yet"` while unset) + `APPLE_PRODUCT_MONTHLY` /
+    `APPLE_PRODUCT_ANNUAL` (App Store Connect product ids; default to
+    `trade.congress.premium.monthly` / `.annual` when unset).
+  - Server verifies the JWS chain (leaf → intermediate → Apple Root CA - G3,
+    the last pinned in `src/billing/appleRootCert.ts` — no network call) via
+    `src/billing/appleJws.ts`, checks `bundleId`, maps `productId` to a plan,
+    and requires the transaction to be currently active (not expired/revoked).
+  - **Idempotent on `originalTransactionId`** (StoreKit's stable id across
+    renewals of the same subscription) — restore-purchases works by calling
+    this command again with a freshly-fetched `signedTransaction`; a repeat
+    redeem for the SAME user is a no-op success, a renewal transaction
+    updates the existing ledger row's expiry, and a redeem attempt for an
+    `originalTransactionId` already owned by a DIFFERENT account returns a
+    command `failed` status with `"this Apple subscription is already linked
+    to a different account"` (`409`-equivalent) rather than reassigning it.
+  - Result on success: `{ entitlement, plan, expiresAt, originalTransactionId }`.
+- App Store Server Notifications V2 land at `POST /api/webhooks/apple`
+  (`{ signedPayload }`, same env gate, same JWS-chain verification — including
+  the notification's OWN nested `signedTransactionInfo` /
+  `signedRenewalInfo` JWS, each independently verified). Handles the minimal
+  set: `DID_RENEW` (renew → active, new expiry), `EXPIRED` (→ expired),
+  `REVOKE` (→ revoked, refund/family-sharing-removal), and
+  `DID_CHANGE_RENEWAL_STATUS` (auto-renew toggle; does not itself change
+  access). Idempotent on Apple's `notificationUUID` (claim/release/processed
+  ledger, same pattern as the Stripe webhook). A notification for an
+  `originalTransactionId` with no existing ledger row (i.e. the redeem
+  command hasn't run for it yet) is acknowledged but ignored — a webhook
+  alone never has enough information to attribute a subscription to a user.
+
+#### Entitlement semantics (Stripe OR Apple)
+
+`entitlement.premium` is `true` when EITHER the existing Stripe-derived state
+is active/trialing OR the signed-in user has a currently-active row in the
+`apple_subscriptions` ledger. Every entitlement-bearing response (`GET
+/auth/me`, `GET /billing/status`, `GET /api/client/v1/bootstrap`, `GET
+/api/client/v1/me`) now resolves this OR asynchronously
+(`billing/entitlement.ts` `resolveEntitlementAsync`); so do every
+Premium-gated write path (CSV export, alert/webhook subscription
+create/activate, PDF download). The pure, synchronous `entitlementOf` (used
+internally by the ALSO-still-live legacy `POST /billing/apple/confirm` route)
+is unchanged — Stripe's own resolution code was not touched or restructured.
+
+The response adds one **optional, additive** field for clients that want to
+show the right "Manage subscription" surface (App Store vs. Stripe billing
+portal): `entitlement.source: "stripe" | "apple" | null`. Absent/`undefined`
+is a valid value (older code paths that haven't been touched still omit it)
+and must not be treated as "not premium" — always gate on `entitlement.premium`.
 
 - Implemented now: bootstrap, `me`, feed, trade detail, ticker detail,
   politician detail (`member` endpoint), `preferences` GET/PUT, subscription listing, and command-backed

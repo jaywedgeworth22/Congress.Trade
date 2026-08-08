@@ -18,7 +18,7 @@ import type { Context } from 'hono';
 import type { BillingPlan, Env } from '../shared/types.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import { getUserById } from '../auth/users.ts';
-import { entitlementOf } from './entitlement.ts';
+import { entitlementOf, resolveEntitlementAsync } from './entitlement.ts';
 import {
   billingCapabilitiesAsync,
   checkoutConfiguredAsync,
@@ -98,7 +98,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     return c.json({
       ...(await billingCapabilitiesAsync(c.env)),
       hasCustomer: Boolean(user?.stripeCustomerId),
-      entitlement: entitlementOf(user),
+      entitlement: await resolveEntitlementAsync(c.env, user),
     });
   });
 

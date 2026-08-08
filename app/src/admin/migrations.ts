@@ -863,6 +863,62 @@ export const MEMBERS_DIRECTORY_PERF_SCHEMA_STATEMENTS = [
      WHERE deprecated_at IS NULL`,
 ] as const;
 
+/**
+ * 0080_apple_signin.sql — "Sign in with Apple": link a user to their stable
+ * Apple `sub` claim. Nullable + partial-unique so existing Google/magic-link
+ * users are unaffected until they link Apple.
+ */
+export const APPLE_SIGNIN_SCHEMA_STATEMENTS = [
+  'ALTER TABLE users ADD COLUMN apple_sub TEXT',
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub
+     ON users (apple_sub)
+     WHERE apple_sub IS NOT NULL`,
+] as const;
+
+/**
+ * 0081_apple_iap.sql — Apple In-App Purchase (StoreKit 2) subscription ledger
+ * + App Store Server Notifications V2 webhook idempotency ledger. See
+ * migrations/0081_apple_iap.sql for the full design note (why this table is
+ * independent of, not a replacement for, the Stripe-shaped `users` columns
+ * the legacy POST /billing/apple/confirm route also writes).
+ */
+export const APPLE_IAP_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS apple_subscriptions (
+     original_transaction_id   TEXT PRIMARY KEY,
+     user_id                   TEXT NOT NULL,
+     product_id                TEXT NOT NULL,
+     plan                      TEXT NOT NULL CHECK (plan IN ('monthly', 'annual')),
+     status                    TEXT NOT NULL DEFAULT 'active'
+                                  CHECK (status IN ('active', 'expired', 'revoked', 'grace_period', 'billing_retry')),
+     environment               TEXT,
+     latest_transaction_id     TEXT,
+     purchase_date              TEXT,
+     expires_date               TEXT,
+     auto_renew_status          INTEGER,
+     auto_renew_product_id      TEXT,
+     revoked_at                 TEXT,
+     revocation_reason          INTEGER,
+     last_notification_type     TEXT,
+     last_notification_subtype  TEXT,
+     created_at                 TEXT NOT NULL,
+     updated_at                 TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user ON apple_subscriptions (user_id)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user_active
+     ON apple_subscriptions (user_id, status, expires_date)`,
+  `CREATE TABLE IF NOT EXISTS apple_webhook_events (
+     event_id          TEXT PRIMARY KEY,
+     event_type        TEXT NOT NULL,
+     received_at       TEXT NOT NULL,
+     processed_at      TEXT,
+     claim_token       TEXT,
+     claim_expires_at  TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_apple_webhook_events_received ON apple_webhook_events (received_at DESC)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_webhook_events_claim_expiry
+     ON apple_webhook_events (processed_at, claim_expires_at)`,
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -995,6 +1051,10 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...FILER_IDENTITY_MERGE_SCHEMA_STATEMENTS,
   // 0079_members_directory_perf.sql
   ...MEMBERS_DIRECTORY_PERF_SCHEMA_STATEMENTS,
+  // 0080_apple_signin.sql
+  ...APPLE_SIGNIN_SCHEMA_STATEMENTS,
+  // 0081_apple_iap.sql
+  ...APPLE_IAP_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

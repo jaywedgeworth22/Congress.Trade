@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 import type { ClientCommand, Env, User, ClientCommandType } from '../shared/types.ts';
 
 import { getCurrentUserFromRequest } from '../auth/session.ts';
-import { entitlementOf } from '../billing/entitlement.ts';
+import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
 import {
@@ -72,7 +72,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         user: user
           ? { id: user.id, email: user.email, name: user.name, picture: user.picture }
           : null,
-        entitlement: entitlementOf(user),
+        entitlement: await resolveEntitlementAsync(c.env, user),
       },
       capabilities: {
         feed: true,
@@ -97,7 +97,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/me', async (c) => {
     const user = await getCurrentUserFromRequest(c);
-    return c.json({ user, entitlement: entitlementOf(user) });
+    return c.json({ user, entitlement: await resolveEntitlementAsync(c.env, user) });
   });
 
   r.get('/feed', async (c) => {

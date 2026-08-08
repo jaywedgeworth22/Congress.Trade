@@ -1,5 +1,5 @@
 import type { Env, User, ClientCommandType, Subscription } from '../shared/types.ts';
-import { isPremiumUser } from '../billing/entitlement.ts';
+import { isPremiumUserAsync, resolveEntitlementAsync } from '../billing/entitlement.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
@@ -27,6 +27,15 @@ import {
   publicPushDevice,
   upsertPushDevice,
 } from './pushDevices.ts';
+import { verifyAppleSignedJws, AppleJwsVerificationError } from '../billing/appleJws.ts';
+import {
+  appleTransactionIsActive,
+  planFromConfiguredAppleProductId,
+  resolveAppleProductIds,
+  type AppleTransactionPayload,
+} from '../billing/apple.ts';
+import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 export function commandType(value: unknown): ClientCommandType {
   const type = String(value || '');
@@ -38,7 +47,8 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'register_device' ||
     type === 'unregister_device' ||
     type === 'start_checkout' ||
-    type === 'request_export'
+    type === 'request_export' ||
+    type === 'redeem_apple_purchase'
   ) {
     return type;
   }
@@ -136,7 +146,7 @@ export async function executeCommand(
         env: input.env,
       }, opts);
     }
-    if (!isPremiumUser(user)) {
+    if (!(await isPremiumUserAsync(env, user))) {
       throw new ClientInputError('Creating a subscription requires a Premium account', 402);
     }
     const delivery = asDelivery(input.delivery);
@@ -177,7 +187,7 @@ export async function executeCommand(
     if (input.active !== undefined) {
       patch.active = input.active === true;
       if (patch.active && !existing.active) {
-        if (!isPremiumUser(user)) {
+        if (!(await isPremiumUserAsync(env, user))) {
           throw new ClientInputError('Activating a subscription requires a Premium account', 402);
         }
         try {
@@ -279,6 +289,64 @@ export async function executeCommand(
       if (err instanceof ClientInputError) throw err;
       throw new ClientInputError(err instanceof Error ? err.message : String(err));
     }
+  }
+  if (type === 'redeem_apple_purchase') {
+    const enabled = (await resolveSecret(env, 'APPLE_IAP_ENABLED')).value === 'true';
+    if (!enabled) throw new ClientInputError('Apple in-app purchases are not enabled yet', 503);
+
+    const jws =
+      (typeof input.signedTransaction === 'string' && input.signedTransaction) ||
+      (typeof input.jwsRepresentation === 'string' && input.jwsRepresentation) ||
+      '';
+    if (!jws) throw new ClientInputError('signedTransaction is required');
+
+    let transaction: AppleTransactionPayload;
+    try {
+      transaction = await verifyAppleSignedJws<AppleTransactionPayload>(jws);
+    } catch (err) {
+      const message = err instanceof AppleJwsVerificationError ? err.message : 'invalid Apple transaction';
+      throw new ClientInputError(message);
+    }
+
+    const expectedBundle = (await resolveSecret(env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
+    if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
+      throw new ClientInputError('bundleId mismatch');
+    }
+    const configuredProducts = await resolveAppleProductIds(env);
+    const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts);
+    if (!plan) throw new ClientInputError('unrecognized Apple product id');
+    if (!appleTransactionIsActive(transaction)) {
+      throw new ClientInputError('this Apple transaction is not an active subscription');
+    }
+    const originalTransactionId = transaction.originalTransactionId || transaction.transactionId;
+    if (!originalTransactionId) throw new ClientInputError('missing Apple transaction id');
+
+    const upserted = await upsertAppleSubscription(env, {
+      originalTransactionId,
+      userId: user.id,
+      productId: transaction.productId ?? '',
+      plan,
+      status: 'active',
+      environment: transaction.environment ?? null,
+      latestTransactionId: transaction.transactionId ?? null,
+      purchaseDate: transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : null,
+      expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
+    });
+    if (!upserted.ok) {
+      // Never silently reassign a subscription's Premium grant to a new
+      // account — restore-purchases on a shared/second Apple ID should
+      // surface as a conflict, not a takeover of the original owner's Premium.
+      throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
+    }
+
+    const refreshedUser = await getUserById(env, user.id);
+    const entitlement = await resolveEntitlementAsync(env, refreshedUser);
+    return {
+      entitlement,
+      plan: upserted.record.plan,
+      expiresAt: upserted.record.expiresDate,
+      originalTransactionId: upserted.record.originalTransactionId,
+    };
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

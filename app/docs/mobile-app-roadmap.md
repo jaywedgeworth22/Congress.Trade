@@ -198,6 +198,16 @@ The SwiftUI app should feel native while sharing the same product model.
 
 ## Auth And Billing
 
+**Backend implemented (2026-08-09, env-gated off until App Store Connect
+setup lands — see `app/docs/client-mobile-api.md` for the full contract):**
+`POST /auth/apple` (Sign in with Apple, RS256-against-Apple's-JWKS
+verification) and the `redeem_apple_purchase` client command (StoreKit 2,
+full x5c chain verification against a pinned Apple root, no network call) +
+`POST /api/webhooks/apple` (App Store Server Notifications V2). Entitlement
+is Stripe OR Apple — the shared `users` billing model this section describes
+below is realized via an independent `apple_subscriptions` ledger OR'd into
+the existing resolver, not a fork of it.
+
 Auth should support both clients through the backend:
 
 - Sign in with Apple.

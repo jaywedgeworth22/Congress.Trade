@@ -12,7 +12,7 @@ import { all, first, get, run } from '../shared/db.ts';
 import { prefixedId } from '../shared/ids.ts';
 import { mapSubscription, type SubscriptionRow } from './rows.ts';
 import { getUserById } from '../auth/users.ts';
-import { isPremiumUser } from '../billing/entitlement.ts';
+import { isPremiumUserAsync } from '../billing/entitlement.ts';
 
 const SELECT_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
@@ -32,9 +32,10 @@ export class SubscriptionQuotaError extends Error {}
  * state (trial-and-cancel would otherwise keep webhook/SSE delivery working
  * forever). User-owned rows store clientId as `user:<id>`; the owner must
  * still satisfy the same canonical predicate the UI/REST layer uses
- * (billing/entitlement isPremiumUser over the users row). Admin
- * operator-provisioned integration ids are intentionally ungated, matching
- * the PATCH /subscriptions/:id policy.
+ * (billing/entitlement isPremiumUserAsync — Stripe OR Apple IAP — over the
+ * users row + apple_subscriptions ledger). Admin operator-provisioned
+ * integration ids are intentionally ungated, matching the PATCH
+ * /subscriptions/:id policy.
  */
 export async function subscriptionOwnerEntitled(
   env: Env,
@@ -42,7 +43,7 @@ export async function subscriptionOwnerEntitled(
 ): Promise<boolean> {
   if (!clientId?.startsWith('user:')) return true;
   const owner = await getUserById(env, clientId.slice('user:'.length));
-  return isPremiumUser(owner);
+  return isPremiumUserAsync(env, owner);
 }
 
 export function subscriptionSecretError(value: unknown): string | null {

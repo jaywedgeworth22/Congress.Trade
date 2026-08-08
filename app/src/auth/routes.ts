@@ -8,6 +8,8 @@
  *   GET  /auth/google/callback  -> verify state, exchange code, create session
  *   POST /auth/magic/request    -> { email } : email a single-use sign-in link
  *   GET  /auth/magic/verify     -> consume token, create session, redirect home
+ *   POST /auth/apple            -> { identityToken, nonce?, fullName? } : verify
+ *                                   the native Sign in with Apple JWS, create session
  *
  * Sessions are opaque KV tokens (see session.ts). This router owns identity
  * only; subscription/paywall gating is layered on separately.
@@ -28,16 +30,21 @@ import {
   getSafeRedirectUrl,
 } from './session.ts';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google.ts';
-import { upsertUserFromGoogle, upsertUserByEmail } from './users.ts';
+import { upsertUserFromGoogle, upsertUserByEmail, upsertUserFromApple } from './users.ts';
 import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic.ts';
 import { sendEmail } from './email.ts';
 import { constantTimeEqual, randomToken } from './tokens.ts';
-import { entitlementOf } from '../billing/entitlement.ts';
+import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { billingCapabilitiesAsync } from '../billing/stripe.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { isAdminSessionEmail, adminRuntimeConfig } from '../admin/identity.ts';
 import { verifyAccessJwt, certsUrl } from '../admin/access.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
+import {
+  verifyAppleIdentityToken,
+  appleEmailIsVerified,
+  AppleIdentityVerificationError,
+} from './appleIdentity.ts';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -83,7 +90,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
 
     return c.json({
       user: user ? publicUser(user) : null,
-      entitlement: entitlementOf(user),
+      entitlement: await resolveEntitlementAsync(c.env, user),
       admin: { allowed: adminAllowed },
       billing: {
         ...(await billingCapabilitiesAsync(c.env)),
@@ -269,6 +276,61 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       return c.redirect(`${targetOrigin}?token=${encodeURIComponent(sessionToken)}`);
     }
     return c.redirect(`${targetOrigin}/?login=ok`);
+  });
+
+  // --- POST /auth/apple -----------------------------------------------------
+  // Native "Sign in with Apple" (ASAuthorizationAppleIDProvider). The client
+  // verifies nothing itself — it forwards the identityToken JWS as-is; this
+  // route does the full RS256-against-Apple's-JWKS verification
+  // (appleIdentity.ts) before ever trusting a claim in it.
+  r.post('/apple', async (c) => {
+    const enabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
+    if (!enabled) return c.json({ error: 'Sign in with Apple is not enabled' }, 503);
+
+    const ip = clientIp(c.req.raw);
+    const ipRl = await rateLimit(c.env, 'apple-signin-ip', ip, 20, 600);
+    if (!ipRl.ok) {
+      return c.json({ error: 'too many requests, please try again later' }, 429, {
+        'Retry-After': String(ipRl.retryAfterSec),
+      });
+    }
+
+    let body: { identityToken?: unknown; nonce?: unknown; fullName?: unknown };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const identityToken = typeof body.identityToken === 'string' ? body.identityToken : '';
+    if (!identityToken) return c.json({ error: 'identityToken required' }, 400);
+    const nonce = typeof body.nonce === 'string' && body.nonce ? body.nonce : undefined;
+    const fullName = typeof body.fullName === 'string' && body.fullName.trim() ? body.fullName.trim().slice(0, 200) : null;
+
+    const bundleId = (await resolveSecret(c.env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
+
+    let claims;
+    try {
+      claims = await verifyAppleIdentityToken(identityToken, { bundleId, nonce });
+    } catch (err) {
+      const message = err instanceof AppleIdentityVerificationError ? err.message : 'invalid Apple identity token';
+      console.warn('apple sign-in rejected:', message);
+      return c.json({ error: message }, 401);
+    }
+
+    const user = await upsertUserFromApple(c.env, {
+      sub: claims.sub as string,
+      email: claims.email ?? null,
+      emailVerified: appleEmailIsVerified(claims),
+      name: fullName,
+    });
+    const sessionToken = await createSession(c.env, user.id);
+    await setSessionCookie(c, sessionToken);
+    return c.json({
+      ok: true,
+      token: sessionToken,
+      user: publicUser(user),
+      entitlement: await resolveEntitlementAsync(c.env, user),
+    });
   });
 
   return r;

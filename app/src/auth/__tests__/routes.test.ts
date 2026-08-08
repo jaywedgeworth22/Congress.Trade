@@ -87,11 +87,15 @@ describe('auth router', () => {
         },
       },
       DB: {
-        prepare: () => ({
+        // Scoped by SQL text — an unscoped "always return the user row"
+        // stand-in would also (wrongly) satisfy the unrelated
+        // apple_subscriptions entitlement lookup GET /me now issues.
+        prepare: (sql: string) => ({
           bind() {
             return this;
           },
           async first() {
+            if (!/FROM users/i.test(sql)) return null;
             return {
               id: 'u1',
               email: 'admin@example.com',
@@ -119,6 +123,7 @@ describe('auth router', () => {
       user: { email: 'admin@example.com' },
       admin: { allowed: true },
       billing: { hasCustomer: true },
+      entitlement: { premium: false },
     });
   });
 

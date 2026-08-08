@@ -306,7 +306,8 @@ export type ClientCommandType =
   | 'register_device'
   | 'unregister_device'
   | 'start_checkout'
-  | 'request_export';
+  | 'request_export'
+  | 'redeem_apple_purchase';
 
 export type ClientCommandStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
@@ -341,6 +342,8 @@ export interface User {
   picture: string | null;
   /** Google `sub` claim when the user has linked Google sign-in; null otherwise. */
   googleSub: string | null;
+  /** Apple `sub` claim when the user has linked Sign in with Apple; null otherwise. */
+  appleSub: string | null;
   emailVerified: boolean;
   createdAt: string;
   lastLoginAt: string | null;
@@ -380,6 +383,14 @@ export interface Entitlement {
   trialEnd: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /**
+   * Which provider the premium grant currently comes from, when known.
+   * Populated only by the async resolver (billing/entitlement.ts
+   * resolveEntitlementAsync) that also checks the Apple IAP ledger; the pure
+   * sync `entitlementOf` leaves this undefined. Additive/optional so it is
+   * always backward-compatible for existing Decodable clients.
+   */
+  source?: 'stripe' | 'apple' | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +879,16 @@ export interface Env {
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */
   STRIPE_MANAGED_PAYMENTS?: string;
+
+  // --- Apple (Sign in with Apple + In-App Purchase) ---
+  /** "true" to enable POST /auth/apple. Off until Sign in with Apple capability + key config are set up in App Store Connect. */
+  APPLE_SIGNIN_ENABLED?: string;
+  /** "true" to enable the redeem_apple_purchase command + POST /api/webhooks/apple. Off until the App Store Connect subscription products exist. */
+  APPLE_IAP_ENABLED?: string;
+  /** App Store Connect product id for the monthly Premium subscription (default trade.congress.premium.monthly). */
+  APPLE_PRODUCT_MONTHLY?: string;
+  /** App Store Connect product id for the annual Premium subscription (default trade.congress.premium.annual). */
+  APPLE_PRODUCT_ANNUAL?: string;
 
   // --- Infisical runtime secret resolver ---
   /** Optional Infisical API origin. Defaults to https://app.infisical.com. */
