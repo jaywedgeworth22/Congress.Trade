@@ -24,18 +24,35 @@ struct FeedDashboardView: View {
     @State private var showExportSheet = false
     @FocusState private var focusedField: TradeFilterField?
 
-    /// Newest trade date first; cursor is only a tie-breaker so seed imports of
-    /// old filings don't sit above recent activity just because they were
-    /// inserted later.
+    /// Orders the loaded page per the active Trades sort control (owner
+    /// punch list #2, item 7). Date is a real backend sort key — the server
+    /// already returned rows in this order — but re-sorting here keeps the
+    /// list stable/consistent even if a poll races the display. Amount has
+    /// no backend sort key, so this IS the sort: a local re-sort of the
+    /// already-loaded page only, never a fetch beyond it.
     private var sortedCached: [ClientTrade] {
-        cachedTrades.sorted { lhs, rhs in
-            let ld = lhs.transaction.date ?? ""
-            let rd = rhs.transaction.date ?? ""
-            if ld != rd { return ld > rd }
-            let lf = lhs.filing.filedDate ?? ""
-            let rf = rhs.filing.filedDate ?? ""
-            if lf != rf { return lf > rf }
-            return (lhs.cursor ?? 0) > (rhs.cursor ?? 0)
+        let ascending = store.feedSortDirection == .ascending
+        switch store.feedSortKey {
+        case .date:
+            return cachedTrades.sorted { lhs, rhs in
+                let ld = lhs.transaction.date ?? ""
+                let rd = rhs.transaction.date ?? ""
+                if ld != rd { return ascending ? ld < rd : ld > rd }
+                let lf = lhs.filing.filedDate ?? ""
+                let rf = rhs.filing.filedDate ?? ""
+                if lf != rf { return ascending ? lf < rf : lf > rf }
+                let lc = lhs.cursor ?? 0
+                let rc = rhs.cursor ?? 0
+                return ascending ? lc < rc : lc > rc
+            }
+        case .amount:
+            return cachedTrades.sorted { lhs, rhs in
+                let la = lhs.transaction.amountMin ?? 0
+                let ra = rhs.transaction.amountMin ?? 0
+                if la != ra { return ascending ? la < ra : la > ra }
+                // Stable tie-break: newest trade date first, regardless of direction.
+                return (lhs.transaction.date ?? "") > (rhs.transaction.date ?? "")
+            }
         }
     }
 
@@ -130,7 +147,8 @@ struct FeedDashboardView: View {
                         }
                     )
 
-                    HStack {
+                    HStack(spacing: 8) {
+                        FeedSortControl()
                         Spacer(minLength: 0)
                         Text("\(filteredTrades.count) trades")
                             .font(.caption.weight(.medium))
@@ -185,6 +203,10 @@ struct FeedDashboardView: View {
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens trade details")
                         }
+                    }
+
+                    if !filteredTrades.isEmpty {
+                        FeedPaginationBar()
                     }
                 }
                 .padding(.horizontal, 16)
@@ -480,6 +502,129 @@ struct FeedControlBar: View {
             next.insert(chamber)
         }
         Task { await store.setChamberSelection(next) }
+    }
+}
+
+/// Trades-only sort control (owner punch list #2, item 7) — mirrors the
+/// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
+/// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
+/// Amount) plus a separate direction button that flips asc/desc for
+/// whichever key is active.
+struct FeedSortControl: View {
+    @EnvironmentObject private var store: CongressTradeStore
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(FeedSortKey.allCases) { key in
+                    Button {
+                        Task { await store.setFeedSortKey(key) }
+                    } label: {
+                        HStack {
+                            Text(key.label)
+                            if store.feedSortKey == key {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                FilterMenuLabel(
+                    title: store.feedSortKey.label,
+                    icon: "arrow.up.arrow.down",
+                    isActive: false,
+                    alwaysShowLabel: true,
+                    accessibilityLabel: "Sort by \(store.feedSortKey.label)"
+                )
+            }
+
+            Button {
+                Task { await store.toggleFeedSortDirection() }
+            } label: {
+                Image(systemName: store.feedSortDirection.systemImage)
+                    .font(.caption.weight(.bold))
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(.secondary)
+                    .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+            }
+            .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
+        }
+    }
+}
+
+/// "Page X of Y" + prev/next + rows-per-page (owner punch list #2, item 8) —
+/// mirrors the web's `#prevPageBtn`/`#nextPageBtn`/`#pageSize`
+/// (`app/src/ui/dashboardHtml.ts`). Reads `total`/`limit` from the feed's own
+/// response metadata via the store's `totalPages`/`pageSize`; never a
+/// client-side estimate.
+struct FeedPaginationBar: View {
+    @EnvironmentObject private var store: CongressTradeStore
+
+    private static let pageSizeOptions = [50, 100, 200]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                Task { await store.goToPreviousPage() }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 30, height: 30)
+            }
+            .disabled(!store.canGoToPreviousPage)
+            .accessibilityLabel("Previous page")
+
+            Text("Page \(store.currentPage + 1) of \(store.totalPages)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 84)
+                .accessibilityLabel("Page \(store.currentPage + 1) of \(store.totalPages)")
+
+            Button {
+                Task { await store.goToNextPage() }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 30, height: 30)
+            }
+            .disabled(!store.canGoToNextPage)
+            .accessibilityLabel("Next page")
+
+            Spacer(minLength: 8)
+
+            Menu {
+                ForEach(Self.pageSizeOptions, id: \.self) { size in
+                    Button {
+                        store.setPageSize(size)
+                    } label: {
+                        HStack {
+                            Text("\(size) / page")
+                            if store.pageSize == size {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text("\(store.pageSize)/page")
+                        .font(.caption.weight(.semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .opacity(0.5)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("Rows per page, \(store.pageSize)")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 

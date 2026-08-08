@@ -157,13 +157,33 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       const maxAmount = Number(params[i++]);
       rows = rows.filter((row) => row.amount_min != null && row.amount_min <= maxAmount);
     }
-    if (/ORDER BY[^]*t\.cursor_seq DESC/i.test(sql)) {
+    // tx_date checks first: the real ORDER BY clause for sort=tx_date is
+    // "t.tx_date DESC, t.cursor_seq DESC" (see buildTransactionsQuery), which
+    // also matches the plain cursor_seq patterns below — so tx_date must win
+    // when present, with cursor_seq only as its tie-breaker.
+    if (/ORDER BY[^]*t\.tx_date DESC/i.test(sql)) {
+      rows.sort((a, b) => {
+        const at = String(a.tx_date ?? '');
+        const bt = String(b.tx_date ?? '');
+        if (at !== bt) return at < bt ? 1 : -1;
+        return Number(b.cursor_seq ?? 0) - Number(a.cursor_seq ?? 0);
+      });
+    } else if (/ORDER BY[^]*t\.tx_date ASC/i.test(sql)) {
+      rows.sort((a, b) => {
+        const at = String(a.tx_date ?? '');
+        const bt = String(b.tx_date ?? '');
+        if (at !== bt) return at < bt ? -1 : 1;
+        return Number(a.cursor_seq ?? 0) - Number(b.cursor_seq ?? 0);
+      });
+    } else if (/ORDER BY[^]*t\.cursor_seq DESC/i.test(sql)) {
       rows.sort((a, b) => Number(b.cursor_seq ?? 0) - Number(a.cursor_seq ?? 0));
     } else if (/ORDER BY[^]*t\.cursor_seq ASC/i.test(sql)) {
       rows.sort((a, b) => Number(a.cursor_seq ?? 0) - Number(b.cursor_seq ?? 0));
     }
     const limit = Number(sql.match(/LIMIT\s+(\d+)/i)?.[1] ?? rows.length);
-    return rows.slice(0, limit);
+    const offsetMatch = sql.match(/OFFSET\s+(\d+)/i);
+    const offset = offsetMatch ? Number(offsetMatch[1]) : 0;
+    return rows.slice(offset, offset + limit);
   };
 
   const midpoint = (row: FeedTransactionRow) => {
@@ -1652,5 +1672,44 @@ describe('client API detail endpoints: row budget + zero-delta polling', () => {
     const body = (await res.json()) as { items: unknown[]; total?: number };
     expect(body.items).toHaveLength(1);
     expect(body.total).toBe(1);
+  });
+});
+
+describe('client API feed: offset-paged snapshots (iOS punch list #2, item 8)', () => {
+  it('allows offset up to the public depth cap and rejects beyond it with 400 (mirrors /api/transactions)', async () => {
+    const { env } = makeEnv();
+    const app = buildClientRouter();
+
+    const atCap = await app.request('http://localhost/feed?offset=2000', {}, env);
+    expect(atCap.status).toBe(200);
+
+    const overCap = await app.request('http://localhost/feed?offset=2001', {}, env);
+    expect(overCap.status).toBe(400);
+    const body = (await overCap.json()) as { error: string };
+    expect(body.error).toContain('offset beyond 2000');
+  });
+
+  it('returns the page starting at offset, sorted newest-trade-date-first when sort=tx_date&order=desc', async () => {
+    const { env, feedRows } = makeEnv();
+    // cursor_seq deliberately does NOT correlate with tx_date order, so this
+    // only passes if sort=tx_date actually drives the ordering rather than
+    // silently falling back to the cursor_seq default (the bug this fixes).
+    feedRows.push(
+      feedRow({ id: 'tx-newest', cursor_seq: 1, tx_date: '2026-03-03', __chamber: 'house' }),
+      feedRow({ id: 'tx-middle', cursor_seq: 3, tx_date: '2026-02-02', __chamber: 'house' }),
+      feedRow({ id: 'tx-oldest', cursor_seq: 2, tx_date: '2026-01-01', __chamber: 'house' }),
+    );
+    const app = buildClientRouter();
+
+    const page1 = await app.request('http://localhost/feed?limit=2&offset=0&sort=tx_date&order=desc', {}, env);
+    expect(page1.status).toBe(200);
+    const page1Body = (await page1.json()) as { items: Array<{ id: string }>; total: number };
+    expect(page1Body.items.map((i) => i.id)).toEqual(['tx-newest', 'tx-middle']);
+    expect(page1Body.total).toBe(3);
+
+    const page2 = await app.request('http://localhost/feed?limit=2&offset=2&sort=tx_date&order=desc', {}, env);
+    expect(page2.status).toBe(200);
+    const page2Body = (await page2.json()) as { items: Array<{ id: string }> };
+    expect(page2Body.items.map((i) => i.id)).toEqual(['tx-oldest']);
   });
 });

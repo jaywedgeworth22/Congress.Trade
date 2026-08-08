@@ -220,6 +220,30 @@ struct ClientMemberResponse: Decodable {
     }
 }
 
+/// `GET /api/members` — the People directory roster (owner punch list #2,
+/// item 9). Public, origin-level endpoint (not under `/api/client/v1/*`),
+/// same pattern as `/api/transactions`: `APIClient.membersDirectory()` calls
+/// it against `originURL`, not `baseURL`. See `app/docs/client-mobile-api.md`.
+struct MemberDirectoryResponse: Decodable {
+    let members: [MemberDirectoryEntry]
+    let count: Int
+}
+
+struct MemberDirectoryEntry: Decodable, Identifiable, Hashable {
+    let filerId: String
+    let fullName: String?
+    let chamber: String?
+    let party: String?
+    let state: String?
+    let district: String?
+    let txCount: Int?
+    /// Same-columns addition to the roster query (2026-08-09); `nil` when the
+    /// filer has no `filers.photo_url` — falls back to the party-emoji tile.
+    let photoUrl: String?
+
+    var id: String { filerId }
+}
+
 struct SubscriptionListResponse: Decodable {
     let subscriptions: [Subscription]
 }
@@ -441,6 +465,52 @@ enum AmountThresholdFilter: Int, CaseIterable, Identifiable, Hashable {
     /// Server `minAmount=` query value; `nil` omits the param (Any $).
     var queryValue: Int? {
         self == .any ? nil : rawValue
+    }
+}
+
+/// Trades feed sort control (owner punch list #2, item 7) — mirrors the
+/// web's `setSort()` (`app/src/ui/dashboardHtml.ts`): `date` is a real
+/// backend sort key (`sort=tx_date` on `GET /api/client/v1/feed`, fixed
+/// 2026-08-09 — see `app/docs/client-mobile-api.md`), so changing it or its
+/// direction refetches the current page. `amount` has no backend sort key;
+/// selecting it only re-sorts the trades already loaded on the current page
+/// (never a fetch beyond it — same rule the web applies to non-backend
+/// columns).
+enum FeedSortKey: String, CaseIterable, Identifiable {
+    case date
+    case amount
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .date: return "Date"
+        case .amount: return "Amount"
+        }
+    }
+
+    /// Whether selecting/flipping this key requires a server refetch
+    /// (`sort=tx_date`) vs a local-only re-sort of the loaded page.
+    var isServerSort: Bool { self == .date }
+}
+
+/// Sort direction shared by the Trades sort control's Date/Amount keys.
+enum SortDirection: String, CaseIterable, Identifiable {
+    case descending = "desc"
+    case ascending = "asc"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        self == .ascending ? "arrow.up" : "arrow.down"
+    }
+
+    var accessibilityLabel: String {
+        self == .ascending ? "Ascending" : "Descending"
+    }
+
+    var toggled: SortDirection {
+        self == .ascending ? .descending : .ascending
     }
 }
 

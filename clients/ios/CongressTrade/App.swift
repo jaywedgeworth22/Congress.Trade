@@ -3,8 +3,10 @@ import SwiftData
 
 /// Tab identity shared with `TabRouter` so any screen (e.g. the header
 /// hamburger menu's "Sign In" entry) can programmatically switch tabs.
+/// Order matches `MainTabView`: Trends | Trades | People | Delivery | Settings
+/// (owner punch list #2, item 9 — People inserted between Trades and Delivery).
 enum AppTab: Hashable {
-    case trends, trades, delivery, settings
+    case trends, trades, people, delivery, settings
 }
 
 /// Cross-tab navigation used by the header hamburger menu (`AccountQuickMenu`)
@@ -65,6 +67,12 @@ struct MainTabView: View {
                     Label("Trades", systemImage: "list.bullet.rectangle")
                 }
                 .tag(AppTab.trades)
+
+            PeopleDirectoryView()
+                .tabItem {
+                    Label("People", systemImage: "person.2")
+                }
+                .tag(AppTab.people)
 
             DeliveryView()
                 .tabItem {
