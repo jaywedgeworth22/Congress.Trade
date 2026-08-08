@@ -36,6 +36,12 @@ function envWithExistingFiling(providerSeed: boolean) {
           }
           return { results: [] as T[] };
         },
+        // resolveIngestFilerId's merge/existing-filer lookups (get() -> .first()).
+        // DISCOVERED carries no `state`, so it never reaches the chamber+state
+        // scan — these two always miss for this fixture, same as an empty DB.
+        async first<T>() {
+          return null as T | null;
+        },
       };
       return statement as unknown as D1PreparedStatement;
     },
