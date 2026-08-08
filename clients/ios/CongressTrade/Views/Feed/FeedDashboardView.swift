@@ -63,8 +63,8 @@ struct FeedDashboardView: View {
         let filteringChambers = !chambers.isEmpty
         let fromISO = store.selectedTimeRange.fromDateISO
         let toISO = store.selectedTimeRange.toDateISO
-        let typeFilter = store.selectedTradeType
-        let minAmount = store.selectedAmountThreshold.queryValue
+        let types = store.selectedTradeTypes
+        let parties = store.selectedParties
 
         return sortedCached.filter { trade in
             if let fromISO {
@@ -85,14 +85,21 @@ struct FeedDashboardView: View {
                 }
             }
 
-            if !typeFilter.matches(txType: trade.transaction.type) {
+            // Multi-select side filter. Server `type=` is single-valued (only
+            // forwarded when exactly one side is selected — see
+            // `CongressTradeStore.tradeTypeQueryValue`), so this local check
+            // is what actually narrows the result for a 2+ selection.
+            if !types.isEmpty, !types.contains(where: { $0.matches(txType: trade.transaction.type) }) {
                 return false
             }
 
-            // Null amountMin counts as 0 against the threshold (matches the
-            // server's `matchesFilters` semantics for `minAmount`).
-            if let minAmount, (trade.transaction.amountMin ?? 0) < minAmount {
-                return false
+            // Party filter is entirely client-side: `/api/client/v1/feed`
+            // does not accept a `party=` param at all (see
+            // `CongressTradeStore.selectedParties` doc comment).
+            if !parties.isEmpty {
+                guard let bucket = PartyFilter.bucket(for: trade.member.party), parties.contains(bucket) else {
+                    return false
+                }
             }
 
             if !politicianNeedle.isEmpty {
@@ -388,110 +395,150 @@ struct FeedControlBar: View {
                     )
                 }
 
-                // $-threshold Filter — icon-only "$" when unset ("Any $"),
-                // immediately after Timeframe per the punch list resolution.
+                // Branch/Chamber Filter — multi-select: each row is a Toggle
+                // (not a Button) so tapping it flips membership without
+                // dismissing the menu, matching native multi-select menu
+                // idiom (Button-only menu items always dismiss on tap;
+                // Toggle/Picker items don't). Wired into the `chamber=` CSV
+                // param exactly as the web sends it (`app/docs/
+                // client-mobile-api.md`).
                 Menu {
-                    ForEach(AmountThresholdFilter.allCases) { threshold in
-                        Button {
-                            Task { await store.setAmountThreshold(threshold) }
-                        } label: {
-                            HStack {
-                                Text(threshold.label)
-                                if store.selectedAmountThreshold == threshold {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    FilterMenuLabel(
-                        title: store.selectedAmountThreshold.label,
-                        icon: "dollarsign",
-                        isActive: store.selectedAmountThreshold != .any,
-                        accessibilityLabel: "Minimum amount, \(store.selectedAmountThreshold.label)"
-                    )
-                }
-
-                // Branch/Chamber Filter
-                Menu {
-                    Button("All Branches") {
+                    Button {
                         Task { await store.setChamberSelection([]) }
+                    } label: {
+                        Label("All Branches", systemImage: "xmark.circle")
                     }
+                    Divider()
                     ForEach(ChamberFilter.allCases) { chamber in
-                        Button {
-                            toggleChamber(chamber)
-                        } label: {
-                            HStack {
-                                Text(chamber.label)
-                                if store.selectedChambers.contains(chamber) {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                        Toggle(isOn: chamberBinding(for: chamber)) {
+                            Text(chamber.label)
                         }
+                        .accessibilityLabel(chamber.label)
+                        .accessibilityValue(store.selectedChambers.contains(chamber) ? "Selected" : "Not selected")
                     }
                 } label: {
                     FilterMenuLabel(
-                        // Compact "All" when default so all pills fit on one row.
+                        // Full labels joined "+" once modified (owner spec:
+                        // "House+Senate"); icon-only "All" at default.
                         title: store.selectedChambers.isEmpty
                             ? "All"
-                            : store.selectedChambers.map { $0.shortLabel }.joined(separator: ", "),
+                            : ChamberFilter.allCases
+                                .filter { store.selectedChambers.contains($0) }
+                                .map(\.label)
+                                .joined(separator: "+"),
                         icon: "building.columns",
                         isActive: !store.selectedChambers.isEmpty,
-                        accessibilityLabel: "Branch filter, \(store.selectedChambers.isEmpty ? "all" : store.selectedChambers.map { $0.label }.joined(separator: ", "))"
+                        accessibilityLabel: "Branch filter, \(store.selectedChambers.isEmpty ? "all" : ChamberFilter.allCases.filter { store.selectedChambers.contains($0) }.map(\.label).joined(separator: ", "))"
                     )
                 }
 
-                // Party Filter
+                // Party Filter — multi-select, entirely client-side on the
+                // Trades feed (server has no `party=` feed param at all); see
+                // `CongressTradeStore.selectedParties`.
                 Menu {
-                    Button("All Parties") {
-                        Task { await store.setPartyFilter(nil) }
+                    Button {
+                        Task { await store.setPartySelection([]) }
+                    } label: {
+                        Label("All Parties", systemImage: "xmark.circle")
                     }
+                    Divider()
                     ForEach(PartyFilter.allCases) { party in
-                        Button {
-                            Task { await store.setPartyFilter(party) }
-                        } label: {
-                            HStack {
-                                Text("\(party.emoji) \(party.label)")
-                                if store.selectedParty == party {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                        Toggle(isOn: partyBinding(for: party)) {
+                            Text("\(party.emoji) \(party.label)")
                         }
+                        .accessibilityLabel(party.label)
+                        .accessibilityValue(store.selectedParties.contains(party) ? "Selected" : "Not selected")
                     }
                 } label: {
                     FilterMenuLabel(
-                        title: store.selectedParty?.label ?? "All",
+                        title: store.selectedParties.isEmpty
+                            ? "All"
+                            : PartyFilter.allCases
+                                .filter { store.selectedParties.contains($0) }
+                                .map(\.summaryLabel)
+                                .joined(separator: "+"),
                         icon: "person.2.fill",
-                        isActive: store.selectedParty != nil,
-                        accessibilityLabel: "Party filter, \(store.selectedParty?.label ?? "all")"
+                        isActive: !store.selectedParties.isEmpty,
+                        accessibilityLabel: "Party filter, \(store.selectedParties.isEmpty ? "all" : PartyFilter.allCases.filter { store.selectedParties.contains($0) }.map(\.label).joined(separator: ", "))"
                     )
                 }
 
-                // Side Filter (Buy/Sell) — green up + red down instead of double-arrow.
+                // Side/Trade Type Filter (Buy/Sell/Exchange) — multi-select.
+                // Server `type=` is single-valued, so it's only forwarded
+                // when exactly one side is chosen; any selection count is
+                // still filtered correctly client-side
+                // (`FeedDashboardView.filteredTrades`).
                 Menu {
+                    Button {
+                        Task { await store.setTradeTypeSelection([]) }
+                    } label: {
+                        Label("All Sides", systemImage: "xmark.circle")
+                    }
+                    Divider()
                     ForEach(TradeTypeFilter.allCases) { type in
-                        Button {
-                            Task { await store.setTradeType(type) }
-                        } label: {
-                            HStack {
-                                Text(type.label)
-                                if store.selectedTradeType == type {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                        Toggle(isOn: tradeTypeBinding(for: type)) {
+                            Text(type.label)
                         }
+                        .accessibilityLabel(type.label)
+                        .accessibilityValue(store.selectedTradeTypes.contains(type) ? "Selected" : "Not selected")
                     }
                 } label: {
                     SidesFilterMenuLabel(
-                        title: store.selectedTradeType == .all ? "All" : store.selectedTradeType.label,
-                        isActive: store.selectedTradeType != .all,
-                        selected: store.selectedTradeType
+                        title: store.selectedTradeTypes.isEmpty
+                            ? "All"
+                            : TradeTypeFilter.allCases
+                                .filter { store.selectedTradeTypes.contains($0) }
+                                .map(\.summaryLabel)
+                                .joined(separator: "+"),
+                        isActive: !store.selectedTradeTypes.isEmpty,
+                        selected: store.selectedTradeTypes
                     )
                 }
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
         }
+    }
+
+    private func chamberBinding(for chamber: ChamberFilter) -> Binding<Bool> {
+        Binding(
+            get: { store.selectedChambers.contains(chamber) },
+            set: { _ in toggleChamber(chamber) }
+        )
+    }
+
+    private func partyBinding(for party: PartyFilter) -> Binding<Bool> {
+        Binding(
+            get: { store.selectedParties.contains(party) },
+            set: { _ in toggleParty(party) }
+        )
+    }
+
+    private func tradeTypeBinding(for type: TradeTypeFilter) -> Binding<Bool> {
+        Binding(
+            get: { store.selectedTradeTypes.contains(type) },
+            set: { _ in toggleTradeType(type) }
+        )
+    }
+
+    private func toggleParty(_ party: PartyFilter) {
+        var next = store.selectedParties
+        if next.contains(party) {
+            next.remove(party)
+        } else {
+            next.insert(party)
+        }
+        Task { await store.setPartySelection(next) }
+    }
+
+    private func toggleTradeType(_ type: TradeTypeFilter) {
+        var next = store.selectedTradeTypes
+        if next.contains(type) {
+            next.remove(type)
+        } else {
+            next.insert(type)
+        }
+        Task { await store.setTradeTypeSelection(next) }
     }
 
     private func toggleChamber(_ chamber: ChamberFilter) {
@@ -628,23 +675,38 @@ struct FeedPaginationBar: View {
     }
 }
 
-/// Tiny green up + red down arrows for the shared Sides control. Icon-only
-/// (compact) at the default "All" state; expands to icon+value once a side
-/// is selected (owner punch list item 5).
+/// Tiny green up / red down / grey left-right arrows for the shared
+/// multi-select Sides control (Buy/Sell/Exchange). Icon-only (compact) at
+/// the default "All" state — every arrow shows its normal color, since
+/// nothing selected means every side is shown. Once a subset is selected,
+/// the unselected sides' arrows dim and the compact summary label (e.g.
+/// "Buys+Sells") appears (owner punch list item 5 pattern, extended to
+/// multi-select 2026-08-09).
 struct SidesFilterMenuLabel: View {
     let title: String
     let isActive: Bool
-    let selected: TradeTypeFilter
+    let selected: Set<TradeTypeFilter>
+
+    /// A side reads as "on" when nothing is selected (default = show all) or
+    /// when it's explicitly in the selection.
+    private func isOn(_ type: TradeTypeFilter) -> Bool {
+        selected.isEmpty || selected.contains(type)
+    }
+
+    private var dimColor: Color { isActive ? .white.opacity(0.45) : .secondary }
 
     var body: some View {
         HStack(spacing: 4) {
             HStack(spacing: 1) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(selected == .sell ? (isActive ? .white : .secondary) : Color.green)
+                    .foregroundStyle(isOn(.buy) ? Color.green : dimColor)
                 Image(systemName: "arrow.down")
                     .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(selected == .buy ? (isActive ? .white : .secondary) : Color.red)
+                    .foregroundStyle(isOn(.sell) ? Color.red : dimColor)
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(isOn(.exchange) ? Color.orange : dimColor)
             }
             if isActive {
                 Text(title)

@@ -20,7 +20,23 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var marketCapBuckets: [MarketCapItem] = []
     @Published private(set) var partySplit: PartySplitResponse?
     @Published private(set) var filingLag: FilingLagResponse?
-    @Published private(set) var selectedParty: PartyFilter? = nil
+    /// Multi-select party filter (owner directive 2026-08-09: Chamber/Party/
+    /// Trade Type pills must support one-or-many, matching the web's CSV
+    /// multi-select semantics). Empty = all parties (default), matching the
+    /// Chamber convention. Wired two different ways because the two server
+    /// endpoints differ:
+    ///  - Trades feed (`/api/client/v1/feed`): `filtersFromQuery` in
+    ///    `app/src/client/utils.ts` has NO `party` param at all, so the
+    ///    Trades list is filtered by party entirely client-side
+    ///    (`FeedDashboardView.filteredTrades`), for any number selected.
+    ///  - Trends analytics (`/api/analytics/*`): `asPartyBucket` in
+    ///    `app/src/analytics/sql.ts` accepts one bucket. `refreshTrends()`
+    ///    below sends `party=` only when exactly one party is selected,
+    ///    mirroring the same single-value fallback the web itself uses for
+    ///    its `qSideGroup`/`selectedSideParam` side chips — selecting 2+
+    ///    parties shows unfiltered (all-party) analytics, honestly, rather
+    ///    than silently picking one.
+    @Published private(set) var selectedParties: Set<PartyFilter> = []
     @Published private(set) var isLoadingTrends = false
     @Published private(set) var trendsNotice: String?
     @Published private(set) var subscriptions: [Subscription] = []
@@ -71,11 +87,13 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
-    /// Buy / Sell / All side filter (`type=` on feed + local cache filter).
-    @Published private(set) var selectedTradeType: TradeTypeFilter = .all
-    /// $-threshold pill (`minAmount=` on feed + local cache filter). Website
-    /// parity with the shared `qMinAmt`/`trMinAmt` row, mirrored on Trends.
-    @Published private(set) var selectedAmountThreshold: AmountThresholdFilter = .any
+    /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Server
+    /// `type=` (`app/src/client/utils.ts` `asTxType`) is single-valued, so
+    /// `tradeTypeQueryValue` only forwards it when exactly one side is
+    /// selected (same fallback the web's own `qSideGroup` chips use); any
+    /// selection count is still filtered correctly client-side in
+    /// `FeedDashboardView.filteredTrades`.
+    @Published private(set) var selectedTradeTypes: Set<TradeTypeFilter> = []
     /// Trades-only free-text politician filter (`memberName=`).
     @Published private(set) var politicianFilter: String = ""
     /// Trades-only asset/ticker filter (`ticker=`).
@@ -180,22 +198,11 @@ final class CongressTradeStore: ObservableObject {
         _ = await (r1, r2)
     }
 
-    func setTradeType(_ type: TradeTypeFilter) async {
-        guard type != selectedTradeType else { return }
-        selectedTradeType = type
-        currentPage = 0
-        async let r1: Void = refresh()
-        async let r2: Void = refreshTrends()
-        _ = await (r1, r2)
-    }
-
-    /// $-threshold pill (server `minAmount=`). Mirrors `setTradeType`: also
-    /// pings `refreshTrends()` for shared-filter-row consistency even though
-    /// the analytics endpoints don't yet accept `minAmount` (same precedent
-    /// as the side/type filter above).
-    func setAmountThreshold(_ threshold: AmountThresholdFilter) async {
-        guard threshold != selectedAmountThreshold else { return }
-        selectedAmountThreshold = threshold
+    /// Sets the full Buy/Sell/Exchange multi-selection and immediately
+    /// resyncs. Empty = all sides.
+    func setTradeTypeSelection(_ types: Set<TradeTypeFilter>) async {
+        guard types != selectedTradeTypes else { return }
+        selectedTradeTypes = types
         currentPage = 0
         async let r1: Void = refresh()
         async let r2: Void = refreshTrends()
@@ -341,8 +348,7 @@ final class CongressTradeStore: ObservableObject {
         let from = selectedTimeRange.fromDateISO
         let to = selectedTimeRange.toDateISO
         let search = searchTerm
-        let typeParam = selectedTradeType.queryValue
-        let minAmountParam = selectedAmountThreshold.queryValue
+        let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
         // Dedicated fields win; legacy combined search still fills the other slot.
         let tickerParam: String? = {
             if !assetFilter.isEmpty { return assetFilter }
@@ -376,7 +382,6 @@ final class CongressTradeStore: ObservableObject {
                     memberName: memberNameParam,
                     chamber: chamberParam,
                     type: typeParam,
-                    minAmount: minAmountParam,
                     from: from,
                     to: to,
                     sort: "tx_date",
@@ -394,7 +399,7 @@ final class CongressTradeStore: ObservableObject {
             let filterKey = Self.syncFilterKey(
                 chambers: chambers,
                 range: selectedTimeRange,
-                tradeType: selectedTradeType
+                tradeTypes: selectedTradeTypes
             )
             if let cursor = response.cursor { cursorStore.setCursor(cursor, for: filterKey) }
             if signedIn {
@@ -426,8 +431,12 @@ final class CongressTradeStore: ObservableObject {
         scheduleAutoRefresh()
     }
 
-    func setPartyFilter(_ party: PartyFilter?) async {
-        selectedParty = party
+    /// Sets the full party multi-selection and immediately resyncs both the
+    /// (client-side-filtered) Trades feed and Trends analytics. Empty = all
+    /// parties.
+    func setPartySelection(_ parties: Set<PartyFilter>) async {
+        guard parties != selectedParties else { return }
+        selectedParties = parties
         currentPage = 0
         async let r1: Void = refreshTrends()
         async let r2: Void = refresh()
@@ -439,7 +448,10 @@ final class CongressTradeStore: ObservableObject {
         trendsNotice = nil
         // All-time + calendar-year analytics map through analyticsWindow.
         let analyticsWindow = selectedTimeRange.analyticsWindow
-        let partyParam = selectedParty?.rawValue
+        // Server `party=` (`asPartyBucket`) is single-valued — see the
+        // `selectedParties` doc comment above. Forward it only when exactly
+        // one party is selected; 0 or 2+ selected shows unfiltered analytics.
+        let partyParam = selectedParties.count == 1 ? selectedParties.first?.rawValue : nil
         let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
@@ -554,13 +566,14 @@ final class CongressTradeStore: ObservableObject {
     private static func syncFilterKey(
         chambers: Set<ChamberFilter>,
         range: TimeRange,
-        tradeType: TradeTypeFilter = .all
+        tradeTypes: Set<TradeTypeFilter> = []
     ) -> String {
         let chamberKey = (chambers.isEmpty ? initialChambers : chambers)
             .map(\.rawValue)
             .sorted()
             .joined(separator: ",")
-        return "\(chamberKey)|\(range.rawValue)|\(tradeType.rawValue)"
+        let typeKey = tradeTypes.isEmpty ? "all" : tradeTypes.map(\.rawValue).sorted().joined(separator: ",")
+        return "\(chamberKey)|\(range.rawValue)|\(typeKey)"
     }
 
     /// The `chamber=` query value for a selection, or `nil` to omit the
@@ -570,6 +583,17 @@ final class CongressTradeStore: ObservableObject {
         let all = Set(ChamberFilter.allCases)
         if chambers.isEmpty || chambers == all { return nil }
         return chambers.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// The `type=` query value for a multi-selection, or `nil` to omit the
+    /// parameter — sent only when exactly one side is selected, since the
+    /// server's `type=` (`asTxType`) is single-valued. Mirrors the web's own
+    /// `selectedSideParam` fallback for its `qSideGroup` chips. Any selection
+    /// count is still filtered correctly client-side afterward (see
+    /// `FeedDashboardView.filteredTrades`).
+    private static func tradeTypeQueryValue(for types: Set<TradeTypeFilter>) -> String? {
+        guard types.count == 1 else { return nil }
+        return types.first?.rawValue
     }
 
     private func trimCache(in context: ModelContext) throws {
@@ -779,8 +803,7 @@ final class CongressTradeStore: ObservableObject {
             ticker: assetFilter.isEmpty ? nil : assetFilter,
             memberName: politicianFilter.isEmpty ? nil : politicianFilter,
             chamber: chamberParam,
-            type: selectedTradeType.queryValue,
-            minAmount: selectedAmountThreshold.queryValue
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
         )
     }
 

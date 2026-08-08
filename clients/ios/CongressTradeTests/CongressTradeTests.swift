@@ -560,23 +560,39 @@ final class CongressTradeTests: XCTestCase {
 
     func testFeedQueryEmitsTypeForBuySellFilter() {
         // Storage/API canonical buy is B (legacy P still accepted by matchers).
-        let buy = FeedQuery(limit: 50, type: TradeTypeFilter.buy.queryValue)
+        // `TradeTypeFilter` no longer exposes `queryValue` — the single-vs-
+        // multi decision now lives in `CongressTradeStore.tradeTypeQueryValue`
+        // (owner directive 2026-08-09: multi-select filter pills); a lone
+        // case's `rawValue` is still the exact server `type=` token.
+        let buy = FeedQuery(limit: 50, type: TradeTypeFilter.buy.rawValue)
         XCTAssertEqual(buy.queryItems.first(where: { $0.name == "type" })?.value, "B")
-        let sell = FeedQuery(limit: 50, type: TradeTypeFilter.sell.queryValue)
+        let sell = FeedQuery(limit: 50, type: TradeTypeFilter.sell.rawValue)
         XCTAssertEqual(sell.queryItems.first(where: { $0.name == "type" })?.value, "S")
-        let all = FeedQuery(limit: 50, type: TradeTypeFilter.all.queryValue)
+        let exchange = FeedQuery(limit: 50, type: TradeTypeFilter.exchange.rawValue)
+        XCTAssertEqual(exchange.queryItems.first(where: { $0.name == "type" })?.value, "E")
+        let all = FeedQuery(limit: 50, type: nil)
         XCTAssertNil(all.queryItems.first(where: { $0.name == "type" }))
     }
 
     func testTradeTypeFilterMatchesLocalCacheSides() {
-        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "P"))
-        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "B"))
-        XCTAssertTrue(TradeTypeFilter.all.matches(txType: "S"))
         XCTAssertTrue(TradeTypeFilter.buy.matches(txType: "P"))
         XCTAssertTrue(TradeTypeFilter.buy.matches(txType: "B"))
         XCTAssertFalse(TradeTypeFilter.buy.matches(txType: "S"))
         XCTAssertTrue(TradeTypeFilter.sell.matches(txType: "S"))
         XCTAssertFalse(TradeTypeFilter.sell.matches(txType: "E"))
+        XCTAssertTrue(TradeTypeFilter.exchange.matches(txType: "E"))
+        XCTAssertFalse(TradeTypeFilter.exchange.matches(txType: "B"))
+    }
+
+    func testPartyFilterBucketsMirrorServerAsPartyBucket() {
+        // Mirrors `asPartyBucket` in `app/src/analytics/sql.ts`: first
+        // letter D/R, anything else non-empty is Other, empty/nil unresolved.
+        XCTAssertEqual(PartyFilter.bucket(for: "Democratic"), .democrat)
+        XCTAssertEqual(PartyFilter.bucket(for: "d"), .democrat)
+        XCTAssertEqual(PartyFilter.bucket(for: "Republican"), .republican)
+        XCTAssertEqual(PartyFilter.bucket(for: "Independent"), .other)
+        XCTAssertNil(PartyFilter.bucket(for: ""))
+        XCTAssertNil(PartyFilter.bucket(for: nil))
     }
 
     func testTimeRangeCalendarYearBounds() {
@@ -670,12 +686,65 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
-        await store.setTradeType(.buy)
+        await store.setTradeTypeSelection([.buy])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
         // Free-text search still uses memberName when set later; type alone must not emit member=.
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
+    }
+
+    /// Multi-select Trade Type pill (owner directive 2026-08-09): the
+    /// server's `type=` (`asTxType`) accepts exactly one value, so selecting
+    /// 2+ sides must omit the param (an unfiltered fetch, narrowed correctly
+    /// client-side by `FeedDashboardView.filteredTrades`) rather than send a
+    /// CSV the server can't parse — mirroring the web's own
+    /// `selectedSideParam` fallback for its `qSideGroup` chips.
+    @MainActor
+    func testSetTradeTypeSelectionOmitsTypeParamWhenMultipleSidesSelected() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setTradeTypeSelection([.buy, .sell])
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "type" }))
+    }
+
+    /// Chamber's `chamber=` param is genuinely CSV-capable server-side
+    /// (`asChambers` in `app/src/client/utils.ts`), so a multi-selection
+    /// forwards the full CSV, unlike Trade Type above.
+    @MainActor
+    func testSetChamberSelectionSendsChamberCSVForMultipleBranches() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setChamberSelection([.house, .executive])
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "chamber" })?.value, "executive,house")
     }
 
     @MainActor

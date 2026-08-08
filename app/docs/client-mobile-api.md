@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-07-19
+Last updated: 2026-08-09
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -79,9 +79,29 @@ do not consume the SSE/webhook subscription quota.
   `offset`, and `limit`, and returns the cursor/count/total metadata used by
   polling clients. `minAmount` (server-side `filtersFromQuery`/`TxQueryParams`,
   same as the website's shared `qMinAmt`/`trMinAmt` pill) filters to
-  `amountMin >= minAmount`; iOS wires it as the `$`-threshold filter pill
-  (2026-08-09, iOS punch list). `GET /api/export/transactions.csv` accepts
-  the same filter set (including `minAmount`) for Premium CSV export.
+  `amountMin >= minAmount`. **iOS does not send `minAmount` and has no $/size
+  filter UI** (owner reversal, 2026-08-09: the iOS `$`-threshold pill added
+  earlier the same day was removed — no $/size dropdown on any platform).
+  `GET /api/export/transactions.csv` still accepts the full filter set
+  (including `minAmount`) for Premium CSV export; iOS's export call simply
+  never populates that param. This endpoint has no `party` param at all —
+  see the iOS multi-select note below.
+  - iOS's Chamber/Party/Trade Type filter pills are multi-select (owner
+    directive, 2026-08-09), matching the web's own multi-select chip
+    semantics: `chamber` is genuinely CSV-capable server-side (`asChambers`),
+    so iOS forwards the full multi-selection as `chamber=house,senate`
+    exactly like the web. `type` (`asTxType`) is single-valued server-side —
+    iOS forwards it only when exactly one side is selected (mirroring the
+    web's own `qSideGroup`/`selectedSideParam` single-value fallback) and
+    otherwise narrows the fetched page to the selected sides client-side, so
+    a 2+ selection still filters correctly on-device even though the
+    request itself is unfiltered. Party has **no feed-level server param at
+    all** — `filtersFromQuery` (`app/src/client/utils.ts`) never parses a
+    `party` value for `feed`/`transactions.csv` — so iOS's Party pill
+    filters the Trades list entirely client-side, for any number of parties
+    selected; Trends analytics' `party=` (`asPartyBucket`,
+    `app/src/analytics/sql.ts`) is separately single-valued and only
+    receives it when exactly one party is selected.
   - `sort` accepts `published`, `cursor` (default), or `tx_date` (fixed
     2026-08-09 — `tx_date` was already a valid `TxQueryParams`/SQL sort key
     for `/api/transactions` but this endpoint's query parser silently dropped
