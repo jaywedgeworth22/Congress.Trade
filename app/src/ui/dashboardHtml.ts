@@ -156,6 +156,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        de-emphasized neutral (never buy/sell green/red — those mean trades). */
     --rival:     #7b8dab;
     --radius:    12px;
+    /* Capsule chrome radius + shared control height for the filter-pill row
+       (chip clusters, pill-selects, icon search fields, header icon buttons).
+       Distinct from --radius (card/section/modal corner radius) — don't
+       conflate the two. */
+    --radius-pill: 999px;
+    --control-h:   34px;
     --mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans:      "Inter", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   }
@@ -403,6 +409,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-member { color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
+  /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
+     bold trailing amount+date stack, tighter identity-first meta line.
+     Replaces .fc-row1 (kept above, unused, harmless) as feedCardHtml()'s
+     top row wrapper; card-scoped only, does not touch the dense desktop
+     table's 22px .tkr-logo. */
+  .fc-top { display:flex; align-items:center; gap:10px; min-width:0; }
+  .fc-top .asset-cell { flex:1 1 auto; min-width:0; }
+  .fc-top .tag { flex:0 0 auto; }
+  .fc-trail { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:2px; margin-left:4px; }
+  .fc-trail .amount-cell { align-items:flex-end; text-align:right; }
+  .fc-trail .amount-range { color:var(--text); font-weight:700; font-size:13px; }
+  .fc-date { font-size:11px; white-space:nowrap; }
+  .feed-card .tkr-logo { width:36px; height:36px; border-radius:9px; }
+  .feed-card .tkr-logo.transparent,
+  .feed-card .tkr-logo.mono,
+  .feed-card .tkr-logo.glyph { background: var(--panel-2); border:1px solid var(--border); padding:5px; }
+  html[data-theme="light"] .feed-card .tkr-logo.transparent,
+  html[data-theme="light"] .feed-card .tkr-logo.mono,
+  html[data-theme="light"] .feed-card .tkr-logo.glyph { background:#fff; }
   /* Asset-cell ticker→name spacing (the user asked for a clear gap). */
   .tkr-gap { display: inline-block; width: .65em; }
   /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
@@ -867,7 +892,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      the mobile breakpoint (see the 720px media query near the bottom nav). */
   .acct-mobile { display:none; position:relative; }
   .acct-hamburger {
-    width:38px; height:38px; border:1px solid var(--border); border-radius:10px;
+    width:38px; height:38px; border:1px solid var(--border); border-radius: var(--radius-pill);
     background:var(--panel); color:var(--text); font-size:18px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
@@ -968,6 +993,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
+  /* Issue #1529: capsule chrome pass — true pill radius + shared control
+     height, plus a bolder solid-fill "on" state (reuses .tag's proven
+     buy/sell/accent + white-text contrast pairs). These layer on top of the
+     tinted/inset-ring rules above via source order (same specificity),
+     restyle-only — data-ch/data-party/data-side, .on, aria-pressed and the
+     delegated qChamber/qPartyGroup/qSideGroup listeners are untouched. */
+  .branch-seg, .party-chips, .side-chips { border-radius: var(--radius-pill); }
+  .branch-toggle, .party-chip, .side-chip { height: var(--control-h); }
+  .branch-toggle.on { background: var(--accent); color: #fff; box-shadow: none; }
+  .party-chip.on[data-party="D"] { background: var(--buy); box-shadow: none; }
+  .party-chip.on[data-party="R"] { background: var(--sell); box-shadow: none; }
+  .party-chip.on[data-party="O"] { background: var(--accent); color:#fff; box-shadow: none; }
+  .side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }
+  .side-chip.on[data-side="B"] .side-up { color:#fff; }
+  .side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }
+  .side-chip.on[data-side="S"] .side-dn { color:#fff; }
+  .side-chip.on[data-side="E"] { background: var(--exch); box-shadow: none; }
+  .side-chip.on[data-side="E"] .side-ex { color:#fff; }
   .filter-groups { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
   /* Single combined info popover replacing the old per-group ⓘs — a little
      larger than a plain .branch-info since it now carries every pictograph. */
@@ -986,6 +1029,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      Trades tab and defeating .min-amt-select's margin-left:auto right-align. */
   .trends-filter-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   .min-amt-select { width:auto; min-width:7.5rem; margin-left:auto; }
+  /* Issue #1529: Timeframe + $ Minimum become icon+value+chevron pills that
+     still open the native <select> option list — CSS-only wrapper around
+     the existing element, id/onchange/<option>s untouched. */
+  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
+  .pill-select.pill-amt { margin-left:auto; min-width:7.5rem; }
+  .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
+  .pill-select.pill-cal::before { content:"📅"; }
+  .pill-select.pill-amt::before { content:"$"; font-weight:800; }
+  .pill-select-el {
+    appearance:none; -webkit-appearance:none; -moz-appearance:none;
+    width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
+    color:var(--text); border-radius:var(--radius-pill); font:600 12px var(--sans);
+    padding:0 26px 0 30px; cursor:pointer;
+    background-repeat:no-repeat; background-position:right 8px center;
+    background-image:url('data:image/svg+xml;utf8,<svg fill="%2334435b" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+  }
+  html[data-theme="dark"] .pill-select-el {
+    background-image:url('data:image/svg+xml;utf8,<svg fill="%23b8c7dd" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+  }
+  .pill-select-el:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .pill-select-el:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* Issue #1529: #qMember / #qTicker become rounded leading-icon fields —
+     wrapper + icon glyph, id/oninput/aria-label on the <input> untouched. */
+  .icon-field { position:relative; display:inline-flex; align-items:center; min-width:0; }
+  .icon-field .icon-field-ic { position:absolute; left:12px; font-size:12px; line-height:1; color:var(--text-dim); pointer-events:none; }
+  .icon-input { padding-left:30px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
@@ -1116,7 +1185,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .delivery-card h4 { margin:0 0 8px; font-size:14px; }
   .delivery-card p { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--text); }
   .delivery-card p.note { margin-bottom:0; }
-  .feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: 2px; }
+  /* Issue #1529: right-align the "N trades" count on desktop (iOS-parity). */
+  .feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
   /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
      shown under the mobile breakpoint via the higher-specificity #view-feed rule. */
   .feed-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
@@ -1171,10 +1241,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .card .v { font-size:24px; }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
-    .feed-stats { display: none; }
     .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
-    .toolbar #qMember { grid-column: span 2; }
-    .toolbar #qTicker { width:100% !important; }
+    /* .icon-field / .pill-select-el keep an asymmetric left inset for their
+       icon/chevron — restore it after the generic mobile shorthand above
+       (higher specificity than the desktop .icon-input/.pill-select-el rules
+       so it wins, but scoped so it doesn't touch the desktop padding). */
+    .toolbar .icon-field { width: 100%; }
+    .toolbar .icon-input { padding: 8px 9px 8px 30px; }
+    .toolbar .pill-select-el { padding: 8px 26px 8px 30px; }
+    /* Issue #1529: search-this-page button left, "N trades" count right, on
+       their own row below the two full-width text fields (iOS-parity count
+       placement — see .feed-stats above). */
+    #feedExtraFilters { grid-template-columns: 1fr auto; align-items: center; }
+    #feedExtraFilters #qMemberField, #feedExtraFilters #qTickerField { grid-column: 1 / -1; }
+    #feedExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
+    .feed-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
+    .feed-stats .stat-today { display: none; }
     .search-panel.open {
       position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
       display: grid; grid-template-columns: 1fr; z-index: 44; max-height: 58vh; overflow:auto;
@@ -1788,17 +1870,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
     <!-- Shared filter row (mirrored on Trends) -->
     <div class="toolbar shared-filters" id="feedSharedFilters">
-      <select id="feedGlobalWindow" class="tr-window-select shared-window" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-        <option value="1d">Past Day</option>
-        <option value="7d">Past Week</option>
-        <option value="30d">Past Month</option>
-        <option value="90d" selected>Past 3 Months</option>
-        <option value="180d">Past 6 Months</option>
-        <option value="365d">Past Year</option>
-        <option value="1825d">Past 5 Years</option>
-        <option value="this_cy">This calendar year</option>
-        <option value="last_cy">Last calendar year</option>
-      </select>
+      <span class="pill-select pill-cal">
+        <select id="feedGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
+          <option value="1d">Past Day</option>
+          <option value="7d">Past Week</option>
+          <option value="30d">Past Month</option>
+          <option value="90d" selected>Past 3 Months</option>
+          <option value="180d">Past 6 Months</option>
+          <option value="365d">Past Year</option>
+          <option value="1825d">Past 5 Years</option>
+          <option value="this_cy">This calendar year</option>
+          <option value="last_cy">Last calendar year</option>
+        </select>
+      </span>
       <div class="filter-groups">
         <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
           <div class="branch-seg">
@@ -1833,27 +1917,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <select id="qMinAmt" class="min-amt-select" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();">
-        <option value="">Any $</option>
-        <option value="1001">$1k+</option>
-        <option value="15001">$15k+</option>
-        <option value="50001">$50k+</option>
-        <option value="100001">$100k+</option>
-        <option value="250001">$250k+</option>
-        <option value="500001">$500k+</option>
-        <option value="1000001">$1m+</option>
-        <option value="5000001">$5m+</option>
-        <option value="25000001">$25m+</option>
-        <option value="50000001">$50m+</option>
-      </select>
+      <span class="pill-select pill-amt">
+        <select id="qMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this); resetFeedPage();">
+          <option value="">Any $</option>
+          <option value="1001">$1k+</option>
+          <option value="15001">$15k+</option>
+          <option value="50001">$50k+</option>
+          <option value="100001">$100k+</option>
+          <option value="250001">$250k+</option>
+          <option value="500001">$500k+</option>
+          <option value="1000001">$1m+</option>
+          <option value="5000001">$5m+</option>
+          <option value="25000001">$25m+</option>
+          <option value="50000001">$50m+</option>
+        </select>
+      </span>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="feedExtraFilters">
-      <input id="qMember" placeholder="Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
-      <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
+      <span class="icon-field" id="qMemberField">
+        <span class="icon-field-ic" aria-hidden="true">👤</span>
+        <input id="qMember" class="icon-input" placeholder="Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
+      </span>
+      <span class="icon-field" id="qTickerField" style="min-width:140px">
+        <span class="icon-field-ic" aria-hidden="true">📈</span>
+        <input id="qTicker" class="icon-input" placeholder="Asset / ticker…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" />
+      </span>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <div id="feedStats" class="feed-stats muted">
-        <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
+        <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
       </div>
     </div>
     <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
@@ -1923,17 +2015,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
-      <select id="trGlobalWindow" class="tr-window-select shared-window" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-        <option value="1d">Past Day</option>
-        <option value="7d">Past Week</option>
-        <option value="30d">Past Month</option>
-        <option value="90d" selected>Past 3 Months</option>
-        <option value="180d">Past 6 Months</option>
-        <option value="365d">Past Year</option>
-        <option value="1825d">Past 5 Years</option>
-        <option value="this_cy">This calendar year</option>
-        <option value="last_cy">Last calendar year</option>
-      </select>
+      <span class="pill-select pill-cal">
+        <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
+          <option value="1d">Past Day</option>
+          <option value="7d">Past Week</option>
+          <option value="30d">Past Month</option>
+          <option value="90d" selected>Past 3 Months</option>
+          <option value="180d">Past 6 Months</option>
+          <option value="365d">Past Year</option>
+          <option value="1825d">Past 5 Years</option>
+          <option value="this_cy">This calendar year</option>
+          <option value="last_cy">Last calendar year</option>
+        </select>
+      </span>
       <div class="filter-groups">
         <div class="branch-filters" id="trChamber" role="group" aria-label="Filter by branch">
           <div class="branch-seg">
@@ -1968,19 +2062,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <select id="trMinAmt" class="min-amt-select" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)">
-        <option value="">Any $</option>
-        <option value="1001">$1k+</option>
-        <option value="15001">$15k+</option>
-        <option value="50001">$50k+</option>
-        <option value="100001">$100k+</option>
-        <option value="250001">$250k+</option>
-        <option value="500001">$500k+</option>
-        <option value="1000001">$1m+</option>
-        <option value="5000001">$5m+</option>
-        <option value="25000001">$25m+</option>
-        <option value="50000001">$50m+</option>
-      </select>
+      <span class="pill-select pill-amt">
+        <select id="trMinAmt" class="min-amt-select pill-select-el" aria-label="Minimum amount" onchange="onSharedMinAmtChange(this)">
+          <option value="">Any $</option>
+          <option value="1001">$1k+</option>
+          <option value="15001">$15k+</option>
+          <option value="50001">$50k+</option>
+          <option value="100001">$100k+</option>
+          <option value="250001">$250k+</option>
+          <option value="500001">$500k+</option>
+          <option value="1000001">$1m+</option>
+          <option value="5000001">$5m+</option>
+          <option value="25000001">$25m+</option>
+          <option value="50000001">$50m+</option>
+        </select>
+      </span>
     </div>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
@@ -3306,10 +3402,12 @@ function feedCardHtml(r) {
   var memberHtml = r.filerId
     ? '<span class="fc-member clickable" data-member="' + esc(r.filerId) + '">' + esc(member) + (r.st ? ', ' + esc(r.st) : '') + '</span>'
     : esc(member) + (r.st ? ', ' + esc(r.st) : '');
+  // Row 2 is identity-first (member, chamber, lag) — the trade date moved
+  // into the trailing amount/date stack on row 1 (see .fc-trail below), so
+  // it's intentionally NOT duplicated here as "Traded <date>" anymore.
   var bits = [];
   if (member) bits.push(memberHtml);
   if (chamber) bits.push(esc(chamber));
-  bits.push('Traded ' + esc(traded));
   if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
   if (r.stockActStatus === 'late' || r.stockActStatus === 'severely_late') {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
@@ -3317,8 +3415,8 @@ function feedCardHtml(r) {
   }
   return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
     '<div class="fc-main">' +
-      '<div class="fc-row1">' + assetCellHtml(r) +
-        '<div class="fc-amt">' + actionBadge(r.type) + amountCellHtml(r) + '</div>' +
+      '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
+        '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
       '</div>' +
       '<div class="fc-row2 muted">' + bits.join(' <span class="fc-sep">·</span> ') + '</div>' +
     '</div>' +
