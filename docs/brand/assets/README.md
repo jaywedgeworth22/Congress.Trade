@@ -11,7 +11,7 @@
 - **Website:** transparent lockup/mark only (no cream fill) — the UI supplies the background.
 - **Light lockup:** solid black letters on transparent (good on light/cream UI).
 - **Dark lockup:** same art with **white** letters; eagle colors preserved.
-- **iOS AppIcon only:** opaque light-gray full-bleed plate (`eagle-app-icon-light-1024.png` / `source-owner-app-icon-1024x1024.jpg`). Hi-res master: `eagle-app-icon-light-1408.png` / `source-owner-app-icon-1408x1408.jpg`. iOS rejects transparent AppIcon.
+- **iOS AppIcon only:** opaque **white/off-white full-bleed plate** + eagle mark (`eagle-app-icon-light-1024.png`). Hi-res: `eagle-app-icon-light-1408.png`. iOS rejects transparent AppIcon and applies its own squircle — do **not** ship pre-rounded mockups with outer canvas (kept only as `source-owner-app-icon-mockup-rounded-1408x1408.jpg` for reference).
 - **Everywhere else that allows alpha** (web/PWA icons, favicon, apple-touch-icon, splash, in-app BrandLogo): transparent eagle mark — no plate fill.
 
 ## Files
