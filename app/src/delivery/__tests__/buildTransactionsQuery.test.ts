@@ -111,6 +111,31 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).not.toContain('SELECT t.* FROM transactions t');
   });
 
+  it('filters by party bucket via the filers table (same bucketing as the Trends analytics endpoints)', () => {
+    const q = buildTransactionsQuery({ partyBuckets: ['D'] });
+    // Party filters need the join BEFORE limit, same as chamber.
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
+    expect(q.sql).toContain(
+      "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
+        "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
+        "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
+        'ELSE NULL END) IN (?)',
+    );
+    expect(q.params).toEqual([0, 'D']);
+    expect(q.sql).not.toContain('SELECT t.* FROM transactions t');
+    const count = buildTransactionsCountQuery({ partyBuckets: ['D', 'R'] });
+    expect(count.sql).toContain('IN (?, ?)');
+    expect(count.params).toEqual(['D', 'R']);
+  });
+
+  it('an unfiltered party query does not narrow the count (regression guard for the "applying a filter changes the count" fix)', () => {
+    const unfiltered = buildTransactionsCountQuery({});
+    const filtered = buildTransactionsCountQuery({ partyBuckets: ['D'] });
+    expect(unfiltered.sql).not.toContain('IN (?)');
+    expect(filtered.sql).toContain('IN (?)');
+    expect(filtered.params).toContain('D');
+  });
+
   it('nests keyset before joins for ticker-only filters', () => {
     const q = buildTransactionsQuery({ since: 9, ticker: 'aapl', limit: 25 });
     expect(q.sql).toContain('SELECT t.* FROM transactions t');

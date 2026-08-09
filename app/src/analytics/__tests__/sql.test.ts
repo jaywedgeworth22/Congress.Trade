@@ -119,21 +119,30 @@ describe('SQL fragments', () => {
 });
 
 describe('buildCommonFilters', () => {
-  it('always excludes retracted rows, then the 30-day window with the offset as the first param', () => {
+  it('always excludes retracted + non-first-class placeholder rows, then the 30-day window with the offset as the first param', () => {
     const { where, params } = buildCommonFilters({});
     expect(where[0]).toBe('t.deprecated_at IS NULL');
-    expect(where[1]).toBe("t.tx_date >= date('now', ?)");
+    // Same "real, first-class disclosed trade" guards as the public feed
+    // (src/delivery/rows.ts buildTxFilters) — see buildCommonFilters for why:
+    // without these, Trends aggregates over-count relative to the Trades tab.
+    expect(where[1]).toBe("SUBSTR(t.doc_id, 1, 17) != 'provider-missing-'");
+    expect(where[2]).toBe('t.filer_id IS NOT NULL');
+    expect(where[3]).toBe(
+      "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
+    );
+    expect(where[4]).toBe("t.tx_date >= date('now', ?)");
     expect(params[0]).toBe('-30 days');
   });
 
-  it('window="all" drops the date clause entirely (but keeps the retracted guard)', () => {
+  it('window="all" drops the date clause entirely (but keeps the retracted + placeholder guards)', () => {
     const { where, params } = buildCommonFilters({ window: 'all' });
     expect(where.join(' ')).not.toContain('tx_date >=');
     expect(where).toContain('t.deprecated_at IS NULL');
+    expect(where).toContain('t.filer_id IS NOT NULL');
     expect(params).toEqual([]);
   });
 
-  it('emits chamber/party/source/minConf clauses in order', () => {
+  it('emits chamber/party/source/minConf clauses in order, after the always-on guards', () => {
     const { where, params } = buildCommonFilters({
       window: '90d',
       chamber: 'senate',
@@ -143,6 +152,9 @@ describe('buildCommonFilters', () => {
     });
     expect(where).toEqual([
       't.deprecated_at IS NULL',
+      "SUBSTR(t.doc_id, 1, 17) != 'provider-missing-'",
+      't.filer_id IS NOT NULL',
+      "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
       "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' ELSE NULL END) = ?",
@@ -152,9 +164,10 @@ describe('buildCommonFilters', () => {
     expect(params).toEqual(['-90 days', 'senate', 'D', 0.7]);
   });
 
-  it('source="all" applies no source clause', () => {
+  it('source="all" applies no explicit source-filter clause (the always-on competitor_backfill guard still references t.source)', () => {
     const { where } = buildCommonFilters({ source: 'all' });
-    expect(where.join(' ')).not.toContain('t.source');
+    expect(where).not.toContain("t.source IN ('primary', 'manual')");
+    expect(where).not.toContain('t.source = ?');
   });
 
   it('tickerNotNull and txTypes expand to the expected clauses + params', () => {

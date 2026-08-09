@@ -9,7 +9,7 @@
  * They also assert the Trends tab + its API wiring are present.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parse } from 'node-html-parser';
 import { DASHBOARD_HTML } from '../dashboardHtml.ts';
@@ -598,6 +598,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('width: max-content');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v8');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v9');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#tradesTable.resizable th { text-align: center;');
@@ -613,6 +614,75 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('TRADE_BY_ID');
     expect(DASHBOARD_HTML).toContain("e.target.closest('a[href]:not(.clickable)')");
     expect(DASHBOARD_HTML).toContain('Official Filed');
+  });
+
+  it('keeps the resizable feed table stable — sane header-fit min-widths, a clamp against degenerate persisted widths, and a decoupled Latency header/body wrap (layout-stability follow-up, 2026-08-09)', () => {
+    // Owner report (two screenshots): the Trades table rendered correctly at
+    // first, then "on its own" (an admin session's two extra columns —
+    // Imported/Latency — arriving once /auth/me resolves after boot, or a
+    // live window resize) collapsed fixed columns to unreadable ellipsis
+    // stubs ("DA…", "T…") and wrapped Latency's header one letter per line
+    // ("L/A/T/E/N/C/Y"). Root cause: minColWidth() floors were smaller than
+    // the columns' own header labels need, and the Latency column's header
+    // shared its white-space:normal/word-break:break-word wrap CSS with the
+    // (legitimately two-line) body cell. Storage key bumped v9->v10 because
+    // widths persisted under the old, too-small floor are now structurally
+    // incompatible with the new one.
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v10'");
+    expect(DASHBOARD_HTML).toContain('function clampSavedWidth(key, raw)');
+
+    // Only the BODY cell wraps two lines of real latency content; the header
+    // (7-letter "Latency" label) now falls through to the same
+    // nowrap+ellipsis base rule every other column header gets — never
+    // white-space:normal, never word-break:break-word.
+    expect(DASHBOARD_HTML).toContain('#tradesTable.resizable td.latency { white-space: normal; word-break: break-word; }');
+    expect(DASHBOARD_HTML).not.toContain('th.c-latency, #tradesTable.resizable td.latency');
+    expect(DASHBOARD_HTML).not.toContain('width: 55px; min-width: 55px; max-width: 55px');
+
+    // Extract and actually RUN the real minColWidth/clampSavedWidth functions
+    // (not just string-match their source) so a future edit that quietly
+    // shrinks a floor back below its label's needs fails this test.
+    const [minColWidthSrc, clampSavedWidthSrc] = loadDashboardFunctions(['minColWidth', 'clampSavedWidth']);
+    const { minColWidth, clampSavedWidth } = new Function(
+      `${minColWidthSrc}\n${clampSavedWidthSrc}\nreturn { minColWidth, clampSavedWidth };`,
+    )() as { minColWidth: (key: string) => number; clampSavedWidth: (key: string, raw: unknown) => number | null };
+
+    // Every compact/fixed column's floor must comfortably fit its own header
+    // label (text + sort arrow + the resizable header's padding) — these
+    // thresholds are the measured on-screen requirement plus headroom (see
+    // the minColWidth doc comment), not arbitrary round numbers.
+    const requiredFloors: Record<string, number> = {
+      traded: 80, type: 90, amount: 100, sector: 95, country: 105,
+      imported: 110, latency: 90, conf: 120, published: 80, lag: 70,
+      owner: 90, filed: 140, chamber: 105, notes: 75, source: 95,
+    };
+    for (const [key, minRequired] of Object.entries(requiredFloors)) {
+      expect(minColWidth(key), `minColWidth('${key}')`).toBeGreaterThanOrEqual(minRequired);
+    }
+    // Politician/Asset intentionally stay outside this floor — they keep the
+    // flexible majority via estimatedColWidth/DEFAULT_CAP instead.
+    expect(minColWidth('asset')).toBe(140);
+    expect(minColWidth('member')).toBe(62);
+    // An unknown/future column id still gets a real floor, not 0.
+    expect(minColWidth('__unknown__')).toBeGreaterThanOrEqual(60);
+
+    // clampSavedWidth is the load-time guard: a degenerate stored value
+    // (too small, zero, negative, non-numeric, missing) must never be
+    // trusted verbatim — it either gets floored up to minColWidth or
+    // rejected outright (null, meaning "fall back to the natural width").
+    expect(clampSavedWidth('type', 5)).toBe(minColWidth('type'));
+    expect(clampSavedWidth('latency', 1)).toBe(minColWidth('latency'));
+    expect(clampSavedWidth('country', -20)).toBeNull();
+    expect(clampSavedWidth('imported', 0)).toBeNull();
+    expect(clampSavedWidth('amount', NaN)).toBeNull();
+    expect(clampSavedWidth('', 200)).toBeNull();
+    // A legitimately large, user-dragged value passes through unclamped.
+    expect(clampSavedWidth('asset', 260)).toBe(260);
+
+    // The DEFAULT_CAP soft-caps used when no saved width exists must stay
+    // >= their own column's floor, or they'd be dead weight (silently
+    // overridden back up by syncTradesTableWidth on the very next pass).
+    expect(DASHBOARD_HTML).toContain('traded: 110,\n    type: 112,\n    amount: 130,\n    country: 130,\n    latency: 140');
   });
 
   it('keeps the polished table, drawer, and trends layout hooks', () => {
@@ -3528,5 +3598,206 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     // Create-flow + table are untouched.
     expect(DASHBOARD_HTML).toContain('id="subsManage"');
     expect(DASHBOARD_HTML).toContain('id="subsTable"');
+  });
+});
+
+describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
+  // Every test in this block stubs `el`/`fetch`/counter globals via
+  // vi.stubGlobal so the extracted functions (which run as plain global
+  // code, not module-scoped) see them — always restore afterward so nothing
+  // leaks into a later test in this file.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Builds a runnable `fetchUpdates` bound to the REAL chip/param-reading
+   *  helpers it depends on (chipSel/chamberParam/selectedSideParam/partySel/
+   *  partyParam/tradesFilterParams), so a test exercising it also proves the
+   *  active party/chamber/ticker/politician filters actually reach the poll
+   *  request — not just that the response-handling arithmetic is correct. */
+  function loadFetchUpdates() {
+    const chamberAll = DASHBOARD_HTML.match(/var CHAMBER_ALL = \[[^\]]*\];/);
+    if (!chamberAll) throw new Error('CHAMBER_ALL was not found in DASHBOARD_HTML');
+    const sources = loadDashboardFunctions([
+      'chipSel',
+      'chamberParam',
+      'selectedSideParam',
+      'partySel',
+      'partyParam',
+      'tradesFilterParams',
+      'fetchUpdates',
+    ]);
+    const body = [chamberAll[0], ...sources].join('\n\n') + '\nreturn fetchUpdates;';
+    return new Function(body)() as () => Promise<number>;
+  }
+
+  function fakeInput(value: string) {
+    return { value };
+  }
+  /** Fake chip group: `.querySelectorAll('.<cls>.on')` returns one fake
+   *  button per currently-"on" value, each answering `getAttribute(attr)`. */
+  function fakeChipGroup(attr: string, onValues: string[]) {
+    return {
+      querySelectorAll(selector: string) {
+        if (!selector.endsWith('.on')) return [];
+        return onValues.map((v) => ({ getAttribute: (a: string) => (a === attr ? v : null) }));
+      },
+    };
+  }
+
+  /** Installs every global `fetchUpdates` (transitively) touches. Rendering
+   *  (`renderTrades`) and row shaping (`txToRow`/`sortRows`/`rememberTradeRow`)
+   *  are stubbed to identity/no-op — this test's subject is the counting
+   *  contract (totalRows/filingsImportedToday/cursor/TRADES-merge), which is
+   *  independent of DOM rendering and covered separately by the string-level
+   *  Trades-table tests elsewhere in this file. */
+  function installFetchUpdatesGlobals(opts: {
+    partyOn?: string[];
+    chamberOn?: string[];
+    sideOn?: string[];
+    ticker?: string;
+    member?: string;
+    cursor?: number;
+    tradesPageSize?: number;
+    totalRows?: number;
+    filingsImportedToday?: number;
+    tradesPage?: number;
+    loadingPage?: boolean;
+  }) {
+    const dom: Record<string, unknown> = {
+      qTicker: fakeInput(opts.ticker ?? ''),
+      qMember: fakeInput(opts.member ?? ''),
+      qSideGroup: fakeChipGroup('data-side', opts.sideOn ?? []),
+      qChamber: fakeChipGroup('data-ch', opts.chamberOn ?? []),
+      qPartyGroup: fakeChipGroup('data-party', opts.partyOn ?? []),
+      qFrom: fakeInput(''),
+      qTo: fakeInput(''),
+      // No shared-window select stubbed => tradesFilterParams' window
+      // fallback branches are skipped entirely (no unrequested `from`).
+    };
+    vi.stubGlobal('el', (id: string) => dom[id] ?? null);
+    vi.stubGlobal('cursor', opts.cursor ?? 0);
+    vi.stubGlobal('tradesPage', opts.tradesPage ?? 0);
+    vi.stubGlobal('loadingPage', opts.loadingPage ?? false);
+    vi.stubGlobal('tradesPageSize', opts.tradesPageSize ?? 50);
+    vi.stubGlobal('TRADES', [] as unknown[]);
+    vi.stubGlobal('totalRows', opts.totalRows ?? 0);
+    vi.stubGlobal('filingsImportedToday', opts.filingsImportedToday ?? 0);
+    vi.stubGlobal('sortKey', 'txdate');
+    vi.stubGlobal('sortDir', -1);
+    vi.stubGlobal('txToRow', (tx: unknown) => tx);
+    vi.stubGlobal('rememberTradeRow', () => {});
+    vi.stubGlobal('sortRows', (rows: unknown[]) => rows);
+    vi.stubGlobal('setTradesKpis', () => {});
+    vi.stubGlobal('renderTrades', () => {});
+  }
+
+  it('assigns totalRows from the server on every poll instead of accumulating it (owner report #1: 2535 -> 2635 -> 2735 drift)', async () => {
+    installFetchUpdatesGlobals({ totalRows: 2535, cursor: 100 });
+    const requestedUrls: string[] = [];
+    const responses = [
+      { transactions: [{ id: 'tx1' }, { id: 'tx2' }], cursor: 101, total: 2537, filingsImportedToday: 4 },
+      { transactions: [{ id: 'tx3' }], cursor: 102, total: 2538, filingsImportedToday: 5 },
+      // Zero-delta poll: server omits total/filingsImportedToday entirely.
+      { transactions: [], cursor: 102 },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        requestedUrls.push(url);
+        return Promise.resolve({ ok: true, json: async () => responses.shift() });
+      }),
+    );
+
+    const fetchUpdates = loadFetchUpdates();
+    await fetchUpdates();
+    expect((globalThis as Record<string, unknown>).totalRows).toBe(2537);
+    await fetchUpdates();
+    // Must be exactly the server's fresh number (2538) — a client that instead
+    // did `totalRows += txs.length` on top of the previous 2537 would also
+    // land on 2538 here by coincidence, but would diverge from the truth the
+    // moment the server's count and the poll's row count aren't in lockstep
+    // (e.g. a de-duplicated or budget-limited delta) — which the next
+    // assertion (zero-delta poll) exercises.
+    expect((globalThis as Record<string, unknown>).totalRows).toBe(2538);
+    await fetchUpdates();
+    // No new rows + server omits `total` -> must hold at the last known-good
+    // value, never reset to 0 and never keep incrementing on an empty delta.
+    expect((globalThis as Record<string, unknown>).totalRows).toBe(2538);
+    expect(requestedUrls).toHaveLength(3);
+  });
+
+  it('includes the active party/chamber filter in the poll request (owner report #2: filtering must reach the poll, not just the initial page load)', async () => {
+    installFetchUpdatesGlobals({ partyOn: ['D'], chamberOn: ['house'], cursor: 50 });
+    const requestedUrls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        requestedUrls.push(url);
+        return Promise.resolve({ ok: true, json: async () => ({ transactions: [], cursor: 50 }) });
+      }),
+    );
+
+    const fetchUpdates = loadFetchUpdates();
+    await fetchUpdates();
+    expect(requestedUrls).toHaveLength(1);
+    const url = new URL(requestedUrls[0], 'https://example.test');
+    expect(url.searchParams.get('party')).toBe('D');
+    expect(url.searchParams.get('chamber')).toBe('house');
+    expect(url.searchParams.get('since')).toBe('50');
+  });
+
+  it('an unfiltered poll omits party/chamber/ticker/memberName entirely (no accidental filter leakage)', async () => {
+    installFetchUpdatesGlobals({ cursor: 0 });
+    const requestedUrls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        requestedUrls.push(url);
+        return Promise.resolve({ ok: true, json: async () => ({ transactions: [], cursor: 0 }) });
+      }),
+    );
+    const fetchUpdates = loadFetchUpdates();
+    await fetchUpdates();
+    const url = new URL(requestedUrls[0], 'https://example.test');
+    expect(url.searchParams.has('party')).toBe(false);
+    expect(url.searchParams.has('chamber')).toBe(false);
+    expect(url.searchParams.has('ticker')).toBe(false);
+    expect(url.searchParams.has('memberName')).toBe(false);
+  });
+
+  it('a party chip selection reaches tradesQueryParams (the full-page fetch), matching the poll wiring', () => {
+    const chamberAll = DASHBOARD_HTML.match(/var CHAMBER_ALL = \[[^\]]*\];/);
+    if (!chamberAll) throw new Error('CHAMBER_ALL was not found in DASHBOARD_HTML');
+    const sources = loadDashboardFunctions([
+      'chipSel',
+      'chamberParam',
+      'selectedSideParam',
+      'partySel',
+      'partyParam',
+      'tradesFilterParams',
+      'tradesQueryParams',
+    ]);
+    const tradesQueryParams = new Function(
+      [chamberAll[0], ...sources].join('\n\n') + '\nreturn tradesQueryParams;',
+    )() as () => URLSearchParams;
+
+    installFetchUpdatesGlobals({ partyOn: ['R', 'O'] });
+    const params = tradesQueryParams();
+    expect(params.get('party')).toBe('O,R'); // partyParam sorts before joining
+    expect(params.get('since')).toBe('0');
+  });
+
+  it('Trends "Trades" KPI carries a scope tooltip so a residual difference from the Trades tab total is self-explanatory, not confusing (owner report #3)', () => {
+    expect(DASHBOARD_HTML).toContain("kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP)");
+    expect(DASHBOARD_HTML).toMatch(/var TRENDS_TRADES_TIP = '[^']*Trades tab[^']*';/);
+    // The Trades-tab total gets the reciprocal explanation.
+    expect(DASHBOARD_HTML).toContain('id="tradesStats" class="trades-stats muted" title=');
+    expect(DASHBOARD_HTML).toContain('Trends tab');
+  });
+
+  it('never shows a stale corpus-wide total next to a page-local-filtered list (owner report #2)', () => {
+    expect(DASHBOARD_HTML).toContain('var pageFilterActive = !!qa ||');
+    expect(DASHBOARD_HTML).toContain("loaded rows match this page filter");
   });
 });

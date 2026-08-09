@@ -229,6 +229,21 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
 
   // Retracted (un-published) rows never appear in any analytics aggregate.
   where.push('t.deprecated_at IS NULL');
+  // Same "real, first-class disclosed trade" guards the public feed applies
+  // unconditionally (see buildTxFilters in src/delivery/rows.ts). Before this,
+  // Trends aggregates (e.g. the "Trades" summary KPI) counted synthetic
+  // provider-discovered placeholders, filer-less orphan rows, and
+  // competitor-only executive injects that the Trades tab has never shown —
+  // inflating every Trends number above the feed's total for what should be
+  // the identical underlying universe (owner report: the Trends "TRADES" stat
+  // running far ahead of the Trades tab's own total). Mirrored here (not
+  // imported) so this module stays dependency-free, matching its own "mirrors
+  // src/delivery/rows.ts" convention.
+  where.push("SUBSTR(t.doc_id, 1, 17) != 'provider-missing-'");
+  where.push('t.filer_id IS NOT NULL');
+  where.push(
+    "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
+  );
 
   const win = p.window ?? '30d';
   if (win === 'this_cy') {

@@ -228,7 +228,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   #tradesTable.resizable { table-layout: fixed; min-width: 100%; }
   #tradesTable.resizable th, #tradesTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #tradesTable.resizable th.c-latency, #tradesTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
+  /* Owner report (2026-08-09, layout-stability follow-up): this used to also
+     match th.c-latency, which forced the HEADER label ("Latency") into
+     white-space:normal + word-break:break-word too. In table-layout:fixed the
+     width/min-width/max-width this rule declared never actually constrained
+     the rendered column (the <col> width JS keeps in sync always wins), so
+     whenever that column got squeezed toward its old, too-small minColWidth
+     floor the word-break kicked in with nothing to stop it, wrapping the
+     7-letter label one letter per line. Only the BODY cell renders two lines
+     of real content ("detected …" / "imported … later") and needs to wrap;
+     the header stays nowrap+ellipsis like every other column (base rule
+     above), backed by a minColWidth('latency') sized for the one-word label. */
+  #tradesTable.resizable td.latency { white-space: normal; word-break: break-word; }
   #tradesTable.resizable th { text-align: center; padding-right: 18px; }
   #tradesTable.resizable td > * { max-width: 100%; min-width: 0; }
   #tradesTable.resizable .asset-cell,
@@ -2099,7 +2110,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <input id="qTicker" class="icon-input" placeholder="Asset / Ticker" aria-label="Filter by asset ticker" oninput="handleTradesTextFilter()" />
       </span>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
-      <div id="tradesStats" class="trades-stats muted">
+      <div id="tradesStats" class="trades-stats muted" title="Scoped by the ticker/politician/chamber/party/side/date filters above — a different query than the Trends tab's own time-window total.">
         <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
       </div>
     </div>
@@ -3801,16 +3812,28 @@ function resetCols() {
   renderColChooser(); renderTradesHeader(); renderTrades();
 }
 
-function renderTrades() {
+/* Builds a predicate for "does this row match the CURRENTLY ACTIVE
+   member/ticker/side/chamber filters" — snapshotting the filter values once
+   so filtering many rows doesn't re-read the DOM per row. Shared by
+   renderTrades() below and the SSE congress.trade handler, which must apply
+   the SAME check before letting a pushed row affect this view's rows/total —
+   a live broadcast carries every new trade, not just ones matching what THIS
+   visitor is currently filtered to. */
+function makeTradesFilterMatcher() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
       ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
   // Mirror the server's semantics: no HSP selection (empty param) = all
   // branches, including unresolved-chamber rows. Explicit chips filter exactly.
   var chDefault = chamberParam('qChamber') === '';
-  function chamberMatch(r) {
-    if (chDefault) return true;
-    return chs.indexOf(r.chamber) >= 0;
-  }
+  return function (r) {
+    if (!chDefault && chs.indexOf(r.chamber) < 0) return false;
+    return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
+           (!t || (r.ticker || '').indexOf(t) >= 0) &&
+           (!ty || r.type === ty);
+  };
+}
+function renderTrades() {
+  var matchesActiveFilters = makeTradesFilterMatcher();
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll') && el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qPageMinAmt') && el('qPageMinAmt').value);
@@ -3840,10 +3863,7 @@ function renderTrades() {
     }
     if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
     if (!isNaN(maxAmt) && !((r.max != null ? r.max : r.min) <= maxAmt)) return false;
-    return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
-           (!t || (r.ticker || '').indexOf(t) >= 0) &&
-           (!ty || r.type === ty) &&
-           chamberMatch(r);
+    return matchesActiveFilters(r);
   });
   rows = sortRows(rows);
   if (rows.length === 0) {
@@ -3890,8 +3910,24 @@ function updateTradesCountMsg(shown) {
   var end = Math.min(tradesPage * tradesPageSize + shown, total);
   var pageCount = Math.max(1, Math.ceil(total / tradesPageSize));
   var maxPage = maxReachableTradesPage(total);
+  // "Search this page" / Min-Max $ (this page) only ever narrow the rows
+  // already loaded into THIS page — they never reach the server (the search
+  // panel says so: "Filters the rows already loaded on this page only"), so
+  // total above stays the full server-filtered-query total, not a count of
+  // what these narrow to. Showing "N of total" while one is active would
+  // silently pass off a page-local slice as a corpus-wide count (owner
+  // report #2: never show a stale unfiltered total next to a filtered list).
+  var qa = (el('qAll') && el('qAll').value || '').trim();
+  var pageFilterActive = !!qa ||
+    (el('qPageMinAmt') && el('qPageMinAmt').value !== '') ||
+    (el('qMaxAmt') && el('qMaxAmt').value !== '');
   if (msg) {
-    msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
+    if (pageFilterActive) {
+      msg.innerHTML = '<span class="tick-num">' + shown.toLocaleString() + '</span> of <span class="tick-num">' +
+        TRADES.length.toLocaleString() + '</span> loaded rows match this page filter';
+    } else {
+      msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
+    }
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
@@ -3908,12 +3944,42 @@ function updateTradesCountMsg(shown) {
    column defaults (Politician/Asset flexible, Date/Type/Amount/Country
    compact, Size column removed — #22/#24) actually take effect for every
    visitor who never intentionally dragged a column; the resizable feature
-   itself (drag-to-resize, per-column persistence) is otherwise unchanged. */
-var COL_WIDTH_KEY = 'feed-col-widths-v9';
+   itself (drag-to-resize, per-column persistence) is otherwise unchanged.
+   Layout-stability follow-up (2026-08-09, v9->v10): the compact-column
+   minColWidth() floors below were smaller than the columns' own header
+   labels need (e.g. "Type"/"Country" need ~85-100px to not truncate; the
+   floor let them get pinned as low as 44-54px), so whenever a column got
+   clamped to its floor — first paint on a merely-average viewport, an admin
+   session's two extra columns (Imported/Latency) arriving after /auth/me
+   resolves, a live window resize — headers collapsed to unreadable ellipsis
+   stubs ("DA…", "T…"), and Latency's header (which shared its wrap CSS with
+   the two-line body cell) could word-break into one letter per line. Fixed
+   by raising every compact column's floor to fit its own label (see
+   minColWidth below) and by clamping (never trusting) any already-persisted
+   width against that floor at load time (clampSavedWidth). Widths saved
+   under v9 could be as low as the OLD (too-small) floor, which is now
+   structurally incompatible, hence the key bump — v10 starts every visitor
+   clean, same as the v8->v9 bump above. */
+var COL_WIDTH_KEY = 'feed-col-widths-v10';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
 function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeInit = true; initColumnResize(); } }
+/* Defense-in-depth guard (layout-stability follow-up): a persisted width can
+   be stale (saved before a minColWidth floor was raised), corrupted, or just
+   absent/non-numeric — never trust it verbatim. Returns null (use the
+   natural/auto width instead) when nothing usable was stored, otherwise the
+   stored value clamped up to at least the column's current floor. This runs
+   BEFORE the column is ever painted as 'resizable', so a degenerate stored
+   value never gets a single frame on screen (syncTradesTableWidth applies
+   the same minColWidth floor again on every later pass — resize, drag,
+   re-render — so the floor holds for the lifetime of the page, not just at
+   init). */
+function clampSavedWidth(key, raw) {
+  var n = Number(raw);
+  if (!key || !Number.isFinite(n) || n <= 0) return null;
+  return Math.max(minColWidth(key), Math.round(n));
+}
 function clampNum(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function estimatedColWidth(key, fallback, min, max) {
   var selector = key === 'asset'
@@ -3929,25 +3995,36 @@ function estimatedColWidth(key, fallback, min, max) {
   var px = key === 'asset' ? 42 + Math.ceil(med * 6.4) : 54 + Math.ceil(med * 7.4);
   return clampNum(px, min, max);
 }
+/* Content-fit floors for the compact/fixed columns (Politician/Asset are
+   excluded — they keep the flexible majority via estimatedColWidth/
+   DEFAULT_CAP in initColumnResize, not this floor). Every value here is
+   measured against the column's own header label (text + sort arrow, where
+   the column is sortable) rendered with the production th padding, rounded
+   up with headroom for cross-platform font-metric variance — never trim
+   these below what the label itself needs, or the truncation/word-break
+   this floor exists to prevent (owner report, layout-stability follow-up)
+   comes back. */
 function minColWidth(key) {
   var map = {
     asset: 140,
     member: 62,
-    amount: 76,
-    imported: 62,
-    published: 62,
-    traded: 62,
-    filed: 62,
-    type: 44,
-    lag: 42,
-    owner: 50,
-    chamber: 54,
-    sector: 58,
-    country: 54,
-    conf: 56,
-    latency: 44
+    amount: 108,
+    imported: 118,
+    published: 88,
+    traded: 88,
+    filed: 148,
+    type: 96,
+    lag: 80,
+    owner: 100,
+    chamber: 114,
+    sector: 104,
+    country: 112,
+    conf: 132,
+    latency: 96,
+    notes: 82,
+    source: 106
   };
-  return map[key] || 46;
+  return map[key] || 80;
 }
 function applyColumnWidthClasses() {
   var table = el('tradesTable'); if (!table) return;
@@ -3979,19 +4056,24 @@ function initColumnResize() {
   // so they stop stealing width from the two columns that actually need it.
   // The (now-removed, #22) Size column's share folds into this too. Any column
   // stays draggable regardless of these defaults.
+  // Caps must stay >= the column's own minColWidth floor (below) or they'd be
+  // dead weight — always overridden back up by that floor on the very next
+  // syncTradesTableWidth pass, which is confusing to read and easy to
+  // re-break by editing one without the other.
   var DEFAULT_CAP = {
     asset: estimatedColWidth('asset', 220, 190, 320),
     member: estimatedColWidth('member', 240, 210, 320),
-    traded: 96,
-    type: 60,
+    traded: 110,
+    type: 112,
     amount: 130,
-    country: 90,
+    country: 130,
     latency: 140
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
-    var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
-    if (!(k && saved[k]) && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
+    var savedW = clampSavedWidth(k, saved[k]);
+    var w = savedW != null ? savedW : ths[i].offsetWidth;
+    if (savedW == null && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
     ths[i].style.width = w + 'px';
   }
   table.classList.add('resizable');
@@ -4220,22 +4302,17 @@ function syncPageSizeControl() {
   tradesPageSize = currentPageSize();
   var s = el('pageSize'); if (s) s.value = String(tradesPageSize);
 }
-function tradesQueryParams() {
+/* Shared ticker/member/type/chamber/party/date filters, independent of
+   paging/since/sort — used by both the bounded page fetch (tradesQueryParams,
+   below) and the incremental poll (fetchUpdates) so a poll's "new" rows and
+   its total/today counters always match the SAME query the user is currently
+   looking at. Before this, fetchUpdates fetched/counted against the whole
+   unfiltered corpus regardless of the active Trades filters — a filter chip
+   (chamber/party/side) or the ticker/politician fields would visibly narrow
+   the page on the next full reload, then silently widen back out on the next
+   30s poll (owner report #2: filtering doesn't change the count). */
+function tradesFilterParams() {
   var p = new URLSearchParams();
-  p.set('since', '0');
-  var apiSort = 'tx_date';
-  var apiOrder = 'desc';
-  if (sortKey === 'published' || sortKey === 'imported') {
-    apiSort = 'published';
-    apiOrder = sortDir === -1 ? 'desc' : 'asc';
-  } else if (sortKey === 'txdate' || sortKey === 'traded') {
-    apiSort = 'tx_date';
-    apiOrder = sortDir === -1 ? 'desc' : 'asc';
-  }
-  p.set('sort', apiSort);
-  p.set('order', apiOrder);
-  p.set('limit', String(tradesPageSize));
-  p.set('offset', String(tradesPage * tradesPageSize));
   var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
   // Buy/sell/exchange toggle: only filters when exactly one of the three is
@@ -4243,6 +4320,7 @@ function tradesQueryParams() {
   var ty = selectedSideParam('qSideGroup');
   if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
+  var pa = partyParam('qPartyGroup'); if (pa) p.set('party', pa);
   // Owner follow-up batch #21: the $ threshold UI pill is gone (no $/size
   // dropdown on any platform) — minAmount is no longer sent from here. The
   // server still accepts ?minAmount= for direct API consumers.
@@ -4267,6 +4345,24 @@ function tradesQueryParams() {
     }
   }
   var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
+  return p;
+}
+function tradesQueryParams() {
+  var p = tradesFilterParams();
+  p.set('since', '0');
+  var apiSort = 'tx_date';
+  var apiOrder = 'desc';
+  if (sortKey === 'published' || sortKey === 'imported') {
+    apiSort = 'published';
+    apiOrder = sortDir === -1 ? 'desc' : 'asc';
+  } else if (sortKey === 'txdate' || sortKey === 'traded') {
+    apiSort = 'tx_date';
+    apiOrder = sortDir === -1 ? 'desc' : 'asc';
+  }
+  p.set('sort', apiSort);
+  p.set('order', apiOrder);
+  p.set('limit', String(tradesPageSize));
+  p.set('offset', String(tradesPage * tradesPageSize));
   return p;
 }
 function setTradesKpis() {
@@ -4449,25 +4545,29 @@ function lastTradesPage() {
    them into page 1 without changing the user's current page. */
 function fetchUpdates() {
   if (loadingPage || tradesPage !== 0) return Promise.resolve(0);
-  return fetch('/api/transactions?since=' + cursor + '&limit=' + tradesPageSize)
+  // API HOOK: GET /api/transactions?since=<cursor>&limit=<pageSize>[&ticker=&memberName=&type=&chamber=&party=&from=&to=]
+  // Filtered by the SAME active filters as the main page fetch (fetchPage /
+  // tradesQueryParams) — a poll must never surface, or count, rows outside
+  // the user's current query. The server recomputes total (and
+  // filingsImportedToday) fresh with these same filters on every response
+  // that carries new rows (see delivery/rest.ts — omitted, not zero, on a
+  // zero-delta poll); we assign them directly rather than incrementing
+  // locally so a burst of polls can never drift the displayed total upward
+  // (owner report #1: 2535 -> 2635 -> 2735, +page-size on every poll).
+  var qp = tradesFilterParams();
+  qp.set('since', String(cursor));
+  qp.set('limit', String(tradesPageSize));
+  return fetch('/api/transactions?' + qp.toString())
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
       var txs = (data.transactions || []).map(txToRow);
-      if (!txs.length) return 0;
+      if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
+      if (typeof data.total === 'number') totalRows = data.total;
+      if (typeof data.filingsImportedToday === 'number') filingsImportedToday = data.filingsImportedToday;
+      if (!txs.length) { setTradesKpis(); return 0; }
       txs.forEach(rememberTradeRow);
       txs.reverse();
-      var today = new Date().toISOString().slice(0, 10);
-      var seenDocs = {};
-      TRADES.forEach(function (r) { if (r.docId) seenDocs[r.docId] = true; });
-      txs.forEach(function (r) {
-        if ((r.imported || '').slice(0, 10) === today && r.docId && !seenDocs[r.docId]) {
-          filingsImportedToday += 1;
-          seenDocs[r.docId] = true;
-        }
-      });
       TRADES = sortRows(txs.concat(TRADES)).slice(0, tradesPageSize);
-      if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
-      if (totalRows) totalRows += txs.length;
       setTradesKpis();
       renderTrades();
       return txs.length;
@@ -4520,19 +4620,34 @@ function startStream() {
         var payload = JSON.parse(e.data);
         var trades = (payload && payload.trades) || [];
         var changed = false;
+        // The stream is a shared broadcast — it carries every new trade
+        // regardless of which chamber/party/side/ticker/politician THIS
+        // visitor is filtered to, so each pushed row must pass the same
+        // active-filter check the page's own rows do before it's allowed to
+        // touch TRADES or the displayed total (owner report #1/#2: a push
+        // used to unshift + increment totalRows unconditionally, both leaking
+        // out-of-filter rows into a filtered view and inflating the count).
+        var matchesActiveFilters = tradesPage === 0 ? makeTradesFilterMatcher() : null;
+        var today = new Date().toISOString().slice(0, 10);
         for (var ti = 0; ti < trades.length; ti++) {
           var tx = trades[ti];
           if (!tx || !tx.id) continue;
           if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
           if (tradesPage !== 0) continue;
           var row = txToRow(tx);
+          var isNewId = !TRADE_BY_ID[row.id];
           rememberTradeRow(row);
-          var today = new Date().toISOString().slice(0, 10);
+          if (!matchesActiveFilters(row)) continue; // out-of-filter push: doesn't belong in this view
           var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
-          if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
           TRADES.unshift(row);
           TRADES = sortRows(TRADES).slice(0, tradesPageSize);
-          if (totalRows) totalRows += 1;
+          if (isNewId) {
+            // De-duped: a redelivered event for a row we already knew about
+            // must not bump the total again. A future poll/reload still
+            // reconciles against the server's authoritative filtered count.
+            if (typeof totalRows === 'number') totalRows += 1;
+            if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
+          }
           changed = true;
         }
         if (changed) {
@@ -7912,6 +8027,16 @@ function runMarketBackfill(dryRun) {
 	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
 	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
 	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
+	// Trends "Trades" answers a different question than the Trades tab's own
+	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party
+	// chips above (default: past 90 days, all parties), while the Trades tab
+	// counts whatever its own ticker/politician/date/chamber/party/side filters
+	// currently say, over its own separately paginated total. Both count the
+	// same underlying "real, disclosed trade" universe (synthetic/placeholder
+	// rows are excluded from both — see delivery/rows.ts + analytics/sql.ts),
+	// so a residual difference here is a scope difference, not a bug — this
+	// tip exists so that's obvious at a glance rather than a support question.
+	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party filters above — a different query than the Trades tab list, which has its own filters and total.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(getTrWindow());
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
@@ -8626,7 +8751,7 @@ function loadTrSummary() {
     var sparkNetFlow = sparklineHtml(s, 'netflow');
     var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
-      kpi('Trades', d.totalTrades) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
+      kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
 	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
       kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
       kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
@@ -10145,6 +10270,23 @@ function selectedSideParam(groupId) {
   g.querySelectorAll('.side-chip.on').forEach(function (b) { on.push(b.getAttribute('data-side')); });
   if (on.length === 1) return on[0];
   return '';
+}
+/* Multi-select party chips (D/R/O), same mental model as chamber chips: no
+   selection = all parties (no filter). Returns the CSV ?party= value the
+   feed + Trends analytics both accept (see delivery/rows.ts TxQueryParams
+   .partyBuckets and analytics/sql.ts CommonFilters.party). Previously the
+   party chips visible on the Trades toolbar only reached loadTrends() —
+   selecting one had zero effect on the Trades list or its "N total" (owner
+   report #2) because tradesQueryParams() never read them. */
+function partySel(groupId) {
+  var g = el(groupId); if (!g) return [];
+  var on = [];
+  g.querySelectorAll('.party-chip.on').forEach(function (b) { on.push(b.getAttribute('data-party')); });
+  return on;
+}
+function partyParam(groupId) {
+  var sel = partySel(groupId);
+  return sel.length ? sel.slice().sort().join(',') : '';
 }
 function applyPartySelection(parties) {
   ['qPartyGroup', 'trPartyGroup'].forEach(function (id) {

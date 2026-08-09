@@ -281,6 +281,28 @@ function asChambers(v: string | undefined): Chamber[] | undefined {
   return parsed.length ? parsed : undefined;
 }
 
+function asPartyBucket(v: string): 'D' | 'R' | 'O' | undefined {
+  const c = v.trim().charAt(0).toUpperCase();
+  return c === 'D' ? 'D' : c === 'R' ? 'R' : c === 'O' || c === 'I' ? 'O' : undefined;
+}
+
+/** CSV multi-party-bucket selection (e.g. "D,R"); undefined = no party filter
+ *  (all parties, including unknown — see TxQueryParams.partyBuckets). Same
+ *  bucketing (first-letter, I folded into O) as the analytics `?party=`
+ *  filter, just multi-select instead of single-value. */
+function asPartyBuckets(v: string | undefined): Array<'D' | 'R' | 'O'> | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(
+      v
+        .split(',')
+        .map((part) => asPartyBucket(part))
+        .filter((c): c is 'D' | 'R' | 'O' => !!c),
+    ),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
 function asTxType(v: string | undefined): TxType | undefined {
   // Canonical storage B|S|E; legacy P (Purchase) → B.
   if (v === 'P' || v === 'p' || v === 'B' || v === 'b') return 'B';
@@ -323,6 +345,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     member: q.member || undefined,
     memberName: q.memberName || undefined,
     chambers: asChambers(q.chamber),
+    partyBuckets: asPartyBuckets(q.party),
     type: asTxType(q.type),
     stockAct: asStockActStatus(q.stockAct),
     owner: asOwner(q.owner),
@@ -448,6 +471,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       member: q.member || undefined,
       memberName: q.memberName || undefined,
       chambers: asChambers(q.chamber),
+      partyBuckets: asPartyBuckets(q.party),
       type: asTxType(q.type),
       stockAct: asStockActStatus(q.stockAct),
       owner: asOwner(q.owner),
