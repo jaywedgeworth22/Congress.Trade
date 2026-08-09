@@ -392,7 +392,8 @@ export class HousePdfExtractor implements Extractor {
  * Returns references to the concrete (stub) extractor classes that the
  * extraction agent implements in src/extraction/*:
  *   - SenateHtmlExtractor (senate_html)
- *   - TextPdfExtractor    (text_pdf)
+ *   - TextPdfExtractor    (text_pdf, House PTR layout)
+ *   - OgeTextExtractor    (text_pdf, chamber='executive' — OGE 278-T layout)
  *   - VisionLlmExtractor  (scanned_pdf — uses GEMINI_API_KEY)
  *
  * The classifier picks a docKind; the queue handler iterates this pipeline and
@@ -404,7 +405,8 @@ export class HousePdfExtractor implements Extractor {
 export function buildExtractorPipeline(env: Env): Extractor[] {
   const senateHtml = new SenateHtmlExtractor(env);
   const textPdf = new TextPdfExtractor();
-  
+  const ogeText = new OgeTextExtractor();
+
   const geminiVision = new VisionLlmExtractor(env);
   const anthropicVision = new AnthropicVisionExtractor(env);
   const visionLlmWithFallback = new FallbackExtractor(geminiVision, anthropicVision);
@@ -431,7 +433,10 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const visionArbitrated = new ArbitratingExtractor(configuredVision, env, secondary);
   const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);
 
-  return [senateHtml, housePdf, textPdf, visionArbitrated];
+  // ogeText is ordered before the generic textPdf so executive-chamber PDFs
+  // (OGE 278-T layout) get the parser tuned for their table, instead of
+  // silently matching the House-tuned parser and yielding zero rows.
+  return [senateHtml, housePdf, ogeText, textPdf, visionArbitrated];
 }
 
 // ---------------------------------------------------------------------------
@@ -440,11 +445,12 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
 
 import { SenateHtmlExtractor } from '../extraction/senateHtml.ts';
 import { TextPdfExtractor } from '../extraction/textPdf.ts';
+import { OgeTextExtractor } from '../extraction/ogeText.ts';
 import { VisionLlmExtractor } from '../extraction/visionLlm.ts';
 import { AnthropicVisionExtractor } from '../extraction/anthropicVision.ts';
 import { ConfiguredVisionExtractor } from '../extraction/configuredVision.ts';
 
 export {
-  SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor,
+  SenateHtmlExtractor, TextPdfExtractor, OgeTextExtractor, VisionLlmExtractor, AnthropicVisionExtractor,
   ConfiguredVisionExtractor,
 };

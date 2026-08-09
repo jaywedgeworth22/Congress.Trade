@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ArbitratingExtractor,
   arbitrationRowKey,
+  buildExtractorPipeline,
   fieldAgreement,
   HousePdfExtractor,
   mergeResults,
@@ -230,5 +231,33 @@ describe('HousePdfExtractor', () => {
     const house = new HousePdfExtractor(text, vision);
 
     expect(house.canHandle(filing({ chamber: 'senate' }))).toBe(false);
+  });
+});
+
+describe('buildExtractorPipeline routing', () => {
+  // Construction does no I/O (secrets/keys resolve lazily inside extract()),
+  // so a bare fake Env is safe here — this only exercises canHandle() routing.
+  const pipeline = buildExtractorPipeline({} as Env);
+
+  function firstMatch(f: Filing): string | undefined {
+    return pipeline.find((e) => e.canHandle(f))?.name;
+  }
+
+  it('routes executive text_pdf filings to ogeText, not the House-tuned textPdf or vision', () => {
+    expect(firstMatch(filing({ chamber: 'executive', docKind: 'text_pdf' }))).toBe('ogeText');
+  });
+
+  it('still routes House text_pdf filings through housePdf (text-first, vision fallback)', () => {
+    const name = firstMatch(filing({ chamber: 'house', docKind: 'text_pdf' }));
+    expect(name).toMatch(/^housePdf\(/);
+  });
+
+  it('still routes Senate HTML filings to senateHtml', () => {
+    expect(firstMatch(filing({ chamber: 'senate', docKind: 'senate_html' }))).toBe('senateHtml');
+  });
+
+  it('leaves executive scanned_pdf filings on the vision path (ogeText only claims text_pdf)', () => {
+    const name = firstMatch(filing({ chamber: 'executive', docKind: 'scanned_pdf' }));
+    expect(name).toMatch(/^arbitrating\(/);
   });
 });
