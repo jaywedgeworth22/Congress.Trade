@@ -298,11 +298,23 @@ export function escapeLikePattern(value: string): string {
 export async function resolveMemberFilerId(env: Env, memberName: string): Promise<string | null> {
   const term = memberName.trim();
   if (!term) return null;
+  // A substring like "Capito" can match SEVERAL filers rows for the same real
+  // person (e.g. the live "Shelley Moore Capito" plus a dormant seed row
+  // "Shelley M Capito" that holds no live transactions, or an alias row
+  // tombstoned by the identity dedupe in migration 0078). Picking alphabetically
+  // silently returned the dead row and the search showed ZERO trades for an
+  // active senator. Rank: exact name first, then canonical (not merged away),
+  // then filers that actually have live transactions, then name.
   const row = await get<{ bioguide_id: string }>(
     env.DB,
-    `SELECT bioguide_id FROM filers
-      WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\'
-      ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name
+    `SELECT COALESCE(f.merged_into, f.bioguide_id) AS bioguide_id
+       FROM filers f
+      WHERE LOWER(f.full_name) = LOWER(?) OR LOWER(f.full_name) LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN LOWER(f.full_name) = LOWER(?) THEN 0 ELSE 1 END,
+               CASE WHEN f.merged_into IS NULL THEN 0 ELSE 1 END,
+               EXISTS(SELECT 1 FROM transactions t
+                       WHERE t.filer_id = f.bioguide_id AND t.deprecated_at IS NULL) DESC,
+               f.full_name
       LIMIT 1`,
     [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
   );
