@@ -327,6 +327,16 @@ export interface TxQueryParams {
    * request so a single mega-filing can't swamp the feed.
    */
   chambers?: Chamber[];
+  /**
+   * Multi-select party-bucket filter (D/R/O, bucketed from `filers.party` by
+   * first letter — same bucketing as PARTY_BUCKET_SQL in analytics/sql.ts,
+   * duplicated locally in {@link PARTY_BUCKET_SQL_LOCAL} so this module stays
+   * dependency-free). ABSENT/empty means no party filter (all parties,
+   * including rows with unknown party). Exposed on the public feed as
+   * `?party=D,R` — the same param shape the Trends analytics endpoints
+   * already accept, so a party chip selection filters both tabs identically.
+   */
+  partyBuckets?: Array<'D' | 'R' | 'O'>;
   type?: TxType;
   /**
    * STOCK Act 45-day classification filter (`transactions.stock_act_status`,
@@ -437,6 +447,18 @@ const REF_SELECT =
 /** SQL expression resolving the chamber, preferring the filers table. */
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
 
+/**
+ * Party bucketed to 'D' | 'R' | 'O' by first letter; unknown stays NULL.
+ * Mirrors PARTY_BUCKET_SQL in analytics/sql.ts — duplicated (not imported) so
+ * this module stays dependency-free/independently testable, matching this
+ * file's existing convention of each surface owning its own filter SQL.
+ */
+const PARTY_BUCKET_SQL_LOCAL =
+  "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
+  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
+  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
+  'ELSE NULL END)';
+
 /** O(1) indexed MAX query over transactions.cursor_seq */
 export async function readCursorHighWater(env: Env): Promise<number> {
   const row = await first<{ hwm: number | null }>(env.DB, 'SELECT MAX(cursor_seq) AS hwm FROM transactions', []);
@@ -512,6 +534,10 @@ function buildTxFilters(
   } else {
     // Default view = all chambers. Executive rows are no longer excluded by default.
   }
+  if (p.partyBuckets && p.partyBuckets.length) {
+    where.push(`${PARTY_BUCKET_SQL_LOCAL} IN (${p.partyBuckets.map(() => '?').join(', ')})`);
+    params.push(...p.partyBuckets);
+  }
   if (Number.isFinite(p.minAmount)) {
     where.push('t.amount_min >= ?');
     params.push(Number(p.minAmount));
@@ -550,6 +576,7 @@ function canNestTransactionKeyset(p: TxQueryParams): boolean {
   if (p.memberName) return false;
   if (p.chamber) return false;
   if (p.chambers && p.chambers.length) return false;
+  if (p.partyBuckets && p.partyBuckets.length) return false;
   if (p.filedSince) return false;
   if (p.sort === 'published') return false;
   return true;
