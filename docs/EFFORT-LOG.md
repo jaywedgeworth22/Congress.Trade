@@ -1,4 +1,5 @@
 # Congress.Trade Effort Log — cross-agent board
+| 2026-08-09 | CODEX | Codex Cloud protocol bootstrap | In Progress | Repo-local setup/maintenance hooks and portable Slack/GitHub helper added; cloud Apple Notes handoff documented |
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
 (mirror: docs/EFFORT-LOG.md in the repo). As of 2026-07-05.
 2026-07-05 (CLAUDE next-wave) correction: the repo mirror `docs/EFFORT-LOG.md` at origin/main was
