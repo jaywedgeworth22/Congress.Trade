@@ -51,7 +51,7 @@ export const PUBLIC_ASSETS_DIR = PUBLIC_DIR;
 export const SITE_WEBMANIFEST = JSON.stringify({
   name: 'Congress.Trade',
   short_name: 'Congress.Trade',
-  description: 'Live STOCK Act disclosures from the House & Senate, plus premium webhooks.',
+  description: 'STOCK Act disclosures from the House, Senate, and Executive Branch, plus premium webhooks.',
   start_url: '/',
   display: 'standalone',
   background_color: '#08111f',

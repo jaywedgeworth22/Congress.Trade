@@ -36,6 +36,7 @@
 - Web `app/public/assets/brand-logo-{light,dark}.png` ← hi-res lockups (`?v=20`)
 - Web `app/public/assets/eagle-splash.png` ← transparent mark
 - Web `app/public/{icon-192,icon-512,apple-touch-icon,favicon}.png` ← **transparent** mark (`?v=10`)
+- Web `app/public/og-image.png` ← social share card (1200×630 light plate; master `og-image-light-1200x630.png`; meta `?v=21`)
 - iOS `BrandLockup` ← light (black letters) + dark (white letters)
 - iOS `BrandLogo` ← transparent eagle mark (in-app; alpha OK)
 - iOS `AppIcon` ← **opaque** owner 1024×1024 plate (light bg + soft shadow); web icons stay transparent
