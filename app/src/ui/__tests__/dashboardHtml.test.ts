@@ -598,6 +598,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('width: max-content');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v8');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v9');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#tradesTable.resizable th { text-align: center;');
@@ -613,6 +614,75 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('TRADE_BY_ID');
     expect(DASHBOARD_HTML).toContain("e.target.closest('a[href]:not(.clickable)')");
     expect(DASHBOARD_HTML).toContain('Official Filed');
+  });
+
+  it('keeps the resizable feed table stable — sane header-fit min-widths, a clamp against degenerate persisted widths, and a decoupled Latency header/body wrap (layout-stability follow-up, 2026-08-09)', () => {
+    // Owner report (two screenshots): the Trades table rendered correctly at
+    // first, then "on its own" (an admin session's two extra columns —
+    // Imported/Latency — arriving once /auth/me resolves after boot, or a
+    // live window resize) collapsed fixed columns to unreadable ellipsis
+    // stubs ("DA…", "T…") and wrapped Latency's header one letter per line
+    // ("L/A/T/E/N/C/Y"). Root cause: minColWidth() floors were smaller than
+    // the columns' own header labels need, and the Latency column's header
+    // shared its white-space:normal/word-break:break-word wrap CSS with the
+    // (legitimately two-line) body cell. Storage key bumped v9->v10 because
+    // widths persisted under the old, too-small floor are now structurally
+    // incompatible with the new one.
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v10'");
+    expect(DASHBOARD_HTML).toContain('function clampSavedWidth(key, raw)');
+
+    // Only the BODY cell wraps two lines of real latency content; the header
+    // (7-letter "Latency" label) now falls through to the same
+    // nowrap+ellipsis base rule every other column header gets — never
+    // white-space:normal, never word-break:break-word.
+    expect(DASHBOARD_HTML).toContain('#tradesTable.resizable td.latency { white-space: normal; word-break: break-word; }');
+    expect(DASHBOARD_HTML).not.toContain('th.c-latency, #tradesTable.resizable td.latency');
+    expect(DASHBOARD_HTML).not.toContain('width: 55px; min-width: 55px; max-width: 55px');
+
+    // Extract and actually RUN the real minColWidth/clampSavedWidth functions
+    // (not just string-match their source) so a future edit that quietly
+    // shrinks a floor back below its label's needs fails this test.
+    const [minColWidthSrc, clampSavedWidthSrc] = loadDashboardFunctions(['minColWidth', 'clampSavedWidth']);
+    const { minColWidth, clampSavedWidth } = new Function(
+      `${minColWidthSrc}\n${clampSavedWidthSrc}\nreturn { minColWidth, clampSavedWidth };`,
+    )() as { minColWidth: (key: string) => number; clampSavedWidth: (key: string, raw: unknown) => number | null };
+
+    // Every compact/fixed column's floor must comfortably fit its own header
+    // label (text + sort arrow + the resizable header's padding) — these
+    // thresholds are the measured on-screen requirement plus headroom (see
+    // the minColWidth doc comment), not arbitrary round numbers.
+    const requiredFloors: Record<string, number> = {
+      traded: 80, type: 90, amount: 100, sector: 95, country: 105,
+      imported: 110, latency: 90, conf: 120, published: 80, lag: 70,
+      owner: 90, filed: 140, chamber: 105, notes: 75, source: 95,
+    };
+    for (const [key, minRequired] of Object.entries(requiredFloors)) {
+      expect(minColWidth(key), `minColWidth('${key}')`).toBeGreaterThanOrEqual(minRequired);
+    }
+    // Politician/Asset intentionally stay outside this floor — they keep the
+    // flexible majority via estimatedColWidth/DEFAULT_CAP instead.
+    expect(minColWidth('asset')).toBe(140);
+    expect(minColWidth('member')).toBe(62);
+    // An unknown/future column id still gets a real floor, not 0.
+    expect(minColWidth('__unknown__')).toBeGreaterThanOrEqual(60);
+
+    // clampSavedWidth is the load-time guard: a degenerate stored value
+    // (too small, zero, negative, non-numeric, missing) must never be
+    // trusted verbatim — it either gets floored up to minColWidth or
+    // rejected outright (null, meaning "fall back to the natural width").
+    expect(clampSavedWidth('type', 5)).toBe(minColWidth('type'));
+    expect(clampSavedWidth('latency', 1)).toBe(minColWidth('latency'));
+    expect(clampSavedWidth('country', -20)).toBeNull();
+    expect(clampSavedWidth('imported', 0)).toBeNull();
+    expect(clampSavedWidth('amount', NaN)).toBeNull();
+    expect(clampSavedWidth('', 200)).toBeNull();
+    // A legitimately large, user-dragged value passes through unclamped.
+    expect(clampSavedWidth('asset', 260)).toBe(260);
+
+    // The DEFAULT_CAP soft-caps used when no saved width exists must stay
+    // >= their own column's floor, or they'd be dead weight (silently
+    // overridden back up by syncTradesTableWidth on the very next pass).
+    expect(DASHBOARD_HTML).toContain('traded: 110,\n    type: 112,\n    amount: 130,\n    country: 130,\n    latency: 140');
   });
 
   it('keeps the polished table, drawer, and trends layout hooks', () => {

@@ -228,7 +228,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   #tradesTable.resizable { table-layout: fixed; min-width: 100%; }
   #tradesTable.resizable th, #tradesTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #tradesTable.resizable th.c-latency, #tradesTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
+  /* Owner report (2026-08-09, layout-stability follow-up): this used to also
+     match th.c-latency, which forced the HEADER label ("Latency") into
+     white-space:normal + word-break:break-word too. In table-layout:fixed the
+     width/min-width/max-width this rule declared never actually constrained
+     the rendered column (the <col> width JS keeps in sync always wins), so
+     whenever that column got squeezed toward its old, too-small minColWidth
+     floor the word-break kicked in with nothing to stop it, wrapping the
+     7-letter label one letter per line. Only the BODY cell renders two lines
+     of real content ("detected …" / "imported … later") and needs to wrap;
+     the header stays nowrap+ellipsis like every other column (base rule
+     above), backed by a minColWidth('latency') sized for the one-word label. */
+  #tradesTable.resizable td.latency { white-space: normal; word-break: break-word; }
   #tradesTable.resizable th { text-align: center; padding-right: 18px; }
   #tradesTable.resizable td > * { max-width: 100%; min-width: 0; }
   #tradesTable.resizable .asset-cell,
@@ -3933,12 +3944,42 @@ function updateTradesCountMsg(shown) {
    column defaults (Politician/Asset flexible, Date/Type/Amount/Country
    compact, Size column removed — #22/#24) actually take effect for every
    visitor who never intentionally dragged a column; the resizable feature
-   itself (drag-to-resize, per-column persistence) is otherwise unchanged. */
-var COL_WIDTH_KEY = 'feed-col-widths-v9';
+   itself (drag-to-resize, per-column persistence) is otherwise unchanged.
+   Layout-stability follow-up (2026-08-09, v9->v10): the compact-column
+   minColWidth() floors below were smaller than the columns' own header
+   labels need (e.g. "Type"/"Country" need ~85-100px to not truncate; the
+   floor let them get pinned as low as 44-54px), so whenever a column got
+   clamped to its floor — first paint on a merely-average viewport, an admin
+   session's two extra columns (Imported/Latency) arriving after /auth/me
+   resolves, a live window resize — headers collapsed to unreadable ellipsis
+   stubs ("DA…", "T…"), and Latency's header (which shared its wrap CSS with
+   the two-line body cell) could word-break into one letter per line. Fixed
+   by raising every compact column's floor to fit its own label (see
+   minColWidth below) and by clamping (never trusting) any already-persisted
+   width against that floor at load time (clampSavedWidth). Widths saved
+   under v9 could be as low as the OLD (too-small) floor, which is now
+   structurally incompatible, hence the key bump — v10 starts every visitor
+   clean, same as the v8->v9 bump above. */
+var COL_WIDTH_KEY = 'feed-col-widths-v10';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
 function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeInit = true; initColumnResize(); } }
+/* Defense-in-depth guard (layout-stability follow-up): a persisted width can
+   be stale (saved before a minColWidth floor was raised), corrupted, or just
+   absent/non-numeric — never trust it verbatim. Returns null (use the
+   natural/auto width instead) when nothing usable was stored, otherwise the
+   stored value clamped up to at least the column's current floor. This runs
+   BEFORE the column is ever painted as 'resizable', so a degenerate stored
+   value never gets a single frame on screen (syncTradesTableWidth applies
+   the same minColWidth floor again on every later pass — resize, drag,
+   re-render — so the floor holds for the lifetime of the page, not just at
+   init). */
+function clampSavedWidth(key, raw) {
+  var n = Number(raw);
+  if (!key || !Number.isFinite(n) || n <= 0) return null;
+  return Math.max(minColWidth(key), Math.round(n));
+}
 function clampNum(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function estimatedColWidth(key, fallback, min, max) {
   var selector = key === 'asset'
@@ -3954,25 +3995,36 @@ function estimatedColWidth(key, fallback, min, max) {
   var px = key === 'asset' ? 42 + Math.ceil(med * 6.4) : 54 + Math.ceil(med * 7.4);
   return clampNum(px, min, max);
 }
+/* Content-fit floors for the compact/fixed columns (Politician/Asset are
+   excluded — they keep the flexible majority via estimatedColWidth/
+   DEFAULT_CAP in initColumnResize, not this floor). Every value here is
+   measured against the column's own header label (text + sort arrow, where
+   the column is sortable) rendered with the production th padding, rounded
+   up with headroom for cross-platform font-metric variance — never trim
+   these below what the label itself needs, or the truncation/word-break
+   this floor exists to prevent (owner report, layout-stability follow-up)
+   comes back. */
 function minColWidth(key) {
   var map = {
     asset: 140,
     member: 62,
-    amount: 76,
-    imported: 62,
-    published: 62,
-    traded: 62,
-    filed: 62,
-    type: 44,
-    lag: 42,
-    owner: 50,
-    chamber: 54,
-    sector: 58,
-    country: 54,
-    conf: 56,
-    latency: 44
+    amount: 108,
+    imported: 118,
+    published: 88,
+    traded: 88,
+    filed: 148,
+    type: 96,
+    lag: 80,
+    owner: 100,
+    chamber: 114,
+    sector: 104,
+    country: 112,
+    conf: 132,
+    latency: 96,
+    notes: 82,
+    source: 106
   };
-  return map[key] || 46;
+  return map[key] || 80;
 }
 function applyColumnWidthClasses() {
   var table = el('tradesTable'); if (!table) return;
@@ -4004,19 +4056,24 @@ function initColumnResize() {
   // so they stop stealing width from the two columns that actually need it.
   // The (now-removed, #22) Size column's share folds into this too. Any column
   // stays draggable regardless of these defaults.
+  // Caps must stay >= the column's own minColWidth floor (below) or they'd be
+  // dead weight — always overridden back up by that floor on the very next
+  // syncTradesTableWidth pass, which is confusing to read and easy to
+  // re-break by editing one without the other.
   var DEFAULT_CAP = {
     asset: estimatedColWidth('asset', 220, 190, 320),
     member: estimatedColWidth('member', 240, 210, 320),
-    traded: 96,
-    type: 60,
+    traded: 110,
+    type: 112,
     amount: 130,
-    country: 90,
+    country: 130,
     latency: 140
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
-    var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
-    if (!(k && saved[k]) && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
+    var savedW = clampSavedWidth(k, saved[k]);
+    var w = savedW != null ? savedW : ths[i].offsetWidth;
+    if (savedW == null && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
     ths[i].style.width = w + 'px';
   }
   table.classList.add('resizable');
