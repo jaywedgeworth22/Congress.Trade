@@ -382,7 +382,9 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     // extraction_pending_local, 10d ceiling for any other mid-pipeline
     // status) — a non-zero count here means the hourly autonomy-sweeps lane
     // has work queued for its next pass. Excludes provider-missing-%
-    // placeholders and already review-resolved rows, same as the sweeps.
+    // placeholders. Review-resolved rows are counted SEPARATELY below
+    // (resolvedStatusDesync) rather than excluded outright: excluding them here
+    // is what hid the 562-row production desync from this very check.
     const ceilingCutoff = new Date(nowMs - 24 * 3600_000).toISOString();
     const strandedCutoff = new Date(nowMs - 10 * 86_400_000).toISOString();
     const res = await get<{ n: number }>(
@@ -397,6 +399,18 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       [ceilingCutoff, strandedCutoff],
     );
     strandedFilings = Number(res?.n ?? 0);
+
+    // The blind-spot counterpart: filings whose review is resolved but whose
+    // ingest_status never got its terminal stamp. These are excluded from
+    // every sweep's WHERE clause by design, so without this they are invisible
+    // (production had 562 such rows while this check reported healthy).
+    const desync = await get<{ n: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS n FROM filings f
+        WHERE f.ingest_status IN ('new','fetched','classified','extraction_pending_local','needs_review')
+          AND EXISTS (SELECT 1 FROM review_queue rq WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)`,
+    );
+    strandedFilings += Number(desync?.n ?? 0);
   } catch {}
 
   const signals: PipelineSignals = {
