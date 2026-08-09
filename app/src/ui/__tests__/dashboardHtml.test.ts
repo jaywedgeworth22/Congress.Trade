@@ -194,7 +194,8 @@ describe('DASHBOARD_HTML', () => {
     const tradesIdx = DASHBOARD_HTML.indexOf('data-view="trades"');
     expect(trendsIdx).toBeGreaterThan(0);
     expect(trendsIdx).toBeLessThan(tradesIdx);
-    expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends" data-icon="⌁" class="active"');
+    expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends"');
+    expect(DASHBOARD_HTML).toContain('class="active" id="tab-trends"');
     expect(DASHBOARD_HTML).toContain('<nav class="tabs" role="tablist" aria-label="Primary views">');
     expect(DASHBOARD_HTML).toContain('role="tab" aria-selected="true" aria-controls="view-trends"');
     expect(DASHBOARD_HTML).toContain('role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false"');
@@ -205,8 +206,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('<section class="view" id="view-trades" role="tabpanel"');
     // The former "Live Feed" tab is now labelled "Trades" — canonical id is
     // now "trades" too (owner follow-up batch #25), not the pre-rename "feed".
-    expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades" data-icon="▦"');
+    expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades"');
     expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</button>');
+    // People tab is Directory (owner rename); view id stays "people" for deep links.
+    expect(DASHBOARD_HTML).toContain('data-view="people" data-mobile="Directory"');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</button>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
@@ -594,17 +598,24 @@ describe('DASHBOARD_HTML', () => {
     // Owner follow-up batch #13: the old asset cap (40-54px) sat below
     // asset's own 140px floor, silently pinning it there regardless of
     // content — replaced with a genuinely content-responsive range.
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 220, 190, 320)");
-    expect(DASHBOARD_HTML).not.toContain('width: max-content');
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 240, 200, 300)");
+    // After a user column drag, table width = sum of cols (max-content / px total),
+    // not min-width:100% fill that redistributes leftover into flex columns.
+    expect(DASHBOARD_HTML).toContain('width: max-content');
+    expect(DASHBOARD_HTML).not.toContain('min-width: 100%');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v8');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v9');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v10');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v11');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#tradesTable.resizable th { text-align: center;');
     expect(DASHBOARD_HTML).toContain('minColWidth(key)');
     expect(DASHBOARD_HTML).toContain("p.set('sort', apiSort)");
-    expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
+    // Unified search maps the single query into memberName/ticker server params.
+    expect(DASHBOARD_HTML).toContain('function applySearchToServerParams(');
+    expect(DASHBOARD_HTML).toContain("p.set('memberName', nameBits.join(' '))");
     expect(DASHBOARD_HTML).toContain('function handleTradesTextFilter(');
     expect(DASHBOARD_HTML).toContain('tradesRequestSeq');
     expect(DASHBOARD_HTML).toContain("arr.textContent = '↕'");
@@ -627,8 +638,14 @@ describe('DASHBOARD_HTML', () => {
     // shared its white-space:normal/word-break:break-word wrap CSS with the
     // (legitimately two-line) body cell. Storage key bumped v9->v10 because
     // widths persisted under the old, too-small floor are now structurally
-    // incompatible with the new one.
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v10'");
+    // incompatible with the new one; v10->v11 for grow/shrink table width.
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v12'");
+    expect(DASHBOARD_HTML).toContain('function plainCleaningNote(');
+    expect(DASHBOARD_HTML).toContain('asset name derived from ticker');
+    expect(DASHBOARD_HTML).toContain('var colWidthsUserAdjusted = false');
+    expect(DASHBOARD_HTML).toContain('if (!colWidthsUserAdjusted && avail > total)');
+    expect(DASHBOARD_HTML).toContain("table.style.width = total + 'px'");
+    expect(DASHBOARD_HTML).toContain('colWidthsUserAdjusted = true');
     expect(DASHBOARD_HTML).toContain('function clampSavedWidth(key, raw)');
 
     // Only the BODY cell wraps two lines of real latency content; the header
@@ -682,7 +699,7 @@ describe('DASHBOARD_HTML', () => {
     // The DEFAULT_CAP soft-caps used when no saved width exists must stay
     // >= their own column's floor, or they'd be dead weight (silently
     // overridden back up by syncTradesTableWidth on the very next pass).
-    expect(DASHBOARD_HTML).toContain('traded: 110,\n    type: 112,\n    amount: 130,\n    country: 130,\n    latency: 140');
+    expect(DASHBOARD_HTML).toContain('traded: 100,\n    type: 90,\n    amount: 100,\n    sector: 130,\n    country: 120,\n    imported: 112,\n    latency: 120,\n    notes: 200');
   });
 
   it('keeps the polished table, drawer, and trends layout hooks', () => {
@@ -2403,7 +2420,9 @@ describe('UX P0 review fixes (web)', () => {
   });
 
   it('gates CSV export as Premium with memberName+from filters and export pricing intent', () => {
-    expect(DASHBOARD_HTML).toContain("if (m) p.set('memberName', m)");
+    // Unified search → memberName/ticker via applySearchToServerParams (not dual fields).
+    expect(DASHBOARD_HTML).toContain('applySearchToServerParams(p, tradesSearchQuery())');
+    expect(DASHBOARD_HTML).toContain("p.set('memberName', nameBits.join(' '))");
     expect(DASHBOARD_HTML).toContain("if (from) p.set('from', from)");
     expect(DASHBOARD_HTML).toContain("if (to) p.set('to', to)");
     expect(DASHBOARD_HTML).toContain("window.location.href = '/api/export/transactions.csv'");
@@ -2489,7 +2508,7 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     // for the full main/footer safe-area regression coverage).
     expect(DASHBOARD_HTML).toContain('padding-bottom: calc(70px + env(safe-area-inset-bottom))');
     expect(DASHBOARD_HTML).toContain('data-view="people"');
-    expect(DASHBOARD_HTML).toContain('data-mobile="People"');
+    expect(DASHBOARD_HTML).toContain('data-mobile="Directory"');
   });
 });
 
@@ -2565,8 +2584,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="colsBtn"');
     expect(extraFilters![0]).not.toContain('id="pageSize"');
     expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
-    expect(extraFilters![0]).toContain('id="qMember"');
-    expect(extraFilters![0]).toContain('id="qTicker"');
+    expect(extraFilters![0]).toContain('id="qSearch"');
     expect(extraFilters![0]).toContain('id="searchToggle"');
     expect(extraFilters![0]).toContain('id="tradesStats"');
     // Pager bar carries Rows (relabeled "N rows") + Columns.
@@ -2734,28 +2752,23 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] .pill-select-el {');
   });
 
-  it('keeps #qMember/#qTicker in rounded fields with NO leading icon (owner punch list #8), keeps id/oninput/aria-label', () => {
+  it('uses a single unified trades search field (rounded, no leading icon) with multi-token placeholder', () => {
     const document = parse(DASHBOARD_HTML);
-    const member = document.querySelector('#qMember');
-    const ticker = document.querySelector('#qTicker');
-    expect(member).not.toBeNull();
-    expect(ticker).not.toBeNull();
-    expect(member!.getAttribute('oninput')).toBe('handleTradesTextFilter()');
-    expect(ticker!.getAttribute('oninput')).toBe('handleTradesTextFilter()');
-    expect(member!.getAttribute('aria-label')).toBe('Filter by politician');
-    expect(ticker!.getAttribute('aria-label')).toBe('Filter by asset ticker');
-    expect(member!.classList.contains('icon-input')).toBe(true);
-    expect(ticker!.classList.contains('icon-input')).toBe(true);
-    expect(member!.parentNode?.tagName.toLowerCase()).toBe('span');
-    expect((member!.parentNode as any).classList.contains('icon-field')).toBe(true);
-    expect((ticker!.parentNode as any).classList.contains('icon-field')).toBe(true);
-    // Placeholder copy: "Name" / "Asset / Ticker" — no ellipsis, no leading
-    // "politician" wording in the search fields themselves.
-    expect(ticker!.getAttribute('placeholder')).toBe('Asset / Ticker');
-    expect(member!.getAttribute('placeholder')).toBe('Name');
-    // The old inline width:120px is gone from the input itself.
-    expect(ticker!.getAttribute('style')).toBeFalsy();
-    // No leading icon glyph span on either field, at any width.
+    const search = document.querySelector('#qSearch');
+    expect(search).not.toBeNull();
+    expect(search!.getAttribute('oninput')).toBe('handleTradesTextFilter()');
+    expect(search!.getAttribute('aria-label')).toMatch(/search trades/i);
+    expect(search!.classList.contains('icon-input')).toBe(true);
+    expect(search!.parentNode?.tagName.toLowerCase()).toBe('span');
+    expect((search!.parentNode as any).classList.contains('icon-field')).toBe(true);
+    expect((search!.parentNode as any).id).toBe('qSearchField');
+    expect(search!.getAttribute('placeholder')).toMatch(/name|ticker|state|party/i);
+    // Legacy dual fields remain as hidden aliases for hydration/deep links.
+    const legacyMember = document.querySelector('#qMember');
+    const legacyTicker = document.querySelector('#qTicker');
+    expect(legacyMember?.getAttribute('type')).toBe('hidden');
+    expect(legacyTicker?.getAttribute('type')).toBe('hidden');
+    // No leading icon glyph span on the field.
     expect(DASHBOARD_HTML).not.toContain('icon-field-ic');
     expect(DASHBOARD_HTML).not.toContain('👤</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="icon-field-ic"');
@@ -3064,8 +3077,9 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     it('keeps the People directory rows entity-clickable via data-member', () => {
       expect(DASHBOARD_HTML).toContain('function renderPeopleDirectory(all)');
       expect(DASHBOARD_HTML).toContain(
-        "return '<tr class=\"row\" ' + (m.filerId ? 'data-member=\"' + esc(m.filerId) + '\" style=\"cursor:pointer\"' : '') + '>' +",
+        "return '<tr class=\"row\" ' + (m.filerId ? 'data-member=\"' + esc(m.filerId) + '\"' : '') + '>' +",
       );
+      expect(DASHBOARD_HTML).toContain('data-member="' + "' + esc(m.filerId) + '" + '"');
     });
 
     it('keeps member-drawer rows (Most-Traded -> ticker drawer, Recent Trades -> trade view) entity-clickable', () => {
@@ -3345,17 +3359,15 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.amount-bars i:nth-child(6) { height:17px; }'); // desktop table unchanged
   });
 
-  it('#8 uses "Name" / "Asset / Ticker" placeholders with no leading icon and no "politician" wording in the search fields', () => {
+  it('#8 uses a single unified search field covering name/ticker/state/party (no dual Name + Asset fields)', () => {
     const document = parse(DASHBOARD_HTML);
-    const member = document.querySelector('#qMember')!;
-    const ticker = document.querySelector('#qTicker')!;
-    expect(member.getAttribute('placeholder')).toBe('Name');
-    expect(ticker.getAttribute('placeholder')).toBe('Asset / Ticker');
-    expect(member.getAttribute('placeholder')).not.toMatch(/politician/i);
-    expect(member.getAttribute('placeholder')).not.toMatch(/…|\.\.\./);
-    expect(ticker.getAttribute('placeholder')).not.toMatch(/…|\.\.\./);
-    // "politician" survives in non-search contexts (aria-label, People tab, etc).
-    expect(member.getAttribute('aria-label')).toBe('Filter by politician');
+    const search = document.querySelector('#qSearch')!;
+    expect(search).not.toBeNull();
+    expect(search.getAttribute('placeholder')).toMatch(/name|ticker|state|party/i);
+    // Visible dual fields are gone; legacy hidden aliases may remain.
+    expect(document.querySelector('#qMemberField')).toBeNull();
+    expect(document.querySelector('#qTickerField')).toBeNull();
+    expect(document.querySelector('#qSearchField')).not.toBeNull();
   });
 
   it('#9 merges the Trades feed toolbars onto one desktop row (>768px) via explicit flex order, without touching the <=768px ID-scoped grid', () => {
@@ -3366,25 +3378,24 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(wrapMatch).not.toBeNull();
     expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesSharedFilters,\n    .trades-toolbars #tradesExtraFilters { display:contents; }');
-    // Desired order: timeframe, groups+ⓘ, search fields, Search, stats. (The
-    // $ pill that used to close this row is gone — owner follow-up batch
-    // #21/#23 — #tradesStats is now the last item, no orphaned order/gap.)
+    // Desired order: timeframe, groups+ⓘ, unified search, Search, stats.
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qMemberField { order:3; }');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qTickerField { order:4; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #searchToggle { order:5; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:6; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
-    // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid (both the
-    // direct-child structure and its CSS) is byte-for-byte unchanged —
+    // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
-    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qMemberField, #tradesExtraFilters #qTickerField { grid-column: 1 / -1; }');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1 / -1; }');
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }');
     const document = parse(DASHBOARD_HTML);
     const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
-    expect(extras).toEqual(['qMemberField', 'qTickerField', 'searchToggle', 'tradesStats']);
+    // Hidden legacy inputs have no visible layout role but may lack ids on wrappers.
+    expect(extras).toContain('qSearchField');
+    expect(extras).toContain('searchToggle');
+    expect(extras).toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
     // #9's "tighten to match the app" mobile sub-clause).
     expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
@@ -3624,6 +3635,8 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
       'selectedSideParam',
       'partySel',
       'partyParam',
+      'tradesSearchQuery',
+      'applySearchToServerParams',
       'tradesFilterParams',
       'fetchUpdates',
     ]);
@@ -3664,9 +3677,13 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
     tradesPage?: number;
     loadingPage?: boolean;
   }) {
+    // Unified search: combine member/ticker stubs into qSearch; keep legacy
+    // fields empty so tradesSearchQuery prefers #qSearch.
+    const searchParts = [opts.member, opts.ticker].filter(Boolean);
     const dom: Record<string, unknown> = {
-      qTicker: fakeInput(opts.ticker ?? ''),
-      qMember: fakeInput(opts.member ?? ''),
+      qSearch: fakeInput(searchParts.join(' ')),
+      qTicker: fakeInput(''),
+      qMember: fakeInput(''),
       qSideGroup: fakeChipGroup('data-side', opts.sideOn ?? []),
       qChamber: fakeChipGroup('data-ch', opts.chamberOn ?? []),
       qPartyGroup: fakeChipGroup('data-party', opts.partyOn ?? []),
@@ -3775,6 +3792,8 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
       'selectedSideParam',
       'partySel',
       'partyParam',
+      'tradesSearchQuery',
+      'applySearchToServerParams',
       'tradesFilterParams',
       'tradesQueryParams',
     ]);

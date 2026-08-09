@@ -1,95 +1,96 @@
 import SwiftUI
 
-/// People directory tab (owner punch list #2, item 9) — mirrors the web's
-/// People directory (`app/src/ui/dashboardHtml.ts` `loadPeopleDirectory()`/
-/// `renderPeopleDirectory()`): loads the full `GET /api/members` roster once
-/// (memoized client-side, `CongressTradeStore.loadMembersDirectory`) and
-/// filters/sorts it locally by name/state/party as the user types — the
-/// roster is small enough (one filer per row, not one row per trade) that a
-/// server round trip per keystroke isn't worth it, same call the web makes.
+/// Directory tab — mirrors web Directory (`loadPeopleDirectory` /
+/// multi-token name/state/party search + column sort).
 struct PeopleDirectoryView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var selectedMemberId: String?
     @State private var selectedMemberName: String?
+    @State private var sortKey: MemberDirectorySearch.SortKey = .trades
+    @State private var sortAscending = false
 
     private var filteredMembers: [MemberDirectoryEntry] {
-        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // Most-active-first, matching the roster's own server-side default order.
-        let ranked = store.members.sorted { ($0.txCount ?? 0) > ($1.txCount ?? 0) }
-        guard !needle.isEmpty else { return ranked }
-        return ranked.filter { member in
-            let haystack = [member.fullName, member.filerId, member.party, member.state, member.chamber]
-                .compactMap { $0 }
-                .joined(separator: " ")
-                .lowercased()
-            return haystack.contains(needle)
-        }
+        let matched = store.members.filter { MemberDirectorySearch.matches($0, query: searchText) }
+        return MemberDirectorySearch.sort(matched, key: sortKey, ascending: sortAscending)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
+            VStack(spacing: 0) {
+                VStack(spacing: 10) {
                     PeopleSearchField(text: $searchText, focused: $searchFocused)
-                        .accessibilityLabel("Search politicians by name, state, or party")
+                        .accessibilityLabel("Search directory by name, state, or party")
 
                     HStack {
-                        Spacer(minLength: 0)
                         Text("\(filteredMembers.count) of \(store.members.count) shown")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
                     }
 
-                    if let notice = store.membersNotice {
-                        FeedFreshnessView(
-                            isOffline: false,
-                            lastRefresh: nil,
-                            notice: notice,
-                            onRetry: { Task { await store.loadMembersDirectory(force: true) } }
-                        )
-                    }
-
-                    if store.isLoadingMembers && store.members.isEmpty {
-                        ProgressView("Loading Directory…")
-                            .padding(.top, 40)
-                    } else if filteredMembers.isEmpty {
-                        ContentUnavailableView {
-                            Label(
-                                searchText.isEmpty ? "No Politicians Yet" : "No Matches",
-                                systemImage: "person.2"
-                            )
-                        } description: {
-                            Text(
-                                searchText.isEmpty
-                                    ? "The directory fills in as filings are ingested."
-                                    : "Try another name, state, or party."
-                            )
-                        }
-                        .padding(.top, 40)
-                    } else {
-                        LazyVStack(spacing: 8) {
-                            ForEach(filteredMembers) { member in
-                                Button {
-                                    selectedMemberId = member.filerId
-                                    selectedMemberName = member.fullName ?? member.filerId
-                                } label: {
-                                    PersonRow(member: member)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Opens politician details")
-                            }
-                        }
-                    }
+                    DirectorySortHeader(
+                        sortKey: $sortKey,
+                        sortAscending: $sortAscending
+                    )
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 24)
+                .padding(.bottom, 8)
+                .background(AppTheme.background)
+
+                ScrollView {
+                    VStack(spacing: 8) {
+                        if let notice = store.membersNotice {
+                            FeedFreshnessView(
+                                isOffline: false,
+                                lastRefresh: nil,
+                                notice: notice,
+                                onRetry: { Task { await store.loadMembersDirectory(force: true) } }
+                            )
+                        }
+
+                        if store.isLoadingMembers && store.members.isEmpty {
+                            ProgressView("Loading Directory…")
+                                .padding(.top, 40)
+                        } else if filteredMembers.isEmpty {
+                            ContentUnavailableView {
+                                Label(
+                                    searchText.isEmpty ? "No Politicians Yet" : "No Matches",
+                                    systemImage: "person.2"
+                                )
+                            } description: {
+                                Text(
+                                    searchText.isEmpty
+                                        ? "The directory fills in as filings are ingested."
+                                        : "Try a name, state (full or CA), party, or “CA Ro”."
+                                )
+                            }
+                            .padding(.top, 40)
+                        } else {
+                            LazyVStack(spacing: 8) {
+                                ForEach(filteredMembers) { member in
+                                    Button {
+                                        selectedMemberId = member.filerId
+                                        selectedMemberName = member.fullName ?? member.filerId
+                                    } label: {
+                                        PersonRow(member: member)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens politician details")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                }
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.background)
-            .navigationTitle("People")
+            .navigationTitle("Directory")
+            .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.loadMembersDirectory(force: true) }
             .task {
                 await store.loadMembersDirectory()
@@ -109,8 +110,50 @@ struct PeopleDirectoryView: View {
     }
 }
 
-/// One People-directory row: avatar (photo, falling back to a party-emoji
-/// tile), name + chamber/party-state meta line, trailing trade count.
+/// Sticky-style sort controls (mirrors web column headings).
+private struct DirectorySortHeader: View {
+    @Binding var sortKey: MemberDirectorySearch.SortKey
+    @Binding var sortAscending: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(MemberDirectorySearch.SortKey.allCases) { key in
+                    Button {
+                        if sortKey == key {
+                            sortAscending.toggle()
+                        } else {
+                            sortKey = key
+                            sortAscending = key != .trades
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(key.label)
+                                .font(.caption.weight(.semibold))
+                            if sortKey == key {
+                                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            sortKey == key
+                                ? Color.accentColor.opacity(0.16)
+                                : Color(uiColor: .secondarySystemBackground),
+                            in: Capsule()
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Sort by \(key.label)")
+                    .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
+                }
+            }
+        }
+    }
+}
+
+/// One Directory row: avatar, name + chamber/party-state meta, trade count.
 private struct PersonRow: View {
     let member: MemberDirectoryEntry
 
@@ -198,17 +241,16 @@ private struct PersonRow: View {
     }
 }
 
-/// "Name" search field for the People directory — same visual language as
-/// Trades' `CompactFilterField`, kept standalone here rather than reusing
-/// that struct's `TradeFilterField`-typed focus binding, which is specific
-/// to the Trades tab's own text fields.
 private struct PeopleSearchField: View {
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
 
     var body: some View {
         HStack(spacing: 6) {
-            TextField("Name", text: $text)
+            Image(systemName: "magnifyingglass")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField("Name, state, party… e.g. CA Ro", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
                 .font(.subheadline)
@@ -222,14 +264,12 @@ private struct PeopleSearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Clear")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border(cornerRadius: 12))
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

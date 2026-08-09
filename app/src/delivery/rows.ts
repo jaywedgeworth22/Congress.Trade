@@ -24,6 +24,7 @@ import { first, get, parseJson, toBool } from '../shared/db.ts';
 import type { StockActStatus } from '../shared/stockAct.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { resolveAssetDisplayName } from '../shared/companyName.ts';
+import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 
@@ -177,7 +178,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     cursorSeq: row.cursor_seq ?? 0,
     disclosureLagDays: row.disclosure_lag_days ?? null,
     stockActStatus: (row.stock_act_status as StockActStatus | null) ?? null,
-    cleaningNote: row.cleaning_note ?? null,
+    cleaningNote: plainCleaningNote(row.cleaning_note ?? null) || null,
   };
   return transaction;
 }
@@ -351,6 +352,12 @@ export interface TxQueryParams {
   partyBuckets?: Array<'D' | 'R' | 'O'>;
   type?: TxType;
   /**
+   * Multi-select transaction type filter (B/S/E). Takes precedence over `type`
+   * when non-empty. Exposed as `?type=B,S` on public + client feeds so multi-
+   * select side chips can narrow both the page rows and the COUNT(*) total.
+   */
+  types?: TxType[];
+  /**
    * STOCK Act 45-day classification filter (`transactions.stock_act_status`,
    * stored by migration 0065). Exposed on the public feed as `?stockAct=late`
    * etc. Rows with unknown dates (NULL status) are excluded when set.
@@ -520,14 +527,25 @@ function buildTxFilters(
     where.push('LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ? ESCAPE \'\\\'');
     params.push(`%${escapeLikePattern(p.memberName.toLowerCase())}%`);
   }
-  if (p.type) {
-    // Buy dual-read: B is canonical; legacy P still matches until migrate lands.
-    if (p.type === 'B') {
-      where.push("t.tx_type IN ('B', 'P')");
-    } else {
-      where.push('t.tx_type = ?');
-      params.push(p.type);
+  const typeList = (p.types && p.types.length ? p.types : (p.type ? [p.type] : [])) as TxType[];
+  if (typeList.length === 1 && typeList[0] !== 'B') {
+    // Single non-buy type: keep the historic `=` form (tests + query plans).
+    where.push('t.tx_type = ?');
+    params.push(typeList[0]);
+  } else if (typeList.length) {
+    // Multi-select or Buy: B dual-reads legacy P until migrate lands.
+    const expanded = new Set<string>();
+    for (const t of typeList) {
+      if (t === 'B') {
+        expanded.add('B');
+        expanded.add('P');
+      } else {
+        expanded.add(t);
+      }
     }
+    const vals = Array.from(expanded);
+    where.push(`t.tx_type IN (${vals.map(() => '?').join(', ')})`);
+    params.push(...vals);
   }
   if (p.stockAct) {
     where.push('t.stock_act_status = ?');

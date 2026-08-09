@@ -226,7 +226,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (min-width: 1300px) {
     #view-trends .section:has(> .table-wrap) { width: fit-content; max-width: 100%; }
   }
-  #tradesTable.resizable { table-layout: fixed; min-width: 100%; }
+  /* Width is driven by the sum of <col>/th widths (syncTradesTableWidth).
+     After the user resizes a column, the table grows/shrinks instead of
+     redistributing leftover space into Politician/Asset. */
+  #tradesTable.resizable { table-layout: fixed; width: max-content; min-width: 0; }
   #tradesTable.resizable th, #tradesTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   /* Owner report (2026-08-09, layout-stability follow-up): this used to also
      match th.c-latency, which forced the HEADER label ("Latency") into
@@ -587,6 +590,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  /* Directory table: sticky sortable headers inside scroll box */
+  .people-table-wrap { max-height: min(70vh, 720px); overflow: auto; -webkit-overflow-scrolling: touch; }
+  .people-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .people-table thead th {
+    position: sticky; top: 0; z-index: 3; background: var(--panel);
+    cursor: pointer; user-select: none; white-space: nowrap;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .people-table thead th:hover { color: var(--accent); }
+  .people-table thead th .sort-ind { font-size: 10px; opacity: .55; margin-left: 2px; }
+  .people-table thead th.sort-asc .sort-ind::after { content: '▲'; opacity: 1; }
+  .people-table thead th.sort-desc .sort-ind::after { content: '▼'; opacity: 1; }
+  .people-table tbody tr[data-member] { cursor: pointer; }
+  .people-table tbody tr[data-member]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .pager { margin-top:14px; justify-content:space-between; }
   .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
@@ -1171,8 +1188,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars #tradesExtraFilters { display:contents; }
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
-    .trades-toolbars #qMemberField { order:3; }
-    .trades-toolbars #qTickerField { order:4; }
+    .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
     .trades-toolbars #searchToggle { order:5; }
     .trades-toolbars #tradesStats { order:6; }
   }
@@ -1390,7 +1406,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
     #tradesExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-    #tradesExtraFilters #qMemberField, #tradesExtraFilters #qTickerField { grid-column: 1 / -1; }
+    #tradesExtraFilters #qSearchField { grid-column: 1 / -1; }
     #tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
     .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
@@ -2029,11 +2045,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="brand" aria-label="Congress.Trade">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
-    <button data-view="trades" data-mobile="Trades" data-icon="▦" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
-    <button data-view="people" data-mobile="People" data-icon="◎" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">People</button>
+    <button data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
+    <button data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
+    <button data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs" data-mobile="Delivery" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
+    <button data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
     <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
@@ -2103,12 +2119,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="tradesExtraFilters">
-      <span class="icon-field" id="qMemberField">
-        <input id="qMember" class="icon-input" placeholder="Name" aria-label="Filter by politician" oninput="handleTradesTextFilter()" />
+      <span class="icon-field" id="qSearchField" style="min-width:220px;flex:1">
+        <input id="qSearch" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
       </span>
-      <span class="icon-field" id="qTickerField" style="min-width:140px">
-        <input id="qTicker" class="icon-input" placeholder="Asset / Ticker" aria-label="Filter by asset ticker" oninput="handleTradesTextFilter()" />
-      </span>
+      <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
+      <input type="hidden" id="qMember" value="" />
+      <input type="hidden" id="qTicker" value="" />
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <div id="tradesStats" class="trades-stats muted" title="Scoped by the ticker/politician/chamber/party/side/date filters above — a different query than the Trends tab's own time-window total.">
         <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
@@ -2403,14 +2419,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 ${speedProofSectionHtml(false)}
   </section>
 
-  <!-- ================= PEOPLE (politician directory) ================= -->
+  <!-- ================= DIRECTORY (politician directory) ================= -->
   <section class="view" id="view-people" role="tabpanel" aria-labelledby="tab-people" aria-hidden="true">
     <div class="section">
-      <h3>Politician Directory</h3>
-      <p class="sub">Look up members of Congress and executive filers in our corpus. Click a name for their profile and trades.</p>
+      <h3>Directory</h3>
+      <p class="sub">Look up members of Congress and executive filers. Search by name, state (full or abbrev), or party. Click a column heading to sort; click a name for their profile and trades.</p>
       <div class="toolbar" style="margin-bottom:12px">
-        <input id="peopleQ" placeholder="Search name, state, or party…" aria-label="Search politicians" style="min-width:220px;flex:1" oninput="filterPeopleDirectory()" />
-        <select id="peopleChamber" onchange="loadPeopleDirectory()" aria-label="Chamber filter">
+        <input id="peopleQ" placeholder="Search name, ticker, state, party… any order" aria-label="Search directory" style="min-width:220px;flex:1" oninput="filterPeopleDirectory()" />
+        <select id="peopleChamber" onchange="filterPeopleDirectory()" aria-label="Chamber filter">
           <option value="">All branches</option>
           <option value="house">House</option>
           <option value="senate">Senate</option>
@@ -2418,8 +2434,14 @@ ${speedProofSectionHtml(false)}
         </select>
         <button class="btn ghost sm" onclick="loadPeopleDirectory()">Refresh</button>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Politician</th><th>Branch</th><th>Party</th><th>State</th><th>Trades</th></tr></thead>
+      <div class="table-wrap people-table-wrap"><table id="peopleTable" class="people-table">
+        <thead><tr id="peopleHead">
+          <th data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
+          <th data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch">Branch <span class="sort-ind"></span></th>
+          <th data-sort="party" onclick="sortPeopleDirectory('party')" title="Sort by party">Party <span class="sort-ind"></span></th>
+          <th data-sort="state" onclick="sortPeopleDirectory('state')" title="Sort by state">State <span class="sort-ind"></span></th>
+          <th data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
+        </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="5" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="peopleCount"></p>
@@ -3169,6 +3191,22 @@ function clipTextHtml(value, fallback, title) {
   var cls = text === '—' ? 'clip-text muted' : 'clip-text';
   return '<span class="' + cls + '" title="' + esc(title || text) + '">' + esc(text) + '</span>';
 }
+/* Concise plain-English cleaning notes (incomplete sentences, no forced
+   capitals). Mirrors app/src/shared/cleaningNote.ts so the table stays readable
+   even if an older API payload still carries a technical string. */
+function plainCleaningNote(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (s === 'Populated official company name from securities_ref' || s === 'asset name derived from ticker') {
+    return 'asset name derived from ticker';
+  }
+  if (/^Cleaned OCR dot leader noise/i.test(s)) return 'cleaned OCR noise from asset name';
+  if (/^Stripped OCR dot leader suffix/i.test(s)) return 'removed OCR noise from asset name';
+  if (/^Cleaned junk OCR text/i.test(s)) return 'removed junk OCR from asset name';
+  if (s === 'cleaned OCR noise from asset name' || s === 'removed OCR noise from asset name' ||
+      s === 'removed junk OCR from asset name') return s;
+  return s;
+}
 
 /* Strip stray HTML/entities some upstream datasets embed in asset descriptions
    (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
@@ -3618,7 +3656,10 @@ var TRADES_COLS = [
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
-  { id: 'notes', label: 'Notes', sort: null, def: false, cls: 'muted', tip: 'Data normalization and asset cleaning audit notes.', cell: function (r) { return clipTextHtml(r.cleaningNote || '', '—', r.cleaningNote || ''); } },
+  { id: 'notes', label: 'Notes', sort: null, def: false, cls: 'muted', tip: 'How we cleaned or filled the asset name (concise plain English).', cell: function (r) {
+    var n = plainCleaningNote(r.cleaningNote || '');
+    return clipTextHtml(n, '—', n);
+  } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
@@ -3666,10 +3707,13 @@ function parsePx(v) {
   var n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 }
-/* Columns that should absorb leftover width at wide desktop viewports instead
-   of leaving dead space after the last column (owner follow-up batch #15,
-   consistent with #13's "Politician/Asset get the flexible majority"). */
+/* Columns that absorb leftover viewport width only while the user has not
+   manually resized any column (initial defaults / window resize). Once the
+   user drags a resizer, the table width tracks the sum of column widths so
+   expanding/shrinking a column makes the whole table wider/narrower instead
+   of redistributing space into Politician/Asset (owner 2026-08-09). */
 var TRADES_FLEX_COLS = ['member', 'asset'];
+var colWidthsUserAdjusted = false;
 function syncTradesTableWidth() {
   var table = el('tradesTable'); if (!table) return;
   var ths = Array.prototype.slice.call(document.querySelectorAll('#tradesHead th'));
@@ -3683,16 +3727,12 @@ function syncTradesTableWidth() {
     total += w;
   }
   var wrap = table.closest ? table.closest('.table-wrap') : null;
-  // Subtract the 60px padding-right so the table doesn't bleed into the padding space.
-  var avail = wrap ? (wrap.clientWidth - 60) : 0;
-  // Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
-  // ~1920px) the compact fixed-width columns (#13) no longer sum to the
-  // card's full width, which used to show up as a dead strip of empty space
-  // (plus the card's own drop shadow) after the last column. Give any
-  // leftover width to the flexible columns — Politician/Asset — instead.
-  // Idempotent: once total==avail this no-ops on the next call (window
-  // resize, re-render), so it never runs away.
-  if (avail > total) {
+  // .table-wrap padding-right is 0; clientWidth is the true content box.
+  var avail = wrap ? Math.max(0, wrap.clientWidth) : 0;
+  // Only fill leftover viewport while defaults are still in effect. After a
+  // manual column drag, leave total alone so the table grows/shrinks with
+  // the sum of column widths (horizontal scroll when wider than the wrap).
+  if (!colWidthsUserAdjusted && avail > total) {
     var extra = avail - total;
     var flexThs = ths.filter(function (th) { return TRADES_FLEX_COLS.indexOf(th.dataset.col) >= 0; });
     if (flexThs.length) {
@@ -3709,7 +3749,7 @@ function syncTradesTableWidth() {
   for (var k = 0; k < ths.length; k++) {
     if (cols[k]) cols[k].style.width = ths[k].style.width;
   }
-  table.style.width = Math.max(total, avail) + 'px';
+  table.style.width = total + 'px';
 }
 
 /* Render the header from the registry, (re)attach sort handlers, and reset the
@@ -3819,17 +3859,82 @@ function resetCols() {
    the SAME check before letting a pushed row affect this view's rows/total —
    a live broadcast carries every new trade, not just ones matching what THIS
    visitor is currently filtered to. */
+/** Multi-token AND trade search: any order; each token matches politician
+ *  name, ticker, asset name, state (abbr or full), or party synonyms. */
+function tradeRowMatchesSearch(r, q) {
+  var raw = String(q || '').trim().toLowerCase();
+  if (!raw) return true;
+  var tokens = raw.split(/\\s+/).filter(Boolean);
+  var name = String(r.member || '').toLowerCase();
+  var nameParts = name.split(/[\\s,.\\-']+/).filter(Boolean);
+  var ticker = String(r.ticker || '').toLowerCase();
+  var asset = String(r.asset || r.company || '').toLowerCase();
+  var state = String(r.st || r.state || '').toLowerCase();
+  var party = String(r.party || r.partyBucket || '');
+  return tokens.every(function (tok) {
+    if (name.indexOf(tok) >= 0) return true;
+    for (var i = 0; i < nameParts.length; i++) {
+      if (nameParts[i].indexOf(tok) === 0 || nameParts[i].indexOf(tok) >= 0) return true;
+    }
+    if (ticker && ticker.indexOf(tok) >= 0) return true;
+    if (asset && asset.indexOf(tok) >= 0) return true;
+    if (typeof peopleStateMatches === 'function' && peopleStateMatches(tok, state)) return true;
+    if (typeof peoplePartyMatches === 'function' && peoplePartyMatches(tok, party)) return true;
+    if (state && state.indexOf(tok) >= 0) return true;
+    return false;
+  });
+}
+function tradesSearchQuery() {
+  var s = el('qSearch');
+  if (s) return String(s.value || '').trim();
+  // Fallback if only legacy fields exist
+  var m = el('qMember') ? String(el('qMember').value || '').trim() : '';
+  var t = el('qTicker') ? String(el('qTicker').value || '').trim() : '';
+  return [m, t].filter(Boolean).join(' ');
+}
+/** Heuristic server params from unified query (OR-ish fetch; client re-filters). */
+function applySearchToServerParams(p, q) {
+  var raw = String(q || '').trim();
+  if (!raw) return;
+  var tokens = raw.split(/\\s+/).filter(Boolean);
+  var nameBits = [];
+  var tickerHint = '';
+  for (var i = 0; i < tokens.length; i++) {
+    var tok = tokens[i];
+    var up = tok.toUpperCase();
+    // Ticker-like: 1–5 alnum, not a state abbr, not party word
+    var tokL = tok.toLowerCase();
+    var isState = (typeof US_STATE_ABBR !== 'undefined' && US_STATE_ABBR[tokL]) ||
+      (typeof US_STATE_NAME_TO_ABBR !== 'undefined' && US_STATE_NAME_TO_ABBR[tokL]);
+    if (/^[A-Za-z]{1,5}$/.test(tok) && !isState &&
+        !/^(dem|rep|ind|gop|other|democrat|republican|independent)s?$/i.test(tok)) {
+      // Prefer pure tickers when entire query is one ticker-like token
+      if (tokens.length === 1) tickerHint = up;
+      else if (!tickerHint && up === tok.toUpperCase() && tok === tok.toUpperCase()) tickerHint = up;
+      else nameBits.push(tok);
+    } else if (isState) {
+      // state — client filter only (server has no state= on public feed)
+    } else if (/^(dem|rep|ind|gop|other|democrat|republican|independent)/i.test(tok)) {
+      // party — client filter
+    } else {
+      nameBits.push(tok);
+    }
+  }
+  if (tickerHint) p.set('ticker', tickerHint);
+  if (nameBits.length) p.set('memberName', nameBits.join(' '));
+  // If nothing classified, send whole string as memberName so server still narrows
+  if (!tickerHint && !nameBits.length) p.set('memberName', raw);
+}
 function makeTradesFilterMatcher() {
-  var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
-      ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
+  var q = tradesSearchQuery();
+  var ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
   // Mirror the server's semantics: no HSP selection (empty param) = all
   // branches, including unresolved-chamber rows. Explicit chips filter exactly.
   var chDefault = chamberParam('qChamber') === '';
   return function (r) {
     if (!chDefault && chs.indexOf(r.chamber) < 0) return false;
-    return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
-           (!t || (r.ticker || '').indexOf(t) >= 0) &&
-           (!ty || r.type === ty);
+    if (ty && r.type !== ty) return false;
+    return tradeRowMatchesSearch(r, q);
   };
 }
 function renderTrades() {
@@ -3959,12 +4064,29 @@ function updateTradesCountMsg(shown) {
    width against that floor at load time (clampSavedWidth). Widths saved
    under v9 could be as low as the OLD (too-small) floor, which is now
    structurally incompatible, hence the key bump — v10 starts every visitor
-   clean, same as the v8->v9 bump above. */
-var COL_WIDTH_KEY = 'feed-col-widths-v10';
+   clean, same as the v8->v9 bump above.
+   Grow/shrink follow-up (2026-08-09, v10->v11): after the user drags any
+   column, the table width is the sum of column widths (grows/shrinks with
+   the drag) instead of always filling the wrap and redistributing leftover
+   into Politician/Asset. Default (pre-drag) still fills the viewport via
+   flex columns. Bump clears persisted fill-inflated widths.
+   Default-balance follow-up (2026-08-09, v11->v12): tighter compact caps for
+   Date/Type/Amount/Imported/Latency matching the owner-approved default
+   layout (screenshot), with Politician/Asset still taking the flex remainder
+   until the user drags. */
+var COL_WIDTH_KEY = 'feed-col-widths-v12';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
 function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeInit = true; initColumnResize(); } }
+/* If the user has any persisted column widths, treat as user-adjusted so we
+   don't re-inflate flex columns and undo their custom table width. */
+function hasPersistedColWidths() {
+  var w = loadColWidths();
+  if (!w || typeof w !== 'object') return false;
+  for (var k in w) { if (Object.prototype.hasOwnProperty.call(w, k)) return true; }
+  return false;
+}
 /* Defense-in-depth guard (layout-stability follow-up): a persisted width can
    be stale (saved before a minColWidth floor was raised), corrupted, or just
    absent/non-numeric — never trust it verbatim. Returns null (use the
@@ -4044,30 +4166,24 @@ function initColumnResize() {
   var table = el('tradesTable'); if (!table) return;
   var ths = document.querySelectorAll('#tradesHead th');
   var saved = loadColWidths();
+  colWidthsUserAdjusted = hasPersistedColWidths();
   // Freeze current auto widths (or restore saved ones) so switching the table to
-  // fixed layout doesn't visually jump. Owner follow-up batch #13/#24: the old
-  // asset cap (40-54px) was a bug — it sat BELOW asset's own 140px floor
-  // (minColWidth), so Asset was silently pinned to exactly 140px regardless of
-  // content, which is nowhere near enough for a ticker + company name. Fixed
-  // by giving Politician/Asset a genuinely content-responsive range (with a
-  // floor high enough that real names — "Shelley Moore Capito", "David H.
-  // McCormick" — never ellipsize at typical desktop widths), while Date/Type/
-  // Amount/Country (content is short and uniform) get tight compact-fit caps
-  // so they stop stealing width from the two columns that actually need it.
-  // The (now-removed, #22) Size column's share folds into this too. Any column
-  // stays draggable regardless of these defaults.
-  // Caps must stay >= the column's own minColWidth floor (below) or they'd be
-  // dead weight — always overridden back up by that floor on the very next
-  // syncTradesTableWidth pass, which is confusing to read and easy to
-  // re-break by editing one without the other.
+  // fixed layout doesn't visually jump. Defaults cap compact columns; Politician
+  // / Asset get content-responsive ranges. Any column stays draggable.
+  // Soft caps when no saved width: compact columns stay tight (owner screenshot
+  // 2026-08-09); Politician/Asset get content-responsive ranges and then absorb
+  // leftover wrap width via TRADES_FLEX_COLS until the user resizes.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 220, 190, 320),
-    member: estimatedColWidth('member', 240, 210, 320),
-    traded: 110,
-    type: 112,
-    amount: 130,
-    country: 130,
-    latency: 140
+    asset: estimatedColWidth('asset', 240, 200, 300),
+    member: estimatedColWidth('member', 200, 170, 260),
+    traded: 100,
+    type: 90,
+    amount: 100,
+    sector: 130,
+    country: 120,
+    imported: 112,
+    latency: 120,
+    notes: 200
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
@@ -4088,6 +4204,8 @@ function addColResizer(th) {
   grip.addEventListener('mousedown', function (e) {
     e.preventDefault(); e.stopPropagation();
     var startX = e.pageX, startW = th.offsetWidth;
+    // First drag permanently opts out of "fill viewport with flex columns".
+    colWidthsUserAdjusted = true;
     function move(ev) {
       th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px';
       syncTradesTableWidth();
@@ -4097,7 +4215,7 @@ function addColResizer(th) {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
-      var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
+      var w = loadColWidths(); w[th.dataset.col] = parsePx(th.style.width) || th.offsetWidth; saveColWidths(w);
       syncTradesTableWidth();
       applyColumnWidthClasses();
     }
@@ -4313,8 +4431,7 @@ function syncPageSizeControl() {
    30s poll (owner report #2: filtering doesn't change the count). */
 function tradesFilterParams() {
   var p = new URLSearchParams();
-  var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
-  var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
+  applySearchToServerParams(p, tradesSearchQuery());
   // Buy/sell/exchange toggle: only filters when exactly one of the three is
   // pressed (multi-select, like the H/S/P chips — nothing on = all types).
   var ty = selectedSideParam('qSideGroup');
@@ -4452,8 +4569,10 @@ function syncFilterUrl() {
   try {
     var u = new URL(window.location.href);
     var pairs = [
-      ['ft', el('qTicker') ? el('qTicker').value.trim() : ''],
-      ['fm', el('qMember') ? el('qMember').value.trim() : ''],
+      ['fq', tradesSearchQuery()],
+      // Legacy deep-link keys still cleared when empty
+      ['ft', ''],
+      ['fm', ''],
       ['fty', selectedSideParam('qSideGroup')],
       ['fch', chamberParam('qChamber')],
       ['fw', getTrWindow()],
@@ -4468,8 +4587,9 @@ function syncFilterUrl() {
 function restoreFiltersFromUrl() {
   try {
     var sp = new URLSearchParams(window.location.search);
-    if (sp.get('ft') && el('qTicker')) el('qTicker').value = sp.get('ft');
-    if (sp.get('fm') && el('qMember')) el('qMember').value = sp.get('fm');
+    var fq = sp.get('fq') || [sp.get('fm'), sp.get('ft')].filter(Boolean).join(' ');
+    if (fq && el('qSearch')) el('qSearch').value = fq;
+    else if (fq && el('qMember')) el('qMember').value = fq;
     var fty = sp.get('fty');
     if (fty) {
       ['qSideGroup', 'trSideGroup'].forEach(function (gid) {
@@ -8304,10 +8424,100 @@ function loadTrConflicts() {
   });
 }
 
-/* ---- People directory (GET /api/members; client filter by name/party/state) ---- */
+/* ---- Directory (GET /api/members; multi-token name/state/party search + sort) ---- */
 var PEOPLE_CACHE = null; // full roster once loaded
 var PEOPLE_CACHE_AT = 0;
 var PEOPLE_TTL_MS = 5 * 60 * 1000;
+var PEOPLE_SORT = { key: 'trades', dir: -1 }; // default most-active first
+/* abbr → full name (lowercase) for state search */
+var US_STATE_ABBR = {
+  al:'alabama', ak:'alaska', az:'arizona', ar:'arkansas', ca:'california', co:'colorado',
+  ct:'connecticut', de:'delaware', fl:'florida', ga:'georgia', hi:'hawaii', id:'idaho',
+  il:'illinois', in:'indiana', ia:'iowa', ks:'kansas', ky:'kentucky', la:'louisiana',
+  me:'maine', md:'maryland', ma:'massachusetts', mi:'michigan', mn:'minnesota',
+  ms:'mississippi', mo:'missouri', mt:'montana', ne:'nebraska', nv:'nevada',
+  nh:'new hampshire', nj:'new jersey', nm:'new mexico', ny:'new york', nc:'north carolina',
+  nd:'north dakota', oh:'ohio', ok:'oklahoma', or:'oregon', pa:'pennsylvania',
+  ri:'rhode island', sc:'south carolina', sd:'south dakota', tn:'tennessee', tx:'texas',
+  ut:'utah', vt:'vermont', va:'virginia', wa:'washington', wv:'west virginia',
+  wi:'wisconsin', wy:'wyoming', dc:'district of columbia', pr:'puerto rico', vi:'virgin islands',
+  gu:'guam', as:'american samoa', mp:'northern mariana islands'
+};
+var US_STATE_NAME_TO_ABBR = (function () {
+  var m = {};
+  Object.keys(US_STATE_ABBR).forEach(function (abbr) { m[US_STATE_ABBR[abbr]] = abbr; });
+  return m;
+})();
+function peoplePartySearchBlob(party) {
+  var p = String(party || '').toLowerCase().trim();
+  var blob = p;
+  if (!p) return 'other independent independents';
+  if (p === 'd' || p.indexOf('dem') === 0) blob += ' democrat democrats d';
+  else if (p === 'r' || p.indexOf('rep') === 0) blob += ' republican republicans r gop';
+  else if (p === 'i' || p === 'id' || p.indexOf('ind') === 0 || p.indexOf('other') === 0)
+    blob += ' independent independents other i';
+  else blob += ' other independent independents';
+  return blob;
+}
+function peopleStateMatches(token, stateAbbr) {
+  var st = String(stateAbbr || '').toLowerCase().trim();
+  if (!st) return false;
+  if (token === st) return true;
+  var full = US_STATE_ABBR[st] || '';
+  if (full && (full === token || full.indexOf(token) === 0 || full.indexOf(token) >= 0)) return true;
+  // token is a full state name (or prefix)
+  var abbrFromName = US_STATE_NAME_TO_ABBR[token];
+  if (abbrFromName && abbrFromName === st) return true;
+  // multi-word state: match if token is a word in the full name
+  if (full) {
+    var words = full.split(/\\s+/);
+    for (var i = 0; i < words.length; i++) {
+      if (words[i] === token || words[i].indexOf(token) === 0) return true;
+    }
+  }
+  return false;
+}
+function peoplePartyMatches(token, party) {
+  var blob = peoplePartySearchBlob(party);
+  if (blob.indexOf(token) >= 0) return true;
+  // partial of democrat/republican/independent/other
+  var labels = ['democrat', 'democrats', 'republican', 'republicans', 'independent', 'independents', 'other'];
+  for (var i = 0; i < labels.length; i++) {
+    if (labels[i].indexOf(token) === 0 || token.indexOf(labels[i]) === 0) {
+      // token is a prefix of a party word — still need party to match that family
+      if (labels[i].charAt(0) === 'd' && blob.indexOf('democrat') >= 0) return true;
+      if (labels[i].charAt(0) === 'r' && blob.indexOf('republican') >= 0) return true;
+      if ((labels[i].charAt(0) === 'i' || labels[i].charAt(0) === 'o') &&
+          (blob.indexOf('independent') >= 0 || blob.indexOf('other') >= 0)) return true;
+    }
+  }
+  return false;
+}
+/** Multi-token AND search: "CA Ro" matches California + Ro Khanna. */
+function memberMatchesPeopleQuery(m, q) {
+  var raw = String(q || '').trim().toLowerCase();
+  if (!raw) return true;
+  var tokens = raw.split(/\\s+/).filter(Boolean);
+  var name = String(m.fullName || '').toLowerCase();
+  var nameParts = name.split(/[\\s,.\\-']+/).filter(Boolean);
+  var filer = String(m.filerId || '').toLowerCase();
+  var state = String(m.state || '').toLowerCase();
+  var chamber = String(m.chamber || '').toLowerCase();
+  var district = String(m.district || '').toLowerCase();
+  var party = String(m.party || '');
+  return tokens.every(function (tok) {
+    if (peopleStateMatches(tok, state)) return true;
+    if (peoplePartyMatches(tok, party)) return true;
+    if (name.indexOf(tok) >= 0) return true;
+    if (filer.indexOf(tok) >= 0) return true;
+    if (chamber.indexOf(tok) >= 0) return true;
+    if (district && district.indexOf(tok) >= 0) return true;
+    for (var i = 0; i < nameParts.length; i++) {
+      if (nameParts[i].indexOf(tok) === 0 || nameParts[i].indexOf(tok) >= 0) return true;
+    }
+    return false;
+  });
+}
 function loadPeopleDirectory() {
   var body = el('peopleBody');
   var countEl = el('peopleCount');
@@ -8331,6 +8541,35 @@ function loadPeopleDirectory() {
       body.innerHTML = stateRow(5, 'Could not load directory: ' + e.message);
     });
 }
+function sortPeopleDirectory(key) {
+  if (PEOPLE_SORT.key === key) PEOPLE_SORT.dir = -PEOPLE_SORT.dir;
+  else {
+    PEOPLE_SORT.key = key;
+    PEOPLE_SORT.dir = key === 'trades' ? -1 : 1;
+  }
+  if (PEOPLE_CACHE && PEOPLE_CACHE.members) renderPeopleDirectory(PEOPLE_CACHE.members);
+  else loadPeopleDirectory();
+}
+function peopleSortValue(m, key) {
+  if (key === 'trades') return Number(m.txCount) || 0;
+  if (key === 'name') return String(m.fullName || m.filerId || '').toLowerCase();
+  if (key === 'chamber') return String(m.chamber || '').toLowerCase();
+  if (key === 'party') return String(m.party || '').toLowerCase();
+  if (key === 'state') return String(m.state || '').toLowerCase();
+  return '';
+}
+function syncPeopleSortIndicators() {
+  var head = el('peopleHead');
+  if (!head) return;
+  var ths = head.querySelectorAll('th[data-sort]');
+  for (var i = 0; i < ths.length; i++) {
+    var th = ths[i];
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.getAttribute('data-sort') === PEOPLE_SORT.key) {
+      th.classList.add(PEOPLE_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+    }
+  }
+}
 function renderPeopleDirectory(all) {
   var body = el('peopleBody');
   var countEl = el('peopleCount');
@@ -8338,7 +8577,7 @@ function renderPeopleDirectory(all) {
   var chamberSel = el('peopleChamber');
   var chamber = chamberSel ? String(chamberSel.value || '').toLowerCase() : '';
   var qEl = el('peopleQ');
-  var q = qEl ? String(qEl.value || '').trim().toLowerCase() : '';
+  var q = qEl ? String(qEl.value || '').trim() : '';
   var rows = (all || []).filter(function (m) {
     if (chamber) {
       var ch = String(m.chamber || '').toLowerCase();
@@ -8346,12 +8585,24 @@ function renderPeopleDirectory(all) {
       if (chamber === 'senate' && ch !== 'senate' && ch !== 's' && ch.indexOf('senate') === -1) return false;
       if (chamber === 'executive' && ch !== 'executive' && ch !== 'oge' && ch !== 'exec' && ch.indexOf('exec') === -1) return false;
     }
-    if (!q) return true;
-    var hay = [
-      m.fullName, m.filerId, m.party, m.state, m.district, m.chamber
-    ].map(function (x) { return String(x || '').toLowerCase(); }).join(' ');
-    return hay.indexOf(q) !== -1;
+    return memberMatchesPeopleQuery(m, q);
   });
+  var sk = PEOPLE_SORT.key;
+  var sd = PEOPLE_SORT.dir;
+  rows.sort(function (a, b) {
+    var av = peopleSortValue(a, sk);
+    var bv = peopleSortValue(b, sk);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sd;
+    if (av < bv) return -1 * sd;
+    if (av > bv) return 1 * sd;
+    // stable secondary: name then trades
+    var an = String(a.fullName || a.filerId || '').toLowerCase();
+    var bn = String(b.fullName || b.filerId || '').toLowerCase();
+    if (an < bn) return -1;
+    if (an > bn) return 1;
+    return (Number(b.txCount) || 0) - (Number(a.txCount) || 0);
+  });
+  syncPeopleSortIndicators();
   if (!rows.length) {
     body.innerHTML = stateRow(5, q || chamber ? 'No politicians match this filter.' : 'No politicians in the directory yet.');
     if (countEl) countEl.textContent = '0 shown';
@@ -8362,7 +8613,7 @@ function renderPeopleDirectory(all) {
     var memberAttr = m.filerId
       ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
-    return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '" style="cursor:pointer"' : '') + '>' +
+    return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
       '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
       '<td class="muted">' + esc(chamberLabel(m.chamber) || '—') + '</td>' +
       '<td class="muted">' + esc(m.party || '—') + '</td>' +
@@ -8378,7 +8629,7 @@ function filterPeopleDirectory() {
   }
   renderPeopleDirectory(PEOPLE_CACHE.members);
 }
-/* People directory uses data-member; global handleEntityOpenEvent covers clicks. */
+/* Directory uses data-member; global handleEntityOpenEvent covers clicks. */
 
 /* ================= SPEED VS DATA PROVIDERS (provider scorecard) ================= */
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
@@ -8780,7 +9031,7 @@ function loadTrTickers() {
     body.innerHTML = rows.map(function (r, i) {
       return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
         '<td class="rank">' + (i + 1) + '</td>' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
+        '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
         '<td class="muted">' + (r.memberCount || 0) + '</td>' +
@@ -8800,7 +9051,7 @@ function loadTrTrending() {
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
+        '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
         '<td class="muted">' + (r.recentMembers || 0) + '</td></tr>';
@@ -9577,7 +9828,7 @@ function openTrade(row) {
       kvRow('Asset Type', assetTypeDetailHtml(row)) +
       kvRow('Imported', esc(dateTimeText(row.imported))) +
       (row.source === 'manual' ? kvRow('Source', 'Manual Entry') : '') +
-      (row.cleaningNote ? kvRow('Cleaning Notes', esc(row.cleaningNote)) : '') +
+      (row.cleaningNote ? kvRow('Notes', esc(plainCleaningNote(row.cleaningNote))) : '') +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
   // Owner punch list #13(e): Performance now leads, directly under the
@@ -10004,8 +10255,7 @@ function exportCsv() {
     return;
   }
   var p = new URLSearchParams();
-  var t = el('qTicker') && el('qTicker').value.trim(); if (t) p.set('ticker', t);
-  var m = el('qMember') && el('qMember').value.trim(); if (m) p.set('memberName', m);
+  applySearchToServerParams(p, tradesSearchQuery());
   var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);

@@ -309,6 +309,15 @@ function asTxType(v: string | undefined): TxType | undefined {
   return v === 'S' || v === 'E' ? v : undefined;
 }
 
+/** CSV multi-type selection (e.g. "B,S"); undefined = no type filter. */
+function asTxTypes(v: string | undefined): TxType[] | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asTxType(part.trim())).filter((t): t is TxType => !!t)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
 /** Closed enum for the public `?owner=` feed filter (canonical insert-time set). */
 function asOwner(v: string | undefined): Owner | undefined {
   return v === 'self' || v === 'spouse' || v === 'joint' || v === 'dependent' ? v : undefined;
@@ -340,13 +349,15 @@ function asTxSort(v: string | undefined): TxQueryParams['sort'] {
 
 /** Parse the shared ticker/member/type/chamber filters from the query string. */
 function filtersFromQuery(q: Record<string, string>): TxQueryParams {
+  const types = asTxTypes(q.type);
   return {
     ticker: q.ticker || undefined,
     member: q.member || undefined,
     memberName: q.memberName || undefined,
     chambers: asChambers(q.chamber),
     partyBuckets: asPartyBuckets(q.party),
-    type: asTxType(q.type),
+    type: types?.length === 1 ? types[0] : asTxType(q.type),
+    types: types && types.length > 1 ? types : undefined,
     stockAct: asStockActStatus(q.stockAct),
     owner: asOwner(q.owner),
     txDateMin: q.from || q.txDateMin || undefined,
