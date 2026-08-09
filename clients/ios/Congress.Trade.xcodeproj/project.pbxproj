@@ -14,6 +14,7 @@
 		4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8927A2808F29C1F169FB78CD /* DeliveryView.swift */; };
 		5A1000010000000000000002 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000012 /* APIClient.swift */; };
 		5A1000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000013 /* Models.swift */; };
+		5A10000100000000000000A1 /* MemberDirectorySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A10000100000000000000A0 /* MemberDirectorySearch.swift */; };
 		5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000014 /* KeychainTokenStore.swift */; };
 		5A1000010000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000015 /* Assets.xcassets */; };
 		5A1000010000000000000099 /* Fonts/ZillaSlab-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000097 /* Fonts/ZillaSlab-Regular.ttf */; };
@@ -51,6 +52,7 @@
 		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = CongressTrade.app; path = Congress.Trade.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		5A10000100000000000000A0 /* MemberDirectorySearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberDirectorySearch.swift; sourceTree = "<group>"; };
 		5A1000010000000000000014 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		5A1000010000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5A1000010000000000000097 /* Fonts/ZillaSlab-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = font; path = "Fonts/ZillaSlab-Regular.ttf"; sourceTree = "<group>"; };
@@ -129,6 +131,7 @@
 				5A1000010000000000000096 /* Fonts/ZillaSlab-Bold.ttf */,
 				5A1000010000000000000012 /* APIClient.swift */,
 				5A1000010000000000000013 /* Models.swift */,
+				5A10000100000000000000A0 /* MemberDirectorySearch.swift */,
 				5A1000010000000000000014 /* KeychainTokenStore.swift */,
 				22EA0601D7D0B9B96A739A93 /* Store */,
 				2C19828CDAFE62F809DF6C27 /* App.swift */,
@@ -314,6 +317,7 @@
 			files = (
 				5A1000010000000000000002 /* APIClient.swift in Sources */,
 				5A1000010000000000000003 /* Models.swift in Sources */,
+				5A10000100000000000000A1 /* MemberDirectorySearch.swift in Sources */,
 				5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */,
 				4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */,
 				09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */,

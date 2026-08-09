@@ -122,6 +122,68 @@ final class ClientTrade: Decodable, Identifiable {
         var amountMin: Int?
         var amountMax: Int?
         var isOption: Bool?
+
+        init(
+            date: String? = nil,
+            type: String,
+            owner: String? = nil,
+            amountMin: Int? = nil,
+            amountMax: Int? = nil,
+            isOption: Bool? = nil
+        ) {
+            self.date = date
+            self.type = type
+            self.owner = owner
+            self.amountMin = amountMin
+            self.amountMax = amountMax
+            self.isOption = isOption
+        }
+
+        /// STOCK Act brackets are usually integers, but some cleaned / private-fund
+        /// rows arrive as fractional USD (e.g. 982.18). Strict `Int` decoding then
+        /// fails the whole member/feed payload with "isn't in the correct format"
+        /// (owner report: Max Miller profile, 2026-08-09). Accept Int, Double, or
+        /// numeric String and round to the nearest whole dollar for display.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            date = try container.decodeIfPresent(String.self, forKey: .date)
+            type = try container.decodeIfPresent(String.self, forKey: .type) ?? "B"
+            owner = try container.decodeIfPresent(String.self, forKey: .owner)
+            amountMin = try Self.decodeFlexibleInt(from: container, forKey: .amountMin)
+            amountMax = try Self.decodeFlexibleInt(from: container, forKey: .amountMax)
+            isOption = try container.decodeIfPresent(Bool.self, forKey: .isOption)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(date, forKey: .date)
+            try container.encode(type, forKey: .type)
+            try container.encodeIfPresent(owner, forKey: .owner)
+            try container.encodeIfPresent(amountMin, forKey: .amountMin)
+            try container.encodeIfPresent(amountMax, forKey: .amountMax)
+            try container.encodeIfPresent(isOption, forKey: .isOption)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case date, type, owner, amountMin, amountMax, isOption
+        }
+
+        private static func decodeFlexibleInt(
+            from container: KeyedDecodingContainer<CodingKeys>,
+            forKey key: CodingKeys
+        ) throws -> Int? {
+            guard container.contains(key), try !container.decodeNil(forKey: key) else { return nil }
+            if let int = try? container.decode(Int.self, forKey: key) { return int }
+            if let double = try? container.decode(Double.self, forKey: key) {
+                return Int(double.rounded())
+            }
+            if let string = try? container.decode(String.self, forKey: key) {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let int = Int(trimmed) { return int }
+                if let double = Double(trimmed) { return Int(double.rounded()) }
+            }
+            return nil
+        }
     }
 
     struct Filing: Codable {
@@ -774,15 +836,35 @@ enum JSONValue: Codable, Hashable {
     }
 }
 
+/// Multi-token AND trade search (any order). Each token may match politician
+/// name, ticker, asset name, state (abbr or full), chamber, or party synonyms.
 enum TradeSearch {
+    static func matches(_ trade: ClientTrade, query: String) -> Bool {
+        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !raw.isEmpty else { return true }
+        let tokens = raw.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let name = (trade.member.name ?? "").lowercased()
+        let nameParts = name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let state = (trade.member.state ?? "").lowercased()
+        let party = trade.member.party ?? ""
+        let chamber = (trade.member.chamber ?? "").lowercased()
+        let ticker = (trade.asset.ticker ?? "").lowercased()
+        let asset = (trade.asset.name ?? "").lowercased()
+        return tokens.allSatisfy { tok in
+            if name.contains(tok) { return true }
+            if nameParts.contains(where: { $0.hasPrefix(tok) || $0.contains(tok) }) { return true }
+            if ticker.contains(tok) { return true }
+            if asset.contains(tok) { return true }
+            if chamber.contains(tok) { return true }
+            if MemberDirectorySearch.stateMatchesPublic(tok, stateAbbr: state) { return true }
+            if MemberDirectorySearch.partyMatchesPublic(tok, party: party) { return true }
+            return false
+        }
+    }
+
+    /// Legacy single-needle API (substring over common fields).
     static func matches(_ trade: ClientTrade, normalizedNeedle: String) -> Bool {
-        [
-            trade.asset.ticker,
-            trade.asset.name,
-            trade.member.name,
-            trade.member.state,
-            trade.member.chamber
-        ].contains { ($0 ?? "").lowercased().contains(normalizedNeedle) }
+        matches(trade, query: normalizedNeedle)
     }
 }
 

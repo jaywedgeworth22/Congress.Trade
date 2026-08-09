@@ -386,6 +386,101 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "offset" }), "Page reset must omit offset (page 1)")
     }
 
+    // MARK: - Client member profile decode
+
+    /// Owner report (2026-08-09): opening Max Miller failed with
+    /// "The data couldn't be read because it isn't in the correct format"
+    /// because some private-fund rows ship fractional `amountMin`/`amountMax`
+    /// (e.g. 982.18) while `Transaction` required strict Int.
+    func testClientMemberResponseAcceptsFractionalAmountBrackets() throws {
+        let json = """
+        {
+          "member": {
+            "id": "house-oh07-max-miller",
+            "name": "Max Miller",
+            "chamber": "house",
+            "party": "Republican",
+            "state": "OH",
+            "district": "7",
+            "committees": [],
+            "photoUrl": null
+          },
+          "summary": {
+            "totalTrades": 2,
+            "buyCount": 2,
+            "sellCount": 0,
+            "exchangeCount": 0,
+            "estimatedVolumeUsd": 33300.5,
+            "estimatedNetFlowUsd": 1000,
+            "firstTrade": "2023-01-01",
+            "lastTrade": "2023-06-29",
+            "uniqueTickers": 1,
+            "uniqueAssets": 2,
+            "performance": {
+              "tradeCount": 2,
+              "scoredCount": 1,
+              "winRate": 0.5,
+              "medianReturn": 0.1,
+              "medianExcess": -0.1,
+              "avgReturn": 0.1,
+              "avgExcess": -0.1,
+              "avgAnnualizedExcess": null,
+              "side": "buys",
+              "buyCount": 2,
+              "tradeDate": {
+                "tradeCount": 2, "scoredCount": 1, "winRate": 0.5,
+                "medianReturn": 0.1, "medianExcess": -0.1,
+                "avgReturn": 0.1, "avgExcess": -0.1, "avgAnnualizedExcess": null
+              },
+              "filingDate": {
+                "tradeCount": 2, "scoredCount": 1, "winRate": 0.5,
+                "medianReturn": 0.1, "medianExcess": -0.1,
+                "avgReturn": 0.1, "avgExcess": -0.1, "avgAnnualizedExcess": -0.05
+              }
+            }
+          },
+          "items": [
+            {
+              "id": "tx-int-bracket",
+              "cursor": 1,
+              "docId": "H-1",
+              "member": {"id": "house-oh07-max-miller", "name": "Max Miller", "chamber": "house", "party": "Republican", "state": "OH"},
+              "asset": {"name": "Elliot Associates, LP", "ticker": null, "type": null, "sector": null, "marketCapBucket": null},
+              "transaction": {"date": "2023-06-29", "type": "B", "owner": "self", "amountMin": 15001, "amountMax": 50000, "estValue": 32500.5, "isOption": false},
+              "filing": {"filedDate": "2023-07-12", "firstSeenAt": "2026-07-24T04:59:14.522Z", "sourceUrl": "https://example.test/doc.pdf"},
+              "confidence": 0.85,
+              "source": "primary"
+            },
+            {
+              "id": "tx-float-bracket",
+              "cursor": 2,
+              "docId": "H-2",
+              "member": {"id": "house-oh07-max-miller", "name": "Max Miller", "chamber": "house", "party": "Republican", "state": "OH"},
+              "asset": {"name": "New Water Capital Partners Ii, LP", "ticker": null, "type": null},
+              "transaction": {"date": "2023-01-15", "type": "B", "owner": "self", "amountMin": 982.18, "amountMax": 982.18, "estValue": 982.18, "isOption": false},
+              "filing": {"filedDate": "2023-02-01", "firstSeenAt": null, "sourceUrl": null},
+              "confidence": 1,
+              "source": "primary"
+            }
+          ],
+          "cursor": 2,
+          "count": 2,
+          "total": 2,
+          "limit": 25
+        }
+        """
+        let decoded = try JSONDecoder().decode(ClientMemberResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.member.name, "Max Miller")
+        XCTAssertEqual(decoded.items.count, 2)
+        XCTAssertEqual(decoded.items[0].transaction.amountMin, 15001)
+        XCTAssertEqual(decoded.items[0].transaction.amountMax, 50000)
+        // Fractional USD brackets round to nearest whole dollar.
+        XCTAssertEqual(decoded.items[1].transaction.amountMin, 982)
+        XCTAssertEqual(decoded.items[1].transaction.amountMax, 982)
+        XCTAssertEqual(decoded.summary.performance?.tradeDate?.scoredCount, 1)
+        XCTAssertEqual(decoded.summary.performance?.filingDate?.avgAnnualizedExcess, -0.05)
+    }
+
     // MARK: - People directory (owner punch list #2, item 9)
 
     func testMembersDirectoryHitsOriginLevelMembersEndpointNotClientV1() async throws {
