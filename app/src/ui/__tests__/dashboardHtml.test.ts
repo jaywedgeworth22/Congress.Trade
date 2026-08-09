@@ -321,6 +321,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('FMP_LATENCY_PROBE_ENABLED');
     // The public pager mirrors the server's anti-scrape offset cap.
     expect(DASHBOARD_HTML).toContain(`var MAX_PUBLIC_TRADES_OFFSET = ${MAX_PUBLIC_TX_OFFSET}`);
+    // Trades pager: range-of-total count + full first/prev/next/last controls.
+    expect(DASHBOARD_HTML).toContain('id="tradesCountMsg"');
+    expect(DASHBOARD_HTML).toContain('id="firstPageBtn"');
+    expect(DASHBOARD_HTML).toContain('id="prevPageBtn"');
+    expect(DASHBOARD_HTML).toContain('id="nextPageBtn"');
+    expect(DASHBOARD_HTML).toContain('id="lastPageBtn"');
+    expect(DASHBOARD_HTML).toContain('function firstTradesPage(');
+    expect(DASHBOARD_HTML).toContain('function lastTradesPage(');
+    expect(DASHBOARD_HTML).toContain('function maxReachableTradesPage(');
+    expect(DASHBOARD_HTML).toContain("aria-label=\"Trades pagination\"");
   });
 
   it('requires explicit review type/date and preserves an unknown owner', () => {
@@ -2510,9 +2520,14 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   it('formats the bottom pagination string without the word "Showing" and with thousands separators', () => {
     expect(DASHBOARD_HTML).not.toContain('Showing <span');
     expect(DASHBOARD_HTML).not.toMatch(/>Showing</);
+    // Range-of-total ("1-50 of 12,345") — compact so it fits beside << < > >>.
     expect(DASHBOARD_HTML).toContain(
-      "msg.innerHTML = '<span class=\"tick-num\">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class=\"tick-num\">' + total.toLocaleString() + '</span> trades';",
+      "msg.innerHTML = '<span class=\"tick-num\">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class=\"tick-num\">' + total.toLocaleString() + '</span>';",
     );
+    expect(DASHBOARD_HTML).toContain('id="firstPageBtn"');
+    expect(DASHBOARD_HTML).toContain('id="lastPageBtn"');
+    expect(DASHBOARD_HTML).toContain('function firstTradesPage(');
+    expect(DASHBOARD_HTML).toContain('function lastTradesPage(');
   });
 
   it('gives mobile (<=720px) a hamburger menu instead of the theme-toggle/Sign-In/Upgrade cluster', () => {
