@@ -836,38 +836,6 @@ enum JSONValue: Codable, Hashable {
     }
 }
 
-/// Multi-token AND trade search (any order). Each token may match politician
-/// name, ticker, asset name, state (abbr or full), chamber, or party synonyms.
-enum TradeSearch {
-    static func matches(_ trade: ClientTrade, query: String) -> Bool {
-        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !raw.isEmpty else { return true }
-        let tokens = raw.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let name = (trade.member.name ?? "").lowercased()
-        let nameParts = name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        let state = (trade.member.state ?? "").lowercased()
-        let party = trade.member.party ?? ""
-        let chamber = (trade.member.chamber ?? "").lowercased()
-        let ticker = (trade.asset.ticker ?? "").lowercased()
-        let asset = (trade.asset.name ?? "").lowercased()
-        return tokens.allSatisfy { tok in
-            if name.contains(tok) { return true }
-            if nameParts.contains(where: { $0.hasPrefix(tok) || $0.contains(tok) }) { return true }
-            if ticker.contains(tok) { return true }
-            if asset.contains(tok) { return true }
-            if chamber.contains(tok) { return true }
-            if MemberDirectorySearch.stateMatchesPublic(tok, stateAbbr: state) { return true }
-            if MemberDirectorySearch.partyMatchesPublic(tok, party: party) { return true }
-            return false
-        }
-    }
-
-    /// Legacy single-needle API (substring over common fields).
-    static func matches(_ trade: ClientTrade, normalizedNeedle: String) -> Bool {
-        matches(trade, query: normalizedNeedle)
-    }
-}
-
 struct LatencyProvider: Decodable, Identifiable {
     let id: String
     let label: String

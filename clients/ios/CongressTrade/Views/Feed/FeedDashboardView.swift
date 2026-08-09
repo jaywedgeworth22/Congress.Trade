@@ -128,6 +128,7 @@ struct FeedDashboardView: View {
                         onClear: {
                             searchText = ""
                             Task {
+                                await store.setSearch(nil)
                                 await store.setPoliticianFilter("")
                                 await store.setAssetFilter("")
                             }
@@ -291,62 +292,38 @@ struct FeedDashboardView: View {
                     .presentationDragIndicator(.visible)
             }
             .onDisappear { filterTask?.cancel() }
-            .onAppear {
-                // Seed unified search from any still-active dedicated filters.
-                if searchText.isEmpty {
-                    let parts = [store.politicianFilter, store.assetFilter]
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    if !parts.isEmpty { searchText = parts.joined(separator: " ") }
-                }
-            }
             .simultaneousGesture(
                 TapGesture().onEnded { searchFocused = false }
             )
         }
     }
 
-    private func scheduleSearchDebounce() {
+    private func scheduleFilterApply(_ work: @escaping @MainActor () async -> Void) {
         filterTask?.cancel()
         filterTask = Task {
             try? await Task.sleep(for: .milliseconds(320))
             guard !Task.isCancelled else { return }
-            await applyUnifiedSearchAsync()
+            await work()
         }
     }
 
+    /// Submit path for the unified search field: reaches the server via
+    /// `CongressTradeStore.setSearch` (ticker-vs-politician-name heuristic
+    /// lives in `CongressTradeStore.looksLikeTicker`) immediately, rather
+    /// than waiting for the typing debounce below.
     private func applyUnifiedSearch() {
         filterTask?.cancel()
-        Task { await applyUnifiedSearchAsync() }
+        Task { await store.setSearch(searchText) }
     }
 
-    /// Map free-text search into the store's server-side politician/asset filters.
-    /// Multi-token queries stay client-local; a single ticker-like token also
-    /// hits `setAssetFilter` so the feed fetch can narrow.
-    @MainActor
-    private func applyUnifiedSearchAsync() async {
-        let raw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.isEmpty {
-            await store.setPoliticianFilter("")
-            await store.setAssetFilter("")
-            return
-        }
-        let tokens = raw.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        if tokens.count == 1 {
-            let tok = tokens[0]
-            let looksLikeTicker = tok.count <= 5 && tok.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) }
-                && tok.uppercased() == tok
-            if looksLikeTicker {
-                await store.setAssetFilter(tok)
-                await store.setPoliticianFilter("")
-            } else {
-                await store.setPoliticianFilter(tok)
-                await store.setAssetFilter("")
-            }
-        } else {
-            // Multi-token: keep server unfiltered; local TradeSearch narrows the page.
-            await store.setPoliticianFilter("")
-            await store.setAssetFilter("")
+    /// Typing itself only needs the already-loaded page's local re-filter
+    /// (`filteredTrades`, via `TradeSearch.matches`, recomputes automatically
+    /// off `searchText` — no explicit trigger needed); this debounce is
+    /// purely so a pause in typing also reaches the server, same 320ms
+    /// pattern `scheduleFilterApply` used for the old per-field search.
+    private func scheduleSearchDebounce() {
+        scheduleFilterApply { [searchText] in
+            await store.setSearch(searchText)
         }
     }
 
@@ -780,7 +757,12 @@ struct FilterMenuLabel: View {
     }
 }
 
-/// Single unified Trades search field (name / ticker / state / party, any order).
+/// Trades-only unified search field (name / ticker / state / party, any
+/// order) — replaces the old side-by-side Name + Asset/Ticker fields.
+/// `TradeSearch.matches` (`MemberDirectorySearch.swift`) does the actual
+/// any-order token matching against the already-loaded page; submitting or
+/// pausing while typing (`FeedDashboardView.scheduleSearchDebounce`) also
+/// reaches the server via `CongressTradeStore.setSearch`.
 struct TradesUnifiedSearchField: View {
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
@@ -788,15 +770,19 @@ struct TradesUnifiedSearchField: View {
     var onClear: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Search name, ticker, state, party…", text: $text)
+            TextField("Name, ticker, state, or party", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
+                .font(.subheadline)
                 .focused(focused)
                 .submitLabel(.search)
-                .onSubmit(onSubmit)
+                .onSubmit {
+                    onSubmit()
+                    focused.wrappedValue = false
+                }
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
@@ -805,17 +791,15 @@ struct TradesUnifiedSearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
-                .accessibilityLabel("Clear search")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear Search")
             }
         }
-        .font(.subheadline)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
+        .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
         .overlay(AppTheme.border(cornerRadius: 12))
-        .accessibilityLabel("Search trades by name, ticker, state, or party")
+        .accessibilityLabel("Search trades by politician name, ticker, state, or party")
     }
 }
 

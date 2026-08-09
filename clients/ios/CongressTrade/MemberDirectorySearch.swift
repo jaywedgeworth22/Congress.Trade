@@ -1,5 +1,30 @@
 import Foundation
 
+/// Unified multi-token trade search (any word order, partial matches):
+/// each token may match politician name, ticker, asset name, state, or party.
+enum TradeSearch {
+    static func matches(_ trade: ClientTrade, query: String) -> Bool {
+        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !raw.isEmpty else { return true }
+        let tokens = raw.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let name = (trade.member.name ?? "").lowercased()
+        let nameParts = name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let state = (trade.member.state ?? "").lowercased()
+        let party = trade.member.party ?? ""
+        let ticker = (trade.asset.ticker ?? "").lowercased()
+        let asset = (trade.asset.name ?? "").lowercased()
+        return tokens.allSatisfy { tok in
+            if name.contains(tok) { return true }
+            if nameParts.contains(where: { $0.hasPrefix(tok) || $0.contains(tok) }) { return true }
+            if ticker.contains(tok) { return true }
+            if asset.contains(tok) { return true }
+            if MemberDirectorySearch.stateMatchesPublic(tok, stateAbbr: state) { return true }
+            if MemberDirectorySearch.partyMatchesPublic(tok, party: party) { return true }
+            return false
+        }
+    }
+}
+
 /// Shared Directory search: multi-token AND matching for name (first/last/partial),
 /// state abbreviation **or full name**, and party labels
 /// (Democrat(s)/Republican(s)/Independent(s)/Other).
