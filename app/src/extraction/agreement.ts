@@ -763,6 +763,9 @@ async function persistClaimedPublish(
             agreement_next_attempt_at = NULL,
             agreement_claim_token = NULL,
             agreement_claimed_at = NULL,
+            resolution_kind = 'published',
+            resolution_reason = 'model_agreement',
+            resolved_at = CURRENT_TIMESTAMP,
             review_revision = review_revision + 1
       WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
         AND agreement_claim_token = ? AND ${exactLiveSetPredicate}`,

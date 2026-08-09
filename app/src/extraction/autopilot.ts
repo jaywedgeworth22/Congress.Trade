@@ -48,7 +48,7 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { all, get, run } from '../shared/db.ts';
+import { all, batch, get, run } from '../shared/db.ts';
 import { uuid } from '../shared/ids.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import {
@@ -812,20 +812,48 @@ async function quarantineCorruptDoc(env: Env, docId: string): Promise<boolean> {
 /**
  * Auto-resolve an empty doc as no-transactions. Lease-respecting guarded
  * UPDATE — a claimed/suppressed/resolved row is never touched.
+ *
+ * This is the ONLY 'verified_empty' write path: resolution_kind + a
+ * non-blank resolution_reason are set in the SAME statement that flips
+ * resolved=1 (trg_review_queue_honest_resolution, migration 0082, aborts any
+ * UPDATE that doesn't), and filings.ingest_status moves off 'needs_review' to
+ * 'verified_empty' in the same atomic batch. Previously this only touched
+ * review_queue — filings.ingest_status was left stuck at 'needs_review'
+ * forever, and review_queue recorded no reason on the row itself (only a
+ * companion ingestion_decisions audit row) — the exact production bug this
+ * migration fixes (3,497 review_queue rows all resolved=1, 738 with zero live
+ * transactions, 180 filings stuck at needs_review despite a "resolved" queue
+ * row).
  */
 async function resolveEmptyDoc(env: Env, docId: string, now: Date): Promise<boolean> {
   const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
-  const result = await run(
-    env.DB,
-    `UPDATE review_queue
-        SET resolved = 1, agreement_next_attempt_at = NULL,
-            agreement_claim_token = NULL, agreement_claimed_at = NULL,
-            review_revision = review_revision + 1
-      WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
-        AND (agreement_claim_token IS NULL OR agreement_claimed_at IS NULL OR agreement_claimed_at <= ?)`,
-    [docId, leaseExpired],
-  );
-  if ((result.meta?.changes ?? 0) === 0) return false;
+  const results = await batch(env.DB, [
+    [
+      `UPDATE review_queue
+          SET resolved = 1, agreement_next_attempt_at = NULL,
+              agreement_claim_token = NULL, agreement_claimed_at = NULL,
+              resolution_kind = 'verified_empty',
+              resolution_reason = 'doc_class_empty_no_transactions',
+              resolved_at = CURRENT_TIMESTAMP,
+              review_revision = review_revision + 1
+        WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+          AND (agreement_claim_token IS NULL OR agreement_claimed_at IS NULL OR agreement_claimed_at <= ?)`,
+      [docId, leaseExpired],
+    ],
+    [
+      `UPDATE filings
+          SET ingest_status = 'verified_empty', error = NULL
+        WHERE doc_id = ?
+          AND ingest_status <> 'persisted'
+          AND NOT EXISTS (SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL)
+          AND EXISTS (
+            SELECT 1 FROM review_queue
+             WHERE doc_id = ? AND resolved = 1 AND resolution_kind = 'verified_empty'
+          )`,
+      [docId, docId, docId],
+    ],
+  ]);
+  if ((results[0]?.meta?.changes ?? 0) === 0) return false;
   await recordIngestionDecision(env.DB, {
     docId,
     action: 'auto_resolved_empty',

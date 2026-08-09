@@ -64,7 +64,10 @@ CREATE TABLE review_queue (
   agreement_legacy_replay_at TEXT,
   agreement_suppressed_at TEXT,
   agreement_suppression_reason TEXT,
-  review_revision INTEGER NOT NULL DEFAULT 1
+  review_revision INTEGER NOT NULL DEFAULT 1,
+  resolution_kind TEXT,
+  resolution_reason TEXT,
+  resolved_at TEXT
 );
 CREATE INDEX idx_review_resolved ON review_queue (resolved);
 
@@ -119,6 +122,8 @@ export interface ReviewQueueFixtureRow {
   ingestStatus?: string | null;
   docKind?: string | null;
   sourceUrl?: string | null;
+  resolutionKind?: string | null;
+  resolutionReason?: string | null;
   models?: Array<{
     provider: string;
     model: string;
@@ -149,8 +154,10 @@ export function makeReviewQueueTestDb(rows: ReviewQueueFixtureRow[]): D1Database
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertReview = raw.prepare(
-    `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
-     VALUES (?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO review_queue
+       (doc_id, reason, payload, created_at, resolved, review_revision,
+        resolution_kind, resolution_reason, resolved_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
   );
   const insertRun = raw.prepare(
     `INSERT INTO extraction_runs (id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, created_at)
@@ -173,6 +180,9 @@ export function makeReviewQueueTestDb(rows: ReviewQueueFixtureRow[]): D1Database
       row.payload === undefined ? '{"minConfidence":0,"transactions":[]}' : row.payload,
       row.createdAt,
       row.resolved ?? 0,
+      row.resolutionKind ?? null,
+      row.resolutionReason ?? null,
+      row.resolved ? row.createdAt : null,
     );
     for (const m of row.models ?? []) {
       insertRun.run(

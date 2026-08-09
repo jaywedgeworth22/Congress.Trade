@@ -4924,7 +4924,7 @@ function reviewDocHtml(r) {
     '<a class="review-doc-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">View Document</a>';
 }
 /* Coloured status pill for a review document. */
-var STATUS_COLORS = { pending: '#b08900', published: '#1a7f37', rejected: '#c0362c', modified: '#6f42c1', resolved: '#57606a' };
+var STATUS_COLORS = { pending: '#b08900', published: '#1a7f37', rejected: '#c0362c', modified: '#6f42c1', resolved: '#57606a', verified_empty: '#0969da', unverified_empty: '#c0362c', orphan_deleted: '#57606a' };
 function statusBadge(status) {
   var s = status || 'pending';
   var c = STATUS_COLORS[s] || '#57606a';
@@ -4995,9 +4995,12 @@ function renderReview() {
     var retryAutoBtn = r.agreementSuppressedAt
       ? '<button class="btn ghost sm" onclick="retryReviewAuto(\\'' + esc(r.docId) + '\\')">Retry Auto</button> '
       : '';
+    var reopenable = r.status === 'published' || r.status === 'modified'
+      || r.status === 'verified_empty' || r.status === 'unverified_empty';
+    var reopenLabel = r.status === 'verified_empty' || r.status === 'unverified_empty' ? 'Reopen' : 'Unpublish';
     var actions = REVIEW_RESOLVED
-      ? (r.status === 'published' || r.status === 'modified'
-          ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">Unpublish</button> ' : '') + modelsBtn
+      ? (reopenable
+          ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">' + reopenLabel + '</button> ' : '') + modelsBtn
       : '<button class="btn sm" onclick="openQueuedReviewEditor(\\'' + esc(r.docId) + '\\')">Review / Confirm</button> ' +
         '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
         '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button> ' + retryAutoBtn + modelsBtn +
