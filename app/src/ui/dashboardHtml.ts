@@ -111,10 +111,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta name="twitter:description" content="First-party House &amp; Senate STOCK Act ingestion and publishing — live feed, analytics, premium webhooks. Not a single-source API reskin." />
 <meta name="twitter:image" content="https://congress.trade/og-image.png" />
 <!-- Icons / PWA -->
-<link rel="icon" href="/favicon.ico?v=9" sizes="32x32" />
-<link rel="icon" type="image/png" href="/icon-192.png?v=9" sizes="192x192" />
-<link rel="icon" type="image/png" href="/icon-512.png?v=9" sizes="512x512" />
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=9" />
+<link rel="icon" href="/favicon.ico?v=10" sizes="32x32" />
+<link rel="icon" type="image/png" href="/icon-192.png?v=10" sizes="192x192" />
+<link rel="icon" type="image/png" href="/icon-512.png?v=10" sizes="512x512" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=10" />
 <link rel="manifest" href="/site.webmanifest" />
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
@@ -2027,7 +2027,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=19" data-src-dark="/assets/brand-logo-dark.png?v=18" data-src-light="/assets/brand-logo-light.png?v=19" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="trades" data-mobile="Trades" data-icon="▦" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
