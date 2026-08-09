@@ -2676,6 +2676,55 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   });
 });
 
+describe('owner feedback: exchange toggle glyph + legend semantic colors', () => {
+  it('renders the resting ⇄ toggle glyph in the themed ink color with a bolder stroke, not var(--exch)', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '.side-chip .side-ex { color:var(--text); font-size:12px; font-weight:900; -webkit-text-stroke:.5px var(--text); }',
+    );
+    // The old amber-off-state rule is gone entirely.
+    expect(DASHBOARD_HTML).not.toContain('.side-chip .side-ex { color:var(--exch); font-size:12px; }');
+    // The pressed/"on" state keeps its existing white-on-amber treatment —
+    // var(--exch) is untouched as the pill's pressed fill, only the resting
+    // glyph color changed.
+    expect(DASHBOARD_HTML).toContain('.side-chip.on[data-side="E"] { background: var(--exch); box-shadow: none; }');
+    expect(DASHBOARD_HTML).toContain('.side-chip.on[data-side="E"] .side-ex { color:#fff; }');
+  });
+
+  it('gives the combined H/S/P + party + buy/sell/exchange legend real semantic colors instead of a blanket accent blue', () => {
+    // The base rule is themed ink (matches the live, neutral-text H/S/P
+    // chips) — not var(--accent) link-blue.
+    expect(DASHBOARD_HTML).toContain('.branch-pop-row .branch-icon { color:var(--text); font-weight:700; }');
+    expect(DASHBOARD_HTML).not.toContain('.branch-pop-row .branch-icon { color:var(--accent); font-weight:700; }');
+    // Buy/sell/exchange rows carry the same fixed colors as their live
+    // toolbar counterparts: green buy, red sell, themed-ink exchange (same
+    // color the ⇄ toggle uses at rest, per the rule above).
+    expect(DASHBOARD_HTML).toContain('.branch-pop-row .branch-icon.icon-buy { color:var(--buy); }');
+    expect(DASHBOARD_HTML).toContain('.branch-pop-row .branch-icon.icon-sell { color:var(--sell); }');
+    expect(DASHBOARD_HTML).toContain(
+      '.branch-pop-row .branch-icon.icon-exch { color:var(--text); font-weight:900; -webkit-text-stroke:.4px var(--text); }',
+    );
+    // No rule anywhere still paints a branch-icon variant with the old
+    // blanket accent-blue color.
+    expect(DASHBOARD_HTML).not.toMatch(/branch-icon[^{]*\{[^}]*color:var\(--accent\)/);
+
+    // Both the Trades-tab and Trends-tab popovers apply the color modifier
+    // classes to the ▲/▼/⇄ rows; H/S/P stay on the bare (themed-ink) class.
+    for (const popId of ['qFiltersInfoPop', 'trFiltersInfoPop']) {
+      const pop = DASHBOARD_HTML.match(
+        new RegExp('<div class="branch-pop" id="' + popId + '"[\\s\\S]*?<div class="branch-pop-note"'),
+      );
+      expect(pop).not.toBeNull();
+      const body = pop![0];
+      expect(body).toContain('<span class="branch-icon icon-buy">▲</span>');
+      expect(body).toContain('<span class="branch-icon icon-sell">▼</span>');
+      expect(body).toContain('<span class="branch-icon icon-exch">⇄</span>');
+      expect(body).toContain('<span class="branch-icon">H</span>');
+      expect(body).toContain('<span class="branch-icon">S</span>');
+      expect(body).toContain('<span class="branch-icon">P</span>');
+    }
+  });
+});
+
 /**
  * Issue #1529 — design convergence: filter-chrome restyle + per-surface feed
  * presentation + header/search convergence. Restyle-only pass on top of LANE

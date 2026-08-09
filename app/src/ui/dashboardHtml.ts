@@ -1105,7 +1105,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .party-chip.on[data-party="R"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip .side-up { color:var(--buy); font-size:11px; }
   .side-chip .side-dn { color:var(--sell); font-size:11px; }
-  .side-chip .side-ex { color:var(--exch); font-size:12px; }
+  /* Owner feedback: the ⇄ toggle read as faint amber (var(--exch)) at this
+     size and was hard to read against the chip chrome — swap to the themed
+     ink color (var(--text): near-black on light, white on dark, so it never
+     vanishes) and thicken it with a text-stroke since the glyph is a single
+     Unicode character, not an SVG path we can set stroke-width on directly.
+     var(--exch) stays in use elsewhere (the pressed/"on" pill fill, .tag.E)
+     — only this resting glyph color changes. */
+  .side-chip .side-ex { color:var(--text); font-size:12px; font-weight:900; -webkit-text-stroke:.5px var(--text); }
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
@@ -1137,7 +1144,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .branch-info:hover, .branch-info:focus-visible, .branch-info[aria-expanded="true"] { color:var(--accent); outline:none; }
   .branch-pop { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px; max-width:min(340px, 92vw); background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:6px; font-size:12px; color:var(--text); box-shadow:0 10px 30px rgba(0,0,0,.35); }
   .branch-pop-row { display:grid; grid-template-columns:16px 1fr; gap:8px; align-items:baseline; }
-  .branch-pop-row .branch-icon { color:var(--accent); font-weight:700; }
+  /* Owner feedback: this legend previously painted every glyph (H/S/P, the
+     party emoji, and the ▲▼⇄ trio) in var(--accent) link-blue, which doesn't
+     match any of those symbols' live colors on the toolbar. H/S/P now use
+     the themed ink color (matches the live H/S/P chips, which are neutral
+     text, not blue), and the trade-type row below restores each glyph's
+     real semantic color: green buy, red sell, and the same ink color the
+     ⇄ toggle uses at rest (see .side-chip .side-ex above). */
+  .branch-pop-row .branch-icon { color:var(--text); font-weight:700; }
+  .branch-pop-row .branch-icon.icon-buy { color:var(--buy); }
+  .branch-pop-row .branch-icon.icon-sell { color:var(--sell); }
+  .branch-pop-row .branch-icon.icon-exch { color:var(--text); font-weight:900; -webkit-text-stroke:.4px var(--text); }
   .branch-pop-note { color:var(--text-dim); font-size:11px; margin-top:2px; }
   /* Must stay display:flex (NOT inline-flex): this class lands on the same
      element as .toolbar, and an inline-flex override makes the Trends row
@@ -2109,9 +2126,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
             <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
             <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">⇄</span><span>Exchanges</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
             <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
           </div>
         </div>
@@ -2240,9 +2257,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
             <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
             <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">⇄</span><span>Exchanges</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
+            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
             <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
           </div>
         </div>
