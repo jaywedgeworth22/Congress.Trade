@@ -9,27 +9,42 @@
  *
  * The 278-T renders its transactions as a single flat table with columns:
  *   # | DESCRIPTION | TYPE | DATE | NOTIFICATION RECEIVED OVER 30 DAYS AGO | AMOUNT
- * pdf.js merges each row onto one line of text, e.g.:
+ * e.g. one logical row reads:
  *
  *   1 Amazon.com, Inc. (AMZN) Sale 06/10/2022 No $1,001 - $15,000
  *
+ * IMPORTANT: unpdf's mergePages text-layout heuristic (pdf.js's line-break
+ * insertion, driven by Y-coordinate deltas between text items) is NOT
+ * guaranteed to insert a newline between rows — verified in production
+ * (Cloudflare Workers runtime) that an entire multi-page 278-T comes back as
+ * ONE line with no `\n` at all, while the same PDF parsed locally under
+ * Node.js does insert per-row newlines. Parsing therefore does NOT split on
+ * `\n` and match per line (that silently found 0 rows in production while
+ * finding 3/3 in local Node testing — a real incident, not a hypothetical).
+ * Instead the whole merged text is whitespace-normalized to single spaces
+ * (folding away import '\n'/'\r' too) and scanned with a GLOBAL regex, the
+ * same technique textPdf.ts's parseInlineRecords() uses for the same reason.
+ * `\s+` matches a real newline just as well as a run of spaces, so this
+ * approach is correct under EITHER text-layout behavior.
+ *
  * This is a DIFFERENT layout from the House PTR text_pdf format that
  * textPdf.ts targets (House rows carry an owner code + a bracketed asset-type
- * code across two source lines; OGE 278-T rows have neither and are single-
- * line). Routing an executive filing through the House-tuned parser silently
- * yields zero rows — this extractor claims chamber==='executive' text_pdf
- * filings ahead of the generic TextPdfExtractor in buildExtractorPipeline()
- * so those filings get a parser that actually matches their layout.
+ * code; OGE 278-T rows have neither). Routing an executive filing through the
+ * House-tuned parser silently yields zero rows — this extractor claims
+ * chamber==='executive' text_pdf filings ahead of the generic TextPdfExtractor
+ * in buildExtractorPipeline() so those filings get a parser that actually
+ * matches their layout.
  *
  * SCOPE: the dedicated 278-T "Periodic Transaction Report" form only. The
  * broader OGE 278e annual/termination disclosure (a much larger multi-section
  * form whose own Part 7 "Transactions" table uses a harder-to-bound layout
  * interleaved with unrelated numbered lists — positions held, agreements,
  * assets) is intentionally NOT targeted: ROW_RE requires the full
- * type+date+notification+amount suffix on one line, so 278e prose simply
- * fails to match and yields zero rows (safe no-op), never a wrong parse.
- * A scanned/OCR'd 278-T whose text layer is garbled (e.g. "Fobn.iary" for
- * "February") also correctly yields zero rows rather than guessed data.
+ * type+date+notification+amount suffix to immediately follow the description,
+ * so 278e prose simply fails to match and yields zero rows (safe no-op),
+ * never a wrong parse. A scanned/OCR'd 278-T whose text layer is garbled
+ * (e.g. "Fobn.iary" for "February") also correctly yields zero rows rather
+ * than guessed data.
  */
 
 import { extractText, getDocumentProxy } from 'unpdf';
@@ -48,13 +63,27 @@ const COMPLETE_ROW_CONFIDENCE = 0.97;
 const TICKER_PATTERN = String.raw`[A-Z][A-Z0-9.^\/\-]{0,9}`;
 const TICKER_SUFFIX_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)\s*$`);
 
-// One flat transaction row:
-//   "<#> <description...> <Purchase|Sale|Exchange> <MM/DD/YYYY> <Yes|No> <$amount[-$amount]>"
-// The suffix (type + date + Yes/No + amount) is anchored to end-of-line, so a
-// non-greedy description can never stop early on a false-positive "sale"
-// inside a company name — the whole remainder still has to match.
+// The table header always appears immediately before the first transaction
+// row (verified against real production text). Anchoring the scan to start
+// AFTER it is the primary defense against false-positive row-number matches
+// in the surrounding boilerplate (legal prose is full of "<digit> <word>"
+// sequences — e.g. "5 U.S.C. app. section 101 et seq." — that would
+// otherwise be indistinguishable from a real row's leading "# ").
+const TABLE_HEADER_RE = /#\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION\s+RECEIVED\s+OVER\s+30\s+DAYS\s+AGO\s+AMOUNT/i;
+
+// One flat transaction row, scanned globally over the (whitespace-normalized,
+// header-anchored) document text rather than split by line — see the module
+// comment for why "split by line" doesn't work here. The leading
+// `(?<![\d,.])` stops the row-number token from matching inside a dollar
+// amount (e.g. the "001" in "$1,001"): such a match is always preceded by a
+// digit or comma, which this excludes. The description is capped at 200
+// chars (`.{1,200}?`, still non-greedy) rather than unbounded `.+?` as a
+// second layer of defense — a genuine 278-T description is a short "Company
+// Name (TICK)" string, so an accidental match that ran past the header
+// anchor (e.g. scanning without TABLE_HEADER_RE found) fails fast instead of
+// swallowing hundreds of characters of prose to reach a later real row.
 const ROW_RE =
-  /^\s*\d{1,3}\s+(.+?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)\s*$/i;
+  /(?<![\d,.])\d{1,3}\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
 
 const TX_TYPE_MAP: Record<string, TxType> = {
   purchase: 'B',
@@ -109,16 +138,31 @@ async function extractPdfText(
 
 /** Parse the merged 278-T text into ParsedTx[]. Pure / unit-testable. */
 export function parseOgeTransactionRows(text: string): ParsedTx[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+  // Fold NUL bytes, non-breaking spaces, and every run of whitespace
+  // (including real newlines, when the runtime's pdf.js DOES emit them) down
+  // to single spaces, so the same global scan below is correct regardless of
+  // whether rows arrived newline-separated or all on one line.
+  const normalized = text
+    .replace(/\u0000/g, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return [];
+
+  // Prefer scanning only after the table header (see TABLE_HEADER_RE above);
+  // fall back to the whole text if the header wasn't found (a format variant
+  // this module hasn't seen), relying on ROW_RE's own length cap + required
+  // suffix as the safety net in that case.
+  const headerMatch = TABLE_HEADER_RE.exec(normalized);
+  const searchText = headerMatch
+    ? normalized.slice(headerMatch.index + headerMatch[0].length)
+    : normalized;
 
   const rows: ParsedTx[] = [];
-  for (const line of lines) {
-    const m = ROW_RE.exec(line);
-    if (!m) continue;
-    const [, descriptionRaw, typeWord, dateRaw, amountRaw] = m;
+  ROW_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ROW_RE.exec(searchText)) !== null) {
+    const [matchText, descriptionRaw, typeWord, dateRaw, amountRaw] = m;
     const description = descriptionRaw.trim();
     const tickerMatch = TICKER_SUFFIX_RE.exec(description);
     const ticker = tickerMatch ? normalizeTicker(tickerMatch[1]) : null;
@@ -144,11 +188,15 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
       txType,
       amountMin: min,
       amountMax: max,
-      isOption: detectOption(line),
+      isOption: detectOption(matchText),
       capGainsOver200: false,
-      rawText: line,
+      rawText: matchText.trim(),
       confidence,
     });
+    // Avoid an infinite loop on a zero-length match (shouldn't happen given
+    // ROW_RE always consumes at least the row-number + suffix, but a global
+    // regex with a zero-width overall match would otherwise stall exec()).
+    if (m.index === ROW_RE.lastIndex) ROW_RE.lastIndex += 1;
   }
   return rows;
 }

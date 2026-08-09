@@ -74,6 +74,18 @@ Criswell, Deanne - Page 3
 Website and to any person, department or agency, any waiver of the restrictions.
 `;
 
+// Verbatim response captured from the deployed production /debug-raw-text
+// diagnostic for this same filing (E-2022-deanne-criswell-07-01-2022-278t) --
+// unpdf.extractText({mergePages:true}) under the Cloudflare Workers
+// runtime, with ZERO newline characters anywhere in the whole multi-page
+// document (a real production behavior difference from Node.js, which DOES
+// insert per-row newlines for the same PDF -- see the module comment on
+// ROW_RE/TABLE_HEADER_RE). This is the regression fixture for the actual
+// incident: the original line-split implementation found 3/3 rows against
+// local Node output and 0/3 rows here, in production, against the exact
+// same source PDF.
+const CRISWELL_278T_TEXT_PRODUCTION_FLATTENED = `Criswell, Deanne - Page 1 Periodic Transaction Report | U.S. Office of Government Ethics; 5 C.F.R. part 2634 (Updated Nov. 2019) Executive Branch Personnel Public Financial Disclosure Report: Periodic Transaction Report (OGE Form 278-T) Filer's Information Criswell, Deanne Administrator, Department of Homeland Security Electronic Signature - I certify that the statements I have made in this form are true, complete and correct to the best of my knowledge. /s/ Criswell, Deanne [electronically signed on 07/01/2022 by Criswell, Deanne in Integrity.gov] Agency Ethics Official's Opinion - On the basis of information contained in this report, I conclude that the filer is in compliance with applicable laws and regulations (subject to any comments below). /s/ O'Connor, Michael, Certifying Official [electronically signed on 08/05/2022 by O'Connor, Michael in Integrity.gov] Other review conducted by /s/ Phillips, Christina, Ethics Official [electronically signed on 08/02/2022 by Phillips, Christina in Integrity.gov] U.S. Office of Government Ethics Certification /s/ Granahan, Megan, Certifying Official [electronically signed on 09/01/2022 by Granahan, Megan in Integrity.gov] Transactions Criswell, Deanne - Page 2 Endnotes Summary of Contents The 278-T discloses purchases, sales, or exchanges of securities in excess of $1,000 made on behalf of the filer, the filer's spouse, or dependent child. Transactions are required to be disclosed within 30 days of receiving notification of a transaction but not later than 45 days after the transaction. Filers need not disclose (1) mutual funds and other excepted investment funds; (2) certificates of deposit, savings or checking accounts, and money market accounts; (3) U.S. Treasury bills, notes, and bonds; (4) Thrift Savings Plan accounts; (5) real property; and (6) transactions that are solely by and between the filer, the filer's spouse, and the filer's dependent children. Privacy Act Statement Title I of the Ethics in Government Act of 1978, as amended (the Act), 5 U.S.C. app. § 101 et seq., as amended by the Stop Trading on Congressional Knowledge Act of 2012 (Pub. L. 112-105) (STOCK Act), and 5 C.F.R. Part 2634 of the U. S. Office of Government Ethics regulations require the reporting of this information. Failure to provide the requested information may result in separation, disciplinary action, or civil action. The primary use of the information on this report is for review by Government officials to determine compliance with applicable Federal laws and regulations. This report may also be disclosed upon request to any requesting person in accordance with sections 105 and 402(b)(1) of the Act or as otherwise authorized by law. You may inspect applications for public access of your own form upon request. Additional disclosures of the information on this report may be made: (1) to any requesting person, subject to the limitation contained in section 208(d)(1) of title 18, any determination granting an exemption pursuant to sections 208(b)(1) and 208(b)(3) of title 18; (2) to a Federal, State, or local law enforcement agency if the disclosing agency becomes aware of violations or potential violations of law or regulation; (3) to a source when necessary to obtain information relevant to a conflict of interest investigation or determination; (4) to the National Archives and Records Administration or the General Services Administration in records management inspections; (5) to the Office of Management and Budget during legislative coordination on private relief legislation; (6) when the disclosing agency determines that the records are arguably relevant to a proceeding before a court, grand jury, or administrative or adjudicative body, or in a proceeding before an administrative or adjudicative body when the adjudicator determines the records to be relevant to the proceeding; (7) to reviewing officials in a new office, department or agency when an employee transfers or is detailed from one covered position to another, a public financial disclosure report and any accompanying documents, including statements notifying an employee's supervising ethics office of the commencement of negotiations for future employment or compensation or of an agreement for future employment or compensation; (8) to a Member of Congress or a congressional office in response to an inquiry made on behalf of and at the request of an individual who is the subject of the record; (9) to contractors and other non-Government employees working on a contract, service or assignment for the Federal Government when necessary to accomplish a function related to this system of records; (10) on the OGE Website and to any person, department or agency, any written ethics agreement, including certifications of ethics agreement compliance, filed with OGE by an individual nominated by the President to a position requiring Senate confirmation; (11) on the OGE Website and to any person, department or agency, any certificate of divestiture issued by OGE; (12) on the OGE # DESCRIPTION TYPE DATE NOTIFICATION RECEIVED OVER 30 DAYS AGO AMOUNT 1 Amazon.com, Inc. (AMZN) Sale 06/10/2022 No $1,001 - $15,000 2 SPDR S&P 500 ETF Trust (SPY) Purchase 06/13/2022 No $1,001 - $15,000 3 Invesco QQQ Trust, Series 1 (QQQ) Purchase 06/13/2022 No $1,001 - $15,000 Criswell, Deanne - Page 3 Website and to any person, department or agency, any waiver of the restrictions contained in Executive Order 13770 or any superseding executive order; (13) to appropriate agencies, entities and persons when there has been a suspected or confirmed breach of the system of records, the agency maintaining the records has determined that there is a risk of harm to individuals, the agency, the Federal Government, or national security, and the disclosure is reasonably necessary to assist in connection with the agency's efforts to respond to the suspected or confirmed breach or to prevent, minimize, or remedy such harm; and (14) to another Federal agency or Federal entity, when the agency maintaining the record determines that information from this system of records is reasonably necessary to assist the recipient agency or entity in responding to a suspected or confirmed breach or in preventing, minimizing, or remedying the risk of harm to individuals, the recipient agency or entity, the Federal Government, or national security. See also the OGE/GOVT-1 executive branch-wide Privacy Act system of records.`;
+
 describe('parseOgeTransactionRows', () => {
   it('parses all three rows from a real 278-T text extraction, ignoring preamble/footer prose', () => {
     const rows = parseOgeTransactionRows(CRISWELL_278T_TEXT);
@@ -106,6 +118,42 @@ describe('parseOgeTransactionRows', () => {
       amountMin: 1001,
       amountMax: 15000,
     });
+  });
+
+  it('parses all three rows from the real, verbatim PRODUCTION text (single line, zero newlines) -- regression guard for the newline-flattening incident', () => {
+    const rows = parseOgeTransactionRows(CRISWELL_278T_TEXT_PRODUCTION_FLATTENED);
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({
+      assetName: 'Amazon.com, Inc.',
+      ticker: 'AMZN',
+      txType: 'S',
+      txDate: '2022-06-10',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+    expect(rows[1]).toMatchObject({
+      assetName: 'SPDR S&P 500 ETF Trust',
+      ticker: 'SPY',
+      txType: 'B',
+      txDate: '2022-06-13',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+    expect(rows[2]).toMatchObject({
+      assetName: 'Invesco QQQ Trust, Series 1',
+      ticker: 'QQQ',
+      txType: 'B',
+      txDate: '2022-06-13',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+    // None of the surrounding legal boilerplate's own "<digit> <word>"
+    // sequences (e.g. "5 U.S.C. app. section 101 et seq.", "(1) mutual
+    // funds...", page numbers) produced a spurious extra row.
+    for (const row of rows) {
+      expect(row.assetName.length).toBeLessThan(60);
+    }
   });
 
   it('handles an Exchange row and an open-ended top-tier amount', () => {
