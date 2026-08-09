@@ -356,6 +356,8 @@ export interface ResolvedDesyncSweepResult {
  *
  * This sweep owns exactly that population: it does NOT re-open, re-fetch, or
  * re-extract anything (the review outcome stands) — it only stamps the terminal
+ * status. Provider-missing placeholder rows are excluded: they legitimately sit
+ * in needs_review awaiting an official document and are not stuck filings.
  * status the resolution should have written, so operational queries and the
  * health signal stop lying. Idempotent and bounded.
  */
@@ -375,10 +377,11 @@ export async function sweepResolvedStatusDesync(
                     WHERE t.doc_id = f.doc_id AND t.deprecated_at IS NULL) AS has_tx
        FROM filings f
       WHERE (f.ingest_status IN (${statusPlaceholders}) OR f.ingest_status = 'needs_review')
+        AND f.doc_id NOT LIKE ?
         AND EXISTS (SELECT 1 FROM review_queue rq
                      WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)
       LIMIT ?`,
-    [...STRANDABLE_STATUSES, limit],
+    [...STRANDABLE_STATUSES, PROVIDER_MISSING_PREFIX, limit],
   );
 
   let reconciled = 0;

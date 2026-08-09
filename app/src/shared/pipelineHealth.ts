@@ -370,6 +370,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       `SELECT COUNT(*) AS n
          FROM filings f
         WHERE f.ingest_status = 'needs_review'
+          AND f.doc_id NOT LIKE 'provider-missing-%'
           AND NOT EXISTS (
             SELECT 1 FROM review_queue rq WHERE rq.doc_id = f.doc_id AND rq.resolved = 0
           )`,
@@ -408,6 +409,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       env.DB,
       `SELECT COUNT(*) AS n FROM filings f
         WHERE f.ingest_status IN ('new','fetched','classified','extraction_pending_local','needs_review')
+          AND f.doc_id NOT LIKE 'provider-missing-%'
           AND EXISTS (SELECT 1 FROM review_queue rq WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)`,
     );
     strandedFilings += Number(desync?.n ?? 0);

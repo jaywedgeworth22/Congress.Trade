@@ -944,6 +944,22 @@ export const REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS = [
     WHERE resolved = 1
       AND resolution_kind IS NULL
       AND (reason LIKE 'rejected:%' OR reason = 'orphan_filing_deleted')`,
+  // Remaining legacy rows (the ~950 that predate resolution_kind and match
+  // neither rule above): they were resolved with no live transactions and no
+  // 'rejected:' marker, i.e. closed as empty without ever recording why. That
+  // is a true statement we CAN make honestly — classify them as verified_empty
+  // with a reason naming the backfill, so review_resolution_integrity reports
+  // the real ongoing state instead of a permanent legacy number nobody can act
+  // on. Only ever touches rows still NULL, so it is idempotent.
+  `UPDATE review_queue
+      SET resolution_kind = 'verified_empty',
+          resolution_reason = COALESCE(
+            NULLIF(resolution_reason, ''),
+            'legacy backfill 2026-08-09: resolved before resolution_kind existed; no live transactions at backfill time'
+          ),
+          resolved_at = COALESCE(resolved_at, created_at)
+    WHERE resolved = 1
+      AND resolution_kind IS NULL`,
   // Ongoing sweep (originally PR #1180, previously living unconditionally in
   // CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS / migration 0067's mirror — moved
   // here, after resolution_kind/resolution_reason exist, because
