@@ -31,6 +31,7 @@
 		97517A2B33E5482E86A318B5 /* PeopleDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D58DC901FA6490EB7CEBB28 /* PeopleDirectoryView.swift */; };
 		7F8000010000000000000007 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000006 /* AppleSignIn.swift */; };
 		F50DFBB7356AAE99705B681E /* ManageSubscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71C91980D0DFD4B129C99CDC /* ManageSubscription.swift */; };
+		C11BDCC769F60D313590590E /* MemberDirectorySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		0D58DC901FA6490EB7CEBB28 /* PeopleDirectoryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PeopleDirectoryView.swift; path = Views/People/PeopleDirectoryView.swift; sourceTree = "<group>"; };
 		7F8000010000000000000006 /* AppleSignIn.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleSignIn.swift; path = Store/AppleSignIn.swift; sourceTree = "<group>"; };
 		71C91980D0DFD4B129C99CDC /* ManageSubscription.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ManageSubscription.swift; path = Store/ManageSubscription.swift; sourceTree = "<group>"; };
+		9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MemberDirectorySearch.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +132,7 @@
 				5A1000010000000000000012 /* APIClient.swift */,
 				5A1000010000000000000013 /* Models.swift */,
 				5A1000010000000000000014 /* KeychainTokenStore.swift */,
+				9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */,
 				22EA0601D7D0B9B96A739A93 /* Store */,
 				2C19828CDAFE62F809DF6C27 /* App.swift */,
 				D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */,
@@ -332,6 +335,7 @@
 				97517A2B33E5482E86A318B5 /* PeopleDirectoryView.swift in Sources */,
 				7F8000010000000000000007 /* AppleSignIn.swift in Sources */,
 				F50DFBB7356AAE99705B681E /* ManageSubscription.swift in Sources */,
+				C11BDCC769F60D313590590E /* MemberDirectorySearch.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
