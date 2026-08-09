@@ -5243,6 +5243,49 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // --- GET /debug-raw-text/:id ----------------------------------------------
+  // Diagnostic-only, read-only: fetches the filing's raw R2 bytes and, for PDFs,
+  // runs the SAME unpdf.extractText({mergePages:true}) call every text-layer
+  // extractor (textPdf/ogeText) uses, returning a bounded snippet. Exists to
+  // debug "extractor picked correctly but yielded 0 rows" cases (a stored R2
+  // copy that differs from the live source, an unexpected OCR text layer,
+  // etc.) without guessing from ExtractorResult.raw, which extractParsed()
+  // deliberately drops before returning (see /debug-extract/:id above).
+  // Query: ?limit=<chars> (default 4000, max 20000).
+  r.get('/debug-raw-text/:id', async (c) => {
+    try {
+      const filing = await loadFilingRow(c.env, c.req.param('id'));
+      if (!filing) return c.json({ error: 'no filing' });
+      if (!filing.raw_object_key) return c.json({ error: 'no rawObjectKey', filing });
+      const obj = await c.env.RAW_FILES.get(filing.raw_object_key);
+      if (!obj) return c.json({ error: 'no r2 object', filing });
+      const bytes = await obj.arrayBuffer();
+      const limitParam = Number(c.req.query('limit'));
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 20000) : 4000;
+      const isPdf = new Uint8Array(bytes.slice(0, 5)).every(
+        (b, i) => b === [0x25, 0x50, 0x44, 0x46, 0x2d][i],
+      );
+      if (!isPdf) {
+        const text = new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+        return c.json({ docId: filing.doc_id, byteLength: bytes.byteLength, isPdf: false, text: text.slice(0, limit) });
+      }
+      const { getDocumentProxy, extractText } = await import('unpdf');
+      const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
+      const { text } = await extractText(pdf, { mergePages: true });
+      const merged = typeof text === 'string' ? text : (text as string[]).join('\n');
+      return c.json({
+        docId: filing.doc_id,
+        byteLength: bytes.byteLength,
+        isPdf: true,
+        pageCount: typeof pdf.numPages === 'number' ? pdf.numPages : null,
+        textLength: merged.length,
+        text: merged.slice(0, limit),
+      });
+    } catch (e) {
+      return c.json({ error: (e as Error).message });
+    }
+  });
+
   r.get('/debug-members', async (c) => {
     try {
       const members = await all(c.env.DB, "SELECT bioguide_id, full_name, chamber FROM filers WHERE full_name LIKE '%Manual%' OR full_name LIKE '%manual%' LIMIT 10", []);
