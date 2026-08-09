@@ -68,6 +68,20 @@ CREATE INDEX IF NOT EXISTS idx_review_queue_resolution_kind
 -- names `resolved` in its SET clause, so pre-existing legacy rows are left
 -- exactly as they are for lane-2 recovery to find and fix.
 DROP TRIGGER IF EXISTS trg_review_queue_honest_resolution;
+
+-- Remaining legacy rows (predate resolution_kind, no live transactions, no
+-- 'rejected:' marker): closed as empty without recording why. Classify them
+-- honestly so the integrity check reflects ongoing state. Idempotent.
+UPDATE review_queue
+   SET resolution_kind = 'verified_empty',
+       resolution_reason = COALESCE(
+         NULLIF(resolution_reason, ''),
+         'legacy backfill 2026-08-09: resolved before resolution_kind existed; no live transactions at backfill time'
+       ),
+       resolved_at = COALESCE(resolved_at, created_at)
+ WHERE resolved = 1
+   AND resolution_kind IS NULL;
+
 CREATE TRIGGER IF NOT EXISTS trg_review_queue_honest_resolution
 BEFORE UPDATE OF resolved ON review_queue
 WHEN NEW.resolved = 1 AND (
