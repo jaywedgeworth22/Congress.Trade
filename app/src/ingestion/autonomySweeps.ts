@@ -336,9 +336,82 @@ export async function sweepOgeUndatedFilingDates(
   return { updated, attempted };
 }
 
+export interface ResolvedDesyncSweepResult {
+  scanned: number;
+  reconciled: number;
+}
+
+/**
+ * Reconcile filings whose review_queue row says resolved=1 while
+ * filings.ingest_status is still non-terminal.
+ *
+ * WHY THIS EXISTS (the blind spot the #1579 verifier caught): every other
+ * safety net here — the classifier/fetcher no-op guard, the ceiling sweep, the
+ * stranded sweep, and pipelineHealth's stranded_filings check — deliberately
+ * excludes `resolved = 1` rows so a closed-out filing is never revived. That
+ * assumes resolved=1 implies a terminal ingest_status. Production disproved it:
+ * 562 rows (268 extraction_pending_local + 114 classified + 180 needs_review)
+ * are ALL resolved=1 yet frozen at a pre-resolution status, so they were
+ * invisible to every sweep AND to the health check built to surface them.
+ *
+ * This sweep owns exactly that population: it does NOT re-open, re-fetch, or
+ * re-extract anything (the review outcome stands) — it only stamps the terminal
+ * status the resolution should have written, so operational queries and the
+ * health signal stop lying. Idempotent and bounded.
+ */
+export async function sweepResolvedStatusDesync(
+  env: Env,
+  now = new Date(),
+  opts: { limit?: number } = {},
+): Promise<ResolvedDesyncSweepResult> {
+  const limit = opts.limit ?? 500;
+  const nowIso = now.toISOString();
+  const statusPlaceholders = STRANDABLE_STATUSES.map(() => '?').join(',');
+
+  const rows = await all<{ doc_id: string; ingest_status: string; has_tx: number }>(
+    env.DB,
+    `SELECT f.doc_id, f.ingest_status,
+            EXISTS(SELECT 1 FROM transactions t
+                    WHERE t.doc_id = f.doc_id AND t.deprecated_at IS NULL) AS has_tx
+       FROM filings f
+      WHERE (f.ingest_status IN (${statusPlaceholders}) OR f.ingest_status = 'needs_review')
+        AND EXISTS (SELECT 1 FROM review_queue rq
+                     WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)
+      LIMIT ?`,
+    [...STRANDABLE_STATUSES, limit],
+  );
+
+  let reconciled = 0;
+  for (const row of rows) {
+    // A resolved filing that produced trades is 'published'; one resolved with
+    // no trades (rejected / verified-empty) is terminal 'error' so it stays
+    // visible to the same operational queries as any other dead end.
+    const terminal = row.has_tx ? 'published' : 'error';
+    const res = await run(
+      env.DB,
+      `UPDATE filings
+          SET ingest_status = ?,
+              error = CASE WHEN ? = 'error'
+                           THEN COALESCE(error, ?)
+                           ELSE error END
+        WHERE doc_id = ? AND ingest_status = ?`,
+      [
+        terminal,
+        terminal,
+        `autonomy-sweep: review resolved with no extracted transactions; status reconciled ${nowIso}`,
+        row.doc_id,
+        row.ingest_status,
+      ],
+    );
+    if (res.meta?.changes) reconciled += 1;
+  }
+  return { scanned: rows.length, reconciled };
+}
+
 export interface AutonomySweepResult {
   ceiling: CeilingSweepResult | null;
   stranded: StrandedSweepResult | null;
+  resolvedDesync: ResolvedDesyncSweepResult | null;
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
   errors: string[];
@@ -359,6 +432,7 @@ export async function runAutonomySweeps(
   const result: AutonomySweepResult = {
     ceiling: null,
     stranded: null,
+    resolvedDesync: null,
     filedDateBackfill: null,
     ogeUndated: null,
     errors,
@@ -379,6 +453,13 @@ export async function runAutonomySweeps(
     result.stranded = await sweepStrandedFilings(env, now);
   } catch (err) {
     errors.push(`stranded: ${(err as Error).message}`);
+  }
+
+  try {
+    throwIfAborted();
+    result.resolvedDesync = await sweepResolvedStatusDesync(env, now);
+  } catch (err) {
+    errors.push(`resolvedDesync: ${(err as Error).message}`);
   }
 
   try {
