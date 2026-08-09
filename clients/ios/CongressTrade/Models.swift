@@ -774,18 +774,6 @@ enum JSONValue: Codable, Hashable {
     }
 }
 
-enum TradeSearch {
-    static func matches(_ trade: ClientTrade, normalizedNeedle: String) -> Bool {
-        [
-            trade.asset.ticker,
-            trade.asset.name,
-            trade.member.name,
-            trade.member.state,
-            trade.member.chamber
-        ].contains { ($0 ?? "").lowercased().contains(normalizedNeedle) }
-    }
-}
-
 struct LatencyProvider: Decodable, Identifiable {
     let id: String
     let label: String

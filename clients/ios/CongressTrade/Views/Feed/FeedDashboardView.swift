@@ -128,6 +128,7 @@ struct FeedDashboardView: View {
                         onClear: {
                             searchText = ""
                             Task {
+                                await store.setSearch(nil)
                                 await store.setPoliticianFilter("")
                                 await store.setAssetFilter("")
                             }
@@ -232,7 +233,7 @@ struct FeedDashboardView: View {
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("Done") { focusedField = nil }
+                    Button("Done") { searchFocused = false }
                 }
             }
             .refreshable { await store.refresh() }
@@ -290,23 +291,9 @@ struct FeedDashboardView: View {
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
             }
-            .onChange(of: politicianText) { _, newValue in
-                scheduleFilterApply {
-                    await store.setPoliticianFilter(newValue)
-                }
-            }
-            .onChange(of: assetText) { _, newValue in
-                scheduleFilterApply {
-                    await store.setAssetFilter(newValue)
-                }
-            }
             .onDisappear { filterTask?.cancel() }
-            .onAppear {
-                politicianText = store.politicianFilter
-                assetText = store.assetFilter
-            }
             .simultaneousGesture(
-                TapGesture().onEnded { focusedField = nil }
+                TapGesture().onEnded { searchFocused = false }
             )
         }
     }
@@ -317,6 +304,26 @@ struct FeedDashboardView: View {
             try? await Task.sleep(for: .milliseconds(320))
             guard !Task.isCancelled else { return }
             await work()
+        }
+    }
+
+    /// Submit path for the unified search field: reaches the server via
+    /// `CongressTradeStore.setSearch` (ticker-vs-politician-name heuristic
+    /// lives in `CongressTradeStore.looksLikeTicker`) immediately, rather
+    /// than waiting for the typing debounce below.
+    private func applyUnifiedSearch() {
+        filterTask?.cancel()
+        Task { await store.setSearch(searchText) }
+    }
+
+    /// Typing itself only needs the already-loaded page's local re-filter
+    /// (`filteredTrades`, via `TradeSearch.matches`, recomputes automatically
+    /// off `searchText` — no explicit trigger needed); this debounce is
+    /// purely so a pause in typing also reaches the server, same 320ms
+    /// pattern `scheduleFilterApply` used for the old per-field search.
+    private func scheduleSearchDebounce() {
+        scheduleFilterApply { [searchText] in
+            await store.setSearch(searchText)
         }
     }
 
@@ -750,68 +757,32 @@ struct FilterMenuLabel: View {
     }
 }
 
-/// Trades-only Name + Asset/Ticker fields under the shared filter bar —
-/// side-by-side on one row, each just under half width, no leading symbols
-/// (owner punch list item 4).
-struct TradesExtraFilters: View {
-    @Binding var politicianText: String
-    @Binding var assetText: String
-    var focusedField: FocusState<TradeFilterField?>.Binding
-    var onPoliticianSubmit: () -> Void
-    var onAssetSubmit: () -> Void
-    var onPoliticianClear: () -> Void
-    var onAssetClear: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            CompactFilterField(
-                text: $politicianText,
-                placeholder: "Name",
-                focused: focusedField,
-                field: .politician,
-                onSubmit: onPoliticianSubmit,
-                onClear: onPoliticianClear
-            )
-            .accessibilityLabel("Filter by politician name")
-            CompactFilterField(
-                text: $assetText,
-                placeholder: "Asset / Ticker",
-                focused: focusedField,
-                field: .asset,
-                autocap: true,
-                onSubmit: onAssetSubmit,
-                onClear: onAssetClear
-            )
-            .accessibilityLabel("Filter by asset or ticker")
-        }
-    }
-}
-
-struct CompactFilterField: View {
+/// Trades-only unified search field (name / ticker / state / party, any
+/// order) — replaces the old side-by-side Name + Asset/Ticker fields.
+/// `TradeSearch.matches` (`MemberDirectorySearch.swift`) does the actual
+/// any-order token matching against the already-loaded page; submitting or
+/// pausing while typing (`FeedDashboardView.scheduleSearchDebounce`) also
+/// reaches the server via `CongressTradeStore.setSearch`.
+struct TradesUnifiedSearchField: View {
     @Binding var text: String
-    let placeholder: String
-    var focused: FocusState<TradeFilterField?>.Binding
-    let field: TradeFilterField
-    var autocap: Bool = false
+    var focused: FocusState<Bool>.Binding
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 6) {
-            Group {
-                if autocap {
-                    TextField(placeholder, text: $text)
-                        .tickerAutocapitalized()
-                } else {
-                    TextField(placeholder, text: $text)
-                        .neverAutocapitalized()
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Name, ticker, state, or party", text: $text)
+                .neverAutocapitalized()
+                .autocorrectionDisabled()
+                .font(.subheadline)
+                .focused(focused)
+                .submitLabel(.search)
+                .onSubmit {
+                    onSubmit()
+                    focused.wrappedValue = false
                 }
-            }
-            .font(.subheadline)
-            .autocorrectionDisabled()
-            .focused(focused, equals: field)
-            .submitLabel(.search)
-            .onSubmit(onSubmit)
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
@@ -820,15 +791,15 @@ struct CompactFilterField: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
-                .accessibilityLabel("Clear")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear Search")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
+        .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
         .overlay(AppTheme.border(cornerRadius: 12))
+        .accessibilityLabel("Search trades by politician name, ticker, state, or party")
     }
 }
 
