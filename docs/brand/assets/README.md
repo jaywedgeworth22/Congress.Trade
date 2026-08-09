@@ -38,4 +38,4 @@
 - Web `app/public/{icon-192,icon-512,apple-touch-icon,favicon}.png` ← **transparent** mark (`?v=10`)
 - iOS `BrandLockup` ← light (black letters) + dark (white letters)
 - iOS `BrandLogo` ← transparent eagle mark (in-app; alpha OK)
-- iOS `AppIcon` ← **opaque** owner 1024×1024 plate only
+- iOS `AppIcon` ← **opaque** owner 1024×1024 plate (light bg + soft shadow); web icons stay transparent
