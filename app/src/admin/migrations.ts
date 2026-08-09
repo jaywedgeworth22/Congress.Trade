@@ -676,10 +676,13 @@ export const FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS = [
 ] as const;
 
 // 0067_clean_ocr_dot_leader_asset_names.sql — clean OCR dot leaders from asset_name and save audit note.
+// Owner 2026-08-09: cleaning_note strings are concise plain-English fragments
+// (no title case, no internal table names). New writes + a rewrite pass at the
+// end of this list keep API/UI/export consistent without a one-shot only.
 export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
   'ALTER TABLE transactions ADD COLUMN cleaning_note TEXT',
   `UPDATE transactions
-      SET cleaning_note = 'Cleaned OCR dot leader noise (Original: ' || asset_name || ')',
+      SET cleaning_note = 'cleaned OCR noise from asset name',
           asset_name = NULL
     WHERE asset_name IN (
        '..', '...', '....', '.....', '......', '.......', '........', '.........', '..........',
@@ -690,14 +693,14 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
        '..........................', '...........................', '.................',
        '.....]', '......s', '..........A', '..o', '...................0', '...................e', '.............e'
     )`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'ARCC' WHERE asset_name LIKE 'ARCC .%'`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'NVDA' WHERE asset_name LIKE 'NVDA .%'`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'XOM' WHERE asset_name LIKE 'XOM .%'`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'BAC' WHERE asset_name LIKE 'BAC .%'`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'FMAO' WHERE asset_name LIKE 'FMAO .%'`,
-  `UPDATE transactions SET cleaning_note = 'Stripped OCR dot leader suffix (Original: ' || asset_name || ')', asset_name = 'HD' WHERE asset_name LIKE 'HD .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'ARCC' WHERE asset_name LIKE 'ARCC .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'NVDA' WHERE asset_name LIKE 'NVDA .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'XOM' WHERE asset_name LIKE 'XOM .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'BAC' WHERE asset_name LIKE 'BAC .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'FMAO' WHERE asset_name LIKE 'FMAO .%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name', asset_name = 'HD' WHERE asset_name LIKE 'HD .%'`,
   `UPDATE transactions
-      SET cleaning_note = 'Cleaned junk OCR text (Original: ' || asset_name || ')',
+      SET cleaning_note = 'removed junk OCR from asset name',
           asset_name = NULL
     WHERE (asset_name LIKE '...%' OR asset_name LIKE '%...' OR asset_name LIKE '%....%')
       AND cleaning_note IS NULL`,
@@ -712,11 +715,20 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
   // — see that block for why it can't stay here).
   `UPDATE transactions
       SET asset_name = (SELECT sr.company_name FROM securities_ref sr WHERE sr.ticker = transactions.ticker),
-          cleaning_note = COALESCE(cleaning_note, 'Populated official company name from securities_ref')
+          cleaning_note = COALESCE(cleaning_note, 'asset name derived from ticker')
     WHERE ticker IS NOT NULL
       AND ticker != ''
       AND EXISTS (SELECT 1 FROM securities_ref sr WHERE sr.ticker = transactions.ticker AND sr.company_name IS NOT NULL AND sr.company_name != '')
       AND (asset_name IS NULL OR asset_name = '' OR asset_name = '(unknown)' OR asset_name = ticker OR asset_name LIKE '%..%')`,
+  // Rewrite legacy technical notes already stored (idempotent).
+  `UPDATE transactions SET cleaning_note = 'asset name derived from ticker'
+    WHERE cleaning_note = 'Populated official company name from securities_ref'`,
+  `UPDATE transactions SET cleaning_note = 'cleaned OCR noise from asset name'
+    WHERE cleaning_note LIKE 'Cleaned OCR dot leader noise%'`,
+  `UPDATE transactions SET cleaning_note = 'removed OCR noise from asset name'
+    WHERE cleaning_note LIKE 'Stripped OCR dot leader suffix%'`,
+  `UPDATE transactions SET cleaning_note = 'removed junk OCR from asset name'
+    WHERE cleaning_note LIKE 'Cleaned junk OCR text%'`,
 ] as const;
 
 /**

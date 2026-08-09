@@ -75,6 +75,34 @@ export function asTxType(v: string | undefined): TxType | undefined {
   return v === 'S' || v === 'E' ? v : undefined;
 }
 
+/** CSV multi-type selection (e.g. "B,S"); undefined = no type filter. */
+export function asTxTypes(v: string | undefined): TxType[] | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asTxType(part.trim())).filter((t): t is TxType => !!t)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
+function asPartyBucket(v: string): 'D' | 'R' | 'O' | undefined {
+  const c = v.trim().charAt(0).toUpperCase();
+  return c === 'D' ? 'D' : c === 'R' ? 'R' : c === 'O' || c === 'I' ? 'O' : undefined;
+}
+
+/** CSV multi-party-bucket selection (e.g. "D,R"); undefined = no party filter. */
+export function asPartyBuckets(v: string | undefined): Array<'D' | 'R' | 'O'> | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(
+      v
+        .split(',')
+        .map((part) => asPartyBucket(part))
+        .filter((c): c is 'D' | 'R' | 'O' => !!c),
+    ),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
 export function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
   return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
 }
@@ -138,13 +166,18 @@ export function publicSubscription(sub: Subscription, includeSecret = false): Re
 }
 
 export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
+  const types = asTxTypes(q.type);
   return {
     since: parseIntOrUndef(q.since),
     ticker: q.ticker || undefined,
     member: q.member || undefined,
     memberName: q.memberName || undefined,
     chambers: asChambers(q.chamber),
-    type: asTxType(q.type),
+    // Multi-select `?type=B,S` when present; single-value still works via types[0]
+    // path inside the query builder.
+    type: types?.length === 1 ? types[0] : asTxType(q.type),
+    types: types && types.length > 1 ? types : undefined,
+    partyBuckets: asPartyBuckets(q.party),
     minAmount: asNonNegativeNumber(q.minAmount),
     maxAmount: asNonNegativeNumber(q.maxAmount),
     txDateMin: q.from || q.txDateMin || undefined,

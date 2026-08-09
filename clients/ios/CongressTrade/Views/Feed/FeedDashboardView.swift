@@ -2,15 +2,10 @@ import SwiftUI
 import SwiftData
 import UIKit
 
-enum TradeFilterField: Hashable {
-    case politician, asset
-}
-
 struct FeedDashboardView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Query private var cachedTrades: [ClientTrade]
-    @State private var politicianText = ""
-    @State private var assetText = ""
+    @State private var searchText = ""
     @State private var filterTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
     @State private var selectedPoliticianId: String?
@@ -22,7 +17,7 @@ struct FeedDashboardView: View {
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
     @State private var showExportSheet = false
-    @FocusState private var focusedField: TradeFilterField?
+    @FocusState private var searchFocused: Bool
 
     /// Orders the loaded page per the active Trades sort control (owner
     /// punch list #2, item 7). Date is a real backend sort key — the server
@@ -57,8 +52,7 @@ struct FeedDashboardView: View {
     }
 
     var filteredTrades: [ClientTrade] {
-        let politicianNeedle = politicianText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let assetNeedle = assetText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let searchNeedle = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let chambers = store.selectedChambers
         let filteringChambers = !chambers.isEmpty
         let fromISO = store.selectedTimeRange.fromDateISO
@@ -102,18 +96,10 @@ struct FeedDashboardView: View {
                 }
             }
 
-            if !politicianNeedle.isEmpty {
-                let name = (trade.member.name ?? "").lowercased()
-                let state = (trade.member.state ?? "").lowercased()
-                if !name.contains(politicianNeedle) && !state.contains(politicianNeedle) {
-                    return false
-                }
-            }
-
-            if !assetNeedle.isEmpty {
-                let ticker = (trade.asset.ticker ?? "").lowercased()
-                let name = (trade.asset.name ?? "").lowercased()
-                if !ticker.contains(assetNeedle) && !name.contains(assetNeedle) {
+            // Unified multi-token search (any order): each token may match
+            // politician name, ticker, asset name, state, or party.
+            if !searchNeedle.isEmpty {
+                if !TradeSearch.matches(trade, query: searchNeedle) {
                     return false
                 }
             }
@@ -122,8 +108,7 @@ struct FeedDashboardView: View {
     }
 
     private var hasActiveTextFilter: Bool {
-        !politicianText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !assetText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -135,24 +120,22 @@ struct FeedDashboardView: View {
                     // Shared filters (also on Trends) — chamber / party / sides / timeframe.
                     FeedControlBar()
 
-                    // Trades-only extras: politician, asset, type is already in shared bar as Sides.
-                    TradesExtraFilters(
-                        politicianText: $politicianText,
-                        assetText: $assetText,
-                        focusedField: $focusedField,
-                        onPoliticianSubmit: {
-                            Task { await store.setPoliticianFilter(politicianText) }
-                        },
-                        onAssetSubmit: {
-                            Task { await store.setAssetFilter(assetText) }
-                        },
-                        onPoliticianClear: {
-                            Task { await store.setPoliticianFilter("") }
-                        },
-                        onAssetClear: {
-                            Task { await store.setAssetFilter("") }
+                    // Single unified search (name / ticker / state / party, any order).
+                    TradesUnifiedSearchField(
+                        text: $searchText,
+                        focused: $searchFocused,
+                        onSubmit: { applyUnifiedSearch() },
+                        onClear: {
+                            searchText = ""
+                            Task {
+                                await store.setPoliticianFilter("")
+                                await store.setAssetFilter("")
+                            }
                         }
                     )
+                    .onChange(of: searchText) { _, _ in
+                        scheduleSearchDebounce()
+                    }
 
                     HStack(spacing: 8) {
                         FeedSortControl()
