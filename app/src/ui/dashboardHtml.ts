@@ -100,16 +100,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta property="og:title" content="Congress.Trade" />
 <meta property="og:description" content="We ingest and publish official House &amp; Senate STOCK Act disclosures ourselves — a live congressional stock-trade feed, not a wrapper around one third-party API." />
 <meta property="og:url" content="https://congress.trade/" />
-<meta property="og:image" content="https://congress.trade/og-image.png" />
+<meta property="og:image" content="https://congress.trade/og-image.png?v=21" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Congress.Trade eagle logo on a dark background" />
+<meta property="og:image:alt" content="Congress.Trade eagle mark with stacked CONGRESS / TRADE wordmark on a light background — STOCK Act disclosures from the House, Senate, and Executive Branch" />
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Congress.Trade" />
 <meta name="twitter:description" content="First-party House &amp; Senate STOCK Act ingestion and publishing — live feed, analytics, premium webhooks. Not a single-source API reskin." />
-<meta name="twitter:image" content="https://congress.trade/og-image.png" />
+<meta name="twitter:image" content="https://congress.trade/og-image.png?v=21" />
 <!-- Icons / PWA -->
 <link rel="icon" href="/favicon.ico?v=10" sizes="32x32" />
 <link rel="icon" type="image/png" href="/icon-192.png?v=10" sizes="192x192" />

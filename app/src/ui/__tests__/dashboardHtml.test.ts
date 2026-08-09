@@ -91,7 +91,7 @@ describe('DASHBOARD_HTML', () => {
       '<title>Congress.Trade</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
-    expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
+    expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png?v=21"');
     expect(DASHBOARD_HTML).toContain('name="twitter:card" content="summary_large_image"');
   });
 
@@ -113,7 +113,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('src="/assets/brand-logo-light.png');
     expect(DASHBOARD_HTML).toContain('data-src-dark="/assets/brand-logo-dark.png');
     expect(DASHBOARD_HTML).toContain('data-src-light="/assets/brand-logo-light.png');
-    expect(DASHBOARD_HTML).toContain('content="https://congress.trade/og-image.png"');
+    expect(DASHBOARD_HTML).toContain('content="https://congress.trade/og-image.png?v=21"');
   });
 
   it('contains at least the boot + main script blocks', () => {
