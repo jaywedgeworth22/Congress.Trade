@@ -28,6 +28,16 @@ services:
     environment:
       - DENO_KV_PATH=/data/congress-trade/kv.sqlite
       - PORT=5000
+    # deno:alpine ships wget, not curl. Coolify/cmd healthchecks that call
+    # /usr/bin/curl mark the stack exited:unhealthy → public 502 even when
+    # the Deno process is fine. Use wget; keep start_period generous so
+    # first boot / migrate does not flap.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   sqlite-web:
     build: 

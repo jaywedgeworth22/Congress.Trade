@@ -578,7 +578,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .pager { margin-top:14px; justify-content:space-between; }
   .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .pager-controls button { border: none !important; border-radius: 0 !important; }
+  .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
+  .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   /* Owner punch list #6: .note's global margin-top:8px throws "Page 1 of 56"
      off-center inside the pager control box (align-items:center centers the
@@ -2147,10 +2148,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div id="tradesCards" class="trades-cards mobile-only" aria-live="polite"></div>
     <div class="row-flex pager">
       <span class="note" id="tradesCountMsg"></span>
-      <div class="pager-controls">
-        <button class="btn ghost sm" id="prevPageBtn" onclick="prevTradesPage()" title="Previous page">&lt;</button>
+      <div class="pager-controls" role="navigation" aria-label="Trades pagination">
+        <button class="btn ghost sm" id="firstPageBtn" onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
+        <button class="btn ghost sm" id="prevPageBtn" onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
         <span class="note" id="tradesPageMsg"></span>
-        <button class="btn ghost sm" id="nextPageBtn" onclick="nextTradesPage()" title="Next page">&gt;</button>
+        <button class="btn ghost sm" id="nextPageBtn" onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
+        <button class="btn ghost sm" id="lastPageBtn" onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
       </div>
       <div class="pager-tools">
         <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
@@ -3860,31 +3863,44 @@ function renderTrades() {
   syncTradesTableWidth();
 }
 
-/* "Showing X-Y of N" + previous/next controls for the bounded table page. */
+/* "1-N of total" + first/prev/next/last controls for the bounded table page. */
+function maxReachableTradesPage(total) {
+  var byTotal = Math.max(0, Math.ceil((total || 0) / tradesPageSize) - 1);
+  var byCap = Math.floor(MAX_PUBLIC_TRADES_OFFSET / tradesPageSize);
+  return Math.min(byTotal, byCap);
+}
 function updateTradesCountMsg(shown) {
   var msg = el('tradesCountMsg');
   var pageMsg = el('tradesPageMsg');
+  var first = el('firstPageBtn');
   var prev = el('prevPageBtn');
   var next = el('nextPageBtn');
+  var last = el('lastPageBtn');
   if (!realDataLoaded) {
     if (msg) msg.textContent = '';
     if (pageMsg) pageMsg.textContent = '';
+    if (first) first.disabled = true;
     if (prev) prev.disabled = true;
     if (next) next.disabled = true;
+    if (last) last.disabled = true;
     return;
   }
   var total = totalRows || shown;
   var start = total === 0 ? 0 : tradesPage * tradesPageSize + 1;
   var end = Math.min(tradesPage * tradesPageSize + shown, total);
+  var pageCount = Math.max(1, Math.ceil(total / tradesPageSize));
+  var maxPage = maxReachableTradesPage(total);
   if (msg) {
-    msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span> trades';
+    msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
   }
-  if (pageMsg) pageMsg.textContent = 'Page ' + (tradesPage + 1) + ' of ' + Math.max(1, Math.ceil(total / tradesPageSize));
+  if (pageMsg) pageMsg.textContent = 'Page ' + (tradesPage + 1) + ' of ' + pageCount;
+  if (first) first.disabled = tradesPage <= 0 || loadingPage;
   if (prev) prev.disabled = tradesPage <= 0 || loadingPage;
-  if (next) next.disabled = end >= total || loadingPage || (tradesPage + 1) * tradesPageSize > MAX_PUBLIC_TRADES_OFFSET;
+  if (next) next.disabled = tradesPage >= maxPage || end >= total || loadingPage;
+  if (last) last.disabled = tradesPage >= maxPage || end >= total || loadingPage;
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
@@ -4393,19 +4409,39 @@ function restoreFiltersFromUrl() {
 }
 
 function resetTradesPage() { tradesPage = 0; syncFilterUrl(); return fetchPage(); }
-function prevTradesPage() { if (tradesPage <= 0) return; tradesPage -= 1; fetchPage(); }
+function firstTradesPage() {
+  if (tradesPage <= 0 || loadingPage) return;
+  tradesPage = 0;
+  fetchPage();
+}
+function prevTradesPage() { if (tradesPage <= 0 || loadingPage) return; tradesPage -= 1; fetchPage(); }
 /* The server rejects public offsets beyond this depth (see
    MAX_PUBLIC_TX_OFFSET in src/security/botDefense.ts, enforced
    unconditionally in delivery/rest.ts). Interpolated, not hand-copied, so
    the pager can never 400. Deeper history is the Premium CSV export. */
 var MAX_PUBLIC_TRADES_OFFSET = ${MAX_PUBLIC_TX_OFFSET};
 function nextTradesPage() {
+  if (loadingPage) return;
   if ((tradesPage + 1) * tradesPageSize >= totalRows) return;
   if ((tradesPage + 1) * tradesPageSize > MAX_PUBLIC_TRADES_OFFSET) {
     showToast('Deeper history is available with Premium CSV export — use ⤓ Export CSV.');
     return;
   }
   tradesPage += 1;
+  fetchPage();
+}
+function lastTradesPage() {
+  if (loadingPage) return;
+  var total = totalRows || 0;
+  if (total <= 0) return;
+  var target = maxReachableTradesPage(total);
+  if (target <= tradesPage) {
+    if ((target + 1) * tradesPageSize < total) {
+      showToast('Deeper history is available with Premium CSV export — use ⤓ Export CSV.');
+    }
+    return;
+  }
+  tradesPage = target;
   fetchPage();
 }
 
