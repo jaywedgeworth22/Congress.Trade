@@ -47,18 +47,31 @@ export interface PipelineSignals {
    * production incident).
    */
   orphanedNeedsReviewCount: number | null;
+  /**
+   * Filings sitting in a non-terminal ingest_status well past every
+   * stage-specific retry window (autonomySweeps.ts's stranded-sweep
+   * threshold), i.e. rows the periodic sweep is *about* to terminalize on
+   * its next run but hasn't yet. Never null when collected — a query error
+   * fails open to 0 rather than surfacing as 'unknown', since an operator
+   * would otherwise see a permanent 'unknown' between hourly sweeps.
+   * Excludes provider-missing-% placeholder rows (working as designed) and
+   * anything already review-resolved.
+   */
+  strandedFilings: number | null;
 }
 
 export interface PipelineThresholds {
   outboxAgeMinutes: number; // default 90
   reviewBacklogWarn: number; // default 25
   txAgeHours: number; // default 96 (weekend/recess slack)
+  strandedFilingsWarn: number; // default 1 (any is worth a look; sweep clears them hourly)
 }
 
 export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   outboxAgeMinutes: 90,
   reviewBacklogWarn: 25,
   txAgeHours: 96,
+  strandedFilingsWarn: 1,
 };
 
 const STATUS_WEIGHT: Record<PipelineStatus, number> = {
@@ -244,6 +257,26 @@ export function evaluatePipelineSignals(
     });
   }
 
+  // 8. Stranded filings (autonomy sweep backstop visibility). A count here
+  // means the hourly autonomy-sweeps lane (cronLanes.ts) has, at most, one
+  // more hour to run before terminalizing these rows itself — this check
+  // exists so an operator (or an alert) sees the backlog immediately rather
+  // than only after the sweep already fired, and so a sweep that is itself
+  // failing (e.g. a bug, or the lane silently not registered) is caught
+  // before rows go stale for days.
+  if (s.strandedFilings === null) {
+    checks.push({ id: 'stranded_filings', status: 'unknown', detail: 'Stranded-filing count uncollected', value: null });
+  } else if (s.strandedFilings >= t.strandedFilingsWarn) {
+    checks.push({
+      id: 'stranded_filings',
+      status: 'degraded',
+      detail: `${s.strandedFilings} filing(s) stranded mid-pipeline past the autonomy sweep's retry window`,
+      value: s.strandedFilings,
+    });
+  } else {
+    checks.push({ id: 'stranded_filings', status: 'ok', detail: 'No stranded filings', value: 0 });
+  }
+
   for (const c of checks) {
     overall = worstStatus(overall, c.status);
   }
@@ -269,6 +302,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let latestTxCreatedAt: string | null = null;
   let dishonestResolutionCount: number | null = null;
   let orphanedNeedsReviewCount: number | null = null;
+  let strandedFilings: number | null = null;
 
   try {
     const res = await get<{ n: number; oldest: string | null }>(
@@ -343,6 +377,28 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     if (res) orphanedNeedsReviewCount = Number(res.n ?? 0);
   } catch {}
 
+  try {
+    // Mirrors autonomySweeps.ts's own eligibility windows (24h ceiling for
+    // extraction_pending_local, 10d ceiling for any other mid-pipeline
+    // status) — a non-zero count here means the hourly autonomy-sweeps lane
+    // has work queued for its next pass. Excludes provider-missing-%
+    // placeholders and already review-resolved rows, same as the sweeps.
+    const ceilingCutoff = new Date(nowMs - 24 * 3600_000).toISOString();
+    const strandedCutoff = new Date(nowMs - 10 * 86_400_000).toISOString();
+    const res = await get<{ n: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS n FROM filings f
+        WHERE f.doc_id NOT LIKE 'provider-missing-%'
+          AND NOT EXISTS (SELECT 1 FROM review_queue rq WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)
+          AND (
+            (f.ingest_status = 'extraction_pending_local' AND f.local_wait_expires_at IS NOT NULL AND f.local_wait_expires_at < ?)
+            OR (f.ingest_status IN ('new', 'fetched', 'classified', 'extraction_pending_local') AND f.first_seen_at IS NOT NULL AND f.first_seen_at < ?)
+          )`,
+      [ceilingCutoff, strandedCutoff],
+    );
+    strandedFilings = Number(res?.n ?? 0);
+  } catch {}
+
   const signals: PipelineSignals = {
     outboxPending,
     outboxOldestAt,
@@ -355,6 +411,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     latestTxCreatedAt,
     dishonestResolutionCount,
     orphanedNeedsReviewCount,
+    strandedFilings,
   };
 
   return evaluatePipelineSignals(signals, nowMs);

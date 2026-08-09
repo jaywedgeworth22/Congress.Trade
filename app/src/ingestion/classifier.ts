@@ -32,12 +32,14 @@
 import type { Env, DocKind } from '../shared/types.ts';
 import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
 import { get, run } from '../shared/db.ts';
+import { isReviewResolved } from './reviewQueueGuard.ts';
 
 interface FilingRow {
   doc_id: string;
   chamber: string | null;
   source_url: string | null;
   raw_object_key: string | null;
+  doc_kind: DocKind | null;
 }
 
 const PDF_SNIFF_BYTES = 256 * 1024; // bound the scan to the first 256KB
@@ -124,12 +126,21 @@ export async function classifyFiling(
   await lease?.assertOwned();
   const row = await get<FilingRow>(
     env.DB,
-    `SELECT doc_id, chamber, source_url, raw_object_key FROM filings WHERE doc_id = ?`,
+    `SELECT doc_id, chamber, source_url, raw_object_key, doc_kind FROM filings WHERE doc_id = ?`,
     [docId],
   );
   if (!row) {
     console.warn(`classifier: no filings row for ${docId}; skipping`);
     return 'unknown';
+  }
+  // Autonomy guard: the review process already closed this doc_id out
+  // (publish / admin reject-confirm / agreement exhaustion / provider-
+  // placeholder reconciliation). A re-triggered filing.fetched message must
+  // not clobber the terminal ingest_status it stamped. See
+  // reviewQueueGuard.ts for the full incident writeup.
+  if (await isReviewResolved(env.DB, docId)) {
+    console.warn(`classifier: ${docId} already review-resolved; skipping re-classify (no-op)`);
+    return row.doc_kind ?? 'unknown';
   }
   const key = row.raw_object_key;
   if (!key) {

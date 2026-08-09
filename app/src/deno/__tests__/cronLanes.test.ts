@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   hourlyEnrichment: vi.fn(async () => ({
     scanned: 0, enriched: 0, fmpCalls: 0, budgetRemaining: 0, remainingBacklog: false,
   })),
+  autonomySweeps: vi.fn(async () => ({
+    ceiling: { flipped: 0 }, stranded: { terminalized: 0 },
+    filedDateBackfill: { updated: 0, yearsFetched: [] }, ogeUndated: { updated: 0, attempted: 0 },
+    errors: [],
+  })),
 }));
 
 vi.mock('../../jobs.ts', () => ({
@@ -20,6 +25,10 @@ vi.mock('../../jobs.ts', () => ({
   maybeRunDailyRetentionJobs: mocks.retention,
   runHourlyEnrichmentSlice: mocks.hourlyEnrichment,
   HOURLY_ENRICHMENT_SLICE_DEADLINE_MS: 480_000,
+}));
+
+vi.mock('../../ingestion/autonomySweeps.ts', () => ({
+  runAutonomySweeps: mocks.autonomySweeps,
 }));
 
 import {
@@ -50,10 +59,10 @@ describe('daily lane cron windows', () => {
     vi.clearAllMocks();
   });
 
-  it('has five lanes with unique names, hourly schedules, off-peak minutes, and snapshot after market data', () => {
-    expect(DAILY_LANE_CRONS).toHaveLength(5);
+  it('has six lanes with unique names, hourly schedules, off-peak minutes, and snapshot after market data', () => {
+    expect(DAILY_LANE_CRONS).toHaveLength(6);
     const names = DAILY_LANE_CRONS.map((l) => l.name);
-    expect(new Set(names).size).toBe(5);
+    expect(new Set(names).size).toBe(6);
     const minuteOf = (schedule: string) => Number(schedule.split(' ')[0]);
     const minutes = DAILY_LANE_CRONS.map((l) => minuteOf(l.schedule));
     // Every lane is hourly with a fixed minute.
@@ -66,7 +75,7 @@ describe('daily lane cron windows', () => {
     }
     // Snapshot must fire after the market-data lane it captures.
     expect(minuteOf('22 * * * *')).toBeGreaterThan(minuteOf('7 * * * *'));
-    const order = ['daily-market-data', 'daily-snapshot', 'daily-filer', 'hourly-enrichment', 'daily-retention'];
+    const order = ['daily-market-data', 'daily-snapshot', 'daily-filer', 'hourly-enrichment', 'autonomy-sweeps', 'daily-retention'];
     expect(names).toEqual(order);
   });
 
@@ -84,6 +93,8 @@ describe('daily lane cron windows', () => {
     expect(mocks.retention).toHaveBeenCalledTimes(1);
     expect(mocks.hourlyEnrichment).toHaveBeenCalledTimes(1);
     expect(mocks.hourlyEnrichment.mock.calls[0][2]).toMatchObject({ deadlineMs: 480_000 });
+    expect(mocks.autonomySweeps).toHaveBeenCalledTimes(1);
+    expect(mocks.autonomySweeps.mock.calls[0][2]).toHaveProperty('signal');
   });
 });
 

@@ -26,6 +26,7 @@ import {
   runHourlyEnrichmentSlice,
   HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
 } from '../jobs.ts';
+import { runAutonomySweeps } from '../ingestion/autonomySweeps.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 
@@ -61,6 +62,16 @@ export const DAILY_LANE_CRONS: readonly DailyLaneCron[] = [
         signal,
         deadlineMs: HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
       }),
+  },
+  // Autonomy sweeps (ceiling-flip stuck extraction_pending_local, terminalize
+  // ancient stranded filings, House filed_date backfill, OGE undated-date
+  // fallback): cheap, LIMIT-bounded, no daily stamp — matches
+  // hourly-enrichment's every-hour cadence per autonomySweeps.ts's own
+  // idempotency guarantees.
+  {
+    name: 'autonomy-sweeps',
+    schedule: '42 * * * *',
+    run: (env, now, signal) => runAutonomySweeps(env, now, { signal }),
   },
   // Retention sweeps last, clear of every write-heavy lane.
   { name: 'daily-retention', schedule: '53 * * * *', run: maybeRunDailyRetentionJobs },

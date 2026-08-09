@@ -136,6 +136,30 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(sentMessages.length).toBe(1);
       expect(sentMessages[0].message).toEqual({ type: 'filing.extracted', docId: 'doc-scan-stale' });
     });
+
+    it('no-ops (does not overwrite ingest_status) when the doc is already review-resolved', async () => {
+      // Regression guard for the autonomy diagnosis 2026-08-09 finding #2:
+      // classifyFiling used to unconditionally overwrite ingest_status on
+      // every re-delivery of filing.fetched, clobbering a terminal status
+      // the review process already stamped (e.g. admin reject).
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('doc-already-rejected', 'house', 'https://example.com/scan.pdf', 'text.pdf', 'error', 'unknown', nowIso, 'rejected: bad extraction').run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('doc-already-rejected', 'rejected: bad extraction', 1, nowIso).run();
+
+      await classifyFiling(env, 'doc-already-rejected');
+
+      const row = await d1.prepare(
+        `SELECT ingest_status, error FROM filings WHERE doc_id = ?`
+      ).bind('doc-already-rejected').first<{ ingest_status: string; error: string }>();
+      expect(row?.ingest_status).toBe('error');
+      expect(row?.error).toBe('rejected: bad extraction');
+      expect(sentMessages.length).toBe(0);
+    });
   });
 
   describe('handleLocalWaitCheck queue handler', () => {
@@ -157,7 +181,11 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(sentMessages[0].message).toEqual({ type: 'filing.extracted', docId: 'doc-wait-expired' });
     });
 
-    it('does not transition non-expired extraction_pending_local filing', async () => {
+    it('does not transition non-expired extraction_pending_local filing, but reschedules a follow-up check (lost-wakeup fix)', async () => {
+      // Regression guard for the autonomy diagnosis 2026-08-09 finding #2:
+      // an early-firing check used to silently no-op with nothing ever
+      // scheduled again, stranding the filing until the hourly ceiling sweep
+      // eventually rescued it (up to ~24h later).
       const env = makeEnv();
       const futureExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
       await d1.prepare(
@@ -171,7 +199,12 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       ).bind('doc-wait-active').first<{ ingest_status: string }>();
 
       expect(row?.ingest_status).toBe('extraction_pending_local');
-      expect(sentMessages.length).toBe(0);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].message).toEqual({ type: 'filing.local_wait_check', docId: 'doc-wait-active' });
+      const options = sentMessages[0].options as { delaySeconds: number };
+      // Remaining wait is ~10 minutes (600s); allow slack for test execution time.
+      expect(options.delaySeconds).toBeGreaterThan(500);
+      expect(options.delaySeconds).toBeLessThanOrEqual(600);
     });
   });
 
