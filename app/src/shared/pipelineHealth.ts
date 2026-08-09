@@ -33,6 +33,20 @@ export interface PipelineSignals {
   lastExtractionSuccessAt: string | null;
   autopilotHaltReason: string | null;
   latestTxCreatedAt: string | null;
+  /**
+   * review_queue rows with resolved=1 but no recorded resolution_kind (the
+   * 2026-08-09 production bug: 738 filings resolved with zero live
+   * transactions and no reason recorded anywhere on the row). See migration
+   * 0082 and autopilot.ts resolveEmptyDoc.
+   */
+  dishonestResolutionCount: number | null;
+  /**
+   * filings.ingest_status='needs_review' with no open (resolved=0)
+   * review_queue row — the queue/filing desync that made the review UI
+   * report "all done" while filings sat unreviewed (180 filings in the same
+   * production incident).
+   */
+  orphanedNeedsReviewCount: number | null;
 }
 
 export interface PipelineThresholds {
@@ -201,6 +215,35 @@ export function evaluatePipelineSignals(
     }
   }
 
+  // 7. Review-queue resolution honesty (queue/filing consistency). Catches
+  // both directions of the 2026-08-09 production bug: resolved=1 rows with
+  // no recorded resolution reason (silently "done" with nothing to show for
+  // it), and needs_review filings with no open queue row (the review UI
+  // reporting "all done" while filings sat unreviewed). See migration 0082.
+  if (s.dishonestResolutionCount === null || s.orphanedNeedsReviewCount === null) {
+    checks.push({
+      id: 'review_resolution_integrity',
+      status: 'unknown',
+      detail: 'Review-queue resolution integrity uncollected',
+      value: null,
+    });
+  } else if (s.dishonestResolutionCount > 0 || s.orphanedNeedsReviewCount > 0) {
+    checks.push({
+      id: 'review_resolution_integrity',
+      status: 'degraded',
+      detail: `${s.dishonestResolutionCount} review item(s) resolved with no recorded resolution reason; `
+        + `${s.orphanedNeedsReviewCount} filing(s) marked needs_review with no open review-queue row`,
+      value: s.dishonestResolutionCount + s.orphanedNeedsReviewCount,
+    });
+  } else {
+    checks.push({
+      id: 'review_resolution_integrity',
+      status: 'ok',
+      detail: 'Review-queue resolutions and filing status are consistent',
+      value: 0,
+    });
+  }
+
   for (const c of checks) {
     overall = worstStatus(overall, c.status);
   }
@@ -224,6 +267,8 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let lastExtractionSuccessAt: string | null = null;
   let autopilotHaltReason: string | null = null;
   let latestTxCreatedAt: string | null = null;
+  let dishonestResolutionCount: number | null = null;
+  let orphanedNeedsReviewCount: number | null = null;
 
   try {
     const res = await get<{ n: number; oldest: string | null }>(
@@ -277,6 +322,27 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     latestTxCreatedAt = res?.created_at ?? null;
   } catch {}
 
+  try {
+    const res = await get<{ n: number }>(
+      env.DB,
+      "SELECT COUNT(*) AS n FROM review_queue WHERE resolved = 1 AND resolution_kind IS NULL",
+    );
+    if (res) dishonestResolutionCount = Number(res.n ?? 0);
+  } catch {}
+
+  try {
+    const res = await get<{ n: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS n
+         FROM filings f
+        WHERE f.ingest_status = 'needs_review'
+          AND NOT EXISTS (
+            SELECT 1 FROM review_queue rq WHERE rq.doc_id = f.doc_id AND rq.resolved = 0
+          )`,
+    );
+    if (res) orphanedNeedsReviewCount = Number(res.n ?? 0);
+  } catch {}
+
   const signals: PipelineSignals = {
     outboxPending,
     outboxOldestAt,
@@ -287,6 +353,8 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     lastExtractionSuccessAt,
     autopilotHaltReason,
     latestTxCreatedAt,
+    dishonestResolutionCount,
+    orphanedNeedsReviewCount,
   };
 
   return evaluatePipelineSignals(signals, nowMs);

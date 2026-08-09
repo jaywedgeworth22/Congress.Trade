@@ -706,10 +706,10 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
           deprecated_reason = 'synthetic_provider_missing_placeholder'
     WHERE doc_id LIKE 'provider-missing-%'
       AND deprecated_at IS NULL`,
-  `UPDATE review_queue
-      SET resolved = 1
-    WHERE reason = 'provider_discovered_missing_official'
-      AND resolved = 0`,
+  // Retroactive sweep (PR #1180), MOVED to REVIEW_QUEUE_RESOLUTION_REASON_
+  // SCHEMA_STATEMENTS below (still runs every /migrate, just after the
+  // resolution_kind/resolution_reason columns exist and can be set honestly
+  // — see that block for why it can't stay here).
   `UPDATE transactions
       SET asset_name = (SELECT sr.company_name FROM securities_ref sr WHERE sr.ticker = transactions.ticker),
           cleaning_note = COALESCE(cleaning_note, 'Populated official company name from securities_ref')
@@ -919,6 +919,73 @@ export const APPLE_IAP_SCHEMA_STATEMENTS = [
      ON apple_webhook_events (processed_at, claim_expires_at)`,
 ] as const;
 
+/**
+ * 0082_review_queue_resolution_reason.sql — make review_queue.resolved=1 an
+ * honest signal. See that file for the full production-bug writeup. Keep in
+ * exact lockstep with migrations/0082_review_queue_resolution_reason.sql.
+ */
+export const REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS = [
+  'ALTER TABLE review_queue ADD COLUMN resolution_kind TEXT',
+  'ALTER TABLE review_queue ADD COLUMN resolution_reason TEXT',
+  'ALTER TABLE review_queue ADD COLUMN resolved_at TEXT',
+  `UPDATE review_queue
+      SET resolution_kind = 'published',
+          resolved_at = COALESCE(resolved_at, created_at)
+    WHERE resolved = 1
+      AND resolution_kind IS NULL
+      AND EXISTS (
+        SELECT 1 FROM transactions t
+         WHERE t.doc_id = review_queue.doc_id AND t.deprecated_at IS NULL
+      )`,
+  `UPDATE review_queue
+      SET resolution_kind = 'rejected',
+          resolution_reason = COALESCE(resolution_reason, reason),
+          resolved_at = COALESCE(resolved_at, created_at)
+    WHERE resolved = 1
+      AND resolution_kind IS NULL
+      AND (reason LIKE 'rejected:%' OR reason = 'orphan_filing_deleted')`,
+  // Ongoing sweep (originally PR #1180, previously living unconditionally in
+  // CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS / migration 0067's mirror — moved
+  // here, after resolution_kind/resolution_reason exist, because
+  // trg_review_queue_honest_resolution below is a durable DB object: once
+  // installed by any earlier deploy, it enforces on every future UPDATE that
+  // sets resolved=1 regardless of that statement's position in THIS list, so
+  // the bare `SET resolved = 1` it used to run would abort on every redeploy
+  // for as long as routeProviderOnlyObservationsToReview (tradeLatency.ts)
+  // keeps creating new provider-only rows. Provider-only placeholder filings
+  // have no raw_object_key — nothing was ever fetched to extract from — so
+  // they can never gain a live transaction; 'verified_empty' is honest here.
+  `UPDATE review_queue
+      SET resolved = 1,
+          resolution_kind = 'verified_empty',
+          resolution_reason = 'provider_only_lead_cleared',
+          resolved_at = CURRENT_TIMESTAMP
+    WHERE reason = 'provider_discovered_missing_official'
+      AND resolved = 0`,
+  `CREATE INDEX IF NOT EXISTS idx_review_queue_resolution_kind
+     ON review_queue (resolved, resolution_kind)`,
+  'DROP TRIGGER IF EXISTS trg_review_queue_honest_resolution',
+  `CREATE TRIGGER IF NOT EXISTS trg_review_queue_honest_resolution
+BEFORE UPDATE OF resolved ON review_queue
+WHEN NEW.resolved = 1 AND (
+  NEW.resolution_kind IS NULL
+  OR NEW.resolution_kind NOT IN ('published', 'verified_empty', 'rejected', 'orphan_deleted')
+  OR (
+    NEW.resolution_kind IN ('verified_empty', 'rejected')
+    AND (NEW.resolution_reason IS NULL OR TRIM(NEW.resolution_reason) = '')
+  )
+  OR (
+    NEW.resolution_kind = 'published'
+    AND NOT EXISTS (
+      SELECT 1 FROM transactions WHERE doc_id = NEW.doc_id AND deprecated_at IS NULL
+    )
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'review_queue.resolved=1 requires an honest resolution_kind: published needs a live transaction, verified_empty/rejected need resolution_reason');
+END`,
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -1055,6 +1122,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...APPLE_SIGNIN_SCHEMA_STATEMENTS,
   // 0081_apple_iap.sql
   ...APPLE_IAP_SCHEMA_STATEMENTS,
+  // 0082_review_queue_resolution_reason.sql
+  ...REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

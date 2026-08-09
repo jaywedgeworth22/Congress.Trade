@@ -51,6 +51,7 @@ export type IngestStatus =
   | 'extracted'
   | 'persisted'
   | 'needs_review'
+  | 'verified_empty'
   | 'error';
 
 /** Detected physical form of a disclosure document. */

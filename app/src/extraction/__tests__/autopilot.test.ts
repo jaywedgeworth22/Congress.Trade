@@ -46,6 +46,7 @@ interface MockState {
   runUpdates: Array<{ sql: string; params: unknown[] }>;
   runInserts: unknown[][];
   reviewUpdates: Array<{ sql: string; params: unknown[] }>;
+  filingUpdates: Array<{ sql: string; params: unknown[] }>;
   legacyReplayResets: Array<{ docId: string; params: unknown[] }>;
   decisions: unknown[][];
   selectionSqls: string[];
@@ -65,6 +66,7 @@ function makeState(over: Partial<MockState> = {}): MockState {
     runUpdates: [],
     runInserts: [],
     reviewUpdates: [],
+    filingUpdates: [],
     legacyReplayResets: [],
     decisions: [],
     selectionSqls: [],
@@ -271,6 +273,10 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
           }
           if (/INSERT INTO ingestion_decisions/i.test(sql)) {
             state.decisions.push(this.params);
+            return { success: true, meta: { changes: 1 } };
+          }
+          if (/UPDATE filings/i.test(sql)) {
+            state.filingUpdates.push({ sql, params: this.params });
             return { success: true, meta: { changes: 1 } };
           }
           return { success: true, meta: { changes: 1 } };
@@ -528,6 +534,17 @@ describe('handleAutopilotTick — doc_class consumers', () => {
     const resolve = state.reviewUpdates.find((update) => /SET resolved = 1/.test(update.sql));
     expect(resolve).toBeDefined();
     expect(resolve!.params[0]).toBe('H-1');
+    // Honest resolution: resolution_kind + a non-blank resolution_reason are
+    // set in the SAME statement that flips resolved=1 (what
+    // trg_review_queue_honest_resolution, migration 0082, requires).
+    expect(resolve!.sql).toContain("resolution_kind = 'verified_empty'");
+    expect(resolve!.sql).toContain("resolution_reason = 'doc_class_empty_no_transactions'");
+    // filings.ingest_status must move off 'needs_review' in the same atomic
+    // batch — this is the exact production bug (738 docs resolved with the
+    // filing stuck at needs_review forever) this fix closes.
+    const filingUpdate = state.filingUpdates.find((update) => /ingest_status = 'verified_empty'/.test(update.sql));
+    expect(filingUpdate).toBeDefined();
+    expect(filingUpdate!.params).toContain('H-1');
     expect(state.decisions.some((params) => params[2] === 'auto_resolved_empty')).toBe(true);
     const final = finalUpdate(state);
     const outcomes = JSON.parse(String(final!.params[6])) as Array<Record<string, unknown>>;

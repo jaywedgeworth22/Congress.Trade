@@ -18,6 +18,8 @@ describe('evaluatePipelineSignals', () => {
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
     autopilotHaltReason: null,
     latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
+    dishonestResolutionCount: 0,
+    orphanedNeedsReviewCount: 0,
   };
 
   it('returns ok status for clean pipeline signals', () => {
@@ -37,6 +39,8 @@ describe('evaluatePipelineSignals', () => {
       lastExtractionSuccessAt: null,
       autopilotHaltReason: null,
       latestTxCreatedAt: null,
+      dishonestResolutionCount: null,
+      orphanedNeedsReviewCount: null,
     };
     const res = evaluatePipelineSignals(nullSignals, nowMs);
     expect(res.status).toBe('unknown');
@@ -103,5 +107,55 @@ describe('evaluatePipelineSignals', () => {
     expect(res.status).toBe('degraded');
     const txCheck = res.checks.find((c) => c.id === 'data_freshness');
     expect(txCheck?.status).toBe('degraded');
+  });
+
+  // --- review_resolution_integrity (2026-08-09 production bug) -------------
+  // review_queue reported resolved=1 for 3,497/3,497 rows (hence the review
+  // UI saying "all done" daily) while 738 of those had zero live
+  // transactions and 180 needs_review filings had no open queue row. This
+  // check is the seeded-738-style regression guard the incident asked for.
+  describe('review_resolution_integrity', () => {
+    it('flags degraded when resolved rows carry no recorded resolution reason (the 738 case)', () => {
+      const dishonestSignals: PipelineSignals = {
+        ...cleanSignals,
+        dishonestResolutionCount: 738,
+      };
+      const res = evaluatePipelineSignals(dishonestSignals, nowMs);
+      expect(res.status).toBe('degraded');
+      const check = res.checks.find((c) => c.id === 'review_resolution_integrity');
+      expect(check?.status).toBe('degraded');
+      expect(check?.detail).toContain('738');
+      expect(check?.value).toBe(738);
+    });
+
+    it('flags degraded when needs_review filings have no open queue row (the 180 case)', () => {
+      const orphanedSignals: PipelineSignals = {
+        ...cleanSignals,
+        orphanedNeedsReviewCount: 180,
+      };
+      const res = evaluatePipelineSignals(orphanedSignals, nowMs);
+      expect(res.status).toBe('degraded');
+      const check = res.checks.find((c) => c.id === 'review_resolution_integrity');
+      expect(check?.status).toBe('degraded');
+      expect(check?.detail).toContain('180');
+    });
+
+    it('stays ok when every resolved row has a recorded reason and every needs_review filing has an open queue row', () => {
+      const res = evaluatePipelineSignals(cleanSignals, nowMs);
+      const check = res.checks.find((c) => c.id === 'review_resolution_integrity');
+      expect(check?.status).toBe('ok');
+      expect(check?.value).toBe(0);
+    });
+
+    it('reports unknown (not ok) when integrity counts could not be collected', () => {
+      const uncollectedSignals: PipelineSignals = {
+        ...cleanSignals,
+        dishonestResolutionCount: null,
+        orphanedNeedsReviewCount: null,
+      };
+      const res = evaluatePipelineSignals(uncollectedSignals, nowMs);
+      const check = res.checks.find((c) => c.id === 'review_resolution_integrity');
+      expect(check?.status).toBe('unknown');
+    });
   });
 });

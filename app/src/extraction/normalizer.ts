@@ -853,6 +853,9 @@ async function persistNormalizedPublish(
                 agreement_claimed_at = NULL,
                 agreement_suppressed_at = NULL,
                 agreement_suppression_reason = NULL,
+                resolution_kind = 'published',
+                resolution_reason = 'auto_published',
+                resolved_at = CURRENT_TIMESTAMP,
                 review_revision = review_revision + 1
           WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
             AND ${exactLiveSet}`,

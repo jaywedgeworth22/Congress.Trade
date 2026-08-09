@@ -641,6 +641,9 @@ interface ReviewRow {
   agreement_suppressed_at?: string | null;
   agreement_suppression_reason?: string | null;
   review_revision?: number | null;
+  resolution_kind?: string | null;
+  resolution_reason?: string | null;
+  resolved_at?: string | null;
 }
 
 // --- GET /review-queue pagination/filter helpers ---------------------------
@@ -2197,6 +2200,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           rq.agreement_suppressed_at,
           rq.agreement_suppression_reason,
           rq.review_revision,
+          rq.resolution_kind,
+          rq.resolution_reason,
+          rq.resolved_at,
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
@@ -2276,15 +2282,27 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     const items = pageRows.map((row) => {
       const manual = (row.manual_rows ?? 0) > 0;
+      // Honest status, derived from resolution_kind (migration 0082) rather
+      // than a bare "resolved" boolean — see docs/EFFORT-LOG.md for the
+      // production bug this replaced (review_queue.resolved=1 for 738 docs
+      // with zero live transactions, reported as an undifferentiated
+      // 'resolved'). 'unverified_empty' is the tell for a legacy row this
+      // migration's backfill could not honestly classify — a resolved queue
+      // item with no live transactions and no recorded resolution_kind —
+      // left for lane-2 recovery to find via this exact label.
       const status = !row.resolved || row.resolved === 0
         ? 'pending'
-        : row.ingest_status === 'error'
+        : row.resolution_kind === 'rejected' || row.ingest_status === 'error'
           ? 'rejected'
-          : manual
-            ? 'modified'
-            : (row.live_rows ?? 0) > 0
-              ? 'published'
-              : 'resolved';
+          : row.resolution_kind === 'orphan_deleted'
+            ? 'orphan_deleted'
+            : manual
+              ? 'modified'
+              : (row.live_rows ?? 0) > 0
+                ? 'published'
+                : row.resolution_kind === 'verified_empty'
+                  ? 'verified_empty'
+                  : 'unverified_empty';
       return {
         docId: row.doc_id,
         reason: row.reason ?? '',
@@ -2292,6 +2310,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         createdAt: row.created_at ?? '',
         resolved: row.resolved === 1,
         status,
+        resolutionKind: row.resolution_kind ?? null,
+        resolutionReason: row.resolution_reason ?? null,
+        resolvedAt: row.resolved_at ?? null,
         ingestStatus: row.ingest_status ?? '',
         sourceUrl: row.source_url ?? '',
         pdfUrl: row.raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
@@ -2565,9 +2586,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                   reason = ?,
                   agreement_suppressed_at = ?,
                   agreement_suppression_reason = ?,
+                  resolution_kind = 'rejected',
+                  resolution_reason = ?,
+                  resolved_at = ?,
                   review_revision = review_revision + 1
             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?`,
-          [rejectionReason, nowIso, rejectionReason, docId, reviewRevision],
+          [rejectionReason, nowIso, rejectionReason, rejectionReason, nowIso, docId, reviewRevision],
         ],
       ]);
       if ((rejectResults[rejectResults.length - 1]?.meta?.changes ?? 0) === 0) {
@@ -2624,7 +2648,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       [docId],
     );
     if (!filing) {
-      await run(c.env.DB, `UPDATE review_queue SET resolved = 1, reason = 'orphan_filing_deleted' WHERE doc_id = ? AND resolved = 0`, [docId]);
+      await run(
+        c.env.DB,
+        `UPDATE review_queue
+            SET resolved = 1,
+                reason = 'orphan_filing_deleted',
+                resolution_kind = 'orphan_deleted',
+                resolution_reason = 'orphan_filing_deleted',
+                resolved_at = CURRENT_TIMESTAMP
+          WHERE doc_id = ? AND resolved = 0`,
+        [docId],
+      );
       return c.json({ docId, decision: 'orphan_resolved', resolved: true });
     }
     const filingFilerId = filing?.filer_id ?? null;
@@ -2779,10 +2813,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               SET resolved = 1,
                   agreement_suppressed_at = NULL,
                   agreement_suppression_reason = NULL,
+                  resolution_kind = 'published',
+                  resolution_reason = ?,
+                  resolved_at = CURRENT_TIMESTAMP,
                   review_revision = review_revision + 1
             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
               AND ${completeLiveSet}`,
           [
+            decision === 'manual' ? 'admin_manual' : 'admin_confirmed',
             docId, reviewRevision,
             docId, source, rowKeysJson, rowKeys.length,
             docId, rowKeys.length,
@@ -2939,6 +2977,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 agreement_claimed_at = NULL,
                 agreement_suppressed_at = ?,
                 agreement_suppression_reason = ?,
+                resolution_kind = NULL,
+                resolution_reason = NULL,
+                resolved_at = NULL,
                 review_revision = review_revision + 1
           WHERE doc_id = ? AND resolved = 1 AND review_revision = ?`,
         [holdReason, nowIso, nowIso, holdReason, docId, reviewRevision],
