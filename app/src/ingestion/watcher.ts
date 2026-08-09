@@ -701,7 +701,7 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
   const lastSuccessAt = await getLastPollAt(env, 'senate');
   const lookbackDays = computeSenateLookbackDays(now, lastSuccessAt, baseDays, maxDays, deepSweepDue);
   const since = new Date(now.getTime() - lookbackDays * 86_400_000);
-  const filings = await fetchSenatePtrFilings({ now, since, kv: env.CONFIG_KV });
+  const filings = await fetchSenatePtrFilings({ now, since, kv: env.CONFIG_KV, relayUrl: env.SENATE_RELAY_URL });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
     const filerName = cleanFilerName(f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim()) || null;
     return {

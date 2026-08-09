@@ -367,6 +367,13 @@ export async function fetchSenatePtrFilings(
   const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
 
+  // Prefer an explicitly-passed relayUrl (callers should thread env.SENATE_RELAY_URL
+  // through — see watcher.ts's pollSenate and senateCrawler.ts's runSenateBackfill).
+  // The raw process.env read stays only as a last-resort fallback: it was found
+  // 2026-08-09 to be UNRELIABLE on its own — Imperva blocks the box's datacenter
+  // IP with a 403, and calls relying solely on this fallback intermittently took
+  // the direct (non-relay) path and hit that block even with the container env
+  // var correctly set, while explicit env-threaded calls did not reproduce it.
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
   if (relayUrl) {
     const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
