@@ -20,6 +20,7 @@ describe('evaluatePipelineSignals', () => {
     latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
     dishonestResolutionCount: 0,
     orphanedNeedsReviewCount: 0,
+    strandedFilings: 0,
   };
 
   it('returns ok status for clean pipeline signals', () => {
@@ -41,6 +42,7 @@ describe('evaluatePipelineSignals', () => {
       latestTxCreatedAt: null,
       dishonestResolutionCount: null,
       orphanedNeedsReviewCount: null,
+      strandedFilings: null,
     };
     const res = evaluatePipelineSignals(nullSignals, nowMs);
     expect(res.status).toBe('unknown');
@@ -95,6 +97,18 @@ describe('evaluatePipelineSignals', () => {
     expect(res.status).toBe('stalled');
     const outboxCheck = res.checks.find((c) => c.id === 'ingestion_backlog');
     expect(outboxCheck?.status).toBe('stalled');
+  });
+
+  it('flags degraded when filings are stranded past the autonomy sweep window', () => {
+    const strandedSignals: PipelineSignals = {
+      ...cleanSignals,
+      strandedFilings: 3,
+    };
+    const res = evaluatePipelineSignals(strandedSignals, nowMs);
+    expect(res.status).toBe('degraded');
+    const strandedCheck = res.checks.find((c) => c.id === 'stranded_filings');
+    expect(strandedCheck?.status).toBe('degraded');
+    expect(strandedCheck?.value).toBe(3);
   });
 
   it('flags degraded (never stalled) when transaction data is stale (recess guard)', () => {

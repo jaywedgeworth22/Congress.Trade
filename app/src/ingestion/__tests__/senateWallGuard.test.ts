@@ -59,17 +59,24 @@ function envForSenateFetch() {
       },
     },
     DB: {
+      // Branch on SQL text: the fetcher's own filings lookup vs. the
+      // reviewQueueGuard's review_queue.resolved check must return distinct
+      // shapes, or the guard misreads the (non-null) filings-row mock as
+      // "resolved" and turns every test into a no-op.
       prepare: (sql: string) => ({
         bind: (...params: unknown[]) => ({
           run: async () => {
             dbRuns.push({ sql, params });
           },
-          first: async () => ({
-            doc_id: 'S-wall-1',
-            chamber: 'senate',
-            source_url: 'https://efdsearch.senate.gov/search/view/ptr/wall-1/',
-            ingest_status: 'new',
-          }),
+          first: async () =>
+            /review_queue/i.test(sql)
+              ? null
+              : {
+                  doc_id: 'S-wall-1',
+                  chamber: 'senate',
+                  source_url: 'https://efdsearch.senate.gov/search/view/ptr/wall-1/',
+                  ingest_status: 'new',
+                },
         }),
       }),
     },
@@ -148,15 +155,18 @@ describe('fetchFiling senate wall guard', () => {
   it('leaves non-senate HTML untouched (no wall sniffing for house docs)', async () => {
     const { env, r2Puts } = envForSenateFetch();
     env.DB = {
-      prepare: () => ({
+      prepare: (sql: string) => ({
         bind: () => ({
           run: async () => {},
-          first: async () => ({
-            doc_id: 'H-2026-1',
-            chamber: 'house',
-            source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/1.pdf',
-            ingest_status: 'new',
-          }),
+          first: async () =>
+            /review_queue/i.test(sql)
+              ? null
+              : {
+                  doc_id: 'H-2026-1',
+                  chamber: 'house',
+                  source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/1.pdf',
+                  ingest_status: 'new',
+                },
         }),
       }),
     };

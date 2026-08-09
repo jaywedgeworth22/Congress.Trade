@@ -117,12 +117,22 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
           { service: 'filing-ingestion', operation: 'head-validate-detection' },
         ).catch(() => null);
 
+        // 404 is deliberately NOT in this pass-through list (autonomy fix
+        // 2026-08-09): a definitively-missing document must be rejected here,
+        // before insertFilingIfNew ever runs. Root cause of the prod
+        // 2026-07-30 phantom-filing burst — the external detection scout's
+        // speculative "frontier probe" feature guesses sequential doc IDs
+        // ahead of the confirmed max and POSTs each guess here; a HEAD 404
+        // used to pass validation, so every guessed ID that didn't exist got
+        // written to filings anyway (900 rows, doc_id range
+        // 20035076-20035975). 403 stays allowed: the Clerk/eFD WAF answers
+        // request bursts with short-lived 403s unrelated to whether the
+        // document exists (see fetcher.ts's identical exception).
         if (
           headRes &&
           !headRes.ok &&
           headRes.status !== 304 &&
           headRes.status !== 405 &&
-          headRes.status !== 404 &&
           headRes.status !== 403
         ) {
           return c.json({ error: `HEAD validation failed: sourceUrl returned HTTP ${headRes.status}` }, 400);

@@ -18,6 +18,7 @@ import type { Env } from '../shared/types.ts';
 import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
 import { get, run } from '../shared/db.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { isReviewResolved } from './reviewQueueGuard.ts';
 import {
   SENATE_SESSION_KV_KEY,
   establishSenateSession,
@@ -208,6 +209,13 @@ export async function fetchFiling(
   );
   if (!row) {
     console.warn(`fetcher: no filings row for ${docId}; skipping`);
+    return;
+  }
+  // Autonomy guard: see reviewQueueGuard.ts. A re-triggered filing.new
+  // message must not clobber a terminal ingest_status the review process
+  // already stamped for this doc_id.
+  if (await isReviewResolved(env.DB, docId)) {
+    console.warn(`fetcher: ${docId} already review-resolved; skipping re-fetch (no-op)`);
     return;
   }
   const sourceUrl = row.source_url;

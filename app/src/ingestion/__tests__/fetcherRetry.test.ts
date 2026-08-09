@@ -4,18 +4,27 @@ import {
   shouldRetryFetchStatus,
 } from '../fetcher.ts';
 
-function envForFetch() {
+function envForFetch(opts: { reviewResolved?: boolean } = {}) {
   const updates: unknown[][] = [];
   const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
   const send = vi.fn(async (msg: any) => updates.push(msg));
+  const reviewResolved = opts.reviewResolved ?? false;
   return {
     env: {
       RAW_FILES: { put },
       DB: {
-        prepare: () => ({
+        // Branch on the SQL text: the fetcher looks up the filings row, then
+        // the reviewQueueGuard checks review_queue.resolved before doing any
+        // work. A single fixed mock response for both queries would make the
+        // guard misfire (the filings row is a non-null object, so a
+        // type-agnostic mock would always read as "resolved").
+        prepare: (sql: string) => ({
           bind: () => ({
             run: async () => {},
-            first: async () => ({ source_url: 'http://test/doc.pdf', chamber: 'house', ingest_status: 'new' }),
+            first: async () =>
+              /review_queue/i.test(sql)
+                ? (reviewResolved ? { n: 1 } : null)
+                : { source_url: 'http://test/doc.pdf', chamber: 'house', ingest_status: 'new' },
           }),
         }),
         batch: async (stmts: any[]) => { updates.push(...stmts); return []; },
@@ -80,6 +89,18 @@ describe('fetcherRetry', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
     await expect(fetchFiling(env, 'doc_1')).resolves.toBeUndefined();
     // The limit trips while buffering, before R2 is ever touched.
+    expect(put).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('no-ops without touching R2/DB/queue when the doc is already review-resolved', async () => {
+    const { env, put, send } = envForFetch({ reviewResolved: true });
+    const fetchMock = vi.fn(async () => new Response('small filing', {
+      status: 200, headers: { 'content-type': 'application/pdf', 'content-length': '12' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchFiling(env, 'doc_resolved')).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });

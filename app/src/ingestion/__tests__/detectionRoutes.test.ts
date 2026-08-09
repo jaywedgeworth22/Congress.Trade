@@ -97,6 +97,12 @@ describe('POST /api/ingest/detection', () => {
   });
 
   it('computes houseFilerId for House filings using houseFilerId(first, last, stateDst)', async () => {
+    // Stub HEAD validation to a real 200: this fixture docId does not
+    // actually exist at the Clerk, and 404 is (correctly, as of the
+    // 2026-08-09 autonomy fix) no longer a HEAD-validation pass-through —
+    // this test is about houseFilerId derivation, not HEAD-status handling,
+    // so it must not depend on live network reachability of the fixture URL.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200, headers: { 'content-type': 'application/pdf' } })));
     const res = await post('ingest-secret', {
       source: 'house',
       docKey: 'H-2024-20024115',
@@ -106,6 +112,7 @@ describe('POST /api/ingest/detection', () => {
       detectedAt: '2026-07-01T00:00:00.000Z',
     });
     expect(res.status).toBe(200);
+    vi.unstubAllGlobals();
     expect(insertFilingIfNew).toHaveBeenCalledTimes(1);
     const filing = insertFilingIfNew.mock.calls[0][1] as {
       docId: string;
@@ -148,6 +155,41 @@ describe('POST /api/ingest/detection', () => {
     expect(body.insert).toBe('duplicate');
     expect(body.enqueued).toBe(false);
     expect(enqueueFilingNew).not.toHaveBeenCalled();
+  });
+
+  it('rejects a frontier-probe guess whose HEAD is a definitive 404 (autonomy fix 2026-08-09)', async () => {
+    // Root cause of the prod 2026-07-30 phantom-filing burst (900 rows,
+    // doc_id 20035076-20035975): 404 used to be a HEAD-validation
+    // pass-through, so a scout guess for a doc_id that does not exist yet
+    // got written to filings anyway. It must now be rejected before
+    // insertFilingIfNew ever runs.
+    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await post('ingest-secret', {
+      source: 'house',
+      docKey: 'H-2026-20035999',
+      link: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035999.pdf',
+      detectedAt: '2026-07-30T15:45:00.000Z',
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/HEAD validation failed.*404/);
+    expect(insertFilingIfNew).not.toHaveBeenCalled();
+    expect(enqueueFilingNew).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('still allows 403 (WAF burst) through HEAD validation', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await post('ingest-secret', {
+      source: 'house',
+      docKey: 'H-2026-20035050',
+      link: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035050.pdf',
+    });
+    expect(res.status).toBe(200);
+    expect(insertFilingIfNew).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it('returns 503 when the D1 write governor defers the insert', async () => {
