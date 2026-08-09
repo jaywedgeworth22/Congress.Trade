@@ -25,7 +25,10 @@ function makeEnv(opts: { filerId: string | null }): { env: Env; captured: Captur
       return this;
     },
     async first<T>() {
-      if (/SELECT bioguide_id FROM filers/i.test(sql)) {
+      // Matches both the legacy `SELECT bioguide_id FROM filers` and the
+      // ranked COALESCE(merged_into, bioguide_id) form that prefers canonical
+      // filers with live transactions (dormant-duplicate fix).
+      if (/bioguide_id[\s\S]*FROM filers/i.test(sql)) {
         captured.filerLookups += 1;
         return (opts.filerId ? { bioguide_id: opts.filerId } : null) as T | null;
       }

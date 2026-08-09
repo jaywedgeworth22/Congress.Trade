@@ -542,7 +542,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // reads. Both fields are omitted (not falsely reported as 0) so a
     // reconciliation consumer that DOES want a fresh total on every poll can
     // tell "not computed this round" apart from "actually zero".
-    const isIncrementalNoOp = params.since !== undefined && transactions.length === 0;
+    // `since > 0` (not merely present): the dashboard sends since=0 on its
+    // FIRST/only page load, including every filtered query. Treating that as a
+    // steady-state poll omitted `total` whenever a filter legitimately matched
+    // zero rows, so the UI kept showing the previous (stale, unfiltered) count
+    // instead of 0. Only a real cursor poll skips the COUNT.
+    const isIncrementalNoOp =
+      params.since !== undefined && params.since > 0 && transactions.length === 0;
     let effectiveCursor = maxCursor;
     if (isIncrementalNoOp) {
       const hwm = await readCursorHighWater(c.env);
