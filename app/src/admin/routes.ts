@@ -4732,6 +4732,28 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- POST /repair-competitor-attribution ----------------------------------
+  // Repairs source='competitor_backfill' rows (doc_id LIKE 'COMPETITOR-%')
+  // whose filer_id was resolved by LAST NAME ONLY (verified in production —
+  // e.g. Rep. Mike Collins GA-10's crypto trades landing on Sen. Susan M.
+  // Collins ME) by re-deriving the TRUE reporter from raw_text and
+  // reassigning when chamber/state/resolved-bioguide clearly disagree with
+  // the assigned filer. In the same pass, reclassifies crypto disclosures
+  // mis-stored as asset_type='stock' (raw notes carry a '[CT]' marker or a
+  // crypto keyword) to the House 'CT' asset-type code. ?dryRun=1 reports
+  // without writing. Never deletes rows; safe to re-run.
+  r.post('/repair-competitor-attribution', async (c) => {
+    const { repairCompetitorAttribution } = await import('./competitorAttributionRepair.ts');
+    const dryRunParam = c.req.query('dryRun');
+    const dryRun = dryRunParam === '1' || dryRunParam === 'true';
+    try {
+      const result = await repairCompetitorAttribution(c.env, { dryRun });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
   // --- POST /oge-backfill ---------------------------------------------------
   // Force-poll the OGE President/VP + PAS indexes and enqueue any new executive
   // 278-T filings through the normal pipeline (same filing.new message the cron

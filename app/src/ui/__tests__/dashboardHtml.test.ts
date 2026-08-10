@@ -1521,9 +1521,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('data-asset="\' + esc(displayTicker) + \'"');
   });
 
-  it('compacts the company profile into a responsive definition grid', () => {
+  it('compacts the company profile into a same-line label/value definition grid', () => {
     expect(DASHBOARD_HTML).toContain('def-grid');
-    expect(DASHBOARD_HTML).toContain('repeat(auto-fit, minmax(130px, 1fr))');
+    // Label/value pairs render on ONE line (label column ~35%, value 1fr) —
+    // not label-above-value stacked, which the owner flagged as unreadable.
+    expect(DASHBOARD_HTML).toContain('.def-grid { display: grid; grid-template-columns: 35% 1fr;');
+    expect(DASHBOARD_HTML).toContain('.def-item { display: contents; }');
     expect(DASHBOARD_HTML).toContain("item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '')");
   });
 

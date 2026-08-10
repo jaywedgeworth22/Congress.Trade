@@ -461,10 +461,33 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
  *   annualized by elapsed days since the public filing anchor.
  *
  * Options are excluded (no EOD-equity anchor); only resolved, non-retracted buys
- * with both a filing anchor and a current price count. `minTrades` (validated
- * int, default 5) is a small-N guard so a 1–2 trade "leader" can't top the
- * board. Reports equal-weighted annualized average excess, raw average excess
- * for compatibility, win-rate, N, and est volume.
+ * with both a filing anchor and a current price count. Asset-class filtered to
+ * public equity only (see `canonicalAssetTypeCategorySql`) — crypto and other
+ * misc disclosure rows sometimes carry a ticker string that collides with an
+ * unrelated public-equity ticker (e.g. a crypto symbol matching a small-cap
+ * stock in `securities_ref`), which would otherwise price the crypto trade off
+ * the wrong instrument. `minTrades` (validated int, default 5) is a small-N
+ * guard so a 1–2 trade "leader" can't top the board.
+ *
+ * Each trade's excess is winsorized (flat-capped) to ±200% before aggregating
+ * — mirrors the spirit of pitScores' percentile winsorization, but with a flat
+ * cap rather than p5/p95: per-member sample sizes here are too small (5+
+ * trades) for percentile winsorization to be stable, and a flat cap is cheap
+ * to reason about (still leaves room for genuine 2x-vs-SPX outperformance).
+ * Without it, a single multi-bagger trade can swing a member's entire average.
+ *
+ * `avg_excess` (size-weighted, winsorized, NOT annualized) is both what the
+ * card displays AND what it sorts by, so the rank always matches the number
+ * shown. `avg_annualized_excess` is still reported for reference/debugging,
+ * but the annualization multiplier (up to ~12x for a 30-day-old trade) makes
+ * it unsuitable as the primary sort — it was the original bug here.
+ *
+ * medianExcess is intentionally NOT computed in this query: SQLite/D1 has no
+ * built-in per-group percentile function, and a correlated subquery per
+ * `filer_id` group would add real cost to an endpoint that already 502s under
+ * load. The member-drawer endpoint computes median in application code over a
+ * single member's rows, which is cheap; doing that for every leaderboard row
+ * is not. Skipped per perf constraint, not an oversight.
  */
 export function buildMemberPerformanceLeaderboardQuery(
   p: CommonFilters & { limit?: number; minTrades?: number },
@@ -475,12 +498,18 @@ export function buildMemberPerformanceLeaderboardQuery(
   // Excess return of one buy vs SPX, both legs anchored at the filing date.
   const EXCESS =
     '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  // Flat winsorization cap: clip each trade's excess to [-200%, +200%] before
+  // it feeds any aggregate. See the doc comment above for why flat vs percentile.
+  const WINSOR_EXCESS = `MAX(-2.0, MIN(2.0, (${EXCESS})))`;
   const ANCHOR_DATE = 'COALESCE(f.filed_date, f.first_seen_at, t.tx_date)';
   const ELAPSED_DAYS = `(julianday('now') - julianday(${ANCHOR_DATE}))`;
-  const ANNUALIZED_EXCESS = `((${EXCESS}) * (365.25 / MAX(30.0, ${ELAPSED_DAYS})))`;
+  const ANNUALIZED_EXCESS = `((${WINSOR_EXCESS}) * (365.25 / MAX(30.0, ${ELAPSED_DAYS})))`;
+  // Public-equity rows only — see the doc comment above for why.
+  const categorySql = canonicalAssetTypeCategorySql('t.asset_type', 't.asset_type_name', 't.is_option');
   const allWhere = [
     "t.tx_type IN ('B', 'P')",
     't.is_option = 0',
+    `${categorySql} = 'public_equity'`,
     'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
     'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
     'sr.current_price IS NOT NULL AND sr.current_price > 0',
@@ -496,7 +525,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     'MAX(fl.photo_url) AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
     `SUM((${ANNUALIZED_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_annualized_excess, ` +
-    `SUM((${EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_excess, ` +
+    `SUM((${WINSOR_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_excess, ` +
     `SUM(CASE WHEN ${ANNUALIZED_EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
     `SUM(${MID}) AS est_volume ` +
     'FROM transactions t ' +
@@ -508,7 +537,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     whereSql(allWhere) +
     'GROUP BY t.filer_id ' +
     `HAVING trade_count >= ${minTrades} ` +
-    'ORDER BY avg_annualized_excess DESC ' +
+    'ORDER BY avg_excess DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
 }
