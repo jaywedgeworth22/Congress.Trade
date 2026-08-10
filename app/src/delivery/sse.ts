@@ -528,7 +528,7 @@ export async function drainSseBacklog(
       env.DB,
       `SELECT t.*, f.chamber AS __chamber,
               sr.sector AS __sector, sr.market_cap_bucket AS __bucket,
-              fl.full_name AS filer_full_name, fl.state AS filer_state,
+              COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state,
               fl.photo_url AS filer_photo_url
          FROM (
            SELECT t.* FROM transactions t INDEXED BY idx_tx_cursor

@@ -133,6 +133,10 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     }
     if (/LOWER\(COALESCE\(fl\.full_name/i.test(sql)) {
       const memberName = String(params[i++]).replace(/%/g, '').toLowerCase();
+      // Second param: the OR LOWER(COALESCE(fl.display_name, '')) LIKE ?
+      // branch (rows.ts buildTxFilters) — same normalized term, consume it
+      // so downstream param indices stay aligned.
+      if (/OR LOWER\(COALESCE\(fl\.display_name/i.test(sql)) i++;
       rows = rows.filter((row) => String(row.filer_full_name ?? row.filer_id ?? '').toLowerCase().includes(memberName));
     }
     if (/t\.tx_type = \?/i.test(sql)) {

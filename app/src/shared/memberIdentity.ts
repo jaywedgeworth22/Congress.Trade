@@ -64,6 +64,26 @@ export const MEMBER_FILER_MERGES: readonly MemberFilerMerge[] = [
       'MANUAL-KHANNA',
     ],
   },
+  {
+    // FL-02 House: production carries three duplicate/malformed filer rows
+    // for Rep. Neal Patrick Dunn on top of the canonical one — 'MANUAL-FACS'
+    // (full_name 'Neal Patrick Dunn FACS', a competitor-backfill artifact
+    // that kept his post-nominal), and the blank-name 'MANUAL-' filer
+    // (full_name ' ', 8 transactions with source='competitor_backfill')
+    // whose 8 raw_text payloads all cite House Clerk filing #20026140,
+    // which names "Hon. Neal Patrick Dunn, MD, FACS — FL02" and matches all
+    // 8 assets/dates/amounts exactly. Confirmed via that filing PDF.
+    canonicalId: 'house-fl02-neal-patrick-dunn',
+    canonicalName: 'Neal Patrick Dunn',
+    chamber: 'house',
+    state: 'FL',
+    district: '02',
+    resolvedBioguideId: 'D000628',
+    aliasIds: [
+      'MANUAL-FACS',
+      'MANUAL-',
+    ],
+  },
 ];
 
 /**

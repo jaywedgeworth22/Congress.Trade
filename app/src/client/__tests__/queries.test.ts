@@ -58,6 +58,10 @@ describe('resolveMember', () => {
     await resolveMember(env, 'Pelosi');
     const byName = calls.find((c) => /LOWER\(full_name\) LIKE/i.test(c.sql));
     expect(byName).toBeDefined();
-    expect(byName!.params).toEqual(['Pelosi', '%pelosi%', 'Pelosi']);
+    // Matches both full_name and display_name (the curated "campaign sign"
+    // preferred name) so a search by either name resolves the filer — see
+    // resolveMember's byName query in client/queries.ts.
+    expect(byName!.sql).toContain('LOWER(display_name) LIKE');
+    expect(byName!.params).toEqual(['Pelosi', '%pelosi%', 'Pelosi', '%pelosi%', 'Pelosi', 'Pelosi']);
   });
 });

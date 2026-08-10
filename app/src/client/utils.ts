@@ -8,6 +8,8 @@ import type { Context } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { validateSubscriptionFilters } from '../delivery/subscriptions.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { executiveTitleFor } from '../shared/executiveTitles.ts';
 
 export type ClientContext = Context<{ Bindings: Env }>;
 
@@ -305,17 +307,26 @@ export function memberProfile(row: MemberProfileRow | null, id: string) {
       district: null,
       committees: [],
       photoUrl: null,
+      title: executiveTitleFor(id),
     };
   }
   const committees = parseJson<string[]>(row.committees, []);
   return {
     id: row.bioguide_id,
-    name: row.full_name,
+    // Every other server surface runs `filers.full_name` through
+    // cleanFilerName before shipping it to a client — this one previously
+    // didn't, so the iOS member-detail screen could show a raw DB string
+    // (e.g. a bare `MANUAL-KHANNA`-style value) verbatim (scout report
+    // scout2-name-surfaces-exec.md §1, client/utils.ts:313).
+    name: row.full_name ? (cleanFilerName(row.full_name) || row.full_name) : null,
     chamber: asChamber(row.chamber ?? undefined) ?? null,
     party: row.party,
     state: row.state,
     district: row.district,
     committees: Array.isArray(committees) ? committees : [],
     photoUrl: row.photo_url,
+    // Curated agency/position label for executive-branch filers (see
+    // shared/executiveTitles.ts); null for House/Senate filers.
+    title: executiveTitleFor(row.bioguide_id),
   };
 }

@@ -8743,9 +8743,28 @@ function sortPeopleDirectory(key) {
   if (PEOPLE_CACHE && PEOPLE_CACHE.members) renderPeopleDirectory(PEOPLE_CACHE.members);
   else loadPeopleDirectory();
 }
+/* Sort key for the People directory 'name' column: keys on the LAST name
+ * token (ignoring a trailing generational suffix like Jr/Sr/II/III/IV) so
+ * "Rob Portman" sorts under P, not R — the owner's expectation for a member
+ * directory. Ties (two members sharing a surname) fall back to the full
+ * display string via a low-codepoint separator so lexicographic comparison
+ * of the composite key alone (av < bv / av > bv) does the tie-break, without
+ * needing special-case comparator logic at the call site. */
+function surnameSortKey(name) {
+  var SORT_SEP = String.fromCharCode(1);
+  var display = String(name || '');
+  var tokens = display.split(/\\s+/).filter(Boolean);
+  if (!tokens.length) return '~' + SORT_SEP + display.toLowerCase();
+  var last = tokens[tokens.length - 1];
+  var lastBare = last.toLowerCase().replace(/[.,]/g, '');
+  if (tokens.length > 1 && NAME_SUFFIX[lastBare]) {
+    last = tokens[tokens.length - 2];
+  }
+  return last.toLowerCase() + SORT_SEP + display.toLowerCase();
+}
 function peopleSortValue(m, key) {
   if (key === 'trades') return Number(m.txCount) || 0;
-  if (key === 'name') return String(m.fullName || m.filerId || '').toLowerCase();
+  if (key === 'name') return surnameSortKey(fmtName(m.fullName || m.filerId || ''));
   if (key === 'chamber') return String(m.chamber || '').toLowerCase();
   if (key === 'party') return String(m.party || '').toLowerCase();
   if (key === 'state') return String(m.state || '').toLowerCase();
@@ -8807,11 +8826,21 @@ function renderPeopleDirectory(all) {
       ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
     var parts = [];
-    var chLabel = chamberLabel(m.chamber);
-    if (chLabel) parts.push(esc(chLabel));
-    if (m.party) parts.push(esc(dirPartyLetter(m.party)));
-    if (m.state) {
-      parts.push(esc(String(m.state)) + (m.district ? ' - ' + fmtDistrictOrdinalHtml(m.district) : ''));
+    var chRaw = String(m.chamber || '').toLowerCase();
+    var isExec = chRaw === 'executive' || chRaw === 'oge' || chRaw === 'exec' || chRaw.indexOf('exec') !== -1;
+    if (isExec) {
+      // Title (e.g. "Treasury Secretary") replaces the generic "Exec" branch
+      // word when curated (see shared/executiveTitles.ts); no state/district
+      // for executive filers — they don't represent one.
+      parts.push(esc(m.title ? String(m.title) : 'Executive'));
+      if (m.party) parts.push(esc(dirPartyLetter(m.party)));
+    } else {
+      var chLabel = chamberLabel(m.chamber);
+      if (chLabel) parts.push(esc(chLabel));
+      if (m.party) parts.push(esc(dirPartyLetter(m.party)));
+      if (m.state) {
+        parts.push(esc(String(m.state)) + (m.district ? ' - ' + fmtDistrictOrdinalHtml(m.district) : ''));
+      }
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +

@@ -156,7 +156,7 @@ export async function flushDeliveryOutbox(
       const freshRows = await all(
         env.DB,
         `SELECT t.*, f.chamber AS __chamber, sr.sector AS __sector, sr.market_cap_bucket AS __bucket,
-                fl.full_name AS filer_full_name, fl.state AS filer_state, fl.photo_url AS filer_photo_url
+                COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state, fl.photo_url AS filer_photo_url
            FROM transactions t
            LEFT JOIN filings f ON f.doc_id = t.doc_id
            LEFT JOIN securities_ref sr ON sr.ticker = t.ticker

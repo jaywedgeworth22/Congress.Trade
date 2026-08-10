@@ -135,7 +135,7 @@ export function buildMemberLeaderboardQuery(
   const sort = asMemberSort(p.sort);
   const limit = clampLimit(p.limit, 20, 200);
   const sql =
-    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
+    'SELECT t.filer_id AS filer_id, COALESCE(fl.display_name, fl.full_name) AS full_name, fl.party AS party, ' +
     `${CHAMBER_EXPR} AS chamber, fl.state AS state, fl.photo_url AS photo_url, ` +
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
@@ -195,7 +195,7 @@ export function buildClusterMembersQuery(
   const allParams: SqlParam[] = [...tickers, ...params];
   const sql =
     'SELECT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id, ' +
-    'fl.full_name AS full_name, fl.party AS party, fl.photo_url AS photo_url, ' +
+    'COALESCE(fl.display_name, fl.full_name) AS full_name, fl.party AS party, fl.photo_url AS photo_url, ' +
     'COUNT(*) AS trade_count ' +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
@@ -433,7 +433,7 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
     ...where,
   ];
   const sql =
-    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, fl.state AS state, ' +
+    'SELECT t.filer_id AS filer_id, COALESCE(fl.display_name, fl.full_name) AS full_name, fl.party AS party, fl.state AS state, ' +
     `${CHAMBER_EXPR} AS chamber, fl.photo_url AS photo_url, ` +
     `AVG(${lag}) AS avg_lag_days, MAX(${lag}) AS max_lag_days, ` +
     `SUM(CASE WHEN ${lag} > 45 THEN 1 ELSE 0 END) AS late_count, ` +
@@ -492,7 +492,7 @@ export function buildMemberPerformanceLeaderboardQuery(
   ];
   const sql =
     'WITH sx AS MATERIALIZED (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) ' +
-    'SELECT t.filer_id AS filer_id, MAX(fl.full_name) AS full_name, MAX(fl.party) AS party, ' +
+    'SELECT t.filer_id AS filer_id, MAX(COALESCE(fl.display_name, fl.full_name)) AS full_name, MAX(fl.party) AS party, ' +
     'MAX(fl.photo_url) AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
     `SUM((${ANNUALIZED_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_annualized_excess, ` +
@@ -643,7 +643,7 @@ export function buildConflictCandidatesQuery(p: CommonFilters & { limit?: number
   const limit = clampLimit(p.limit, 200, 2000);
   const sql =
     'SELECT t.id AS id, t.ticker AS ticker, t.tx_type AS tx_type, t.tx_date AS tx_date, ' +
-    `t.filer_id AS filer_id, fl.full_name AS full_name, ${CHAMBER_EXPR} AS chamber, fl.party AS party, ` +
+    `t.filer_id AS filer_id, COALESCE(fl.display_name, fl.full_name) AS full_name, ${CHAMBER_EXPR} AS chamber, fl.party AS party, ` +
     'fl.committees AS committees, sr.sector AS sector, t.amount_min AS amount_min, t.amount_max AS amount_max ' +
     ANALYTICS_FROM_JOINS +
     'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
@@ -677,7 +677,7 @@ export function buildTickerTopTradersQuery(
   const { where, params } = tickerFilters(ticker, { ...p, txTypes: [txType] });
   const limit = clampLimit(p.limit, 5, 50);
   const sql =
-    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
+    'SELECT t.filer_id AS filer_id, COALESCE(fl.display_name, fl.full_name) AS full_name, fl.party AS party, ' +
     'fl.photo_url AS photo_url, COUNT(*) AS trade_count, ' +
     `SUM(${MID}) AS est_volume ` +
     ANALYTICS_FROM_JOINS +
@@ -698,7 +698,7 @@ export function buildTickerRecentTradesQuery(
     't.asset_type AS asset_type, t.asset_type_name AS asset_type_name, t.raw_text AS raw_text, ' +
     't.source AS source, t.tx_date AS tx_date, t.tx_type AS tx_type, t.owner AS owner, ' +
     't.amount_min AS amount_min, t.amount_max AS amount_max, t.is_option AS is_option, ' +
-    't.created_at AS created_at, t.filer_id AS filer_id, fl.full_name AS full_name, ' +
+    't.created_at AS created_at, t.filer_id AS filer_id, COALESCE(fl.display_name, fl.full_name) AS full_name, ' +
     'fl.party AS party, fl.photo_url AS photo_url, f.filed_date AS filed_date, ' +
     'f.first_seen_at AS first_seen_at, f.source_url AS source_url ' +
     ANALYTICS_FROM_JOINS +

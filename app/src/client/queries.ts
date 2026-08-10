@@ -28,8 +28,8 @@ export const SUBSCRIPTION_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
 
 export const CLIENT_TRADE_SELECT =
-  'SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ' +
-  'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+  'SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber, COALESCE(fl.display_name, fl.full_name) AS __member_name, fl.party AS __party, ' +
+  'COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state, ' +
   'fl.photo_url AS filer_photo_url, ' +
   'sr.company_name AS ref_company_name, sr.sector AS ref_sector, sr.market_cap AS ref_market_cap, ' +
   'sr.market_cap_bucket AS ref_market_cap_bucket, sr.country AS ref_country, ' +
@@ -128,14 +128,18 @@ export async function resolveMember(env: Env, value: string): Promise<ResolvedMe
   const term = value.trim();
   const byId = await get<MemberProfileRow>(
     env.DB,
-    'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
+    'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
     [term],
   );
   if (byId) return { id: byId.bioguide_id, profile: byId };
+  const likeTerm = `%${escapeLikePattern(term.toLowerCase())}%`;
   const byName = await get<MemberProfileRow>(
     env.DB,
-    "SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\' ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1",
-    [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
+    "SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers" +
+      " WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\'" +
+      " OR LOWER(display_name) = LOWER(?) OR LOWER(display_name) LIKE ? ESCAPE '\\'" +
+      " ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) OR LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1",
+    [term, likeTerm, term, likeTerm, term, term],
   );
   if (byName) return { id: byName.bioguide_id, profile: byName };
   if (/^[A-Za-z0-9_-]{1,64}$/.test(term)) return { id: term, profile: null };

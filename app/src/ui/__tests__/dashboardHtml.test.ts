@@ -2267,6 +2267,33 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(fmtName('Richard Dean Dr McCormick')).toBe('Richard Dean McCormick');
     expect(fmtName('Dunn, Neal Patrick MD, FACS')).toBe('Neal Patrick Dunn');
   });
+
+  // ---- People directory: surname-order name sort --------------------------
+  it('keys the People directory name sort on the LAST name token, not the full string', () => {
+    const src = [
+      'var NAME_SUFFIX = { jr: \'Jr\', \'jr.\': \'Jr\', sr: \'Sr\', \'sr.\': \'Sr\', ii: \'II\', iii: \'III\', iv: \'IV\' };',
+      extractFn(DASHBOARD_HTML, 'surnameSortKey'),
+      'return surnameSortKey;',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const surnameSortKey = new Function(src)() as (name: string) => string;
+
+    // "Rob Portman" sorts under P (surname), not R (given name).
+    const names = ['Rob Portman', 'Nancy Pelosi', 'Mitch McConnell', 'Marco Rubio'];
+    const sorted = [...names].sort((a, b) => (surnameSortKey(a) < surnameSortKey(b) ? -1 : 1));
+    expect(sorted).toEqual(['Mitch McConnell', 'Nancy Pelosi', 'Rob Portman', 'Marco Rubio']);
+
+    // A trailing generational suffix (Jr/Sr/II/III/IV) is ignored — the
+    // surname is the token BEFORE it, not the suffix itself.
+    const suffixed = ['Robert Casey Jr', 'August Pfluger II', 'Al Green Sr'];
+    const sortedSuffixed = [...suffixed].sort((a, b) => (surnameSortKey(a) < surnameSortKey(b) ? -1 : 1));
+    expect(sortedSuffixed).toEqual(['Robert Casey Jr', 'Al Green Sr', 'August Pfluger II']);
+
+    // Two members sharing a surname tie-break on the full display string.
+    const sameSurname = ['John Delaney', 'April McClain Delaney'];
+    const sortedSame = [...sameSurname].sort((a, b) => (surnameSortKey(a) < surnameSortKey(b) ? -1 : 1));
+    expect(sortedSame).toEqual(['April McClain Delaney', 'John Delaney']);
+  });
 });
 
 /**
