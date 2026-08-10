@@ -4,6 +4,7 @@ import {
   OPENROUTER_APP_REFERER,
   OPENROUTER_APP_TITLE,
   OPENROUTER_PRIMARY_KEY_REF,
+  OPENROUTER_PURPOSE,
   OPENROUTER_SOURCE_APP,
   buildOpenRouterClassifier,
   openRouterAttributionHeaders,
@@ -20,54 +21,60 @@ describe('openRouterAttributionHeaders', () => {
     const headers = openRouterAttributionHeaders();
     expect(headers['HTTP-Referer']).toBe(OPENROUTER_APP_REFERER);
     expect(headers['X-OpenRouter-Title']).toBe(OPENROUTER_APP_TITLE);
-    // Back-compat title for older analytics paths.
     expect(headers['X-Title']).toBe(OPENROUTER_APP_TITLE);
   });
 });
 
 describe('buildOpenRouterClassifier', () => {
-  it('builds flat trace enrichment with congress-trade sourceApp', () => {
+  it('builds flat trace enrichment with purpose + generation_name', () => {
     const enrichment = buildOpenRouterClassifier(env, {
       service: 'openRouterVision',
+      purpose: OPENROUTER_PURPOSE.VISION_EXTRACT,
       feature: 'vision-extract-house',
+      chamber: 'house',
       user: 'H-2025-1',
     });
     expect(enrichment).toBeDefined();
     expect(enrichment!.user).toBe('H-2025-1');
-    expect(enrichment!.trace).toEqual({
+    expect(enrichment!.trace).toMatchObject({
       sourceApp: OPENROUTER_SOURCE_APP,
       environment: 'test',
       service: 'openRouterVision',
       feature: 'vision-extract-house',
       keyRef: OPENROUTER_PRIMARY_KEY_REF,
       gitSha: 'deadbeef',
+      purpose: 'vision_extract',
+      generation_name: 'PTR vision extraction',
+      chamber: 'house',
     });
     expect((enrichment!.trace as { metadata?: unknown }).metadata).toBeUndefined();
   });
 
-  it('omits blank user and defaults keyRef', () => {
+  it('omits blank user and defaults feature to purpose', () => {
     const enrichment = buildOpenRouterClassifier(env, {
       service: 'docClassifier',
-      feature: 'doc-class',
+      purpose: OPENROUTER_PURPOSE.DOC_CLASS,
       user: '',
     });
     expect(enrichment).toBeDefined();
     expect('user' in enrichment!).toBe(false);
-    expect(enrichment!.trace.keyRef).toBe(OPENROUTER_PRIMARY_KEY_REF);
+    expect(enrichment!.trace.feature).toBe('doc_class');
+    expect((enrichment!.trace as { purpose?: string }).purpose).toBe('doc_class');
   });
 });
 
 describe('openRouterTelemetryMetadata', () => {
-  it('mirrors classifier keys for Usage-Monitor filters', () => {
+  it('mirrors purpose for Usage-Monitor filters', () => {
     const meta = openRouterTelemetryMetadata(env, {
       service: 'senatePaperMedia',
+      purpose: OPENROUTER_PURPOSE.SENATE_PAPER_OCR,
       feature: 'senate-paper-ocr',
+      chamber: 'senate',
       user: 'S-1',
     });
     expect(meta.sourceApp).toBe(OPENROUTER_SOURCE_APP);
-    expect(meta.keyRef).toBe(OPENROUTER_PRIMARY_KEY_REF);
-    expect(meta.service).toBe('senatePaperMedia');
-    expect(meta.feature).toBe('senate-paper-ocr');
+    expect(meta.purpose).toBe('senate_paper_ocr');
+    expect(meta.chamber).toBe('senate');
     expect(meta.user).toBe('S-1');
   });
 });

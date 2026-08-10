@@ -36,6 +36,7 @@ import { keyFor } from './bakeoff.ts';
 import { looksLikePdf } from '../ingestion/classifier.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
+  OPENROUTER_PURPOSE,
   buildOpenRouterClassifier,
   openRouterAttributionHeaders,
 } from '../shared/openRouterAttribution.ts';
@@ -220,6 +221,7 @@ export async function classifyDocClassWithModel(
     if (!key) return null;
     const classifierEnrichment = buildOpenRouterClassifier(env, {
       service: 'docClassifier',
+      purpose: OPENROUTER_PURPOSE.DOC_CLASS,
       feature: 'doc-class',
       keyRef: 'OPENROUTER_API_KEY',
     });

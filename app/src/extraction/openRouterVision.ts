@@ -35,6 +35,7 @@ import { resolveSecret } from '../secrets/infisical.ts';
 import { sendPushover } from '../shared/pushover.ts';
 import type { OpenRouterRequestEnrichment } from '@jaywedgeworth22/congress-trading-shared';
 import {
+  OPENROUTER_PURPOSE,
   buildOpenRouterClassifier,
   openRouterAttributionHeaders,
 } from '../shared/openRouterAttribution.ts';
@@ -341,9 +342,12 @@ export class OpenRouterVisionExtractor implements Extractor {
    * retries of the same document. Delegates to shared openRouterAttribution.
    */
   private buildClassifierEnrichment(input: ExtractorInput): OpenRouterRequestEnrichment | undefined {
+    const chamber = input.filing.chamber || undefined;
     return buildOpenRouterClassifier(this.env, {
       service: this.name,
-      feature: input.filing.chamber ? `vision-extract-${input.filing.chamber}` : 'vision-extract',
+      purpose: OPENROUTER_PURPOSE.VISION_EXTRACT,
+      feature: chamber ? `vision-extract-${chamber}` : 'vision-extract',
+      chamber,
       keyRef: this.apiKeyName,
       // Deterministic per-doc id — never "" (omit when missing).
       user: input.filing.docId || undefined,
@@ -547,9 +551,11 @@ export class OpenRouterVisionExtractor implements Extractor {
                     // Usage-Monitor key attribution can split primary vs backup.
                     ...buildOpenRouterClassifier(this.env, {
                       service: this.name,
+                      purpose: OPENROUTER_PURPOSE.VISION_EXTRACT,
                       feature: input.filing.chamber
                         ? `vision-extract-${input.filing.chamber}`
                         : 'vision-extract',
+                      chamber: input.filing.chamber || undefined,
                       keyRef: 'OPENROUTER_BACKUP_API_KEY',
                       user: input.filing.docId || undefined,
                     }),
