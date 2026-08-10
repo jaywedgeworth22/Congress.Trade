@@ -1367,31 +1367,15 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
     [docId],
   );
 
-  let fallbackUrl = filingRow?.source_url;
-  if (!fallbackUrl) {
-    const s = String(docId || '');
-    if (s.startsWith('S-')) {
-      fallbackUrl = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
-    } else {
-      const m = /^H-(\d{4})-(\d+)$/.exec(s);
-      if (m) {
-        const num = parseInt(m[2], 10);
-        if (num >= 20000000 && num < 30000000) {
-          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/${m[1]}/${m[2]}.pdf`;
-        } else {
-          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/${m[1]}/${m[2]}.pdf`;
-        }
-      }
-    }
-  }
-
+  // STORED COPY ONLY (2026-08-10): never 302 to Clerk/eFD/OGE. Redirecting
+  // browsers (and any intermediate crawlers) at primary sources burns IP
+  // reputation and can serve a different document than the one we extracted.
+  // If we have not stored the bytes yet, 404 honestly.
   if (!filingRow || !filingRow.raw_object_key) {
-    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
     return c.json({ error: 'document not found or not fetched' }, 404);
   }
   const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
   if (!obj) {
-    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
     return c.json({ error: 'document not found in storage' }, 404);
   }
 
@@ -1401,6 +1385,7 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
     'content-disposition': 'inline',
     'cache-control': 'public, max-age=86400, immutable',
     'x-content-type-options': 'nosniff',
+    'x-congress-trade-source': 'stored-raw',
   };
   // Stored senate filings are text/html authored by a third party (eFD).
   // Serving them inline from our origin must never execute their markup in

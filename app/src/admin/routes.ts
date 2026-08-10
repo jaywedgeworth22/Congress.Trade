@@ -4987,6 +4987,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Skips resolved-review, live-transaction docs, and local_vision_exhausted
   // parks (worker retry-cap terminal class — #1575 vision-spend bucket) so
   // workers don't burn subscription quota on no-ops.
+  //
+  // STORED COPY ONLY (2026-08-10): requires raw_object_key. Workers must pull
+  // bytes via GET /filings/:docId/raw — never re-hit Clerk/eFD/OGE from the
+  // Mac/residential IP. source_url is metadata only.
   r.get('/scanned-filings/pending', async (c) => {
     try {
       const rows = await all<{
@@ -4994,8 +4998,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         chamber: string | null;
         filing_type: string | null;
         filed_date: string | null;
-        source_url: string;
-        raw_object_key: string | null;
+        source_url: string | null;
+        raw_object_key: string;
         ingest_status: string;
         doc_kind: string;
         local_wait_expires_at: string | null;
@@ -5006,7 +5010,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 f.ingest_status, f.doc_kind, f.local_wait_expires_at, f.first_seen_at
            FROM filings f
           WHERE f.doc_kind = 'scanned_pdf'
-            AND f.source_url IS NOT NULL
+            AND f.raw_object_key IS NOT NULL
+            AND TRIM(f.raw_object_key) != ''
             AND (
               f.ingest_status IN ('extraction_pending_local', 'classified')
               OR (
@@ -5047,9 +5052,62 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             f.first_seen_at DESC
           LIMIT 50`,
       );
-      return c.json({ ok: true, count: rows.length, filings: rows });
+      const filings = rows.map((row) => ({
+        ...row,
+        // Absolute path under /api/admin — workers prepend CONGRESS_TRADE_API_URL.
+        stored_document_url: `/api/admin/filings/${encodeURIComponent(row.doc_id)}/raw`,
+      }));
+      return c.json({ ok: true, count: filings.length, filings });
     } catch (err) {
       return c.json({ ok: false, error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- GET /filings/:docId/raw --------------------------------------------
+  // Serve the durable R2/object-store bytes for a filing. Admin-auth only.
+  // NEVER redirects to Clerk/eFD/OGE — workers and ops must use this so
+  // residential egress does not re-hit primary sources (IP reputation +
+  // consistency with the copy used for reviews).
+  // PDF and HTML (and any other stored content-type) are returned as-is.
+  r.get('/filings/:docId/raw', async (c) => {
+    const docId = c.req.param('docId');
+    if (!docId?.trim()) return c.json({ error: 'docId is required' }, 400);
+    try {
+      const filingRow = await get<{ raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT raw_object_key FROM filings WHERE doc_id = ?`,
+        [docId],
+      );
+      if (!filingRow?.raw_object_key) {
+        return c.json({
+          error: 'stored copy not available',
+          docId,
+          detail: 'filings.raw_object_key is null — fetch stage has not stored this document yet',
+        }, 404);
+      }
+      const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
+      if (!obj) {
+        return c.json({
+          error: 'stored copy missing from object store',
+          docId,
+          rawObjectKey: filingRow.raw_object_key,
+        }, 404);
+      }
+      const contentType = obj.httpMetadata?.contentType || 'application/pdf';
+      const headers: Record<string, string> = {
+        'content-type': contentType,
+        'content-disposition': 'inline',
+        'cache-control': 'private, max-age=300',
+        'x-content-type-options': 'nosniff',
+        'x-congress-trade-source': 'stored-raw',
+        'x-congress-trade-doc-id': docId,
+      };
+      if (contentType.toLowerCase().includes('html')) {
+        headers['content-security-policy'] = 'sandbox';
+      }
+      return new Response(obj.body, { headers });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 

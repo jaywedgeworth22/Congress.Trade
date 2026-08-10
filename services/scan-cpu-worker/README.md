@@ -18,7 +18,7 @@ threshold is repeatable on any Coolify host.
 
 1. Heartbeat → `POST /api/admin/local-worker/heartbeat` (`workerId=server_cpu_1`)
 2. Poll → `GET /api/admin/scanned-filings/pending`
-3. Download PDF (`source_url` or R2 via admin-provided URL)
+3. Download stored bytes only → `GET /api/admin/filings/:docId/raw` (never source_url)
 4. Extract → submit → `POST /api/admin/ingest-local-vision`
 
 When any worker heartbeat is fresh, classifier parks scanned filings in
