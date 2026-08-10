@@ -426,7 +426,12 @@ async function pollFmpFamily() {
         break;
       }
     }
-    if (lastErr) warn(`fmp:${src.id}`, lastErr);
+    if (lastErr) {
+      warn(`fmp:${src.id}`, lastErr);
+      // Surface quota errors so the cycle can back off instead of retrying every 45s.
+      const msg = String(lastErr?.message || lastErr);
+      if (/HTTP (402|429)/.test(msg) && !out.length) throw lastErr;
+    }
   }
   return { keys: out, payloads };
 }
