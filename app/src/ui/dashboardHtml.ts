@@ -666,19 +666,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
+  /* By Asset Type: labels vary in length ("Stock Options" etc.) — auto-size
+     the label column so they don't ellipsis-cut, and cap the bar track so a
+     long label doesn't squeeze it away entirely. */
+  #trSectors .hbar .hlabel { width: auto; max-width: 50%; }
+  #trSectors .hbar .htrack { flex: 0 1 50%; max-width: 50%; }
   .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr); align-items: stretch; gap: 29px; }
   .timeliness-panel { min-width: 0; display: flex; flex-direction: column; height: 100%; }
   .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; margin-bottom: 4px; }
   
   .lag-dist-header { display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; padding: 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-  .lag-dist-header .day-col { width: 150px; }
-  .lag-dist-header .count-col { width: 120px; text-align: right; }
-  
+  .lag-dist-header .day-col { width: 150px; text-align: center; }
+  .lag-dist-header .count-col { width: 120px; text-align: center; }
+
   .lag-dist { flex: 1; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
   .lag-dist .hbar { margin: 0; cursor: help; }
-  .lag-dist .hbar .hlabel { width: 150px; font-size: 15px; font-weight: 500; }
+  .lag-dist .hbar .hlabel { width: 150px; font-size: 15px; font-weight: 500; text-align: center; }
   .lag-dist .htrack { height: 18px; border-radius: 9px; }
-  .lag-dist .hbar .hval { font-size: 14px; font-weight: 600; width: 120px; text-align: right; }
+  .lag-dist .hbar .hval { font-size: 14px; font-weight: 600; width: 120px; text-align: center; }
   
   .late-filers-wrap { max-height: 242px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; }
   /* The base table overflow:hidden rule (rounded-corner clip) would make the
@@ -687,8 +692,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      + clipping here; the table must stay overflow-visible for sticky to pin
      against the scrolling wrap. */
   .late-filers-wrap table { margin: 0; overflow: visible; border-radius: 0; }
-  .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; }
+  .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; vertical-align: middle; }
   .late-filers-wrap td[data-tip] { cursor: help; }
+  #view-trends .late-filers-wrap .member-cell { align-items: center; }
   /* Owner follow-up batch #5: Slowest Filers is the one Trends table that
      stays genuinely scrollable (it can run to 50 rows) — give it a sticky
      column-header row, same idiom as the Trades feed's own #tradesHead th. */
@@ -735,8 +741,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .stack-under {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
     gap: 1px;
     font-size: 11px;
     color: var(--text-dim);
@@ -745,7 +752,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .stack-under > span { white-space: nowrap; }
   .stack-under .split-wrap { display: inline-flex; }
   .stack-under .split { display: none; }
-  
+  /* Top Performers / Most Active Politicians: larger, vertically centered
+     photos beside the two-line name/stat stack. */
+  #trPerformers .avatar, #trMembers .avatar { width: 34px; height: 34px; font-size: 12px; }
+  #trPerformers .member-cell, #trMembers .member-cell { align-items: center; }
+
   .chart-tooltip {
     position: absolute; pointer-events: none; z-index: 100;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
@@ -761,7 +772,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .chart-tooltip-lbl { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .chart-tooltip-val { font-variant-numeric: tabular-nums; font-weight: 500; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
-  .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
+  /* Every column reserves the SAME fixed-height label row, even when its own
+     label text is empty (unlabeled columns between tick marks) — otherwise
+     .tchart's align-items:flex-end bottom-aligns the shorter (label-less)
+     column's whole box, which pushes that column's .tbars (and its bars)
+     down past the baseline shared by labeled columns, covering the row of
+     labels beneath them. A reserved height keeps every column the same
+     total height regardless of label content, so all bars share one baseline
+     above the label row and never dip below it. */
+  .tlbl { display:block; height:12px; line-height:12px; font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
   .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
   .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
   .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
@@ -1484,9 +1503,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .tcol { gap: 2px; }
     #view-trends .tbars { gap: 1px; height: 130px; }
     #view-trends .tbars i { max-width: 5px; }
-    #view-trends .tlbl { font-size: 8px; max-width: 100%; overflow: hidden; }
-    #view-trends .tchart-head { flex-direction: column; align-items: stretch; gap: 8px; }
-    #view-trends .tchart-controls { justify-content: flex-start; }
+    #view-trends .tlbl { display: block; height: 11px; line-height: 11px; font-size: 8px; max-width: 100%; overflow: hidden; }
+    /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
+       (like desktop) — only the button sizing shrinks to fit. */
     #view-trends #trTimeMetric.seg button,
     #view-trends #trTimeWin.seg button { padding: 5px 7px; font-size: 11px; }
     #view-trends .stack-under { font-size: 11px; }
@@ -1587,34 +1606,63 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   letter-spacing: -0.01em;
   line-height: 1.25;
   margin-top: 0;
+  margin-bottom: 10px;
 }
-/* Collapsible Trends sections: summary matches section h3, with a native
-   disclosure caret kept readable against the section surface. */
+/* Collapsible Trends sections: summary matches section h3. Every fold card
+   (mobile-only show/hide) carries a right-aligned "SHOW ↓" / "HIDE ↑" text
+   cue instead of a caret glyph — see .fold-cue below. */
 #view-trends details.trends-fold > summary {
   cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 4px;
+  margin: 0 0 10px;
   color: var(--text);
 }
 #view-trends details.trends-fold > summary::-webkit-details-marker { display: none; }
 #view-trends details.trends-fold > summary::marker { content: ''; }
-/* Owner follow-up batch #11: the chevron used to be a ::before, which shifted
-   the title text itself ~18px right of its sibling h3.tf-h headings (the
-   "stray disclosure bullet [that] indents the heading oddly"). Moving it to
-   ::after keeps the expand/collapse affordance but puts it AFTER the title
-   text, so the text itself starts flush with every other section heading. */
-#view-trends details.trends-fold > summary::after {
-  content: '▸';
-  display: inline-block;
-  font-size: 12px;
-  color: var(--text-dim);
-  transition: transform 0.15s ease;
+/* Right-aligned text cue, mobile-only affordance (desktop hides it below and
+   forces every fold open via JS, since a plain "always expanded" card has no
+   need for a show/hide control at all). */
+#view-trends details.trends-fold > summary .fold-cue {
+  margin-left: auto;
   flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text-dim);
+  opacity: .75;
+  white-space: nowrap;
 }
-#view-trends details.trends-fold[open] > summary::after { transform: rotate(90deg); }
+#view-trends details.trends-fold > summary .fold-cue::after { content: 'SHOW ↓'; }
+#view-trends details.trends-fold[open] > summary .fold-cue::after { content: 'HIDE ↑'; }
+/* Buys vs Sells: heading + toggle controls share the summary row; the fold
+   cue still pins to the far right (see .tchart-controls margin-left:auto
+   below, which pushes the controls+cue group as a unit). */
+#view-trends details.trends-fold > summary.tchart-summary .tchart-controls {
+  margin-left: auto;
+}
+/* Desktop (above this file's 768px mobile breakpoint): no show/hide — every
+   fold card stays expanded (forced via the matchMedia listener near
+   stampWindowChips), so the cue is hidden and the summary row stops acting
+   like a toggle control. */
+@media (min-width: 769px) {
+  #view-trends details.trends-fold > summary .fold-cue { display: none; }
+  #view-trends details.trends-fold > summary { cursor: default; pointer-events: none; }
+  #view-trends details.trends-fold > summary * { pointer-events: auto; }
+}
+/* Mobile: the whole summary line is the tap target, with comfortable padding
+   so the disclosure toggle is easy to hit with a thumb. */
+@media (max-width: 768px) {
+  #view-trends details.trends-fold > summary {
+    padding: 10px 2px;
+    margin: 0 -2px 10px;
+    border-radius: 8px;
+  }
+  #view-trends details.trends-fold > summary:active { background: var(--surf-hi); }
+}
 #view-trends h3.tf-h .chip,
 #view-trends h3.tf-h .tf-chip,
 #view-trends h3.tf-h .info-tip,
@@ -2097,8 +2145,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="180d">Past 6 Months</option>
           <option value="365d">Past Year</option>
           <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This calendar year</option>
-          <option value="last_cy">Last calendar year</option>
+          <option value="this_cy">This Calendar Year</option>
+          <option value="last_cy">Last Calendar Year</option>
         </select>
       </span>
       <div class="filter-groups">
@@ -2228,8 +2276,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="180d">Past 6 Months</option>
           <option value="365d">Past Year</option>
           <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This calendar year</option>
-          <option value="last_cy">Last calendar year</option>
+          <option value="this_cy">This Calendar Year</option>
+          <option value="last_cy">Last Calendar Year</option>
         </select>
       </span>
       <div class="filter-groups">
@@ -2276,21 +2324,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid-split">
-      <div class="section">
-        <h3 class="tf-h">What Congress Is Trading <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Most-traded assets in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">What Congress Is Trading <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="row-flex" style="margin:-6px 0 12px">
-          <label class="lbl">Rank By</label>
+          <label class="lbl">Rank By:</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
             <option value="trades">Trades</option>
             <option value="members">Distinct Politicians</option>
 	            <option value="volume">Est. Volume</option>
             <option value="netflow">Net Flow</option>
-          </select>
-          <label class="lbl" style="margin-left:8px">Asset Type</label>
-          <select id="trTickerAsset" title="Filter by Asset Type">
-            <option value="all">All Assets</option>
-            <option value="exclude_options">Stocks &amp; ETFs Only</option>
           </select>
         </div>
         <div class="table-wrap">
@@ -2308,45 +2350,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <tbody id="trTickers"></tbody>
           </table>
         </div>
-      </div>
-      <div class="section">
-        <h3 class="tf-h">Rising Activity <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Assets whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
-        <div class="row-flex" style="margin:-6px 0 12px">
-          <label class="lbl">Asset Type</label>
-          <select id="trTrendingAsset" title="Filter by Asset Type">
-            <option value="all">All Assets</option>
-            <option value="exclude_options">Stocks &amp; ETFs Only</option>
-          </select>
-        </div>
+      </details>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Rising Activity <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap">
           <table id="tableTrTrending">
             <thead>
               <tr>
-                <th style="min-width: 140px;">Asset</th>
-                <th>Trades (Prior &rarr; Recent)</th>
+                <th style="min-width: 90px;">Asset</th>
+                <th>Trades</th>
                 <th>Change</th>
-                <th>Recent Politicians</th>
+                <th>Politicians</th>
               </tr>
             </thead>
             <tbody id="trTrending"></tbody>
           </table>
         </div>
-      </div>
+      </details>
     </div>
 
     <!-- Consensus / cluster buys -->
-    <div class="section">
-      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em>  <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above).&nbsp; Shown as an educational observation.</p>
+    <details class="section trends-fold" open>
+      <summary class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <p class="sub">Assets where several different politicians happened to trade the same direction within <span id="trConsensusPhrase">the past 3 months</span>.</p>
       <div class="cluster-grid" id="trClusters"></div>
-    </div>
+    </details>
 
     <!-- Buys vs sells over time -->
-    <div class="section">
-      <div class="tchart-head">
-        <h3 class="tf-h" style="margin:0">Buys vs Sells</h3>
-        <div class="tchart-controls">
+    <details class="section trends-fold" open>
+      <summary class="tf-h tchart-summary">
+        <span class="tchart-summary-title">Buys vs Sells</span>
+        <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
             <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
             <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
@@ -2357,56 +2391,52 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
           </div>
         </div>
-      </div>
-      <p class="sub" id="trTimeSub">The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
+        <span class="fold-cue" aria-hidden="true"></span>
+      </summary>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
-    </div>
+    </details>
 
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
-      <div class="section">
-        <h3 class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data).</p>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trSectorFlow"></div>
-      </div>
-      <div class="section">
-        <h3 class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
+      </details>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trCapFlow"></div>
-      </div>
+      </details>
     </div>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
-    <div class="section">
-      <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <em>disclosed</em>, shown as an <strong>average</strong> relative return <strong>(if returns equal the S&amp;P then 0%)</strong>.&nbsp; A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+    <details class="section trends-fold" open>
+      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average relative return</strong> (returns matching the S&amp;P = 0%).</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
-    </div>
+    </details>
 
     <!-- Politicians + Party -->
     <div class="trend-members-grid">
-      <div class="section">
-        <h3 class="tf-h">Most Active Politicians <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-        <p class="sub">Who is trading the most in the window.</p>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Most Active Politicians <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
-      </div>
+      </details>
       <div class="trend-side-stack">
-        <div class="section">
-          <h3 class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-          <p class="sub">Buy / sell mix and estimated net flow per party.</p>
+        <details class="section trends-fold" open>
+          <summary class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trParties"></div>
-        </div>
-        <div class="section">
-          <h3 class="tf-h">By Asset Type <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
-          <p class="sub">Share of estimated volume by instrument type.</p>
+        </details>
+        <details class="section trends-fold" open>
+          <summary class="tf-h">By Asset Type <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trSectors"></div>
-        </div>
+        </details>
       </div>
     </div>
 
     <!-- Disclosure timeliness -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
+      <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Days from trade to filing.&nbsp; The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -2416,7 +2446,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div id="trLagDist" class="lag-dist"></div>
         </div>
         <div class="timeliness-panel">
-          <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Avg Lag)</h3>
+          <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Average Lag)</h3>
           <div class="late-filers-wrap"><table>
             <thead><tr><th>Politician</th><th>Avg</th><th>Max</th><th>Late</th></tr></thead>
             <tbody id="trLateFilers"></tbody>
@@ -2427,7 +2457,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Committee conflicts (journalistic accountability lens) -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
+      <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
@@ -8236,8 +8266,12 @@ function trParams() {
   }
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This calendar year', 'last_cy': 'Last calendar year', 'all': 'All' };
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
+/* Tail phrase for the Consensus Moves explainer ("...within the past 3 months.") —
+   keyed the same as TR_WINDOW_LABELS but phrased as a lowercase prepositional clause. */
+var TR_CONSENSUS_PHRASE = { '1d': 'the past day', '7d': 'the past week', '30d': 'the past month', '90d': 'the past 3 months', '180d': 'the past 6 months', '365d': 'the past year', '1825d': 'the past 5 years', 'this_cy': 'this calendar year', 'last_cy': 'last calendar year', 'all': 'the full record' };
+function consensusPhrase(v) { return TR_CONSENSUS_PHRASE[v] || 'the selected window'; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Section headers display the
    active timeframe setting as italic text (.tr-window-label). This function
@@ -8248,6 +8282,8 @@ function stampWindowChips() {
   document.querySelectorAll('.tr-window-label').forEach(function(el) {
     el.textContent = lblText;
   });
+  var phraseEl = el('trConsensusPhrase');
+  if (phraseEl) phraseEl.textContent = consensusPhrase(val);
 }
 /* Small TTL memo cache over the analytics endpoints (same TTL+dedupe idiom as
    fetchLatencySummary below): a Trends window change fires ~12 parallel aGet
@@ -8315,8 +8351,9 @@ function polFull(n) { n = Number(n || 0); return n + ' politician' + (n === 1 ? 
 function assetFull(n) { n = Number(n || 0); return n + ' asset' + (n === 1 ? '' : 's'); }
 function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
-  return buys + ' buy' + (buys === 1 ? '' : 's') + ' / ' + sells + ' sell' + (sells === 1 ? '' : 's');
+  return buys + ' buy' + (buys === 1 ? '' : 's') + '\\u00a0\\u00a0/\\u00a0\\u00a0' + sells + ' sell' + (sells === 1 ? '' : 's');
 }
+
 	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
@@ -9121,13 +9158,13 @@ function setPricingProof() {
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
   var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
-  var breadth = polFull(r.uniqueMembers) + ' • ' + assetFull(r.uniqueTickers);
+  var breadth = polFull(r.uniqueMembers) + '\\u00a0\\u00a0•\\u00a0\\u00a0' + assetFull(r.uniqueTickers);
   return '<div class="flowrow">' +
     '<div class="ftop"><span class="flabel" title="' + esc(title || label) + '">' + esc(label) + '</span>' +
       '<span class="fval">' + estUsd(r.estVolumeUsd) + '</span></div>' +
     '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
     '<div class="fchip">' + esc(buySellText(r.buyCount, r.sellCount)) +
-      ' • ' + esc(breadth) + ' • net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
+      '\\u00a0\\u00a0•\\u00a0\\u00a0' + esc(breadth) + '\\u00a0\\u00a0•\\u00a0\\u00a0net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
 }
 
 /* Some sector strings vary by provider/vintage for the same real GICS sector
@@ -9192,21 +9229,22 @@ function pctSigned(n) {
 }
 function loadTrPerformers() {
   var body = el('trPerformers');
-  body.innerHTML = skRows(3, 6);
+  body.innerHTML = skRows(2, 6);
   aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(3, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(2, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
+      var statLine = r.tradeCount + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
+      return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
-          '<div class="stack-under"><span>' + r.tradeCount + ' buys</span><span>' + Math.round(100 * (r.winRate || 0)) + '% win</span></div>' +
+          '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
         '<td title="Average relative performance vs S&amp;P 500 since filing date; 0% means matched the S&amp;P, +3% means it beat the S&amp;P by 3%.">' + pctSigned(r.avgExcessReturn) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(2, 'Could not load: ' + e.message); });
 }
 
 function loadTrSummary() {
@@ -9233,10 +9271,9 @@ function loadTrSummary() {
 function loadTrTickers() {
   var body = el('trTickers');
   body.innerHTML = skRows(6, 6);
-  var assetVal = el('trTickerAsset') ? el('trTickerAsset').value : 'all';
   var sortVal = el('trTickerSort') ? el('trTickerSort').value : 'trades';
-  var queryParams = trParams() + '&sort=' + sortVal + '&limit=15' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
-  
+  var queryParams = trParams() + '&sort=' + sortVal + '&limit=15';
+
   // Update header sort icons
   var icons = document.querySelectorAll('#tableTrTickers .sort-icon');
   for (var i = 0; i < icons.length; i++) {
@@ -9262,8 +9299,7 @@ function loadTrTickers() {
 function loadTrTrending() {
   var body = el('trTrending');
   body.innerHTML = skRows(4, 6);
-  var assetVal = el('trTrendingAsset') ? el('trTrendingAsset').value : 'all';
-  var queryParams = trParams() + '&limit=12' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
+  var queryParams = trParams() + '&limit=12';
   aGet('trending?' + queryParams).then(function (d) {
     var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
@@ -9282,7 +9318,6 @@ function loadTrClusters() {
   box.innerHTML = '<div class="chip">Loading…</div>';
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
-    el('trClusterHint').textContent = cs.length + ' found';
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
@@ -9313,10 +9348,6 @@ function loadTrClusters() {
    chamber/party/source stay shared via trParams(); only the window is overridden. */
 var trTimeWindow = '1825d';
 var trTimeMetric = 'count';
-var TR_TIME_SUB = {
-  count: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
-  dollars: 'The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
-};
 function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
 function setTrTimeWin(w) {
   trTimeWindow = w;
@@ -9331,8 +9362,6 @@ function setTrTimeMetric(m) {
     var btns = group.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-m') === trTimeMetric) ? 'on' : '';
   }
-  var sub = el('trTimeSub');
-  if (sub) sub.innerHTML = TR_TIME_SUB[trTimeMetric];
   loadTrTime();
 }
 /* If the series overflows, pin the scroll to the right so the MOST RECENT dates
@@ -9354,23 +9383,24 @@ function loadTrTime() {
 
 function loadTrMembers() {
   var body = el('trMembers');
-  body.innerHTML = skRows(3, 6);
+  body.innerHTML = skRows(2, 6);
   aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(3, 'No politician activity in this window.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(2, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
+      var statLine = r.tradeCount + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + (r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + (r.sellCount || 0) + ' sells';
+      return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
-          '<div class="stack-under"><span>' + r.tradeCount + ' trades</span><span class="stack-split">' + splitBar(r.buyCount, r.sellCount) + '</span></div>' +
+          '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(2, 'Could not load: ' + e.message); });
 }
 
 function loadTrParties() {
@@ -9388,7 +9418,7 @@ function loadTrParties() {
         '<div class="ftop"><span class="flabel">' + pdot(k) + esc(names[k]) + '</span>' +
           '<span class="fval">' + estUsd(v.estVolumeUsd) + '</span></div>' +
         '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-        '<div class="fchip">' + esc(buySellText(v.buys, v.sells)) + ' • ' + esc(polFull(v.members)) + ' • net ' + netHtml(v.estNetFlowUsd) + '</div></div>';
+        '<div class="fchip">' + esc(buySellText(v.buys, v.sells)) + '\\u00a0\\u00a0•\\u00a0\\u00a0' + esc(polFull(v.members)) + '\\u00a0\\u00a0•\\u00a0\\u00a0net ' + netHtml(v.estNetFlowUsd) + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
@@ -9453,9 +9483,9 @@ function loadTrLag() {
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
       return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
-        '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd avg</td>' +
-        '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd max</td>' +
-        '<td class="muted"' + attrTip(lateTip) + '>' + late + ' late</td></tr>';
+        '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
+        '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
+        '<td class="muted"' + attrTip(lateTip) + '>' + late + '</td></tr>';
     }).join('');
   }).catch(function (e) {
     dbox.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>';
@@ -10835,8 +10865,18 @@ function initSideChips() {
 initPartyChips();
 initSideChips();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
-(function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
-(function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
+/* Trends fold cards (mobile-only show/hide): CSS alone can't force a
+   <details> open, so on desktop widths (above this file's 768px mobile
+   breakpoint) JS keeps every details.trends-fold expanded — including after
+   a resize/rotation crosses the breakpoint while a card was collapsed. */
+function forceTrendsFoldOpenAtDesktop() {
+  if (!window.matchMedia || !window.matchMedia('(min-width: 769px)').matches) return;
+  document.querySelectorAll('#view-trends details.trends-fold').forEach(function (d) {
+    if (!d.open) d.open = true;
+  });
+}
+forceTrendsFoldOpenAtDesktop();
+window.addEventListener('resize', forceTrendsFoldOpenAtDesktop);
 /* Map a /api/client/v1 trade envelope item into the trades-row shape openTrade expects. */
 function clientTradeToRow(item) {
   if (!item) return null;

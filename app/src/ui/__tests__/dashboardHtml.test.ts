@@ -1586,8 +1586,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="name-line"');
     expect(DASHBOARD_HTML).toContain('.stack-under {');
     expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
-    expect(DASHBOARD_HTML).toContain("'% win</span></div>'");
-    expect(DASHBOARD_HTML).toContain("' trades</span><span class=\"stack-split\">'");
+    // Top Performers / Most Active Politicians: single merged stat line
+    // (no separate rank column, no split-bar visualization).
+    expect(DASHBOARD_HTML).toContain("' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win'");
+    expect(DASHBOARD_HTML).toContain("' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + (r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + (r.sellCount || 0) + ' sells'");
   });
 
   it('surfaces source error and stale status instead of showing only successful polls', () => {
