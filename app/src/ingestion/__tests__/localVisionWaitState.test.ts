@@ -334,6 +334,126 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(filingRow?.ingest_status).toBe('persisted');
     });
 
+    it('GET /api/admin/scanned-filings/pending excludes local_vision_exhausted parks', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, error, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        'scanned-exhausted-1',
+        'house',
+        'https://example.com/exhausted.pdf',
+        'needs_review',
+        'scanned_pdf',
+        'local_vision_exhausted: attempts=3 last=zero_transactions worker=local_mac_1',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('scanned-exhausted-1', 'local_vision_exhausted,scanned_pdf_vision_spend', 0, nowIso).run();
+
+      // Control: still-pending extract_empty should remain visible.
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-empty-1', 'house', 'https://example.com/empty.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('scanned-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const res = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as { ok: boolean; filings: Array<{ doc_id: string }> };
+      expect(json.ok).toBe(true);
+      const ids = json.filings.map((f) => f.doc_id);
+      expect(ids).toContain('scanned-empty-1');
+      expect(ids).not.toContain('scanned-exhausted-1');
+    });
+
+    it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        'doc-park-1',
+        'house',
+        'https://example.com/park.pdf',
+        'extraction_pending_local',
+        'scanned_pdf',
+        new Date(Date.now() + 600_000).toISOString(),
+        nowIso,
+      ).run();
+      // Prior empty extract that was spinning the worker.
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('doc-park-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const res = await app.request('/local-vision-park', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'doc-park-1',
+          workerId: 'local_mac_1',
+          attempts: 3,
+          lastError: 'zero_transactions',
+          extractor: 'local_grok_cli_v1',
+        }),
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        ok: boolean;
+        docId: string;
+        reason: string;
+        ingestStatus: string;
+      };
+      expect(json.ok).toBe(true);
+      expect(json.docId).toBe('doc-park-1');
+      expect(json.reason).toBe('local_vision_exhausted,scanned_pdf_vision_spend');
+      expect(json.ingestStatus).toBe('needs_review');
+
+      const filing = await d1.prepare(
+        `SELECT ingest_status, error, local_wait_expires_at FROM filings WHERE doc_id = ?`
+      ).bind('doc-park-1').first<{
+        ingest_status: string;
+        error: string | null;
+        local_wait_expires_at: string | null;
+      }>();
+      expect(filing?.ingest_status).toBe('needs_review');
+      expect(filing?.error).toMatch(/^local_vision_exhausted:/);
+      expect(filing?.local_wait_expires_at).toBeNull();
+
+      const review = await d1.prepare(
+        `SELECT reason, resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?`
+      ).bind('doc-park-1').first<{
+        reason: string;
+        resolved: number;
+        resolution_kind: string | null;
+        resolution_reason: string | null;
+      }>();
+      expect(review?.reason).toContain('local_vision_exhausted');
+      expect(review?.reason).toContain('scanned_pdf_vision_spend');
+      // Unresolved — does not trip review_resolution_integrity (resolved-without-reason).
+      expect(review?.resolved).toBe(0);
+      expect(review?.resolution_kind == null || review?.resolution_kind === '').toBe(true);
+
+      // Pending queue must drop the parked doc.
+      const pendingRes = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      const pending = await pendingRes.json() as { filings: Array<{ doc_id: string }> };
+      expect(pending.filings.map((f) => f.doc_id)).not.toContain('doc-park-1');
+    });
+
     it('POST /api/admin/ingest-local-vision accepts source=server_cpu from Coolify CPU worker', async () => {
       const app = createAdminApp();
       const env = makeEnv();

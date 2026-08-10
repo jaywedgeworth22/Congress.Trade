@@ -33,6 +33,15 @@ Env:
   OPENROUTER_TIMEOUT_SEC   (default 600)
   MAX_DOCS_PER_POLL        (default 2)
   MAX_PAGES                (default 12 — cap page images sent to local CLI)
+  MAX_ATTEMPTS             (default 3 — per-doc local-vision retries before park)
+  BACKOFF_BASE_SEC         (default 90 — exponential: base * 2^(attempt-1))
+  STATE_FILE               (default ~/vision-worker/attempt-state.json)
+  EXHAUSTED_ALERT_THRESHOLD (default 5 — Pushover when parked count crosses)
+  PUSHOVER_APP_TOKEN / PUSHOVER_USER_KEY  (optional; publish + exhausted alerts)
+
+Defect fix (2026-08-10): unbounded re-attempts of the same 0-tx docs burned
+xAI subscription quota and flooded Grok Build session history. Max attempts
++ exponential backoff + honest local_vision_exhausted park are mandatory.
 """
 
 from __future__ import annotations  # py3.9: lazy annotations (dict | None etc.)
@@ -48,6 +57,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 logging.basicConfig(
@@ -67,8 +77,16 @@ GROK_CLI_MAX_TURNS = int(os.getenv("GROK_CLI_MAX_TURNS", "8"))
 OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "600"))
 MAX_DOCS_PER_POLL = int(os.getenv("MAX_DOCS_PER_POLL", "2"))
 MAX_PAGES = int(os.getenv("MAX_PAGES", "12"))
+MAX_ATTEMPTS = max(1, int(os.getenv("MAX_ATTEMPTS", "3")))
+BACKOFF_BASE_SEC = max(15, int(os.getenv("BACKOFF_BASE_SEC", "90")))
+EXHAUSTED_ALERT_THRESHOLD = max(1, int(os.getenv("EXHAUSTED_ALERT_THRESHOLD", "5")))
+STATE_FILE = os.path.expanduser(
+    os.getenv("STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "attempt-state.json"))
+)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.5")
+PUSHOVER_APP_TOKEN = os.getenv("PUSHOVER_APP_TOKEN", "")
+PUSHOVER_USER_KEY = os.getenv("PUSHOVER_USER_KEY", "")
 DOWNLOAD_UA = "congress-feed/0.1 (+https://congress.trade)"
 
 
@@ -115,7 +133,101 @@ def send_request(url: str, method: str = "GET", payload: dict | None = None, tim
         return {"ok": False, "error": str(e)}
 
 
-def send_heartbeat() -> bool:
+def load_attempt_state() -> dict:
+    """Per-doc attempt ledger: {docs: {doc_id: {attempts, next_eligible_at, last_error, exhausted, parked}}}."""
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("docs"), dict):
+            return data
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning("attempt state load failed (%s); starting empty", str(e)[:120])
+    return {"docs": {}, "exhausted_alert_sent_at": None, "exhausted_alert_count": 0}
+
+
+def save_attempt_state(state: dict) -> None:
+    try:
+        parent = os.path.dirname(STATE_FILE)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        logger.error("attempt state save failed: %s", str(e)[:200])
+
+
+def doc_entry(state: dict, doc_id: str) -> dict:
+    docs = state.setdefault("docs", {})
+    entry = docs.get(doc_id)
+    if not isinstance(entry, dict):
+        entry = {
+            "attempts": 0,
+            "next_eligible_at": 0.0,
+            "last_error": None,
+            "exhausted": False,
+            "parked": False,
+        }
+        docs[doc_id] = entry
+    return entry
+
+
+def send_pushover(title: str, message: str, priority: int = 0) -> bool:
+    """Optional publish/exhausted alerts. No-op when keys missing; never throws."""
+    if not PUSHOVER_APP_TOKEN or not PUSHOVER_USER_KEY:
+        return False
+    try:
+        body = urllib.parse.urlencode({
+            "token": PUSHOVER_APP_TOKEN,
+            "user": PUSHOVER_USER_KEY,
+            "title": title[:250],
+            "message": message[:1024],
+            "priority": str(priority),
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.pushover.net/1/messages.json",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        logger.warning("pushover failed: %s", str(e)[:160])
+        return False
+
+
+def count_exhausted(state: dict) -> int:
+    docs = state.get("docs") or {}
+    return sum(1 for e in docs.values() if isinstance(e, dict) and e.get("exhausted"))
+
+
+def maybe_alert_exhausted(state: dict) -> None:
+    n = count_exhausted(state)
+    if n < EXHAUSTED_ALERT_THRESHOLD:
+        return
+    # Renotify only when count rises past a previous alert level.
+    prev = int(state.get("exhausted_alert_count") or 0)
+    if n <= prev:
+        return
+    sent = send_pushover(
+        "CT local vision: docs exhausted",
+        f"{n} scanned filing(s) parked as local_vision_exhausted "
+        f"(threshold {EXHAUSTED_ALERT_THRESHOLD}). Needs #1575 vision spend decision.",
+        priority=0,
+    )
+    if sent:
+        state["exhausted_alert_count"] = n
+        state["exhausted_alert_sent_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        save_attempt_state(state)
+        logger.info("exhausted-threshold pushover sent (count=%d)", n)
+
+
+def send_heartbeat(state: dict | None = None) -> bool:
+    exhausted = count_exhausted(state) if state is not None else None
     res = send_request(
         f"{API_BASE_URL}/api/admin/local-worker/heartbeat",
         method="POST",
@@ -127,6 +239,9 @@ def send_heartbeat() -> bool:
                 "grokBin": grok_bin(),
                 "openrouterModel": OPENROUTER_MODEL,
                 "openrouterKeyConfigured": bool(OPENROUTER_API_KEY),
+                "maxAttempts": MAX_ATTEMPTS,
+                "maxDocsPerPoll": MAX_DOCS_PER_POLL,
+                "exhaustedDocs": exhausted,
                 "activeAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             },
         },
@@ -142,6 +257,37 @@ def get_pending_scanned_filings() -> list:
     if res.get("ok") and isinstance(res.get("filings"), list):
         return res["filings"]
     return []
+
+
+def park_local_vision(
+    doc_id: str,
+    attempts: int,
+    last_error: str,
+    extractor: str | None = None,
+) -> bool:
+    """Honest terminal park via admin API. Falls back to local exhausted flag if API missing."""
+    res = send_request(
+        f"{API_BASE_URL}/api/admin/local-vision-park",
+        method="POST",
+        payload={
+            "docId": doc_id,
+            "workerId": WORKER_ID,
+            "attempts": attempts,
+            "lastError": last_error[:500],
+            "extractor": extractor or active_engine_label(),
+        },
+        timeout=60,
+    )
+    if res.get("ok"):
+        logger.info(
+            "parked %s as local_vision_exhausted attempts=%d last=%s",
+            doc_id, attempts, last_error[:120],
+        )
+        return True
+    err = res.get("error") or "unknown"
+    # Pre-deploy: API may 404 — still stop local re-attempts.
+    logger.warning("local-vision-park API failed for %s: %s (local exhaust still holds)", doc_id, err)
+    return False
 
 
 # Shared extraction instructions. Local CLI path lists page image paths;
@@ -506,28 +652,103 @@ def transcribe(pdf_path: str, pages: list, filing: dict) -> tuple[list | None, s
     return rows, "local_grok_openrouter_v1"
 
 
-def process_filing(filing: dict) -> bool:
+def record_failure(state: dict, doc_id: str, reason: str, extractor: str | None = None) -> None:
+    """Increment attempt, schedule backoff, or park after MAX_ATTEMPTS."""
+    entry = doc_entry(state, doc_id)
+    entry["attempts"] = int(entry.get("attempts") or 0) + 1
+    entry["last_error"] = reason
+    entry["last_attempt_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    attempts = entry["attempts"]
+    if attempts >= MAX_ATTEMPTS:
+        entry["exhausted"] = True
+        entry["next_eligible_at"] = time.time() + 365 * 24 * 3600  # never re-pick locally
+        parked = park_local_vision(doc_id, attempts, reason, extractor)
+        entry["parked"] = bool(parked)
+        logger.warning(
+            "cap: max attempts reached doc=%s attempts=%d/%d last=%s parked_api=%s",
+            doc_id, attempts, MAX_ATTEMPTS, reason[:120], parked,
+        )
+        save_attempt_state(state)
+        maybe_alert_exhausted(state)
+        return
+    backoff = BACKOFF_BASE_SEC * (2 ** max(0, attempts - 1))
+    entry["next_eligible_at"] = time.time() + backoff
+    logger.warning(
+        "cap: attempt failed doc=%s attempts=%d/%d backoff=%ds reason=%s",
+        doc_id, attempts, MAX_ATTEMPTS, backoff, reason[:120],
+    )
+    save_attempt_state(state)
+
+
+def clear_attempts(state: dict, doc_id: str) -> None:
+    docs = state.get("docs") or {}
+    if doc_id in docs:
+        del docs[doc_id]
+        save_attempt_state(state)
+
+
+def process_filing(filing: dict, state: dict) -> str:
+    """
+    Process one filing. Returns outcome tag:
+      published | needs_review_with_rows | skipped_backoff | skipped_exhausted | failed
+    """
     doc_id = filing.get("doc_id")
     source_url = filing.get("source_url")
     if not doc_id or not source_url:
-        return False
+        return "failed"
+
+    entry = doc_entry(state, doc_id)
+    now = time.time()
+    if entry.get("exhausted"):
+        logger.info(
+            "cap: skip exhausted doc=%s attempts=%s last=%s",
+            doc_id, entry.get("attempts"), (entry.get("last_error") or "")[:80],
+        )
+        # Re-assert park if API was down earlier.
+        if not entry.get("parked"):
+            parked = park_local_vision(
+                doc_id,
+                int(entry.get("attempts") or MAX_ATTEMPTS),
+                str(entry.get("last_error") or "exhausted"),
+            )
+            entry["parked"] = bool(parked)
+            save_attempt_state(state)
+        return "skipped_exhausted"
+
+    next_eligible = float(entry.get("next_eligible_at") or 0)
+    if next_eligible > now:
+        wait = int(next_eligible - now)
+        logger.info(
+            "cap: backoff skip doc=%s attempts=%s next_in=%ds last=%s",
+            doc_id, entry.get("attempts"), wait, (entry.get("last_error") or "")[:80],
+        )
+        return "skipped_backoff"
+
     logger.info(
-        "Processing %s (chamber=%s, engine=%s) ...",
-        doc_id, filing.get("chamber"), VISION_ENGINE,
+        "Processing %s (chamber=%s, engine=%s, prior_attempts=%s) ...",
+        doc_id, filing.get("chamber"), VISION_ENGINE, entry.get("attempts") or 0,
     )
+    extractor = active_engine_label()
     with tempfile.TemporaryDirectory(prefix="vw-") as td:
         pdf_path = os.path.join(td, "filing.pdf")
         if not download_pdf(source_url, pdf_path):
-            logger.warning("download failed for %s", doc_id)
-            return False
+            record_failure(state, doc_id, "download_failed", extractor)
+            return "failed"
         pages = render_pages(pdf_path, td) if VISION_ENGINE != "openrouter" else []
         if VISION_ENGINE != "openrouter" and not pages:
             # Still try OpenRouter with the PDF if local render failed.
             logger.warning("page render failed for %s; OpenRouter-only attempt", doc_id)
         rows, extractor = transcribe(pdf_path, pages, filing)
     if rows is None:
-        logger.warning("transcription failed for %s (will retry next poll)", doc_id)
-        return False
+        record_failure(state, doc_id, "transcription_failed", extractor)
+        return "failed"
+
+    # Zero-row "success" is still a failed local-vision attempt for retry
+    # purposes — those docs re-entered pending via extract_empty and spun forever.
+    # Final attempt parks via local-vision-park (honest class), not extract_empty.
+    if len(rows) == 0:
+        record_failure(state, doc_id, "zero_transactions", extractor)
+        return "failed"
 
     res = send_request(
         f"{API_BASE_URL}/api/admin/ingest-local-vision",
@@ -542,13 +763,23 @@ def process_filing(filing: dict) -> bool:
         timeout=120,
     )
     if res.get("ok"):
+        published = bool(res.get("published"))
+        needs_review = bool(res.get("needsReview"))
         logger.info(
             "%s submitted via %s: %d txs, published=%s needsReview=%s",
-            doc_id, extractor, len(rows), res.get("published"), res.get("needsReview"),
+            doc_id, extractor, len(rows), published, needs_review,
         )
-        return True
+        clear_attempts(state, doc_id)
+        if published:
+            send_pushover(
+                "CT local vision: published",
+                f"{doc_id}: {len(rows)} tx via {extractor}",
+            )
+            return "published"
+        return "needs_review_with_rows"
     logger.error("Submission failed for %s: %s", doc_id, res.get("error"))
-    return False
+    record_failure(state, doc_id, f"submit_failed:{res.get('error')}", extractor)
+    return "failed"
 
 
 def main():
@@ -563,22 +794,41 @@ def main():
                 sys.exit(2)
             logger.warning("continuing in auto with OpenRouter-only fallback")
     logger.info(
-        "Starting vision worker [ID=%s, API=%s, engine=%s, grokBin=%s, orKey=%s]",
+        "Starting vision worker [ID=%s, API=%s, engine=%s, grokBin=%s, orKey=%s, "
+        "maxAttempts=%d, maxDocsPerPoll=%d, state=%s]",
         WORKER_ID, API_BASE_URL, active_engine_label(), grok_bin(), bool(OPENROUTER_API_KEY),
+        MAX_ATTEMPTS, MAX_DOCS_PER_POLL, STATE_FILE,
     )
+    # Grok CLI has no --no-history / ephemeral flag (checked 2026-08-10) —
+    # headless -p sessions still appear in Grok Build history. Do not hack around it.
+    logger.info(
+        "note: grok CLI has no no-history/ephemeral flag; headless sessions may appear in Grok Build UI",
+    )
+    state = load_attempt_state()
     last_heartbeat = 0.0
     while True:
         now = time.time()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL_SEC:
-            send_heartbeat()
+            # Heartbeat always fires — even when the pending queue is empty —
+            # so the app can keep extraction_pending_local wait windows honest.
+            send_heartbeat(state)
             last_heartbeat = now
         try:
             filings = get_pending_scanned_filings()
             if filings:
+                if len(filings) > MAX_DOCS_PER_POLL:
+                    logger.info(
+                        "cap: poll backlog capped pending=%d processing=%d (MAX_DOCS_PER_POLL)",
+                        len(filings), MAX_DOCS_PER_POLL,
+                    )
                 batch = filings[:MAX_DOCS_PER_POLL]
-                logger.info("Found %d pending scanned filings; processing %d", len(filings), len(batch))
+                logger.info(
+                    "Found %d pending scanned filings; processing %d",
+                    len(filings), len(batch),
+                )
                 for f in batch:
-                    process_filing(f)
+                    process_filing(f, state)
+            # else: quiet poll; heartbeat above still ran on schedule
         except Exception as e:
             logger.error("Worker poll loop exception: %s", str(e))
         time.sleep(POLL_INTERVAL_SEC)
