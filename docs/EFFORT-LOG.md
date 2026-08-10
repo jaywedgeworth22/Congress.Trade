@@ -1,3 +1,4 @@
+- **2026-08-10 — GROK — IN PR #1669 — Web UX trades chrome + full UI expert review.** Export→Options menu; Sign In/Upgrade group; matching-trades count; dual pagination; whole-row trade open. Review: docs/reviews/2026-08-10-web-ui-expert-review.md. Branch `grok/web-ux-trades-chrome`.
 # Congress.Trade Effort Log — cross-agent board
 | 2026-08-09 | CODEX | Codex Cloud protocol bootstrap | In Progress | Repo-local setup/maintenance hooks and portable Slack/GitHub helper added; cloud Apple Notes handoff documented |
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
@@ -10,6 +11,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **2026-08-10 — GROK — IN PR — Web UX trades chrome + full UI expert review.** Export→Options menu; Sign In/Upgrade group; matching-trades count; dual pagination; whole-row trade open + drawer CTAs. Review: docs/reviews/2026-08-10-web-ui-expert-review.md. Branch `grok/web-ux-trades-chrome`.
+- **2026-08-10 ~afternoon CT — GROK — IN PROGRESS/LANDING — iOS auth Settings polish + enable Sign in with Apple.** Root cause: prod `POST /auth/apple` returned 503 (`APPLE_SIGNIN_ENABLED` unset). Set Infisical prod `APPLE_SIGNIN_ENABLED=true` (len=4), restarted Coolify `congress-trade`; probe now 401 invalid-token (enabled). UI: Settings Google button ST-parity (48pt outline + multicolor G), Apple requests fullName+email scopes, friendlier Apple errors, removed Recent Activity + long footers/extra notice section. Branch `grok/ios-auth-settings-polish`. IAP remains OFF (`APPLE_IAP_ENABLED` unset).
 - **2026-08-10 ~afternoon CT — GROK — COMPLETED/MERGED (#1665) — iOS auth Settings polish + enable Sign in with Apple.** Root cause: prod `POST /auth/apple` returned 503 (`APPLE_SIGNIN_ENABLED` unset). Set Infisical prod `APPLE_SIGNIN_ENABLED=true` (len=4), restarted Coolify `congress-trade`; probe now 401 invalid-token (enabled). UI: Settings Google button ST-parity (48pt outline + multicolor G), Apple requests fullName+email scopes, friendlier Apple errors, removed Recent Activity + long footers/extra notice section. Branch `grok/ios-auth-settings-polish`. IAP remains OFF (`APPLE_IAP_ENABLED` unset).
 
 
