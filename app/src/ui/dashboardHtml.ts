@@ -626,6 +626,36 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     cursor: pointer; user-select: none; white-space: nowrap;
     box-shadow: 0 1px 0 var(--border);
   }
+  /* Review Queue + All Filing Decisions: show at most ~7 body rows, then
+     scroll inside the wrap with sticky column headings. max-height only —
+     empty / single "queue is clear" state stays content-sized (no min-height). */
+  #view-review .review-table-wrap {
+    max-height: calc(2.6rem + 7 * 4.85rem);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--panel) 75%, transparent);
+    box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1);
+  }
+  #view-review .review-table-wrap > table {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    /* overflow:hidden on the global table rule clips sticky thead; clear it. */
+    overflow: visible;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  #view-review .review-table-wrap thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--panel);
+    box-shadow: 0 1px 0 var(--border);
+  }
   .people-table thead th:hover { color: var(--accent); }
   .people-table thead th .sort-ind { font-size: 10px; opacity: .55; margin-left: 2px; }
   .people-table thead th.sort-asc .sort-ind::after { content: '▲'; opacity: 1; }
@@ -2627,18 +2657,22 @@ ${speedProofSectionHtml(false)}
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
       </div>
-      <table>
-        <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
-        <tbody id="reviewBody"></tbody>
-      </table>
+      <div class="review-table-wrap" id="reviewTableWrap" role="region" aria-label="Review queue table">
+        <table>
+          <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
+          <tbody id="reviewBody"></tbody>
+        </table>
+      </div>
       <p class="note">Confirm promotes the read to the Trades tab; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it.&nbsp; Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>).&nbsp; <code>POST /api/admin/review/:docId {decision}</code></p>
       <div style="margin-top:14px">
         <h3>All Filing Decisions</h3>
         <p class="sub">Append-only filing decisions, including clean auto-published filings that never entered the review queue.</p>
-        <table>
-          <thead><tr><th>Time</th><th>Doc</th><th>Action</th><th>Source</th><th>Reason</th><th>Rows</th></tr></thead>
-          <tbody id="decisionBody"></tbody>
-        </table>
+        <div class="review-table-wrap" id="decisionTableWrap" role="region" aria-label="Filing decisions history">
+          <table>
+            <thead><tr><th>Time</th><th>Doc</th><th>Action</th><th>Source</th><th>Reason</th><th>Rows</th></tr></thead>
+            <tbody id="decisionBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
@@ -2728,12 +2762,12 @@ ${speedProofSectionHtml(false)}
 ${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
-      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token.&nbsp; Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests.&nbsp; Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
+      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token.&nbsp; Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests.&nbsp; <strong>Save Token</strong> checks the value against the server and reports accepted vs rejected.&nbsp; Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
       <div class="row-flex">
         <input id="adminToken" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="flex:1;min-width:240px" />
         <button class="btn" onclick="saveAdminToken()">Save Token</button>
         <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
-        <span id="adminTokenMsg" class="note"></span>
+        <span id="adminTokenMsg" class="note" role="status" aria-live="polite"></span>
       </div>
     </div>
     <div class="section">
@@ -6397,21 +6431,50 @@ function admin401(r) {
   if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin tab access box.');
   return r;
 }
+function setAdminTokenMsg(text, kind) {
+  var msg = el('adminTokenMsg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  // kind: 'ok' | 'err' | '' (neutral)
+  msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
+}
+/* Persist the token, then probe a cheap admin GET so a wrong/missing value is
+   reported in Admin Access instead of only failing later on a random panel. */
 function saveAdminToken() {
   var v = el('adminToken').value.trim();
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
-  el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
-  setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
   applyAdminVisibility();
   renderTradesHeader(); renderColChooser(); renderTrades();
-  if (v) loadReview();
-  loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
+  if (!v) {
+    setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
+    setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
+    return;
+  }
+  setAdminTokenMsg('Checking token…', '');
+  // API HOOK: GET /api/admin/poll-config — lightweight auth probe (same gate as other admin reads).
+  fetch('/api/admin/poll-config', { headers: adminHeaders() })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) {
+        setAdminTokenMsg('Token rejected — wrong value, expired, or server has no matching ADMIN_TOKEN / Access allowlist.', 'err');
+        return null;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setAdminTokenMsg('Token accepted — saved in this browser.', 'ok');
+      setTimeout(function () { setAdminTokenMsg('', ''); }, 4000);
+      loadReview();
+      loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
+      loadLogoSetting();
+      return r;
+    })
+    .catch(function (e) {
+      setAdminTokenMsg('Could not verify token: ' + (e && e.message ? e.message : 'network error'), 'err');
+    });
 }
 function clearAdminToken() {
   try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   if (el('adminToken')) el('adminToken').value = '';
-  el('adminTokenMsg').textContent = 'Cleared.';
-  setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
+  setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
   applyAdminVisibility();
   renderTradesHeader(); renderColChooser(); renderTrades();
 }

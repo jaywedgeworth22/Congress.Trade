@@ -4031,4 +4031,29 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
   it('Politicians+Party grid hugs the left card instead of leaving a dead middle column', () => {
     expect(DASHBOARD_HTML).toContain('#view-trends .trend-members-grid { grid-template-columns: fit-content(760px) minmax(360px, 1fr); }');
   });
+
+  it('caps Review Queue + Filing Decisions at ~7 visible rows with sticky heads (empty stays content-sized)', () => {
+    // max-height only — no min-height — so an empty "queue is clear" row is not stretched.
+    expect(DASHBOARD_HTML).toContain('#view-review .review-table-wrap {');
+    expect(DASHBOARD_HTML).toContain('max-height: calc(2.6rem + 7 * 4.85rem);');
+    expect(DASHBOARD_HTML).not.toMatch(/#view-review \.review-table-wrap \{[^}]*min-height:/);
+    expect(DASHBOARD_HTML).toContain('#view-review .review-table-wrap thead th {\n    position: sticky;');
+    expect(DASHBOARD_HTML).toContain('id="reviewTableWrap"');
+    expect(DASHBOARD_HTML).toContain('id="decisionTableWrap"');
+    expect(DASHBOARD_HTML).toContain('id="reviewBody"');
+    expect(DASHBOARD_HTML).toContain('id="decisionBody"');
+  });
+
+  it('verifies admin token on Save and reports accepted vs rejected in Admin Access', () => {
+    expect(DASHBOARD_HTML).toContain('function setAdminTokenMsg(');
+    expect(DASHBOARD_HTML).toContain('function saveAdminToken(');
+    expect(DASHBOARD_HTML).toContain("setAdminTokenMsg('Checking token…'");
+    expect(DASHBOARD_HTML).toContain("Token rejected — wrong value");
+    expect(DASHBOARD_HTML).toContain("Token accepted — saved in this browser.");
+    expect(DASHBOARD_HTML).toContain("Cleared — no admin token stored in this browser.");
+    expect(DASHBOARD_HTML).toContain('id="adminTokenMsg"');
+    expect(DASHBOARD_HTML).toContain('role="status"');
+    // Still uses the actionable 401 copy on other admin probes.
+    expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin token in the Admin tab access box.");
+  });
 });
