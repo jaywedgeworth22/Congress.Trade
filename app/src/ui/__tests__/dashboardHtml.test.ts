@@ -91,7 +91,8 @@ describe('DASHBOARD_HTML', () => {
       '<title>Congress.Trade</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
-    expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png?v=21"');
+    // OG tags are server-filled placeholders (deep-link context cards).
+    expect(DASHBOARD_HTML).toContain('property="og:image" content="%OG_IMAGE%"');
     expect(DASHBOARD_HTML).toContain('name="twitter:card" content="summary_large_image"');
   });
 
@@ -113,7 +114,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('src="/assets/brand-logo-light.png');
     expect(DASHBOARD_HTML).toContain('data-src-dark="/assets/brand-logo-dark.png');
     expect(DASHBOARD_HTML).toContain('data-src-light="/assets/brand-logo-light.png');
-    expect(DASHBOARD_HTML).toContain('content="https://congress.trade/og-image.png?v=21"');
+    expect(DASHBOARD_HTML).toContain('content="%OG_IMAGE%"');
   });
 
   it('contains at least the boot + main script blocks', () => {
@@ -471,8 +472,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('.u-abbr {');
     // tableTrTickers' "Politicians" column and tableTrTrending's "Recent
     // Politicians" column now render a bare number — no word, no abbr.
-    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.memberCount || 0) + '</td>' +");
-    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + (r.recentMembers || 0) + '</td></tr>';");
+    // Display uses fmtCount (thousand separators); storage stays bare.
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + fmtCount(r.memberCount || 0) + '</td>' +");
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted\">' + fmtCount(r.recentMembers || 0) + '</td></tr>';");
     // Consensus Moves cluster cards are a prose/sub-caption context — the
     // full word "politicians" always spells out, never abbreviates.
     expect(DASHBOARD_HTML).toContain("politician' + (c.memberCount === 1 ? '' : 's') + ' · '");
@@ -1403,6 +1405,29 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
   });
 
+  it('formats district ordinals with superscript suffixes (display-only)', () => {
+    expect(DASHBOARD_HTML).toContain('function ordinalSuffix(');
+    expect(DASHBOARD_HTML).toContain('function fmtDistrictOrdinal(');
+    expect(DASHBOARD_HTML).toContain('function fmtDistrictOrdinalHtml(');
+    expect(DASHBOARD_HTML).toContain("return 'st'");
+    expect(DASHBOARD_HTML).toContain("return 'nd'");
+    expect(DASHBOARD_HTML).toContain("return 'rd'");
+    expect(DASHBOARD_HTML).toContain("return 'th'");
+    expect(DASHBOARD_HTML).toContain("'<sup class=\"ord\">' + ordinalSuffix(n) + '</sup>'");
+    expect(DASHBOARD_HTML).toContain('fmtDistrictOrdinalHtml(m.district)');
+    expect(DASHBOARD_HTML).toContain("fmtDistrictOrdinalHtml(p.district) + ' District'");
+  });
+
+  it('formats counts with thousand separators (display-only)', () => {
+    expect(DASHBOARD_HTML).toContain('function fmtCount(');
+    expect(DASHBOARD_HTML).toContain(".toLocaleString('en-US')");
+    expect(DASHBOARD_HTML).toContain('fmtCount(m.txCount)');
+    expect(DASHBOARD_HTML).toContain('fmtCount(a.txCount)');
+    expect(DASHBOARD_HTML).toContain('fmtCount(a.memberCount)');
+    expect(DASHBOARD_HTML).toContain("fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown'");
+    expect(DASHBOARD_HTML).toContain("typeof v === 'number' && Number.isFinite(v)) ? fmtCount(v) : v");
+  });
+
   it('renders amount bracket categories above the compact amount text', () => {
     expect(DASHBOARD_HTML).toContain('function amountTier(');
     expect(DASHBOARD_HTML).toContain('function amountBarsHtml(');
@@ -1588,8 +1613,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
     // Top Performers / Most Active Politicians: single merged stat line
     // (no separate rank column, no split-bar visualization).
-    expect(DASHBOARD_HTML).toContain("' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win'");
-    expect(DASHBOARD_HTML).toContain("' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + (r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + (r.sellCount || 0) + ' sells'");
+    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win'");
+    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells'");
   });
 
   it('surfaces source error and stale status instead of showing only successful polls', () => {
@@ -2066,13 +2091,14 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
 
   // ---- 2. "1 Democrats" pluralization --------------------------------------
   it('pluralizes party counts correctly (1 Democrat, not 1 Democrats)', () => {
-    const src = extractFn(DASHBOARD_HTML, 'pluralCount') + '\nreturn pluralCount;';
+    const src = extractFn(DASHBOARD_HTML, 'fmtCount') + '\n' + extractFn(DASHBOARD_HTML, 'pluralCount') + '\nreturn pluralCount;';
     // eslint-disable-next-line no-new-func -- executing the real shipped source
     const pluralCount = new Function(src)() as (n: number, noun: string) => string;
     expect(pluralCount(1, 'Democrat')).toBe('1 Democrat');
     expect(pluralCount(2, 'Democrat')).toBe('2 Democrats');
     expect(pluralCount(0, 'Republican')).toBe('0 Republicans');
     expect(pluralCount(1, 'Other')).toBe('1 Other');
+    expect(pluralCount(22293, 'trade')).toBe('22,293 trades');
   });
 
   it('builds cluster-card party breakdowns from partyCountHtml/pluralCount instead of hardcoded plurals', () => {
@@ -2088,7 +2114,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   it('owner follow-up batch #14: Consensus Moves cards abbreviate Democrats/Republicans to Dems/Reps on mobile (2-up), full word on desktop', () => {
     expect(DASHBOARD_HTML).toContain('function partyCountHtml(n, full, abbr) {');
     expect(DASHBOARD_HTML).toContain(
-      "return n + ' <span class=\"party-full\">' + full + suf + '</span><span class=\"party-abbr\">' + abbr + suf + '</span>';",
+      "return fmtCount(n) + ' <span class=\"party-full\">' + full + suf + '</span><span class=\"party-abbr\">' + abbr + suf + '</span>';",
     );
     // Desktop default: full word shown, abbreviation hidden.
     expect(DASHBOARD_HTML).toContain('.party-abbr { display: none; }');
@@ -2436,6 +2462,30 @@ describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () =>
     const html = await res.text();
     expect(html).not.toContain('%GA_SCRIPT%');
     expect(html).not.toContain('%LOGO_DISPLAY%');
+    expect(html).not.toContain('%OG_IMAGE%');
+    expect(html).not.toContain('%OG_TITLE%');
+    expect(html).not.toContain('%CANONICAL_URL%');
+  });
+
+  it('serves context OG cards for Trends / company / politician deep links', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+
+    const trends = await (await app.request('http://localhost/?view=trends', {}, { } as never)).text();
+    expect(trends).toContain('og-image-trends.png?v=22');
+    expect(trends).toContain('content="Trends · Congress.Trade"');
+
+    const company = await (await app.request('http://localhost/?ticker=AAPL', {}, { } as never)).text();
+    expect(company).toContain('og-image-company.png?v=22');
+    expect(company).toContain('content="AAPL · Congress.Trade"');
+
+    const pol = await (await app.request('http://localhost/?member=P000197', {}, { } as never)).text();
+    expect(pol).toContain('og-image-politician.png?v=22');
+    expect(pol).toContain('content="P000197 · Congress.Trade"');
+
+    const home = await (await app.request('http://localhost/', {}, { } as never)).text();
+    expect(home).toContain('og-image.png?v=22');
+    expect(home).not.toContain('og-image-trends.png');
   });
 });
 
@@ -3293,7 +3343,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     it('names the window instead of the vague "in window" once the endpoint has returned one', () => {
       expect(DASHBOARD_HTML).not.toContain('disclosed buys in window');
       expect(DASHBOARD_HTML).toContain("var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';");
-      expect(DASHBOARD_HTML).toContain("buyCount + ' disclosed buys' + horizonPhrase");
+      expect(DASHBOARD_HTML).toContain("fmtCount(buyCount) + ' disclosed buys' + horizonPhrase");
     });
   });
 });
@@ -3341,6 +3391,9 @@ describe('static UI assets (issue #1040)', () => {
       { path: '/assets/brand-logo-light.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'immutable' },
       { path: '/assets/zilla-slab-700.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
       { path: '/og-image.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-trends.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-company.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-politician.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
       { path: '/apple-touch-icon.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
     ];
 
@@ -3517,7 +3570,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     // openTrade's "in TKR | Company" line.
     expect(DASHBOARD_HTML).toContain("(displayTicker && displayAsset ? '<span class=\"dot-sep\">  |  </span>' : '')");
     // Ticker drawer stats row: "N trades  |  N politicians  |  ~$X approx. volume".
-    expect(DASHBOARD_HTML).toContain("' trades  |  ' + (s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>'");
+    expect(DASHBOARD_HTML).toContain("fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>'");
     // Market Cap: "Mega  |  ~$4.8t".
     expect(DASHBOARD_HTML).toContain("(ref.marketCap != null ? (ref.marketCapBucket ? '  |  ' : '') + estUsd(ref.marketCap) : '')");
   });

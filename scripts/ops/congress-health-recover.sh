@@ -113,7 +113,10 @@ cooldown_ok() {
 }
 
 find_app_container() {
-  # Prefer live container matching Coolify resource / project labels.
+  # Prefer live Coolify-labeled congress-app only.
+  # Monet incident 2026-08-10: `docker ps -aq --filter name=congress-app-` matched
+  # abandoned manual relics (congress-app-live-*) and `docker start` resurrected a
+  # 3-day-old build on a health blip. Never start name-matched stopped containers.
   local id
   id=$(docker ps -q \
     --filter "label=coolify.resourceName=congress-trade" \
@@ -122,15 +125,19 @@ find_app_container() {
     printf '%s\n' "$id"
     return 0
   fi
+  # Stopped-but-labeled Coolify container: restart is OK (same resource).
   id=$(docker ps -aq \
     --filter "label=coolify.resourceName=congress-trade" \
-    --filter "label=com.docker.compose.service=congress-app" 2>/dev/null | head -1 || true)
+    --filter "label=com.docker.compose.service=congress-app" \
+    --filter "status=exited" 2>/dev/null | head -1 || true)
   if [[ -n "$id" ]]; then
     printf '%s\n' "$id"
     return 0
   fi
-  id=$(docker ps -aq --filter "name=congress-app-" 2>/dev/null | head -1 || true)
+  # Name fallback: RUNNING only. Manual/relic stopped containers must not start.
+  id=$(docker ps -q --filter "name=congress-app-" 2>/dev/null | head -1 || true)
   if [[ -n "$id" ]]; then
+    log "warn: using running name=congress-app- fallback id=${id:0:12} (prefer Coolify labels)"
     printf '%s\n' "$id"
     return 0
   fi

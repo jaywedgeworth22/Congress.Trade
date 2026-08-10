@@ -37,13 +37,21 @@ export const BRAND_LOGO_PNG = loadAsset('assets/brand-logo.png', 'image/png');
 export const BRAND_LOGO_DARK_PNG = loadAsset('assets/brand-logo-dark.png', 'image/png');
 export const BRAND_LOGO_LIGHT_PNG = loadAsset('assets/brand-logo-light.png', 'image/png');
 
-// Well-known root icons / social card (long cache, stable paths).
+// Well-known root icons / social cards (long cache, stable paths).
+// Context-specific OG cards share the site heading lockup (CONGRESS + eagle + TRADE)
+// with a subtitle for Trends / Company / Politician deep links.
 export const OG_IMAGE_PNG = loadAsset('og-image.png', 'image/png');
+export const OG_IMAGE_TRENDS_PNG = loadAsset('og-image-trends.png', 'image/png');
+export const OG_IMAGE_COMPANY_PNG = loadAsset('og-image-company.png', 'image/png');
+export const OG_IMAGE_POLITICIAN_PNG = loadAsset('og-image-politician.png', 'image/png');
 export const ICON_192_PNG = loadAsset('icon-192.png', 'image/png');
 export const ICON_512_PNG = loadAsset('icon-512.png', 'image/png');
 export const APPLE_TOUCH_ICON_PNG = loadAsset('apple-touch-icon.png', 'image/png');
 /** Favicon bytes (PNG content; served at /favicon.ico with image/png). */
 export const FAVICON_PNG = loadAsset('favicon.png', 'image/png');
+
+/** Cache-bust query for og:image URLs. Bump when regenerating social cards. */
+export const OG_IMAGE_VERSION = '22';
 
 /** Absolute path to the public asset root (for tests / tooling). */
 export const PUBLIC_ASSETS_DIR = PUBLIC_DIR;
