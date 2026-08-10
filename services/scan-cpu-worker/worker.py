@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -90,16 +91,38 @@ def get_pending_scanned_filings() -> List[Dict[str, Any]]:
     return []
 
 
-def download_pdf(url: str, dest: str) -> bool:
+def stored_document_url(filing: Dict[str, Any]) -> Optional[str]:
+    """Admin URL for durable R2 bytes. Never uses source_url / primary gov hosts."""
+    explicit = filing.get("stored_document_url") or filing.get("storedDocumentUrl")
+    if isinstance(explicit, str) and explicit.strip():
+        path = explicit.strip()
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return f"{API_BASE_URL}{path if path.startswith('/') else '/' + path}"
+    doc_id = filing.get("doc_id")
+    if not doc_id or not filing.get("raw_object_key"):
+        return None
+    return f"{API_BASE_URL}/api/admin/filings/{urllib.parse.quote(str(doc_id), safe='')}/raw"
+
+
+def download_stored_document(filing: Dict[str, Any], dest: str) -> bool:
+    url = stored_document_url(filing)
+    if not url:
+        logger.warning(
+            "no stored copy for %s — refusing source re-download",
+            filing.get("doc_id"),
+        )
+        return False
     try:
         req = urllib.request.Request(url)
         if ADMIN_TOKEN:
             req.add_header("Authorization", f"Bearer {ADMIN_TOKEN}")
+        req.add_header("User-Agent", "congress-scan-cpu-worker/stored-raw")
         with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
             f.write(resp.read())
         return os.path.getsize(dest) > 100
     except Exception as e:
-        logger.warning("PDF download failed %s: %s", url, e)
+        logger.warning("stored download failed %s: %s", url, e)
         return False
 
 
@@ -107,14 +130,11 @@ def process_filing(filing: Dict[str, Any]) -> bool:
     doc_id = filing.get("doc_id")
     if not doc_id:
         return False
-    logger.info("Processing %s …", doc_id)
+    logger.info("Processing %s (via=stored-raw) …", doc_id)
     pdf_path = f"/tmp/{doc_id}.pdf"
-    source_url = filing.get("source_url") or ""
-    ok_dl = False
-    if source_url:
-        ok_dl = download_pdf(source_url, pdf_path)
+    ok_dl = download_stored_document(filing, pdf_path)
     if not ok_dl or not os.path.exists(pdf_path):
-        logger.error("No PDF for %s", doc_id)
+        logger.error("No stored PDF for %s", doc_id)
         return False
 
     try:

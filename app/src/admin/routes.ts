@@ -5006,8 +5006,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     stalled)
   //   • needs_review extract_empty scanned PDFs (server_cpu/Tesseract empty
   //     reads that need Grok vision re-transcription)
-  // Skips resolved-review and live-transaction docs so workers don't burn
-  // spend on no-ops.
+  // Skips resolved-review, live-transaction docs, and local_vision_exhausted
+  // parks (worker retry-cap terminal class — #1575 vision-spend bucket) so
+  // workers don't burn subscription quota on no-ops.
+  //
+  // STORED COPY ONLY (2026-08-10): requires raw_object_key. Workers must pull
+  // bytes via GET /filings/:docId/raw — never re-hit Clerk/eFD/OGE from the
+  // Mac/residential IP. source_url is metadata only.
   r.get('/scanned-filings/pending', async (c) => {
     try {
       const rows = await all<{
@@ -5015,8 +5020,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         chamber: string | null;
         filing_type: string | null;
         filed_date: string | null;
-        source_url: string;
-        raw_object_key: string | null;
+        source_url: string | null;
+        raw_object_key: string;
         ingest_status: string;
         doc_kind: string;
         local_wait_expires_at: string | null;
@@ -5027,7 +5032,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 f.ingest_status, f.doc_kind, f.local_wait_expires_at, f.first_seen_at
            FROM filings f
           WHERE f.doc_kind = 'scanned_pdf'
-            AND f.source_url IS NOT NULL
+            AND f.raw_object_key IS NOT NULL
+            AND TRIM(f.raw_object_key) != ''
             AND (
               f.ingest_status IN ('extraction_pending_local', 'classified')
               OR (
@@ -5040,8 +5046,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                        rq.reason LIKE '%extract_empty%'
                        OR rq.reason LIKE '%no_transactions_extracted%'
                      )
+                     AND rq.reason NOT LIKE '%local_vision_exhausted%'
                 )
               )
+            )
+            AND (f.error IS NULL OR f.error NOT LIKE 'local_vision_exhausted%')
+            AND NOT EXISTS (
+              SELECT 1 FROM review_queue rq
+               WHERE rq.doc_id = f.doc_id
+                 AND rq.resolved = 0
+                 AND rq.reason LIKE '%local_vision_exhausted%'
             )
             AND NOT EXISTS (
               SELECT 1 FROM review_queue rq
@@ -5060,9 +5074,62 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             f.first_seen_at DESC
           LIMIT 50`,
       );
-      return c.json({ ok: true, count: rows.length, filings: rows });
+      const filings = rows.map((row) => ({
+        ...row,
+        // Absolute path under /api/admin — workers prepend CONGRESS_TRADE_API_URL.
+        stored_document_url: `/api/admin/filings/${encodeURIComponent(row.doc_id)}/raw`,
+      }));
+      return c.json({ ok: true, count: filings.length, filings });
     } catch (err) {
       return c.json({ ok: false, error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- GET /filings/:docId/raw --------------------------------------------
+  // Serve the durable R2/object-store bytes for a filing. Admin-auth only.
+  // NEVER redirects to Clerk/eFD/OGE — workers and ops must use this so
+  // residential egress does not re-hit primary sources (IP reputation +
+  // consistency with the copy used for reviews).
+  // PDF and HTML (and any other stored content-type) are returned as-is.
+  r.get('/filings/:docId/raw', async (c) => {
+    const docId = c.req.param('docId');
+    if (!docId?.trim()) return c.json({ error: 'docId is required' }, 400);
+    try {
+      const filingRow = await get<{ raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT raw_object_key FROM filings WHERE doc_id = ?`,
+        [docId],
+      );
+      if (!filingRow?.raw_object_key) {
+        return c.json({
+          error: 'stored copy not available',
+          docId,
+          detail: 'filings.raw_object_key is null — fetch stage has not stored this document yet',
+        }, 404);
+      }
+      const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
+      if (!obj) {
+        return c.json({
+          error: 'stored copy missing from object store',
+          docId,
+          rawObjectKey: filingRow.raw_object_key,
+        }, 404);
+      }
+      const contentType = obj.httpMetadata?.contentType || 'application/pdf';
+      const headers: Record<string, string> = {
+        'content-type': contentType,
+        'content-disposition': 'inline',
+        'cache-control': 'private, max-age=300',
+        'x-content-type-options': 'nosniff',
+        'x-congress-trade-source': 'stored-raw',
+        'x-congress-trade-doc-id': docId,
+      };
+      if (contentType.toLowerCase().includes('html')) {
+        headers['content-security-policy'] = 'sandbox';
+      }
+      return new Response(obj.body, { headers });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
@@ -5090,6 +5157,145 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         [workerId, nowIso, statusJson],
       );
       return c.json({ ok: true, workerId, lastHeartbeatAt: nowIso });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /local-vision-park --------------------------------------------
+  // Terminal park after the Mac/server local-vision lane exhausts retries on a
+  // doc (max attempts / zero-row / hard failure). Honest, visible class —
+  // NOT a fake review "rejected" resolution.
+  //
+  // Side effects:
+  //   • filings.ingest_status = needs_review
+  //   • filings.error = local_vision_exhausted: attempts=N; last=...
+  //   • unresolved review_queue.reason includes local_vision_exhausted
+  //     (+ scanned_pdf_vision_spend so it lands in the #1575 owner-spend bucket)
+  //   • does NOT set resolved=1 — keeps review_resolution_integrity clean
+  //   • pending query excludes these so workers stop re-burning quota
+  r.post('/local-vision-park', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const docId = typeof body.docId === 'string' ? body.docId.trim() : '';
+    if (!docId) return c.json({ error: 'docId is required' }, 400);
+
+    const attemptsRaw = body.attempts;
+    const attempts =
+      typeof attemptsRaw === 'number' && Number.isFinite(attemptsRaw)
+        ? Math.max(0, Math.floor(attemptsRaw))
+        : typeof attemptsRaw === 'string' && Number.isFinite(Number(attemptsRaw))
+          ? Math.max(0, Math.floor(Number(attemptsRaw)))
+          : null;
+    const lastError =
+      typeof body.lastError === 'string' && body.lastError.trim()
+        ? body.lastError.trim().slice(0, 500)
+        : 'unknown';
+    const workerId =
+      typeof body.workerId === 'string' && body.workerId.trim()
+        ? body.workerId.trim().slice(0, 120)
+        : 'local_mac_1';
+    const extractor =
+      typeof body.extractor === 'string' && body.extractor.trim()
+        ? body.extractor.trim().slice(0, 120)
+        : null;
+
+    // Reason class for pending exclusion + #1575 spend bucket. Never mark
+    // resolved — integrity check fires on resolved rows missing a reason, and
+    // owner still needs to decide paid vision for these docs.
+    const reason = 'local_vision_exhausted,scanned_pdf_vision_spend';
+    const errorDetail =
+      `local_vision_exhausted: attempts=${attempts ?? '?'} last=${lastError} worker=${workerId}`;
+    const nowIso = new Date().toISOString();
+    const payload = JSON.stringify({
+      kind: 'local_vision_exhausted',
+      attempts,
+      lastError,
+      workerId,
+      extractor,
+      parkedAt: nowIso,
+    });
+
+    try {
+      const filingRow = await get<{ doc_id: string; ingest_status: string | null }>(
+        c.env.DB,
+        `SELECT doc_id, ingest_status FROM filings WHERE doc_id = ?`,
+        [docId],
+      );
+      if (!filingRow) {
+        return c.json({ error: `Filing ${docId} not found` }, 404);
+      }
+
+      await run(
+        c.env.DB,
+        `UPDATE filings
+            SET ingest_status = 'needs_review',
+                error = ?,
+                local_wait_expires_at = NULL,
+                extractor = COALESCE(?, extractor)
+          WHERE doc_id = ?`,
+        [errorDetail.slice(0, 1000), extractor, docId],
+      );
+
+      // Prefer updating an open review row; insert if none. Never touch resolved=1.
+      const open = await get<{ doc_id: string }>(
+        c.env.DB,
+        `SELECT doc_id FROM review_queue WHERE doc_id = ? AND resolved = 0 LIMIT 1`,
+        [docId],
+      );
+      if (open) {
+        await run(
+          c.env.DB,
+          `UPDATE review_queue
+              SET reason = ?,
+                  payload = ?
+            WHERE doc_id = ? AND resolved = 0`,
+          [reason, payload, docId],
+        );
+      } else {
+        await run(
+          c.env.DB,
+          `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
+           VALUES (?, ?, ?, ?, 0)`,
+          [docId, reason, payload, nowIso],
+        );
+        // If a resolved row already owns the PK, leave it alone (do not reopen).
+        // Integrity prefers not resurrecting closed reviews.
+      }
+
+      try {
+        await run(
+          c.env.DB,
+          `INSERT OR IGNORE INTO ingestion_decisions
+             (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+           VALUES (?, ?, 'local_vision_exhausted', 'local_worker', ?, ?, ?, '[]', ?)`,
+          [
+            `decision:local_vision_exhausted:${docId}:${nowIso}`,
+            docId,
+            workerId,
+            reason,
+            payload,
+            nowIso,
+          ],
+        );
+      } catch {
+        // decisions table may lag in some local fixtures — park still lands.
+      }
+
+      return c.json({
+        ok: true,
+        docId,
+        reason,
+        attempts,
+        lastError,
+        previousStatus: filingRow.ingest_status,
+        ingestStatus: 'needs_review',
+      });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
