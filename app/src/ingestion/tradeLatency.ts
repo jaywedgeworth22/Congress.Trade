@@ -3045,9 +3045,31 @@ async function runProviderProbe(
     return { ...base, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors };
   }
 
+  const recordHandoff = async (
+    kind: 'success' | 'error' | 'budget_skip' | 'not_configured' | 'disabled',
+    detail?: { error?: string | null; fetchedRows?: number },
+  ) => {
+    if (!isFmpFamilyProvider(provider.id) && provider.id !== 'unusual_whales' && provider.id !== 'quiver') {
+      return;
+    }
+    try {
+      const { recordLatencyProbeOutcome } = await import('./scoutHandoff.ts');
+      await recordLatencyProbeOutcome(env, provider.id as 'fmp' | 'fmp_rapidapi' | 'unusual_whales' | 'quiver', {
+        source: 'server',
+        kind,
+        error: detail?.error ?? null,
+        fetchedRows: detail?.fetchedRows,
+        now,
+      });
+    } catch {
+      /* handoff bookkeeping best-effort */
+    }
+  };
+
   // FMP family: skip HTTP when explicitly OFF (FMP_LATENCY_PROBE_ENABLED=false)
   // or path filtered out of FMP_LATENCY_PATHS. Default is ON for CT.
   if (isFmpFamilyProvider(provider.id) && base.operationalStatus === 'off') {
+    await recordHandoff('disabled');
     return {
       ...base,
       enabled: false,
@@ -3103,6 +3125,9 @@ async function runProviderProbe(
     if (provider.id === 'fmp_rapidapi') {
       apiKey = await resolveFmpRapidApiKey(env);
       if (!apiKey) {
+        await recordHandoff('not_configured', {
+          error: 'FMP_RAPIDAPI_KEY / RAPIDAPI_KEY missing',
+        });
         return {
           ...base,
           configured: false,
@@ -3121,6 +3146,7 @@ async function runProviderProbe(
         errors.push(
           'FMP RapidAPI at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)',
         );
+        await recordHandoff('budget_skip');
       } else {
         await addLatencySourceUsed(env, 'fmp_rapidapi', sourceBudget.callsPerRun, now);
         await setLastPollAt(env, LATENCY_SOURCE_BUDGETS.fmp_rapidapi.pollSource, now);
@@ -3130,6 +3156,9 @@ async function runProviderProbe(
       if (!fmpSelection) {
         const anyKey = await resolveProviderSecret(env, provider);
         if (!anyKey) {
+          await recordHandoff('not_configured', {
+            error: `${FMP_LATENCY_KEY_PRIMARY} / ${FMP_LATENCY_KEY_SECONDARY} missing`,
+          });
           return {
             ...base,
             configured: false,
@@ -3146,6 +3175,7 @@ async function runProviderProbe(
         errors.push(
           'FMP latency keys at daily cap or spacing interval; skipped latest fetch (DB re-match still runs)',
         );
+        await recordHandoff('budget_skip');
       } else {
         apiKey = fmpSelection.apiKey;
         // Reserve full house+senate batch on this key's counter before HTTP.
@@ -3160,6 +3190,11 @@ async function runProviderProbe(
       apiKey = await resolveProviderSecret(env, provider);
     }
     if (!apiKey) {
+      await recordHandoff('not_configured', {
+        error: isUnusualWhales
+          ? 'UNUSUAL_WHALES_API_KEY / UNUSUALWHALES_API_KEY missing'
+          : `${provider.secretNames[0]} missing`,
+      });
       return {
         ...base,
         configured: false,
@@ -3182,6 +3217,7 @@ async function runProviderProbe(
         errors.push(
           `${provider.label} at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)`,
         );
+        await recordHandoff('budget_skip');
       } else {
         await addLatencySourceUsed(env, budgetSourceId, sourceBudget.callsPerRun, now);
         if (isUnusualWhales) {
@@ -3227,8 +3263,10 @@ async function runProviderProbe(
       } else if (fmpSelection) {
         await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
       }
+      await recordHandoff('success', { fetchedRows });
     } catch (err) {
       errors.push((err as Error).message);
+      await recordHandoff('error', { error: (err as Error).message, fetchedRows: 0 });
     } finally {
       if (fmpSelection) {
         const overReserved = FMP_LATENCY_CALLS_PER_RUN - fmpCallsMade;
@@ -3364,6 +3402,101 @@ export async function runDisclosureLatencyProbe(
     errors: runs.flatMap((r) => r.errors.map((err) => `${r.id}: ${err}`)),
     providers: runs,
   };
+}
+
+/**
+ * Residential scout → server: parse provider JSON with the same parsers the
+ * server probe uses, upsert observations, and re-match pending races.
+ * Used when the server cannot poll a source (IP block, key error, silence).
+ */
+export async function ingestScoutLatencyPayload(
+  env: Env,
+  input: {
+    provider: ProviderId;
+    observedAt?: string;
+    /** Raw chamber payloads (preferred — server-side parse keeps keys consistent). */
+    chamberJson?: Partial<Record<Chamber, unknown>>;
+    /** Pre-parsed rows (optional alternative to chamberJson). */
+    rows?: DisclosureProviderRow[];
+    /** FMP path identity when provider is fmp / fmp_rapidapi. */
+    fmpPathId?: FmpLatencyPathId;
+    source?: 'scout' | 'server';
+  },
+): Promise<{ upserted: number; matched: number; pending: number; errors: string[]; provider: ProviderId }> {
+  const providerId = input.provider;
+  if (!DIRECT_PROVIDER_IDS.includes(providerId) && !isFmpFamilyProvider(providerId)) {
+    throw new Error(`unsupported latency provider: ${providerId}`);
+  }
+  const nowIso =
+    input.observedAt && !Number.isNaN(Date.parse(input.observedAt))
+      ? new Date(input.observedAt).toISOString()
+      : new Date().toISOString();
+  const now = new Date(nowIso);
+  const errors: string[] = [];
+  let rows: DisclosureProviderRow[] = input.rows ? [...input.rows] : [];
+
+  if (input.chamberJson) {
+    for (const chamber of ['house', 'senate', 'executive'] as Chamber[]) {
+      const payload = input.chamberJson[chamber];
+      if (payload == null) continue;
+      try {
+        if (isFmpFamilyProvider(providerId) || providerId === 'fmp') {
+          const pid: ProviderId =
+            input.fmpPathId === 'rapidapi' || providerId === 'fmp_rapidapi' ? 'fmp_rapidapi' : 'fmp';
+          rows.push(...parseFmpDisclosureRows(chamber, payload, pid));
+        } else if (providerId === 'quiver') {
+          rows.push(...parseQuiverDisclosureRows(chamber, payload));
+        } else if (providerId === 'unusual_whales') {
+          // UW is a single feed; chamberJson.house (or any) is accepted as the full payload.
+          rows.push(...parseUnusualWhalesDisclosureRows(payload));
+        }
+      } catch (err) {
+        errors.push(`${chamber}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  // Dedup by providerKey+tradeHash within this batch.
+  const seen = new Set<string>();
+  rows = rows.filter((r) => {
+    const k = `${r.provider}|${r.chamber}|${r.providerKey}|${r.tradeHash}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  if (rows.length) {
+    const storeProvider = (rows[0]?.provider ?? providerId) as ProviderId;
+    await upsertProviderRows(env, storeProvider, rows, nowIso);
+  }
+
+  let matched = 0;
+  let pending = 0;
+  try {
+    const provider = definition(
+      isFmpFamilyProvider(providerId) && input.fmpPathId === 'rapidapi' ? 'fmp_rapidapi' : providerId,
+    );
+    const result = await matchPendingCandidates(env, provider, now, nowIso, errors);
+    matched = result.matched;
+    pending = result.pending;
+  } catch (err) {
+    if (!storageMissing(err)) errors.push(`match: ${(err as Error).message}`);
+  }
+
+  try {
+    const { recordLatencyProbeOutcome } = await import('./scoutHandoff.ts');
+    await recordLatencyProbeOutcome(env, (rows[0]?.provider ?? providerId) as 'fmp' | 'fmp_rapidapi' | 'unusual_whales' | 'quiver', {
+      source: input.source ?? 'scout',
+      kind: errors.length && !rows.length ? 'error' : 'success',
+      error: errors[0] ?? null,
+      fetchedRows: rows.length,
+      now,
+    });
+  } catch {
+    /* handoff bookkeeping best-effort */
+  }
+
+  return { upserted: rows.length, matched, pending, errors, provider: providerId };
 }
 
 export async function runFmpDisclosureLatencyProbe(

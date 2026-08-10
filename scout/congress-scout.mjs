@@ -40,6 +40,10 @@
  *   LEADS_FILE            default ./scout-leads.jsonl
  *   CT_INGEST_URL         optional: POST each detection here
  *   CT_INGEST_TOKEN       bearer token for CT_INGEST_URL
+ *   CT_BASE_URL           base for scout-plan / latency-payload / raw (default derived from CT_INGEST_URL)
+ *   SCOUT_LATENCY_ALWAYS  "1" = always post provider payloads (ignore server needScout)
+ *   SCOUT_RAW_UPLOAD      "1" (default) download + POST raw bytes to R2 when possible
+ *   SCOUT_RAW_MAX_BYTES   default 20_000_000
  */
 
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
@@ -91,6 +95,23 @@ const STATE_FILE = process.env.STATE_FILE || './scout-state.json';
 const LEADS_FILE = process.env.LEADS_FILE || './scout-leads.jsonl';
 const CT_INGEST_URL = process.env.CT_INGEST_URL || '';
 const CT_INGEST_TOKEN = process.env.CT_INGEST_TOKEN || '';
+// Derive API base (https://congress.trade) from CT_INGEST_URL when possible.
+const CT_BASE_URL = (process.env.CT_BASE_URL || (() => {
+  if (!CT_INGEST_URL) return '';
+  try {
+    const u = new URL(CT_INGEST_URL);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '';
+  }
+})()).replace(/\/+$/, '');
+const SCOUT_LATENCY_ALWAYS = /^(1|true|yes|on)$/i.test((process.env.SCOUT_LATENCY_ALWAYS || '').trim());
+const SCOUT_RAW_UPLOAD = !/^(0|false|no|off)$/i.test((process.env.SCOUT_RAW_UPLOAD ?? '1').trim());
+const SCOUT_RAW_MAX_BYTES = Number(process.env.SCOUT_RAW_MAX_BYTES) || 20_000_000;
+const authHeaders = () =>
+  CT_INGEST_TOKEN
+    ? { authorization: `Bearer ${CT_INGEST_TOKEN}`, 'content-type': 'application/json' }
+    : { 'content-type': 'application/json' };
 
 /**
  * FMP latency source registry (CT latency + Mac scout only; not Socratic).
@@ -322,10 +343,14 @@ async function detectHouseFrontier(state) {
 }
 
 // --- FMP family (stable default; RapidAPI opt-in; dual free keys rotate) ---
+/**
+ * @returns {{ keys: Array<{key,pathId,sourceId}>, chamberJson: {house?:unknown,senate?:unknown} }}
+ */
 async function pollFmpPath(src, freeKey) {
   const out = [];
+  const chamberJson = {};
   const key = src.auth === 'rapidapi' ? FMP_RAPIDAPI_KEY : freeKey;
-  if (!key) return out;
+  if (!key) return { keys: out, chamberJson };
   // house + senate only (executive-latest often 404 and wastes free-tier quota)
   for (const ch of ['house', 'senate']) {
     let url = `${src.baseUrl}/${ch}-latest?page=0&limit=100`;
@@ -340,13 +365,14 @@ async function pollFmpPath(src, freeKey) {
     const r = await fetch(url, { headers });
     if (!r.ok) throw new Error(`${src.id}/${ch}-latest HTTP ${r.status}`);
     const json = await r.json();
+    chamberJson[ch] = json;
     const rows = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
     for (const row of rows) {
       const k = keyFromLink(row?.link || row?.url || '');
       if (k) out.push({ key: k, pathId: src.pathId, sourceId: src.id });
     }
   }
-  return out;
+  return { keys: out, chamberJson };
 }
 
 /**
@@ -355,13 +381,21 @@ async function pollFmpPath(src, freeKey) {
  * per-IP limit — second account still has quota when first is bandwidth-capped).
  * RapidAPI off by default (404 product gap).
  */
+/**
+ * @returns {{ keys: Array, payloads: Array<{provider,fmpPathId,chamberJson}> }}
+ */
 async function pollFmpFamily() {
   const out = [];
+  const payloads = [];
   for (const src of FMP_SOURCE_REGISTRY) {
     if (fmpSourceStatus(src) !== 'running') continue;
     if (src.auth === 'rapidapi') {
       try {
-        out.push(...(await pollFmpPath(src, '')));
+        const res = await pollFmpPath(src, '');
+        out.push(...res.keys);
+        if (Object.keys(res.chamberJson).length) {
+          payloads.push({ provider: 'fmp_rapidapi', fmpPathId: 'rapidapi', chamberJson: res.chamberJson });
+        }
       } catch (e) {
         warn(`fmp:${src.id}`, e);
       }
@@ -375,7 +409,11 @@ async function pollFmpFamily() {
       if (!freeKey || tried.has(freeKey)) continue;
       tried.add(freeKey);
       try {
-        out.push(...(await pollFmpPath(src, freeKey)));
+        const res = await pollFmpPath(src, freeKey);
+        out.push(...res.keys);
+        if (Object.keys(res.chamberJson).length) {
+          payloads.push({ provider: 'fmp', fmpPathId: 'stable', chamberJson: res.chamberJson });
+        }
         lastErr = null;
         break;
       } catch (e) {
@@ -390,29 +428,41 @@ async function pollFmpFamily() {
     }
     if (lastErr) warn(`fmp:${src.id}`, lastErr);
   }
-  return out;
+  return { keys: out, payloads };
 }
 
 // --- QQ ---------------------------------------------------------------------
 async function pollQQ() {
   const out = [];
-  const url = `https://api.quiverquant.com/beta/live/congresstrading?version=V2`;
-  const r = await fetch(url, { headers: { "Authorization": `Token ${QQ_KEY}` } });
-  if (!r.ok) throw new Error(`QQ HTTP ${r.status}`);
-  const json = await r.json();
-  const rows = Array.isArray(json) ? json : [];
-  for (const t of rows) {
-    const key = `${t.Name || t.Representative || ''}_${t.Filed || t.ReportDate || ''}_${t.Ticker || ''}_${t.TransactionDate || ''}`.replace(/[^a-zA-Z0-9_]/g, '');
-    out.push({ key });
+  // Live house+senate endpoints match server tradeLatency fetchQuiverRows.
+  const headers = { Authorization: `Token ${QQ_KEY}`, Accept: 'application/json' };
+  const chamberJson = {};
+  for (const [ch, path] of [
+    ['house', 'https://api.quiverquant.com/beta/live/housetrading?options=true'],
+    ['senate', 'https://api.quiverquant.com/beta/live/senatetrading?options=true'],
+  ]) {
+    try {
+      const r = await fetch(path, { headers });
+      if (!r.ok) throw new Error(`QQ ${ch} HTTP ${r.status}`);
+      const json = await r.json();
+      chamberJson[ch] = json;
+      const rows = Array.isArray(json) ? json : [];
+      for (const t of rows) {
+        const key = `${t.Name || t.Representative || ''}_${t.Filed || t.ReportDate || ''}_${t.Ticker || ''}_${t.TransactionDate || ''}`.replace(/[^a-zA-Z0-9_]/g, '');
+        out.push({ key });
+      }
+    } catch (e) {
+      warn(`qq:${ch}`, e);
+    }
   }
-  return out;
+  return { keys: out, chamberJson };
 }
 
 // --- UW ---------------------------------------------------------------------
 async function pollUW() {
   const out = [];
-  const url = `https://api.unusualwhales.com/api/congress/recent-trades`;
-  const r = await fetch(url, { headers: { "Authorization": `Bearer ${UW_KEY}` } });
+  const url = `https://api.unusualwhales.com/api/congress/recent-trades?limit=200`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${UW_KEY}`, 'UW-CLIENT-API-ID': '100001' } });
   if (!r.ok) throw new Error(`UW HTTP ${r.status}`);
   const json = await r.json();
   const rows = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
@@ -420,7 +470,122 @@ async function pollUW() {
     const key = `${t.name || t.politician || t.representative || ''}_${t.filed_at_date || t.filed_date || t.disclosure_date || ''}_${t.ticker || ''}_${t.transaction_date || ''}`.replace(/[^a-zA-Z0-9_]/g, '');
     out.push({ key });
   }
-  return out;
+  // Server parser expects the full feed under any chamber key; use house.
+  return { keys: out, chamberJson: { house: json } };
+}
+
+// --- server handoff (plan + latency payload + raw R2 upload) -----------------
+async function fetchScoutPlan() {
+  if (!CT_BASE_URL || !CT_INGEST_TOKEN) return null;
+  try {
+    const res = await fetch(`${CT_BASE_URL}/api/ingest/scout-plan`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      warn('scout-plan', new Error(`HTTP ${res.status}`));
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    warn('scout-plan', e);
+    return null;
+  }
+}
+
+async function postLatencyPayload(provider, chamberJson, fmpPathId) {
+  if (!CT_BASE_URL || !CT_INGEST_TOKEN) return false;
+  try {
+    const res = await fetch(`${CT_BASE_URL}/api/ingest/latency-payload`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        provider,
+        fmpPathId,
+        observedAt: nowIso(),
+        chamberJson,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      warn('latency-payload', new Error(`HTTP ${res.status} ${text.slice(0, 160)}`));
+      return false;
+    }
+    const body = await res.json().catch(() => ({}));
+    log('LATENCY', provider, `upserted=${body.upserted ?? '?'}`, `matched=${body.matched ?? '?'}`);
+    return true;
+  } catch (e) {
+    warn('latency-payload', e);
+    return false;
+  }
+}
+
+function bytesToBase64(buf) {
+  return Buffer.from(buf).toString('base64');
+}
+
+async function downloadFilingBytes(link) {
+  if (!link) return null;
+  const res = await fetch(link, {
+    headers: {
+      'user-agent': UA,
+      accept: 'application/pdf,text/html,application/octet-stream,*/*',
+    },
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`download HTTP ${res.status}`);
+  const ab = await res.arrayBuffer();
+  if (ab.byteLength === 0) throw new Error('empty body');
+  if (ab.byteLength > SCOUT_RAW_MAX_BYTES) throw new Error(`body ${ab.byteLength} exceeds SCOUT_RAW_MAX_BYTES`);
+  const contentType = res.headers.get('content-type') || 'application/octet-stream';
+  // Reject obvious Senate agreement wall HTML
+  const head = Buffer.from(ab.slice(0, 4096)).toString('utf8');
+  if (/I agree to the terms/i.test(head) && /efdsearch|agreement/i.test(head)) {
+    throw new Error('senate agreement wall HTML (not a filing)');
+  }
+  return { bytes: Buffer.from(ab), contentType };
+}
+
+async function postRawUpload(docId, link, contentType, bytes) {
+  if (!CT_BASE_URL || !CT_INGEST_TOKEN) return false;
+  try {
+    const res = await fetch(`${CT_BASE_URL}/api/ingest/raw`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        docId,
+        sourceUrl: link || undefined,
+        contentType,
+        bytesBase64: bytesToBase64(bytes),
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      warn('raw-upload', new Error(`${docId} HTTP ${res.status} ${text.slice(0, 160)}`));
+      return false;
+    }
+    const body = await res.json().catch(() => ({}));
+    log('RAW', docId, `bytes=${body.bytes ?? bytes.length}`, `enqueued=${body.enqueued ?? '?'}`);
+    return true;
+  } catch (e) {
+    warn('raw-upload', e);
+    return false;
+  }
+}
+
+async function maybeUploadRaw(docId, link, state) {
+  if (!SCOUT_RAW_UPLOAD || !link || !docId) return;
+  if (state.rawUploaded?.[docId]) return;
+  try {
+    const got = await downloadFilingBytes(link);
+    if (!got) return;
+    const ok = await postRawUpload(docId, link, got.contentType, got.bytes);
+    if (ok) {
+      state.rawUploaded = state.rawUploaded || {};
+      state.rawUploaded[docId] = nowIso();
+    }
+  } catch (e) {
+    warn(`raw:${docId}`, e);
+  }
 }
 
 // --- optional: push detections to the Cloudflare app ------------------------
@@ -432,7 +597,7 @@ async function maybePost(d, ts) {
   try {
     const res = await fetch(CT_INGEST_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(CT_INGEST_TOKEN ? { authorization: `Bearer ${CT_INGEST_TOKEN}` } : {}) },
+      headers: authHeaders(),
       body: JSON.stringify({
         source: d.source,
         docKey: d.key,
@@ -466,7 +631,18 @@ async function maybePost(d, ts) {
 
 // --- state ------------------------------------------------------------------
 function loadState() {
-  const fresh = { startedAt: nowIso(), baselineEstablishedAt: null, ourSeen: {}, posted: {}, fmpSeen: {}, qqSeen: {}, uwSeen: {}, leadsLogged: {}, houseMaxDocId: 0 };
+  const fresh = {
+    startedAt: nowIso(),
+    baselineEstablishedAt: null,
+    ourSeen: {},
+    posted: {},
+    fmpSeen: {},
+    qqSeen: {},
+    uwSeen: {},
+    leadsLogged: {},
+    houseMaxDocId: 0,
+    rawUploaded: {},
+  };
   if (existsSync(STATE_FILE)) {
     try {
       // Merge onto `fresh` so a state file saved before these fields existed
@@ -486,22 +662,65 @@ async function cycle(state) {
   // posted to the app and scored as us "winning" a race that never happened.
   const isBaselineCycle = !state.baselineEstablishedAt;
 
+  // Server-first plan: which latency sources the Mac must cover + raw backlog.
+  const plan = await fetchScoutPlan();
+  const needScout = new Set(
+    (plan?.latencyNeedScout || []).map((h) => h.provider).filter(Boolean),
+  );
+  if (SCOUT_LATENCY_ALWAYS) {
+    needScout.add('fmp');
+    needScout.add('unusual_whales');
+    needScout.add('quiver');
+  }
+  // If plan unavailable, still cover FMP when enabled (historical FMP quiet gap).
+  if (!plan && FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY)) needScout.add('fmp');
+  if (plan?.latencyNeedScout?.length) {
+    log(
+      'HANDOFF latency',
+      plan.latencyNeedScout.map((h) => `${h.provider}:${(h.needScoutReason || '').slice(0, 48)}`).join(' | ') || 'none',
+    );
+  }
+
   // Poll FMP BEFORE running our own detection (only when FMP_PROBE_ENABLED).
   // Polling FMP first errs conservative (does not inflate our measured lead).
   if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY)) {
     try {
-      for (const f of await pollFmpFamily()) {
+      const fmp = await pollFmpFamily();
+      for (const f of fmp.keys) {
         if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
+      }
+      if (needScout.has('fmp') || needScout.has('fmp_rapidapi')) {
+        for (const p of fmp.payloads) {
+          if (needScout.has(p.provider) || (p.provider === 'fmp' && needScout.has('fmp'))) {
+            await postLatencyPayload(p.provider, p.chamberJson, p.fmpPathId);
+          }
+        }
       }
     } catch (e) { warn('fmp', e); }
   }
-  if (QQ_KEY) {
-    try { for (const q of await pollQQ()) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() }; }
-    catch (e) { warn('qq', e); }
+  if (QQ_KEY && (needScout.has('quiver') || SCOUT_LATENCY_ALWAYS)) {
+    try {
+      const qq = await pollQQ();
+      for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
+      if (Object.keys(qq.chamberJson).length) await postLatencyPayload('quiver', qq.chamberJson);
+    } catch (e) { warn('qq', e); }
+  } else if (QQ_KEY) {
+    try {
+      const qq = await pollQQ();
+      for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
+    } catch (e) { warn('qq', e); }
   }
-  if (UW_KEY) {
-    try { for (const u of await pollUW()) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() }; }
-    catch (e) { warn('uw', e); }
+  if (UW_KEY && (needScout.has('unusual_whales') || SCOUT_LATENCY_ALWAYS)) {
+    try {
+      const uw = await pollUW();
+      for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
+      if (Object.keys(uw.chamberJson).length) await postLatencyPayload('unusual_whales', uw.chamberJson);
+    } catch (e) { warn('uw', e); }
+  } else if (UW_KEY) {
+    try {
+      const uw = await pollUW();
+      for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
+    } catch (e) { warn('uw', e); }
   }
 
   const detections = [];
@@ -529,7 +748,18 @@ async function cycle(state) {
     for (const [key, entry] of Object.entries(state.ourSeen)) {
       if (state.posted[key]) continue;
       const ok = await maybePost({ source: entry.source, key, link: entry.link, name: entry.name, filedDate: entry.filedDate }, entry.at);
-      if (ok) state.posted[key] = true;
+      if (ok) {
+        state.posted[key] = true;
+        // Residential download → R2 when server may be IP-blocked.
+        await maybeUploadRaw(key, entry.link, state);
+      }
+    }
+  }
+
+  // Backlog from server plan: filings missing raw / 403-class fetch errors.
+  if (!isBaselineCycle && SCOUT_RAW_UPLOAD && plan?.rawFetch?.length) {
+    for (const need of plan.rawFetch.slice(0, 10)) {
+      await maybeUploadRaw(need.docId, need.sourceUrl, state);
     }
   }
 
@@ -569,7 +799,12 @@ function summarize(state) {
 (async () => {
   const state = loadState();
   const fmpOn = FMP_PROBE_ENABLED && !!(FMP_KEY || FMP_RAPIDAPI_KEY);
-  log(`scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER} fmp=${fmpOn ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}`);
+  log(
+    `scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER}` +
+      ` fmp=${fmpOn ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}` +
+      ` handoff=${CT_BASE_URL ? 'on' : 'OFF'} rawUpload=${SCOUT_RAW_UPLOAD ? 'on' : 'OFF'}` +
+      ` latencyAlways=${SCOUT_LATENCY_ALWAYS ? 'on' : 'off'}`,
+  );
   logFmpRegistry();
   if (ONCE) { await cycle(state); return; }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
