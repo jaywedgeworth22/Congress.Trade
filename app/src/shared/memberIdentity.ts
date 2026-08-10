@@ -30,6 +30,31 @@ export const MEMBER_NAME_ALIASES: readonly MemberNameAlias[] = [
     canonicalName: 'Ro Khanna',
     aliases: ['rohit khanna', 'khanna rohit'],
   },
+  {
+    // TX Senate: PTR/disclosure filings sometimes carry Sen. Cruz's legal
+    // first name "Rafael" (birth name Rafael Edward Cruz). Unlike the
+    // formal/informal pairs the diminutive table in
+    // enrichment/legislators.ts bridges ("William" <-> "Bill"), "Rafael" and
+    // "Ted" share no lexical root, and congress-legislators' live JSON
+    // indexes him only under "Ted" with no nickname/legal-name field
+    // connecting the two (confirmed against the hosted current-legislators
+    // JSON — his name record is just {first: "Ted", last: "Cruz",
+    // official_full: "Ted Cruz"}, no "Rafael" anywhere). No generic key
+    // matching can derive this; it is curated here instead.
+    canonicalName: 'Ted Cruz',
+    aliases: ['rafael cruz', 'rafael e cruz', 'rafael edward cruz', 'cruz rafael edward'],
+  },
+  {
+    // KY Senate: Sen. McConnell's legal name is Addison Mitchell McConnell,
+    // Jr. Same situation as Cruz above — congress-legislators' live JSON
+    // indexes him only under "Mitch" with no first/middle/nickname field
+    // linking "Addison" or "Mitchell" to "Mitch" (his name record is just
+    // {first: "Mitch", last: "McConnell", official_full: "Mitch
+    // McConnell"}, no middle field at all). Curated here for the same
+    // reason as the Cruz entry above.
+    canonicalName: 'Mitch McConnell',
+    aliases: ['a mitchell mcconnell', 'addison mitchell mcconnell', 'mcconnell a mitchell'],
+  },
 ];
 
 /**
