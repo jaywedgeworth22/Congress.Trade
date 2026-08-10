@@ -247,11 +247,18 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
   same pattern as `/api/transactions`, `auth/*`, and the logo proxy that
   `APIClient.swift` already calls at `originURL`) returns
   `{ members: [{ filerId, fullName, chamber, party, state, district, txCount,
-  photoUrl }], count }`. `photoUrl` (added 2026-08-09, iOS punch list #2 item
-  9) is a same-columns addition to the existing cached roster query (no new
-  join, no perf regression) — `null` when the filer has no `filers.photo_url`.
-  iOS's People directory tab renders it as a row avatar; the web directory
-  table intentionally stays photo-less.
+  photoUrl, title }], count }`. `photoUrl` (added 2026-08-09, iOS punch list
+  #2 item 9) is a same-columns addition to the existing cached roster query
+  (no new join, no perf regression) — `null` when the filer has no
+  `filers.photo_url`. iOS's People directory tab renders it as a row avatar;
+  the web directory table intentionally stays photo-less. `title` (added
+  2026-08-10) is a curated agency/position label for executive-branch filers
+  (`filerId` starting `EXEC-`) — e.g. `"Treasury Secretary"` — sourced from
+  `shared/executiveTitles.ts`; `null` for House/Senate filers, and
+  `"Executive Branch"` for an `EXEC-*` filer with no curated entry. The same
+  `title` field is on the `member.profile` object from `GET
+  /api/client/v1/member/:memberIdOrName` and on `GET /api/analytics/member/
+  :filerId`'s `profile`.
 - Each feed item's `asset` object carries `name` (the disclosed asset text),
   `ticker`, raw disclosure `type`, `typeName`, canonical cross-chamber
   `typeCategory` / `typeCategoryLabel`, `sector`, and `marketCapBucket`, plus

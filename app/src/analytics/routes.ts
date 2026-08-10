@@ -84,6 +84,7 @@ import { computePerformance } from '../prices/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
 import { getDisclosureLatencySummary } from '../ingestion/tradeLatency.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { executiveTitleFor } from '../shared/executiveTitles.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -1035,7 +1036,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const [profileRow, statsRow, topRows, recentRows] = await Promise.all([
         get<Record<string, unknown>>(
           c.env.DB,
-          'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
+          'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
           [filerId],
         ),
         first<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
@@ -1060,6 +1061,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
               district: str(profileRow.district),
               committees: Array.isArray(committees) ? committees : [],
               photoUrl: str(profileRow.photo_url),
+              // Curated agency/position label for executive-branch filers
+              // (see shared/executiveTitles.ts); null for House/Senate filers.
+              title: executiveTitleFor(filerId),
             }
           : null,
         stats: {

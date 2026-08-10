@@ -311,13 +311,21 @@ export async function resolveMemberFilerId(env: Env, memberName: string): Promis
     `SELECT COALESCE(f.merged_into, f.bioguide_id) AS bioguide_id
        FROM filers f
       WHERE LOWER(f.full_name) = LOWER(?) OR LOWER(f.full_name) LIKE ? ESCAPE '\\'
-      ORDER BY CASE WHEN LOWER(f.full_name) = LOWER(?) THEN 0 ELSE 1 END,
+         OR LOWER(f.display_name) = LOWER(?) OR LOWER(f.display_name) LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN LOWER(f.full_name) = LOWER(?) OR LOWER(f.display_name) = LOWER(?) THEN 0 ELSE 1 END,
                CASE WHEN f.merged_into IS NULL THEN 0 ELSE 1 END,
                EXISTS(SELECT 1 FROM transactions t
                        WHERE t.filer_id = f.bioguide_id AND t.deprecated_at IS NULL) DESC,
                f.full_name
       LIMIT 1`,
-    [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
+    [
+      term,
+      `%${escapeLikePattern(term.toLowerCase())}%`,
+      term,
+      `%${escapeLikePattern(term.toLowerCase())}%`,
+      term,
+      term,
+    ],
   );
   return row?.bioguide_id ?? null;
 }
@@ -524,8 +532,12 @@ function buildTxFilters(
     params.push(p.member);
   }
   if (p.memberName) {
-    where.push('LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ? ESCAPE \'\\\'');
-    params.push(`%${escapeLikePattern(p.memberName.toLowerCase())}%`);
+    where.push(
+      '(LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ? ESCAPE \'\\\'' +
+        ' OR LOWER(COALESCE(fl.display_name, \'\')) LIKE ? ESCAPE \'\\\')',
+    );
+    const likeTerm = `%${escapeLikePattern(p.memberName.toLowerCase())}%`;
+    params.push(likeTerm, likeTerm);
   }
   const typeList = (p.types && p.types.length ? p.types : (p.type ? [p.type] : [])) as TxType[];
   if (typeList.length === 1 && typeList[0] !== 'B') {
@@ -654,8 +666,8 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
       : `${orderExpr} ${direction}, t.cursor_seq ${direction}`;
 
   const selectList =
-    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
-    'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, COALESCE(fl.display_name, fl.full_name) AS __member_name, fl.party AS __party, ` +
+    'COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, fl.resolved_bioguide_id AS filer_bioguide_id, ' +
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
@@ -748,8 +760,8 @@ export function buildTransactionsExportQuery(
     maxRows != null && Number.isFinite(maxRows) && Math.floor(Number(maxRows)) > 0;
   const limit = hasLimit ? Math.floor(Number(maxRows)) : Number.MAX_SAFE_INTEGER;
   const sql =
-    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
-    'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, COALESCE(fl.display_name, fl.full_name) AS __member_name, fl.party AS __party, ` +
+    'COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, fl.resolved_bioguide_id AS filer_bioguide_id, ' +
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +

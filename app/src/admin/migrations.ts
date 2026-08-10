@@ -1014,6 +1014,16 @@ BEGIN
 END`,
 ] as const;
 
+/**
+ * 0083_filers_display_name.sql — the member's "campaign sign" preferred
+ * public display name, distinct from full_name. See that file and
+ * src/enrichment/identitySync.ts for how it is computed and kept in sync.
+ * Keep in exact lockstep with migrations/0083_filers_display_name.sql.
+ */
+export const FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filers ADD COLUMN display_name TEXT',
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -1152,6 +1162,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...APPLE_IAP_SCHEMA_STATEMENTS,
   // 0082_review_queue_resolution_reason.sql
   ...REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS,
+  // 0083_filers_display_name.sql
+  ...FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

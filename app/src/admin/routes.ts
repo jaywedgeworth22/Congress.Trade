@@ -47,6 +47,8 @@ import { listIngestionDecisions, recordIngestionDecision } from '../shared/inges
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config.ts';
 import { uuid } from '../shared/ids.ts';
 import { runCommitteeSync } from '../enrichment/committeeSync.ts';
+import { buildLegislatorMap, normName } from '../enrichment/legislators.ts';
+import { runIdentitySync } from '../enrichment/identitySync.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
@@ -1008,90 +1010,8 @@ function reviewAssetTypeName(e: EditedTx): string | null {
 }
 
 // --- Politician photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
-
-const LEGISLATOR_SOURCES = [
-  'https://unitedstates.github.io/congress-legislators/legislators-current.json',
-  'https://unitedstates.github.io/congress-legislators/legislators-historical.json',
-];
-
-const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
-
-/**
- * Normalize a politician name for matching: lowercase, strip punctuation, drop
- * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
- */
-function normName(s: string | null | undefined): string {
-  return (s ?? '')
-    .toLowerCase()
-    .replace(/[.,]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length > 1 && !NAME_SUFFIXES.has(t))
-    .join(' ')
-    .trim();
-}
-
-interface LegislatorTerm {
-  type?: string;
-  party?: string;
-  state?: string;
-  district?: number | string | null;
-  start?: string;
-  end?: string;
-}
-
-interface Legislator {
-  id?: { bioguide?: string };
-  name?: { first?: string; last?: string; official_full?: string; nickname?: string };
-  terms?: LegislatorTerm[];
-}
-
-interface LegislatorMatch {
-  bioguide: string;
-  party: string | null;
-  state: string | null;
-  district: string | null;
-}
-
-function latestLegislatorTerm(terms: LegislatorTerm[] | undefined): LegislatorTerm | undefined {
-  return (terms ?? []).slice().sort((a, b) => String(b.start ?? '').localeCompare(String(a.start ?? '')))[0];
-}
-
-/** Build a normalized-name -> legislator metadata map from congress-legislators. */
-async function buildLegislatorMap(): Promise<Map<string, LegislatorMatch>> {
-  const map = new Map<string, LegislatorMatch>();
-  for (const url of LEGISLATOR_SOURCES) {
-    const res = await trackedFetch(url, {
-      headers: {
-        'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
-        accept: 'application/json',
-      },
-    }, { service: 'member-enrichment', operation: 'fetch-legislator-roster' });
-    if (!res.ok) continue;
-    const list = (await res.json()) as Legislator[];
-    for (const leg of list) {
-      const bio = leg.id?.bioguide;
-      if (!bio) continue;
-      const term = latestLegislatorTerm(leg.terms);
-      const match: LegislatorMatch = {
-        bioguide: bio,
-        party: term?.party ?? null,
-        state: term?.state ?? null,
-        district: term?.district == null ? null : String(term.district),
-      };
-      const n = leg.name ?? {};
-      const candidates = [
-        n.first && n.last ? `${n.first} ${n.last}` : '',
-        n.nickname && n.last ? `${n.nickname} ${n.last}` : '',
-        n.official_full ?? '',
-      ];
-      for (const raw of candidates) {
-        const k = normName(raw);
-        if (k && !map.has(k)) map.set(k, match); // current list is loaded first; it wins
-      }
-    }
-  }
-  return map;
-}
+// buildLegislatorMap/normName/Legislator live in ../enrichment/legislators.ts
+// (shared with identitySync.ts's bioguide backfill + display-name sync).
 
 function photoUrlFor(bioguide: string): string {
   return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
@@ -4669,17 +4589,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
   // --- POST /dedupe-filer-identities -----------------------------------------
   // Generic (non-curated) counterpart to /repair-member-identity: finds
-  // `filers` rows that forked for the same real member purely from a
-  // middle-initial/punctuation/suffix name variance within the same
+  // `filers` rows that forked for the same real member across three passes —
+  // (A) middle-initial/punctuation/suffix name variance within the same
   // chamber+state (e.g. "Michael T. McCaul" vs "Michael McCaul" — issue
-  // #1452), and merges them. Never deletes a row — aliases are tombstoned
-  // via `merged_into` and every rewrite is recorded in
+  // #1452), (B) any rows already sharing (resolved_bioguide_id, chamber),
+  // and (C) chamber='executive' rows sharing a name-key once ERM/date/year
+  // noise is stripped (state is never consulted for exec rows — they don't
+  // carry one) — and merges them. Never deletes a row — aliases are
+  // tombstoned via `merged_into` and every rewrite is recorded in
   // filer_identity_merges (migration 0078) so it stays auditable/reversible.
   // Idempotent; safe to re-run (e.g. from a cron alongside /repair-member-identity).
+  // Accepts ?dryRun=1 to report clustersFound + details without writing.
   r.post('/dedupe-filer-identities', async (c) => {
     try {
-      const result = await dedupeSplitFilerIdentities(c.env);
-      return c.json({ ok: true, ...result });
+      const dryRun = c.req.query('dryRun') === '1';
+      const result = await dedupeSplitFilerIdentities(c.env, { dryRun });
+      return c.json({ ok: true, dryRun, ...result });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
@@ -9137,6 +9062,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.post('/committees/sync', async (c) => {
     try {
       return c.json(await runCommitteeSync(c.env));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /identity/sync -------------------------------------------------
+  // Bioguide-driven identity sync: backfills missing filers.resolved_bioguide_id
+  // for house/senate filers (never overwrites an existing one), sets
+  // filers.display_name to each resolved filer's congress-legislators
+  // official_full ("campaign sign" name — Bernie Moreno, not Bernardo Moreno),
+  // overwrites party/state/district from the legislator's latest term for
+  // resolved filers, and cleans up display_name for filers that never resolve
+  // (executive branch, MANUAL-* competitor injects, blank-name rows). Accepts
+  // ?dryRun=1 to return the full plan without writing. See
+  // src/enrichment/identitySync.ts for the resolution rules.
+  r.post('/identity/sync', async (c) => {
+    try {
+      const dryRun = c.req.query('dryRun') === '1';
+      return c.json(await runIdentitySync(c.env, { dryRun }));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

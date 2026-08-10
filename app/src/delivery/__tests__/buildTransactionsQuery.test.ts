@@ -63,15 +63,19 @@ describe('buildTransactionsQuery', () => {
   it('filters by fuzzy politician name server-side', () => {
     const q = buildTransactionsQuery({ memberName: 'Pelo' });
     expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
+    // Also matches display_name (the "campaign sign" preferred name) so a
+    // search by either name finds the filer — see rows.ts buildTxFilters.
+    expect(q.sql).toContain("LOWER(COALESCE(fl.display_name, '')) LIKE ?");
     expect(q.sql).toContain("ESCAPE '\\'");
-    expect(q.params).toEqual([0, '%pelo%']);
+    expect(q.params).toEqual([0, '%pelo%', '%pelo%']);
   });
 
   it('escapes LIKE metacharacters in memberName so they are matched literally', () => {
     const q = buildTransactionsQuery({ memberName: 'A_B%C' });
     // A literal '_' must not act as a single-char wildcard, and a literal '%'
-    // must not act as a multi-char wildcard.
-    expect(q.params).toEqual([0, '%a\\_b\\%c%']);
+    // must not act as a multi-char wildcard. Same escaped term is bound
+    // twice: once for the full_name branch, once for display_name.
+    expect(q.params).toEqual([0, '%a\\_b\\%c%', '%a\\_b\\%c%']);
   });
 
   it('filters by tx type', () => {
@@ -153,13 +157,15 @@ describe('buildTransactionsQuery', () => {
   it('selects the resolved chamber + politician name alongside t.*', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber');
-    expect(q.sql).toContain('fl.full_name AS __member_name');
+    // display_name (the curated "campaign sign" preferred name) wins over
+    // full_name when set — see migrations/0083_filers_display_name.sql.
+    expect(q.sql).toContain('COALESCE(fl.display_name, fl.full_name) AS __member_name');
   });
 
   it('joins filers to project the politician name/state/headshot for the feed', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
-    expect(q.sql).toContain('fl.full_name AS filer_full_name');
+    expect(q.sql).toContain('COALESCE(fl.display_name, fl.full_name) AS filer_full_name');
     expect(q.sql).toContain('fl.state AS filer_state');
     expect(q.sql).toContain('fl.photo_url AS filer_photo_url');
     expect(q.sql).toContain('fl.resolved_bioguide_id AS filer_bioguide_id');

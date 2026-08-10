@@ -50,7 +50,20 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { isPremiumUserAsync } from '../billing/entitlement.ts';
 import { getUserById } from '../auth/users.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+
+/**
+ * `__member_name` is a raw join alias (COALESCE(display_name, full_name) at
+ * the SQL level, see buildTransactionsQuery) that never passes through
+ * cleanFilerName — unlike `mapFeedTransaction`'s `fullName`, which does. Only
+ * reach for this as a fallback when `tx.fullName` is missing (e.g. filer join
+ * gap); never prefer the raw value over the cleaned one.
+ */
+function cleanMemberNameFallback(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return cleanFilerName(raw) || raw;
+}
 import { formatPartyLabel } from '../shared/partyLabel.ts';
+import { executiveTitleFor } from '../shared/executiveTitles.ts';
 import {
   createSubscription,
   getSubscription,
@@ -207,7 +220,7 @@ interface MembersRosterRow {
  */
 async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[]; count: number }> {
   const baseSql = `SELECT t.filer_id AS filer_id,
-                f.full_name AS full_name,
+                COALESCE(f.display_name, f.full_name) AS full_name,
                 f.chamber   AS chamber,
                 f.party     AS party,
                 f.state     AS state,
@@ -240,6 +253,9 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
     // Rendered as a row avatar in the iOS People directory (owner punch list
     // #2 item 9); the web directory table stays photo-less (unchanged).
     photoUrl: row.photo_url ?? null,
+    // Curated agency/position label for executive-branch filers (see
+    // shared/executiveTitles.ts); null for House/Senate filers.
+    title: executiveTitleFor(row.filer_id),
   }));
   return { members, count: members.length };
 }
@@ -695,7 +711,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         [
           t.createdAt,
           t.txDate ?? '',
-          row.__member_name ?? t.fullName ?? t.filerId ?? '',
+          t.fullName ?? cleanMemberNameFallback(row.__member_name) ?? t.filerId ?? '',
           (row.__chamber as string | null) ?? '',
           t.ticker ?? '',
           t.assetName ?? '',
@@ -747,7 +763,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
     const items = rows.map((row) => {
       const tx = mapFeedTransaction(row);
-      const who = row.__member_name ?? tx.fullName ?? tx.filerId ?? 'Unknown filer';
+      const who = tx.fullName ?? cleanMemberNameFallback(row.__member_name) ?? tx.filerId ?? 'Unknown filer';
       const side = (tx.txType === 'B' || String(tx.txType) === 'P') ? 'bought' : tx.txType === 'S' ? 'sold' : 'traded';
       const what = tx.ticker ?? tx.assetName;
       const title = `${who} ${side} ${what}`;
