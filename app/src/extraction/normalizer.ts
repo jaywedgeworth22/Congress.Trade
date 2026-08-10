@@ -187,8 +187,10 @@ interface SecRow {
  * Normalize + validate parsed transactions for a filing, then persist.
  *
  * Behaviour:
- *   - Build a Transaction for each ParsedTx, applying ticker resolution and
- *     validation penalties to derive a final per-tx confidence.
+ *   - Drop PTR form-chrome rows (Clerk letterhead / table headers) before scoring
+ *     so OCR noise never reaches review_queue as fake "transactions".
+ *   - Build a Transaction for each remaining ParsedTx, applying ticker resolution
+ *     and validation penalties to derive a final per-tx confidence.
  *   - needsReview = (no rows) OR (minConfidence < CONFIDENCE_THRESHOLD) OR any
  *     hard structural problem (invalid bracket, bad tx_type).
  *   - If needsReview: write a review_queue row + filings.ingest_status =
@@ -208,7 +210,13 @@ export async function normalize(
   const modelVersion = meta?.modelVersion ?? filing.modelVersion ?? null;
   const source = meta?.source ?? 'primary';
 
-  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, parsed, source);
+  // Drop form-chrome rows up front. Pure letterhead OCR floods were parking
+  // hundreds of "Clerk of the House…" fakes in review_queue and burning the
+  // agreement cascade budget on documents with zero real trades.
+  const usableParsed = parsed.filter((p) => !looksLikeHeaderContaminatedAsset(p.assetName));
+  const droppedFormChrome = parsed.length - usableParsed.length;
+
+  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, usableParsed, source);
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
@@ -253,9 +261,17 @@ export async function normalize(
   }
 
   if (needsReview) {
-    const reason = exceedsPublishLimit
+    let reason = exceedsPublishLimit
       ? 'extraction_row_limit_exceeded'
       : reviewReason(flagged, minConfidence);
+    // When every extracted row was form chrome (or empty after drop), tag the
+    // park reason so ops/dashboard can tell OCR letterhead floods from real
+    // low-confidence trades — and agreement can skip burning budget on them.
+    if (flagged.length === 0 && droppedFormChrome > 0) {
+      reason = reason
+        ? `form_chrome_only,${reason}`
+        : 'form_chrome_only,extract_empty_failure,no_transactions_extracted';
+    }
     const routed = await routeToReview(
       env,
       filing,
@@ -265,7 +281,9 @@ export async function normalize(
       {
         extractor: extractorName,
         modelVersion,
-        reasonOverride: exceedsPublishLimit ? reason : undefined,
+        reasonOverride: exceedsPublishLimit || (flagged.length === 0 && droppedFormChrome > 0)
+          ? reason
+          : undefined,
       },
       reviewSnapshot,
     );
@@ -552,9 +570,14 @@ export function scoreFields(
   return { confidence: clamp01(confidence), flags, ticker, amountMin, amountMax, txType };
 }
 
-function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
+/**
+ * True when the "asset name" is PTR form chrome (letterhead / column headers),
+ * not a tradeable security. Used to drop rows before review parking and by the
+ * server_cpu scan worker before submit.
+ */
+export function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
   if (!assetName) return false;
-  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:)/i.test(
+  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:)/i.test(
     assetName,
   );
 }
