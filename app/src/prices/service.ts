@@ -25,6 +25,15 @@ import { resolveSecrets } from '../secrets/infisical.ts';
 
 const DEFAULT_DAILY_CAP = 230;
 /**
+ * Per-run ticker cap when the peer app (Socratic.Trade) is the sole price
+ * source. The peer serves from its own database — no metered quota — so the
+ * only real bound is run duration. 230 (the FMP-era default) throttled the
+ * ~370-ticker daily backlog into a rolling multi-day queue that left the
+ * most-traded names 2+ weeks stale (owner report 2026-08-10); 5000 clears the
+ * whole universe every run with headroom. FMP_DAILY_CALL_CAP still overrides.
+ */
+const PEER_DAILY_CAP = 5000;
+/**
  * How long a ticker stays negative-cached after a SECOND (or later) consecutive
  * empty EOD-history fetch before we retry it. Bounds the "delisted/foreign/
  * non-equity ticker can never be priced" set (~544 tickers) so it stops
@@ -91,6 +100,9 @@ interface PricePlan {
   client: PriceClient;
   /** True only for FMP, whose calls are metered against the shared daily budget. */
   fmpBudgeted: boolean;
+  /** True when the sole source is the peer app (Socratic.Trade) — no metered
+   * quota, so the per-run ticker cap defaults far higher (PEER_DAILY_CAP). */
+  peerOnly: boolean;
 }
 
 /** True when PRICE_PROVIDER selects Socratic.Trade / App B as the sole source. */
@@ -118,6 +130,7 @@ function pricePlan(env: EnvX): PricePlan | null {
     return {
       client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
       fmpBudgeted: false,
+      peerOnly: true,
     };
   }
 
@@ -126,6 +139,7 @@ function pricePlan(env: EnvX): PricePlan | null {
     return {
       client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
       fmpBudgeted: false,
+      peerOnly: true,
     };
   }
 
@@ -154,6 +168,7 @@ function pricePlan(env: EnvX): PricePlan | null {
       return {
         client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
         fmpBudgeted: false,
+        peerOnly: true,
       };
     }
   }
@@ -166,7 +181,7 @@ function pricePlan(env: EnvX): PricePlan | null {
     baseClient = buildFallbackPriceClient(peerClient, baseClient);
   }
 
-  return { client: baseClient, fmpBudgeted: budgeted };
+  return { client: baseClient, fmpBudgeted: budgeted, peerOnly: false };
 }
 
 /**
@@ -369,7 +384,9 @@ export async function runPriceRefresh(
   if (!plan) return result; // no usable price provider configured
   const { client, fmpBudgeted } = plan;
 
-  const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
+  const cap =
+    parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) ||
+    (plan.peerOnly ? PEER_DAILY_CAP : DEFAULT_DAILY_CAP);
   // Massive isn't metered against the FMP budget; cap its per-run work instead.
   const used = fmpBudgeted ? await getDailyUsed(env) : 0;
   let budget = fmpBudgeted ? remainingBudget(cap, used, opts.max) : opts.max ?? cap;

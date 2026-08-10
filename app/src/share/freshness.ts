@@ -96,11 +96,21 @@ export async function runFreshnessCheck(env: Env, now = new Date()): Promise<Sta
       fundamentals_latest: string | null;
     }>(
       env.DB,
-      // price_latest reads the maintained, indexed securities_ref.latest_price_date
-      // (max across tickers) rather than MAX(date) over the ~1.43M-row price_eod
-      // table, which has no date-leading index and so full-scanned every cron run.
+      // price_latest is the WORST (oldest) latest_price_date among the 25 most-
+      // recently-traded priceable tickers — the names users actually look at.
+      // It used to be MAX(latest_price_date) across the whole table, which one
+      // freshly-priced quiet ticker keeps green forever: in the 2026-08-10
+      // incident most megacaps sat 12+ sessions stale while SOFI/RKT (fresh)
+      // masked the backlog and this alert never fired. Still reads only the
+      // maintained, indexed securities_ref.latest_price_date (never price_eod).
       'SELECT (SELECT MAX(date) FROM spx_eod) AS spx_latest, ' +
-        '(SELECT MAX(latest_price_date) FROM securities_ref) AS price_latest, ' +
+        '(SELECT MIN(latest_price_date) FROM (' +
+        'SELECT sr.latest_price_date AS latest_price_date FROM transactions t ' +
+        'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+        "WHERE t.ticker IS NOT NULL AND t.ticker <> '' " +
+        'AND COALESCE(sr.price_unavailable, 0) = 0 AND sr.latest_price_date IS NOT NULL ' +
+        'GROUP BY t.ticker ORDER BY MAX(t.cursor_seq) DESC LIMIT 25' +
+        ')) AS price_latest, ' +
         '(SELECT MAX(updated_at) FROM fundamentals_eod) AS fundamentals_latest',
     );
     snapshot = {
