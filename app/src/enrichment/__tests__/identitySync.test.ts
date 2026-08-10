@@ -32,16 +32,61 @@ import type { Env } from '../../shared/types.ts';
 // parenthetical-nickname legal name and a multi-word surname), two same-named
 // people needing state disambiguation, and two negative controls (people
 // who must NOT cross-match each other despite a shared last name/substring).
+//
+// M000355 and C001098 below are copied VERBATIM from the live
+// https://unitedstates.github.io/congress-legislators/legislators-current.json
+// `name` objects (fetched 2026-08-10) — no "middle"/"nickname" field exists
+// for either in the real data (McConnell has no middle field at all; Cruz's
+// "first" is literally "Ted", not a nickname pointing at a separate legal
+// first name). A prior version of this fixture invented a "Mitchell"/"Mitch"
+// nickname split and a "Rafael"/"Ted" first/nickname split that do not exist
+// in the real feed — see the debug findings in identitySync.ts's module doc
+// comment and the curated MEMBER_NAME_ALIASES entries in
+// shared/memberIdentity.ts this real shape now requires.
 const FIXTURE_LEGISLATORS: Legislator[] = [
   {
     id: { bioguide: 'M000355' },
-    name: { first: 'Mitchell', last: 'McConnell', official_full: 'Mitch McConnell', nickname: 'Mitch' },
+    name: { first: 'Mitch', last: 'McConnell', official_full: 'Mitch McConnell' },
     terms: [{ type: 'sen', party: 'Republican', state: 'KY', start: '2021-01-03' }],
   },
   {
     id: { bioguide: 'C001098' },
-    name: { first: 'Rafael', last: 'Cruz', official_full: 'Ted Cruz', nickname: 'Ted' },
+    name: { first: 'Ted', last: 'Cruz', official_full: 'Ted Cruz' },
     terms: [{ type: 'sen', party: 'Republican', state: 'TX', start: '2019-01-03' }],
+  },
+  {
+    id: { bioguide: 'C001075' },
+    name: { first: 'Bill', last: 'Cassidy', official_full: 'Bill Cassidy' },
+    terms: [{ type: 'sen', party: 'Republican', state: 'LA', start: '2021-01-03' }],
+  },
+  {
+    id: { bioguide: 'S001198' },
+    name: { first: 'Dan', last: 'Sullivan', official_full: 'Dan Sullivan' },
+    terms: [{ type: 'sen', party: 'Republican', state: 'AK', start: '2021-01-03' }],
+  },
+  {
+    id: { bioguide: 'U000039' },
+    name: { first: 'Tom', middle: 'S.', last: 'Udall', official_full: 'Tom Udall' },
+    terms: [{ type: 'sen', party: 'Democrat', state: 'NM', start: '2015-01-03', end: '2021-01-03' }],
+  },
+  {
+    id: { bioguide: 'R000608' },
+    name: { first: 'Jacky', last: 'Rosen', official_full: 'Jacky Rosen' },
+    terms: [{ type: 'sen', party: 'Democrat', state: 'NV', start: '2019-01-03' }],
+  },
+  {
+    id: { bioguide: 'B001299' },
+    name: { first: 'Jim', last: 'Banks', official_full: 'Jim Banks' },
+    terms: [{ type: 'sen', party: 'Republican', state: 'IN', start: '2023-01-03' }],
+  },
+  {
+    // Negative-control target: same surname as no one else in this fixture
+    // set, but must NOT be matched by an unrelated first name ("George")
+    // sharing that surname — there is no diminutive or curated-alias bridge
+    // from "George" to "David", so this must stay a last-name-only miss.
+    id: { bioguide: 'P000612' },
+    name: { first: 'David', last: 'Perdue', official_full: 'David Perdue' },
+    terms: [{ type: 'sen', party: 'Republican', state: 'GA', start: '2015-01-03', end: '2021-01-03' }],
   },
   {
     id: { bioguide: 'V000139' },
@@ -111,7 +156,7 @@ function row(overrides: Partial<IdentityFilerRow>): IdentityFilerRow {
 describe('planIdentitySync — primary map resolution', () => {
   const indexes = indexesFrom(FIXTURE_LEGISLATORS);
 
-  it('resolves a legal-name variant with embedded suffix/initial via official_full and sets the campaign-sign display name', () => {
+  it('resolves a legal-name variant with embedded suffix/initial via the curated MEMBER_NAME_ALIASES entry (no middle field in the real data) and sets the campaign-sign display name', () => {
     const plan = planIdentitySync(
       [row({ bioguide_id: 'senate-a-mitchell-jr-mcconnell', full_name: 'A. Mitchell Jr. McConnell', chamber: 'senate', state: 'KY' })],
       indexes,
@@ -126,7 +171,7 @@ describe('planIdentitySync — primary map resolution', () => {
     expect(change.after.district).toBeNull();
   });
 
-  it('resolves via a direct first+last match without needing the nickname', () => {
+  it('resolves the legal first name via the curated MEMBER_NAME_ALIASES entry (real data has no "Rafael" anywhere on Ted Cruz\'s record)', () => {
     const plan = planIdentitySync(
       [row({ bioguide_id: 'seed-senate-rafael-e-cruz', full_name: 'Rafael E Cruz', chamber: 'senate', state: 'TX' })],
       indexes,
@@ -177,6 +222,89 @@ describe('planIdentitySync — primary map resolution', () => {
     );
     expect(plan.bioguideResolved).toBe(0);
     expect(plan.unresolved).toBe(1);
+  });
+});
+
+// Production dryRun miss report (#1654-follow-up): 275 unresolved filers, only
+// 37 gained a bioguide. Debugging against the REAL live congress-legislators
+// JSON (see legislators.ts's DIMINUTIVE_GROUPS doc comment) found two
+// distinct root causes:
+//   - Cassidy/Sullivan/Udall/Rosen/Banks: the filing carries the member's
+//     formal/legal first name ("William", "Daniel", "Thomas", "Jacklyn",
+//     "James") while congress-legislators indexes them under the informal
+//     name they go by ("Bill", "Dan", "Tom", "Jacky", "Jim") — a genuine
+//     diminutive gap, fixed generically by legislators.diminutiveKeyVariants
+//     retried through the state-gated fallback index.
+//   - Cruz/McConnell: NOT a diminutive gap — "Rafael"/"Ted" and
+//     "Mitchell"/"Mitch" share no lexical root, AND (confirmed against the
+//     live JSON) neither member's record carries any field linking their
+//     legal first/middle name to the short name congress-legislators uses.
+//     No generic key-derivation can produce these; they're covered by the
+//     curated MEMBER_NAME_ALIASES allow-list in shared/memberIdentity.ts
+//     instead (see the primary-map describe block above for those two).
+describe('planIdentitySync — diminutive-bridged fallback resolution (real name records)', () => {
+  const indexes = indexesFrom(FIXTURE_LEGISLATORS);
+
+  it('resolves "William Cassidy" -> Bill Cassidy via the diminutive-retried fallback key', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'William Cassidy', chamber: 'senate', state: 'LA' })],
+      indexes,
+    );
+    expect(plan.changes[0]?.after.resolved_bioguide_id).toBe('C001075');
+    expect(plan.changes[0]?.after.display_name).toBe('Bill Cassidy');
+  });
+
+  it('resolves "Daniel S Sullivan" -> Dan Sullivan via the diminutive-retried fallback key', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'Daniel S Sullivan', chamber: 'senate', state: 'AK' })],
+      indexes,
+    );
+    expect(plan.changes[0]?.after.resolved_bioguide_id).toBe('S001198');
+    expect(plan.changes[0]?.after.display_name).toBe('Dan Sullivan');
+  });
+
+  it('resolves "Thomas Udall" -> Tom Udall via the diminutive-retried fallback key', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'Thomas Udall', chamber: 'senate', state: 'NM' })],
+      indexes,
+    );
+    expect(plan.changes[0]?.after.resolved_bioguide_id).toBe('U000039');
+    expect(plan.changes[0]?.after.display_name).toBe('Tom Udall');
+  });
+
+  it('resolves "Jacklyn S Rosen" -> Jacky Rosen via the diminutive-retried fallback key', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'Jacklyn S Rosen', chamber: 'senate', state: 'NV' })],
+      indexes,
+    );
+    expect(plan.changes[0]?.after.resolved_bioguide_id).toBe('R000608');
+    expect(plan.changes[0]?.after.display_name).toBe('Jacky Rosen');
+  });
+
+  it('resolves "James E Banks" -> Jim Banks via the diminutive-retried fallback key', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'James E Banks', chamber: 'senate', state: 'IN' })],
+      indexes,
+    );
+    expect(plan.changes[0]?.after.resolved_bioguide_id).toBe('B001299');
+    expect(plan.changes[0]?.after.display_name).toBe('Jim Banks');
+  });
+
+  it('does NOT resolve "George E Perdue" to David Perdue — same surname, unrelated first name, no diminutive or alias bridge', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'George E Perdue', chamber: 'senate', state: 'GA' })],
+      indexes,
+    );
+    expect(plan.bioguideResolved).toBe(0);
+    expect(plan.changes.some((c) => c.after.resolved_bioguide_id === 'P000612')).toBe(false);
+  });
+
+  it('still does not resolve "George E Perdue" when the state is absent', () => {
+    const plan = planIdentitySync(
+      [row({ bioguide_id: 'x', full_name: 'George E Perdue', chamber: 'senate', state: null })],
+      indexes,
+    );
+    expect(plan.bioguideResolved).toBe(0);
   });
 });
 
