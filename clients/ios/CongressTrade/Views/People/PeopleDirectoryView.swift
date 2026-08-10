@@ -199,13 +199,17 @@ private struct PersonRow: View {
         if let chamber = member.chamber, !chamber.isEmpty {
             parts.append(chamber.chamberLabel)
         }
-        let partyState = [member.party, member.state]
-            .compactMap { value -> String? in
-                guard let value, !value.isEmpty else { return nil }
-                return value
-            }
-            .joined(separator: " · ")
-        if !partyState.isEmpty { parts.append(partyState) }
+        var partyStateBits: [String] = []
+        if let party = member.party, !party.isEmpty {
+            partyStateBits.append(party)
+        }
+        if let state = member.state, !state.isEmpty {
+            let district = CompactFormat.districtOrdinal(member.district)
+            partyStateBits.append(district.isEmpty ? state : "\(state) - \(district)")
+        }
+        if !partyStateBits.isEmpty {
+            parts.append(partyStateBits.joined(separator: " · "))
+        }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
