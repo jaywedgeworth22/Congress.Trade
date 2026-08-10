@@ -6,8 +6,10 @@
  */
 
 import type { Env } from './types.ts';
-import { get } from './db.ts';
+import { all, get } from './db.ts';
+import { getLastPollAt } from './config.ts';
 import { countEligibleBacklog } from '../extraction/autopilot.ts';
+import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
 
 export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
 
@@ -58,6 +60,26 @@ export interface PipelineSignals {
    * anything already review-resolved.
    */
   strandedFilings: number | null;
+  /**
+   * Per-chamber polling liveness (owner directive 2026-08-10: polling can
+   * never be silently off for any chamber). lastSuccessAt/lastAttemptAt come
+   * from source_attempts (executive also max'd with the KV last_poll:oge
+   * checkpoint so the check works for history recorded before executive
+   * wrote source_attempts rows). configDisabled reflects the chamber's
+   * enable gate (currently only executive has one: OGE_WATCH_ENABLED).
+   */
+  pollSources: Array<{
+    source: 'house' | 'senate' | 'executive';
+    lastSuccessAt: string | null;
+    lastAttemptAt: string | null;
+    configDisabled: boolean;
+  }> | null;
+  /**
+   * Latency-probe liveness (same directive): newest observation per provider
+   * from trade_provider_observations. Empty array = probes have never
+   * recorded anything (loud), null = uncollected.
+   */
+  latencyProviders: Array<{ provider: string; lastObservedAt: string }> | null;
 }
 
 export interface PipelineThresholds {
@@ -65,6 +87,12 @@ export interface PipelineThresholds {
   reviewBacklogWarn: number; // default 25
   txAgeHours: number; // default 96 (weekend/recess slack)
   strandedFilingsWarn: number; // default 1 (any is worth a look; sweep clears them hourly)
+  /** Max hours since last successful poll before a chamber is stalled. */
+  pollSuccessMaxAgeHours: { house: number; senate: number; executive: number };
+  /** Max hours since the newest provider latency observation, system-wide. */
+  latencyObservationMaxAgeHours: number;
+  /** Hours of silence before an individual recently-active provider is flagged. */
+  latencyProviderSilenceHours: number;
 }
 
 export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
@@ -72,6 +100,12 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   reviewBacklogWarn: 25,
   txAgeHours: 96,
   strandedFilingsWarn: 1,
+  // House/Senate poll on the minutely watcher cadence — 6h of no success is
+  // unambiguously wrong. Executive (OGE) self-gates to a ~6h cadence and
+  // filings land every few weeks, so allow two missed cycles + slack.
+  pollSuccessMaxAgeHours: { house: 6, senate: 6, executive: 26 },
+  latencyObservationMaxAgeHours: 24,
+  latencyProviderSilenceHours: 48,
 };
 
 const STATUS_WEIGHT: Record<PipelineStatus, number> = {
@@ -277,6 +311,121 @@ export function evaluatePipelineSignals(
     checks.push({ id: 'stranded_filings', status: 'ok', detail: 'No stranded filings', value: 0 });
   }
 
+  // 9-11. Per-chamber polling liveness (owner directive 2026-08-10: polling
+  // must NEVER be silently off for any chamber). Born from two real silent
+  // outages found the same night: OGE_WATCH_ENABLED sat unset for 5 days
+  // (executive polling dead, nothing said so anywhere) and the senate poll
+  // 403'd on every cron tick for days behind a console.warn nobody reads.
+  // Three distinct loud states per chamber:
+  //   - config-disabled  -> stalled ("disabled by config" — a deliberate
+  //     gate is still an outage until someone turns it back on)
+  //   - attempts fresh but successes stale -> stalled ("polling FAILING" —
+  //     the senate-403 class: the watcher runs, the source never lands)
+  //   - attempts stale/absent -> stalled ("polling NOT RUNNING" — cron dead,
+  //     gate stuck, or the source was never wired to record attempts)
+  if (s.pollSources === null) {
+    checks.push({ id: 'polling_liveness', status: 'unknown', detail: 'Poll liveness uncollected', value: null });
+  } else {
+    for (const src of ['house', 'senate', 'executive'] as const) {
+      const id = `polling_${src}`;
+      const st = s.pollSources.find((p) => p.source === src);
+      const maxAgeH = t.pollSuccessMaxAgeHours[src];
+      if (!st) {
+        checks.push({ id, status: 'stalled', detail: `${src} polling NOT RUNNING — no liveness record at all`, value: null });
+        continue;
+      }
+      if (st.configDisabled) {
+        checks.push({
+          id,
+          status: 'stalled',
+          detail: `${src} polling DISABLED by config — must never be silent; re-enable or acknowledge loudly`,
+          value: null,
+        });
+        continue;
+      }
+      const successMs = st.lastSuccessAt ? Date.parse(st.lastSuccessAt) : NaN;
+      const attemptMs = st.lastAttemptAt ? Date.parse(st.lastAttemptAt) : NaN;
+      const successAgeH = Number.isFinite(successMs) ? (nowMs - successMs) / 3_600_000 : Infinity;
+      const attemptAgeH = Number.isFinite(attemptMs) ? (nowMs - attemptMs) / 3_600_000 : Infinity;
+      if (successAgeH <= maxAgeH) {
+        checks.push({
+          id,
+          status: 'ok',
+          detail: `${src} polling live: last success ${successAgeH < 1 ? Math.round(successAgeH * 60) + 'm' : Math.round(successAgeH) + 'h'} ago`,
+          value: Math.round(successAgeH * 10) / 10,
+        });
+      } else if (attemptAgeH <= maxAgeH) {
+        checks.push({
+          id,
+          status: 'stalled',
+          detail: `${src} polling FAILING: attempts are running (last ${Math.round(attemptAgeH)}h ago) but no success in `
+            + `${successAgeH === Infinity ? 'ever' : Math.round(successAgeH) + 'h'} (threshold ${maxAgeH}h)`,
+          value: successAgeH === Infinity ? null : Math.round(successAgeH),
+        });
+      } else {
+        checks.push({
+          id,
+          status: 'stalled',
+          detail: `${src} polling NOT RUNNING: no attempt in `
+            + `${attemptAgeH === Infinity ? 'ever' : Math.round(attemptAgeH) + 'h'} (threshold ${maxAgeH}h)`,
+          value: attemptAgeH === Infinity ? null : Math.round(attemptAgeH),
+        });
+      }
+    }
+  }
+
+  // 12. Latency-monitoring liveness (same owner directive): the provider
+  // latency probes (Quiver/UW/FMP observations that feed the latency
+  // scorecard) must never go silently dark. Whole-system silence is stalled;
+  // an individual recently-active provider going quiet is degraded with the
+  // provider named.
+  if (s.latencyProviders === null) {
+    checks.push({ id: 'latency_probes', status: 'unknown', detail: 'Latency-probe liveness uncollected', value: null });
+  } else if (s.latencyProviders.length === 0) {
+    checks.push({
+      id: 'latency_probes',
+      status: 'stalled',
+      detail: 'Latency monitoring NOT RUNNING — zero provider observations recorded, ever',
+      value: null,
+    });
+  } else {
+    let newestMs = -Infinity;
+    const silent: string[] = [];
+    for (const p of s.latencyProviders) {
+      const ms = Date.parse(p.lastObservedAt);
+      if (!Number.isFinite(ms)) continue;
+      if (ms > newestMs) newestMs = ms;
+      if ((nowMs - ms) / 3_600_000 > t.latencyProviderSilenceHours
+        && (nowMs - ms) / 3_600_000 <= 7 * 24) {
+        silent.push(`${p.provider} (${Math.round((nowMs - ms) / 3_600_000)}h)`);
+      }
+    }
+    const newestAgeH = newestMs === -Infinity ? Infinity : (nowMs - newestMs) / 3_600_000;
+    if (newestAgeH > t.latencyObservationMaxAgeHours) {
+      checks.push({
+        id: 'latency_probes',
+        status: 'stalled',
+        detail: `Latency monitoring SILENT: newest provider observation is `
+          + `${newestAgeH === Infinity ? 'unparseable' : Math.round(newestAgeH) + 'h'} old (threshold ${t.latencyObservationMaxAgeHours}h)`,
+        value: newestAgeH === Infinity ? null : Math.round(newestAgeH),
+      });
+    } else if (silent.length > 0) {
+      checks.push({
+        id: 'latency_probes',
+        status: 'degraded',
+        detail: `Latency provider(s) gone quiet: ${silent.join(', ')} (silence threshold ${t.latencyProviderSilenceHours}h)`,
+        value: silent.length,
+      });
+    } else {
+      checks.push({
+        id: 'latency_probes',
+        status: 'ok',
+        detail: `Latency probes live: newest observation ${newestAgeH < 1 ? Math.round(newestAgeH * 60) + 'm' : Math.round(newestAgeH) + 'h'} ago across ${s.latencyProviders.length} provider(s)`,
+        value: s.latencyProviders.length,
+      });
+    }
+  }
+
   for (const c of checks) {
     overall = worstStatus(overall, c.status);
   }
@@ -415,6 +564,60 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     strandedFilings += Number(desync?.n ?? 0);
   } catch {}
 
+  // Poll liveness: last attempt/success per chamber from source_attempts.
+  // Executive additionally max'es with the KV last_poll:oge checkpoint
+  // (pollExecutive's own success marker, populated long before executive
+  // started writing source_attempts rows) and reads its enable gate — a
+  // disabled chamber must be LOUD, never a silent skip.
+  let pollSources: PipelineSignals['pollSources'] = null;
+  try {
+    const rows = await all<{ source: string; last_success: string | null; last_attempt: string | null }>(
+      env.DB,
+      `SELECT source,
+              MAX(CASE WHEN outcome = 'success' THEN attempted_at END) AS last_success,
+              MAX(attempted_at) AS last_attempt
+         FROM source_attempts
+        WHERE source IN ('house', 'senate', 'executive')
+        GROUP BY source`,
+    );
+    const bySource = new Map(rows.map((r) => [r.source, r]));
+    let ogeDisabled = false;
+    let ogeLastPollIso: string | null = null;
+    try {
+      ogeDisabled = !(await ogeWatchEnabled(env));
+    } catch {}
+    try {
+      const d = await getLastPollAt(env, 'oge');
+      ogeLastPollIso = d ? d.toISOString() : null;
+    } catch {}
+    pollSources = (['house', 'senate', 'executive'] as const).map((source) => {
+      const row = bySource.get(source);
+      let lastSuccessAt = row?.last_success ?? null;
+      let lastAttemptAt = row?.last_attempt ?? null;
+      if (source === 'executive' && ogeLastPollIso) {
+        if (!lastSuccessAt || ogeLastPollIso > lastSuccessAt) lastSuccessAt = ogeLastPollIso;
+        if (!lastAttemptAt || ogeLastPollIso > lastAttemptAt) lastAttemptAt = ogeLastPollIso;
+      }
+      return {
+        source,
+        lastSuccessAt,
+        lastAttemptAt,
+        configDisabled: source === 'executive' ? ogeDisabled : false,
+      };
+    });
+  } catch {}
+
+  let latencyProviders: PipelineSignals['latencyProviders'] = null;
+  try {
+    const rows = await all<{ provider: string; last_observed: string }>(
+      env.DB,
+      'SELECT provider, MAX(last_observed_at) AS last_observed FROM trade_provider_observations GROUP BY provider',
+    );
+    latencyProviders = rows
+      .filter((r) => r.provider && r.last_observed)
+      .map((r) => ({ provider: r.provider, lastObservedAt: r.last_observed }));
+  } catch {}
+
   const signals: PipelineSignals = {
     outboxPending,
     outboxOldestAt,
@@ -428,6 +631,8 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     dishonestResolutionCount,
     orphanedNeedsReviewCount,
     strandedFilings,
+    pollSources,
+    latencyProviders,
   };
 
   return evaluatePipelineSignals(signals, nowMs);

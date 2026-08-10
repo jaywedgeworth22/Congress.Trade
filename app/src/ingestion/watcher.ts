@@ -443,7 +443,7 @@ export type SourceAttemptOutcome = 'success' | 'failure';
 
 async function recordSourceAttempt(
   env: Env,
-  source: 'house' | 'senate',
+  source: 'house' | 'senate' | 'executive',
   attemptedAt: string,
   outcome: SourceAttemptOutcome,
   newCount: number,
@@ -484,7 +484,7 @@ export function isTransientSourceError(message: string): boolean {
 }
 
 /** Record a source-level failure without presenting it as a successful poll. */
-async function recordSourceError(env: Env, source: 'house' | 'senate', nowIso: string, err: unknown): Promise<void> {
+async function recordSourceError(env: Env, source: 'house' | 'senate' | 'executive', nowIso: string, err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   if (isTransientSourceError(message)) {
     console.warn(`watcher: ${source} source degraded (transient, bulk path still authoritative):`, message);
@@ -758,6 +758,16 @@ export async function pollExecutive(
   const newCount = await persistAndEnqueue(env, filings, nowIso, { maxNew: maxFilings });
   await setLastPollAt(env, 'oge', now);
   await logPoll(env, 'oge', nowIso, newCount, nowIso);
+  // Liveness receipt (owner 2026-08-10: polling must never be silently off
+  // for any chamber). Executive historically wrote only the KV checkpoint,
+  // leaving no durable per-attempt record — which is exactly how a 5-day
+  // OGE polling outage went unnoticed. Fail-soft: a receipt failure must
+  // never fail the poll that just succeeded.
+  try {
+    await recordSourceAttempt(env, 'executive', nowIso, 'success', newCount, null);
+  } catch (err) {
+    console.warn('watcher: failed to record executive source attempt:', (err as Error).message);
+  }
   return newCount;
 }
 
@@ -813,6 +823,9 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
     if (polled !== null) result.executive = 'success';
   } catch (err) {
     console.warn('watcher: executive (OGE) source failed:', (err as Error).message);
+    // Durable failure receipt so the polling_executive liveness check sees
+    // "attempts running, successes stale" instead of silence.
+    await recordSourceError(env, 'executive', now.toISOString(), err);
     result.executive = 'failure';
   }
   return result;

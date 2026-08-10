@@ -33,6 +33,7 @@ import {
   sweepOgeUndatedFilingDates,
   extractPrintedDateFromText,
   runAutonomySweeps,
+  sweepLivenessAlarms,
 } from '../autonomySweeps.ts';
 
 describe('autonomySweeps', () => {
@@ -399,5 +400,150 @@ describe('autonomySweeps', () => {
       // orchestrator's error isolation is for a sweep throwing outright.
       expect(result.errors).toEqual([]);
     });
+  });
+});
+
+describe('sweepLivenessAlarms (owner 2026-08-10: silence must be loud)', () => {
+  function kvEnv() {
+    const store = new Map<string, string>();
+    const env = {
+      CONFIG_KV: {
+        get: async (k: string, mode?: string) => {
+          const v = store.get(k) ?? null;
+          if (v === null) return null;
+          return mode === 'json' ? JSON.parse(v) : v;
+        },
+        put: async (k: string, v: string) => { store.set(k, v); },
+        delete: async (k: string) => { store.delete(k); },
+      },
+    } as unknown as Env;
+    return { env, store };
+  }
+  const badHealth = (status: 'stalled' | 'degraded' | 'ok', detail = 'x') => ({
+    status,
+    checks: [
+      { id: 'polling_senate', status, detail, value: null },
+      { id: 'data_freshness', status: 'ok', detail: 'irrelevant non-liveness check', value: 0 },
+    ],
+  });
+
+  it('notifies once on ok->bad transition and records the episode', async () => {
+    const { env, store } = kvEnv();
+    const pushes: Array<{ title: string; priority?: number }> = [];
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: { title: string; priority?: number }) => { pushes.push(m); return { sent: true }; }) as never,
+    });
+    expect(r.notified).toEqual(['polling_senate']);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0].title).toContain('DOWN');
+    expect(pushes[0].priority).toBe(1);
+    expect(store.has('liveness-alarm:polling_senate')).toBe(true);
+  });
+
+  it('does NOT re-notify inside the 6h window while still bad', async () => {
+    const { env } = kvEnv();
+    const pushes: unknown[] = [];
+    const deps = {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: unknown) => { pushes.push(m); return { sent: true }; }) as never,
+    };
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), deps);
+    const r2 = await sweepLivenessAlarms(env, new Date('2026-08-10T07:00:00Z'), deps);
+    expect(pushes).toHaveLength(1);
+    expect(r2.notified).toEqual([]);
+  });
+
+  it('re-notifies after 6h still-bad', async () => {
+    const { env } = kvEnv();
+    const pushes: unknown[] = [];
+    const deps = {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: unknown) => { pushes.push(m); return { sent: true }; }) as never,
+    };
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), deps);
+    await sweepLivenessAlarms(env, new Date('2026-08-10T12:30:00Z'), deps);
+    expect(pushes).toHaveLength(2);
+  });
+
+  it('notifies again when the bad status CHANGES (degraded -> stalled)', async () => {
+    const { env } = kvEnv();
+    const pushes: Array<{ priority?: number }> = [];
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => badHealth('degraded') as never,
+      push: (async (_e: unknown, m: { priority?: number }) => { pushes.push(m); return { sent: true }; }) as never,
+    });
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:30:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: { priority?: number }) => { pushes.push(m); return { sent: true }; }) as never,
+    });
+    expect(pushes).toHaveLength(2);
+    expect(pushes[1].priority).toBe(1);
+  });
+
+  it('sends a recovery note and clears the episode on bad->ok', async () => {
+    const { env, store } = kvEnv();
+    const pushes: Array<{ title: string }> = [];
+    const push = (async (_e: unknown, m: { title: string }) => { pushes.push(m); return { sent: true }; }) as never;
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never, push,
+    });
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-10T07:00:00Z'), {
+      checkHealth: async () => badHealth('ok') as never, push,
+    });
+    expect(r.recovered).toEqual(['polling_senate']);
+    expect(pushes).toHaveLength(2);
+    expect(pushes[1].title).toContain('recovered');
+    expect(store.has('liveness-alarm:polling_senate')).toBe(false);
+  });
+
+  it('an UNDELIVERED alarm (sent:false) records no episode, so it retries next sweep', async () => {
+    // sendPushover never throws — unconfigured creds return {sent:false}.
+    // Counting that as notified would make the alarm channel silently dead:
+    // the exact failure class this sweep exists to kill.
+    const { env, store } = kvEnv();
+    const pushes: unknown[] = [];
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: unknown) => { pushes.push(m); return { sent: false, reason: 'PUSHOVER_APP_TOKEN not configured' }; }) as never,
+    });
+    expect(r.notified).toEqual([]);
+    expect(store.has('liveness-alarm:polling_senate')).toBe(false);
+    // Next sweep retries the delivery (no episode was recorded).
+    await sweepLivenessAlarms(env, new Date('2026-08-10T07:00:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never,
+      push: (async (_e: unknown, m: unknown) => { pushes.push(m); return { sent: true }; }) as never,
+    });
+    expect(pushes).toHaveLength(2);
+    expect(store.has('liveness-alarm:polling_senate')).toBe(true);
+  });
+
+  it("'unknown' (collection blip) mid-episode neither clears the episode nor sends a lying recovery", async () => {
+    const { env, store } = kvEnv();
+    const pushes: Array<{ title: string }> = [];
+    const push = (async (_e: unknown, m: { title: string }) => { pushes.push(m); return { sent: true }; }) as never;
+    await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => badHealth('stalled') as never, push,
+    });
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-10T07:00:00Z'), {
+      checkHealth: async () => badHealth('unknown' as never) as never, push,
+    });
+    expect(r.recovered).toEqual([]);
+    expect(pushes).toHaveLength(1);
+    expect(store.has('liveness-alarm:polling_senate')).toBe(true);
+  });
+
+  it('ignores non-liveness checks entirely (no alarm for data_freshness etc.)', async () => {
+    const { env } = kvEnv();
+    const pushes: unknown[] = [];
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-10T06:00:00Z'), {
+      checkHealth: async () => ({
+        status: 'degraded',
+        checks: [{ id: 'data_freshness', status: 'degraded', detail: 'old data', value: 99 }],
+      }) as never,
+      push: (async (_e: unknown, m: unknown) => { pushes.push(m); return { sent: true }; }) as never,
+    });
+    expect(r.evaluated).toBe(0);
+    expect(pushes).toHaveLength(0);
   });
 });
