@@ -4,7 +4,12 @@ import {
   shouldRetryFetchStatus,
 } from '../fetcher.ts';
 
-function envForFetch(opts: { reviewResolved?: boolean } = {}) {
+function envForFetch(opts: {
+  reviewResolved?: boolean;
+  chamber?: string;
+  sourceUrl?: string;
+  relayUrl?: string;
+} = {}) {
   const updates: unknown[][] = [];
   const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
   const send = vi.fn(async (msg: any) => updates.push(msg));
@@ -12,6 +17,7 @@ function envForFetch(opts: { reviewResolved?: boolean } = {}) {
   return {
     env: {
       RAW_FILES: { put },
+      SENATE_RELAY_URL: opts.relayUrl,
       DB: {
         // Branch on the SQL text: the fetcher looks up the filings row, then
         // the reviewQueueGuard checks review_queue.resolved before doing any
@@ -24,7 +30,11 @@ function envForFetch(opts: { reviewResolved?: boolean } = {}) {
             first: async () =>
               /review_queue/i.test(sql)
                 ? (reviewResolved ? { n: 1 } : null)
-                : { source_url: 'http://test/doc.pdf', chamber: 'house', ingest_status: 'new' },
+                : {
+                    source_url: opts.sourceUrl ?? 'http://test/doc.pdf',
+                    chamber: opts.chamber ?? 'house',
+                    ingest_status: 'new',
+                  },
           }),
         }),
         batch: async (stmts: any[]) => { updates.push(...stmts); return []; },
@@ -103,6 +113,76 @@ describe('fetcherRetry', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('senate document fetch via relay (2026-08-10 regression)', () => {
+  // Imperva blocks the box's datacenter IP on efdsearch.senate.gov, so when
+  // SENATE_RELAY_URL is set EVERY senate document request must go through the
+  // relay's /fetch-doc — never direct. The historical backfill discovered
+  // ~650 filings whose direct fetches then all 403'd; this suite pins the fix.
+  const SENATE_DOC = 'https://efdsearch.senate.gov/search/view/ptr/abc-123/';
+  const RELAY = 'http://relay.test:8899';
+
+  it('routes the senate document fetch through the relay and never touches efdsearch directly', async () => {
+    const { env, put } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC, relayUrl: RELAY });
+    const fetchMock = vi.fn(async () => new Response('<html>Periodic Transaction Report</html>', {
+      status: 200, headers: { 'content-type': 'text/html; charset=utf-8' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFiling(env, 'S-doc_1');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0];
+    expect(calledUrl).toBe(`${RELAY}/fetch-doc`);
+    expect(calledInit.method).toBe('POST');
+    expect(JSON.parse(calledInit.body as string)).toEqual({ url: SENATE_DOC });
+    expect(put).toHaveBeenCalledWith('raw/S-doc_1', expect.any(Uint8Array), {
+      httpMetadata: { contentType: 'text/html; charset=utf-8' },
+    });
+  });
+
+  it('retries through the relay (not direct) when the agreement wall leaks through', async () => {
+    const { env, put } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC, relayUrl: RELAY });
+    const wall = '<form id="agreement_form"><input name="prohibition_agreement"></form>';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(wall, { status: 200, headers: { 'content-type': 'text/html' } }))
+      .mockResolvedValueOnce(new Response('<html>Periodic Transaction Report</html>', {
+        status: 200, headers: { 'content-type': 'text/html' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFiling(env, 'S-doc_1');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe(`${RELAY}/fetch-doc`);
+    }
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it('mirrors an upstream non-OK relay status into the normal error path (no R2 write)', async () => {
+    const { env, put } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC, relayUrl: RELAY });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"x"}', {
+      status: 404, headers: { 'content-type': 'application/json' },
+    })));
+
+    await expect(fetchFiling(env, 'S-doc_1')).resolves.toBeUndefined();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('senate without a relay still uses the direct path (HEAD + GET on the source URL)', async () => {
+    const { env } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC });
+    const fetchMock = vi.fn(async () => new Response('<html>Periodic Transaction Report</html>', {
+      status: 200, headers: { 'content-type': 'text/html' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFiling(env, 'S-doc_1');
+
+    expect(fetchMock.mock.calls.every(([u]) => u === SENATE_DOC)).toBe(true);
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'HEAD')).toBe(true);
   });
 });
 

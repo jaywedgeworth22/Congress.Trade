@@ -233,7 +233,24 @@ export async function fetchFiling(
           : 'application/pdf,*/*',
     };
 
-    if (row.chamber === 'senate' && env.CONFIG_KV) {
+    // Imperva blocks datacenter IPs on efdsearch.senate.gov (bare 403), so
+    // when a relay is configured every senate DOCUMENT fetch must go through
+    // it too — not just the search flow in senateSource.ts. The relay's
+    // /fetch-doc mirrors the upstream status + content-type, so the retry
+    // semantics below work unchanged. Found 2026-08-10: the historical
+    // backfill discovered ~650 filings whose fetches then all 403'd direct.
+    const senateRelayUrl = row.chamber === 'senate' && env.SENATE_RELAY_URL
+      ? env.SENATE_RELAY_URL.replace(/\/$/, '')
+      : undefined;
+    const fetchSenateDocViaRelay = () =>
+      trackedFetch(`${senateRelayUrl}/fetch-doc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: '*/*' },
+        body: JSON.stringify({ url: sourceUrl }),
+        signal: lease?.signal,
+      }, { service: 'filing-ingestion', operation: 'fetch-filing-document-relay', dynamicTarget: 'filing-source' });
+
+    if (row.chamber === 'senate' && env.CONFIG_KV && !senateRelayUrl) {
       try {
         const session = await env.CONFIG_KV.get<{ cookieHeader: string }>('senate_efd_session', 'json');
         if (session?.cookieHeader) {
@@ -243,7 +260,9 @@ export async function fetchFiling(
         console.warn('fetcher: failed to load senate session cookies from KV:', err);
       }
     }
-    const headRes = await trackedFetch(
+    // The HEAD pre-validation is skipped on the relay path: the relay only
+    // exposes POST endpoints, and the GET below surfaces the same statuses.
+    const headRes = senateRelayUrl ? null : await trackedFetch(
       sourceUrl,
       {
         method: 'HEAD',
@@ -269,7 +288,7 @@ export async function fetchFiling(
       return;
     }
 
-    const res = await trackedFetch(sourceUrl, {
+    const res = senateRelayUrl ? await fetchSenateDocViaRelay() : await trackedFetch(sourceUrl, {
       headers,
       redirect: 'follow',
       signal: lease?.signal,
@@ -311,12 +330,20 @@ export async function fetchFiling(
     // KV for subsequent filings), and refetch once. If the wall persists, the
     // message is retried later rather than poisoning the pipeline.
     if (row.chamber === 'senate' && isSenateAgreementWallBytes(rawBytes)) {
-      const session = await establishSenateSession({ kv: env.CONFIG_KV });
-      const retry = await trackedFetch(sourceUrl, {
-        headers: { ...headers, cookie: session.cookieHeader },
-        redirect: 'follow',
-        signal: lease?.signal,
-      }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
+      // On the relay path the relay negotiates its own session (and already
+      // retried once internally); a second relay call is the correct retry.
+      // Direct path: negotiate a fresh agreement-accepted session ourselves.
+      let retry: Response;
+      if (senateRelayUrl) {
+        retry = await fetchSenateDocViaRelay();
+      } else {
+        const session = await establishSenateSession({ kv: env.CONFIG_KV });
+        retry = await trackedFetch(sourceUrl, {
+          headers: { ...headers, cookie: session.cookieHeader },
+          redirect: 'follow',
+          signal: lease?.signal,
+        }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
+      }
       if (!retry.ok || !retry.body) {
         await retry.body?.cancel().catch(() => {});
         const message = `fetcher: senate agreement wall for ${sourceUrl}; refetch -> HTTP ${retry.status}`;

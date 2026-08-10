@@ -114,12 +114,83 @@ function fmtSenateDate(d: Date): string {
   return `${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}/${d.getUTCFullYear()} 00:00:00`;
 }
 
+// One agreement-accepted session reused across requests (both search and
+// document fetches), so a long backfill doesn't renegotiate the 3-step
+// handshake per call. Refreshed on demand when the wall reappears.
+let cachedSession: { csrfCookie: string; cookieHeader: string } | null = null;
+
+async function getSession(forceFresh = false) {
+  if (!cachedSession || forceFresh) {
+    cachedSession = await establishSession();
+  }
+  return cachedSession;
+}
+
+function looksLikeAgreementWall(prefix: string): boolean {
+  // Mirrors app/src/ingestion/senateSource.ts looksLikeSenateAgreementWall.
+  return /prohibition_agreement/i.test(prefix) || /id=["']agreement_form["']/i.test(prefix);
+}
+
+function isWallBytes(bytes: Uint8Array): boolean {
+  if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+    return false; // %PDF — a real document, never the wall
+  }
+  const prefix = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+  return looksLikeAgreementWall(prefix);
+}
+
+async function fetchDocOnce(url: string, session: { cookieHeader: string }) {
+  return await fetch(url, {
+    headers: {
+      ...BROWSER_HEADERS,
+      accept: 'text/html,application/xhtml+xml,application/pdf,*/*',
+      cookie: session.cookieHeader,
+      referer: SENATE_SEARCH,
+    },
+    redirect: 'follow',
+  });
+}
+
+/**
+ * Fetch one efdsearch document (PTR html or paper PDF) through the
+ * residential session. Returns bytes with the upstream status/content-type
+ * mirrored, so the app's own retry semantics keep working unchanged.
+ */
+async function fetchDoc(url: string): Promise<Response> {
+  const session = await getSession();
+  let res = await fetchDocOnce(url, session);
+  if (!res.ok) {
+    return new Response(await res.arrayBuffer(), {
+      status: res.status,
+      headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream' },
+    });
+  }
+  let bytes = new Uint8Array(await res.arrayBuffer());
+  if (isWallBytes(bytes)) {
+    await delay(POLITE_DELAY_MS);
+    const fresh = await getSession(true);
+    res = await fetchDocOnce(url, fresh);
+    bytes = new Uint8Array(await res.arrayBuffer());
+    if (!res.ok || isWallBytes(bytes)) {
+      return new Response(JSON.stringify({ error: 'agreement wall persisted after session refresh' }), {
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream' },
+  });
+}
+
 async function fetchAllRows(sinceIso: string, nowIso: string, pageSize: number): Promise<string[][]> {
   const since = new Date(sinceIso);
   const now = new Date(nowIso);
-  const session = await establishSession();
+  let session = await getSession();
   const rows: string[][] = [];
   let expectedTotal: number | null = null;
+  let refreshedSession = false;
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = new URLSearchParams();
@@ -156,6 +227,16 @@ async function fetchAllRows(sinceIso: string, nowIso: string, pageSize: number):
     });
     const ct = res.headers.get('content-type') || '';
     if (!res.ok || !ct.includes('application/json')) {
+      // A cached session can go stale (CSRF rotation, wall re-arm). Refresh
+      // once per call and retry the same page before giving up.
+      if (!refreshedSession) {
+        refreshedSession = true;
+        await res.body?.cancel().catch(() => {});
+        await delay(POLITE_DELAY_MS);
+        session = await getSession(true);
+        page -= 1;
+        continue;
+      }
       throw new Error(`senate POST report/data/ -> HTTP ${res.status} ${ct}`);
     }
     const json = (await res.json()) as { data?: unknown; recordsFiltered?: unknown };
@@ -175,6 +256,33 @@ console.log(`senate-relay listening on 127.0.0.1:${port}`);
 
 Deno.serve({ port, hostname: '127.0.0.1' }, async (req) => {
   const url = new URL(req.url);
+
+  // Document proxy: fetch one efdsearch PTR/paper document through the
+  // residential session. Body: {url}. Upstream status + content-type are
+  // mirrored so the app's retry semantics work unchanged.
+  if (req.method === 'POST' && url.pathname === '/fetch-doc') {
+    try {
+      const body = (await req.json()) as { url?: string };
+      const target = body.url ?? '';
+      if (!target.startsWith(`${SENATE_BASE}/`)) {
+        return new Response(JSON.stringify({ error: 'url must be on efdsearch.senate.gov' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const t0 = Date.now();
+      const res = await fetchDoc(target);
+      console.log(`fetch-doc ${target} -> ${res.status} in ${Date.now() - t0}ms`);
+      return res;
+    } catch (err) {
+      console.error('fetch-doc error:', (err as Error).message);
+      return new Response(JSON.stringify({ error: (err as Error).message }), {
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  }
+
   if (req.method !== 'POST' || url.pathname !== '/fetch-ptr') {
     return new Response('not found', { status: 404 });
   }
