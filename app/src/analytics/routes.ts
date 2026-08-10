@@ -722,10 +722,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /member-performance --------------------------------------------
-  // Per-politician annualized excess return vs the S&P 500 on their BUYS, anchored at the
+  // Per-politician excess return vs the S&P 500 on their BUYS, anchored at the
   // FILING (disclosure) date — the realizable "could you have followed this?"
   // number, not the trade-date hindsight figure. Buys only, options excluded,
-  // small-N guarded. Defaults to the whole track record (window=all).
+  // public-equity only (see buildMemberPerformanceLeaderboardQuery for why),
+  // small-N guarded. Ranked and displayed by the SAME statistic: size-weighted
+  // average excess, winsorized per-trade at ±200%, NOT annualized — a single
+  // outlier trade or a young trade's annualization multiplier can no longer
+  // put a member at the top of the board without matching the number shown.
+  // Defaults to the whole track record (window=all).
   r.get('/member-performance', async (c) => {
     const q = c.req.query();
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
@@ -745,9 +750,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
           tradeCount: n,
-          // Annualized excess return vs SPX since the filing date, equal-weighted across buys.
+          // Annualized version of avgExcessReturn — reference/debugging only.
+          // NOT what the board sorts or displays by (a young trade's ~12x
+          // annualization multiplier made this misleading as the primary stat).
           avgAnnualizedExcessReturn: num(row.avg_annualized_excess),
-          // Raw cumulative excess is kept for compatibility/debugging.
+          // Size-weighted average excess vs SPX, winsorized per-trade at ±200%,
+          // NOT annualized. This is both what the card displays and what the
+          // query sorts by — rank always matches the number shown.
           avgExcessReturn: num(row.avg_excess),
           winRate: n > 0 ? wins / n : 0,
           estVolumeUsd: usd(row.est_volume),
@@ -758,7 +767,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         members,
         anchor: 'filing_date',
         side: 'buys',
-        note: 'Annualized excess return vs S&P 500 from the disclosure date (realizable by a follower); 0% means matched the S&P, +3% means about 3 percentage points better per year. Buys only, options excluded.',
+        note: 'Size-weighted average excess return vs S&P 500 from the disclosure date (realizable by a follower), winsorized per-trade at ±200% so one outlier trade cannot dominate; 0% means matched the S&P, +3% means about 3 percentage points better. Buys only, options excluded, public equity only.',
         estimatedAmounts: true,
       });
     });

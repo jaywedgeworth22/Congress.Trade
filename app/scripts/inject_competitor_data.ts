@@ -10,6 +10,10 @@ import {
   assetNameFromCompetitorPayload,
   resolveExecutiveFilerIdFromName,
 } from "../src/shared/executiveIdentity.ts";
+import {
+  competitorHouseFilerId,
+  parseCompetitorReporter,
+} from "../src/shared/competitorAttribution.ts";
 
 const dataDir = new URL("../../data/hoarded", import.meta.url).pathname;
 
@@ -105,9 +109,9 @@ async function run() {
   
   const nowStr = new Date().toISOString();
 
-  function processTrade(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any) {
-    if (!date || date < cutoffDate) return; 
-    
+  function processTrade(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any, filerId: string) {
+    if (!date || date < cutoffDate) return;
+
     const tk = (ticker || '').toUpperCase();
     if (!tk) return; // Need ticker
 
@@ -140,8 +144,9 @@ async function run() {
     const tradeHash = generateTradeHash(rawName, tk, date, type);
     const docId = `COMPETITOR-${tradeHash}`;
 
-    // Full-name executive match only — never bare last-name → EXEC-*.
-    const filerId = resolveExecutiveFilerIdFromName(rawName) ?? `MANUAL-${lastName.toUpperCase()}`;
+    // filerId is resolved once by the caller (resolveFilerId) — never
+    // recomputed here, so this insert can never disagree with the filers
+    // row processTradeWithFiler already registered under filersToAdd.
     const assetName = assetNameFromCompetitorPayload(rawObj, tk);
     novelTrades.push({
       id: `${docId}-${tradeHash}`,
@@ -179,13 +184,44 @@ async function run() {
   // Before looping over competitors, create a set of seen filers to add if missing
   const filersToAdd = new Map<string, { id: string, name: string, chamber: string }>();
 
-  function processTradeWithFiler(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any) {
-    const lastName = extractLastName(rawName);
+  /**
+   * Chamber+state identity guard (verified-in-production bug: the original
+   * injector resolved filers by LAST NAME ONLY, colliding e.g. Rep. Mike
+   * Collins GA-10 with Sen. Susan M. Collins ME — same last name, different
+   * chamber AND state). Prefers the payload's own office metadata
+   * (state+district, parsed via shared/competitorAttribution.ts) to mint a
+   * real house-<state><district>-<slug> id, which can never collide across
+   * chamber or state. Without office metadata, still never collapses two
+   * different chambers onto the same MANUAL-<LASTNAME> id — see
+   * admin/competitorAttributionRepair.ts for the one-shot repair of rows
+   * already poisoned by the old behavior.
+   */
+  function resolveFilerId(
+    rawName: string,
+    chamber: 'house' | 'senate' | 'executive',
+    rawObj: any,
+  ): { filerId: string; resolvedChamber: 'house' | 'senate' | 'executive' } {
     const execId = resolveExecutiveFilerIdFromName(rawName);
-    const filerId = execId ?? `MANUAL-${lastName.toUpperCase()}`;
-    const resolvedChamber = execId ? 'executive' : chamber;
+    if (execId) return { filerId: execId, resolvedChamber: 'executive' };
+
+    const parsed = parseCompetitorReporter(rawObj);
+    if (parsed.state && parsed.district) {
+      const houseId = competitorHouseFilerId(rawName, parsed.state, parsed.district);
+      if (houseId) return { filerId: houseId, resolvedChamber: 'house' };
+    }
+
+    const lastName = extractLastName(rawName);
+    const resolvedChamber = parsed.chamber ?? chamber;
+    const filerId = resolvedChamber === 'senate'
+      ? `MANUAL-${lastName.toUpperCase()}-S`
+      : `MANUAL-${lastName.toUpperCase()}`;
+    return { filerId, resolvedChamber };
+  }
+
+  function processTradeWithFiler(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any) {
+    const { filerId, resolvedChamber } = resolveFilerId(rawName, chamber, rawObj);
     filersToAdd.set(filerId, { id: filerId, name: rawName, chamber: resolvedChamber });
-    processTrade(provider, rawName, resolvedChamber as 'house' | 'senate' | 'executive', ticker, date, typeStr, rawObj);
+    processTrade(provider, rawName, resolvedChamber, ticker, date, typeStr, rawObj, filerId);
   }
 
   // unusual whales
