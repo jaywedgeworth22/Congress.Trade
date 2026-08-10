@@ -187,12 +187,37 @@ enum CompactFormat {
         usd(Double(value))
     }
 
+    /// Display-only integer grouping (`22,293`). Storage/API stay bare numbers.
+    /// Always full digits with thousand separators — no k/m abbreviation for counts.
     static func count(_ value: Int?) -> String {
         guard let value else { return "—" }
-        let absV = abs(Double(value))
-        if absV >= 1_000_000 { return "\(Self.compactNumber(Double(value) / 1_000_000.0))m" }
-        if absV >= 10_000 { return "\(Self.compactNumber(Double(value) / 1_000.0))k" }
         return value.formatted(.number.grouping(.automatic))
+    }
+
+    /// District ordinal for display: `1` → `1st`, `2` → `2nd`, `3` → `3rd`, `11` → `11th`.
+    /// Non-numeric values pass through unchanged. Display-only.
+    static func districtOrdinal(_ raw: String?) -> String {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        guard raw.range(of: #"^\d+(?:st|nd|rd|th)?$"#, options: [.regularExpression, .caseInsensitive]) != nil else {
+            return raw
+        }
+        let digits = String(raw.prefix(while: \.isNumber))
+        guard let n = Int(digits), n > 0 else { return raw }
+        let suffix: String
+        let mod100 = n % 100
+        if (11...13).contains(mod100) {
+            suffix = "th"
+        } else {
+            switch n % 10 {
+            case 1: suffix = "st"
+            case 2: suffix = "nd"
+            case 3: suffix = "rd"
+            default: suffix = "th"
+            }
+        }
+        return "\(n)\(suffix)"
     }
 
     /// Drop trailing `.0` so `$1.0m` → `$1m`, keep `$1.2m` / `$15k`.

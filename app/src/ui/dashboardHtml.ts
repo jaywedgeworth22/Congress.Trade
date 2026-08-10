@@ -447,6 +447,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .conf { font-family: var(--mono); font-size: 12px; }
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
+  /* District ordinals: 17<sup class="ord">th</sup> */
+  sup.ord { font-size: 0.65em; line-height: 0; vertical-align: super; font-weight: 600; letter-spacing: 0.01em; }
   .mobile-only { display: none; }
   .trades-cards { display: none; gap: 16px; min-width: 0; max-width: 100%; }
   /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
@@ -2921,6 +2923,46 @@ var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared n
 
 /* ============================ HELPERS ============================ */
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
+/* Display-only integer grouping (22,293). Storage/API stay bare numbers. */
+function fmtCount(n) {
+  if (n == null || n === '') return '—';
+  var v = Number(n);
+  if (!Number.isFinite(v)) return String(n);
+  return Math.round(v).toLocaleString('en-US');
+}
+/* Ordinal suffix for district numbers: 1→st, 2→nd, 3→rd, 11→th, 21→st, … */
+function ordinalSuffix(n) {
+  var v = Math.abs(Math.floor(Number(n))) % 100;
+  if (v >= 11 && v <= 13) return 'th';
+  switch (v % 10) {
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
+/* Plain-text district ordinal for titles/search ("17th"). Non-numeric left as-is. */
+function fmtDistrictOrdinal(raw) {
+  if (raw == null || raw === '') return '';
+  var s = String(raw).trim();
+  if (!s) return '';
+  var m = s.match(/^(\\d+)(?:st|nd|rd|th)?$/i);
+  if (!m) return s;
+  var n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return s;
+  return Math.floor(n) + ordinalSuffix(n);
+}
+/* HTML district ordinal with superscript suffix: 17<sup>th</sup>. Escapes the digits. */
+function fmtDistrictOrdinalHtml(raw) {
+  if (raw == null || raw === '') return '';
+  var s = String(raw).trim();
+  if (!s) return '';
+  var m = s.match(/^(\\d+)(?:st|nd|rd|th)?$/i);
+  if (!m) return esc(s);
+  var n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return esc(s);
+  return esc(String(Math.floor(n))) + '<sup class="ord">' + ordinalSuffix(n) + '</sup>';
+}
 function fmtBracketAmount(n) {
   if (n == null) return '—';
   n = Number(n);
@@ -4126,7 +4168,7 @@ function updateTradesCountMsg(shown) {
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
   }
-  if (pageMsg) pageMsg.textContent = 'Page ' + (tradesPage + 1) + ' of ' + pageCount;
+  if (pageMsg) pageMsg.textContent = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
   if (first) first.disabled = tradesPage <= 0 || loadingPage;
   if (prev) prev.disabled = tradesPage <= 0 || loadingPage;
   if (next) next.disabled = tradesPage >= maxPage || end >= total || loadingPage;
@@ -4572,8 +4614,8 @@ function tradesQueryParams() {
   return p;
 }
 function setTradesKpis() {
-  el('kpiTotal').textContent = totalRows || TRADES.length;
-  el('kpiToday').textContent = filingsImportedToday;
+  el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);
+  el('kpiToday').textContent = fmtCount(filingsImportedToday);
 }
 /* Fetch one bounded newest-first feed page. */
 function fetchPage() {
@@ -5188,8 +5230,8 @@ function renderReview() {
   var body = el('reviewBody');
   var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
   var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
-  el('reviewCount').textContent = matchingTotal ? '(' + matchingTotal + ')' : '';
-  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = unresolvedTotal;
+  el('reviewCount').textContent = matchingTotal ? '(' + fmtCount(matchingTotal) + ')' : '';
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = fmtCount(unresolvedTotal);
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
     return;
@@ -8344,10 +8386,10 @@ function splitBar(buys, sells) {
   return '<span class="split-wrap"><span class="split">' +
     '<span class="seg buy" style="width:' + bp + '%"></span>' +
     '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
-    '<small>' + buys + 'B / ' + sells + 'S</small></span>';
+    '<small>' + fmtCount(buys) + 'B / ' + fmtCount(sells) + 'S</small></span>';
 }
 /* "1 Democrat" / "2 Democrats" — pluralize a count + noun for party breakdowns. */
-function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n === 1 ? '' : 's'); }
+function pluralCount(n, noun) { n = Number(n || 0); return fmtCount(n) + ' ' + noun + (n === 1 ? '' : 's'); }
 /* Owner follow-up batch #14: Consensus Moves cards abbreviate "Democrats"/
    "Republicans" to "Dems"/"Reps" on mobile (so two cards fit per row) while
    desktop keeps the full word — a responsive full/abbr span pair (CSS-only
@@ -8357,19 +8399,22 @@ function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n =
 function partyCountHtml(n, full, abbr) {
   n = Number(n || 0);
   var suf = n === 1 ? '' : 's';
-  return n + ' <span class="party-full">' + full + suf + '</span><span class="party-abbr">' + abbr + suf + '</span>';
+  return fmtCount(n) + ' <span class="party-full">' + full + suf + '</span><span class="party-abbr">' + abbr + suf + '</span>';
 }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
 /* Spacious surfaces (KPI strip, flow chips, drawers): always spell out. */
-function polFull(n) { n = Number(n || 0); return n + ' politician' + (n === 1 ? '' : 's'); }
-function assetFull(n) { n = Number(n || 0); return n + ' asset' + (n === 1 ? '' : 's'); }
+function polFull(n) { n = Number(n || 0); return fmtCount(n) + ' politician' + (n === 1 ? '' : 's'); }
+function assetFull(n) { n = Number(n || 0); return fmtCount(n) + ' asset' + (n === 1 ? '' : 's'); }
 function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
-  return buys + ' buy' + (buys === 1 ? '' : 's') + '\\u00a0\\u00a0/\\u00a0\\u00a0' + sells + ' sell' + (sells === 1 ? '' : 's');
+  return fmtCount(buys) + ' buy' + (buys === 1 ? '' : 's') + '\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(sells) + ' sell' + (sells === 1 ? '' : 's');
 }
 
-	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
+	function kpi(k, v, tip) {
+	  var display = (typeof v === 'number' && Number.isFinite(v)) ? fmtCount(v) : v;
+	  return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + display + '</div></div>';
+	}
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
 	  return '<span class="k-label"><span class="k-full">' + fullHtml + '</span><span class="k-mid">' + esc(mid) + '</span><span class="k-short">' + esc(short) + '</span></span>';
@@ -8731,17 +8776,18 @@ function renderPeopleDirectory(all) {
       : ' class="member-cell"';
     var parts = [];
     var chLabel = chamberLabel(m.chamber);
-    if (chLabel) parts.push(chLabel);
-    if (m.party) parts.push(dirPartyLetter(m.party));
-    var stateStr = m.state ? String(m.state) + (m.district ? ' - ' + String(m.district) : '') : '';
-    if (stateStr) parts.push(stateStr);
+    if (chLabel) parts.push(esc(chLabel));
+    if (m.party) parts.push(esc(dirPartyLetter(m.party)));
+    if (m.state) {
+      parts.push(esc(String(m.state)) + (m.district ? ' - ' + fmtDistrictOrdinalHtml(m.district) : ''));
+    }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
       '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
-      '<td class="muted">' + esc(branchPartyState) + '</td>' +
-      '<td class="muted">' + (m.txCount != null ? Number(m.txCount) : '—') + '</td></tr>';
+      '<td class="muted">' + branchPartyState + '</td>' +
+      '<td class="muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
-  if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
+  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
 }
 /* Single-letter party for the compact Branch • Party • State cell. */
 function dirPartyLetter(p) {
@@ -8895,10 +8941,10 @@ function renderAssetsDirectory(all) {
       '<td><div class="asset-cell clickable" data-asset="' + esc(a.ticker) + '">' + tickerLogoHtml(a.ticker, nm) +
         '<div><span class="tkr">' + esc(a.ticker) + '</span>' + (nm ? ' <span class="muted">' + esc(nm) + '</span>' : '') + '</div></div></td>' +
       '<td class="muted">' + (a.assetClass ? esc(assetClassLabel(a.assetClass)) : '—') + '</td>' +
-      '<td class="muted">' + (a.txCount != null ? Number(a.txCount) : '—') + '</td>' +
-      '<td class="muted">' + (a.memberCount != null ? Number(a.memberCount) : '—') + '</td></tr>';
+      '<td class="muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
+      '<td class="muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
   }).join('');
-  if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
+  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
 }
 function filterAssetsDirectory() {
   if (!ASSETS_CACHE || !ASSETS_CACHE.assets) {
@@ -9041,7 +9087,7 @@ function spCardHtml(p) {
     var winPct = Math.round(100 * wins / p.matched);
     var fillCls = ahead ? 'sp-bar-fill' : tied ? 'sp-bar-fill tied' : 'sp-bar-fill behind';
     barHtml = '<div class="sp-bar-wrap">' +
-      '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + wins + '/' + p.matched + ')</span></div>' +
+      '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + fmtCount(wins) + '/' + fmtCount(p.matched) + ')</span></div>' +
       '<div class="sp-bar-track"><div class="' + fillCls + '" style="width:' + winPct + '%"></div></div>' +
       '</div>';
   }
@@ -9085,13 +9131,13 @@ function spCardHtml(p) {
   var wlt = '';
   if (hasStats) {
     wlt = '<div class="sp-wlt">' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val w">' + wins + '</span><span class="sp-wlt-key">Wins</span></div>' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + losses + '</span><span class="sp-wlt-key">Losses</span></div>' +
-      '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + ties + '</span><span class="sp-wlt-key">Ties</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val w">' + fmtCount(wins) + '</span><span class="sp-wlt-key">Wins</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + fmtCount(losses) + '</span><span class="sp-wlt-key">Losses</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + fmtCount(ties) + '</span><span class="sp-wlt-key">Ties</span></div>' +
       '</div>';
   } else if (p.matched > 0 || p.strongMatched > 0 || p.providerObserved > 0) {
-    wlt = '<div class="sp-sample">n = ' + p.matched + ' live matched · ' +
-      (p.maturedProviderObserved || 0) + ' provider rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
+    wlt = '<div class="sp-sample">n = ' + fmtCount(p.matched) + ' live matched · ' +
+      fmtCount(p.maturedProviderObserved || 0) + ' provider rows · ' + fmtCount(p.unmatchedProvider || 0) + ' unmatched</div>';
   }
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
@@ -9101,11 +9147,11 @@ function speedTableRowsHtml(provs) {
   return provs.map(function (p) {
     function td(v) { return '<td>' + v + '</td>'; }
     var strong = p.strongMatched != null ? p.strongMatched : p.matched;
-    return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + strong + ' / ' + p.candidates) +
-      td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
+    return '<tr>' + td(esc(p.label)) + td(fmtCount(p.matched) + ' / ' + fmtCount(strong) + ' / ' + fmtCount(p.candidates)) +
+      td(fmtCount(p.maturedMatched || 0) + ' / ' + fmtCount(p.maturedProviderObserved || 0)) +
       td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
-      td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
-      td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
+      td(fmtCount(p.unmatchedProvider || 0)) + td(p.comparisonStatus || 'insufficient') +
+      td(fmtCount(p.usFirstCount || 0)) + td(fmtCount(p.providerFirstCount || 0)) + td(fmtCount(p.tieCount || 0)) +
       td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
       td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
       td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
@@ -9159,7 +9205,7 @@ function renderAlertsMini() {
   var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
   if (!best) { box.className = 'speed-mini'; box.innerHTML = ''; return; }
   box.className = 'speed-mini show';
-  box.innerHTML = '<span>⚡ Ahead of ' + esc(best.label) + ' on <span class="lead">' + best.usFirstCount + ' of ' + best.matched +
+  box.innerHTML = '<span>⚡ Ahead of ' + esc(best.label) + ' on <span class="lead">' + fmtCount(best.usFirstCount) + ' of ' + fmtCount(best.matched) +
     '</span> matched filings · typical lead <span class="lead">' + fmtLead(best.medianLeadSec) + '</span></span>' +
     '<button class="btn ghost sm" onclick="openSpeedProof()">See the scoreboard →</button>';
 }
@@ -9174,7 +9220,7 @@ function setPricingProof() {
   var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
   n.textContent = best
     ? 'Right now: filings land here a median ' + fmtLead(best.medianLeadSec) + ' before ' + best.label +
-      ' — measured live over the last ' + best.matched + ' live matched races.'
+      ' — measured live over the last ' + fmtCount(best.matched) + ' live matched races.'
     : '';
 }
 
@@ -9259,7 +9305,7 @@ function loadTrPerformers() {
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = r.tradeCount + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
+      var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
@@ -9312,7 +9358,7 @@ function loadTrTickers() {
         '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
-        '<td class="muted">' + (r.memberCount || 0) + '</td>' +
+        '<td class="muted">' + fmtCount(r.memberCount || 0) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
@@ -9329,9 +9375,9 @@ function loadTrTrending() {
     body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
         '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
-        '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
-        '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
-        '<td class="muted">' + (r.recentMembers || 0) + '</td></tr>';
+        '<td class="muted">' + fmtCount(r.priorCount) + ' → ' + fmtCount(r.recentCount) + '</td>' +
+        '<td class="net pos">▲ ' + fmtCount(r.deltaCount) + '</td>' +
+        '<td class="muted">' + fmtCount(r.recentMembers || 0) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
 }
@@ -9358,7 +9404,7 @@ function loadTrClusters() {
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View company ' + esc(c.ticker) + '" data-asset="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> politician' + (c.memberCount === 1 ? '' : 's') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div><strong>' + fmtCount(c.memberCount) + '</strong> politician' + (c.memberCount === 1 ? '' : 's') + ' · ' + fmtCount(c.tradeCount) + ' trades' + bip + '</div>' +
         '<div class="muted" style="margin-top:2px">' + parties + '</div>' +
         '<div class="muted" style="margin-top:2px">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
@@ -9412,9 +9458,9 @@ function loadTrMembers() {
     if (!rows.length) { body.innerHTML = stateRow(2, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
-      var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
+      var metaBits = [chamberLabel(r.chamber), r.state ? (String(r.state) + (r.district ? ' - ' + fmtDistrictOrdinal(r.district) : '')) : ''].filter(Boolean).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = r.tradeCount + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + (r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + (r.sellCount || 0) + ' sells';
+      var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
@@ -9498,7 +9544,7 @@ function loadTrLag() {
       var avg = Math.round(m.avgLagDays);
       var maxLag = Math.round(m.maxLagDays || 0);
       var late = Number(m.lateCount || 0);
-      var basis = name + ' has ' + tradeCount + ' dated trade row' + (tradeCount === 1 ? '' : 's') + ' in this window.';
+      var basis = name + ' has ' + fmtCount(tradeCount) + ' dated trade row' + (tradeCount === 1 ? '' : 's') + ' in this window.';
       var memberTitle = m.filerId ? 'Open ' + name + ' details.' : name;
       var memberAttr = m.filerId ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="' + esc(memberTitle) + '"' : ' class="member-cell" title="' + esc(memberTitle) + '"';
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
@@ -9508,7 +9554,7 @@ function loadTrLag() {
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
-        '<td class="muted"' + attrTip(lateTip) + '>' + late + '</td></tr>';
+        '<td class="muted"' + attrTip(lateTip) + '>' + fmtCount(late) + '</td></tr>';
     }).join('');
   }).catch(function (e) {
     dbox.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>';
@@ -9867,7 +9913,7 @@ function openAsset(ticker) {
     var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class="dot-sep">  |  </span>' + esc(companyName) : '');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
-	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades  |  ' + (s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
+	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
@@ -9920,7 +9966,7 @@ function tickerBacktestHtml(d) {
       ' <span class="muted">· n=' + n + '</span></div></div>';
   }).join('');
   return '<p class="note" style="margin:0 0 8px">After disclosed <strong>buys</strong> (not sells), equal-weighted forward return vs the S&amp;P. Observational — not a forecast. Cohort: ' +
-    total + ' buy event' + (total === 1 ? '' : 's') + '.</p>' + rows;
+    fmtCount(total) + ' buy event' + (total === 1 ? '' : 's') + '.</p>' + rows;
 }
 
 /* ---- politician drawer (/api/analytics/member/:filerId) ---- */
@@ -9934,7 +9980,7 @@ function openMember(filerId) {
     var meta = [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
     var subBits = [];
     if (meta) subBits.push(esc(meta));
-    if (p.district) subBits.push('District ' + esc(p.district));
+    if (p.district) subBits.push(fmtDistrictOrdinalHtml(p.district) + ' District');
     var partyHtml = partyName ? pdot(p.partyBucket) + esc(partyName) : '';
     var subline = partyHtml + (subBits.length ? (partyHtml ? ' · ' : '') + subBits.join(' · ') : '');
     var committees = p.committees || [];
@@ -9944,7 +9990,7 @@ function openMember(filerId) {
     var top = (d.topTickers || []).map(function (t) {
       return '<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '" style="width:auto;flex:1">' +
         '<span class="tkr">' + esc(t.ticker) + '</span>' + (t.name ? ' <span class="muted">' + esc(t.name) + '</span>' : '') +
-        '</div><div class="hval"><span class="mini-trade-stat"><span>' + esc(t.tradeCount) + '</span><span class="dot">•</span><span>' + estUsd(t.estVolumeUsd) + '</span></span></div></div>';
+        '</div><div class="hval"><span class="mini-trade-stat"><span>' + fmtCount(t.tradeCount) + '</span><span class="dot">•</span><span>' + estUsd(t.estVolumeUsd) + '</span></span></div></div>';
     }).join('') || '<div class="note">—</div>';
     var recent = (d.recentTrades || []).map(function (t) {
       var tradeRow = analyticsTradeRow(t, {
@@ -9966,8 +10012,8 @@ function openMember(filerId) {
       '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
-        kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
-	        kvRow('Distinct Assets', st.uniqueAssets || st.uniqueTickers || 0) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
+        kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
+	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3><div id="memberPerf"><div class="note">Loading performance…</div></div></div>' +
@@ -10003,7 +10049,7 @@ function memberPerfHtml(d) {
         '<div class="note">Not enough priced buys for this anchor.</div></div>';
     }
     var win = leg.winRate == null ? '—' : Math.round(leg.winRate * 100) + '% win';
-    var n = leg.scoredCount + ' of ' + leg.tradeCount + ' buys';
+    var n = fmtCount(leg.scoredCount) + ' of ' + fmtCount(leg.tradeCount) + ' buys';
     var sizeStyles = isDeemphasized ? 'font-size: 14px; opacity: 0.8;' : '';
     return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.85;' : '') + '">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
@@ -10030,7 +10076,7 @@ function memberPerfHtml(d) {
       false
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
-      (buyCount != null ? ' · ' + buyCount + ' disclosed buys' + horizonPhrase : '') +
+      (buyCount != null ? ' · ' + fmtCount(buyCount) + ' disclosed buys' + horizonPhrase : '') +
       '</div>';
 }
 
