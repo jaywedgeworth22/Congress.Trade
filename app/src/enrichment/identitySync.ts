@@ -17,11 +17,23 @@
  *      official_full — the same lookup runPhotoEnrichment already uses.
  *   2. The FALLBACK index, keyed by a first+last token pair extracted from
  *      the free-text filer name after stripping honorifics/ERM/years/
- *      suffixes (see legislators.fallbackNameKeys). Only counted as a match
- *      when it resolves to exactly one candidate — either because the
- *      filer's state matches that candidate's state, or because the filer
- *      has no state on file and the key is unambiguous on its own. Never a
- *      last-name-only guess.
+ *      suffixes (see legislators.fallbackNameKeys — this also covers a
+ *      "middle last" pairing and a first-initial-stripped variant). When
+ *      none of those keys hit, each key is retried with its first token
+ *      swapped for a curated diminutive equivalent (legislators.
+ *      diminutiveKeyVariants — "William" retries as "Bill", "Daniel" as
+ *      "Dan", etc.) to bridge a formal/legal first name in the filing
+ *      against the informal name congress-legislators indexes the member
+ *      under. Every one of these keys — diminutive or not — is only counted
+ *      as a match when it resolves to exactly one candidate: either because
+ *      the filer's state matches that candidate's state, or because the
+ *      filer has no state on file and the key is unambiguous on its own.
+ *      Never a last-name-only guess. Name pairs that share no lexical root
+ *      (e.g. "Rafael" filed for a member who goes by "Ted") cannot be
+ *      bridged by either mechanism and are instead handled, when confirmed,
+ *      by the curated MEMBER_NAME_ALIASES allow-list in
+ *      shared/memberIdentity.ts (consumed upstream via cleanFilerName), not
+ *      by a resolution path here.
  *   3. Nothing: resolved_bioguide_id is never set on a guess, and an
  *      already-set resolved_bioguide_id is never overwritten.
  *
@@ -35,6 +47,7 @@ import { all, batchPrepared } from '../shared/db.ts';
 import {
   fetchLegislatorIndexes,
   fallbackNameKeys,
+  diminutiveKeyVariants,
   normName,
   type LegislatorIndexes,
   type LegislatorMatch,
@@ -76,11 +89,36 @@ function resolvePrimary(fullName: string | null, primary: Map<string, Legislator
 }
 
 /**
+ * Look up a single fallback key and, per the module doc comment, only
+ * accept the hit when it narrows to exactly one legislator: either the
+ * filer's state matches exactly one candidate, or the filer has no state on
+ * file and the key itself is unambiguous.
+ */
+function lookupFallbackKey(
+  key: string,
+  state: string,
+  fallback: Map<string, LegislatorMatch[]>,
+): LegislatorMatch | null {
+  const candidates = fallback.get(key);
+  if (!candidates || candidates.length === 0) return null;
+  if (state) {
+    const stateMatches = candidates.filter((m) => (m.state ?? '').toUpperCase() === state);
+    if (stateMatches.length === 1) return stateMatches[0];
+    return null;
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+/**
  * Resolve via the first+last fallback index, gated by state per the module
  * doc comment. Tries each fallback key derived from the raw filer name in
- * turn (first token + last token, then first token + last-two-tokens for a
- * multi-word surname) and returns the first key whose candidate set narrows
- * to exactly one legislator under the state rule.
+ * turn (first token + last token, first token + last-two-tokens for a
+ * multi-word surname, middle token + last token, and a first-initial-
+ * stripped variant — see legislators.fallbackNameKeys), then — only if none
+ * of those hit — retries every one of those same keys with its first token
+ * swapped for each curated diminutive equivalent (legislators.
+ * diminutiveKeyVariants). Every lookup, diminutive or not, goes through the
+ * same state-gated `lookupFallbackKey` acceptance rule.
  */
 function resolveFallback(
   fullName: string | null,
@@ -89,16 +127,19 @@ function resolveFallback(
 ): LegislatorMatch | null {
   const keys = fallbackNameKeys(fullName);
   const state = (filerState ?? '').trim().toUpperCase();
+
   for (const key of keys) {
-    const candidates = fallback.get(key);
-    if (!candidates || candidates.length === 0) continue;
-    if (state) {
-      const stateMatches = candidates.filter((m) => (m.state ?? '').toUpperCase() === state);
-      if (stateMatches.length === 1) return stateMatches[0];
-    } else if (candidates.length === 1) {
-      return candidates[0];
+    const hit = lookupFallbackKey(key, state, fallback);
+    if (hit) return hit;
+  }
+
+  for (const key of keys) {
+    for (const variant of diminutiveKeyVariants(key)) {
+      const hit = lookupFallbackKey(variant, state, fallback);
+      if (hit) return hit;
     }
   }
+
   return null;
 }
 

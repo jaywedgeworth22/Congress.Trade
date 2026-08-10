@@ -36,6 +36,101 @@ const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
 const HONORIFIC_TOKENS = new Set(['hon', 'honorable', 'dr', 'mr', 'mrs', 'ms', 'md', 'facs']);
 
 /**
+ * Curated bidirectional first-name diminutive groups (~40 common pairs).
+ * Disclosure filings frequently carry a legal/formal first name ("William",
+ * "Daniel") while congress-legislators indexes members under the informal
+ * name they actually go by ("Bill", "Dan") — and occasionally the reverse.
+ * Each group is a closed equivalence class: every member is considered
+ * interchangeable with every other member of the same group for name-key
+ * matching purposes (see `diminutiveEquivalents` / `diminutiveKeyVariants`).
+ * This is deliberately NOT a general nickname engine — entries not listed
+ * here (e.g. "Rafael" -> "Ted", which shares no lexical root) are handled
+ * instead via the curated MEMBER_NAME_ALIASES allow-list in
+ * shared/memberIdentity.ts, never guessed at.
+ */
+const DIMINUTIVE_GROUPS: readonly (readonly string[])[] = [
+  ['william', 'bill', 'billy', 'will'],
+  ['robert', 'bob', 'rob', 'bobby'],
+  ['richard', 'rich', 'rick', 'dick'],
+  ['james', 'jim', 'jimmy'],
+  ['thomas', 'tom', 'thom'],
+  ['daniel', 'dan', 'danny'],
+  ['christopher', 'chris'],
+  ['michael', 'mike'],
+  ['joseph', 'joe'],
+  ['edward', 'ed', 'ted'],
+  ['john', 'jack', 'jon'],
+  ['jacklyn', 'jacky', 'jackie'],
+  ['jonathan', 'jon'],
+  ['matthew', 'matt'],
+  ['timothy', 'tim'],
+  ['kenneth', 'ken'],
+  ['ronald', 'ron'],
+  ['donald', 'don'],
+  ['steven', 'stephen', 'steve'],
+  ['charles', 'charlie', 'chuck'],
+  ['anthony', 'tony'],
+  ['benjamin', 'ben'],
+  ['samuel', 'sam'],
+  ['joshua', 'josh'],
+  ['andrew', 'andy', 'drew'],
+  ['nicholas', 'nick'],
+  ['patrick', 'pat'],
+  ['gregory', 'greg'],
+  ['lawrence', 'larry'],
+  ['gerald', 'jerry'],
+  ['theodore', 'ted'],
+  ['elizabeth', 'liz', 'lizzie', 'beth'],
+  ['katherine', 'kate', 'katie', 'kathy'],
+  ['margaret', 'maggie', 'meg'],
+  ['jennifer', 'jen'],
+  ['deborah', 'deb', 'debbie'],
+  ['cynthia', 'cindy'],
+  ['tammy', 'tamara'],
+  ['bernard', 'bernardo', 'bernie'],
+  ['august', 'augie'],
+  ['frederick', 'fred'],
+];
+
+const DIMINUTIVE_MAP: Map<string, Set<string>> = (() => {
+  const map = new Map<string, Set<string>>();
+  for (const group of DIMINUTIVE_GROUPS) {
+    for (const name of group) {
+      const set = map.get(name) ?? new Set<string>();
+      for (const other of group) {
+        if (other !== name) set.add(other);
+      }
+      map.set(name, set);
+    }
+  }
+  return map;
+})();
+
+/** All curated diminutive-equivalents of a single lowercase name token (empty array if none). */
+export function diminutiveEquivalents(token: string): string[] {
+  return [...(DIMINUTIVE_MAP.get(token.toLowerCase()) ?? [])];
+}
+
+/**
+ * Given a normalized "first ... last" key (space-joined, lowercase — the
+ * shape both `normName` and `fallbackNameKeys` produce), return alternate
+ * keys with the FIRST token swapped for each of its curated diminutive
+ * equivalents. Returns [] when the first token has no known equivalents or
+ * the key has fewer than two tokens. Callers are responsible for gating any
+ * hit against these variants the same way as other fuzzy/fallback matches
+ * (state match, or a globally-unique candidate) — a diminutive swap is not
+ * an exact match and must never be trusted unconditionally.
+ */
+export function diminutiveKeyVariants(key: string): string[] {
+  const tokens = key.split(' ').filter(Boolean);
+  if (tokens.length < 2) return [];
+  const equivalents = diminutiveEquivalents(tokens[0]);
+  if (equivalents.length === 0) return [];
+  const rest = tokens.slice(1).join(' ');
+  return equivalents.map((eq) => `${eq} ${rest}`);
+}
+
+/**
  * Normalize a politician name for matching: lowercase, strip punctuation, drop
  * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
  */
@@ -60,7 +155,7 @@ export interface LegislatorTerm {
 
 export interface Legislator {
   id?: { bioguide?: string };
-  name?: { first?: string; last?: string; official_full?: string; nickname?: string };
+  name?: { first?: string; middle?: string; last?: string; official_full?: string; nickname?: string };
   terms?: LegislatorTerm[];
 }
 
@@ -149,18 +244,40 @@ export function fallbackNameTokens(raw: string | null | undefined): string[] {
  * a multi-word surname ("Van Epps") match whether the query used the whole
  * surname or, symmetrically, lets a legislator whose registered name is only
  * "First Last" still match a query that carries an extra middle name/word
- * before that last name. Returns [] when fewer than 2 usable tokens remain
- * (never a wildcard).
+ * before that last name.
+ *
+ * Two more variants are generated when the tokens support them:
+ *   - a "middle last" key (second token + last token) — catches a filer name
+ *     that carries the member's actual middle name where congress-legislators
+ *     also has a `name.middle` field ("Richard Dean McCormick" against a
+ *     legislator indexed with middle "Dean"; see indexLegislatorFallback).
+ *   - a first-INITIAL-stripped variant, when the leading token is a bare
+ *     single-letter initial ("A. Mitchell Mcconnell" -> re-run key
+ *     generation on ["mitchell", "mcconnell"] as if "Mitchell" were the
+ *     first name) — catches formal filings that lead with a legal first
+ *     initial ahead of the name the member actually goes by.
+ *
+ * Returns [] when fewer than 2 usable tokens remain (never a wildcard).
  */
 export function fallbackNameKeys(raw: string | null | undefined): string[] {
   const tokens = fallbackNameTokens(raw);
   if (tokens.length < 2) return [];
-  const first = tokens[0];
-  const keys = [`${first} ${tokens[tokens.length - 1]}`];
-  if (tokens.length >= 3) {
-    keys.push(`${first} ${tokens.slice(-2).join(' ')}`);
+  const keys = new Set<string>();
+  const addKeysFor = (toks: string[]) => {
+    if (toks.length < 2) return;
+    const first = toks[0];
+    keys.add(`${first} ${toks[toks.length - 1]}`);
+    if (toks.length >= 3) {
+      keys.add(`${first} ${toks.slice(-2).join(' ')}`);
+      // "middle last": second token standing in for a legal middle name.
+      keys.add(`${toks[1]} ${toks[toks.length - 1]}`);
+    }
+  };
+  addKeysFor(tokens);
+  if (tokens.length >= 3 && tokens[0].length === 1) {
+    addKeysFor(tokens.slice(1));
   }
-  return [...new Set(keys)];
+  return [...keys];
 }
 
 /**
@@ -182,6 +299,17 @@ export function indexLegislatorFallback(list: readonly Legislator[]): Map<string
     for (const k of fallbackNameKeys(n.first && n.last ? `${n.first} ${n.last}` : '')) keys.add(k);
     for (const k of fallbackNameKeys(n.nickname && n.last ? `${n.nickname} ${n.last}` : '')) keys.add(k);
     for (const k of fallbackNameKeys(n.official_full ?? '')) keys.add(k);
+    // "middle last" — index a bare `middle last` pair directly (not just via
+    // fallbackNameKeys, since a 2-token "middle last" input never produces
+    // the middle-position variant fallbackNameKeys generates for >=3-token
+    // input). Guarded to a real (non-initial) middle token so this can't
+    // degrade into a last-name-only key.
+    if (n.middle && n.last) {
+      const middleToken = fallbackNameTokens(n.middle)[0];
+      if (middleToken && middleToken.length > 1) {
+        for (const k of fallbackNameKeys(`${middleToken} ${n.last}`)) keys.add(k);
+      }
+    }
     for (const key of keys) {
       const existing = idx.get(key);
       if (existing) {
