@@ -25,6 +25,10 @@ export WORKER_ID="${WORKER_ID:-local_mac_1}"
 export POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-45}"
 export HEARTBEAT_INTERVAL_SEC="${HEARTBEAT_INTERVAL_SEC:-60}"
 export MAX_DOCS_PER_POLL="${MAX_DOCS_PER_POLL:-2}"
+export MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
+export BACKOFF_BASE_SEC="${BACKOFF_BASE_SEC:-90}"
+export EXHAUSTED_ALERT_THRESHOLD="${EXHAUSTED_ALERT_THRESHOLD:-5}"
+export STATE_FILE="${STATE_FILE:-$HOME/vision-worker/attempt-state.json}"
 # PRIMARY: local Grok CLI on owner xAI subscription. OpenRouter is fallback.
 export VISION_ENGINE="${VISION_ENGINE:-auto}"
 export GROK_BIN="${GROK_BIN:-$HOME/.grok/bin/grok}"
@@ -42,6 +46,12 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
   if [[ -z "${OPENROUTER_API_KEY}" ]]; then
     export OPENROUTER_API_KEY="$(load_secret OPENROUTER_API_KEY "$SECRETS_FILE")"
   fi
+fi
+if [[ -z "${PUSHOVER_APP_TOKEN:-}" ]]; then
+  export PUSHOVER_APP_TOKEN="$(load_secret PUSHOVER_APP_TOKEN "$SECRETS_FILE")"
+fi
+if [[ -z "${PUSHOVER_USER_KEY:-}" ]]; then
+  export PUSHOVER_USER_KEY="$(load_secret PUSHOVER_USER_KEY "$SECRETS_FILE")"
 fi
 
 if [[ -z "${ADMIN_TOKEN}" ]]; then
