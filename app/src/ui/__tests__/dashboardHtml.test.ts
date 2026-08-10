@@ -402,10 +402,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
     expect(DASHBOARD_HTML).toContain('.trades-sort-mobile { display: none;');
     expect(DASHBOARD_HTML).toContain('#view-trades .trades-sort-mobile { display: flex; }');
-    // Columns chooser stays wired for desktop but is CSS-hidden on mobile — tradesCardHtml()
-    // renders a fixed field set, so the chooser has no visible effect on phones.
-    expect(DASHBOARD_HTML).toContain('id="colsBtn"');
-    expect(DASHBOARD_HTML).toContain('#colsBtn { display: none; }');
+    // Columns chooser lives in the Options (⋯) menu; hidden on mobile because
+    // tradesCardHtml() renders a fixed field set on phones.
+    expect(DASHBOARD_HTML).toContain('feed-options-item-cols');
+    expect(DASHBOARD_HTML).toContain('.feed-options-item-cols { display: none !important; }');
+    expect(DASHBOARD_HTML).toContain('toggleFeedOptions');
+    expect(DASHBOARD_HTML).toContain('id="exportCsvBtn"');
   });
 
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
@@ -2511,10 +2513,11 @@ describe('UX P0 review fixes (web)', () => {
     expect(DASHBOARD_HTML).toContain('Sign in to export CSV');
     expect(DASHBOARD_HTML).not.toContain('CSV export is free (full history)');
     expect(DASHBOARD_HTML).not.toContain('free CSV export');
-    // The CSV button now lives in the bottom gate-note area (moved out of the
-    // toolbar) beside Start Free Trial; only the pitch text + trial button
-    // hide once premium (data-premium-cue), so Premium users still see CSV.
+    // CSV lives in the Options menu; freemium pitch stays in gate-note and
+    // hides once premium (data-premium-cue). Export entry remains reachable.
     expect(DASHBOARD_HTML).toContain('<span class="gate-note" data-premium-cue="export">');
+    expect(DASHBOARD_HTML).toContain('id="exportCsvBtn"');
+    expect(DASHBOARD_HTML).toContain('toggleFeedOptions');
     expect(DASHBOARD_HTML).toContain('node.hidden = unlocked || !checkoutConfigured();');
   });
 
@@ -2656,8 +2659,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).not.toContain("p.set('minAmount', minAmt)");
   });
 
-  it('moves Columns/Rows to the pager bar and the CSV button to the gate-note area', () => {
-    // Toolbar no longer carries them.
+  it('puts pagination top+bottom, rows selector + Options menu (Columns/Export), and keeps freemium pitch in gateRow', () => {
+    // Toolbar no longer carries export/columns/page size.
     const extraFilters = DASHBOARD_HTML.match(/<div class="toolbar trades-only-filters" id="tradesExtraFilters">[\s\S]*?<\/div>/);
     expect(extraFilters).not.toBeNull();
     expect(extraFilters![0]).not.toContain('id="colsBtn"');
@@ -2666,20 +2669,28 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).toContain('id="qSearch"');
     expect(extraFilters![0]).toContain('id="searchToggle"');
     expect(extraFilters![0]).toContain('id="tradesStats"');
-    // Pager bar carries Rows (relabeled "N rows") + Columns.
-    const pager = DASHBOARD_HTML.match(/<div class="row-flex pager">[\s\S]*?<\/div>\s*<\/div>/);
-    expect(pager).not.toBeNull();
-    expect(pager![0]).toContain('id="pageSize"');
-    expect(pager![0]).toContain('<option value="25">25 rows</option>');
-    expect(pager![0]).toContain('<option value="50" selected>50 rows</option>');
-    expect(pager![0]).toContain('<option value="100">100 rows</option>');
-    expect(pager![0]).toContain('<option value="250">250 rows</option>');
-    expect(pager![0]).toContain('id="colsBtn"');
-    // Gate-note area: CSV sits beside Start Free Trial; only the pitch text
-    // hides once premium, so Premium visitors still see the CSV button.
-    const gateRow = DASHBOARD_HTML.match(/<div class="row-flex" id="gateRow"[\s\S]*?<\/div>\s*<\/div>/);
+    expect(extraFilters![0]).toContain('matching trades');
+    // Top + bottom pagers with shared data-* hooks.
+    expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
+    expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-bottom"');
+    expect(DASHBOARD_HTML).toContain('data-pager="top"');
+    expect(DASHBOARD_HTML).toContain('data-pager="bottom"');
+    expect(DASHBOARD_HTML).toContain('data-trades-count');
+    expect(DASHBOARD_HTML).toContain('data-page-size');
+    expect(DASHBOARD_HTML).toContain('id="pageSize"');
+    expect(DASHBOARD_HTML).toContain('<option value="25">25 rows</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="50" selected>50 rows</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="100">100 rows</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="250">250 rows</option>');
+    // Export + Columns live under the Options (⋯) menu, not as a lone gate button.
+    expect(DASHBOARD_HTML).toContain('toggleFeedOptions');
+    expect(DASHBOARD_HTML).toContain('feed-options-item-cols');
+    expect(DASHBOARD_HTML).toContain('id="exportCsvBtn"');
+    expect(DASHBOARD_HTML).toContain('Export CSV');
+    // Gate-note area: freemium pitch only (CSV moved to Options).
+    const gateRow = DASHBOARD_HTML.match(/<div class="row-flex" id="gateRow"[\s\S]*?<\/div>/);
     expect(gateRow).not.toBeNull();
-    expect(gateRow![0]).toContain('id="exportCsvBtn"');
+    expect(gateRow![0]).not.toContain('id="exportCsvBtn"');
     expect(gateRow![0]).toContain('Start Free Trial');
     expect(gateRow![0]).toContain('data-premium-cue="export"');
   });
@@ -2689,8 +2700,10 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).not.toMatch(/>Showing</);
     // Range-of-total ("1-50 of 12,345") — compact so it fits beside << < > >>.
     expect(DASHBOARD_HTML).toContain(
-      "msg.innerHTML = '<span class=\"tick-num\">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class=\"tick-num\">' + total.toLocaleString() + '</span>';",
+      "countHtml = '<span class=\"tick-num\">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class=\"tick-num\">' + total.toLocaleString() + '</span>';",
     );
+    expect(DASHBOARD_HTML).toContain("setAll('[data-trades-count]'");
+    expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
     expect(DASHBOARD_HTML).toContain('id="firstPageBtn"');
     expect(DASHBOARD_HTML).toContain('id="lastPageBtn"');
     expect(DASHBOARD_HTML).toContain('function firstTradesPage(');
@@ -2928,7 +2941,7 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(fn).not.toContain("bits.push('Traded '");
     expect(fn).not.toContain("'Traded ' + esc(traded)");
     // Member/chamber/lag/late-filing bits are untouched.
-    expect(fn).toContain('if (member) bits.push(memberHtml);');
+    expect(fn).toContain("if (member) bits.push('<span class=\"fc-member\">' + memberHtml + '</span>');");
     expect(fn).toContain('if (chamber) bits.push(esc(chamber));');
     expect(fn).toContain("if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));");
     expect(fn).toContain("r.stockActStatus === 'late' || r.stockActStatus === 'severely_late'");
@@ -3169,7 +3182,33 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     });
   });
 
-  describe('entity click-through coverage (verifying PR #1517 reaches every named surface)', () => {
+    describe('owner web UX trades chrome (2026-08-10)', () => {
+    it('groups Sign In + Upgrade in one acct-auth-group control', () => {
+      expect(DASHBOARD_HTML).toContain('class="acct-auth-group"');
+      expect(DASHBOARD_HTML).toContain('.acct-auth-group {');
+      expect(DASHBOARD_HTML).toContain("var authGroup = '<span class=\"acct-auth-group\">'");
+    });
+
+    it('shows filtered matching trades count (not page size) upper-right', () => {
+      expect(DASHBOARD_HTML).toContain('matching trades');
+      expect(DASHBOARD_HTML).toContain("totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';");
+      expect(DASHBOARD_HTML).not.toContain("el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);");
+    });
+
+    it('opens trade details from the whole feed row/card (no nested feed data-member/data-asset)', () => {
+      expect(DASHBOARD_HTML).toContain("var feedHit = e.target.closest('#tradesBody tr[data-txid]");
+      expect(DASHBOARD_HTML).toContain("openTradeById(feedHit.getAttribute('data-txid'));");
+      // Feed cell helpers no longer emit nested entity targets.
+      expect(DASHBOARD_HTML).toContain('/* Feed cells are NOT nested entity links');
+      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl) +');
+      expect(DASHBOARD_HTML).toContain('// No data-asset on the feed cell');
+      expect(DASHBOARD_HTML).toContain('Politician Details');
+      expect(DASHBOARD_HTML).toContain('Company Details');
+      expect(DASHBOARD_HTML).toContain('drawer-entity-actions');
+    });
+  });
+
+describe('entity click-through coverage (verifying PR #1517 reaches every named surface)', () => {
     it('keeps the shared handleEntityOpenEvent delegation wired to member/asset/ticker/trade ids', () => {
       expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(e)');
       expect(DASHBOARD_HTML).toContain("openMember(m.getAttribute('data-member'));");

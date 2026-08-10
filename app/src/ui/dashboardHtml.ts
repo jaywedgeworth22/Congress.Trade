@@ -631,6 +631,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table th:first-child, .people-table td:first-child { text-align: left; }
   .people-table td { vertical-align: middle; }
   .pager { margin-top:14px; justify-content:space-between; }
+  .pager.pager-top { margin-top:0; margin-bottom:12px; }
+  .pager.pager-bottom { margin-top:14px; }
   .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
@@ -640,9 +642,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      margin box, not the text) — zero it out here so the text itself centers. */
   .pager-controls .note { margin-top: 0; }
   .pager select { padding:5px 9px; font-size:12px; }
-  /* Rows-per-page + Columns chooser live at the end of the bottom pager bar
-     (moved out of the toolbar so the toolbar stays filter-only). */
+  /* Rows-per-page + Options menu live at the end of each pager bar
+     (toolbar stays filter-only; Export/Columns live under Options). */
   .pager-tools { display:flex; align-items:center; gap:8px; }
+  .feed-options { position:relative; }
+  .feed-options .menu-pop { min-width:200px; top:36px; }
+  .feed-options .menu-pop .prem-hint { font-size:11px; color:var(--text-dim); margin-left:6px; }
+  /* Guest Sign In + Upgrade as one joined control (matches segmented filters). */
+  .acct-auth-group {
+    display:inline-flex; align-items:center; border:1px solid var(--border);
+    border-radius:var(--radius-pill); overflow:hidden; background:var(--panel-2);
+  }
+  .acct-auth-group .btn {
+    border:none !important; border-radius:0 !important; box-shadow:none !important;
+    min-height:32px; padding:0 14px;
+  }
+  .acct-auth-group .btn + .btn { border-left:1px solid var(--border) !important; }
+  .acct-auth-group .btn.ghost { background:transparent; }
+  .acct-auth-group .btn:not(.ghost) { background:var(--accent); color:#fff; }
+  .acct-auth-group .btn:hover { filter:brightness(1.06); }
+  /* Trade drawer: explicit politician / company paths (whole list row opens trade). */
+  .drawer-entity-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .drawer-entity-actions .btn { font-size:12px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
   .switch span { position:absolute; inset:0; background: var(--panel-2); border:1px solid var(--border); border-radius:999px; cursor:pointer; transition:.2s; }
@@ -993,7 +1014,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   footer .footer-links a:hover { color: var(--accent); }
   /* ---- account control + auth/billing modals ---- */
   .acct { display:flex; align-items:center; gap:8px; }
-  .acct-desktop { display:flex; align-items:center; gap:8px; }
+  .acct-desktop { display:flex; align-items:center; gap:10px; }
   .acct .email { font-size:12px; color:var(--text-dim); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:999px; border:1px solid var(--border); color:var(--text-dim); }
   .badge.premium { color:var(--good); border-color:color-mix(in srgb,var(--good) 45%,transparent); background:color-mix(in srgb,var(--good) 12%,transparent); }
@@ -1384,6 +1405,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .delivery-card p.note { margin-bottom:0; }
   /* Issue #1529: right-align the "N trades" count on desktop (iOS-parity). */
   .trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
+  .trades-stats .match-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
+  .trades-stats .match-label { color: var(--text-dim); font-weight: 500; }
   /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
      shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
   .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
@@ -1459,9 +1482,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        generic .toolbar input/select/.btn shorthand above already fits it. */
     .toolbar .icon-field { width: 100%; }
     .toolbar .pill-select-el { padding: 8px 26px 8px 30px; }
-    /* Issue #1529: search-this-page button left, "N trades" count right, on
-       their own row below the two full-width text fields (iOS-parity count
-       placement — see .trades-stats above). */
+    /* Issue #1529: search-this-page button left, filtered match count right
+       ("N matching trades" from the server total for active filters — never
+       the current page size). */
     /* display:grid must live on the ID selector: the ≤720px block later in
        the sheet re-flexes .toolbar (equal class specificity, later source
        order wins), which silently killed this row's grid placement on real
@@ -1472,6 +1495,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
     .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
+    /* Pagers stay usable on phones: don't force every child full-width. */
+    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 8px; }
+    .pager.row-flex > * { width: auto; min-height: 0; }
+    .pager .pager-controls { flex: 1 1 auto; }
+    .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
+    .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
     /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
        party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
        (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
@@ -1507,8 +1536,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
     #view-trades .trades-sort-mobile { display: flex; }
     /* The Columns chooser only affects the (hidden) table's field set — tradesCardHtml()
-       renders a fixed field set, so the control has no visible effect on phones. */
-    #colsBtn { display: none; }
+       renders a fixed field set, so hide Columns inside the Options menu on phones.
+       Export CSV stays available. */
+    .feed-options-item-cols { display: none !important; }
     .col-resizer { display: none; }
     .row-flex { align-items: stretch; gap: 9px; }
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
@@ -2232,8 +2262,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
-      <div id="tradesStats" class="trades-stats muted" title="Scoped by the ticker/politician/chamber/party/side/date filters above — a different query than the Trends tab's own time-window total.">
-        <span class="stat-today"><strong id="kpiToday">—</strong> today &middot; </span><strong id="kpiTotal">—</strong> total
+      <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
+        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">matching trades</span><span class="stat-today"> &middot; <strong id="kpiToday">—</strong> today</span>
       </div>
     </div>
     </div>
@@ -2262,7 +2292,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </dialog>
     <dialog class="search-panel" id="searchPanel" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Filter this page</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
-      <p class="note" style="margin:0 0 8px">Filters the rows already loaded on this page only. Use the Ticker / Politician toolbar fields to query the full feed.</p>
+      <p class="note" style="margin:0 0 8px">Filters the rows already loaded on this page only. Use the search field above to query the full feed.</p>
       <span class="lbl">Search this page</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderTrades()" />
       <span class="lbl">Min $ (this page)</span>
@@ -2271,6 +2301,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderTrades()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </dialog>
+    <!-- Pagination top + bottom: same controls, synced in updateTradesCountMsg / setPageSize. -->
+    <div class="row-flex pager pager-top" data-pager="top">
+      <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
+      <div class="pager-controls" role="navigation" aria-label="Trades pagination top">
+        <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
+        <button class="btn ghost sm" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
+        <span class="note trades-page-msg" data-trades-page></span>
+        <button class="btn ghost sm" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
+        <button class="btn ghost sm" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
+      </div>
+      <div class="pager-tools">
+        <select data-page-size onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
+          <option value="25">25 rows</option><option value="50" selected>50 rows</option><option value="100">100 rows</option><option value="250">250 rows</option>
+        </select>
+        <div class="menu feed-options">
+          <button type="button" class="btn ghost sm feed-options-btn" data-feed-options-btn onclick="toggleFeedOptions(this)" title="List options" aria-label="List options" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div class="menu-pop feed-options-menu" data-feed-options-menu role="menu">
+            <button type="button" class="feed-options-item-cols" role="menuitem" onclick="closeFeedOptions();toggleColChooser()">Columns</button>
+            <button type="button" id="exportCsvBtn" role="menuitem" onclick="closeFeedOptions();openExportCsvDialog()">Export CSV <span class="premium-mark" title="Premium">Pro</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="table-wrap">
     <table id="tradesTable">
       <colgroup id="tradesCols"></colgroup>
@@ -2279,26 +2332,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </table>
     </div>
     <div id="tradesCards" class="trades-cards mobile-only" aria-live="polite"></div>
-    <div class="row-flex pager">
-      <span class="note" id="tradesCountMsg"></span>
+    <div class="row-flex pager pager-bottom" data-pager="bottom">
+      <span class="note trades-count-msg" id="tradesCountMsg" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination">
-        <button class="btn ghost sm" id="firstPageBtn" onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
-        <button class="btn ghost sm" id="prevPageBtn" onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
-        <span class="note" id="tradesPageMsg"></span>
-        <button class="btn ghost sm" id="nextPageBtn" onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
-        <button class="btn ghost sm" id="lastPageBtn" onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
+        <button class="btn ghost sm" id="firstPageBtn" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
+        <button class="btn ghost sm" id="prevPageBtn" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
+        <span class="note trades-page-msg" id="tradesPageMsg" data-trades-page></span>
+        <button class="btn ghost sm" id="nextPageBtn" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
+        <button class="btn ghost sm" id="lastPageBtn" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
       </div>
       <div class="pager-tools">
-        <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
+        <select id="pageSize" data-page-size onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
           <option value="25">25 rows</option><option value="50" selected>50 rows</option><option value="100">100 rows</option><option value="250">250 rows</option>
         </select>
-        <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns" aria-label="Show or hide columns">⚙ Columns</button>
+        <div class="menu feed-options">
+          <button type="button" class="btn ghost sm feed-options-btn" data-feed-options-btn onclick="toggleFeedOptions(this)" title="List options" aria-label="List options" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div class="menu-pop feed-options-menu" data-feed-options-menu role="menu">
+            <button type="button" class="feed-options-item-cols" role="menuitem" onclick="closeFeedOptions();toggleColChooser()">Columns</button>
+            <button type="button" role="menuitem" onclick="closeFeedOptions();openExportCsvDialog()">Export CSV <span class="premium-mark" title="Premium">Pro</span></button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center">
       <span class="gate-note" data-premium-cue="export">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
         <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
-      <button class="btn ghost sm" id="exportCsvBtn" onclick="openExportCsvDialog()" title="Export CSV (Premium)">⤓ CSV <span class="premium-mark" title="Premium">Pro</span></button>
     </div>
 
   </section>
@@ -3655,12 +3713,12 @@ function isAuthError(e) { return !!(e && e.isAuth); }
 /* Column registry — single source of truth for the header, body cells, sorting,
    and the column chooser. def:true columns are visible by default; lock:true
    columns can't be hidden. Each cell(r) returns the inner HTML for that td. */
+/* Feed cells are NOT nested entity links — the whole row opens trade details.
+   Politician / company navigation lives in the trade drawer (owner UX: no
+   magic "click here for X, there for Y" on the list surface). */
 function memberCellHtml(r) {
-  var attr = r.filerId
-    ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
-    : 'class="member-cell"';
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
-  return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
+  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
@@ -3689,8 +3747,9 @@ function assetCellHtml(r) {
   var inner = '<div title="' + esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || '')) + '">' +
     (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(nm || '') + '</span></div>';
+  // No data-asset on the feed cell — whole row opens the trade; company lives in the drawer.
   return r.ticker
-    ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, nm) + inner + '</div>'
+    ? '<div class="asset-cell">' + tickerLogoHtml(r.ticker, nm) + inner + '</div>'
     : '<div class="asset-cell">' + inner + '</div>';
 }
 function amountTier(min, max) {
@@ -3725,23 +3784,20 @@ function tradesCardHtml(r) {
   var lag = shortLagText(r);
   var chamber = chamberLabel(r.chamber);
   var member = fmtName(r.member);
-  // Politician name is its own tappable chip; the rest of row 2 (and the chevron)
-  // falls through to the trade drawer via handleTradesOpenEvent's delegation order.
-  var memberHtml = r.filerId
-    ? '<span class="fc-member clickable" data-member="' + esc(r.filerId) + '">' + esc(member) + (r.st ? ', ' + esc(r.st) : '') + '</span>'
-    : esc(member) + (r.st ? ', ' + esc(r.st) : '');
+  // Whole card opens trade details — no nested data-member/data-asset chips.
+  var memberHtml = esc(member) + (r.st ? ', ' + esc(r.st) : '');
   // Row 2 is identity-first (member, chamber, lag) — the trade date moved
   // into the trailing amount/date stack on row 1 (see .fc-trail below), so
   // it's intentionally NOT duplicated here as "Traded <date>" anymore.
   var bits = [];
-  if (member) bits.push(memberHtml);
+  if (member) bits.push('<span class="fc-member">' + memberHtml + '</span>');
   if (chamber) bits.push(esc(chamber));
   if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
   if (r.stockActStatus === 'late' || r.stockActStatus === 'severely_late') {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
   }
-  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
     '<div class="fc-main">' +
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
@@ -4141,29 +4197,27 @@ function renderTrades() {
   syncTradesTableWidth();
 }
 
-/* "1-N of total" + first/prev/next/last controls for the bounded table page. */
+/* "1-N of total" + first/prev/next/last controls for the bounded table page.
+   Top and bottom pagers share data-* hooks so both stay in sync. */
 function maxReachableTradesPage(total) {
   var byTotal = Math.max(0, Math.ceil((total || 0) / tradesPageSize) - 1);
   var byCap = Math.floor(MAX_PUBLIC_TRADES_OFFSET / tradesPageSize);
   return Math.min(byTotal, byCap);
 }
+function setAll(sel, fn) {
+  var nodes = document.querySelectorAll(sel);
+  for (var i = 0; i < nodes.length; i++) fn(nodes[i], i);
+}
 function updateTradesCountMsg(shown) {
-  var msg = el('tradesCountMsg');
-  var pageMsg = el('tradesPageMsg');
-  var first = el('firstPageBtn');
-  var prev = el('prevPageBtn');
-  var next = el('nextPageBtn');
-  var last = el('lastPageBtn');
   if (!realDataLoaded) {
-    if (msg) msg.textContent = '';
-    if (pageMsg) pageMsg.textContent = '';
-    if (first) first.disabled = true;
-    if (prev) prev.disabled = true;
-    if (next) next.disabled = true;
-    if (last) last.disabled = true;
+    setAll('[data-trades-count]', function (n) { n.textContent = ''; });
+    setAll('[data-trades-page]', function (n) { n.textContent = ''; });
+    setAll('[data-pager-first],[data-pager-prev],[data-pager-next],[data-pager-last]', function (n) { n.disabled = true; });
     return;
   }
-  var total = totalRows || shown;
+  // Server-filtered corpus total — never the page size (owner: upper-right
+  // "matching trades" and pager "of N" must track active filters).
+  var total = typeof totalRows === 'number' ? totalRows : (shown || 0);
   var start = total === 0 ? 0 : tradesPage * tradesPageSize + 1;
   var end = Math.min(tradesPage * tradesPageSize + shown, total);
   var pageCount = Math.max(1, Math.ceil(total / tradesPageSize));
@@ -4179,22 +4233,26 @@ function updateTradesCountMsg(shown) {
   var pageFilterActive = !!qa ||
     (el('qPageMinAmt') && el('qPageMinAmt').value !== '') ||
     (el('qMaxAmt') && el('qMaxAmt').value !== '');
-  if (msg) {
-    if (pageFilterActive) {
-      msg.innerHTML = '<span class="tick-num">' + shown.toLocaleString() + '</span> of <span class="tick-num">' +
-        TRADES.length.toLocaleString() + '</span> loaded rows match this page filter';
-    } else {
-      msg.innerHTML = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
-    }
+  var countHtml;
+  if (pageFilterActive) {
+    countHtml = '<span class="tick-num">' + shown.toLocaleString() + '</span> of <span class="tick-num">' +
+      TRADES.length.toLocaleString() + '</span> loaded rows match this page filter';
+  } else {
+    countHtml = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
+  }
+  setAll('[data-trades-count]', function (msg) {
+    msg.innerHTML = countHtml;
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
-  }
-  if (pageMsg) pageMsg.textContent = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
-  if (first) first.disabled = tradesPage <= 0 || loadingPage;
-  if (prev) prev.disabled = tradesPage <= 0 || loadingPage;
-  if (next) next.disabled = tradesPage >= maxPage || end >= total || loadingPage;
-  if (last) last.disabled = tradesPage >= maxPage || end >= total || loadingPage;
+  });
+  setAll('[data-trades-page]', function (pageMsg) {
+    pageMsg.textContent = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
+  });
+  var disFirst = tradesPage <= 0 || loadingPage;
+  var disLast = tradesPage >= maxPage || end >= total || loadingPage;
+  setAll('[data-pager-first],[data-pager-prev]', function (n) { n.disabled = disFirst; });
+  setAll('[data-pager-next],[data-pager-last]', function (n) { n.disabled = disLast; });
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
@@ -4571,7 +4629,7 @@ function currentPageSize() {
 }
 function syncPageSizeControl() {
   tradesPageSize = currentPageSize();
-  var s = el('pageSize'); if (s) s.value = String(tradesPageSize);
+  setAll('[data-page-size]', function (s) { s.value = String(tradesPageSize); });
 }
 /* Shared ticker/member/type/chamber/party/date filters, independent of
    paging/since/sort — used by both the bounded page fetch (tradesQueryParams,
@@ -4636,8 +4694,17 @@ function tradesQueryParams() {
   return p;
 }
 function setTradesKpis() {
-  el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);
-  el('kpiToday').textContent = fmtCount(filingsImportedToday);
+  // Upper-right match count: always the server total for the active filter
+  // set. Never fall back to the current page length (which is often 50/100
+  // and was misread as "100 trades" when filters narrowed the corpus).
+  var totalEl = el('kpiTotal');
+  var todayEl = el('kpiToday');
+  if (totalEl) {
+    totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';
+  }
+  if (todayEl) {
+    todayEl.textContent = realDataLoaded ? fmtCount(filingsImportedToday) : '—';
+  }
 }
 /* Fetch one bounded newest-first feed page. */
 function fetchPage() {
@@ -10184,6 +10251,19 @@ function openTrade(row) {
     tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + '  |  ' : '') + assetLabel) + '">' +
     (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(assetLabel) + '</span></div></div></div>';
+  // Explicit CTAs so politician/company paths are obvious (feed rows no longer
+  // nest those targets — whole card opens this drawer first).
+  var entityActions = '';
+  if (row.filerId || displayTicker) {
+    entityActions = '<div class="drawer-entity-actions">' +
+      (row.filerId
+        ? '<button type="button" class="btn ghost sm" onclick="openMember(' + JSON.stringify(String(row.filerId)) + ')">Politician Details</button>'
+        : '') +
+      (displayTicker
+        ? '<button type="button" class="btn ghost sm" onclick="openAsset(' + JSON.stringify(String(displayTicker)) + ')">Company Details</button>'
+        : '') +
+      '</div>';
+  }
   // Owner punch list #13(d): the STOCK Act bracket shown here is exact — only
   // the midpoint used elsewhere is an estimate — so the old "estimated
   // bracket" caption was misleading and is gone.
@@ -10192,6 +10272,7 @@ function openTrade(row) {
       '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
       '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' + inName +
       '<div class="drawer-trade-identity">' + personCard + assetCard + '</div>' +
+      entityActions +
     '</div>';
   // Owner punch list #13(b): "Politician" -> "Name", plus a chevron affordance
   // showing the row links out (the click already worked).
@@ -10370,12 +10451,17 @@ function renderAccount() {
   var box = el('acct'); if (!box) return;
   var desktopHtml, mobileHtml;
   if (!ME.user) {
-    desktopHtml = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' +
-      '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
-      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Upgrade</button>' : '');
-    mobileHtml = '<button class="btn ghost sm" onclick="closeAcctMobileMenu();openLogin()">Sign In</button>' +
+    // Sign In + Upgrade as one joined control so they read as a pair, not two orphans.
+    var authGroup = '<span class="acct-auth-group">' +
+      '<button class="btn ghost sm" type="button" onclick="openLogin()">Sign In</button>' +
+      (checkoutConfigured() ? '<button class="btn sm" type="button" onclick="openPricing()">Upgrade</button>' : '') +
+      '</span>';
+    desktopHtml = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' + authGroup;
+    mobileHtml = '<span class="acct-auth-group">' +
+      '<button class="btn ghost sm" type="button" onclick="closeAcctMobileMenu();openLogin()">Sign In</button>' +
+      (checkoutConfigured() ? '<button class="btn sm" type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '') +
+      '</span>' +
       themeRowHtml(null, true) +
-      (checkoutConfigured() ? '<button class="btn sm" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '') +
       acctMobileDisclaimerHtml();
   } else {
     var ent = ME.entitlement || {};
@@ -10655,15 +10741,36 @@ function exportCsv() {
 }
 
 /* ---- Premium CSV / delivery CTA under the feed pager ----
-   #gateRow itself always renders — it holds the CSV export button, which is
-   useful (Pro-gated) regardless of plan. Only the "Premium unlocks…" pitch +
-   Start Free Trial button (the .gate-note span, data-premium-cue="export")
-   hide once premium via updatePremiumCues(), leaving just the CSV button. */
+   Export CSV lives in the Options (⋯) menu on each pager. #gateRow only
+   carries the freemium pitch + Start Free Trial (data-premium-cue="export"),
+   which hide once premium via updatePremiumCues(). */
 function updateGateRow() {
   var g = el('gateRow');
   if (!g) return;
   g.style.display = '';
 }
+
+/* Options menu (Columns + Export CSV) on top/bottom pagers. */
+function closeFeedOptions() {
+  setAll('[data-feed-options-menu]', function (m) { m.classList.remove('open'); });
+  setAll('[data-feed-options-btn]', function (b) { b.setAttribute('aria-expanded', 'false'); });
+}
+function toggleFeedOptions(btn) {
+  var wrap = btn && btn.closest ? btn.closest('.feed-options') : null;
+  var menu = wrap ? wrap.querySelector('[data-feed-options-menu]') : null;
+  if (!menu) return;
+  var open = !menu.classList.contains('open');
+  closeFeedOptions();
+  if (open) {
+    menu.classList.add('open');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+}
+document.addEventListener('click', function (e) {
+  if (!e.target || !e.target.closest) return;
+  if (e.target.closest('.feed-options')) return;
+  closeFeedOptions();
+});
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
   var t = el('toast'); if (!t) return;
@@ -11122,6 +11229,15 @@ function handleEntityOpenEvent(e) {
   if (e.target.closest('a[href]:not(.clickable)')) return false;
   if (e.target.closest('button, input, select, textarea, label, option')) return false;
   if (e.target.closest('.drawer-close, .drawer-backdrop, .panel-close')) return false;
+  // Trades feed (table rows + mobile cards): entire surface opens trade details.
+  // Nested politician/company targets were removed from feed cells; those live
+  // in the trade drawer as explicit buttons + clickable identity cards.
+  var feedHit = e.target.closest('#tradesBody tr[data-txid], #tradesCards article.trades-card[data-txid], article.trades-card[data-txid]');
+  if (feedHit && feedHit.getAttribute('data-txid')) {
+    if (e.preventDefault) e.preventDefault();
+    openTradeById(feedHit.getAttribute('data-txid'));
+    return true;
+  }
   var m = e.target.closest('[data-member]');
   if (m && m.getAttribute('data-member')) {
     if (e.preventDefault) e.preventDefault();
