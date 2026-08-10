@@ -1488,6 +1488,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .col-resizer { display: none; }
     .row-flex { align-items: stretch; gap: 9px; }
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
+    /* Rank By: label + dropdown stay side by side on one line (owner). */
+    .rankby-row { align-items: center; flex-wrap: nowrap; }
+    .rankby-row > select { width: auto; flex: 0 1 auto; min-width: 0; }
     .sched-row { grid-template-columns: 1fr 1fr; }
     .trend-grid2, .trend-grid-split { gap: 12px; }
     /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
@@ -1507,7 +1510,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
        (like desktop) — only the button sizing shrinks to fit. */
     #view-trends #trTimeMetric.seg button,
-    #view-trends #trTimeWin.seg button { padding: 5px 7px; font-size: 11px; }
+    #view-trends #trTimeWin.seg button { padding: 4px 5px; font-size: 10px; }
+    /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
+    #view-trends summary.tchart-summary { gap: 5px; }
+    #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
+    #view-trends summary.tchart-summary .tchart-summary-title { font-size: 14px; }
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
@@ -1540,6 +1547,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .toolbar #qMember { grid-column:1 / -1; }
     nav.tabs button::after { font-size: 9px; }
     th, td { padding: 9px 10px; }
+    /* Rising Activity: tighter cells so all four headings fit on phones. */
+    #tableTrTrending th, #tableTrTrending td { padding: 9px 6px; }
+    #tableTrTrending th { font-size: 11px; }
+    /* Directory: tighter cells so Politician / Branch • Party • State / Trades all fit on phones. */
+    .people-table-wrap th, .people-table-wrap td { padding: 9px 6px; }
+    .people-table-wrap th { font-size: 11px; letter-spacing: 0; }
+    .people-table-wrap td { font-size: 12px; }
+    #view-people .section { padding-left: 10px; padding-right: 10px; }
   }
   @media (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     header.top { padding:8px 10px; }
@@ -2326,7 +2341,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
         <summary class="tf-h">What Congress Is Trading <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
-        <div class="row-flex" style="margin:-6px 0 12px">
+        <div class="row-flex rankby-row" style="margin:-6px 0 12px">
           <label class="lbl">Rank By:</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
             <option value="trades">Trades</option>
@@ -8717,7 +8732,7 @@ function renderPeopleDirectory(all) {
     var parts = [];
     var chLabel = chamberLabel(m.chamber);
     if (chLabel) parts.push(chLabel);
-    if (m.party) parts.push(m.party);
+    if (m.party) parts.push(dirPartyLetter(m.party));
     var stateStr = m.state ? String(m.state) + (m.district ? ' - ' + String(m.district) : '') : '';
     if (stateStr) parts.push(stateStr);
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
@@ -8727,6 +8742,14 @@ function renderPeopleDirectory(all) {
       '<td class="muted">' + (m.txCount != null ? Number(m.txCount) : '—') + '</td></tr>';
   }).join('');
   if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
+}
+/* Single-letter party for the compact Branch • Party • State cell. */
+function dirPartyLetter(p) {
+  var s = String(p || '').trim();
+  if (/^dem/i.test(s)) return 'D';
+  if (/^rep/i.test(s)) return 'R';
+  if (/^ind/i.test(s)) return 'I';
+  return s ? s.charAt(0).toUpperCase() : '';
 }
 function filterPeopleDirectory() {
   if (!PEOPLE_CACHE || !PEOPLE_CACHE.members) {
