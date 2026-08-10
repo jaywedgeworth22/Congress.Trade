@@ -73,9 +73,40 @@ extension CongressTradeStore {
                     fullName: fullName
                 )
                 _ = saveSessionToken(response.token)
+            } catch let error as APIError {
+                setAccountNotice(Self.friendlyAppleError(error))
             } catch {
                 setAccountNotice("Sign in with Apple failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Map backend/transport failures to short owner-facing copy (no stack
+    /// noise, no raw "Request failed" without status context).
+    private static func friendlyAppleError(_ error: APIError) -> String {
+        switch error {
+        case .server(let status, let message, _):
+            let lower = message.lowercased()
+            if status == 503 || lower.contains("not enabled") {
+                return "Sign in with Apple is not available yet. Try Google or email, or try again later."
+            }
+            if status == 401 {
+                return "Sign in with Apple could not verify this Apple ID. Try again."
+            }
+            if status == 429 {
+                return "Too many sign-in attempts. Wait a minute and try again."
+            }
+            if !message.isEmpty, message != "Request failed" {
+                return "Sign in with Apple failed: \(message)"
+            }
+            return "Sign in with Apple failed (error \(status))."
+        case .transport:
+            if error.isOffline {
+                return "Sign in with Apple needs a network connection."
+            }
+            return "Sign in with Apple failed: connection error."
+        case .invalidResponse:
+            return "Sign in with Apple failed: unexpected server response."
         }
     }
 
