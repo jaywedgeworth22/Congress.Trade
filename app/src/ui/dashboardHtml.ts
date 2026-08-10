@@ -92,24 +92,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
 <meta name="description" content="First-party House &amp; Senate STOCK Act ingestion — not a third-party API reskin. Congress.Trade runs its own pipeline to parse official disclosures into a live, filterable feed with member/ticker analytics and premium webhooks." />
-<link rel="canonical" href="https://congress.trade/" />
+<link rel="canonical" href="%CANONICAL_URL%" />
 <meta name="theme-color" content="#eff3f8" />
-<!-- Open Graph -->
+<!-- Open Graph — placeholders filled server-side from deep-link query
+     (?view=trends / ?ticker= / ?member=) so crawlers get the right card. -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Congress.Trade" />
-<meta property="og:title" content="Congress.Trade" />
-<meta property="og:description" content="We ingest and publish official House &amp; Senate STOCK Act disclosures ourselves — a live congressional stock-trade feed, not a wrapper around one third-party API." />
-<meta property="og:url" content="https://congress.trade/" />
-<meta property="og:image" content="https://congress.trade/og-image.png?v=21" />
+<meta property="og:title" content="%OG_TITLE%" />
+<meta property="og:description" content="%OG_DESCRIPTION%" />
+<meta property="og:url" content="%OG_URL%" />
+<meta property="og:image" content="%OG_IMAGE%" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Congress.Trade eagle mark with stacked CONGRESS / TRADE wordmark on a light background — STOCK Act disclosures from the House, Senate, and Executive Branch" />
+<meta property="og:image:alt" content="%OG_IMAGE_ALT%" />
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Congress.Trade" />
-<meta name="twitter:description" content="First-party House &amp; Senate STOCK Act ingestion and publishing — live feed, analytics, premium webhooks. Not a single-source API reskin." />
-<meta name="twitter:image" content="https://congress.trade/og-image.png?v=21" />
+<meta name="twitter:title" content="%TWITTER_TITLE%" />
+<meta name="twitter:description" content="%TWITTER_DESCRIPTION%" />
+<meta name="twitter:image" content="%TWITTER_IMAGE%" />
 <!-- Icons / PWA -->
 <link rel="icon" href="/favicon.ico?v=10" sizes="32x32" />
 <link rel="icon" type="image/png" href="/icon-192.png?v=10" sizes="192x192" />

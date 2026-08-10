@@ -25,11 +25,15 @@ import {
   FAVICON_PNG,
   ICON_192_PNG,
   ICON_512_PNG,
+  OG_IMAGE_COMPANY_PNG,
   OG_IMAGE_PNG,
+  OG_IMAGE_POLITICIAN_PNG,
+  OG_IMAGE_TRENDS_PNG,
   SITE_WEBMANIFEST,
   ZILLA_SLAB_WOFF2,
   type StaticAsset,
 } from './assets.ts';
+import { applyOgMeta, resolveOgMeta } from './ogMeta.ts';
 
 /**
  * Analytics injection was removed (CT-AUD-P1-15).
@@ -47,11 +51,40 @@ import {
  * and a privacy-policy update. Until those exist, shipping nothing is the
  * honest behaviour.
  */
-async function renderDashboard(env: Env): Promise<string> {
+/** Best-effort filer display name for politician share cards (never throws). */
+async function lookupMemberDisplayName(env: Env, memberId: string): Promise<string | null> {
+  const id = memberId.trim();
+  if (!id || !env.DB) return null;
+  try {
+    const row = await env.DB
+      .prepare(
+        'SELECT full_name FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
+      )
+      .bind(id)
+      .first<{ full_name: string | null }>();
+    const name = row?.full_name?.trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+async function renderDashboard(env: Env, requestUrl: string): Promise<string> {
   const logoDisplay = await getLogoDisplay(env);
-  return DASHBOARD_HTML
+  let memberDisplayName: string | null = null;
+  try {
+    const u = new URL(requestUrl);
+    const member = (u.searchParams.get('member') || '').trim();
+    if (member) memberDisplayName = await lookupMemberDisplayName(env, member);
+  } catch {
+    /* ignore bad URL */
+  }
+  const og = resolveOgMeta(requestUrl, 'https://congress.trade', { memberDisplayName });
+  let html = DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
     .split('%GA_SCRIPT%').join('');
+  html = applyOgMeta(html, og);
+  return html;
 }
 
 function renderLegalHtml(html: string, _env: Env): string {
@@ -62,8 +95,10 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
   // Dashboard SPA. Hono's c.html() sets `content-type: text/html; charset=UTF-8`.
-  r.get('/', async (c) => c.html(await renderDashboard(c.env)));
-  r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
+  // OG/Twitter meta is filled from the request URL so crawlers unfurl the
+  // correct card for ?view=trends / ?ticker= / ?member= deep links.
+  r.get('/', async (c) => c.html(await renderDashboard(c.env, c.req.url)));
+  r.get('/admin', async (c) => c.html(await renderDashboard(c.env, c.req.url)));
 
   // Binary assets live under app/public/ (loaded by assets.ts) and are served
   // here with long cache headers. HTML references these URL paths — never
@@ -81,6 +116,9 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   r.get('/assets/brand-logo-dark.png', serveAsset(BRAND_LOGO_DARK_PNG, IMMUTABLE));
   r.get('/assets/brand-logo-light.png', serveAsset(BRAND_LOGO_LIGHT_PNG, IMMUTABLE));
   r.get('/og-image.png', serveAsset(OG_IMAGE_PNG, LONG));
+  r.get('/og-image-trends.png', serveAsset(OG_IMAGE_TRENDS_PNG, LONG));
+  r.get('/og-image-company.png', serveAsset(OG_IMAGE_COMPANY_PNG, LONG));
+  r.get('/og-image-politician.png', serveAsset(OG_IMAGE_POLITICIAN_PNG, LONG));
   r.get('/favicon.ico', serveAsset(FAVICON_PNG, LONG));
   r.get('/icon-192.png', serveAsset(ICON_192_PNG, LONG));
   r.get('/icon-512.png', serveAsset(ICON_512_PNG, LONG));

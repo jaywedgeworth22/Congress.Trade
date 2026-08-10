@@ -91,7 +91,8 @@ describe('DASHBOARD_HTML', () => {
       '<title>Congress.Trade</title>',
     );
     expect(DASHBOARD_HTML).toContain('name="description"');
-    expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png?v=21"');
+    // OG tags are server-filled placeholders (deep-link context cards).
+    expect(DASHBOARD_HTML).toContain('property="og:image" content="%OG_IMAGE%"');
     expect(DASHBOARD_HTML).toContain('name="twitter:card" content="summary_large_image"');
   });
 
@@ -113,7 +114,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('src="/assets/brand-logo-light.png');
     expect(DASHBOARD_HTML).toContain('data-src-dark="/assets/brand-logo-dark.png');
     expect(DASHBOARD_HTML).toContain('data-src-light="/assets/brand-logo-light.png');
-    expect(DASHBOARD_HTML).toContain('content="https://congress.trade/og-image.png?v=21"');
+    expect(DASHBOARD_HTML).toContain('content="%OG_IMAGE%"');
   });
 
   it('contains at least the boot + main script blocks', () => {
@@ -2434,6 +2435,30 @@ describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () =>
     const html = await res.text();
     expect(html).not.toContain('%GA_SCRIPT%');
     expect(html).not.toContain('%LOGO_DISPLAY%');
+    expect(html).not.toContain('%OG_IMAGE%');
+    expect(html).not.toContain('%OG_TITLE%');
+    expect(html).not.toContain('%CANONICAL_URL%');
+  });
+
+  it('serves context OG cards for Trends / company / politician deep links', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+
+    const trends = await (await app.request('http://localhost/?view=trends', {}, { } as never)).text();
+    expect(trends).toContain('og-image-trends.png?v=22');
+    expect(trends).toContain('content="Trends · Congress.Trade"');
+
+    const company = await (await app.request('http://localhost/?ticker=AAPL', {}, { } as never)).text();
+    expect(company).toContain('og-image-company.png?v=22');
+    expect(company).toContain('content="AAPL · Congress.Trade"');
+
+    const pol = await (await app.request('http://localhost/?member=P000197', {}, { } as never)).text();
+    expect(pol).toContain('og-image-politician.png?v=22');
+    expect(pol).toContain('content="P000197 · Congress.Trade"');
+
+    const home = await (await app.request('http://localhost/', {}, { } as never)).text();
+    expect(home).toContain('og-image.png?v=22');
+    expect(home).not.toContain('og-image-trends.png');
   });
 });
 
@@ -3339,6 +3364,9 @@ describe('static UI assets (issue #1040)', () => {
       { path: '/assets/brand-logo-light.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'immutable' },
       { path: '/assets/zilla-slab-700.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
       { path: '/og-image.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-trends.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-company.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
+      { path: '/og-image-politician.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
       { path: '/apple-touch-icon.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
     ];
 
