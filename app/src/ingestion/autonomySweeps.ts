@@ -21,6 +21,8 @@
 import { extractText, getDocumentProxy } from 'unpdf';
 import type { Env } from '../shared/types.ts';
 import { all, run } from '../shared/db.ts';
+import { checkPipelineHealth } from '../shared/pipelineHealth.ts';
+import { sendPushover } from '../shared/pushover.ts';
 import { fetchHouseIndex } from './houseSource.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
@@ -417,7 +419,121 @@ export interface AutonomySweepResult {
   resolvedDesync: ResolvedDesyncSweepResult | null;
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
+  livenessAlarms: LivenessAlarmResult | null;
   errors: string[];
+}
+
+export interface LivenessAlarmResult {
+  evaluated: number;
+  bad: number;
+  notified: string[];
+  recovered: string[];
+}
+
+const LIVENESS_ALARM_CHECK_IDS = new Set([
+  'polling_house',
+  'polling_senate',
+  'polling_executive',
+  'latency_probes',
+]);
+const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
+const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;
+
+interface LivenessAlarmEpisode {
+  status: string;
+  notifiedAt: string;
+}
+
+/**
+ * Owner directive 2026-08-10: polling can never be silently off for any
+ * chamber, and latency monitoring can never be silently off. The
+ * polling_house/senate/executive + latency_probes pipelineHealth checks make
+ * silence VISIBLE; this sweep makes it LOUD — a Pushover to the owner's
+ * phone, not just a row on an admin page nobody is staring at.
+ *
+ * Episode semantics (matches the fleet's one-notification-per-episode
+ * precedent): notify on ok->bad transition, re-notify at most every 6h while
+ * still bad, send a recovery note and clear the episode on bad->ok. Episodes
+ * live in CONFIG_KV so restarts/redeploys never replay an alarm storm.
+ */
+export async function sweepLivenessAlarms(
+  env: Env,
+  now = new Date(),
+  deps: {
+    checkHealth?: typeof checkPipelineHealth;
+    push?: typeof sendPushover;
+  } = {},
+): Promise<LivenessAlarmResult> {
+  const checkHealth = deps.checkHealth ?? checkPipelineHealth;
+  const push = deps.push ?? sendPushover;
+  const result: LivenessAlarmResult = { evaluated: 0, bad: 0, notified: [], recovered: [] };
+
+  const health = await checkHealth(env, now);
+  const nowIso = now.toISOString();
+  for (const check of health.checks) {
+    if (!LIVENESS_ALARM_CHECK_IDS.has(check.id)) continue;
+    result.evaluated += 1;
+    const kvKey = `${LIVENESS_ALARM_KV_PREFIX}${check.id}`;
+    let episode: LivenessAlarmEpisode | null = null;
+    try {
+      episode = await env.CONFIG_KV.get<LivenessAlarmEpisode>(kvKey, 'json');
+    } catch {}
+
+    const isBad = check.status === 'stalled' || check.status === 'degraded';
+    if (isBad) {
+      result.bad += 1;
+      const statusChanged = !episode || episode.status !== check.status;
+      const lastNotifiedMs = episode ? Date.parse(episode.notifiedAt) : NaN;
+      const renotifyDue = !Number.isFinite(lastNotifiedMs)
+        || now.getTime() - lastNotifiedMs >= LIVENESS_RENOTIFY_MS;
+      if (statusChanged || renotifyDue) {
+        // sendPushover NEVER throws — it returns {sent:false, reason} on
+        // unconfigured creds / HTTP failure / API rejection. The episode is
+        // recorded ONLY on confirmed delivery, so an undelivered alarm
+        // retries on the next hourly sweep instead of silently counting as
+        // notified — a silently-dead alarm channel would recreate the exact
+        // failure class this sweep exists to kill.
+        try {
+          const delivered = await push(env, {
+            title: `CT ${check.status === 'stalled' ? 'DOWN' : 'DEGRADED'}: ${check.id.replace(/_/g, ' ')}`,
+            message: check.detail,
+            priority: check.status === 'stalled' ? 1 : 0,
+            url: 'https://congress.trade/api/health',
+            urlTitle: 'Pipeline health',
+          });
+          if (delivered.sent) {
+            result.notified.push(check.id);
+            await env.CONFIG_KV.put(kvKey, JSON.stringify({ status: check.status, notifiedAt: nowIso }));
+          } else {
+            console.error('sweepLivenessAlarms: alarm NOT delivered for', check.id, '-', delivered.reason ?? 'unknown reason');
+          }
+        } catch (err) {
+          console.error('sweepLivenessAlarms: pushover failed for', check.id, (err as Error).message);
+        }
+      }
+    } else if (check.status === 'ok' && episode) {
+      // bad -> ok: say so once, then clear the episode. 'unknown' (signal
+      // collection failed this cycle) deliberately does NOT clear or notify —
+      // a DB blip mid-outage must not send a lying "recovered" note and then
+      // re-alarm when collection resumes.
+      try {
+        const delivered = await push(env, {
+          title: `CT recovered: ${check.id.replace(/_/g, ' ')}`,
+          message: check.detail,
+          priority: 0,
+        });
+        if (delivered.sent) {
+          result.recovered.push(check.id);
+          await env.CONFIG_KV.delete(kvKey);
+        } else {
+          console.error('sweepLivenessAlarms: recovery NOT delivered for', check.id, '-', delivered.reason ?? 'unknown reason');
+        }
+      } catch (err) {
+        console.error('sweepLivenessAlarms: recovery pushover failed for', check.id, (err as Error).message);
+      }
+    }
+  }
+  return result;
 }
 
 /**
@@ -438,6 +554,7 @@ export async function runAutonomySweeps(
     resolvedDesync: null,
     filedDateBackfill: null,
     ogeUndated: null,
+    livenessAlarms: null,
     errors,
   };
   const throwIfAborted = () => {
@@ -477,6 +594,13 @@ export async function runAutonomySweeps(
     result.ogeUndated = await sweepOgeUndatedFilingDates(env);
   } catch (err) {
     errors.push(`ogeUndated: ${(err as Error).message}`);
+  }
+
+  try {
+    throwIfAborted();
+    result.livenessAlarms = await sweepLivenessAlarms(env, now);
+  } catch (err) {
+    errors.push(`livenessAlarms: ${(err as Error).message}`);
   }
 
   return result;
