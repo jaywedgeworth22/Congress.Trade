@@ -90,55 +90,12 @@ struct SettingsView: View {
                         }
                         .disabled(store.isLoggingOut)
                     } else {
-                        SignInWithAppleButton(.signIn) { request in
-                            // No custom scopes requested — the backend reads
-                            // fullName from the request body (captured below)
-                            // and email from the verified identity token.
-                            let nonce = AppleSignInNonce.generate()
-                            currentAppleNonce = nonce
-                            request.nonce = nonce
-                        } onCompletion: { result in
-                            Task {
-                                await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
-                                currentAppleNonce = nil
-                            }
-                        }
-                        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                        .frame(height: 44)
-                        .accessibilityLabel("Sign in with Apple")
-
-                        Button {
-                            startGoogleSignIn()
-                        } label: {
-                            Label(
-                                isAuthenticating ? "Opening Google…" : "Sign In with Google",
-                                systemImage: "person.crop.circle.fill"
-                            )
-                            .fontWeight(.medium)
-                        }
-                        .disabled(isAuthenticating)
-
-                        HStack {
-                            TextField("you@example.com", text: $magicEmail)
-                                .urlKeyboard()
-                                .neverAutocapitalized()
-                                .autocorrectionDisabled()
-                                .focused($magicEmailFocused)
-                                .submitLabel(.done)
-                                .onSubmit { magicEmailFocused = false }
-                            Button {
-                                magicEmailFocused = false
-                                Task { await store.requestMagicLink(email: magicEmail) }
-                            } label: {
-                                Label("Email Link", systemImage: "envelope")
-                            }
-                            .disabled(magicEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
+                        signInButtons
                     }
                 } header: {
                     Text("Account")
                 } footer: {
-                    Text("Sign in to manage delivery alerts and a saved watchlist. Preferences sync to the Congress.Trade backend — this app never holds provider keys or admin tokens.")
+                    accountFooter
                 }
 
                 Section {
@@ -154,9 +111,6 @@ struct SettingsView: View {
                     .accessibilityElement(children: .contain)
                 } header: {
                     Text("Appearance")
-                } footer: {
-                    Text("Light, Dark, or System — same control as Congress.Trade.")
-                        .font(.footnote)
                 }
 
                 Section {
@@ -200,7 +154,7 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
                 } header: {
-                    Text("Push Notifications (APNs)")
+                    Text("Push Notifications")
                 }
 
                 if store.signedIn && !store.isPremium {
@@ -216,47 +170,6 @@ struct SettingsView: View {
                         if let url = store.api.upgradeURL {
                             Link("Subscribe on Congress.Trade", destination: url)
                         }
-                    }
-                }
-
-                if store.signedIn {
-                    Section("Recent Activity") {
-                        if store.commands.isEmpty {
-                            Text("No recent commands.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ScrollView {
-                                VStack(spacing: 12) {
-                                    ForEach(store.commands) { command in
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(command.type.replacingOccurrences(of: "_", with: " ").capitalized)
-                                                    .font(.subheadline.weight(.medium))
-                                                Text(Optional(command.createdAt).shortDate)
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            Spacer()
-                                            StatusPill(
-                                                text: command.status.rawValue.capitalized,
-                                                color: command.status.tint,
-                                                compact: true
-                                            )
-                                        }
-                                        .accessibilityElement(children: .combine)
-                                    }
-                                }
-                            }
-                            .frame(maxHeight: 150)
-                        }
-                    }
-                }
-
-                if let notice = store.watchlistNotice, !notice.isEmpty {
-                    Section {
-                        Text(notice)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -282,6 +195,90 @@ struct SettingsView: View {
                 SubscribeView()
                     .environmentObject(store)
             }
+        }
+    }
+
+    /// Full-width Apple + Google buttons (ST-style parity: same height/radius,
+    /// Google uses outline + multicolor G mark; Apple stays the system control).
+    @ViewBuilder
+    private var signInButtons: some View {
+        VStack(spacing: 12) {
+            SignInWithAppleButton(.signIn) { request in
+                // Request name + email on first authorization so the backend
+                // can store a display name (email also lands in the JWT).
+                request.requestedScopes = [.fullName, .email]
+                let nonce = AppleSignInNonce.generate()
+                currentAppleNonce = nonce
+                request.nonce = nonce
+            } onCompletion: { result in
+                Task {
+                    await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
+                    currentAppleNonce = nil
+                }
+            }
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .frame(height: 48)
+            .frame(maxWidth: 375)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityLabel("Sign in with Apple")
+
+            Button {
+                startGoogleSignIn()
+            } label: {
+                HStack(spacing: 8) {
+                    GoogleMark()
+                        .frame(width: 18, height: 18)
+                    Text(isAuthenticating ? "Opening Google…" : "Sign in with Google")
+                        .font(.subheadline.weight(.medium))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 48)
+                .foregroundStyle(Color.primary)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(colorScheme == .dark
+                              ? Color(white: 0.09).opacity(0.78)
+                              : Color.white.opacity(0.65))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(
+                                    Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.1),
+                                    lineWidth: 1
+                                )
+                        }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isAuthenticating)
+            .accessibilityLabel("Sign in with Google")
+
+            HStack(spacing: 8) {
+                TextField("you@example.com", text: $magicEmail)
+                    .urlKeyboard()
+                    .neverAutocapitalized()
+                    .autocorrectionDisabled()
+                    .focused($magicEmailFocused)
+                    .submitLabel(.done)
+                    .onSubmit { magicEmailFocused = false }
+                Button {
+                    magicEmailFocused = false
+                    Task { await store.requestMagicLink(email: magicEmail) }
+                } label: {
+                    Text("Email Link")
+                        .font(.subheadline.weight(.medium))
+                }
+                .disabled(magicEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+    }
+
+    @ViewBuilder
+    private var accountFooter: some View {
+        if let notice = store.watchlistNotice, !notice.isEmpty {
+            Text(notice)
+        } else if !store.signedIn {
+            Text("Sign in to manage delivery alerts and a saved watchlist.")
         }
     }
 
@@ -328,11 +325,24 @@ struct SettingsView: View {
 
         let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: scheme) { callbackURL, error in
             isAuthenticating = false
-            guard error == nil, let callbackURL = callbackURL else { return }
+            if let error {
+                if let authError = error as? ASWebAuthenticationSessionError,
+                   authError.code == .canceledLogin {
+                    return
+                }
+                store.setAccountNotice("Google sign-in failed: \(error.localizedDescription)")
+                return
+            }
+            guard let callbackURL else {
+                store.setAccountNotice("Google sign-in did not return a session.")
+                return
+            }
 
             // Expected URL: congresstrade://auth?token=XYZ
             guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value else {
+                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
+                  !token.isEmpty else {
+                store.setAccountNotice("Google sign-in did not return a usable session token.")
                 return
             }
 
@@ -341,5 +351,49 @@ struct SettingsView: View {
 
         session.presentationContextProvider = AuthPresentationContext.shared
         session.start()
+    }
+}
+
+// MARK: - Google mark (ST LoginView parity — multicolor G ring)
+
+/// Multicolor "G" mark matching Socratic.Trade's `LoginView.GoogleMark` so the
+/// Google button sits next to Apple with comparable visual weight.
+private struct GoogleMark: View {
+    var body: some View {
+        Canvas { context, size in
+            let blue = Color(red: 0x42 / 255, green: 0x85 / 255, blue: 0xF4 / 255)
+            let green = Color(red: 0x34 / 255, green: 0xA8 / 255, blue: 0x53 / 255)
+            let yellow = Color(red: 0xFB / 255, green: 0xBC / 255, blue: 0x05 / 255)
+            let red = Color(red: 0xEA / 255, green: 0x43 / 255, blue: 0x35 / 255)
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let radius = size.width * 0.42
+            let lw = size.width * 0.18
+
+            func arc(_ start: Double, _ end: Double, _ color: Color) {
+                var p = Path()
+                p.addArc(
+                    center: center,
+                    radius: radius,
+                    startAngle: .degrees(start),
+                    endAngle: .degrees(end),
+                    clockwise: false
+                )
+                context.stroke(p, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .butt))
+            }
+            arc(-35, 20, blue)
+            arc(20, 120, green)
+            arc(120, 220, yellow)
+            arc(220, 325, red)
+            context.fill(
+                Path(CGRect(
+                    x: size.width * 0.48,
+                    y: size.height * 0.42,
+                    width: size.width * 0.42,
+                    height: size.width * 0.16
+                )),
+                with: .color(blue)
+            )
+        }
+        .accessibilityHidden(true)
     }
 }

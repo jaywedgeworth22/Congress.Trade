@@ -642,7 +642,7 @@ final class CongressTradeAPIClient {
         }
         throw APIError.server(
             status: 504,
-            message: "Command is still running. Check Recent Activity in Settings, then retry if needed.",
+            message: "Command is still running. Wait a moment, then retry if needed.",
             retryAfterSeconds: 2
         )
     }
