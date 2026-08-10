@@ -16,6 +16,7 @@ import { resolveSecret } from '../secrets/infisical.ts';
 import { parseAmountRange } from './amounts.ts';
 import { parseTruncationAwareJson, fetchWithRetry } from './visionLlm.ts';
 import {
+  OPENROUTER_PURPOSE,
   buildOpenRouterClassifier,
   openRouterAttributionHeaders,
 } from '../shared/openRouterAttribution.ts';
@@ -132,7 +133,9 @@ export async function extractFromSenatePaperMedia(
 
   const classifierEnrichment = buildOpenRouterClassifier(env, {
     service: 'senatePaperMedia',
+    purpose: OPENROUTER_PURPOSE.SENATE_PAPER_OCR,
     feature: 'senate-paper-ocr',
+    chamber: 'senate',
     keyRef: 'OPENROUTER_API_KEY',
   });
   const body = {

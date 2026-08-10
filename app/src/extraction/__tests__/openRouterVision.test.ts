@@ -231,6 +231,8 @@ describe('OpenRouterVisionExtractor', () => {
     expect(body.user).toBe('S-1');
     expect('session_id' in body).toBe(false);
     // Classifier keys FLAT under trace — no metadata sub-object anywhere.
+    // Purpose tags (purpose/generation_name/chamber) ride alongside the shared
+    // static classifier fields for call-purpose reporting.
     expect(body.trace).toEqual({
       sourceApp: 'congress-trade',
       environment: 'test',
@@ -238,6 +240,9 @@ describe('OpenRouterVisionExtractor', () => {
       feature: 'vision-extract-senate',
       keyRef: 'OPENROUTER_API_KEY',
       gitSha: 'abc123def456',
+      purpose: 'vision_extract',
+      generation_name: 'PTR vision extraction',
+      chamber: 'senate',
     });
     expect(body.trace.metadata).toBeUndefined();
     expect('metadata' in body).toBe(false);
