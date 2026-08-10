@@ -511,6 +511,42 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     );
   });
 
+  // --- GET /health/polling --------------------------------------------------
+  // Owner directive (2026-08-10): per-chamber polling liveness can never be
+  // silently off — see pipelineHealth.ts's polling_house/polling_senate/
+  // polling_executive checks. Scoped, public, unauthenticated: exists purely
+  // so one UptimeRobot HTTP monitor can page the owner on it directly (the
+  // free plan caps at 10 monitors, which is why all three chambers aggregate
+  // behind a single monitor instead of one each).
+  r.get('/health/polling', async (c) => {
+    const pipeline = await checkPipelineHealth(c.env);
+    const checks = pipeline.checks.filter(
+      (ch) => ch.id === 'polling_house' || ch.id === 'polling_senate' || ch.id === 'polling_executive',
+    );
+    // Only 'stalled' pages. 'unknown' and 'degraded' stay 200 so a transient
+    // collection blip doesn't flap the pager — the polling_* checks don't
+    // emit 'degraded' today anyway (each chamber is binary live/not-live).
+    const ok = !checks.some((ch) => ch.status === 'stalled');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ok, checks }, ok ? 200 : 503);
+  });
+
+  // --- GET /health/latency ---------------------------------------------------
+  // Same 2026-08-10 owner directive, for the latency-probe side: "monitor
+  // that ALL latency providers are being probed" — a single quiet provider
+  // must page. Scoped, public, unauthenticated, and the second (of two) of
+  // the UptimeRobot monitors this pair of endpoints exists for.
+  r.get('/health/latency', async (c) => {
+    const check = (await checkPipelineHealth(c.env)).checks.find((ch) => ch.id === 'latency_probes') ?? null;
+    // Pages on 'stalled' OR 'degraded': latency_probes already reserves
+    // 'degraded' for a specific provider having gone silent rather than a
+    // query hiccup, so both states are a real outage worth paging on.
+    // 'unknown' (uncollected) stays 200.
+    const ok = check === null || (check.status !== 'stalled' && check.status !== 'degraded');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ok, check }, ok ? 200 : 503);
+  });
+
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
