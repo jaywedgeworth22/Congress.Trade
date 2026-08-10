@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from checkbox import ink_ratio
+from form_chrome import is_form_chrome_asset
 from grid_ptr import BRACKET_RANGES, analyze_grid, row_bracket, row_type
 from ocr_backends import OcrBackend, extract_dates, get_backend
 
@@ -261,6 +262,14 @@ def extract_pdf(
                 all_tx.extend(page_txs)
             except Exception as e:
                 logger.exception("Page %d extract failed: %s", i, e)
+        before = len(all_tx)
+        all_tx = [t for t in all_tx if not is_form_chrome_asset(t.assetName)]
+        dropped = before - len(all_tx)
+        if dropped:
+            logger.info(
+                "extract_pdf %s: dropped %d form-chrome row(s) (letterhead/header)",
+                pdf_path, dropped,
+            )
         logger.info(
             "extract_pdf %s: %d pages, %d rows via %s",
             pdf_path, len(pages), len(all_tx), ocr.name if hasattr(ocr, "name") else ocr_backend,

@@ -425,7 +425,7 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).not.toContain('low_confidence');
   });
 
-  it('routes header-contaminated asset names to review', async () => {
+  it('drops pure form-chrome rows as extract_empty (not fake review trades)', async () => {
     const { env, cap } = makeEnv([{ ticker: 'GD', name: 'General Dynamics Corporation', aliases: '[]' }]);
     const result = await normalize(env, filing(), [
       tx({
@@ -436,10 +436,36 @@ describe('normalize', () => {
     ]);
 
     expect(result.needsReview).toBe(true);
-    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(result.transactions).toHaveLength(0);
+    expect(result.minConfidence).toBe(0);
     expect(cap.insertedTx).toHaveLength(0);
     expect(cap.reviewRows).toHaveLength(1);
-    expect(String(cap.reviewRows[0][1])).toContain('bad_asset_name');
+    const reason = String(cap.reviewRows[0][1]);
+    expect(reason).toContain('form_chrome_only');
+    expect(reason).toContain('extract_empty_failure');
+    // Must not park as a soft "bad_asset_name" fake trade for humans/cascade.
+    expect(reason).not.toContain('bad_asset_name');
+  });
+
+  it('drops form-chrome rows and still publishes remaining real trades', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '["Apple"]' }]);
+    const result = await normalize(env, filing(), [
+      tx({
+        assetName:
+          'Clerk of the House of Representatives + Legislative Resource Center * B81 Cannon Building',
+        ticker: null,
+        txDate: null,
+        confidence: 0.25,
+      }),
+      tx({ ticker: 'AAPL', assetName: 'Apple Inc.', confidence: 0.97 }),
+    ]);
+
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].ticker).toBe('AAPL');
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.reviewRows).toHaveLength(0);
   });
 
   it('routes unreadable or missing asset names to review instead of publishing a guessed row', async () => {
