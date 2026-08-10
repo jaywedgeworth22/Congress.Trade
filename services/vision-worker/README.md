@@ -15,7 +15,8 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 ## Features
 
 - Heartbeats → `POST /api/admin/local-worker/heartbeat`
-- Polls → `GET /api/admin/scanned-filings/pending`
+- Polls → `GET /api/admin/scanned-filings/pending` (**stored-copy only**: requires `raw_object_key`)
+- Downloads → `GET /api/admin/filings/:docId/raw` (R2 bytes; **never** Clerk/eFD/OGE)
 - Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`)
 
 ## Env
@@ -31,7 +32,30 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 | `CONGRESS_TRADE_API_URL` | `http://localhost:8787` | Use `https://congress.trade` in launchd |
 | `ADMIN_TOKEN` | — | `CT_ADMIN_TOKEN` from `~/.secrets/` |
 | `WORKER_ID` | `local_mac_1` | |
-| `MAX_DOCS_PER_POLL` | `2` | |
+| `MAX_DOCS_PER_POLL` | `2` | Log line when pending > cap |
+| `MAX_ATTEMPTS` | `3` | Per-doc retries before `local_vision_exhausted` park |
+| `BACKOFF_BASE_SEC` | `90` | Exponential: base × 2^(attempt−1) between tries |
+| `STATE_FILE` | `~/vision-worker/attempt-state.json` | Local attempt ledger |
+| `EXHAUSTED_ALERT_THRESHOLD` | `5` | Pushover when parked count crosses |
+| `PUSHOVER_APP_TOKEN` / `PUSHOVER_USER_KEY` | — | Publish + exhausted alerts only |
+
+### Retry / park (defect fix 2026-08-10)
+
+Unbounded re-attempts of the same 0-tx docs burned xAI subscription quota and
+flooded Grok Build session history. That is a **defect**, not a tuning preference.
+
+1. Each doc gets at most `MAX_ATTEMPTS` local-vision tries (download / transcription /
+   zero-row / submit failure all count).
+2. Between attempts: exponential backoff; worker logs `cap: backoff skip` / `cap: attempt failed`.
+3. After exhaust: `POST /api/admin/local-vision-park` with honest class
+   `local_vision_exhausted,scanned_pdf_vision_spend` (unresolved review row —
+   lands in the #1575 vision-spend bucket; does **not** fake-resolve as rejected).
+4. Pending query excludes parked docs so the spin stops.
+5. Heartbeat continues when the queue is empty (lane never silently off).
+
+**Grok CLI sessions:** there is no `--no-history` / ephemeral flag on `grok -p`
+(verified 2026-08-10). Headless runs may still appear in the Grok Build chat list;
+we do not hack around that.
 
 ## Installation (launchd)
 

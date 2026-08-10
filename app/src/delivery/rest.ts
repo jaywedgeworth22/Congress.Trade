@@ -511,6 +511,42 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     );
   });
 
+  // --- GET /health/polling --------------------------------------------------
+  // Owner directive (2026-08-10): per-chamber polling liveness can never be
+  // silently off — see pipelineHealth.ts's polling_house/polling_senate/
+  // polling_executive checks. Scoped, public, unauthenticated: exists purely
+  // so one UptimeRobot HTTP monitor can page the owner on it directly (the
+  // free plan caps at 10 monitors, which is why all three chambers aggregate
+  // behind a single monitor instead of one each).
+  r.get('/health/polling', async (c) => {
+    const pipeline = await checkPipelineHealth(c.env);
+    const checks = pipeline.checks.filter(
+      (ch) => ch.id === 'polling_house' || ch.id === 'polling_senate' || ch.id === 'polling_executive',
+    );
+    // Only 'stalled' pages. 'unknown' and 'degraded' stay 200 so a transient
+    // collection blip doesn't flap the pager — the polling_* checks don't
+    // emit 'degraded' today anyway (each chamber is binary live/not-live).
+    const ok = !checks.some((ch) => ch.status === 'stalled');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ok, checks }, ok ? 200 : 503);
+  });
+
+  // --- GET /health/latency ---------------------------------------------------
+  // Same 2026-08-10 owner directive, for the latency-probe side: "monitor
+  // that ALL latency providers are being probed" — a single quiet provider
+  // must page. Scoped, public, unauthenticated, and the second (of two) of
+  // the UptimeRobot monitors this pair of endpoints exists for.
+  r.get('/health/latency', async (c) => {
+    const check = (await checkPipelineHealth(c.env)).checks.find((ch) => ch.id === 'latency_probes') ?? null;
+    // Pages on 'stalled' OR 'degraded': latency_probes already reserves
+    // 'degraded' for a specific provider having gone silent rather than a
+    // query hiccup, so both states are a real outage worth paging on.
+    // 'unknown' (uncollected) stays 200.
+    const ok = check === null || (check.status !== 'stalled' && check.status !== 'degraded');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ok, check }, ok ? 200 : 503);
+  });
+
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
@@ -1331,31 +1367,15 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
     [docId],
   );
 
-  let fallbackUrl = filingRow?.source_url;
-  if (!fallbackUrl) {
-    const s = String(docId || '');
-    if (s.startsWith('S-')) {
-      fallbackUrl = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
-    } else {
-      const m = /^H-(\d{4})-(\d+)$/.exec(s);
-      if (m) {
-        const num = parseInt(m[2], 10);
-        if (num >= 20000000 && num < 30000000) {
-          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/${m[1]}/${m[2]}.pdf`;
-        } else {
-          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/${m[1]}/${m[2]}.pdf`;
-        }
-      }
-    }
-  }
-
+  // STORED COPY ONLY (2026-08-10): never 302 to Clerk/eFD/OGE. Redirecting
+  // browsers (and any intermediate crawlers) at primary sources burns IP
+  // reputation and can serve a different document than the one we extracted.
+  // If we have not stored the bytes yet, 404 honestly.
   if (!filingRow || !filingRow.raw_object_key) {
-    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
     return c.json({ error: 'document not found or not fetched' }, 404);
   }
   const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
   if (!obj) {
-    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
     return c.json({ error: 'document not found in storage' }, 404);
   }
 
@@ -1365,6 +1385,7 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
     'content-disposition': 'inline',
     'cache-control': 'public, max-age=86400, immutable',
     'x-content-type-options': 'nosniff',
+    'x-congress-trade-source': 'stored-raw',
   };
   // Stored senate filings are text/html authored by a third party (eFD).
   // Serving them inline from our origin must never execute their markup in

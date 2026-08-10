@@ -228,14 +228,19 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(fresh).toBe(true);
     });
 
-    it('GET /api/admin/scanned-filings/pending returns pending scanned filings', async () => {
+    it('GET /api/admin/scanned-filings/pending returns pending scanned filings with stored copy only', async () => {
       const app = createAdminApp();
       const env = makeEnv();
       const nowIso = new Date().toISOString();
 
       await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-pending-1', 'house', 'https://example.com/1.pdf', 'raw/scanned-pending-1.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
+
+      // No raw_object_key → must NOT appear (workers must not re-hit source).
+      await d1.prepare(
         `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind('scanned-pending-1', 'house', 'https://example.com/1.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
+      ).bind('scanned-no-raw-1', 'house', 'https://clerk.example/ghost.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
 
       const res = await app.request('/scanned-filings/pending', {
         method: 'GET',
@@ -243,10 +248,17 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       }, env as never);
 
       expect(res.status).toBe(200);
-      const json = await res.json() as { ok: boolean; count: number; filings: Array<{ doc_id: string }> };
+      const json = await res.json() as {
+        ok: boolean;
+        count: number;
+        filings: Array<{ doc_id: string; stored_document_url?: string; raw_object_key?: string }>;
+      };
       expect(json.ok).toBe(true);
       expect(json.count).toBe(1);
       expect(json.filings[0].doc_id).toBe('scanned-pending-1');
+      expect(json.filings[0].raw_object_key).toBe('raw/scanned-pending-1.pdf');
+      expect(json.filings[0].stored_document_url).toBe('/api/admin/filings/scanned-pending-1/raw');
+      expect(json.filings.map((f) => f.doc_id)).not.toContain('scanned-no-raw-1');
     });
 
     it('GET /api/admin/scanned-filings/pending includes expired waits and extract_empty review scans', async () => {
@@ -256,12 +268,12 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       const past = new Date(Date.now() - 600_000).toISOString();
 
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind('scanned-expired-1', 'house', 'https://example.com/expired.pdf', 'extraction_pending_local', 'scanned_pdf', past, nowIso).run();
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-expired-1', 'house', 'https://example.com/expired.pdf', 'raw/expired.pdf', 'extraction_pending_local', 'scanned_pdf', past, nowIso).run();
 
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind('exec-empty-1', 'executive', 'https://example.com/oge.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('exec-empty-1', 'executive', 'https://example.com/oge.pdf', 'raw/oge.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
       await d1.prepare(
         `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
       ).bind('exec-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
@@ -277,6 +289,58 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       const ids = json.filings.map((f) => f.doc_id).sort();
       expect(ids).toContain('scanned-expired-1');
       expect(ids).toContain('exec-empty-1');
+    });
+
+    it('GET /api/admin/filings/:docId/raw serves stored bytes and never source-redirects', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7 stored-copy-only');
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('doc-raw-1', 'house', 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2024/999.pdf', 'raw/doc-raw-1.pdf', 'fetched', 'scanned_pdf', nowIso).run();
+
+      const envWithR2 = {
+        ...env,
+        RAW_FILES: {
+          get: async (key: string) => {
+            if (key !== 'raw/doc-raw-1.pdf') return null;
+            return {
+              httpMetadata: { contentType: 'application/pdf' },
+              body: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(pdfBytes);
+                  controller.close();
+                },
+              }),
+              arrayBuffer: async () => pdfBytes.buffer,
+            };
+          },
+        },
+      };
+
+      const res = await app.request('/filings/doc-raw-1/raw', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, envWithR2 as never);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('application/pdf');
+      expect(res.headers.get('x-congress-trade-source')).toBe('stored-raw');
+      expect(res.headers.get('location')).toBeNull();
+      const body = new Uint8Array(await res.arrayBuffer());
+      expect(new TextDecoder().decode(body).startsWith('%PDF')).toBe(true);
+
+      // Missing stored object → 404 JSON, not a 302 to Clerk.
+      const missing = await app.request('/filings/doc-missing/raw', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get('location')).toBeNull();
+      const missJson = await missing.json() as { error: string };
+      expect(missJson.error).toMatch(/stored copy/i);
     });
 
     it('POST /api/admin/ingest-local-vision normalizes and persists transactions with source=local_mac', async () => {
@@ -332,6 +396,127 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       ).bind('doc-local-vision-1').first<{ ingest_status: string }>();
 
       expect(filingRow?.ingest_status).toBe('persisted');
+    });
+
+    it('GET /api/admin/scanned-filings/pending excludes local_vision_exhausted parks', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, error, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        'scanned-exhausted-1',
+        'house',
+        'https://example.com/exhausted.pdf',
+        'raw/exhausted.pdf',
+        'needs_review',
+        'scanned_pdf',
+        'local_vision_exhausted: attempts=3 last=zero_transactions worker=local_mac_1',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('scanned-exhausted-1', 'local_vision_exhausted,scanned_pdf_vision_spend', 0, nowIso).run();
+
+      // Control: still-pending extract_empty should remain visible.
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-empty-1', 'house', 'https://example.com/empty.pdf', 'raw/empty.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('scanned-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const res = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as { ok: boolean; filings: Array<{ doc_id: string }> };
+      expect(json.ok).toBe(true);
+      const ids = json.filings.map((f) => f.doc_id);
+      expect(ids).toContain('scanned-empty-1');
+      expect(ids).not.toContain('scanned-exhausted-1');
+    });
+
+    it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        'doc-park-1',
+        'house',
+        'https://example.com/park.pdf',
+        'extraction_pending_local',
+        'scanned_pdf',
+        new Date(Date.now() + 600_000).toISOString(),
+        nowIso,
+      ).run();
+      // Prior empty extract that was spinning the worker.
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+      ).bind('doc-park-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const res = await app.request('/local-vision-park', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'doc-park-1',
+          workerId: 'local_mac_1',
+          attempts: 3,
+          lastError: 'zero_transactions',
+          extractor: 'local_grok_cli_v1',
+        }),
+      }, env as never);
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        ok: boolean;
+        docId: string;
+        reason: string;
+        ingestStatus: string;
+      };
+      expect(json.ok).toBe(true);
+      expect(json.docId).toBe('doc-park-1');
+      expect(json.reason).toBe('local_vision_exhausted,scanned_pdf_vision_spend');
+      expect(json.ingestStatus).toBe('needs_review');
+
+      const filing = await d1.prepare(
+        `SELECT ingest_status, error, local_wait_expires_at FROM filings WHERE doc_id = ?`
+      ).bind('doc-park-1').first<{
+        ingest_status: string;
+        error: string | null;
+        local_wait_expires_at: string | null;
+      }>();
+      expect(filing?.ingest_status).toBe('needs_review');
+      expect(filing?.error).toMatch(/^local_vision_exhausted:/);
+      expect(filing?.local_wait_expires_at).toBeNull();
+
+      const review = await d1.prepare(
+        `SELECT reason, resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?`
+      ).bind('doc-park-1').first<{
+        reason: string;
+        resolved: number;
+        resolution_kind: string | null;
+        resolution_reason: string | null;
+      }>();
+      expect(review?.reason).toContain('local_vision_exhausted');
+      expect(review?.reason).toContain('scanned_pdf_vision_spend');
+      // Unresolved — does not trip review_resolution_integrity (resolved-without-reason).
+      expect(review?.resolved).toBe(0);
+      expect(review?.resolution_kind == null || review?.resolution_kind === '').toBe(true);
+
+      // Pending queue must drop the parked doc.
+      const pendingRes = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      const pending = await pendingRes.json() as { filings: Array<{ doc_id: string }> };
+      expect(pending.filings.map((f) => f.doc_id)).not.toContain('doc-park-1');
     });
 
     it('POST /api/admin/ingest-local-vision accepts source=server_cpu from Coolify CPU worker', async () => {
