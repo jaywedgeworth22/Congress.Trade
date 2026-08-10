@@ -15,6 +15,10 @@ import type { Env, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { parseAmountRange } from './amounts.ts';
 import { parseTruncationAwareJson, fetchWithRetry } from './visionLlm.ts';
+import {
+  buildOpenRouterClassifier,
+  openRouterAttributionHeaders,
+} from '../shared/openRouterAttribution.ts';
 
 const EFD_MEDIA_HOST = 'efd-media-public.senate.gov';
 const DEFAULT_MODEL = 'x-ai/grok-4.5';
@@ -126,12 +130,20 @@ export async function extractFromSenatePaperMedia(
     content.push({ type: 'image_url', image_url: { url } });
   }
 
+  const classifierEnrichment = buildOpenRouterClassifier(env, {
+    service: 'senatePaperMedia',
+    feature: 'senate-paper-ocr',
+    keyRef: 'OPENROUTER_API_KEY',
+  });
   const body = {
     model,
     messages: [{ role: 'user', content }],
     temperature: 0,
     max_tokens: 8000,
     usage: { include: true },
+    // Keep all CT OpenRouter traffic under one app title for Activity /
+    // Apps analytics; differentiate call sites via trace.feature instead.
+    ...classifierEnrichment,
   };
 
   const res = await fetchWithRetry(
@@ -141,8 +153,7 @@ export async function extractFromSenatePaperMedia(
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://congress.trade',
-        'X-Title': 'Congress.Trade senate paper media',
+        ...openRouterAttributionHeaders(),
       },
       body: JSON.stringify(body),
       signal: opts.signal,

@@ -143,6 +143,12 @@ interface MeasuredThirdPartyUsageFields {
   confidence?: ThirdPartyUsageTelemetryEvent['confidence'];
   metadata?: Record<string, string | number | boolean | null>;
   /**
+   * Secret-name alias for the key that produced this measurement (never the
+   * raw secret). Usage-Monitor key attribution binds this to a project/app —
+   * e.g. OPENROUTER_API_KEY → congress-trade. Optional.
+   */
+  producerKeyRef?: string;
+  /**
    * Provider-side call/generation id (e.g. OpenRouter's `id` on a completions
    * response), for monitor-side spend verification (`GET
    * /api/v1/generation?id=...`). Callers must pass `undefined` — never `""`
@@ -398,6 +404,7 @@ function baseEvent(
     billingMode: ThirdPartyUsageTelemetryEvent['billingMode'];
     confidence: ThirdPartyUsageTelemetryEvent['confidence'];
     providerRequestId?: string;
+    producerKeyRef?: string;
   },
 ): ThirdPartyUsageTelemetryEvent {
   const service = stableTag(input.service, 'external-api');
@@ -405,6 +412,9 @@ function baseEvent(
   const idempotencyKey = input.idempotencyKey
     ? stableTag(input.idempotencyKey, 'ct-third-party')
     : eventId('ct-third-party');
+  const producerKeyRef = input.producerKeyRef?.trim()
+    ? stableTag(input.producerKeyRef, 'key-ref')
+    : undefined;
   return {
     eventId: idempotencyKey,
     environment: environmentName(env),
@@ -412,6 +422,7 @@ function baseEvent(
     service,
     project: 'congress-trade',
     label: operation,
+    ...(producerKeyRef ? { producerKeyRef } : {}),
     billingMode: input.billingMode,
     metricType: input.metricType,
     confidence: input.confidence,
@@ -999,6 +1010,13 @@ export async function recordMeasuredThirdPartyUsage(
   }
   const mapped = remapOpenRouterTelemetry(usage.provider, usage.model);
 
+  // Default OpenRouter spend to the primary CT key alias so Usage-Monitor
+  // Key Attribution can bind OPENROUTER_API_KEY → congress-trade without
+  // every call site having to remember the field.
+  const defaultProducerKeyRef =
+    mapped.provider === 'openrouter' && !usage.producerKeyRef
+      ? 'OPENROUTER_API_KEY'
+      : usage.producerKeyRef;
   const event = baseEvent(env, {
     provider: mapped.provider,
     service: usage.service,
@@ -1010,6 +1028,7 @@ export async function recordMeasuredThirdPartyUsage(
     billingMode: usage.billingMode ?? 'actual',
     confidence: usage.confidence ?? 'actual',
     providerRequestId: usage.providerRequestId,
+    producerKeyRef: defaultProducerKeyRef,
   });
   event.quantity = nonNegativeFinite(usage.quantity);
   event.unit = usage.unit;
@@ -1018,6 +1037,10 @@ export async function recordMeasuredThirdPartyUsage(
   event.requests = requests == null ? undefined : Math.floor(requests);
   event.credits = nonNegativeFinite(usage.credits);
   const remappedMetadata: Record<string, string> = mapped.transport ? { transport: mapped.transport } : {};
+  // Always stamp sourceApp on metadata so dashboards can filter without
+  // depending only on the batch-level producerId.
+  remappedMetadata.sourceApp = 'congress-trade';
+  if (defaultProducerKeyRef) remappedMetadata.keyRef = defaultProducerKeyRef;
   event.metadata = safeMetadata({ ...(event.metadata ?? {}), ...(usage.metadata ?? {}), ...remappedMetadata });
   return enqueueUsageTelemetryEvent(env, event);
 }
