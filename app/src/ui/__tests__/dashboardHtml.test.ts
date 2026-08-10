@@ -3497,9 +3497,12 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain(
       "'<button onclick=\"closeAcctMobileMenu();logout()\">Sign Out</button>' +\n      acctMobileDisclaimerHtml();",
     );
+    // Guest mobile menu: Sign In/Upgrade joined in acct-auth-group, then theme,
+    // then the short footer disclaimer as the last item.
     expect(DASHBOARD_HTML).toContain(
-      "(checkoutConfigured() ? '<button class=\"btn sm\" onclick=\"closeAcctMobileMenu();openPricing()\">Upgrade</button>' : '') +\n      acctMobileDisclaimerHtml();",
+      "(checkoutConfigured() ? '<button class=\"btn sm\" type=\"button\" onclick=\"closeAcctMobileMenu();openPricing()\">Upgrade</button>' : '') +\n      '</span>' +\n      themeRowHtml(null, true) +\n      acctMobileDisclaimerHtml();",
     );
+    expect(DASHBOARD_HTML).toContain('class="acct-auth-group"');
     expect(DASHBOARD_HTML).toContain("function acctMobileDisclaimerHtml() {\n  return '<div class=\"footer-disclaimer\">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';\n}");
   });
 
