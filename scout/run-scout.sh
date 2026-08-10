@@ -59,6 +59,19 @@ export FMP_PATHS="${FMP_PATHS:-stable}"
 export STATE_FILE="${STATE_FILE:-$SCOUT_DIR/scout-state.json}"
 export LEADS_FILE="${LEADS_FILE:-$SCOUT_DIR/scout-leads.jsonl}"
 export SOURCES="${SOURCES:-house,senate}"
+# Server-first handoff: scout covers quiet/failed latency sources + raw R2 upload
+export SCOUT_RAW_UPLOAD="${SCOUT_RAW_UPLOAD:-1}"
+export SCOUT_LATENCY_ALWAYS="${SCOUT_LATENCY_ALWAYS:-0}"
+# When CT_INGEST_URL is set, derive base for scout-plan / latency-payload / raw
+if [[ -n "${CT_INGEST_URL:-}" && -z "${CT_BASE_URL:-}" ]]; then
+  export CT_BASE_URL="$(python3 - <<'PY'
+import os
+from urllib.parse import urlparse
+u=urlparse(os.environ.get("CT_INGEST_URL",""))
+print(f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else "")
+PY
+)"
+fi
 
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 if [[ -z "$NODE_BIN" ]]; then

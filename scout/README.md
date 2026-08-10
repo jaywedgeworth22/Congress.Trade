@@ -98,7 +98,23 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 | `HOUSE_PROBE_WINDOW` | `25` | docIds probed ahead of the known max |
 | `STATE_FILE` / `LEADS_FILE` | `./scout-state.json` / `./scout-leads.jsonl` | persistence |
 | `CT_INGEST_URL` / `CT_INGEST_TOKEN` | — | optional: POST each detection to the app |
+| `CT_BASE_URL` | derived from `CT_INGEST_URL` | base for scout-plan / latency-payload / raw |
 | `CT_INGEST_LATENCY_ONLY` | unset | set `1` to stamp latency only (no filings insert/enqueue) |
+| `SCOUT_LATENCY_ALWAYS` | off | set `1` to always post FMP/QQ/UW payloads (ignore server needScout) |
+| `SCOUT_RAW_UPLOAD` | on | download filing PDF/HTML and POST to R2 when residential access works |
+| `SCOUT_RAW_MAX_BYTES` | 20MB | max raw upload size |
+
+## Server-first latency + residential fallback
+
+1. **Server** (`runDisclosureLatencyProbe` on cron) polls FMP / UW / Quiver when it can.
+2. Outcomes are recorded in CONFIG_KV. Quiet (>6h), errors, or missing keys set `needScout`.
+3. **Mac scout** calls `GET /api/ingest/scout-plan` each cycle. For each `needScout` provider it
+   polls the provider from residential egress and `POST /api/ingest/latency-payload` with raw
+   chamber JSON (server re-parses with the same parsers as the cron probe).
+4. **Raw files (R2, not Backblaze):** when the scout detects a filing (or the plan lists a filing
+   missing `raw_object_key` / stuck on 403-class fetch), it downloads the PDF/HTML and
+   `POST /api/ingest/raw` so Coolify never has to hit Imperva-blocked Senate/House from a
+   datacenter IP.
 
 ## Feeding the app (official residential ingest)
 
