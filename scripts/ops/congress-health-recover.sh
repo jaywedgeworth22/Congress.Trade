@@ -56,6 +56,32 @@ log() {
 
 now() { date +%s; }
 
+# Pushover alert for give-up paths. Silence is the failure mode this guards:
+# 2026-08-10 the watchdog logged an unrecoverable outage every 5 minutes for
+# ~7 hours to a journal nobody reads, and nothing paged.
+# Rate-limited so a stuck outage does not spam.
+notify() {
+  local msg="$1" title="${2:-congress.trade}"
+  if [[ -z "${PUSHOVER_APP_TOKEN:-}" || -z "${PUSHOVER_USER_KEY:-}" ]]; then
+    return 0
+  fi
+  local stamp_file="$STATE_DIR/last_notify"
+  local last=0
+  [[ -f "$stamp_file" ]] && last=$(cat "$stamp_file" 2>/dev/null || echo 0)
+  if [[ $(( $(now) - last )) -lt "${NOTIFY_MIN_INTERVAL_SEC:-1800}" ]]; then
+    return 0
+  fi
+  now > "$stamp_file"
+  curl -sS -m 15 -o /dev/null \
+    --form-string "token=${PUSHOVER_APP_TOKEN}" \
+    --form-string "user=${PUSHOVER_USER_KEY}" \
+    --form-string "title=${title}" \
+    --form-string "message=${msg}" \
+    --form-string "priority=1" \
+    https://api.pushover.net/1/messages.json >/dev/null 2>&1 \
+    || log "warn: pushover notify failed"
+}
+
 is_deploy_active() {
   # Coolify builder / nixpacks containers indicate a live deploy.
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eqi 'nixpacks|coolify-builder|buildkit'; then
@@ -202,21 +228,30 @@ remediate() {
   n=$(restarts_last_hour)
   if [[ "$n" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
     log "remediate: skipped (already $n restarts in last hour; max $MAX_RESTARTS_PER_HOUR)"
+    notify "Health failing but restart budget is spent ($n/$MAX_RESTARTS_PER_HOUR this hour). Not self-healing — needs a human." "congress.trade DOWN"
     return 0
   fi
 
-  local ok=1
-  if ! restart_via_docker; then
-    ok=0
+  local docker_ok=1 api_ok=1
+  restart_via_docker || docker_ok=0
+  # Coolify API is the ONLY path that recovers a container that was REMOVED
+  # rather than stopped — find_app_container cannot match what does not exist.
+  restart_via_coolify_api || api_ok=0
+
+  # Do not spend hourly budget on a remediation that did nothing. Before this,
+  # a no-op (no container + no token) still burned a slot, so four no-ops
+  # locked out recovery for the rest of the hour.
+  if [[ "$docker_ok" -eq 0 && "$api_ok" -eq 0 ]]; then
+    log "remediate: FAILED — no container to restart and no Coolify API fallback (COOLIFY_TOKEN set? ${COOLIFY_TOKEN:+yes}${COOLIFY_TOKEN:-no})"
+    notify "Cannot self-heal: no congress-app container and Coolify API restart unavailable. Manual redeploy needed." "congress.trade DOWN"
+    return 1
   fi
-  # Best-effort Coolify API (docker path is primary on the host).
-  restart_via_coolify_api || true
 
   local ts
   ts=$(now)
   echo "$ts" >> "$(restart_timestamps_file)"
   echo "$ts" > "$(last_restart_file)"
-  log "remediate: recorded restart ts=$ts docker_ok=$ok"
+  log "remediate: recorded restart ts=$ts docker_ok=$docker_ok api_ok=$api_ok"
 
   # Wait for recovery window before counting more failures.
   sleep 45
@@ -225,6 +260,7 @@ remediate() {
     FAILS=0
   else
     log "remediate: health still down after restart"
+    notify "Restarted congress-app but /api/health is still failing." "congress.trade DOWN"
   fi
 }
 
