@@ -602,8 +602,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table thead th .sort-ind { font-size: 10px; opacity: .55; margin-left: 2px; }
   .people-table thead th.sort-asc .sort-ind::after { content: '▲'; opacity: 1; }
   .people-table thead th.sort-desc .sort-ind::after { content: '▼'; opacity: 1; }
-  .people-table tbody tr[data-member] { cursor: pointer; }
-  .people-table tbody tr[data-member]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .people-table tbody tr[data-member], .people-table tbody tr[data-asset] { cursor: pointer; }
+  .people-table tbody tr[data-member]:hover td, .people-table tbody tr[data-asset]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .people-table th:first-child, .people-table td:first-child { text-align: left; }
+  .people-table td { vertical-align: middle; }
   .pager { margin-top:14px; justify-content:space-between; }
   .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
@@ -2336,7 +2338,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <div class="section">
       <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em>  <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation.</p>
+      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above).&nbsp; Shown as an educational observation.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
@@ -2377,7 +2379,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
       <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <em>disclosed</em>, shown as an <strong>average</strong> relative return <strong>(if returns equal the S&amp;P then 0%)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <em>disclosed</em>, shown as an <strong>average</strong> relative return <strong>(if returns equal the S&amp;P then 0%)</strong>.&nbsp; A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
@@ -2405,7 +2407,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Disclosure timeliness -->
     <details class="section trends-fold" open>
       <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
-      <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
+      <p class="sub">Days from trade to filing.&nbsp; The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
         <div class="timeliness-panel">
@@ -2426,7 +2428,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Committee conflicts (journalistic accountability lens) -->
     <details class="section trends-fold" open>
       <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></summary>
-      <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map). Observational — not evidence of impropriety.</p>
+      <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
         <tbody id="trConflicts"><tr><td colspan="6" class="state">Loading…</td></tr></tbody>
@@ -2440,28 +2442,40 @@ ${speedProofSectionHtml(false)}
   <section class="view" id="view-people" role="tabpanel" aria-labelledby="tab-people" aria-hidden="true">
     <div class="section">
       <h3>Directory</h3>
-      <p class="sub">Look up members of Congress and executive filers. Search by name, state (full or abbrev), or party. Click a column heading to sort; click a name for their profile and trades.</p>
+      <p class="sub" id="dirSub">Look up members of Congress and executive filers.&nbsp; Search by name, state (full or abbrev), or party.&nbsp; Click a column heading to sort; click a name for their profile and trades.</p>
+      <div class="seg" id="dirMode" role="group" aria-label="Directory mode" style="margin-bottom:10px">
+        <button type="button" data-mode="people" class="on" onclick="setDirectoryMode('people')">People</button>
+        <button type="button" data-mode="assets" onclick="setDirectoryMode('assets')">Assets</button>
+      </div>
       <div class="toolbar" style="margin-bottom:12px">
-        <input id="peopleQ" placeholder="Search name, ticker, state, party… any order" aria-label="Search directory" style="min-width:220px;flex:1" oninput="filterPeopleDirectory()" />
+        <input id="peopleQ" placeholder="Search name, state, party… any order" aria-label="Search directory" style="min-width:220px;flex:1" oninput="filterDirectory()" />
         <select id="peopleChamber" onchange="filterPeopleDirectory()" aria-label="Chamber filter">
-          <option value="">All branches</option>
+          <option value="">All Branches</option>
           <option value="house">House</option>
           <option value="senate">Senate</option>
           <option value="executive">Executive</option>
         </select>
-        <button class="btn ghost sm" onclick="loadPeopleDirectory()">Refresh</button>
+        <button class="btn ghost sm" onclick="refreshDirectory()">Refresh</button>
       </div>
-      <div class="table-wrap people-table-wrap"><table id="peopleTable" class="people-table">
+      <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
           <th data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
-          <th data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch">Branch <span class="sort-ind"></span></th>
-          <th data-sort="party" onclick="sortPeopleDirectory('party')" title="Sort by party">Party <span class="sort-ind"></span></th>
-          <th data-sort="state" onclick="sortPeopleDirectory('state')" title="Sort by state">State <span class="sort-ind"></span></th>
+          <th data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
           <th data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
         </tr></thead>
-        <tbody id="peopleBody"><tr><td colspan="5" class="state">Loading directory…</td></tr></tbody>
+        <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="peopleCount"></p>
+      <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
+        <thead><tr id="assetsHead">
+          <th data-sort="name" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind"></span></th>
+          <th data-sort="type" onclick="sortAssetsDirectory('type')" title="Sort by type">Type <span class="sort-ind"></span></th>
+          <th data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
+          <th data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count">Politicians <span class="sort-ind"></span></th>
+        </tr></thead>
+        <tbody id="assetsBody"><tr><td colspan="4" class="state">Loading directory…</td></tr></tbody>
+      </table></div>
+      <p class="note" id="assetsCount" style="display:none"></p>
     </div>
   </section>
 
@@ -2469,7 +2483,7 @@ ${speedProofSectionHtml(false)}
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts. Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified. The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -2478,7 +2492,7 @@ ${speedProofSectionHtml(false)}
         <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
         <tbody id="reviewBody"></tbody>
       </table>
-      <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
+      <p class="note">Confirm promotes the read to the Trades tab; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it.&nbsp; Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>).&nbsp; <code>POST /api/admin/review/:docId {decision}</code></p>
       <div style="margin-top:14px">
         <h3>All Filing Decisions</h3>
         <p class="sub">Append-only filing decisions, including clean auto-published filings that never entered the review queue.</p>
@@ -2509,11 +2523,11 @@ ${speedProofSectionHtml(false)}
           <p>One open HTTPS connection streams each new filing as an event &mdash; a few lines of <code>EventSource</code>, no polling.</p>
         </div>
       </div>
-      <p class="note" style="text-align:center">Every request is HMAC-SHA256 signed, and secrets are shown once at creation. Trends, Trades, and analytics stay free.</p>
+      <p class="note">Every request is HMAC-SHA256 signed, and secrets are shown once at creation.&nbsp; Trends, trades, and analytics stay free.</p>
     </div>
     <div class="section" id="subsManage">
       <h3>Delivery</h3>
-      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>. Pause stops events without removing the delivery; Delete removes it permanently. Edit filters anytime (Premium).</p>
+      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account.&nbsp; Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.&nbsp; Pause stops events without removing the delivery; Delete removes it permanently.&nbsp; Edit filters anytime (Premium).</p>
       <div id="subsGate" class="note" role="status" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid var(--border, #ddd);border-radius:8px">
         Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
       </div>
@@ -2524,29 +2538,42 @@ ${speedProofSectionHtml(false)}
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
-        <select id="newDelivery" disabled>
+        <select id="newDelivery" disabled onchange="updateNewTargetVisibility()">
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
-        <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" disabled />
-        <input id="newTickers" placeholder="tickers (CSV, optional)" style="width:140px" disabled />
-        <input id="newMembers" placeholder="members (names/ids, optional)" style="width:180px" disabled title="Comma-separated filer ids or names" />
+        <input id="newTarget" placeholder="target URL (webhook only)" style="flex:1 1 100%;min-width:0" disabled />
+        <input id="newTickers" placeholder="tickers (CSV, optional)" style="flex:1 1 100%;min-width:0" disabled />
+        <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated filer ids or names" />
         <select id="newChambers" disabled>
-          <option value="">all chambers</option>
-          <option value="house">House only</option>
-          <option value="senate">Senate only</option>
+          <option value="">House + Senate + Executive</option>
+          <option value="house">House</option>
+          <option value="senate">Senate</option>
           <option value="house,senate">House + Senate</option>
-          <option value="executive">Executive only</option>
+          <option value="executive">Executive</option>
         </select>
         <select id="newSides" disabled title="Trade side filter (B buy / S sell / E exchange)">
-          <option value="">all sides</option>
-          <option value="B">Buys only</option>
-          <option value="S">Sales only</option>
-          <option value="E">Exchange only</option>
-          <option value="B,S">Buys + Sales</option>
-          <option value="B,S,E">Buy + Sell + Exchange</option>
+          <option value="">Buys + Sells + Exchanges</option>
+          <option value="B">Buys</option>
+          <option value="S">Sells</option>
+          <option value="E">Exchanges</option>
+          <option value="B,S">Buys + Sells</option>
         </select>
-        <input id="newMinAmt" type="number" min="0" placeholder="min $" style="width:90px" disabled title="Minimum amount bracket floor" />
-        <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
+        <label class="minamt-label" style="display:flex;align-items:center;gap:6px">Minimum Trade Size:
+          <select id="newMinAmt" disabled title="Minimum amount bracket floor">
+            <option value="">Any</option>
+            <option value="1001">$1k+</option>
+            <option value="15001">$15k+</option>
+            <option value="50001">$50k+</option>
+            <option value="100001">$100k+</option>
+            <option value="250001">$250k+</option>
+            <option value="500001">$500k+</option>
+            <option value="1000001">$1m+</option>
+            <option value="5000001">$5m+</option>
+            <option value="25000001">$25m+</option>
+            <option value="50000001">$50m+</option>
+          </select>
+        </label>
+        <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>Add New Delivery</button>
         <button class="btn ghost sm" id="subsEditCancel" type="button" hidden onclick="clearDeliveryForm(); if(el('newDelivery')) el('newDelivery').disabled=false; updateDeliveryGate();">Cancel edit</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
@@ -2562,7 +2589,7 @@ ${speedProofSectionHtml(false)}
 ${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
-      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
+      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token.&nbsp; Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests.&nbsp; Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
       <div class="row-flex">
         <input id="adminToken" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="flex:1;min-width:240px" />
         <button class="btn" onclick="saveAdminToken()">Save Token</button>
@@ -5750,6 +5777,13 @@ function meSubmit(docId) {
 }
 
 /* ============================ SUBSCRIPTIONS / DELIVERY ============================ */
+/* Target URL only applies to webhook delivery — hide the row for SSE. */
+function updateNewTargetVisibility() {
+  var deliverySel = el('newDelivery');
+  var target = el('newTarget');
+  if (!target) return;
+  target.style.display = deliverySel && deliverySel.value === 'webhook' ? '' : 'none';
+}
 function updateDeliveryGate() {
   var gate = el('subsGate');
   var createBtn = el('subsCreateBtn');
@@ -5772,17 +5806,18 @@ function updateDeliveryGate() {
   if (sidesSel) sidesSel.disabled = !canCreate;
   if (minAmtIn) minAmtIn.disabled = !canCreate;
   if (createBtn) createBtn.disabled = !canCreate;
+  updateNewTargetVisibility();
   if (!gate) return;
   if (!signedIn) {
     gate.style.display = '';
-    gate.innerHTML = 'Sign in with Google to use Delivery. Creating a webhook or SSE target requires a signed-in Premium account. '
+    gate.innerHTML = 'Sign in with Google to use Delivery.&nbsp; Creating a webhook or SSE target requires a signed-in Premium account. '
       + '<button class="btn sm" onclick="openLogin()">Sign In</button>';
     if (body) body.innerHTML = stateRow(5, 'Sign in to see your deliveries.');
     return;
   }
   if (!premium) {
     gate.style.display = '';
-    gate.innerHTML = 'You are signed in. Premium is required to create or edit Delivery targets (1-month free trial · $5/mo or $50/yr). Existing deliveries still appear below. '
+    gate.innerHTML = 'You are signed in.&nbsp; Premium is required to create or edit Delivery targets (1-month free trial · $5/mo or $50/yr).&nbsp; Existing deliveries still appear below. '
       + (checkoutConfigured()
         ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
         : '<span class="muted">Billing is not configured yet.</span>');
@@ -5867,8 +5902,9 @@ function clearDeliveryForm() {
   if (el('newChambers')) el('newChambers').value = '';
   if (el('newSides')) el('newSides').value = '';
   if (el('newMinAmt')) el('newMinAmt').value = '';
-  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = '+ New delivery';
+  if (el('subsCreateBtn')) el('subsCreateBtn').textContent = 'Add New Delivery';
   if (el('subsMsg')) el('subsMsg').textContent = '';
+  updateNewTargetVisibility();
   var cancel = el('subsEditCancel');
   if (cancel) cancel.hidden = true;
 }
@@ -5883,6 +5919,7 @@ function beginEditSubscription(id) {
     el('newDelivery').disabled = true; // delivery mode is immutable after create
   }
   if (el('newTarget')) el('newTarget').value = s.targetUrl || '';
+  updateNewTargetVisibility();
   if (el('newTickers')) el('newTickers').value = (f.tickers || []).join(', ');
   if (el('newMembers')) el('newMembers').value = (f.members || []).join(', ');
   if (el('newChambers')) el('newChambers').value = (f.chambers || []).join(',');
@@ -5896,7 +5933,16 @@ function beginEditSubscription(id) {
     }
     sidesSel.value = hasExact ? sidesJoined : ((f.sides && f.sides[0]) || '');
   }
-  if (el('newMinAmt')) el('newMinAmt').value = f.minAmount != null ? String(f.minAmount) : '';
+  if (el('newMinAmt')) {
+    var minAmtSel = el('newMinAmt');
+    var minAmtStr = f.minAmount != null ? String(f.minAmount) : '';
+    // Fall back to "Any" when the stored minAmount doesn't match a bracket-floor option.
+    var hasMinAmtExact = false;
+    for (var mi = 0; mi < minAmtSel.options.length; mi++) {
+      if (minAmtSel.options[mi].value === minAmtStr) { hasMinAmtExact = true; break; }
+    }
+    minAmtSel.value = hasMinAmtExact ? minAmtStr : '';
+  }
   if (el('subsCreateBtn')) el('subsCreateBtn').textContent = 'Save changes';
   var cancel = el('subsEditCancel');
   if (cancel) cancel.hidden = false;
@@ -6078,6 +6124,7 @@ function createSubscription() {
           if (el('newSides')) el('newSides').value = '';
           if (el('newMinAmt')) el('newMinAmt').value = '';
           if (el('newDelivery')) el('newDelivery').value = 'sse';
+          updateNewTargetVisibility();
         }
         loadSubs();
       }
@@ -8539,7 +8586,7 @@ function loadPeopleDirectory() {
   var body = el('peopleBody');
   var countEl = el('peopleCount');
   if (!body) return Promise.resolve();
-  body.innerHTML = stateRow(5, 'Loading directory…');
+  body.innerHTML = stateRow(3, 'Loading directory…');
   if (countEl) countEl.textContent = '';
   var now = Date.now();
   var useCache = PEOPLE_CACHE && (now - PEOPLE_CACHE_AT) < PEOPLE_TTL_MS;
@@ -8555,7 +8602,7 @@ function loadPeopleDirectory() {
   return fetchRoster
     .then(function (d) { renderPeopleDirectory(d && d.members ? d.members : []); })
     .catch(function (e) {
-      body.innerHTML = stateRow(5, 'Could not load directory: ' + e.message);
+      body.innerHTML = stateRow(3, 'Could not load directory: ' + e.message);
     });
 }
 function sortPeopleDirectory(key) {
@@ -8621,7 +8668,7 @@ function renderPeopleDirectory(all) {
   });
   syncPeopleSortIndicators();
   if (!rows.length) {
-    body.innerHTML = stateRow(5, q || chamber ? 'No politicians match this filter.' : 'No politicians in the directory yet.');
+    body.innerHTML = stateRow(3, q || chamber ? 'No politicians match this filter.' : 'No politicians in the directory yet.');
     if (countEl) countEl.textContent = '0 shown';
     return;
   }
@@ -8630,11 +8677,16 @@ function renderPeopleDirectory(all) {
     var memberAttr = m.filerId
       ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
+    var parts = [];
+    var chLabel = chamberLabel(m.chamber);
+    if (chLabel) parts.push(chLabel);
+    if (m.party) parts.push(m.party);
+    var stateStr = m.state ? String(m.state) + (m.district ? ' - ' + String(m.district) : '') : '';
+    if (stateStr) parts.push(stateStr);
+    var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
       '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
-      '<td class="muted">' + esc(chamberLabel(m.chamber) || '—') + '</td>' +
-      '<td class="muted">' + esc(m.party || '—') + '</td>' +
-      '<td class="muted">' + esc(m.state || '—') + (m.district ? ' · ' + esc(String(m.district)) : '') + '</td>' +
+      '<td class="muted">' + esc(branchPartyState) + '</td>' +
       '<td class="muted">' + (m.txCount != null ? Number(m.txCount) : '—') + '</td></tr>';
   }).join('');
   if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
@@ -8646,7 +8698,156 @@ function filterPeopleDirectory() {
   }
   renderPeopleDirectory(PEOPLE_CACHE.members);
 }
+
+/* ---- Directory People|Assets toggle ---- */
+var DIRECTORY_MODE = 'people';
+var DIR_SUB_PEOPLE = 'Look up members of Congress and executive filers.\\u00a0 Search by name, state (full or abbrev), or party.\\u00a0 Click a column heading to sort; click a name for their profile and trades.';
+var DIR_SUB_ASSETS = 'Every ticker Congress has disclosed a trade in.\\u00a0 Search by ticker or company name.\\u00a0 Click a column heading to sort; click a row to open its profile.';
+function setDirectoryMode(mode) {
+  if (mode !== 'people' && mode !== 'assets') return;
+  DIRECTORY_MODE = mode;
+  var seg = el('dirMode');
+  if (seg) {
+    var btns = seg.querySelectorAll('button[data-mode]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('on', btns[i].getAttribute('data-mode') === mode);
+    }
+  }
+  var peopleWrap = el('peopleTableWrap');
+  var assetsWrap = el('assetsTableWrap');
+  var peopleCount = el('peopleCount');
+  var assetsCount = el('assetsCount');
+  var chamberSel = el('peopleChamber');
+  var qEl = el('peopleQ');
+  var subEl = el('dirSub');
+  var isAssets = mode === 'assets';
+  if (peopleWrap) peopleWrap.style.display = isAssets ? 'none' : '';
+  if (assetsWrap) assetsWrap.style.display = isAssets ? '' : 'none';
+  if (peopleCount) peopleCount.style.display = isAssets ? 'none' : '';
+  if (assetsCount) assetsCount.style.display = isAssets ? '' : 'none';
+  // Chamber filter only makes sense for People — hidden for Assets.
+  if (chamberSel) chamberSel.style.display = isAssets ? 'none' : '';
+  if (qEl) qEl.placeholder = isAssets ? 'Search ticker or company…' : 'Search name, state, party… any order';
+  if (subEl) subEl.textContent = isAssets ? DIR_SUB_ASSETS : DIR_SUB_PEOPLE;
+  if (isAssets) loadAssetsDirectory();
+  else filterPeopleDirectory();
+}
+function filterDirectory() {
+  if (DIRECTORY_MODE === 'assets') filterAssetsDirectory();
+  else filterPeopleDirectory();
+}
+function refreshDirectory() {
+  if (DIRECTORY_MODE === 'assets') loadAssetsDirectory();
+  else loadPeopleDirectory();
+}
 /* Directory uses data-member; global handleEntityOpenEvent covers clicks. */
+
+/* ---- Assets directory (GET /api/assets; ticker/company search + sort) ---- */
+var ASSETS_CACHE = null;
+var ASSETS_CACHE_AT = 0;
+var ASSETS_TTL_MS = 5 * 60 * 1000;
+var ASSETS_SORT = { key: 'trades', dir: -1 }; // default most-active first
+function assetMatchesQuery(a, q) {
+  var raw = String(q || '').trim().toLowerCase();
+  if (!raw) return true;
+  var tokens = raw.split(/\\s+/).filter(Boolean);
+  var ticker = String(a.ticker || '').toLowerCase();
+  var name = String(a.name || '').toLowerCase();
+  return tokens.every(function (tok) { return ticker.indexOf(tok) >= 0 || name.indexOf(tok) >= 0; });
+}
+function loadAssetsDirectory() {
+  var body = el('assetsBody');
+  var countEl = el('assetsCount');
+  if (!body) return Promise.resolve();
+  body.innerHTML = stateRow(4, 'Loading directory…');
+  if (countEl) countEl.textContent = '';
+  var now = Date.now();
+  var useCache = ASSETS_CACHE && (now - ASSETS_CACHE_AT) < ASSETS_TTL_MS;
+  var fetchRoster = useCache
+    ? Promise.resolve(ASSETS_CACHE)
+    : fetch('/api/assets', { headers: { accept: 'application/json' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) {
+          ASSETS_CACHE = d;
+          ASSETS_CACHE_AT = Date.now();
+          return d;
+        });
+  return fetchRoster
+    .then(function (d) { renderAssetsDirectory(d && d.assets ? d.assets : []); })
+    .catch(function (e) {
+      body.innerHTML = stateRow(4, 'Could not load directory: ' + e.message);
+    });
+}
+function sortAssetsDirectory(key) {
+  if (ASSETS_SORT.key === key) ASSETS_SORT.dir = -ASSETS_SORT.dir;
+  else {
+    ASSETS_SORT.key = key;
+    ASSETS_SORT.dir = (key === 'trades' || key === 'members') ? -1 : 1;
+  }
+  if (ASSETS_CACHE && ASSETS_CACHE.assets) renderAssetsDirectory(ASSETS_CACHE.assets);
+  else loadAssetsDirectory();
+}
+function assetsSortValue(a, key) {
+  if (key === 'trades') return Number(a.txCount) || 0;
+  if (key === 'members') return Number(a.memberCount) || 0;
+  if (key === 'name') return String(a.name || a.ticker || '').toLowerCase();
+  if (key === 'type') return String(a.assetClass || '').toLowerCase();
+  return '';
+}
+function syncAssetsSortIndicators() {
+  var head = el('assetsHead');
+  if (!head) return;
+  var ths = head.querySelectorAll('th[data-sort]');
+  for (var i = 0; i < ths.length; i++) {
+    var th = ths[i];
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.getAttribute('data-sort') === ASSETS_SORT.key) {
+      th.classList.add(ASSETS_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+    }
+  }
+}
+function renderAssetsDirectory(all) {
+  var body = el('assetsBody');
+  var countEl = el('assetsCount');
+  if (!body) return;
+  var qEl = el('peopleQ');
+  var q = (DIRECTORY_MODE === 'assets' && qEl) ? String(qEl.value || '').trim() : '';
+  var rows = (all || []).filter(function (a) { return assetMatchesQuery(a, q); });
+  var sk = ASSETS_SORT.key;
+  var sd = ASSETS_SORT.dir;
+  rows.sort(function (x, y) {
+    var xv = assetsSortValue(x, sk);
+    var yv = assetsSortValue(y, sk);
+    if (typeof xv === 'number' && typeof yv === 'number') return (xv - yv) * sd;
+    if (xv < yv) return -1 * sd;
+    if (xv > yv) return 1 * sd;
+    return (Number(y.txCount) || 0) - (Number(x.txCount) || 0);
+  });
+  syncAssetsSortIndicators();
+  if (!rows.length) {
+    body.innerHTML = stateRow(4, q ? 'No assets match this filter.' : 'No assets in the directory yet.');
+    if (countEl) countEl.textContent = '0 shown';
+    return;
+  }
+  body.innerHTML = rows.map(function (a) {
+    var nm = fmtCompany(a.name);
+    return '<tr class="row" data-asset="' + esc(a.ticker) + '" title="Open ' + esc(a.ticker) + '">' +
+      '<td><div class="asset-cell clickable" data-asset="' + esc(a.ticker) + '">' + tickerLogoHtml(a.ticker, nm) +
+        '<div><span class="tkr">' + esc(a.ticker) + '</span>' + (nm ? ' <span class="muted">' + esc(nm) + '</span>' : '') + '</div></div></td>' +
+      '<td class="muted">' + (a.assetClass ? esc(assetClassLabel(a.assetClass)) : '—') + '</td>' +
+      '<td class="muted">' + (a.txCount != null ? Number(a.txCount) : '—') + '</td>' +
+      '<td class="muted">' + (a.memberCount != null ? Number(a.memberCount) : '—') + '</td></tr>';
+  }).join('');
+  if (countEl) countEl.textContent = rows.length + ' of ' + (all || []).length + ' shown';
+}
+function filterAssetsDirectory() {
+  if (!ASSETS_CACHE || !ASSETS_CACHE.assets) {
+    loadAssetsDirectory();
+    return;
+  }
+  renderAssetsDirectory(ASSETS_CACHE.assets);
+}
+/* Assets directory uses data-asset; global handleEntityOpenEvent covers clicks. */
 
 /* ================= SPEED VS DATA PROVIDERS (provider scorecard) ================= */
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
@@ -10132,7 +10333,7 @@ function newBillingRequestId() {
 function pricingCopy(intent) {
   if (intent === 'alerts') return {
     title: 'Get the Filing First',
-    sub: 'Free users see filings when they check the site. Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
+    sub: 'Free users see filings when they check the site.  Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
     features: [
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
@@ -10149,7 +10350,7 @@ function pricingCopy(intent) {
   };
   return {
     title: 'Premium',
-    sub: 'The public dashboard stays free. Premium gets full-history CSV export and the filing the moment we see it.',
+    sub: 'The public dashboard stays free.  Premium gets full-history CSV export and the filing the moment we see it.',
     features: [
       'Full-history CSV export of the filtered trade feed',
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',

@@ -2493,8 +2493,8 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('id="newChambers"');
     // Create path posts real filters (not a hard-coded empty object literal alone).
     expect(DASHBOARD_HTML).toContain('payload: { delivery: delivery, targetUrl: targetUrl || null, filters: filters }');
-    expect(DASHBOARD_HTML).toContain('<option value="E">Exchange only</option>');
-    expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sales</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="E">Exchanges</option>');
+    expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sells</option>');
   });
 
   it('styles trends-fold summaries like section headers and keeps mobile bottom nav', () => {
@@ -3640,7 +3640,7 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     expect(DASHBOARD_HTML).not.toContain('Past speed doesn&rsquo;t guarantee future speed.');
     // Exactly one short <p> per delivery-card now (title + one paragraph, no p.note aside).
     const gridStart = DASHBOARD_HTML.indexOf('<div class="delivery-grid">');
-    const gridEnd = DASHBOARD_HTML.indexOf('<p class="note" style="text-align:center">', gridStart);
+    const gridEnd = DASHBOARD_HTML.indexOf('<p class="note">Every request is HMAC-SHA256 signed', gridStart);
     expect(gridStart).toBeGreaterThan(-1);
     expect(gridEnd).toBeGreaterThan(gridStart);
     const grid = DASHBOARD_HTML.slice(gridStart, gridEnd);
