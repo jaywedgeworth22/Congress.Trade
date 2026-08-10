@@ -342,17 +342,69 @@ A PDF of the filing is attached — read every page.
 """
 
 
-def download_pdf(source_url: str, dest: str) -> bool:
+def stored_document_url(filing: dict) -> str | None:
+    """Build admin URL for the durable stored copy. Never uses source_url."""
+    explicit = filing.get("stored_document_url") or filing.get("storedDocumentUrl")
+    if isinstance(explicit, str) and explicit.strip():
+        path = explicit.strip()
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return f"{API_BASE_URL}{path if path.startswith('/') else '/' + path}"
+    doc_id = filing.get("doc_id")
+    raw_key = filing.get("raw_object_key")
+    if not doc_id or not raw_key:
+        return None
+    return f"{API_BASE_URL}/api/admin/filings/{urllib.parse.quote(str(doc_id), safe='')}/raw"
+
+
+def download_stored_document(filing: dict, dest: str) -> bool:
+    """
+    Fetch the durable R2 copy via admin API. NEVER hits Clerk/eFD/OGE.
+    Accepts PDF (primary for scanned_pdf) and HTML (senate/electronic, saved too).
+    """
+    url = stored_document_url(filing)
+    if not url:
+        logger.warning(
+            "no stored copy for %s (raw_object_key missing) — refusing source re-download",
+            filing.get("doc_id"),
+        )
+        return False
+    if not ADMIN_TOKEN:
+        logger.error("ADMIN_TOKEN required to fetch stored document")
+        return False
+    # No -L follow to foreign hosts: the admin endpoint must return bytes inline.
     rc = subprocess.run(
-        ["curl", "-sS", "-o", dest, "-w", "%{http_code}", "--max-time", "90",
-         "-A", DOWNLOAD_UA, "-L", source_url],
+        [
+            "curl", "-sS", "-o", dest, "-w", "%{http_code}",
+            "--max-time", "90",
+            "--max-redirs", "0",
+            "-A", DOWNLOAD_UA,
+            "-H", f"Authorization: Bearer {ADMIN_TOKEN}",
+            url,
+        ],
         capture_output=True, text=True,
     )
     code = (rc.stdout or "").strip()[-3:]
-    if code == "200" and os.path.exists(dest):
-        with open(dest, "rb") as f:
-            return f.read(4) == b"%PDF"
-    logger.warning("download HTTP %s for %s", code, source_url[:120])
+    if code != "200" or not os.path.exists(dest):
+        logger.warning(
+            "stored download HTTP %s for %s url=%s",
+            code, filing.get("doc_id"), url[:160],
+        )
+        return False
+    with open(dest, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"%PDF") or head.lstrip().startswith(b"<") or head.lstrip().lower().startswith(b"<!doctype"):
+        return True
+    # Some HTML is served with a BOM / whitespace; accept non-empty bodies ≥ 100B
+    # that the admin endpoint already validated as our stored object.
+    size = os.path.getsize(dest)
+    if size >= 100:
+        logger.info(
+            "stored download ok (non-pdf magic) doc=%s bytes=%d head=%r",
+            filing.get("doc_id"), size, head[:8],
+        )
+        return True
+    logger.warning("stored download too small/unrecognized for %s", filing.get("doc_id"))
     return False
 
 
@@ -693,8 +745,16 @@ def process_filing(filing: dict, state: dict) -> str:
       published | needs_review_with_rows | skipped_backoff | skipped_exhausted | failed
     """
     doc_id = filing.get("doc_id")
-    source_url = filing.get("source_url")
-    if not doc_id or not source_url:
+    if not doc_id:
+        return "failed"
+    if not filing.get("raw_object_key") and not (
+        filing.get("stored_document_url") or filing.get("storedDocumentUrl")
+    ):
+        logger.warning(
+            "skip %s: no stored copy (raw_object_key) — never re-download from source",
+            doc_id,
+        )
+        record_failure(state, doc_id, "no_stored_copy", active_engine_label())
         return "failed"
 
     entry = doc_entry(state, doc_id)
@@ -725,19 +785,19 @@ def process_filing(filing: dict, state: dict) -> str:
         return "skipped_backoff"
 
     logger.info(
-        "Processing %s (chamber=%s, engine=%s, prior_attempts=%s) ...",
+        "Processing %s (chamber=%s, engine=%s, prior_attempts=%s, via=stored-raw) ...",
         doc_id, filing.get("chamber"), VISION_ENGINE, entry.get("attempts") or 0,
     )
     extractor = active_engine_label()
     with tempfile.TemporaryDirectory(prefix="vw-") as td:
         pdf_path = os.path.join(td, "filing.pdf")
-        if not download_pdf(source_url, pdf_path):
-            record_failure(state, doc_id, "download_failed", extractor)
+        if not download_stored_document(filing, pdf_path):
+            record_failure(state, doc_id, "stored_download_failed", extractor)
             return "failed"
         pages = render_pages(pdf_path, td) if VISION_ENGINE != "openrouter" else []
         if VISION_ENGINE != "openrouter" and not pages:
-            # Still try OpenRouter with the PDF if local render failed.
-            logger.warning("page render failed for %s; OpenRouter-only attempt", doc_id)
+            # Still try OpenRouter with the stored PDF if local render failed.
+            logger.warning("page render failed for %s; OpenRouter-only attempt on stored bytes", doc_id)
         rows, extractor = transcribe(pdf_path, pages, filing)
     if rows is None:
         record_failure(state, doc_id, "transcription_failed", extractor)

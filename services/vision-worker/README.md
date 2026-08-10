@@ -15,7 +15,8 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 ## Features
 
 - Heartbeats → `POST /api/admin/local-worker/heartbeat`
-- Polls → `GET /api/admin/scanned-filings/pending`
+- Polls → `GET /api/admin/scanned-filings/pending` (**stored-copy only**: requires `raw_object_key`)
+- Downloads → `GET /api/admin/filings/:docId/raw` (R2 bytes; **never** Clerk/eFD/OGE)
 - Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`)
 
 ## Env

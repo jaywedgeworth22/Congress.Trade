@@ -228,14 +228,19 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(fresh).toBe(true);
     });
 
-    it('GET /api/admin/scanned-filings/pending returns pending scanned filings', async () => {
+    it('GET /api/admin/scanned-filings/pending returns pending scanned filings with stored copy only', async () => {
       const app = createAdminApp();
       const env = makeEnv();
       const nowIso = new Date().toISOString();
 
       await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-pending-1', 'house', 'https://example.com/1.pdf', 'raw/scanned-pending-1.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
+
+      // No raw_object_key → must NOT appear (workers must not re-hit source).
+      await d1.prepare(
         `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind('scanned-pending-1', 'house', 'https://example.com/1.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
+      ).bind('scanned-no-raw-1', 'house', 'https://clerk.example/ghost.pdf', 'extraction_pending_local', 'scanned_pdf', new Date(Date.now() + 600000).toISOString(), nowIso).run();
 
       const res = await app.request('/scanned-filings/pending', {
         method: 'GET',
@@ -243,10 +248,17 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       }, env as never);
 
       expect(res.status).toBe(200);
-      const json = await res.json() as { ok: boolean; count: number; filings: Array<{ doc_id: string }> };
+      const json = await res.json() as {
+        ok: boolean;
+        count: number;
+        filings: Array<{ doc_id: string; stored_document_url?: string; raw_object_key?: string }>;
+      };
       expect(json.ok).toBe(true);
       expect(json.count).toBe(1);
       expect(json.filings[0].doc_id).toBe('scanned-pending-1');
+      expect(json.filings[0].raw_object_key).toBe('raw/scanned-pending-1.pdf');
+      expect(json.filings[0].stored_document_url).toBe('/api/admin/filings/scanned-pending-1/raw');
+      expect(json.filings.map((f) => f.doc_id)).not.toContain('scanned-no-raw-1');
     });
 
     it('GET /api/admin/scanned-filings/pending includes expired waits and extract_empty review scans', async () => {
@@ -256,12 +268,12 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       const past = new Date(Date.now() - 600_000).toISOString();
 
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind('scanned-expired-1', 'house', 'https://example.com/expired.pdf', 'extraction_pending_local', 'scanned_pdf', past, nowIso).run();
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, local_wait_expires_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-expired-1', 'house', 'https://example.com/expired.pdf', 'raw/expired.pdf', 'extraction_pending_local', 'scanned_pdf', past, nowIso).run();
 
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind('exec-empty-1', 'executive', 'https://example.com/oge.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('exec-empty-1', 'executive', 'https://example.com/oge.pdf', 'raw/oge.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
       await d1.prepare(
         `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
       ).bind('exec-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
@@ -277,6 +289,58 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       const ids = json.filings.map((f) => f.doc_id).sort();
       expect(ids).toContain('scanned-expired-1');
       expect(ids).toContain('exec-empty-1');
+    });
+
+    it('GET /api/admin/filings/:docId/raw serves stored bytes and never source-redirects', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7 stored-copy-only');
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('doc-raw-1', 'house', 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2024/999.pdf', 'raw/doc-raw-1.pdf', 'fetched', 'scanned_pdf', nowIso).run();
+
+      const envWithR2 = {
+        ...env,
+        RAW_FILES: {
+          get: async (key: string) => {
+            if (key !== 'raw/doc-raw-1.pdf') return null;
+            return {
+              httpMetadata: { contentType: 'application/pdf' },
+              body: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(pdfBytes);
+                  controller.close();
+                },
+              }),
+              arrayBuffer: async () => pdfBytes.buffer,
+            };
+          },
+        },
+      };
+
+      const res = await app.request('/filings/doc-raw-1/raw', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, envWithR2 as never);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('application/pdf');
+      expect(res.headers.get('x-congress-trade-source')).toBe('stored-raw');
+      expect(res.headers.get('location')).toBeNull();
+      const body = new Uint8Array(await res.arrayBuffer());
+      expect(new TextDecoder().decode(body).startsWith('%PDF')).toBe(true);
+
+      // Missing stored object → 404 JSON, not a 302 to Clerk.
+      const missing = await app.request('/filings/doc-missing/raw', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get('location')).toBeNull();
+      const missJson = await missing.json() as { error: string };
+      expect(missJson.error).toMatch(/stored copy/i);
     });
 
     it('POST /api/admin/ingest-local-vision normalizes and persists transactions with source=local_mac', async () => {
@@ -340,11 +404,12 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       const nowIso = new Date().toISOString();
 
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, error, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, error, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         'scanned-exhausted-1',
         'house',
         'https://example.com/exhausted.pdf',
+        'raw/exhausted.pdf',
         'needs_review',
         'scanned_pdf',
         'local_vision_exhausted: attempts=3 last=zero_transactions worker=local_mac_1',
@@ -356,8 +421,8 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
 
       // Control: still-pending extract_empty should remain visible.
       await d1.prepare(
-        `INSERT INTO filings (doc_id, chamber, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind('scanned-empty-1', 'house', 'https://example.com/empty.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind('scanned-empty-1', 'house', 'https://example.com/empty.pdf', 'raw/empty.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
       await d1.prepare(
         `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
       ).bind('scanned-empty-1', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
