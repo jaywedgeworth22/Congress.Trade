@@ -526,11 +526,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
   .tkr-logo.glyph { display: inline-flex; align-items: center; justify-content: center; color: var(--text); font-size: 1.05em; }
   .tkr-logo.glyph.tile { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
-  /* Compact company definition grid (kills the right-side whitespace). */
-  .def-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px 16px; margin: 0; }
-  .def-item { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .def-k { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
-  .def-v { color: var(--text); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+  /* Compact company definition grid: label/value on the SAME line (owner:
+     stacked label-above-value "is impossible to look at without getting a
+     headache"). .def-item uses display:contents so its .def-k/.def-v children
+     become direct grid children and line up in the shared two-column grid —
+     no markup change needed in companySectionHtml(). */
+  .def-grid { display: grid; grid-template-columns: 35% 1fr; gap: 7px 14px; margin: 0; }
+  .def-item { display: contents; }
+  .def-k { min-width: 0; color: var(--text-dim); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center; }
+  .def-v { min-width: 0; color: var(--text); font-weight: 600; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; align-self: center; }
   /* Trade-drawer header — makes a tapped trade read as a TRANSACTION, not a company. */
   .drawer-trade-head { padding: 2px 0 6px; }
   .drawer-kicker { display: inline-block; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
@@ -901,9 +905,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-section { border-top:1px solid var(--border); padding:14px 0; }
   .drawer-section.first { border-top:none; padding-top:6px; }
   .drawer-section h3 { margin:0 0 10px; font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.6px; }
-  .drawer-kv { display:grid; grid-template-columns:auto 1fr; gap:7px 14px; margin:0; font-size:13px; }
-  .drawer-kv dt { color:var(--text-dim); white-space:nowrap; }
-  .drawer-kv dd { margin:0; text-align:right; word-break:break-word; }
+  /* Two-column definition grid: label + value stay on the SAME line (owner:
+     the old stacked "Name" / value-on-next-line layout "is impossible to
+     look at without getting a headache"). Labels are a dim small-caps-style
+     eyebrow; values read in normal strong text right next to them, e.g.
+     "Filed:  Nov 7, 2024". ~35% label column holds on phones down to 375px. */
+  .drawer-kv { display:grid; grid-template-columns:35% 1fr; gap:8px 14px; margin:0; font-size:13px; align-items:center; }
+  .drawer-kv dt { color:var(--text-dim); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .drawer-kv dd { margin:0; text-align:left; word-break:break-word; font-weight:600; color:var(--text); }
   .tier-gate-note { font-size:12px; color:var(--text-dim); background:var(--panel-2); border:1px dashed var(--border); border-radius:8px; padding:9px 11px; line-height:1.5; }
   /* Owner punch list #18(a): the ticker drawer's 5 stat cards (grid-cards
      reused from the Trends KPI cards) left a big dead zone below each value —
@@ -1584,8 +1593,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .party-abbr { display: inline; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
-    .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
-    .drawer-kv dd { text-align: left; }
+    /* Keep the label/value pair on one line at phone widths too — this used to
+       collapse to a single column (1fr), which is exactly the stacked layout
+       the owner flagged as unreadable. .def-grid inherits the same 35%/1fr
+       split from its base rule, so it needs no mobile override here. */
+    .drawer-kv { gap: 6px 10px; }
     .plan-grid { grid-template-columns: 1fr; }
     .toolbar .chamber-chips { grid-column: 1 / -1; }
     .sp-grid { grid-template-columns: 1fr; gap: 12px; }
@@ -2659,9 +2671,9 @@ ${speedProofSectionHtml(false)}
         Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
       </div>
       <table id="subsTable">
-        <thead><tr><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Channel</th><th>Target</th><th>Filters</th><th>Progress</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="subsBody">
-          <tr class="row"><td colspan="5" class="state">Sign in to see your deliveries.</td></tr>
+          <tr class="row"><td colspan="6" class="state">Sign in to see your deliveries.</td></tr>
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
@@ -6030,14 +6042,27 @@ function loadSubs() {
       renderSubs(USER_SUBS);
     })
     .catch(function (e) {
-      el('subsBody').innerHTML = stateRow(5, 'Could not load deliveries: ' + e.message);
+      el('subsBody').innerHTML = stateRow(6, 'Could not load deliveries: ' + e.message);
     });
+}
+/* Humanize a subscription's raw delivery cursor (an internal row-sequence
+   position, e.g. "Cursor 0" / "100,508") into what the owner actually wants
+   to know: how far delivery has progressed. Webhooks always have a real
+   position once anything has been delivered. SSE clients pick their own
+   resume position on connect (Last-Event-ID) rather than trusting a stored
+   cursor, so a 0/unset SSE cursor means "nothing delivered yet, connect to
+   pick a position" — showing "Cursor 0" there is meaningless internals, not
+   information, so it's hidden entirely rather than translated. */
+function subCursorText(s) {
+  var c = Number(s.cursor || 0);
+  if (!c || c <= 0) return '—';
+  return 'Delivered through event #' + fmtCount(c);
 }
 function renderSubs(subs) {
   var body = el('subsBody');
   if (!body) return;
   if (subs.length === 0) {
-    body.innerHTML = stateRow(5, isPremium()
+    body.innerHTML = stateRow(6, isPremium()
       ? 'No deliveries yet. Create one below — optional filters (tickers, members, chambers, sides) narrow what you receive.'
       : 'No deliveries on this account yet. Upgrade to Premium to create webhook/SSE deliveries.');
     return;
@@ -6062,6 +6087,7 @@ function renderSubs(subs) {
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
+      '<td class="muted">' + esc(subCursorText(s)) + '</td>' +
       '<td title="' + esc(statusHint) + '"><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + statusLabel + '</span></td>' +
       '<td class="row-flex" style="gap:6px;flex-wrap:wrap">' +
         (canEdit ? '<button class="btn ghost sm" data-sub-edit="' + esc(s.id) + '">Edit</button>' : '') +
@@ -6071,9 +6097,9 @@ function renderSubs(subs) {
     '</tr>';
   }).join('');
   if (pausedCount > 0 && pausedCount === subs.length) {
-    rows += '<tr class="row"><td colspan="5" class="note">All deliveries are paused. Resume one to receive events again, or Delete to free a slot.</td></tr>';
+    rows += '<tr class="row"><td colspan="6" class="note">All deliveries are paused. Resume one to receive events again, or Delete to free a slot.</td></tr>';
   } else if (pausedCount > 0) {
-    rows += '<tr class="row"><td colspan="5" class="note">' + pausedCount + ' paused — those targets receive nothing until Resume.</td></tr>';
+    rows += '<tr class="row"><td colspan="6" class="note">' + pausedCount + ' paused — those targets receive nothing until Resume.</td></tr>';
   }
   body.innerHTML = rows;
 }
@@ -11373,7 +11399,7 @@ applyTheme(resolveTheme(readThemePref()));
 // Initial loading states + boot.
 el('tradesBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
-el('subsBody').innerHTML = stateRow(5, 'Loading…');
+el('subsBody').innerHTML = stateRow(6, 'Loading…');
 el('healthBody').innerHTML = stateRow(9, 'Loading…');
 el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';

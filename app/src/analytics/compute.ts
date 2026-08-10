@@ -158,8 +158,10 @@ export interface MemberPerfRow {
   spxAtFiling?: number | null;
   /**
    * Calendar days from the filing (or fallback) anchor to now. Used to
-   * annualize filing-date excess the same way as the Top Performers board
-   * (365.25 / max(30, elapsedDays)).
+   * annualize filing-date excess with the same formula the Top Performers
+   * board uses for its (reference-only) annualized figure: 365.25 /
+   * max(30, elapsedDays). Top Performers itself ranks by the non-annualized,
+   * winsorized avgExcess — see avgAnnualizedExcess below.
    */
   elapsedDaysSinceFiling?: number | null;
   /** Estimated trade volume in USD for size weighting. */
@@ -186,11 +188,19 @@ export interface MemberPerfSummary {
   medianReturn: number | null;
   medianExcess: number | null;
   avgReturn: number | null;
+  /**
+   * Size-weighted average excess return. On the filing-date leg this is the
+   * SAME statistic Top Performers ranks and displays by (though this
+   * per-member computation is not asset-class filtered or winsorized the way
+   * the leaderboard SQL is — see buildMemberPerformanceLeaderboardQuery).
+   */
   avgExcess: number | null;
   /**
    * Equal-weighted average of annualized excess returns. Present on the
-   * filing-date leg so it matches Top Performers' ranking metric; null when
-   * no scored excess or when this leg does not annualize.
+   * filing-date leg using the same formula as Top Performers' reference-only
+   * annualized figure; NOT the ranking metric (Top Performers ranks by the
+   * non-annualized avgExcess above). Null when no scored excess or when this
+   * leg does not annualize.
    */
   avgAnnualizedExcess?: number | null;
 }
@@ -203,7 +213,8 @@ export interface MemberDualPerformance {
   tradeDate: MemberPerfSummary;
   /**
    * Copy-trade: if you bought when the disclosure went public. Buys only.
-   * Includes avgAnnualizedExcess aligned with Top Performers.
+   * filingDate.avgExcess is the same statistic Top Performers displays/sorts
+   * by; avgAnnualizedExcess is reference-only (see MemberPerfSummary above).
    */
   filingDate: MemberPerfSummary;
 }
