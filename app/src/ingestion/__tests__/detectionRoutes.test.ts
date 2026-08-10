@@ -13,8 +13,27 @@ vi.mock('../watcher.ts', async (importOriginal) => {
 });
 
 const recordDisclosureLatencyCandidate = vi.fn(async () => undefined);
+const ingestScoutLatencyPayload = vi.fn(async () => ({
+  upserted: 2,
+  matched: 0,
+  pending: 1,
+  errors: [],
+  provider: 'fmp',
+}));
 vi.mock('../tradeLatency.ts', () => ({
   recordDisclosureLatencyCandidate: (...args: unknown[]) => recordDisclosureLatencyCandidate(...args),
+  ingestScoutLatencyPayload: (...args: unknown[]) => ingestScoutLatencyPayload(...args),
+}));
+
+const buildScoutPlan = vi.fn(async () => ({
+  generatedAt: '2026-08-10T12:00:00.000Z',
+  latency: [],
+  latencyNeedScout: [{ provider: 'fmp', needScout: true, needScoutReason: 'quiet 87h' }],
+  rawFetch: [],
+  notes: ['Filing storage is Cloudflare R2 (RAW_FILES), not Backblaze.'],
+}));
+vi.mock('../scoutHandoff.ts', () => ({
+  buildScoutPlan: (...args: unknown[]) => buildScoutPlan(...args),
 }));
 
 import { buildDetectionRouter } from '../detectionRoutes.ts';
@@ -25,12 +44,36 @@ const okDb = {
     bind: () => ({ run: async () => ({ meta: {} }), all: async () => ({ results: [] }), first: async () => null }),
   }),
 };
-const env = { INGEST_TOKEN: 'ingest-secret', DB: okDb } as unknown as Record<string, unknown>;
+const rawPuts: Array<{ key: string; bytes: number }> = [];
+const env = {
+  INGEST_TOKEN: 'ingest-secret',
+  DB: okDb,
+  RAW_FILES: {
+    put: async (key: string, bytes: Uint8Array) => {
+      rawPuts.push({ key, bytes: bytes.byteLength });
+    },
+  },
+  INGEST_QUEUE: {
+    send: async () => undefined,
+  },
+} as unknown as Record<string, unknown>;
 
 function post(token: string | null, body: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   return app.request('/detection', { method: 'POST', headers, body: JSON.stringify(body) }, env as never);
+}
+
+function authGet(path: string, token: string | null) {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return app.request(path, { method: 'GET', headers }, env as never);
+}
+
+function authPost(path: string, token: string | null, body: unknown) {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return app.request(path, { method: 'POST', headers, body: JSON.stringify(body) }, env as never);
 }
 
 describe('POST /api/ingest/detection', () => {
@@ -203,5 +246,80 @@ describe('POST /api/ingest/detection', () => {
     const body = (await res.json()) as { ok: boolean; error: string };
     expect(body).toMatchObject({ ok: false, error: 'deferred' });
     expect(enqueueFilingNew).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/ingest/scout-plan + POST latency-payload + raw', () => {
+  beforeEach(() => {
+    buildScoutPlan.mockClear();
+    ingestScoutLatencyPayload.mockClear();
+    rawPuts.length = 0;
+  });
+
+  it('401 without token on scout-plan', async () => {
+    expect((await authGet('/scout-plan', null)).status).toBe(401);
+  });
+
+  it('returns handoff plan for the residential scout', async () => {
+    const res = await authGet('/scout-plan', 'ingest-secret');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      latencyNeedScout: Array<{ provider: string }>;
+      notes: string[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.latencyNeedScout[0]?.provider).toBe('fmp');
+    expect(body.notes.join(' ')).toMatch(/R2/);
+  });
+
+  it('accepts scout latency payloads', async () => {
+    const res = await authPost('/latency-payload', 'ingest-secret', {
+      provider: 'fmp',
+      fmpPathId: 'stable',
+      chamberJson: { house: [{ name: 'A' }], senate: [] },
+    });
+    expect(res.status).toBe(200);
+    expect(ingestScoutLatencyPayload).toHaveBeenCalledTimes(1);
+    const body = (await res.json()) as { ok: boolean; upserted: number };
+    expect(body).toMatchObject({ ok: true, upserted: 2 });
+  });
+
+  it('stores residential raw bytes in R2 for a known filing', async () => {
+    // %PDF magic so content-type sniff works
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]);
+    const b64 = Buffer.from(pdf).toString('base64');
+    const filingDb = {
+      prepare: () => ({
+        bind: (...params: unknown[]) => ({
+          first: async () =>
+            params[0] === 'H-2026-1'
+              ? { doc_id: 'H-2026-1', raw_object_key: null, ingest_status: 'discovered' }
+              : null,
+          run: async () => ({ meta: {} }),
+          all: async () => ({ results: [] }),
+        }),
+      }),
+    };
+    const envWithFiling = { ...env, DB: filingDb };
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      Authorization: 'Bearer ingest-secret',
+    };
+    const res = await app.request(
+      '/raw',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ docId: 'H-2026-1', bytesBase64: b64, contentType: 'application/pdf' }),
+      },
+      envWithFiling as never,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; rawObjectKey: string; bytes: number };
+    expect(body.ok).toBe(true);
+    expect(body.rawObjectKey).toBe('raw/H-2026-1');
+    expect(body.bytes).toBe(pdf.byteLength);
+    expect(rawPuts.some((p) => p.key === 'raw/H-2026-1')).toBe(true);
   });
 });

@@ -1,17 +1,23 @@
 /**
  * src/ingestion/detectionRoutes.ts
  *
- * POST /api/ingest/detection — the residential scout (scout/congress-scout.mjs)
- * pushes each filing it detects the instant it appears on the primary gov source
- * (House Clerk / Senate eFD). Two durable side effects, both INGEST_TOKEN-gated:
+ * Residential scout (scout/congress-scout.mjs) endpoints — all INGEST_TOKEN-gated:
  *
- *   1. Disclosure-latency candidate (congress_first_seen_at = detectedAt) so the
- *      admin latency summary can score "do we beat FMP, by how much".
- *   2. Official pipeline hand-off: INSERT OR IGNORE into filings + enqueue the
- *      same filing.new / ingestion_outbox path the cron watcher uses. This is
- *      what makes the residential Mac useful when Coolify/datacenter IPs get
- *      Imperva 403s from Senate eFD — detection stays on residential egress;
- *      storage/extraction stays on the Worker.
+ *   POST /api/ingest/detection
+ *     Push each filing the scout detects on primary gov sources. Latency
+ *     candidate + optional filings insert/enqueue (same path as the watcher).
+ *
+ *   GET  /api/ingest/scout-plan
+ *     Server-first handoff plan: which latency providers the scout must cover
+ *     (server failed / quiet) + filings still missing raw bytes in R2.
+ *
+ *   POST /api/ingest/latency-payload
+ *     Scout posts provider JSON (FMP/UW/QQ) when the server cannot poll that
+ *     source; server parses with the same parsers as the cron probe.
+ *
+ *   POST /api/ingest/raw
+ *     Scout uploads raw PDF/HTML bytes (base64) into RAW_FILES (Cloudflare R2)
+ *     when residential egress can fetch what the datacenter server cannot.
  *
  * Detection is existence + link, not extraction. Set `ingest: false` to record
  * latency only (used by pure measurement runs). Default is ingest when a
@@ -21,7 +27,18 @@ import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { recordDisclosureLatencyCandidate } from './tradeLatency.ts';
+import { get, run } from '../shared/db.ts';
+import {
+  ingestScoutLatencyPayload,
+  recordDisclosureLatencyCandidate,
+  type ProviderId,
+} from './tradeLatency.ts';
+import { buildScoutPlan } from './scoutHandoff.ts';
+import {
+  MAX_RAW_FILING_BYTES,
+  isSenateAgreementWallBytes,
+  rawKeyFor,
+} from './fetcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   enqueueFilingNew,
@@ -33,14 +50,151 @@ import {
   type InsertFilingResult,
 } from './watcher.ts';
 
+async function requireIngestToken(c: { env: Env; req: { header: (name: string) => string | undefined } }): Promise<Response | null> {
+  const token = (await resolveSecret(c.env, 'INGEST_TOKEN')).value;
+  if (!token || !(await constantTimeEqual(c.req.header('Authorization') ?? '', `Bearer ${token}`))) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+  return null;
+}
+
+function decodeBase64Bytes(b64: string): Uint8Array {
+  const cleaned = b64.replace(/\s+/g, '');
+  // atob is available in Deno/Workers; Buffer is available in Node test env.
+  if (typeof atob === 'function') {
+    const bin = atob(cleaned);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Buf = (globalThis as any).Buffer;
+  if (Buf) return new Uint8Array(Buf.from(cleaned, 'base64'));
+  throw new Error('no base64 decoder available');
+}
+
 export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
-  r.post('/detection', async (c) => {
-    const token = (await resolveSecret(c.env, 'INGEST_TOKEN')).value;
-    if (!token || !(await constantTimeEqual(c.req.header('Authorization') ?? '', `Bearer ${token}`))) {
-      return c.json({ error: 'unauthorized' }, 401);
+  r.get('/scout-plan', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    const plan = await buildScoutPlan(c.env);
+    return c.json({ ok: true, ...plan });
+  });
+
+  r.post('/latency-payload', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
     }
+    const provider = typeof body.provider === 'string' ? body.provider.trim() : '';
+    if (!provider) return c.json({ error: 'provider is required' }, 400);
+    const chamberJson =
+      body.chamberJson && typeof body.chamberJson === 'object' && !Array.isArray(body.chamberJson)
+        ? (body.chamberJson as Record<string, unknown>)
+        : undefined;
+    const fmpPathId =
+      body.fmpPathId === 'rapidapi' || body.fmpPathId === 'stable' ? body.fmpPathId : undefined;
+    try {
+      const result = await ingestScoutLatencyPayload(c.env, {
+        provider: provider as ProviderId,
+        observedAt: typeof body.observedAt === 'string' ? body.observedAt : undefined,
+        chamberJson: chamberJson as Parameters<typeof ingestScoutLatencyPayload>[1]['chamberJson'],
+        fmpPathId,
+        source: 'scout',
+      });
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  r.post('/raw', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const docId = typeof body.docId === 'string' && body.docId.trim() ? body.docId.trim() : null;
+    const b64 = typeof body.bytesBase64 === 'string' ? body.bytesBase64 : null;
+    if (!docId || !b64) {
+      return c.json({ error: 'docId and bytesBase64 are required' }, 400);
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = decodeBase64Bytes(b64);
+    } catch (err) {
+      return c.json({ error: `invalid base64: ${(err as Error).message}` }, 400);
+    }
+    if (bytes.byteLength === 0) return c.json({ error: 'empty payload' }, 400);
+    if (bytes.byteLength > MAX_RAW_FILING_BYTES) {
+      return c.json({ error: `payload exceeds ${MAX_RAW_FILING_BYTES} byte limit` }, 413);
+    }
+    if (isSenateAgreementWallBytes(bytes)) {
+      return c.json({ error: 'payload looks like Senate agreement wall HTML, not a filing' }, 400);
+    }
+
+    const filing = await get<{
+      doc_id: string;
+      raw_object_key: string | null;
+      ingest_status: string | null;
+    }>(c.env.DB, `SELECT doc_id, raw_object_key, ingest_status FROM filings WHERE doc_id = ?`, [docId]);
+    if (!filing) {
+      return c.json({ error: `unknown docId ${docId}; POST /api/ingest/detection first` }, 404);
+    }
+
+    const contentType =
+      typeof body.contentType === 'string' && body.contentType.trim()
+        ? body.contentType.trim()
+        : bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46
+          ? 'application/pdf'
+          : 'application/octet-stream';
+    const key = rawKeyFor(docId);
+    if (!c.env.RAW_FILES) {
+      return c.json({ error: 'RAW_FILES binding unavailable' }, 503);
+    }
+    await c.env.RAW_FILES.put(key, bytes, {
+      httpMetadata: { contentType },
+    });
+    await run(
+      c.env.DB,
+      `UPDATE filings
+          SET raw_object_key = ?, ingest_status = 'fetched', error = NULL
+        WHERE doc_id = ?`,
+      [key, docId],
+    );
+    let enqueued = false;
+    try {
+      await c.env.INGEST_QUEUE.send({ type: 'filing.fetched', docId });
+      enqueued = true;
+    } catch (err) {
+      console.warn('scout raw enqueue filing.fetched failed', docId, (err as Error).message);
+    }
+    return c.json({
+      ok: true,
+      docId,
+      rawObjectKey: key,
+      bytes: bytes.byteLength,
+      contentType,
+      enqueued,
+      previousStatus: filing.ingest_status,
+    });
+  });
+
+  r.post('/detection', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
 
     let body: Record<string, unknown>;
     try {
