@@ -1,3 +1,4 @@
+- **2026-08-10 — GROK — COMPLETED/DEPLOYED — Web UX trades chrome (#1669 `516df274`).** Export→Options (⋯) menu; Sign In/Upgrade acct-auth-group; upper-right matching-trades count; dual pagination; whole-row trade open + Politician/Company Details in drawer. UI expert review: docs/reviews/2026-08-10-web-ui-expert-review.md. Gates: dashboardHtml 219/219 + CI green. Prod build.sha short 516df274.
 - **2026-08-10 — GROK — IN PR #1669 — Web UX trades chrome + full UI expert review.** Export→Options menu; Sign In/Upgrade group; matching-trades count; dual pagination; whole-row trade open. Review: docs/reviews/2026-08-10-web-ui-expert-review.md. Branch `grok/web-ux-trades-chrome`.
 # Congress.Trade Effort Log — cross-agent board
 | 2026-08-09 | CODEX | Codex Cloud protocol bootstrap | In Progress | Repo-local setup/maintenance hooks and portable Slack/GitHub helper added; cloud Apple Notes handoff documented |
