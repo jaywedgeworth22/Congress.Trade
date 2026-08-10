@@ -3871,3 +3871,39 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
     expect(DASHBOARD_HTML).toContain("loaded rows match this page filter");
   });
 });
+
+describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout + stored review docs', () => {
+  it('splitBar spells out lowercase buys/sells instead of the number-like B/S suffixes', () => {
+    // "21B / 0S" reads like magnitudes (21 billion); the label is now
+    // pluralized words: "21 buys / 0 sells", "1 buy / 3 sells".
+    expect(DASHBOARD_HTML).toContain("pluralCount(buys, 'buy') + ' / ' + pluralCount(sells, 'sell')");
+    expect(DASHBOARD_HTML).not.toContain("buys + 'B / ' + sells + 'S'");
+  });
+
+  it('review-queue Document links open the stored copy, never the source agreement wall', () => {
+    // Both render paths (the docId/View Document pair AND the inline
+    // Document action) route through reviewDocUrl, which prefers
+    // /api/documents/:id/pdf (our stored R2 bytes; server-side source
+    // fallback) over the raw sourceUrl.
+    expect(DASHBOARD_HTML).toContain('function reviewDocUrl(r)');
+    expect(DASHBOARD_HTML).toContain('var url = reviewDocUrl(r);');
+    expect(DASHBOARD_HTML).not.toContain('var url = safeDocUrl(r.sourceUrl);');
+  });
+
+  it('Trends wide-desktop cards get an intrinsic table width + crush floor (post-#1613 regression)', () => {
+    // The bare width:fit-content rule broke both ways once #1613 moved these
+    // sections into <details>: full-bleed stretch on standalone cards
+    // (global table{width:100%} makes fit-content circular) and min-content
+    // crush on grid children. The inner table now carries an intrinsic
+    // width and both card and table carry a floor.
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }');
+    // A long one-line subtitle must wrap at a readable measure instead of
+    // inflating the card's fit-content width past its own table.
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .sub { max-width: 68ch; }');
+  });
+
+  it('Politicians+Party grid hugs the left card instead of leaving a dead middle column', () => {
+    expect(DASHBOARD_HTML).toContain('#view-trends .trend-members-grid { grid-template-columns: fit-content(760px) minmax(360px, 1fr); }');
+  });
+});
