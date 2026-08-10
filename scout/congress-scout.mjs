@@ -108,6 +108,10 @@ const CT_BASE_URL = (process.env.CT_BASE_URL || (() => {
 const SCOUT_LATENCY_ALWAYS = /^(1|true|yes|on)$/i.test((process.env.SCOUT_LATENCY_ALWAYS || '').trim());
 const SCOUT_RAW_UPLOAD = !/^(0|false|no|off)$/i.test((process.env.SCOUT_RAW_UPLOAD ?? '1').trim());
 const SCOUT_RAW_MAX_BYTES = Number(process.env.SCOUT_RAW_MAX_BYTES) || 20_000_000;
+/** Min seconds between scout→server latency payload posts per provider (free-tier thrift). */
+const SCOUT_LATENCY_MIN_INTERVAL_SEC = Number(process.env.SCOUT_LATENCY_MIN_INTERVAL_SEC) || 15 * 60;
+/** Back off after FMP 402/429 before retrying (seconds). */
+const SCOUT_FMP_QUOTA_BACKOFF_SEC = Number(process.env.SCOUT_FMP_QUOTA_BACKOFF_SEC) || 45 * 60;
 const authHeaders = () =>
   CT_INGEST_TOKEN
     ? { authorization: `Bearer ${CT_INGEST_TOKEN}`, 'content-type': 'application/json' }
@@ -497,8 +501,25 @@ async function fetchScoutPlan() {
   }
 }
 
-async function postLatencyPayload(provider, chamberJson, fmpPathId) {
+function shouldPostLatency(state, provider) {
+  const last = state.latencyPostedAt?.[provider];
+  if (!last) return true;
+  const ageSec = (Date.now() - Date.parse(last)) / 1000;
+  return !Number.isFinite(ageSec) || ageSec >= SCOUT_LATENCY_MIN_INTERVAL_SEC;
+}
+
+function fmpQuotaBlocked(state) {
+  const until = state.fmpQuotaBlockedUntil;
+  if (!until) return false;
+  return Date.parse(until) > Date.now();
+}
+
+async function postLatencyPayload(provider, chamberJson, fmpPathId, state) {
   if (!CT_BASE_URL || !CT_INGEST_TOKEN) return false;
+  if (!shouldPostLatency(state, provider)) {
+    log('LATENCY', provider, 'skip spacing');
+    return false;
+  }
   try {
     const res = await fetch(`${CT_BASE_URL}/api/ingest/latency-payload`, {
       method: 'POST',
@@ -516,6 +537,8 @@ async function postLatencyPayload(provider, chamberJson, fmpPathId) {
       return false;
     }
     const body = await res.json().catch(() => ({}));
+    state.latencyPostedAt = state.latencyPostedAt || {};
+    state.latencyPostedAt[provider] = nowIso();
     log('LATENCY', provider, `upserted=${body.upserted ?? '?'}`, `matched=${body.matched ?? '?'}`);
     return true;
   } catch (e) {
@@ -579,7 +602,13 @@ async function postRawUpload(docId, link, contentType, bytes) {
 
 async function maybeUploadRaw(docId, link, state) {
   if (!SCOUT_RAW_UPLOAD || !link || !docId) return;
-  if (state.rawUploaded?.[docId]) return;
+  if (state.rawUploaded?.[docId] || state.rawFailed?.[docId]) return;
+  const isSenateView = /efdsearch\.senate\.gov/i.test(link || '');
+  if (isSenateView && !/^(1|true|yes|on)$/i.test((process.env.SCOUT_SENATE_RAW || '').trim())) {
+    state.rawFailed = state.rawFailed || {};
+    state.rawFailed[docId] = 'skip_senate_view_use_relay';
+    return;
+  }
   try {
     const got = await downloadFilingBytes(link);
     if (!got) return;
@@ -587,9 +616,14 @@ async function maybeUploadRaw(docId, link, state) {
     if (ok) {
       state.rawUploaded = state.rawUploaded || {};
       state.rawUploaded[docId] = nowIso();
+    } else {
+      state.rawFailed = state.rawFailed || {};
+      state.rawFailed[docId] = 'post_failed';
     }
   } catch (e) {
     warn(`raw:${docId}`, e);
+    state.rawFailed = state.rawFailed || {};
+    state.rawFailed[docId] = String(e?.message || e).slice(0, 120);
   }
 }
 
@@ -686,28 +720,33 @@ async function cycle(state) {
     );
   }
 
-  // Poll FMP BEFORE running our own detection (only when FMP_PROBE_ENABLED).
-  // Polling FMP first errs conservative (does not inflate our measured lead).
-  if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY)) {
+  // Poll FMP only when server needs cover (or ALWAYS), with free-tier spacing/backoff.
+  const wantFmpCover = needScout.has('fmp') || needScout.has('fmp_rapidapi') || SCOUT_LATENCY_ALWAYS;
+  if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY) && wantFmpCover && !fmpQuotaBlocked(state)) {
     try {
       const fmp = await pollFmpFamily();
       for (const f of fmp.keys) {
         if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
       }
-      if (needScout.has('fmp') || needScout.has('fmp_rapidapi')) {
-        for (const p of fmp.payloads) {
-          if (needScout.has(p.provider) || (p.provider === 'fmp' && needScout.has('fmp'))) {
-            await postLatencyPayload(p.provider, p.chamberJson, p.fmpPathId);
-          }
+      for (const p of fmp.payloads) {
+        if (needScout.has(p.provider) || (p.provider === 'fmp' && needScout.has('fmp')) || SCOUT_LATENCY_ALWAYS) {
+          await postLatencyPayload(p.provider, p.chamberJson, p.fmpPathId, state);
         }
       }
-    } catch (e) { warn('fmp', e); }
+    } catch (e) {
+      warn('fmp', e);
+      const msg = String(e?.message || e);
+      if (/HTTP (402|429)/.test(msg)) {
+        state.fmpQuotaBlockedUntil = new Date(Date.now() + SCOUT_FMP_QUOTA_BACKOFF_SEC * 1000).toISOString();
+        log('fmp quota backoff until', state.fmpQuotaBlockedUntil);
+      }
+    }
   }
   if (QQ_KEY && (needScout.has('quiver') || SCOUT_LATENCY_ALWAYS)) {
     try {
       const qq = await pollQQ();
       for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
-      if (Object.keys(qq.chamberJson).length) await postLatencyPayload('quiver', qq.chamberJson);
+      if (Object.keys(qq.chamberJson).length) await postLatencyPayload('quiver', qq.chamberJson, undefined, state);
     } catch (e) { warn('qq', e); }
   } else if (QQ_KEY) {
     try {
@@ -719,7 +758,7 @@ async function cycle(state) {
     try {
       const uw = await pollUW();
       for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
-      if (Object.keys(uw.chamberJson).length) await postLatencyPayload('unusual_whales', uw.chamberJson);
+      if (Object.keys(uw.chamberJson).length) await postLatencyPayload('unusual_whales', uw.chamberJson, undefined, state);
     } catch (e) { warn('uw', e); }
   } else if (UW_KEY) {
     try {
@@ -763,7 +802,10 @@ async function cycle(state) {
 
   // Backlog from server plan: filings missing raw / 403-class fetch errors.
   if (!isBaselineCycle && SCOUT_RAW_UPLOAD && plan?.rawFetch?.length) {
-    for (const need of plan.rawFetch.slice(0, 10)) {
+    const backlog = plan.rawFetch
+      .filter((n) => n?.sourceUrl && !/efdsearch\.senate\.gov/i.test(n.sourceUrl))
+      .slice(0, 5);
+    for (const need of backlog) {
       await maybeUploadRaw(need.docId, need.sourceUrl, state);
     }
   }
