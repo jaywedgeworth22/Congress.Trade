@@ -13,6 +13,7 @@
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
  *   GET   /filings/:docId    single filing (+ its transactions) for the dashboard
  *   GET   /members           distinct filers seen in transactions
+ *   GET   /assets            distinct tickers seen in transactions (Assets directory)
  *   POST  /subscriptions     create a subscription; returns its secret once
  *   GET   /subscriptions     disabled publicly; use /api/admin/subscriptions
  *   GET   /subscriptions/:id fetch one subscription with its secret
@@ -241,6 +242,48 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
     photoUrl: row.photo_url ?? null,
   }));
   return { members, count: members.length };
+}
+
+interface AssetsRosterRow {
+  ticker: string;
+  company_name: string | null;
+  asset_class: string | null;
+  tx_count: number;
+  member_count: number;
+}
+
+/**
+ * GET /assets' query — the ticker-side analogue of {@link queryMembersRoster}
+ * above: every ticker that actually appears in the transaction feed, LEFT
+ * JOINed to `securities_ref` (the enrichment reference table populated
+ * out-of-band — see admin/migrations.ts INTERMEDIATE_SCHEMA_STATEMENTS and
+ * analytics/sql.ts ANALYTICS_FROM_JOINS_REF for the same join elsewhere) for
+ * a company name and asset class where enrichment has run for that ticker.
+ * LEFT, not INNER, so un-enriched tickers still appear in the directory
+ * (name/assetClass simply come back null) rather than vanishing.
+ */
+async function queryAssetsRoster(db: D1Database): Promise<{ assets: unknown[]; count: number }> {
+  const rows = await all<AssetsRosterRow>(
+    db,
+    `SELECT t.ticker AS ticker,
+            sr.company_name AS company_name,
+            sr.asset_class  AS asset_class,
+            COUNT(*) AS tx_count,
+            COUNT(DISTINCT t.filer_id) AS member_count
+       FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+      WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.deprecated_at IS NULL
+      GROUP BY t.ticker
+      ORDER BY tx_count DESC`,
+  );
+  const assets = rows.map((row) => ({
+    ticker: row.ticker,
+    name: row.company_name || null,
+    assetClass: row.asset_class || null,
+    txCount: row.tx_count,
+    memberCount: row.member_count,
+  }));
+  return { assets, count: assets.length };
 }
 
 function bearerToken(value: string | undefined): string | null {
@@ -1088,6 +1131,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // key); it only shifts with the daily ingest bursts, so a 30-min TTL is
     // invisible to users and cuts a full scan per hit down to one per window.
     const payload = await cached(c.env, 'members:roster', 1800, () => queryMembersRoster(c.env.DB));
+    c.header('Cache-Control', PUBLIC_STABLE_CACHE);
+    return c.json(payload);
+  });
+
+  // --- GET /assets ---------------------------------------------------------
+  // Tickers that actually appear in the transaction feed, joined to
+  // securities_ref for company name / asset class. The ticker-side analogue
+  // of GET /members above — same full-corpus-GROUP-BY cost, same fix: cache
+  // the whole roster (no params → a single key) for 30 minutes.
+  r.get('/assets', async (c) => {
+    const payload = await cached(c.env, 'assets:roster', 1800, () => queryAssetsRoster(c.env.DB));
     c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json(payload);
   });

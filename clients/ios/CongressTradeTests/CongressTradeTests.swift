@@ -814,8 +814,8 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(toLast!.hasSuffix("-12-31"))
         XCTAssertNil(thisYear.toDateISO)
         XCTAssertEqual(TimeRange.all.fromDateISO, nil)
-        XCTAssertEqual(thisYear.label, "This calendar year")
-        XCTAssertEqual(lastYear.label, "Last calendar year")
+        XCTAssertEqual(thisYear.label, "This Calendar Year")
+        XCTAssertEqual(lastYear.label, "Last Calendar Year")
     }
 
     func testAPIErrorCancellationIsNotRetryable() {

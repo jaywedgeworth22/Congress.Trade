@@ -901,8 +901,8 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
         case .ninetyDays: return "Past 3 Months"
         case .sixMonths: return "Past 6 Months"
         case .oneYear: return "Past Year"
-        case .thisCalendarYear: return "This calendar year"
-        case .lastCalendarYear: return "Last calendar year"
+        case .thisCalendarYear: return "This Calendar Year"
+        case .lastCalendarYear: return "Last Calendar Year"
         case .all: return "All Time"
         }
     }

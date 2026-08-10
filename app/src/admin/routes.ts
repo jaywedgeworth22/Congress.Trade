@@ -46,6 +46,7 @@ import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config.ts';
 import { uuid } from '../shared/ids.ts';
+import { runCommitteeSync } from '../enrichment/committeeSync.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
@@ -9123,6 +9124,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.post('/enrich-photos', async (c) => {
     try {
       return c.json(await runPhotoEnrichment(c.env));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /committees/sync ----------------------------------------------
+  // Populate filers.committees from the unitedstates/congress-legislators
+  // hosted JSON (committee membership keyed by bioguide, subcommittees rolled
+  // up to their parent committee). Idempotent; only filers with a resolved
+  // bioguide_id are considered. Returns { updated, skipped, unmatched }.
+  r.post('/committees/sync', async (c) => {
+    try {
+      return c.json(await runCommitteeSync(c.env));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
