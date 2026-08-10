@@ -32,12 +32,12 @@ import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/t
 import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical.ts';
-import { environmentName } from '../shared/thirdPartyTelemetry.ts';
 import { sendPushover } from '../shared/pushover.ts';
+import type { OpenRouterRequestEnrichment } from '@jaywedgeworth22/congress-trading-shared';
 import {
-  openrouterRequestEnrichment,
-  type OpenRouterRequestEnrichment,
-} from '@jaywedgeworth22/congress-trading-shared';
+  buildOpenRouterClassifier,
+  openRouterAttributionHeaders,
+} from '../shared/openRouterAttribution.ts';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
@@ -338,38 +338,16 @@ export class OpenRouterVisionExtractor implements Extractor {
    * a deterministic per-document `user` id, per
    * DESIGN-usage-compliance-classifier.md §2. Built once per extraction call
    * (not per fetchWithRetry attempt) so `user` stays byte-identical across
-   * retries of the same document.
-   *
-   * Best-effort by design: the shared builder fails fast on an invalid STATIC
-   * field (a programming error), but that must never take down a paid
-   * extraction call. Any error here — expected or not — degrades to sending
-   * the OpenRouter request WITHOUT enrichment; the extraction itself proceeds
-   * unaffected.
+   * retries of the same document. Delegates to shared openRouterAttribution.
    */
   private buildClassifierEnrichment(input: ExtractorInput): OpenRouterRequestEnrichment | undefined {
-    try {
-      return openrouterRequestEnrichment({
-        sourceApp: 'congress-trade',
-        environment: environmentName(this.env),
-        service: this.name,
-        feature: input.filing.chamber ? `vision-extract-${input.filing.chamber}` : undefined,
-        keyRef: this.apiKeyName,
-        gitSha: this.env.CF_VERSION_METADATA?.id || this.env.CF_VERSION_METADATA?.tag || undefined,
-        // Deterministic per-doc id, stable across fetchWithRetry's retries of
-        // this same call. Never "" — an unpopulated docId (e.g. a caller that
-        // constructs a partial Filing, as the bake-off harness does for
-        // non-OpenRouter candidates) must OMIT `user`, not send a blank one.
-        user: input.filing.docId || undefined,
-        // No run/session id is in scope at this call site today.
-        sessionId: undefined,
-      });
-    } catch (err) {
-      console.warn(
-        `${this.name}: classifier enrichment failed; sending OpenRouter request without it:`,
-        (err as Error).message,
-      );
-      return undefined;
-    }
+    return buildOpenRouterClassifier(this.env, {
+      service: this.name,
+      feature: input.filing.chamber ? `vision-extract-${input.filing.chamber}` : 'vision-extract',
+      keyRef: this.apiKeyName,
+      // Deterministic per-doc id — never "" (omit when missing).
+      user: input.filing.docId || undefined,
+    });
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
@@ -498,8 +476,7 @@ export class OpenRouterVisionExtractor implements Extractor {
             headers: {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://congress.trade',
-              'X-Title': 'Congress.Trade',
+              ...openRouterAttributionHeaders(),
             },
             body: JSON.stringify({
               model,
@@ -554,8 +531,7 @@ export class OpenRouterVisionExtractor implements Extractor {
                   headers: {
                     'Authorization': `Bearer ${backupKey}`,
                     'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://congress.trade',
-                    'X-Title': 'Congress.Trade',
+                    ...openRouterAttributionHeaders(),
                   },
                   body: JSON.stringify({
                     model,
@@ -567,7 +543,16 @@ export class OpenRouterVisionExtractor implements Extractor {
                     ...(Object.keys(provider).length ? { provider } : {}),
                     plugins,
                     messages: buildMessages(),
-                    ...classifierEnrichment,
+                    // Backup key still tags as OPENROUTER_BACKUP_API_KEY so
+                    // Usage-Monitor key attribution can split primary vs backup.
+                    ...buildOpenRouterClassifier(this.env, {
+                      service: this.name,
+                      feature: input.filing.chamber
+                        ? `vision-extract-${input.filing.chamber}`
+                        : 'vision-extract',
+                      keyRef: 'OPENROUTER_BACKUP_API_KEY',
+                      user: input.filing.docId || undefined,
+                    }),
                   }),
                   signal: input.signal
                     ? AbortSignal.any([input.signal, AbortSignal.timeout(600_000)])

@@ -35,6 +35,10 @@ import { resolveSecrets } from '../secrets/infisical.ts';
 import { keyFor } from './bakeoff.ts';
 import { looksLikePdf } from '../ingestion/classifier.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import {
+  buildOpenRouterClassifier,
+  openRouterAttributionHeaders,
+} from '../shared/openRouterAttribution.ts';
 
 export type DocClass = 'typed' | 'clean_scan' | 'hard_scan' | 'empty' | 'corrupt';
 
@@ -214,13 +218,17 @@ export async function classifyDocClassWithModel(
     signal?.throwIfAborted();
     const key = await keyFor(env, 'openrouter');
     if (!key) return null;
+    const classifierEnrichment = buildOpenRouterClassifier(env, {
+      service: 'docClassifier',
+      feature: 'doc-class',
+      keyRef: 'OPENROUTER_API_KEY',
+    });
     const res = await trackedFetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://congress.trade',
-        'X-Title': 'Congress.Trade',
+        ...openRouterAttributionHeaders(),
       },
       body: JSON.stringify({
         model: knobs.model,
@@ -246,12 +254,14 @@ export async function classifyDocClassWithModel(
               type: 'file',
               file: {
                 filename: 'document.pdf',
-                file_data: `data:application/pdf;base64,${arrayBufferToBase64Chunked(bytes)}`,
+                file_data: `[PDF attachment removed — 0 KB]${arrayBufferToBase64Chunked(bytes)}`,
               },
             },
             { type: 'text', text: CLASSIFIER_PROMPT },
           ],
         }],
+        // App classifier tags for OpenRouter Activity + Usage-Monitor filters.
+        ...classifierEnrichment,
       }),
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
