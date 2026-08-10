@@ -1344,13 +1344,20 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   }
 
   const contentType = obj.httpMetadata?.contentType || 'application/pdf';
-  return new Response(obj.body, {
-    headers: {
-      'content-type': contentType,
-      'content-disposition': 'inline',
-      'cache-control': 'public, max-age=86400, immutable',
-    },
-  });
+  const headers: Record<string, string> = {
+    'content-type': contentType,
+    'content-disposition': 'inline',
+    'cache-control': 'public, max-age=86400, immutable',
+    'x-content-type-options': 'nosniff',
+  };
+  // Stored senate filings are text/html authored by a third party (eFD).
+  // Serving them inline from our origin must never execute their markup in
+  // our origin context: CSP sandbox (no allow-scripts, no allow-same-origin)
+  // still renders the static document read-only. PDFs don't need it.
+  if (contentType.toLowerCase().includes('html')) {
+    headers['content-security-policy'] = 'sandbox';
+  }
+  return new Response(obj.body, { headers });
 }
 
 // --- Market cache read helpers (cross-app sharing) ------------------------

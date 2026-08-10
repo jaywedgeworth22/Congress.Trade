@@ -224,7 +224,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      flow-chip sections are unaffected, and only above a wide-desktop
      threshold so mobile/tablet keep the full-bleed card look. */
   @media (min-width: 1300px) {
-    #view-trends .section:has(> .table-wrap) { width: fit-content; max-width: 100%; }
+    /* Owner 2026-08-10 regression fix: after #1613 wrapped these sections in
+       <details>, bare width:fit-content broke BOTH ways at once — the global
+       table width:100% rule makes fit-content circular, so standalone cards
+       (Top Performers) resolved to full-bleed rows with an orphaned % pinned
+       at the far right, while grid-child cards (Most Active Politicians)
+       collapsed to min-content (~300px) through their ellipsis-shrinkable
+       cells, crushing rows into overlap and leaving a giant empty column.
+       Fix: give the INNER table an intrinsic width (max-content) so the
+       card's fit-content has a real answer, plus a floor so no card can
+       crush. .table-wrap keeps overflow-x for the (wide-desktop-unlikely)
+       case where max-content exceeds the column. */
+    #view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }
+    #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }
+    /* A long one-line subtitle (Top Performers) must wrap at a readable
+       measure instead of inflating the card's fit-content width past its
+       own table. 68ch ≈ ideal reading measure. */
+    #view-trends .section:has(> .table-wrap) > .sub { max-width: 68ch; }
+    /* The Politicians+Party grid: hug the left card's real content width
+       (capped) and let the By Party / By Asset Type stack absorb the rest —
+       kills the dead middle column the fixed 1.6fr/.85fr split left behind
+       once the left card stopped filling its column. */
+    #view-trends .trend-members-grid { grid-template-columns: fit-content(760px) minmax(360px, 1fr); }
   }
   /* Width is driven by the sum of <col>/th widths (syncTradesTableWidth).
      After the user resizes a column, the table grows/shrinks instead of
@@ -1498,9 +1519,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
     .hbar .hlabel { width: 92px; font-size: 12px; }
     .hbar .hval { width: auto; min-width: 56px; }
-    /* Trends tables are dense; on phones drop the 120px buy/sell bar (the "3B / 3S"
-       text stays) and the long company name so the ticker + numeric columns all
-       fit without horizontal scroll. */
+    /* Trends tables are dense; on phones drop the 120px buy/sell bar (the
+       "3 buys / 3 sells" text stays) and the long company name so the ticker +
+       numeric columns all fit without horizontal scroll. */
     #view-trends .split { display: none; }
     #view-trends .split-wrap { gap: 0; }
     /* Buys vs Sells chart: tighter bars/labels on phones. */
@@ -5161,17 +5182,25 @@ function safeDocUrl(url) {
     return '';
   }
 }
+/* Owner 2026-08-10: review links must open OUR stored copy of the document
+   (/api/documents/:id/pdf serves the raw R2 bytes) instead of bouncing
+   through the government site — the Senate source URL lands on the eFD
+   agreement wall on every click and re-pesters the source. The stored route
+   itself falls back to a source redirect server-side when no raw copy
+   exists, so preferring it is always safe. */
+function reviewDocUrl(r) {
+  var docId = r.docId || '';
+  if (r.rawObjectKey || r.pdfUrl || docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
+    return '/api/documents/' + encodeURIComponent(docId) + '/pdf';
+  }
+  return safeDocUrl(r.sourceUrl);
+}
 function reviewDocHtml(r) {
   var docId = r.docId || '';
-  var url = '';
-  if (docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
-    url = '/api/documents/' + encodeURIComponent(docId) + '/pdf';
-  } else {
-    url = safeDocUrl(r.pdfUrl || r.sourceUrl);
-  }
+  var url = reviewDocUrl(r);
   var idHtml = '<span class="tkr">' + esc(docId) + '</span>';
   if (!url) return idHtml;
-  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>' +
+  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open stored filing document">' + esc(docId) + '</a>' +
     '<a class="review-doc-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">View Document</a>';
 }
 /* Coloured status pill for a review document. */
@@ -5239,7 +5268,7 @@ function renderReview() {
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
     var queuedRows = reviewPayloadTransactions(r.payload);
-    var url = safeDocUrl(r.sourceUrl);
+    var url = reviewDocUrl(r);
     var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
     var nModels = (r.models && r.models.length) || 0;
     var modelsBtn = '<button class="btn ghost sm" onclick="toggleModels(\\'' + esc(r.docId) + '\\')">Bake-Off Runs (' + nModels + ')</button>';
@@ -8383,10 +8412,12 @@ function netHtml(n) {
 function splitBar(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
   var tot = buys + sells, bp = tot ? Math.round(100 * buys / tot) : 0, sp = tot ? 100 - bp : 0;
+  // Owner 2026-08-10: "21B / 0S" reads like magnitudes (21 billion) — spell
+  // the words out in lowercase instead, pluralized ("1 buy / 3 sells").
   return '<span class="split-wrap"><span class="split">' +
     '<span class="seg buy" style="width:' + bp + '%"></span>' +
     '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
-    '<small>' + fmtCount(buys) + 'B / ' + fmtCount(sells) + 'S</small></span>';
+    '<small>' + pluralCount(buys, 'buy') + ' / ' + pluralCount(sells, 'sell') + '</small></span>';
 }
 /* "1 Democrat" / "2 Democrats" — pluralize a count + noun for party breakdowns. */
 function pluralCount(n, noun) { n = Number(n || 0); return fmtCount(n) + ' ' + noun + (n === 1 ? '' : 's'); }
