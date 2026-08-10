@@ -614,7 +614,8 @@ struct AccountQuickMenu: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 SignInWithAppleButton(.signIn) { request in
-                    // No custom scopes — see SettingsView's identical button.
+                    // Match SettingsView: name + email scopes + nonce.
+                    request.requestedScopes = [.fullName, .email]
                     let nonce = AppleSignInNonce.generate()
                     currentAppleNonce = nonce
                     request.nonce = nonce
@@ -626,8 +627,9 @@ struct AccountQuickMenu: View {
                     }
                 }
                 .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                // 44pt HIG minimum tap target (matches SettingsView's button).
-                .frame(height: 44)
+                // 48pt matches Settings' ST-parity Apple button height.
+                .frame(height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .accessibilityLabel("Sign in with Apple")
 
                 Button {
