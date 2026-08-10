@@ -60,11 +60,11 @@ export const EXECUTIVE_TITLES: Readonly<Record<string, string>> = {
 
   // Adewale (Wally) Adeyemo — Deputy Treasury Secretary (2021-2025)
   'EXEC-ADEWALE-ADEYEMO': 'Deputy Treasury Secretary',
-  'EXEC-ADEWALE-ADEYEMO-2025-ERM': 'Deputy Treasury Secretary',
+  'EXEC-ADEWALE-ADEYEMO-2025-ERM': 'Deputy Treasury Secretary', // gitleaks:allow — filer id, not a key
 
   // Tommy Beaudreau — Deputy Interior Secretary (2021-2023)
   'EXEC-TOMMY-BEAUDREAU': 'Deputy Interior Secretary',
-  'EXEC-TOMMY-BEAUDREAU-2023-ERM': 'Deputy Interior Secretary',
+  'EXEC-TOMMY-BEAUDREAU-2023-ERM': 'Deputy Interior Secretary', // gitleaks:allow — filer id, not a key
 
   // Frank J. Bisignano — Social Security Commissioner (2025-present)
   'EXEC-FRANK-J-BISIGNANO': 'Social Security Commissioner',
