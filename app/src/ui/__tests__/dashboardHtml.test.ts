@@ -2725,9 +2725,15 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     // The combined popover explains every pictograph: branch, party, and type.
     const qPop = DASHBOARD_HTML.match(/<div class="branch-pop" id="qFiltersInfoPop"[\s\S]*?<\/div>\s*<\/div>/);
     expect(qPop).not.toBeNull();
-    for (const glyph of ['H', 'S', 'P', '🫏', '🐘', '🦅', '▲', '▼', '⇄']) {
+    for (const glyph of ['H', 'S', 'P', '▲', '▼', '⇄']) {
       expect(qPop![0]).toContain('>' + glyph + '<');
     }
+    // Party rows use colored dots (red/blue/purple), not donkey/elephant/eagle
+    // emoji — each dot carries its own accessible name via aria-label/title.
+    for (const party of ['D', 'R', 'O']) {
+      expect(qPop![0]).toContain('class="party-dot ' + party + '"');
+    }
+    expect(qPop![0]).not.toMatch(/[\u{1FACF}\u{1F418}\u{1F985}]/u);
     // A little larger than a plain per-group ⓘ since it now carries more info.
     expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
   });
