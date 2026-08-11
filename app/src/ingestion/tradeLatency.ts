@@ -3990,12 +3990,44 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
 
 type ObservationIdentity = { chamber: Chamber; provider_key: string; trade_hash?: string | null };
 
-function coverageStrength(idx: CoverageIndex, row: ObservationIdentity): MatchStrength {
+/**
+ * `provider_key` is NOT a trade identity for every provider.
+ *
+ * Unusual Whales and Quiver derive it from the row's own fields, so it is
+ * one key per trade line (193 of 194 and 482 of 485 keys are unique in
+ * production). FMP derives it from the PTR document URL, so every line of a
+ * filing shares one key — in production 309 FMP observations span just 31
+ * keys, and a single key covers 73 separate trades. Crediting an observation
+ * as matched because SOME row with the same key matched would inflate that one
+ * pairing into 73, which is exactly the kind of unearned number the latency
+ * claim must never contain.
+ *
+ * So a key only carries a pairing when it is unambiguous in the cohort being
+ * measured — one observation holds it. Everything else pairs by `trade_hash`,
+ * which is a real trade identity.
+ */
+function unambiguousKeys(observations: readonly ObservationIdentity[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const row of observations) {
+    const key = `${row.chamber}:${row.provider_key}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const out = new Set<string>();
+  for (const [key, n] of counts) if (n === 1) out.add(key);
+  return out;
+}
+
+function coverageStrength(
+  idx: CoverageIndex,
+  row: ObservationIdentity,
+  keyIsTrustworthy: Set<string>,
+): MatchStrength {
   const key = `${row.chamber}:${row.provider_key}`;
-  if (idx.strongKeys.has(key) || (!!row.trade_hash && idx.strongHashes.has(row.trade_hash))) {
+  const byKey = keyIsTrustworthy.has(key);
+  if ((byKey && idx.strongKeys.has(key)) || (!!row.trade_hash && idx.strongHashes.has(row.trade_hash))) {
     return 'strong';
   }
-  if (idx.weakKeys.has(key) || (!!row.trade_hash && idx.weakHashes.has(row.trade_hash))) {
+  if ((byKey && idx.weakKeys.has(key)) || (!!row.trade_hash && idx.weakHashes.has(row.trade_hash))) {
     return 'weak';
   }
   return 'none';
@@ -4166,7 +4198,9 @@ function computeProviderMetrics(opts: {
       })),
     providerId,
   );
-  const obsStrength = (row: ObservationIdentity) => coverageStrength(coverageIndex, row);
+  const trustworthyKeys = unambiguousKeys(observations);
+  const obsStrength = (row: ObservationIdentity) =>
+    coverageStrength(coverageIndex, row, trustworthyKeys);
 
   const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
   const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
@@ -4320,17 +4354,28 @@ export function computeLatencyScope(opts: {
 
   // Canonicalise a paired observation onto the candidate hash it paired with,
   // so a provider hash that differs from ours does not read as a second line.
+  // Only via a provider_key that identifies ONE observation — FMP's key is a
+  // document token shared by every line of a filing (see unambiguousKeys), and
+  // folding 73 distinct trades onto one hash would shrink M by 72 lines we
+  // genuinely saw.
   const canonical = new Map<string, string>();
   const strengthByKey = new Map<string, MatchStrength>();
   const strengthByHash = new Map<string, MatchStrength>();
+  const observationKeyCounts = new Map<string, number>();
+  for (const row of observations) {
+    const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
+    observationKeyCounts.set(key, (observationKeyCounts.get(key) ?? 0) + 1);
+  }
   for (const row of coverageRows) {
     const strength = matchStrength(row.match_method);
     // No method means no pairing — do not canonicalise or credit it.
     if (strength === 'none') continue;
     if (row.provider_key) {
       const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
-      if (row.trade_hash) canonical.set(key, row.trade_hash);
-      strengthByKey.set(key, strength);
+      if (observationKeyCounts.get(key) === 1) {
+        if (row.trade_hash) canonical.set(key, row.trade_hash);
+        strengthByKey.set(key, strength);
+      }
     }
     if (row.trade_hash) strengthByHash.set(`${row.provider}:${row.trade_hash}`, strength);
   }

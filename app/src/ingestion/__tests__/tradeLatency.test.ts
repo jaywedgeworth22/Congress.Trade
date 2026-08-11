@@ -1042,6 +1042,41 @@ describe('tradeLatency', () => {
       expect(agedCandidate.status).toBe('matched');
     });
 
+    it('never spreads one pairing across every line of a filing that shares a provider_key', () => {
+      // FMP's provider_key is the PTR document token, so all five lines of one
+      // filing carry it. In production 309 FMP observations span 31 keys and a
+      // single key covers 73 trades — crediting by key alone would turn one
+      // pairing into 73.
+      const filing = ['AAPL', 'MSFT', 'NVDA', 'PANW', 'TSLA'].map((ticker) => ({
+        provider: 'fmp' as const,
+        chamber: 'house' as const,
+        provider_key: '20035180',
+        trade_hash: `hern_${ticker}_2026-08-05_sell`,
+        first_observed_at: '2026-08-07T04:30:10.001Z',
+        last_observed_at: '2026-08-07T04:30:10.001Z',
+        provider_published_at: null,
+        source_url: null,
+        filed_date: '2026-08-05',
+        filer_name: 'Kevin Hern',
+        payload: null,
+      }));
+      const [fmp] = buildPublicLatencyProviders([], [], filing, [], MATURITY, [
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: '20035180',
+          trade_hash: 'hern_PANW_2026-08-05_sell',
+          match_method: 'trade-hash',
+        },
+      ]);
+      expect(fmp.provider).toBe('fmp');
+      expect(fmp.maturedProviderObserved).toBe(5);
+      // Exactly the one line that actually paired.
+      expect(fmp.maturedMatched).toBe(1);
+      expect(fmp.unmatchedProvider).toBe(4);
+      expect(fmp.ctCoveragePct).toBe(20);
+    });
+
     it('flags stored observations that can never match instead of calling them a coverage miss', () => {
       const [fmp] = buildPublicLatencyProviders(
         [],
