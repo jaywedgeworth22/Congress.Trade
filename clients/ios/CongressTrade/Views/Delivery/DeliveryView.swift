@@ -10,7 +10,6 @@ struct DeliveryView: View {
     @State private var watchlistDraft: [String] = []
     @State private var newTicker = ""
     @State private var showSubscribe = false
-    @State private var editingSubscriptionId: String?
     @State private var showExportSheet = false
 
     // DELETED, deliberately: a "Notifications" section of four @AppStorage
