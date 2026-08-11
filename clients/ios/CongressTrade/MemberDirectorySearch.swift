@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Unified multi-token trade search (any word order, partial matches):
 /// each token may match politician name, ticker, asset name, state, or party.
@@ -175,5 +176,370 @@ enum MemberDirectorySearch {
             return p + " independent independents other i"
         }
         return p + " other independent independents"
+    }
+}
+
+/// Assets directory search/sort (web parity: `app/src/ui/dashboardHtml.ts`
+/// `assetMatchesQuery` / `assetsSortValue` / `sortAssetsDirectory`, reached
+/// via the Directory tab's People|Assets segmented toggle). Multi-token AND
+/// match against ticker and company name, order-independent — same shape as
+/// `MemberDirectorySearch.matches` above, just a narrower field set.
+enum AssetDirectorySearch {
+    enum SortKey: String, CaseIterable, Identifiable {
+        case name, trades, members
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .name: return "Asset"
+            case .trades: return "Trades"
+            case .members: return "Politicians"
+            }
+        }
+    }
+
+    static func matches(_ asset: AssetDirectoryEntry, query: String) -> Bool {
+        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !raw.isEmpty else { return true }
+        let tokens = raw.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let ticker = asset.ticker.lowercased()
+        let name = (asset.name ?? "").lowercased()
+        return tokens.allSatisfy { tok in ticker.contains(tok) || name.contains(tok) }
+    }
+
+    /// Trades-descending default (`ASSETS_SORT = { key: 'trades', dir: -1 }`
+    /// on web) — callers seed `sortKey: .trades, sortAscending: false`.
+    static func sort(_ assets: [AssetDirectoryEntry], key: SortKey, ascending: Bool) -> [AssetDirectoryEntry] {
+        assets.sorted { a, b in
+            let cmp: ComparisonResult
+            switch key {
+            case .trades:
+                let av = a.txCount ?? 0
+                let bv = b.txCount ?? 0
+                cmp = av == bv ? .orderedSame : (av < bv ? .orderedAscending : .orderedDescending)
+            case .members:
+                let av = a.memberCount ?? 0
+                let bv = b.memberCount ?? 0
+                cmp = av == bv ? .orderedSame : (av < bv ? .orderedAscending : .orderedDescending)
+            case .name:
+                cmp = (a.name ?? a.ticker).localizedCaseInsensitiveCompare(b.name ?? b.ticker)
+            }
+            if cmp == .orderedSame {
+                // Same tie-break as web's renderAssetsDirectory sort comparator.
+                return (a.txCount ?? 0) > (b.txCount ?? 0)
+            }
+            return ascending ? cmp == .orderedAscending : cmp == .orderedDescending
+        }
+    }
+}
+
+/// Self-contained Assets directory screen — the iOS side of the Directory
+/// tab's People|Assets toggle (web: `setDirectoryMode('assets')` in
+/// `app/src/ui/dashboardHtml.ts`). Loads and caches its own roster via
+/// `store.api.assetsDirectory()` rather than adding state to
+/// `CongressTradeStore`, so it drops into `PeopleDirectoryView` (or any other
+/// host) with a single mode toggle and no store changes. See the iOS
+/// asset-directory lane's PR body for that one-line integration snippet.
+struct AssetDirectoryView: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+    @State private var selectedTicker: String?
+    @State private var sortKey: AssetDirectorySearch.SortKey = .trades
+    @State private var sortAscending = false
+    @State private var assets: [AssetDirectoryEntry] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    /// 0-indexed page of `filteredAssets`. Same rationale as
+    /// `PeopleDirectoryView`: `GET /api/assets` is a full-roster endpoint
+    /// (4,212 tickers, ~72KB gzipped, 30-minute KV cache) with no paging
+    /// parameters — paging here is purely about not rendering thousands of
+    /// rows at once, never a request.
+    @State private var currentPage = 0
+    @State private var pageSize = 50
+
+    private var filteredAssets: [AssetDirectoryEntry] {
+        let matched = assets.filter { AssetDirectorySearch.matches($0, query: searchText) }
+        return AssetDirectorySearch.sort(matched, key: sortKey, ascending: sortAscending)
+    }
+
+    private func totalPages(for count: Int) -> Int {
+        max(1, Int((Double(count) / Double(pageSize)).rounded(.up)))
+    }
+
+    private func pageSlice(of rows: [AssetDirectoryEntry], page: Int) -> ArraySlice<AssetDirectoryEntry> {
+        let start = max(0, page) * pageSize
+        guard start < rows.count else { return rows.prefix(pageSize) }
+        return rows[start..<min(start + pageSize, rows.count)]
+    }
+
+    var body: some View {
+        let rows = filteredAssets
+        let pages = totalPages(for: rows.count)
+        let page = min(currentPage, pages - 1)
+        return NavigationStack {
+            VStack(spacing: 0) {
+                VStack(spacing: 10) {
+                    AssetSearchField(text: $searchText, focused: $searchFocused)
+                        .accessibilityLabel("Search assets by ticker or company name")
+
+                    HStack {
+                        // Truthful by construction: the roster endpoint returns
+                        // every ticker, so both numbers are real totals.
+                        Text("\(CompactFormat.count(rows.count)) of \(CompactFormat.count(assets.count)) shown")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+
+                    AssetDirectorySortHeader(sortKey: $sortKey, sortAscending: $sortAscending)
+
+                    assetPager(page: page, pages: pages)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+                .background(AppTheme.background)
+
+                ScrollView {
+                    VStack(spacing: 8) {
+                        if let errorMessage {
+                            FeedFreshnessView(
+                                isOffline: false,
+                                lastRefresh: nil,
+                                notice: errorMessage,
+                                onRetry: { Task { await load(force: true) } }
+                            )
+                        }
+
+                        if isLoading && assets.isEmpty {
+                            ProgressView("Loading Assets…")
+                                .padding(.top, 40)
+                        } else if rows.isEmpty {
+                            ContentUnavailableView {
+                                Label(searchText.isEmpty ? "No Assets Yet" : "No Matches", systemImage: "chart.bar")
+                            } description: {
+                                Text(
+                                    searchText.isEmpty
+                                        ? "The directory fills in as filings are ingested."
+                                        : "Try a ticker or company name."
+                                )
+                            }
+                            .padding(.top, 40)
+                        } else {
+                            LazyVStack(spacing: 8) {
+                                ForEach(pageSlice(of: rows, page: page)) { asset in
+                                    Button {
+                                        selectedTicker = asset.ticker
+                                    } label: {
+                                        AssetDirectoryRow(asset: asset)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens asset details")
+                                }
+                            }
+
+                            assetPager(page: page, pages: pages)
+                                .padding(.top, 4)
+                        }
+
+                        AppLegalFooter()
+                            .padding(.top, 8)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                }
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("Assets")
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await load(force: true) }
+            .task { await load(force: false) }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedTicker != nil },
+                set: { if !$0 { selectedTicker = nil } }
+            )) {
+                if let ticker = selectedTicker {
+                    TickerDetailView(ticker: ticker)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
+                }
+            }
+            // Same invalidation rule as PeopleDirectoryView: narrowing or
+            // reordering can strand the current page past the new result count.
+            .onChange(of: searchText) { _, _ in currentPage = 0 }
+            .onChange(of: sortKey) { _, _ in currentPage = 0 }
+            .onChange(of: sortAscending) { _, _ in currentPage = 0 }
+        }
+    }
+
+    private func assetPager(page: Int, pages: Int) -> some View {
+        PaginationBar(
+            currentPage: page,
+            totalPages: pages,
+            pageSize: pageSize,
+            canGoPrevious: page > 0,
+            canGoNext: page + 1 < pages,
+            onPrevious: { currentPage = max(0, page - 1) },
+            onNext: { currentPage = min(pages - 1, page + 1) },
+            onPageSize: { size in
+                pageSize = size
+                currentPage = 0
+            }
+        )
+    }
+
+    /// Loads (or reloads) the full roster into local `@State` — this view owns
+    /// its data, `CongressTradeStore` is untouched. `force: false` (the
+    /// initial `.task`) skips the round trip once a prior appearance already
+    /// populated `assets`; pull-to-refresh always passes `force: true`. The
+    /// server itself caches the roster 30 minutes either way.
+    private func load(force: Bool) async {
+        guard force || assets.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let response = try await store.api.assetsDirectory()
+            assets = response.assets
+        } catch let error as APIError where error.isCancellation {
+            // View dismissed mid-fetch — nothing to surface.
+        } catch {
+            errorMessage = (error as? APIError)?.errorDescription ?? "Could not load the assets directory."
+        }
+        isLoading = false
+    }
+}
+
+/// Sticky-style sort controls (mirrors `AssetDirectorySearch.SortKey` /
+/// web's Asset · Trades · Politicians column headings).
+private struct AssetDirectorySortHeader: View {
+    @Binding var sortKey: AssetDirectorySearch.SortKey
+    @Binding var sortAscending: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(AssetDirectorySearch.SortKey.allCases) { key in
+                    Button {
+                        if sortKey == key {
+                            sortAscending.toggle()
+                        } else {
+                            sortKey = key
+                            // Matches web's sortAssetsDirectory: trades/members
+                            // default descending (most-active first), name
+                            // defaults ascending (A→Z).
+                            sortAscending = key == .name
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(key.label)
+                                .font(.caption.weight(.semibold))
+                            if sortKey == key {
+                                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            sortKey == key
+                                ? Color.accentColor.opacity(0.16)
+                                : Color(uiColor: .secondarySystemBackground),
+                            in: Capsule()
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Sort by \(key.label)")
+                    .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
+                }
+            }
+        }
+    }
+}
+
+/// One Assets row: ticker mark, ticker + company name, trade/politician counts.
+private struct AssetDirectoryRow: View {
+    let asset: AssetDirectoryEntry
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AssetMark(symbol: asset.ticker, isTicker: true, size: 40)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(asset.ticker)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+                if let name = asset.name, !name.isEmpty {
+                    Text(name)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 14) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(CompactFormat.count(asset.txCount))
+                        .font(.subheadline.weight(.bold))
+                    Text("trades")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(CompactFormat.count(asset.memberCount))
+                        .font(.subheadline.weight(.bold))
+                    Text("politicians")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AppTheme.borderColor.opacity(0.55), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(asset.ticker), \(asset.name ?? ""), \(asset.txCount ?? 0) trades, \(asset.memberCount ?? 0) politicians"
+        )
+    }
+}
+
+private struct AssetSearchField: View {
+    @Binding var text: String
+    var focused: FocusState<Bool>.Binding
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField("Ticker or company…", text: $text)
+                .neverAutocapitalized()
+                .autocorrectionDisabled()
+                .font(.subheadline)
+                .focused(focused)
+                .submitLabel(.search)
+                .onSubmit { focused.wrappedValue = false }
+            if !text.isEmpty {
+                Button {
+                    withAnimation { text = "" }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
