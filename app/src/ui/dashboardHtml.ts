@@ -530,8 +530,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      stacked label-above-value "is impossible to look at without getting a
      headache"). .def-item uses display:contents so its .def-k/.def-v children
      become direct grid children and line up in the shared two-column grid —
-     no markup change needed in companySectionHtml(). */
-  .def-grid { display: grid; grid-template-columns: 35% 1fr; gap: 7px 14px; margin: 0; }
+     no markup change needed in companySectionHtml().  Same two caps as
+     .drawer-kv: the label column stops at 180px and the block at 560px, so a
+     wide drawer cannot stretch the value away from its label. */
+  .def-grid { display: grid; grid-template-columns: min(35%, 180px) 1fr; gap: 7px 14px; margin: 0; max-width: 560px; }
   .def-item { display: contents; }
   .def-k { min-width: 0; color: var(--text-dim); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center; }
   .def-v { min-width: 0; color: var(--text); font-weight: 600; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; align-self: center; }
@@ -816,6 +818,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
+  /* ---- Trackless .hbar rows are LEDGER rows, not charts (Top Buyers / Top
+     Sellers / Most-Traded / the return-horizon rows in the drawers). With no
+     bar between them the default flex:1 label pushed the value to the far
+     right edge: measured 46–58% of the row blank between the name and the
+     dollar figure, with the value right-aligned inside a fixed 120px box so
+     no two rows started their number in the same place. Same contract as
+     .drawer-kv: bounded label column, value LEFT-aligned on one shared entry
+     guide, no leader dots. 220px clears the longest real politician name
+     (~209px incl. avatar + party dot) before the inherited ellipsis can
+     engage; the 62% floor keeps it usable in a phone-width drawer. ---- */
+  .hbar.ledger { display:grid; grid-template-columns:min(62%, 220px) 1fr; align-items:center; gap:0 12px; max-width:560px; }
+  .hbar.ledger .hlabel { width:auto; min-width:0; }
+  .hbar.ledger .hval { width:auto; min-width:0; text-align:left; justify-self:start; }
+  .hbar.ledger .mini-trade-stat { justify-content:start; }
+  /* Return-horizon rows label with "~1 mo" / "~1 yr", so the entity-name cap
+     would strand the value 150px out. Same contract, label-sized column. */
+  .hbar.ledger.hz { grid-template-columns:min(30%, 82px) 1fr; align-items:baseline; }
+  .hbar.ledger.hz .hval { white-space:normal; }
   /* By Asset Type uses the same .flowrow layout as By Market Cap / By Party
      (label+value on top, full-width bar, stats chip). Do not use the inline
      .hbar fixed-label layout here — long labels like "Government / Municipal
@@ -911,13 +931,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 8px 12px; font-size: 13px; color: var(--text);
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    display: flex; flex-direction: column; gap: 4px;
+    /* Ledger contract, shared across the rows: the tooltip itself is the grid
+       so "Buys" and "Sells" share one label column and both values start on
+       one guide. The rows used to be individual space-between flex boxes, so
+       the two numbers started 9px apart from each other — a ragged left edge
+       in a 155px box. */
+    display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 4px 14px;
     transform: translate(-50%, -100%); margin-top: -10px;
     opacity: 0; transition: opacity 0.1s;
   }
   .chart-tooltip.visible { opacity: 1; }
-  .chart-tooltip-title { font-weight: 700; color: var(--accent); font-size: 12px; margin-bottom: 2px; }
-  .chart-tooltip-row { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+  .chart-tooltip-title { grid-column: 1 / -1; font-weight: 700; color: var(--accent); font-size: 12px; margin-bottom: 2px; }
+  .chart-tooltip-row { display: contents; }
   .chart-tooltip-lbl { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .chart-tooltip-val { font-variant-numeric: tabular-nums; font-weight: 500; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
@@ -941,12 +966,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
   /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
      a full-width bar, then the stats chip flush-left beneath — no hard-coded
-     indent, so it stays aligned at every width. ---- */
+     indent, so it stays aligned at every width.
+
+     The top line follows the SAME ledger contract as .drawer-kv / .def-grid:
+     a bounded label column, then the value LEFT-aligned at one shared entry
+     guide. It used to be justify-content:space-between, which pinned the $ to
+     the far right and opened a measured 67–88% blank gap on 19 rows of the
+     first screen a visitor sees — the owner's loudest complaint ("70+% of the
+     screen width blank between them and its hard to even tell if they are
+     related"). No leader dots and no right-aligned values: leaders are a
+     table-of-contents device for values pinned to a page edge, and a ragged
+     left edge makes the eye re-find the start of every number.
+
+     The 180px cap (not the drawer's 35%) is sized for these labels: they are
+     13px sentence-case DATA (sector / asset-type names), not the drawer's
+     10.5px uppercase eyebrows. 180px clears the longest real label
+     ("Communication Services", 156px) with slack; the 58% floor keeps the
+     value column usable below a ~270px container. .flabel wraps rather than
+     ellipsizes so a label is never truncated. ---- */
   .flowrow { margin: 11px 0; }
   .flowrow:first-child { margin-top: 2px; }
-  .flowrow .ftop { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  .flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr; align-items: baseline; column-gap: 14px; margin-bottom: 5px; }
+  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; }
+  .flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
@@ -1009,8 +1051,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      the old stacked "Name" / value-on-next-line layout "is impossible to
      look at without getting a headache"). Labels are a dim small-caps-style
      eyebrow; values read in normal strong text right next to them, e.g.
-     "Filed:  Nov 7, 2024". ~35% label column holds on phones down to 375px. */
-  .drawer-kv { display:grid; grid-template-columns:35% 1fr; gap:8px 14px; margin:0; font-size:13px; align-items:center; }
+     "Filed:  Nov 7, 2024". ~35% label column holds on phones down to 375px.
+
+     Two caps keep the contract honest as the block gets wider: the label
+     column stops growing at 180px (a bare 35% of a 1600px-wide block would be
+     a 560px label column, re-opening the exact void this rule closes on
+     phones), and the ledger block itself stops at 560px so a wide drawer does
+     not stretch values away from their labels. */
+  .drawer-kv { display:grid; grid-template-columns:min(35%, 180px) 1fr; gap:8px 14px; margin:0; font-size:13px; align-items:center; max-width:560px; }
   .drawer-kv dt { color:var(--text-dim); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .drawer-kv dd { margin:0; text-align:left; word-break:break-word; font-weight:600; color:var(--text); }
   .tier-gate-note { font-size:12px; color:var(--text-dim); background:var(--panel-2); border:1px dashed var(--border); border-radius:8px; padding:9px 11px; line-height:1.5; }
@@ -1102,7 +1150,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .diag-status.error { color:var(--sell); background:color-mix(in srgb,var(--sell) 13%,transparent); }
   /* Intentional disable — grey OFF (not red stopped, not green running). */
   .diag-status.off { color:var(--text-dim); background:color-mix(in srgb,var(--text-dim) 12%,transparent); border-color:color-mix(in srgb,var(--text-dim) 35%,transparent); }
-  .diag-meta { display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; color:var(--text-dim); font-size:11px; }
+  /* Label/value ledger, not two equal columns: 1fr 1fr parked every value at
+     the 50% mark whatever the label was. "auto" sizes the label column to the
+     longest label in the card, which is the same shared-entry-guide contract
+     the ≤560px override below already used. */
+  .diag-meta { display:grid; grid-template-columns:auto 1fr; gap:5px 10px; color:var(--text-dim); font-size:11px; }
   .diag-note { margin-top:8px; color:var(--text-dim); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
   .diag-error { color:var(--sell); font-weight:700; }
   .diag-warning { color:var(--warn); font-weight:700; }
@@ -1695,8 +1747,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
     /* Keep the label/value pair on one line at phone widths too — this used to
        collapse to a single column (1fr), which is exactly the stacked layout
-       the owner flagged as unreadable. .def-grid inherits the same 35%/1fr
-       split from its base rule, so it needs no mobile override here. */
+       the owner flagged as unreadable. .def-grid and .flowrow .ftop inherit
+       the same bounded-label-column contract from their base rules, so they
+       need no mobile override here. */
     .drawer-kv { gap: 6px 10px; }
     .plan-grid { grid-template-columns: 1fr; }
     .toolbar .chamber-chips { grid-column: 1 / -1; }
@@ -10252,7 +10305,7 @@ function openAsset(ticker) {
         var name = fmtName(m.fullName || m.filerId || 'Unknown');
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
-        return '<div class="hbar" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + ' style="width:auto;flex:1">' +
+        return '<div class="hbar ledger" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + '>' +
           memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
@@ -10323,8 +10376,8 @@ function tickerBacktestHtml(d) {
       : '<span class="net ' + (excess > 0 ? 'pos' : excess < 0 ? 'neg' : '') + '">' +
           (excess > 0 ? '+' : '') + (excess * 100).toFixed(1) + '% vs S&amp;P</span>' +
           (ret != null ? ' <span class="muted">(' + (ret > 0 ? '+' : '') + (ret * 100).toFixed(1) + '% asset)</span>' : '');
-    return '<div class="hbar" style="margin:6px 0"><div class="hlabel" style="width:72px">' + esc(hzLabel(h.horizonDays || h.days || h.horizon)) +
-      '</div><div class="hval" style="width:auto;flex:1;text-align:left">' + cell +
+    return '<div class="hbar ledger hz" style="margin:6px 0"><div class="hlabel">' + esc(hzLabel(h.horizonDays || h.days || h.horizon)) +
+      '</div><div class="hval">' + cell +
       ' <span class="muted">· n=' + n + '</span></div></div>';
   }).join('');
   return '<p class="note" style="margin:0 0 8px">After disclosed <strong>buys</strong> (not sells), equal-weighted forward return vs the S&amp;P. Observational — not a forecast. Cohort: ' +
@@ -10350,7 +10403,7 @@ function openMember(filerId) {
       ? committees.map(function (c) { return '<span class="committee-tag">' + esc(c) + '</span>'; }).join('')
       : '<span class="muted">Not recorded</span>';
     var top = (d.topTickers || []).map(function (t) {
-      return '<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '" style="width:auto;flex:1">' +
+      return '<div class="hbar ledger" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '">' +
         '<span class="tkr">' + esc(t.ticker) + '</span>' + (t.name ? ' <span class="muted">' + esc(t.name) + '</span>' : '') +
         '</div><div class="hval"><span class="mini-trade-stat"><span>' + fmtCount(t.tradeCount) + '</span><span class="dot">•</span><span>' + estUsd(t.estVolumeUsd) + '</span></span></div></div>';
     }).join('') || '<div class="note">—</div>';
@@ -10376,7 +10429,7 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
 	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
-        kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
+        kvRow('Avg. Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3><div id="memberPerf"><div class="note">Loading performance…</div></div></div>' +
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
