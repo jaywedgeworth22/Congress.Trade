@@ -30,9 +30,16 @@ import type { LatencyProbeProviderId } from './scoutHandoff.ts';
 export type FmpFreeKeySlot = '1' | '2';
 
 /**
- * HTTP calls one probe of each provider costs. Must stay in lockstep with
- * tradeLatency's LATENCY_SOURCE_BUDGETS[*].callsPerRun and
- * FMP_LATENCY_CALLS_PER_RUN — the Mac makes the same requests the server does.
+ * HTTP calls one probe of each provider costs, in the SAME units the server
+ * charges. Kept in lockstep with tradeLatency's
+ * LATENCY_SOURCE_BUDGETS[*].callsPerRun and FMP_LATENCY_CALLS_PER_RUN so one
+ * cap governs both hosts.
+ *
+ * Quiver is deliberately charged at server parity (3) even though the Mac's
+ * `pollQQ` only fetches house + senate (2) — it skips the trump bulk endpoint.
+ * Over-reserving by one call is the safe direction, and it mirrors how
+ * tradeLatency reserves a whole batch before the HTTP fires. Pass an explicit
+ * `calls` to `chargeLatencyCalls` if a caller needs exact accounting.
  */
 export const PROVIDER_CALLS_PER_RUN: Record<LatencyProbeProviderId, number> = {
   // house + senate latest
@@ -41,7 +48,7 @@ export const PROVIDER_CALLS_PER_RUN: Record<LatencyProbeProviderId, number> = {
   fmp_rapidapi: 2,
   // single recent-trades feed
   unusual_whales: 1,
-  // house + senate + trump bulk
+  // house + senate + trump bulk (server); Mac fetches 2 of these 3
   quiver: 3,
 };
 
