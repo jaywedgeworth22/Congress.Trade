@@ -81,6 +81,11 @@ export function cleanAssetString(name: string | null | undefined, ticker?: strin
       }
       return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
     });
+    // The expansions above append a period ("INC" -> "Inc."), but the word
+    // matcher is [A-Za-z0-9]+ and so never consumed one the source already had.
+    // "ECOLAB Inc." came out as "Ecolab Inc..". Scoped to exactly the
+    // abbreviations this branch rewrites so no other punctuation is touched.
+    str = str.replace(/\b(Inc|Co|Ltd|Corp)\.\.+/g, '$1.');
   }
 
   // 4. Entity normalizations (case-insensitive)

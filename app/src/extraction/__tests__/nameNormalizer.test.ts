@@ -50,6 +50,16 @@ describe('isJunkAssetString & cleanAssetString', () => {
     expect(cleanAssetString('XOM ....k', 'XOM')).toBe('XOM');
     expect(cleanAssetString('...................e')).toBe('');
   });
+
+  it('does not double the period when title-casing an already-punctuated abbreviation', () => {
+    // The ALL-CAPS branch expands "INC" to "Inc." but its [A-Za-z0-9]+ matcher
+    // never consumed the source's own period, so "ECOLAB Inc." came back as
+    // "Ecolab Inc..". Only reachable once a trailing bond suffix is split off,
+    // which is what flips the upper/lower ratio into that branch.
+    expect(cleanAssetString('ECOLAB Inc.')).toBe('Ecolab Inc.');
+    expect(cleanAssetString('ACME CORP.')).toBe('Acme Corp.');
+    expect(cleanAssetString('BROWN CO.')).toBe('Brown Co.');
+  });
 });
 
 describe('splitAssetNameDetail', () => {
