@@ -48,9 +48,11 @@ struct SettingsView: View {
                                 Text(user.email)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                // "Free" in accent blue read like a status
+                                // worth having; only Premium earns the colour.
                                 Text(store.entitlementLabel)
                                     .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(store.isPremium ? Color.blue : Color.secondary)
                             }
                         }
                         .padding(.vertical, 4)

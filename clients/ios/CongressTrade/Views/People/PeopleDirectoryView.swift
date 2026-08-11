@@ -295,8 +295,13 @@ private struct DirectorySortHeader: View {
                                     .font(.system(size: 9, weight: .bold))
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        // Same capsule metrics as `FilterChip` (12/7) so the
+                        // app carries one chip geometry rather than one per
+                        // screen; the softer tinted fill is deliberate — a
+                        // solid-accent chip reads as a hard filter, and this
+                        // only reorders.
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
                         .background(
                             sortKey == key
                                 ? Color.accentColor.opacity(0.16)
