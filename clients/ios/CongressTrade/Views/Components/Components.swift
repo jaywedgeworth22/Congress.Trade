@@ -924,6 +924,10 @@ struct SignInPanel: View {
             HStack(spacing: 8) {
                 TextField("you@example.com", text: $magicEmail)
                     .textFieldStyle(.roundedBorder)
+                    // Same accent leak as the header glyphs: inside a tinted
+                    // Form row the field painted its placeholder — and typed
+                    // text — accent blue.
+                    .foregroundStyle(Color.primary)
                     .urlKeyboard()
                     .neverAutocapitalized()
                     .autocorrectionDisabled()
@@ -1282,10 +1286,18 @@ struct PremiumInfoSheet: View {
 
                     actionSection
 
-                    Button("Not Now") { dismiss() }
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .buttonStyle(.bordered)
+                    // The frame lives on the *label*, not on the Button: a
+                    // bordered style sizes its background to the label, so an
+                    // outer frame widens the hit area and leaves a small pill
+                    // floating in the middle of it.
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Not Now")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.bordered)
 
                     LegalFooterLinks()
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1328,10 +1340,14 @@ struct PremiumInfoSheet: View {
                 }
             }
         } else if store.signedIn {
-            Button("See Plans") { showSubscribe = true }
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 50)
-                .buttonStyle(.borderedProminent)
+            Button {
+                showSubscribe = true
+            } label: {
+                Text("See Plans")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
         } else {
             // Honest, not a dead end: the purchase has to attach to an account,
             // and the sign-in stack is one sheet behind this one.
