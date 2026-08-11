@@ -234,8 +234,10 @@ export async function recomputeTransactions(
   sourceOverride?: TxSource,
 ): Promise<FlaggedTx[]> {
   const nowIso = new Date().toISOString();
-  const resolver = await loadResolver(env);
-  return parsed.map((p, rowIndex) => buildTransaction(p, filing, resolver, nowIso, rowIndex, sourceOverride));
+  const [resolver, nameIndex] = await Promise.all([loadResolver(env), loadNameIndex(env)]);
+  return parsed.map((p, rowIndex) =>
+    buildTransaction(p, filing, resolver, nowIso, rowIndex, sourceOverride, nameIndex),
+  );
 }
 
 /** securities_master row shape. `aliases` is a JSON string array. */
@@ -243,6 +245,12 @@ interface SecRow {
   ticker: string;
   name: string | null;
   aliases: string | null;
+}
+
+/** securities_ref row shape (only the columns this module reads). */
+interface SecRefRow {
+  ticker: string;
+  company_name: string | null;
 }
 
 /**
@@ -339,7 +347,7 @@ export async function normalize(
 
   if (needsReview) {
     let reason = exceedsPublishLimit
-      ? 'extraction_row_limit_exceeded'
+      ? classifyRowLimitReason(flagged)
       : reviewReason(flagged, minConfidence, confThreshold);
     // When every extracted row was form chrome (or empty after drop), tag the
     // park reason so ops/dashboard can tell OCR letterhead floods from real
@@ -435,6 +443,7 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
   sourceOverride?: TxSource,
+  nameIndex?: NameIndex,
 ): FlaggedTx {
   const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
   let rawTicker = p.ticker;
@@ -460,6 +469,7 @@ function buildTransaction(
     },
     filing.filedDate,
     resolve,
+    nameIndex,
   );
   // Models (and local_mac OCR) often leave assetType null even when the PTR
   // line says "Common Stock" or carries a House [ST] code. Infer before
@@ -570,6 +580,7 @@ export function scoreFields(
   },
   filedDate: string | null,
   resolve: TickerResolver,
+  nameIndex?: NameIndex,
 ): ScoredFields {
   const flags: string[] = [];
   let confidence = clamp01(base);
@@ -600,6 +611,23 @@ export function scoreFields(
     confidence *= PENALTY_UNRESOLVED_TICKER;
   } else {
     ticker = null;
+  }
+
+  // --- ticker <-> asset-name consistency (hallucination signal) -------------
+  // Informational only, NOT penalized: securities_master/securities_ref have
+  // known coverage gaps (e.g. crypto/bond tickers), so a "no known name for
+  // this ticker" case must never look like a mismatch. This flag exists to
+  // feed the per-filing garbage_ratio computed in normalize() for the
+  // extraction_row_limit_exceeded review-queue triage split, not to affect
+  // per-row confidence or the publish decision for ordinary filings.
+  if (ticker && nameIndex) {
+    const knownName = nameIndex.get(ticker);
+    if (knownName) {
+      const simplifiedAsset = simplifyCompanyName(assetName);
+      if (simplifiedAsset && !namesPlausiblyMatch(simplifiedAsset, knownName)) {
+        flags.push('ticker_asset_mismatch');
+      }
+    }
   }
 
   // --- amount validation ----------------------------------------------------
@@ -801,6 +829,73 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // what clears the dominant `unresolved_ticker` review-queue reason.
     return resolveTickerDeterministic(t, (sym: string) => (byTicker.has(sym) ? byTicker.get(sym)! : null));
   };
+}
+
+// ---------------------------------------------------------------------------
+// Ticker <-> asset-name consistency (hallucination signal)
+// ---------------------------------------------------------------------------
+
+/** ticker -> simplifyCompanyName(known company name), for the mismatch check only. */
+export type NameIndex = Map<string, string>;
+
+const NAME_INDEX_TTL_MS = 10 * 60 * 1000;
+let nameIndexCache: { loadedAt: number; index: NameIndex } | null = null;
+
+/** Drop the in-process name-index cache (tests / admin reload). */
+export function clearNameIndexCache(): void {
+  nameIndexCache = null;
+}
+
+/**
+ * Load a ticker -> simplified-company-name index for the ticker/assetName
+ * consistency check in scoreFields(), sourced from securities_ref.company_name
+ * only (enriched daily from SEC EDGAR/FMP — fresher than securities_master,
+ * which is a stale, manually-reseeded one-time import; see loadResolver()'s
+ * doc comment). securities_ref lives in the same D1 database as
+ * securities_master, reachable via the same shared env.DB binding, but
+ * nothing under extraction/ had queried it before this — it was simply
+ * unused, not unreachable. Deliberately does NOT also read securities_master
+ * here: loadResolver() already reads it once per isolate/TTL window for
+ * ticker resolution, and a second independent read of the same ~10k-row
+ * table would double that cost for no real coverage gain, since the master
+ * table's own name data is the noisier of the two anyway. A ticker
+ * securities_ref hasn't enriched yet simply has no entry, which correctly
+ * skips the mismatch check (absence of data is not evidence of mismatch),
+ * exactly like the existing "no ticker" / crypto / bond cases.
+ */
+export async function loadNameIndex(env: Env): Promise<NameIndex> {
+  const now = Date.now();
+  if (nameIndexCache && now - nameIndexCache.loadedAt < NAME_INDEX_TTL_MS) {
+    return nameIndexCache.index;
+  }
+  const index: NameIndex = new Map();
+  try {
+    const refRows = await all<SecRefRow>(
+      env.DB,
+      'SELECT ticker, company_name FROM securities_ref WHERE company_name IS NOT NULL',
+    );
+    for (const r of refRows) {
+      const t = (r.ticker || '').toUpperCase();
+      const simplified = simplifyCompanyName(r.company_name || '');
+      if (t && simplified) index.set(t, simplified);
+    }
+  } catch {
+    // Fail open: an empty index just means the mismatch check below never
+    // fires (no penalty either way), never a hard failure.
+    index.clear();
+  }
+  nameIndexCache = { loadedAt: now, index };
+  return index;
+}
+
+/**
+ * True when two simplified company names plausibly refer to the same issuer.
+ * Exact match or substring containment either direction (tolerates partial
+ * historical forms, e.g. "apple computer" vs "apple").
+ */
+function namesPlausiblyMatch(a: string, b: string): boolean {
+  if (!a || !b) return true; // nothing to compare against is not evidence of mismatch
+  return a === b || a.includes(b) || b.includes(a);
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1359,53 @@ function reviewReason(
     reasons.add('low_confidence');
   }
   return Array.from(reasons).join(',') || 'needs_review';
+}
+
+/**
+ * When a filing is rejected purely for exceeding MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+ * the raw row count alone can't tell an operator "this is 250 hallucinated OCR
+ * duplicates" apart from "this is a real, unusually large filing" — both look
+ * identical in review_queue without opening the payload. This computes a cheap
+ * per-filing garbage_ratio (duplicate rows + hard-failure rows + ticker/name
+ * mismatches, as a share of all flagged rows) plus a confidence-uniformity
+ * check (many rows landing at the EXACT same confidence is itself a garbling
+ * signature — see H-2025-8221264: 200+ rows all at 0.189) and folds both into
+ * the review_queue reason string so triage doesn't require eyeballing raw
+ * counts. This does NOT change the publish decision — exceedsPublishLimit
+ * already blocked ALL of these rows from being published regardless of this
+ * classification; it only changes which reason string + priority they land
+ * under. The 0.5 ratio threshold is a starting heuristic (see docs/rollouts
+ * for the pilot that calibrates it), not a proven cutoff.
+ */
+function classifyRowLimitReason(flagged: FlaggedTx[]): string {
+  const total = flagged.length;
+  if (total === 0) return 'extraction_row_limit_exceeded';
+
+  const rowKeys = flagged.map((f) => transactionRowKey('primary', 0, f.tx));
+  const keyCounts = new Map<string, number>();
+  for (const k of rowKeys) keyCounts.set(k, (keyCounts.get(k) ?? 0) + 1);
+
+  let garbageRows = 0;
+  for (let i = 0; i < flagged.length; i += 1) {
+    const f = flagged[i];
+    const isDuplicate = (keyCounts.get(rowKeys[i]) ?? 0) > 1;
+    const isHardFailure = f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag));
+    const isMismatch = f.flags.includes('ticker_asset_mismatch');
+    if (isDuplicate || isHardFailure || isMismatch) garbageRows += 1;
+  }
+  const garbageRatio = garbageRows / total;
+
+  const confidences = flagged.map((f) => f.tx.confidence);
+  const mean = confidences.reduce((a, b) => a + b, 0) / confidences.length;
+  const variance = confidences.reduce((a, b) => a + (b - mean) ** 2, 0) / confidences.length;
+  const confidenceStdev = Math.sqrt(variance);
+  const suspiciouslyUniform = total > 50 && confidenceStdev < 0.01;
+
+  const likelyGarbage = garbageRatio >= 0.5 || suspiciouslyUniform;
+  const ratioLabel = garbageRatio.toFixed(2);
+  return likelyGarbage
+    ? `extraction_row_limit_exceeded_likely_garbage:${ratioLabel}`
+    : `extraction_row_limit_exceeded_needs_reprocess:${ratioLabel}`;
 }
 
 // ---------------------------------------------------------------------------
