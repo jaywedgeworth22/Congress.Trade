@@ -173,75 +173,34 @@ extension XCTestCase {
         return "the view hierarchy was still changing (last count \(previous))"
     }
 
-    /// Chrome inside the Trades scroll view that is *not* a trade row. Used by
-    /// the structural fallback below; matching is by exact label or prefix.
-    private var tradesChromeLabels: Set<String> {
-        ["Retry", "Previous", "Next", "Done", "Menu", "About Congress.Trade"]
-    }
-
     /// Opens a trade's detail sheet and returns an element that proves it is up.
     ///
-    /// Identifier-first, structural fallback:
+    /// `TradeCard` nests *three* buttons per row — ticker logo, asset title,
+    /// politician line — and the ticker and politician ones open **different**
+    /// sheets. Rather than guess structurally, the row button carries
+    /// `trades.row` (FeedDashboardView.swift), so this is one unambiguous query.
     ///
-    /// 1. If `FeedDashboardView` carries `trades.row` (see the handoff note in
-    ///    the PR), tap that — one query, no ambiguity.
-    /// 2. Otherwise walk the buttons inside the Trades scroll view and tap the
-    ///    first plausible row, confirming success by the sheet's own
-    ///    `navigationTitle("Trade Details")`. `TradeCard` nests *three*
-    ///    buttons per row — ticker logo, asset title, politician line — and the
-    ///    ticker and politician ones open **different** sheets, so a candidate
-    ///    that opens the wrong thing is dismissed and the next is tried rather
-    ///    than silently captured.
-    ///
-    /// Fails loudly if no candidate opens the trade sheet.
+    /// An earlier version scanned the scroll view's buttons and filtered them by
+    /// `isHittable`. Do not reintroduce that: probing `isHittable` on an element
+    /// whose activation point cannot be resolved — the "Sort by Date" control,
+    /// as it happens — makes XCTest record a failure, which aborts the run under
+    /// `continueAfterFailure = false`. The identifier is the contract.
     @discardableResult
     func openTradeDetail(in app: XCUIApplication) -> XCUIElement {
         let detailTitle = app.staticTexts["Trade Details"]
-
-        let identified = app.descendants(matching: .any)
+        let row = app.descendants(matching: .any)
             .matching(identifier: "trades.row").firstMatch
-        if identified.waitForExistence(timeout: 2) {
-            identified.tap()
-            if detailTitle.waitForExistence(timeout: UITestTimeout.presentation) {
-                return detailTitle
-            }
-            dismissAnyPresentedSheet(in: app)
-        }
 
-        let scroll = app.scrollViews.firstMatch
         XCTAssertTrue(
-            scroll.waitForExistence(timeout: UITestTimeout.scene),
-            "The Trades list never rendered a scroll view."
+            row.waitForExistence(timeout: UITestTimeout.scene),
+            "No element with identifier 'trades.row' on the Trades tab. Either the live "
+            + "feed returned no rows, or TradeCard lost its .accessibilityIdentifier."
         )
 
-        let candidates = scroll.buttons.allElementsBoundByIndex.filter { button in
-            guard button.exists, button.isHittable else { return false }
-            let label = button.label
-            guard !label.isEmpty else { return false }
-            guard !tradesChromeLabels.contains(label) else { return false }
-            // "View AAPL Trades" is the ticker-logo button — wrong sheet.
-            guard !(label.hasPrefix("View ") && label.hasSuffix(" Trades")) else { return false }
-            return true
-        }
-
-        XCTAssertFalse(
-            candidates.isEmpty,
-            "No tappable trade rows on the Trades tab — the live feed returned nothing."
-        )
-
-        for candidate in candidates.prefix(6) {
-            candidate.tap()
-            if detailTitle.waitForExistence(timeout: UITestTimeout.presentation) {
-                return detailTitle
-            }
-            // Wrong sheet (politician/ticker detail) — close it and try again.
-            dismissAnyPresentedSheet(in: app)
-        }
-
-        XCTFail(
-            "Tapped \(min(candidates.count, 6)) candidate row element(s) and none opened the "
-            + "trade detail sheet. TradeCard's button layout probably changed — see "
-            + "openTradeDetail(in:)."
+        row.tap()
+        XCTAssertTrue(
+            detailTitle.waitForExistence(timeout: UITestTimeout.presentation),
+            "Tapped a 'trades.row' element but the trade detail sheet never appeared."
         )
         return detailTitle
     }

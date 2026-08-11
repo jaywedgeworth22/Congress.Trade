@@ -1214,6 +1214,10 @@ struct TradeCard: View {
                         Button(action: onRowTap) { assetTitleText }
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens trade details")
+                            // Lets the screenshot harness open a trade without
+                            // guessing which of TradeCard's three buttons is
+                            // the row (the other two open different sheets).
+                            .accessibilityIdentifier("trades.row")
                     } else {
                         assetTitleText
                     }

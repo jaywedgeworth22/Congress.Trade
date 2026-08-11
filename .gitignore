@@ -55,3 +55,9 @@ app/.prod.vars.local
 
 # Latency week tracker samples (may contain ops snapshots)
 docs/latency-week/samples/
+
+# App Store screenshot capture runs (~19MB each). The harness in
+# scripts/capture-app-store-screenshots.sh is what is version-controlled; its
+# output is not. Runs accumulate locally so a set can be picked later, and the
+# script prunes to the newest --keep (default 5).
+docs/brand/app-store-screenshots/runs/
