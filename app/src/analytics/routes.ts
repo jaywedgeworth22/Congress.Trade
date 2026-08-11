@@ -1235,7 +1235,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   //    matched=N with empty W/L → fake "preliminary tie".
   r.get('/latency-summary', async (c) => {
     // v5: FMP family merge + effective timing deltas (not published-only).
-    const data = await cached(c.env, 'analytics:latency-summary:v5', 300, async () => {
+    // v6: strong/weak split, window-decoupled coverage, scope denominator.
+    const data = await cached(c.env, 'analytics:latency-summary:v6', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       return {
         generatedAt: publicSummary.generatedAt,
@@ -1251,6 +1252,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           unmatchedProvider: publicSummary.totals.unmatchedProvider,
           comparableProviders: publicSummary.totals.comparableProviders,
         },
+        // "N of M matched" over our whole realm of concern — see
+        // DisclosureLatencyScope in ingestion/tradeLatency.ts for exactly what
+        // M counts. Both clients render this as one line; do not re-derive it.
+        scope: publicSummary.scope,
         providers: publicSummary.providers.map((p) => ({
           id: p.provider,
           label: p.label,
@@ -1260,12 +1265,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           matched: p.matched,
           // Same cohort as matched (live imports only; backfills excluded).
           strongMatched: p.strongMatched,
+          // Pairings that left one identity axis unverified — reported beside
+          // the headline, never inside it.
+          weakMatched: p.weakMatched,
           providerObserved: p.providerObserved,
           maturedProviderObserved: p.maturedProviderObserved,
           unmatchedProvider: p.unmatchedProvider,
+          observedRowsMissingFiler: p.observedRowsMissingFiler,
           pendingProvider: p.pendingProvider,
           maturedCandidates: p.maturedCandidates,
           maturedMatched: p.maturedMatched,
+          maturedWeakMatched: p.maturedWeakMatched,
           ctCoveragePct: p.ctCoveragePct,
           providerCoveragePct: p.providerCoveragePct,
           // Backward-compatible alias; unlike the former field this is CT's
