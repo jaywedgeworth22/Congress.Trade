@@ -4,6 +4,12 @@
  *
  * Owner (2026-08-09): notes like "Populated official company name from
  * securities_ref" should read as "asset name derived from ticker".
+ *
+ * The extraction pipeline (`splitAssetNameDetail`) also emits already-plain,
+ * value-carrying fragments — "coupon 5.0%, matures 05/01/2026",
+ * "matures Jun 15, 2030", "exchanged for Kenvue Inc." — joined with "; " when a
+ * row has more than one. Those need no rewrite and fall through unchanged; the
+ * test suite pins that so a future rewrite rule cannot swallow them.
  */
 export function plainCleaningNote(raw: string | null | undefined): string {
   if (raw == null) return '';
