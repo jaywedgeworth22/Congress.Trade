@@ -1170,13 +1170,28 @@ struct MemberLeaderboardResponse: Decodable {
     let count: Int?
 }
 
+/// `GET /api/analytics/member-leaderboard` → `members[]`. Shape verified
+/// against live production 2026-08-11: `{filerId, fullName, party, partyBucket,
+/// chamber, state, photoUrl, tradeCount, buyCount, sellCount, estVolumeUsd,
+/// estNetFlowUsd}`.
+///
+/// NOT AVAILABLE HERE: `district`. The website shows a district on its
+/// Most Active Politicians rows, but that query selects it from a different
+/// source; `buildMemberLeaderboardQuery` does not. Adding a `district` field
+/// to this struct would decode to `nil` forever — exactly the failure mode
+/// documented on `FilingLagSummary`. It needs a backend change first.
 struct MemberLeaderboardItem: Decodable, Identifiable {
     var id: String { filerId }
     let filerId: String
     let fullName: String?
     let party: String?
+    /// Server-bucketed `"D" | "R" | "O"` (`asPartyBucket`) — matches
+    /// `PartyFilter.rawValue`, so prefer it over parsing `party` locally.
+    let partyBucket: String?
     let chamber: String?
     let state: String?
+    /// Present on every live row; `nil` only when the filer has no photo.
+    let photoUrl: String?
     let tradeCount: Int?
     let buyCount: Int?
     let sellCount: Int?
@@ -1227,9 +1242,17 @@ struct TrendingItem: Decodable, Identifiable {
     }
 }
 
+/// `GET /api/analytics/member-performance` — the Top Performers board.
+/// Shape verified against live production 2026-08-11 (`?window=90d`):
+/// `{window, chamber, party, source, estimatedAmounts, asOf, count, members[],
+/// anchor, side, note}`.
 struct TopPerformersResponse: Decodable {
     let members: [TopPerformerItem]
     let count: Int?
+    /// The server's own plain-English definition of the displayed statistic
+    /// ("Size-weighted average excess return vs S&P 500 from the disclosure
+    /// date…"). Prefer rendering this over a hand-written caption — it is
+    /// written next to the SQL and stays in step with it.
     let note: String?
 }
 
@@ -1241,7 +1264,24 @@ struct TopPerformerItem: Decodable, Identifiable {
     let partyBucket: String?
     let photoUrl: String?
     let tradeCount: Int
+
+    /// **CANONICAL — display and rank by this.** Size-weighted average excess
+    /// return vs the S&P 500 from the *disclosure* date, winsorized per-trade
+    /// at ±200%, NOT annualized. The API's `ORDER BY` uses this exact column,
+    /// so a list painted with it is in the order it arrived; the website
+    /// (`app/src/ui/dashboardHtml.ts`) renders this same field.
+    let avgExcessReturn: Double?
+
+    /// **REFERENCE ONLY — never the headline number.** The backend's own
+    /// comment at `app/src/analytics/routes.ts` calls it "reference/debugging
+    /// only … NOT what the board sorts or displays by (a young trade's ~12x
+    /// annualization multiplier made this misleading as the primary stat)".
+    /// Rendering it beside rows sorted by `avgExcessReturn` is what made the
+    /// board look randomly ordered: live at `window=90d` the honest column
+    /// tops out near 5.7% while this one reads 41.4 / 26.4 / 22.5 / 41.2%.
+    /// Kept decoded so a debug/QA surface can still show it, clearly labelled.
     let avgAnnualizedExcessReturn: Double?
+
     let winRate: Double?
     let estVolumeUsd: Double?
 }
@@ -1280,12 +1320,90 @@ struct FilingLagResponse: Decodable {
     let topLateFilers: [SlowFilerItem]?
 }
 
+/// `GET /api/analytics/filing-lag` → `summary`.
+///
+/// VERIFIED AGAINST THE LIVE ENDPOINT 2026-08-11 (`?window=90d`). The server
+/// emits exactly five keys — `count`, `medianLagDays`, `p90LagDays`,
+/// `overFortyFivePct`, `distribution` — produced by `summarizeLag()` in
+/// `app/src/analytics/compute.ts` (return type `LagSummary`). Anything not in
+/// that list does not exist; see the tombstones at the bottom of this struct.
+///
+/// WHY THE TOMBSTONES EXIST: this struct previously decoded `avgLagDays`,
+/// `maxLagDays`, `lateCount` and `totalTrades` — none of which the API has
+/// ever returned. Because every field was `Optional`, decoding never failed:
+/// it silently produced `nil` forever, and Disclosure Timeliness shipped
+/// "Avg Delay: 0 days" and "Late Filings: —" as permanent, confident-looking
+/// wrong answers. Optionality is what turned a decode error into a lie, so
+/// every field here is justified against the response above before it is added.
 struct FilingLagSummary: Decodable {
-    let avgLagDays: Double?
+    /// Disclosures in the window with a computable trade→filing lag.
+    let count: Int?
+    /// Median days from trade to disclosure (whole days; server sends an Int).
     let medianLagDays: Double?
-    let maxLagDays: Double?
-    let lateCount: Int?
-    let totalTrades: Int?
+    /// 90th-percentile days from trade to disclosure — the tail the median hides.
+    let p90LagDays: Double?
+    /// Fraction 0…1 (NOT a percentage) filed more than 45 days after the
+    /// trade, i.e. past the STOCK Act deadline. Live 90d value: `0.0021`.
+    /// Multiply by 100 before formatting.
+    let overFortyFivePct: Double?
+    /// Fixed-bucket histogram in display order ("0-7d" … "60d+"), from the
+    /// shared `LAG_BUCKETS` table. Always all six buckets, zero-filled.
+    let distribution: [FilingLagBucket]?
+
+    /// Count of disclosures past the 45-day deadline. DERIVED, not decoded —
+    /// summed from the histogram's over-45 buckets, which is exact, with the
+    /// `overFortyFivePct × count` product as the fallback when a future bucket
+    /// table uses labels this parser does not recognise (that product is
+    /// accurate to ±0.00005 × count because the server rounds the fraction to
+    /// four decimals).
+    var lateFilingCount: Int? {
+        // A recognised over-45 bucket makes the sum exact — including a
+        // legitimate zero, which the percentage path could not distinguish
+        // from "no data".
+        if let distribution {
+            let pastDeadline = distribution.filter { Self.bucketIsPastDeadline($0.bucket) }
+            if !pastDeadline.isEmpty {
+                return pastDeadline.reduce(0) { $0 + $1.count }
+            }
+        }
+        guard let overFortyFivePct, let count else { return nil }
+        return Int((overFortyFivePct * Double(count)).rounded())
+    }
+
+    /// A bucket label is "past the deadline" when its lower bound is above 45
+    /// days. Labels are `"<lo>-<hi>d"` or `"<lo>d+"` (`SHARED_LAG_BUCKETS`), so
+    /// the leading integer is all we need — no hard-coded label list to drift.
+    private static func bucketIsPastDeadline(_ label: String) -> Bool {
+        let lowerBound = label.prefix { $0.isNumber }
+        guard let low = Int(lowerBound) else { return false }
+        return low > 45
+    }
+
+    // MARK: - Tombstones for fields the API has never returned
+    //
+    // Left as `unavailable` rather than deleted so a call site that reaches for
+    // one gets "unavailable: <what to use instead>" instead of a bare "has no
+    // member", and so nobody re-adds them from memory.
+
+    @available(*, unavailable, message: "The filing-lag API has no average. Use medianLagDays (or p90LagDays for the tail).")
+    var avgLagDays: Double? { nil }
+
+    @available(*, unavailable, message: "The filing-lag API has no maximum. Use p90LagDays, or SlowFilerItem.maxLagDays for a single filer.")
+    var maxLagDays: Double? { nil }
+
+    @available(*, unavailable, message: "Renamed and now derived from the histogram: use lateFilingCount (or overFortyFivePct for the share).")
+    var lateCount: Int? { nil }
+
+    @available(*, unavailable, message: "Renamed to match the API: use count.")
+    var totalTrades: Int? { nil }
+}
+
+/// One bar of the filing-lag histogram (`summary.distribution[]`).
+struct FilingLagBucket: Decodable, Identifiable {
+    var id: String { bucket }
+    /// Display label straight from the server, e.g. "0-7d", "31-45d", "60d+".
+    let bucket: String
+    let count: Int
 }
 
 struct SlowFilerItem: Decodable, Identifiable {
