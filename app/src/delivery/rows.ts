@@ -22,7 +22,12 @@ import type {
 } from '../shared/types.ts';
 import { first, get, parseJson, toBool } from '../shared/db.ts';
 import type { StockActStatus } from '../shared/stockAct.ts';
-import { canonicalizeAssetType } from '../shared/assetTypes.ts';
+import {
+  canonicalAssetTypeCategorySql,
+  canonicalizeAssetType,
+  isAssetTypeCategory,
+} from '../shared/assetTypes.ts';
+import type { AssetTypeCategory } from '../shared/assetTypes.ts';
 import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
@@ -366,6 +371,21 @@ export interface TxQueryParams {
    */
   types?: TxType[];
   /**
+   * Canonical instrument-class filter (`AssetTypeCategory`), e.g.
+   * `['fund', 'public_equity']` for the owner's "Public Equities, Funds, &
+   * ETFs" dropdown option. Exposed on the public + client feeds as
+   * `?assetClass=equities_funds` (see {@link asAssetCategories}).
+   *
+   * Deliberately SERVER-side: a client that instead filtered one already
+   * fetched page would report a count drawn from that page, which is exactly
+   * the "shows 100 because that's the page size" class of bug. Applied through
+   * the shared {@link buildTxFilters}, so `buildTransactionsCountQuery`'s
+   * `total` — and the CSV export set — narrow with it.
+   *
+   * ABSENT/empty means no instrument-class filter (the "All" option).
+   */
+  assetCategories?: AssetTypeCategory[];
+  /**
    * STOCK Act 45-day classification filter (`transactions.stock_act_status`,
    * stored by migration 0065). Exposed on the public feed as `?stockAct=late`
    * etc. Rows with unknown dates (NULL status) are excluded when set.
@@ -486,6 +506,73 @@ const PARTY_BUCKET_SQL_LOCAL =
   "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
   'ELSE NULL END)';
 
+/**
+ * Canonical instrument-category expression over the transaction row itself
+ * (`asset_type` House bracket code, `asset_type_name` label, `is_option`) —
+ * literally the same generator the Trends analytics builders use
+ * (`canonicalAssetTypeCategorySql`, see analytics/builders.ts), so an
+ * asset-class selection buckets a row identically on the Trades feed and on
+ * Trends. Built once at module load: the CASE is large (one branch per House
+ * code + label alias) but entirely static.
+ *
+ * Only `transactions` columns are referenced, so this filter is safe inside
+ * the nested keyset subquery (see {@link canNestTransactionKeyset}) — no join
+ * has to run before the LIMIT.
+ *
+ * Known edge, honestly stated: the TypeScript {@link canonicalizeAssetType}
+ * ALSO infers a code from the asset name when `asset_type` is blank
+ * ("… Common Stock" -> ST). The SQL form has no such inference, so the rare
+ * row with an empty `asset_type`/`asset_type_name` buckets as `unknown` for
+ * filtering even though the row it renders shows an inferred category. That
+ * gap is in the shared generator, not here; it is narrow (blank type AND
+ * blank type name) and identical to what the Trends tabs already do.
+ */
+const ASSET_TYPE_CATEGORY_SQL = canonicalAssetTypeCategorySql(
+  't.asset_type',
+  't.asset_type_name',
+  't.is_option',
+);
+
+/**
+ * Named instrument-class groups for the public `?assetClass=` filter, so a
+ * client ships a stable slug instead of hard-coding the taxonomy. Owner ask
+ * (2026-08-11): the Trades dropdown offers "All" and "Public Equities, Funds,
+ * & ETFs" — the latter is `public_equity` (ST: stocks incl. ADRs) plus `fund`,
+ * which is where the taxonomy already puts every pooled wrapper a reader lumps
+ * in with stocks (EF = ETF, MF = mutual fund, ET = exchange-traded note,
+ * MA = managed account). Raw category slugs still work, so a future dropdown
+ * option needs no server change.
+ */
+export const ASSET_CLASS_GROUPS: Record<string, AssetTypeCategory[]> = {
+  equities_funds: ['fund', 'public_equity'],
+};
+
+/**
+ * Parse `?assetClass=` into a category list. Accepts a group slug
+ * (`equities_funds`), raw `AssetTypeCategory` slugs, or a CSV mixing both;
+ * separators in a slug are normalized (`equities-funds`, `equities funds`).
+ *
+ * Returns `undefined` — meaning NO filter — for absent/empty input, for the
+ * explicit `all` sentinel (the dropdown's default option), and for input that
+ * matches nothing, which is the same lenient fallback every other filter
+ * parser in this module uses (`asChambers`, `asTxTypes`, `asPartyBuckets`).
+ */
+export function asAssetCategories(v: string | null | undefined): AssetTypeCategory[] | undefined {
+  if (!v || !v.trim()) return undefined;
+  const out = new Set<AssetTypeCategory>();
+  for (const part of v.toLowerCase().split(',')) {
+    const key = part.trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!key || key === 'all') continue;
+    const group = ASSET_CLASS_GROUPS[key];
+    if (group) {
+      for (const category of group) out.add(category);
+      continue;
+    }
+    if (isAssetTypeCategory(key)) out.add(key);
+  }
+  return out.size ? Array.from(out).sort() : undefined;
+}
+
 /** O(1) indexed MAX query over transactions.cursor_seq */
 export async function readCursorHighWater(env: Env): Promise<number> {
   const row = await first<{ hwm: number | null }>(env.DB, 'SELECT MAX(cursor_seq) AS hwm FROM transactions', []);
@@ -604,6 +691,13 @@ function buildTxFilters(
     where.push('t.tx_date <= ?');
     params.push(p.txDateMax.slice(0, 10));
   }
+  // Appended last on purpose: bound-parameter order is positional, so keeping
+  // this clause at the tail leaves every existing caller's param sequence
+  // untouched.
+  if (p.assetCategories && p.assetCategories.length) {
+    where.push(`${ASSET_TYPE_CATEGORY_SQL} IN (${p.assetCategories.map(() => '?').join(', ')})`);
+    params.push(...p.assetCategories);
+  }
 
   return { where, params };
 }
@@ -621,6 +715,10 @@ function canNestTransactionKeyset(p: TxQueryParams): boolean {
   if (p.partyBuckets && p.partyBuckets.length) return false;
   if (p.filedSince) return false;
   if (p.sort === 'published') return false;
+  // `assetCategories` is deliberately absent from this bail-out list: its SQL
+  // reads only `transactions` columns (see ASSET_TYPE_CATEGORY_SQL), so the
+  // instrument-class filter stays inside the nested keyset and still narrows
+  // before the LIMIT.
   return true;
 }
 

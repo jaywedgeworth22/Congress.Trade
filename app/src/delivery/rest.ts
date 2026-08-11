@@ -31,6 +31,7 @@ import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHeal
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
+  asAssetCategories,
   buildTransactionsQuery,
   buildTransactionsCountQuery,
   buildTransactionsTodayFilingsQuery,
@@ -415,6 +416,10 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     memberName: q.memberName || undefined,
     chambers: asChambers(q.chamber),
     partyBuckets: asPartyBuckets(q.party),
+    // Instrument-class dropdown; see TxQueryParams.assetCategories. Included
+    // here so Premium CSV export and the RSS feed honor the same selection
+    // the JSON feed does.
+    assetCategories: asAssetCategories(q.assetClass ?? q.assetCategory),
     type: types?.length === 1 ? types[0] : asTxType(q.type),
     types: types && types.length > 1 ? types : undefined,
     stockAct: asStockActStatus(q.stockAct),
@@ -578,6 +583,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       memberName: q.memberName || undefined,
       chambers: asChambers(q.chamber),
       partyBuckets: asPartyBuckets(q.party),
+      assetCategories: asAssetCategories(q.assetClass ?? q.assetCategory),
       type: asTxType(q.type),
       stockAct: asStockActStatus(q.stockAct),
       owner: asOwner(q.owner),

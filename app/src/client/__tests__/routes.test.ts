@@ -3,6 +3,7 @@ import { buildClientRouter } from '../routes.ts';
 import { executeQueuedCommand } from '../commands.ts';
 import { createSession } from '../../auth/session.ts';
 import { spendRowBudget, DAILY_ROW_BUDGET } from '../../security/botDefense.ts';
+import { canonicalizeAssetType } from '../../shared/assetTypes.ts';
 import type { Env, QueueMessage } from '../../shared/types.ts';
 import type { FeedTransactionRow, SubscriptionRow } from '../../delivery/rows.ts';
 import type { CommandRow } from '../state.ts';
@@ -160,6 +161,24 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     if (/t\.amount_min <= \?/i.test(sql)) {
       const maxAmount = Number(params[i++]);
       rows = rows.filter((row) => row.amount_min != null && row.amount_min <= maxAmount);
+    }
+    // Instrument-class filter (`?assetClass=`). buildTxFilters appends it last,
+    // so its params come last too. The real clause is a several-hundred-branch
+    // CASE (see canonicalAssetTypeCategorySql); match its distinctive tail and
+    // resolve each row's category with the same shared canonicalizer.
+    const assetCategoryIn = sql.match(/ELSE 'other' END\) IN \(([?, ]+)\)/i);
+    if (assetCategoryIn) {
+      const n = (assetCategoryIn[1].match(/\?/g) ?? []).length;
+      const categories = params.slice(i, i + n).map(String);
+      i += n;
+      rows = rows.filter((row) =>
+        categories.includes(
+          canonicalizeAssetType(row.asset_type, row.asset_type_name ?? null, {
+            isOption: row.is_option === 1,
+            assetName: row.asset_name ?? null,
+          }).category,
+        ),
+      );
     }
     // tx_date checks first: the real ORDER BY clause for sort=tx_date is
     // "t.tx_date DESC, t.cursor_seq DESC" (see buildTransactionsQuery), which
@@ -1676,6 +1695,109 @@ describe('client API detail endpoints: row budget + zero-delta polling', () => {
     const body = (await res.json()) as { items: unknown[]; total?: number };
     expect(body.items).toHaveLength(1);
     expect(body.total).toBe(1);
+  });
+});
+
+describe('client API feed: asset-class filter (?assetClass=)', () => {
+  /** One row per canonical bucket the dropdown has to tell apart. */
+  const mixedAssetRows = () => [
+    feedRow({ id: 'stock', cursor_seq: 1, asset_type: 'ST', ticker: 'AAPL', __chamber: 'house' }),
+    feedRow({ id: 'etf', cursor_seq: 2, asset_type: 'EF', ticker: 'SPY', __chamber: 'house' }),
+    feedRow({ id: 'mutual-fund', cursor_seq: 3, asset_type: 'MF', ticker: null, __chamber: 'house' }),
+    feedRow({ id: 'muni-bond', cursor_seq: 4, asset_type: 'GS', ticker: null, __chamber: 'house' }),
+    feedRow({ id: 'real-property', cursor_seq: 5, asset_type: 'RP', ticker: null, __chamber: 'house' }),
+  ];
+
+  it('narrows the page to public equities, funds, and ETFs', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(...mixedAssetRows());
+    const app = buildClientRouter();
+
+    const res = await app.request('http://localhost/feed?assetClass=equities_funds', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }>; count: number };
+    expect(body.items.map((item) => item.id)).toEqual(['stock', 'etf', 'mutual-fund']);
+    expect(body.count).toBe(3);
+  });
+
+  it('reports a `total` that reflects the FILTER, not the page size', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(...mixedAssetRows());
+    const app = buildClientRouter();
+
+    // limit=2 with 3 matching rows: a client-side filter over one fetched page
+    // could only ever report 2 (or, unfiltered, all 5). The server-side filter
+    // must serve a 2-row page while reporting the true match count of 3 — that
+    // is the whole reason this filter is not done on the client.
+    const res = await app.request('http://localhost/feed?limit=2&assetClass=equities_funds', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }>; count: number; total: number };
+    expect(body.items.map((item) => item.id)).toEqual(['stock', 'etf']);
+    expect(body.count).toBe(2);
+    expect(body.total).toBe(3);
+  });
+
+  it('treats "all" (and an absent param) as no filter at all', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(...mixedAssetRows());
+    const app = buildClientRouter();
+
+    const all = await app.request('http://localhost/feed?assetClass=all', {}, env);
+    const allBody = (await all.json()) as { total: number };
+    expect(allBody.total).toBe(5);
+
+    const absent = await app.request('http://localhost/feed', {}, env);
+    const absentBody = (await absent.json()) as { total: number };
+    expect(absentBody.total).toBe(5);
+  });
+
+  it('composes with the other server-side filters and their total', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      ...mixedAssetRows(),
+      feedRow({ id: 'senate-stock', cursor_seq: 6, asset_type: 'ST', __chamber: 'senate' }),
+    );
+    const app = buildClientRouter();
+
+    const res = await app.request(
+      'http://localhost/feed?chamber=senate&assetClass=equities_funds',
+      {},
+      env,
+    );
+    const body = (await res.json()) as { items: Array<{ id: string }>; total: number };
+    expect(body.items.map((item) => item.id)).toEqual(['senate-stock']);
+    expect(body.total).toBe(1);
+  });
+
+  it('carries the canonical category and its label on every trade row', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(...mixedAssetRows());
+    const app = buildClientRouter();
+
+    const res = await app.request('http://localhost/feed', {}, env);
+    const body = (await res.json()) as {
+      items: Array<{
+        id: string;
+        asset: {
+          type: string | null;
+          typeCategory: string | null;
+          typeCategoryLabel: string | null;
+          logoUrl: string | null;
+        };
+      }>;
+    };
+    const byId = new Map(body.items.map((item) => [item.id, item.asset]));
+    // Raw disclosure code is preserved as provenance...
+    expect(byId.get('stock')?.type).toBe('ST');
+    // ...alongside the canonical rollup a client can actually filter/group on.
+    expect(byId.get('stock')?.typeCategory).toBe('public_equity');
+    expect(byId.get('stock')?.typeCategoryLabel).toBe('Public Equity');
+    expect(byId.get('etf')?.typeCategory).toBe('fund');
+    expect(byId.get('muni-bond')?.typeCategory).toBe('fixed_income_government');
+    expect(byId.get('muni-bond')?.typeCategoryLabel).toBe('Government / Municipal Debt');
+    // Same-origin logo proxy path, previously documented but never emitted.
+    expect(byId.get('stock')?.logoUrl).toBe('/api/logos/ticker?symbol=AAPL');
+    expect(byId.get('muni-bond')?.logoUrl).toBeNull();
   });
 });
 
