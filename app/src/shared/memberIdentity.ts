@@ -55,6 +55,25 @@ export const MEMBER_NAME_ALIASES: readonly MemberNameAlias[] = [
     canonicalName: 'Mitch McConnell',
     aliases: ['a mitchell mcconnell', 'addison mitchell mcconnell', 'mcconnell a mitchell'],
   },
+  {
+    // TN-3 House: a filing spells the surname "Fleishmann", dropping the "c".
+    // congress-legislators has {first: "Charles", middle: "J.", last:
+    // "Fleischmann", nickname: "Chuck"} — the filer's first name and middle
+    // initial match exactly and only the surname spelling differs, so this is
+    // a transcription error rather than a different person. Left unmapped, the
+    // filer resolves to nothing and shows no photo, party or state.
+    canonicalName: 'Chuck Fleischmann',
+    aliases: ['charles fleishmann', 'charles j fleishmann', 'fleishmann charles'],
+  },
+  {
+    // WV Senate: filings use Sen. Justice's full legal name. Unlike the Cruz /
+    // McConnell entries this one IS derivable from the roster (his record is
+    // {first: "Jim", middle: "Conley", last: "Justice", official_full: "James
+    // C. Justice"}), but only through the middle-name field that the primary
+    // name index does not key on — so the pairing is pinned here.
+    canonicalName: 'Jim Justice',
+    aliases: ['james conley justice', 'justice ii james conley', 'justice james conley'],
+  },
 ];
 
 /**

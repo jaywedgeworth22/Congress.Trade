@@ -76,6 +76,7 @@ import {
 } from './subscriptions.ts';
 import { openSseStream } from './sse.ts';
 import { handleTickerLogoRequest } from '../ui/tickerLogos.ts';
+import { handleMemberPhotoRequest } from '../enrichment/memberPhotoPack.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
@@ -872,6 +873,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         ?? (typeof c.env.LOGO_DEV_TOKEN === 'string' ? c.env.LOGO_DEV_TOKEN : undefined);
     return handleTickerLogoRequest(new URL(c.req.url), primary ?? alias);
   });
+
+  // --- GET /photos/member -------------------------------------------------
+  // Head-focused member portrait (see enrichment/memberPhotoPack.ts). Answers
+  // from the committed face pack first; a bioguide key we have no packed face
+  // for falls through to the upstream public-domain CDN.
+  r.get('/photos/member', async (c) => handleMemberPhotoRequest(new URL(c.req.url)));
 
   // --- GET /filings/:docId ------------------------------------------------
   // Detail endpoint on the same public corpus as /transactions: applies the
