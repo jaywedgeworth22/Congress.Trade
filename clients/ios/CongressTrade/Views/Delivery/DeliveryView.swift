@@ -9,88 +9,73 @@ struct DeliveryView: View {
     @State private var membersText = ""
     @State private var watchlistDraft: [String] = []
     @State private var newTicker = ""
-    @State private var showSubscribe = false
+    @State private var showPremiumInfo = false
+    @State private var showExport = false
     @State private var editingSubscriptionId: String?
 
-    @AppStorage("notify_all_trades") private var notifyAllTrades = true
-    @AppStorage("notify_new_buys") private var notifyNewBuys = false
-    @AppStorage("notify_new_sells") private var notifyNewSells = false
-    @AppStorage("notify_watchlist") private var notifyWatchlist = false
+    // The four `notify_*` @AppStorage toggles that used to head this screen
+    // ("All Trades" / "New Buys" / "New Sells" / "Watchlist") were removed: a
+    // tree-wide grep found the keys referenced nowhere but their own bindings,
+    // so they were write-only UserDefaults that changed nothing.  They were the
+    // direct cause of the owner's "unsure if any options there impact push
+    // notifications" — they read exactly like notification settings and did
+    // nothing.  The real phone-alert switch now sits at the top of this screen,
+    // and it is the same one the header menu shows.
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Notifications") {
-                    Toggle("All Trades", isOn: Binding(
-                        get: { notifyAllTrades },
-                        set: { isOn in
-                            notifyAllTrades = isOn
-                            if isOn {
-                                notifyNewBuys = false
-                                notifyNewSells = false
-                                notifyWatchlist = false
-                            }
-                        }
-                    ))
-                    Toggle("New Buys", isOn: Binding(
-                        get: { notifyNewBuys },
-                        set: { isOn in
-                            notifyNewBuys = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("New Sells", isOn: Binding(
-                        get: { notifyNewSells },
-                        set: { isOn in
-                            notifyNewSells = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("Watchlist", isOn: Binding(
-                        get: { notifyWatchlist },
-                        set: { isOn in
-                            notifyWatchlist = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
+                Section {
+                    TradeDisclosureAlertsToggle()
+                } header: {
+                    Text("On This Phone")
+                } footer: {
+                    Text("The same switch as in the menu at the top of Trends and Trades.  Nothing else on this screen changes phone notifications.")
                 }
 
-                Section("Create Delivery") {
+                // Premium and Export CSV sit together on purpose (owner ask):
+                // export is the other thing a Premium account buys, so the
+                // upgrade prompt and the feature it unlocks are one glance
+                // apart instead of on separate screens.
+                Section {
+                    if !store.isPremium {
+                        Button {
+                            showPremiumInfo = true
+                        } label: {
+                            Label("Upgrade to Premium", systemImage: "sparkles")
+                        }
+                    }
+                    Button {
+                        showExport = true
+                    } label: {
+                        Label("Export CSV", systemImage: "arrow.down.doc")
+                    }
+                } header: {
+                    Text("Premium")
+                }
+
+                Section {
                     if !store.signedIn {
                         VStack(alignment: .leading, spacing: 10) {
                             DeliveryMethodExplainer()
-                            Text("Sign in to create delivery alerts.")
+                            Text("Sign in to create a delivery.")
                                 .foregroundStyle(.primary)
                         }
                         .padding(.vertical, 4)
                     } else if !store.isPremium {
-                        // Delivery creation is Premium-gated server-side; show
-                        // the paywall up front instead of letting free users
-                        // hit a raw 403 from `create_subscription`.
+                        // Delivery creation is Premium-gated server-side; say so
+                        // up front instead of letting a free account hit a raw
+                        // 403 from `create_subscription`.
                         VStack(alignment: .leading, spacing: 10) {
-                            Label("Premium Feature", systemImage: "star.fill")
-                                .font(.headline)
-                                .foregroundStyle(.orange)
-                            Text("1-month free trial, then $5/month or $50/year. Upgrade with In‑App Purchase or on the website to create SSE/webhook deliveries. Existing deliveries still appear below.")
+                            DeliveryMethodExplainer()
+                            Text("Creating a delivery needs Premium.  Deliveries you already have still appear below.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Button {
-                                showSubscribe = true
+                                showPremiumInfo = true
                             } label: {
-                                Label("Subscribe with Apple", systemImage: "apple.logo")
+                                Label("See What Premium Includes", systemImage: "sparkles")
                                     .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            if let url = store.api.upgradeURL {
-                                Link(destination: url) {
-                                    Label("Or subscribe on Congress.Trade", systemImage: "safari")
-                                        .font(.subheadline.weight(.semibold))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
-                                }
                             }
                         }
                         .padding(.vertical, 4)
@@ -167,11 +152,15 @@ struct DeliveryView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
                     }
+                } header: {
+                    Text("Send to Your Own Server")
+                } footer: {
+                    Text("Feeds a server or script you run.  Not phone notifications.")
                 }
 
-                Section("Existing Subscriptions") {
+                Section("Your Deliveries") {
                     if store.subscriptions.isEmpty {
-                        Text(store.signedIn ? "No delivery subscriptions yet." : "Sign in to manage delivery subscriptions.")
+                        Text(store.signedIn ? "No deliveries yet." : "Sign in to manage deliveries.")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(store.subscriptions) { subscription in
@@ -243,8 +232,14 @@ struct DeliveryView: View {
                 } header: {
                     Text("Watchlist")
                 } footer: {
-                    Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
+                    Text("New deliveries filter to these tickers.  The watchlist syncs to your Congress.Trade account.")
                 }
+
+                Section {
+                    LegalFooterLinks()
+                        .frame(maxWidth: .infinity)
+                }
+                .listRowBackground(Color.clear)
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
@@ -253,8 +248,12 @@ struct DeliveryView: View {
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }
-            .sheet(isPresented: $showSubscribe) {
-                SubscribeView()
+            .sheet(isPresented: $showPremiumInfo) {
+                PremiumInfoSheet()
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: $showExport) {
+                ExportCSVSheet()
                     .environmentObject(store)
             }
             .onAppear {
