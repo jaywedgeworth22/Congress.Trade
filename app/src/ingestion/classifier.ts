@@ -79,13 +79,31 @@ export function classifyPdfBytes(bytes: Uint8Array): 'text_pdf' | 'scanned_pdf' 
   // Latin1 decode keeps PDF operator bytes intact (binary-safe for ASCII tokens).
   const text = new TextDecoder('latin1').decode(sample);
   const hasFont = text.includes('/Font');
+  // Text-show operators are only visible when the content stream is NOT
+  // compressed. PDFs Flate-compress content by default, so this matches almost
+  // nothing in the wild — measured 0 of 25 real House/Executive filings on
+  // 2026-08-11. Kept as a positive signal, never as a requirement.
   const hasTextShow = /\bBT\b[\s\S]*?\b(Tj|TJ)\b/.test(text) || /\)\s*Tj/.test(text);
   // A scan typically has an /Image XObject and no fonts.
   const hasImageOnly = /\/Subtype\s*\/Image/.test(text) && !hasFont;
-  if (hasFont && hasTextShow) return 'text_pdf';
+
+  if (hasTextShow) return 'text_pdf';
+  // Embedded fonts mean glyphs are drawn from a font programme, i.e. there is a
+  // real text layer to extract — even though its operators sit inside a
+  // compressed stream we cannot see here. Requiring `hasFont && hasTextShow`
+  // (as this did until 2026-08-11) made the second half unreachable in practice
+  // and sent typed filings down the scan path: 19 of 25 sampled filings marked
+  // `scanned_pdf` in production had a full extractable text layer.
+  //
+  // Misclassification is deliberately biased toward `text_pdf` because the two
+  // errors do not cost the same. HousePdfExtractor runs text extraction first
+  // and only falls back to vision when it yields no usable rows
+  // (src/extractors/types.ts) — so a wrong `text_pdf` costs one FREE local
+  // attempt, while a wrong `scanned_pdf` costs a paid vision read plus 2-3
+  // more paid reads in the agreement cascade.
+  if (hasFont) return 'text_pdf';
   if (hasImageOnly) return 'scanned_pdf';
-  // Fallback: if any text-show markers exist, treat as text; else scanned.
-  return hasTextShow ? 'text_pdf' : 'scanned_pdf';
+  return 'scanned_pdf';
 }
 
 /**
