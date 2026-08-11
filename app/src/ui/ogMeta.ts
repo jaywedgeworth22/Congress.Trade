@@ -60,7 +60,20 @@ export function escapeAttr(s: string): string {
 export type ResolveOgMetaOptions = {
   /** Optional display name for ?member= (resolved server-side from filers). */
   memberDisplayName?: string | null;
+  /**
+   * Optional seat descriptor for ?member=, already formatted by the caller —
+   * e.g. `D-CA-11`, `R-TX-Sen`. Rendered in parentheses after the name so a
+   * shared politician link identifies the district, not just the person.
+   */
+  memberDistrict?: string | null;
 };
+
+/** Trim a caller-supplied seat descriptor down to something safe to render. */
+function normalizeDistrict(raw: string | null | undefined): string {
+  const s = (raw || '').trim().replace(/^\(+|\)+$/g, '').trim();
+  if (!s) return '';
+  return s.length > 24 ? s.slice(0, 23) + '…' : s;
+}
 
 /**
  * Resolve OG meta from a request URL (path + query). `origin` defaults to the
@@ -81,42 +94,50 @@ export function resolveOgMeta(
   const ticker = (u.searchParams.get('ticker') || '').trim().toUpperCase();
   const view = (u.searchParams.get('view') || '').trim().toLowerCase();
 
+  // Titles deliberately omit a `· Congress.Trade` suffix: every unfurl already
+  // shows the site name above the title and the URL below it, so repeating it
+  // spends the one line crawlers give us on something the reader can see twice.
   if (member) {
     const name = (opts.memberDisplayName || '').trim();
     const label = name || (member.length > 48 ? `${member.slice(0, 45)}…` : member);
+    const district = normalizeDistrict(opts.memberDistrict);
+    const heading = district ? `${label} (${district})` : label;
     return {
       context: 'politician',
-      title: `${label} · Congress.Trade`,
-      description: `Congressional STOCK Act trading activity for ${label} on Congress.Trade.`,
+      title: heading,
+      description: `Congressional STOCK Act trading activity for ${heading} on Congress.Trade.`,
       url: pageUrl,
       imageUrl: absImage('politician'),
       imageAlt:
-        'Congress.Trade lockup (CONGRESS eagle TRADE) with Politician label — STOCK Act disclosures',
+        'Congress.Trade lockup (CONGRESS eagle TRADE) above a "Politician profile" label ' +
+        'and a stylised profile page showing disclosed buys and sells',
     };
   }
 
   if (ticker) {
     return {
       context: 'company',
-      title: `${ticker} · Congress.Trade`,
+      title: ticker,
       description: `Congressional STOCK Act trades in ${ticker} on Congress.Trade.`,
       url: pageUrl,
       imageUrl: absImage('company'),
       imageAlt:
-        'Congress.Trade lockup (CONGRESS eagle TRADE) with Company label — STOCK Act disclosures',
+        'Congress.Trade lockup (CONGRESS eagle TRADE) above a "Company profile" label ' +
+        'and a stylised company page showing buy versus sell volume',
     };
   }
 
   if (view === 'trends') {
     return {
       context: 'trends',
-      title: 'Trends · Congress.Trade',
+      title: 'Trends',
       description:
         'Congressional trading trends — volume, consensus moves, sectors, and disclosure lag on Congress.Trade.',
       url: pageUrl,
       imageUrl: absImage('trends'),
       imageAlt:
-        'Congress.Trade lockup (CONGRESS eagle TRADE) with Trends label — STOCK Act disclosures',
+        'Congress.Trade lockup (CONGRESS eagle TRADE) above a "Trends" label ' +
+        'and a stylised buy/sell volume chart',
     };
   }
 
@@ -127,7 +148,9 @@ export function resolveOgMeta(
     url: pageUrl.endsWith('?') ? SITE + '/' : pageUrl || `${SITE}/`,
     imageUrl: absImage('default'),
     imageAlt:
-      'Congress.Trade lockup with CONGRESS, eagle mark, and TRADE on a light background — STOCK Act disclosures from the House, Senate, and Executive Branch',
+      'Congress.Trade lockup (CONGRESS, eagle mark, TRADE) on a white background above a ' +
+      '"Congressional STOCK Act disclosures" label and a stylised dashboard of summary ' +
+      'tiles and disclosed trades',
   };
 }
 

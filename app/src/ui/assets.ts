@@ -39,7 +39,10 @@ export const BRAND_LOGO_LIGHT_PNG = loadAsset('assets/brand-logo-light.png', 'im
 
 // Well-known root icons / social cards (long cache, stable paths).
 // Context-specific OG cards share the site heading lockup (CONGRESS + eagle + TRADE)
-// with a subtitle for Trends / Company / Politician deep links.
+// over a small eyebrow label and a stylised, non-person-specific impression of
+// the product (stacked panels of KPI tiles / trade rows / buy-sell columns).
+// Regenerate all four with `scripts/render-og-cards.sh` and bump
+// OG_IMAGE_VERSION below so crawler caches pick the new art up.
 export const OG_IMAGE_PNG = loadAsset('og-image.png', 'image/png');
 export const OG_IMAGE_TRENDS_PNG = loadAsset('og-image-trends.png', 'image/png');
 export const OG_IMAGE_COMPANY_PNG = loadAsset('og-image-company.png', 'image/png');
@@ -51,7 +54,7 @@ export const APPLE_TOUCH_ICON_PNG = loadAsset('apple-touch-icon.png', 'image/png
 export const FAVICON_PNG = loadAsset('favicon.png', 'image/png');
 
 /** Cache-bust query for og:image URLs. Bump when regenerating social cards. */
-export const OG_IMAGE_VERSION = '22';
+export const OG_IMAGE_VERSION = '23';
 
 /** Absolute path to the public asset root (for tests / tooling). */
 export const PUBLIC_ASSETS_DIR = PUBLIC_DIR;

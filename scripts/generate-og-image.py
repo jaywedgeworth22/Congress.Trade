@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""Regenerate app/public/og-image.png (1200x630 social share card).
+"""DEPRECATED — superseded by scripts/render-og-cards.sh.
+
+This produces the pre-2026-08-10 card design (silver plate, stacked
+CONGRESS / TRADE, no product graphic) and writes it straight over
+app/public/og-image.png, so running it now silently REVERTS the current
+social cards. It also only ever generated the default card, never the
+Trends / Company / Politician variants.
+
+Use instead:
+  scripts/render-og-cards.sh              # all four cards -> app/public/
+  scripts/render-og-cards.sh /tmp/proof   # render to a scratch dir first
+
+Kept only as a record of the old Pillow pipeline.
 
 Requires: Pillow, and a Zilla Slab Bold TTF (or pass --font).
-Default layout: light silver plate, current eagle mark left, stacked
-CONGRESS / TRADE (Zilla Slab 700) right, tagline under.
 
 Usage (from repo root):
-  python3 scripts/generate-og-image.py
   python3 scripts/generate-og-image.py --font /path/to/ZillaSlab-Bold.ttf
 """
 from __future__ import annotations
