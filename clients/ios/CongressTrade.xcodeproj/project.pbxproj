@@ -269,7 +269,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 5A1000010000000000000071 /* Build configuration list for PBXProject "Congress.Trade" */;
+			buildConfigurationList = 5A1000010000000000000071 /* Build configuration list for PBXProject "CongressTrade" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -574,7 +574,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		5A1000010000000000000071 /* Build configuration list for PBXProject "Congress.Trade" */ = {
+		5A1000010000000000000071 /* Build configuration list for PBXProject "CongressTrade" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				5A1000010000000000000072 /* Debug */,
