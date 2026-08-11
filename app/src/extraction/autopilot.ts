@@ -110,6 +110,12 @@ export interface AutopilotKnobs {
    * replayed. See selectLegacyReplayDoc for the exactly-once reset guard.
    */
   legacyReplayEnabled: boolean;
+  /**
+   * Document kinds the cascade never spends model calls on. Defaults to
+   * `senate_html` (deterministic parser, no model uncertainty to corroborate).
+   * Infisical: AGREEMENT_SKIP_DOC_KINDS.
+   */
+  skipDocKinds: string[];
 }
 
 interface AutopilotSecretEnv {
@@ -123,6 +129,7 @@ interface AutopilotSecretEnv {
   AUTOPILOT_BATCH_PRESEED?: string;
   DOC_CLASS_EMPTY_SPOTCHECK_RATE?: string;
   AUTOPILOT_LEGACY_REPLAY_ENABLED?: string;
+  AGREEMENT_SKIP_DOC_KINDS?: string;
 }
 
 function positiveNumber(raw: string | undefined, fallback: number): number {
@@ -149,6 +156,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       'AUTOPILOT_BATCH_PRESEED',
       'DOC_CLASS_EMPTY_SPOTCHECK_RATE',
       'AUTOPILOT_LEGACY_REPLAY_ENABLED',
+      'AGREEMENT_SKIP_DOC_KINDS',
     ])) as AutopilotSecretEnv;
   } catch {
     // Resolver outage: fail closed (disabled) rather than run unconfigured.
@@ -162,6 +170,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       preseedEnabled: false,
       emptySpotcheckRate: 0.1,
       legacyReplayEnabled: false,
+      skipDocKinds: agreementSkipDocKinds(),
     };
   }
   return {
@@ -177,6 +186,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
     preseedEnabled: secrets.AUTOPILOT_BATCH_PRESEED === 'true',
     emptySpotcheckRate: Math.min(positiveNumber(secrets.DOC_CLASS_EMPTY_SPOTCHECK_RATE, 0.1), 1),
     legacyReplayEnabled: secrets.AUTOPILOT_LEGACY_REPLAY_ENABLED === 'true',
+    skipDocKinds: agreementSkipDocKinds(secrets.AGREEMENT_SKIP_DOC_KINDS),
   };
 }
 
@@ -498,6 +508,46 @@ interface EligibleDoc {
   doc_class: string | null;
 }
 
+/**
+ * Document kinds the agreement cascade must never spend model calls on.
+ *
+ * The cascade exists to corroborate a MODEL's reading of a document by having
+ * two or three other models read the same bytes. That is only meaningful where
+ * the primary read was itself probabilistic. `senate_html` is parsed by a
+ * deterministic HTML extractor (extraction/senateHtml.ts) — there is no model
+ * uncertainty to corroborate, and the cascade's vision models receive HTML
+ * bytes they cannot parse at all.
+ *
+ * Measured cost of not having this gate (2026-08-11, production):
+ *   senate_html / agreement : 2,086 runs, 48 ok, ZERO rows
+ *   scanned_pdf / agreement : 2,590 runs, 1,345 ok, 11,710 rows
+ *   text_pdf    / agreement :   617 runs,   249 ok,  9,727 rows
+ *
+ * i.e. 25% of every model call this system has ever made went to a format that
+ * cannot produce a row. Three Senate HTML docs alone absorbed ~2,013 calls over
+ * four days, each provider replying "Failed to parse document.pdf" — the files
+ * were never corrupt, they were simply not PDFs.
+ *
+ * Override with AGREEMENT_SKIP_DOC_KINDS (comma-separated) to re-open a kind,
+ * or set it empty to disable the gate entirely.
+ */
+export const DEFAULT_AGREEMENT_SKIP_DOC_KINDS = 'senate_html';
+
+export function agreementSkipDocKinds(raw?: string | null): string[] {
+  const value = raw ?? DEFAULT_AGREEMENT_SKIP_DOC_KINDS;
+  return value
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** SQL fragment excluding the skipped kinds; empty string when nothing is skipped. */
+export function agreementSkipDocKindSql(kinds: string[]): string {
+  if (!kinds.length) return '';
+  const list = kinds.map((k) => `'${k.replace(/'/g, "''")}'`).join(', ');
+  return `\n   AND COALESCE(f.doc_kind, '') NOT IN (${list})`;
+}
+
 const ELIGIBLE_PREDICATES = `
        rq.resolved = 0
    AND rq.agreement_suppressed_at IS NULL
@@ -553,14 +603,16 @@ async function selectLegacyReplayDoc(
   attemptCap: number,
   excludeDocIds: string[],
   now: Date,
+  skipKinds: string[] = agreementSkipDocKinds(),
 ): Promise<EligibleDoc | null> {
   const nowIso = now.toISOString();
   const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  const skipSql = agreementSkipDocKindSql(skipKinds);
   const candidate = await get<EligibleDoc>(
     env.DB,
     `SELECT f.doc_id, f.raw_object_key, f.chamber, f.page_count, f.doc_class
        FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
-      WHERE ${LEGACY_REPLAY_PREDICATES}
+      WHERE ${LEGACY_REPLAY_PREDICATES}${skipSql}
         AND rq.doc_id NOT IN (SELECT value FROM json_each(?))
       ORDER BY rq.created_at ASC
       LIMIT 1`,
@@ -587,9 +639,11 @@ async function selectNextDoc(
   eraStart: string,
   now: Date,
   legacyReplayEnabled = false,
+  skipKinds: string[] = agreementSkipDocKinds(),
 ): Promise<EligibleDoc | null> {
   const nowIso = now.toISOString();
   const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  const skipSql = agreementSkipDocKindSql(skipKinds);
   // Ordering: doc_class first (typed/clean/empty are the cheapest to resolve,
   // hard scans and quarantine candidates last), then current-era-first, then
   // oldest review item. Cheapest wins.
@@ -597,7 +651,7 @@ async function selectNextDoc(
     env.DB,
     `SELECT f.doc_id, f.raw_object_key, f.chamber, f.page_count, f.doc_class
        FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
-      WHERE ${ELIGIBLE_PREDICATES}
+      WHERE ${ELIGIBLE_PREDICATES}${skipSql}
         AND rq.doc_id NOT IN (SELECT value FROM json_each(?))
       ORDER BY ${DOC_CLASS_ORDER_SQL},
                CASE WHEN COALESCE(f.filed_date, '') >= ? THEN 0 ELSE 1 END,
@@ -625,6 +679,15 @@ async function selectNextDoc(
  * a permanently-stuck backlog instead of surfacing it honestly.
  */
 export async function countEligibleBacklog(env: Env): Promise<number | null> {
+  let skipKindsRaw: string | undefined;
+  try {
+    const s = (await resolveSecrets(env, ['AGREEMENT_SKIP_DOC_KINDS'])) as {
+      AGREEMENT_SKIP_DOC_KINDS?: string;
+    };
+    skipKindsRaw = s.AGREEMENT_SKIP_DOC_KINDS;
+  } catch {
+    skipKindsRaw = undefined; // fall back to the default skip list
+  }
   try {
     const row = await get<{ n: number }>(
       env.DB,
@@ -632,7 +695,7 @@ export async function countEligibleBacklog(env: Env): Promise<number | null> {
          FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
         WHERE rq.resolved = 0
           AND rq.agreement_suppressed_at IS NULL
-          AND f.raw_object_key IS NOT NULL`,
+          AND f.raw_object_key IS NOT NULL${agreementSkipDocKindSql(agreementSkipDocKinds(skipKindsRaw))}`,
     );
     return row?.n ?? 0;
   } catch {
@@ -1647,6 +1710,9 @@ export async function getAutopilotStatus(env: Env, now = new Date()): Promise<{
       preseedEnabled: knobs.preseedEnabled,
       emptySpotcheckRate: knobs.emptySpotcheckRate,
       legacyReplayEnabled: knobs.legacyReplayEnabled,
+      // Surfaced so the admin page shows which formats the cascade will not
+      // spend on, and where that is configured (Infisical AGREEMENT_SKIP_DOC_KINDS).
+      skipDocKinds: knobs.skipDocKinds,
     },
     backlog: await countEligibleBacklog(env),
     today: {
