@@ -1,82 +1,103 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   computeNeedScout,
-  LATENCY_SCOUT_SILENCE_HOURS,
+  LATENCY_SCOUT_CONSECUTIVE_ERRORS,
   recordLatencyProbeOutcome,
   buildScoutPlan,
+  refreshLatencySilenceFromDb,
 } from '../scoutHandoff.ts';
 
-describe('computeNeedScout', () => {
-  const nowMs = Date.parse('2026-08-10T12:00:00.000Z');
-
-  it('clears needScout on success', () => {
+describe('computeNeedScout (consecutive errors)', () => {
+  it('clears handoff on server success', () => {
     expect(
       computeNeedScout({
-        nowMs,
-        lastSuccessAt: '2026-08-10T11:00:00.000Z',
-        lastError: null,
         kind: 'success',
+        source: 'server',
+        prevConsecutiveServerErrors: 5,
       }),
-    ).toEqual({ needScout: false, needScoutReason: null });
+    ).toEqual({
+      consecutiveServerErrors: 0,
+      needScout: false,
+      needScoutReason: null,
+    });
   });
 
-  it('requires scout on error', () => {
-    const r = computeNeedScout({
-      nowMs,
-      lastSuccessAt: '2026-08-10T11:00:00.000Z',
-      lastError: 'HTTP_403',
+  it('does not hand off on the 1st or 2nd successive server error', () => {
+    const first = computeNeedScout({
       kind: 'error',
+      source: 'server',
+      lastError: 'HTTP_403',
+      prevConsecutiveServerErrors: 0,
     });
-    expect(r.needScout).toBe(true);
-    expect(r.needScoutReason).toMatch(/HTTP_403/);
+    expect(first.consecutiveServerErrors).toBe(1);
+    expect(first.needScout).toBe(false);
+
+    const second = computeNeedScout({
+      kind: 'error',
+      source: 'server',
+      lastError: 'HTTP_403',
+      prevConsecutiveServerErrors: 1,
+    });
+    expect(second.consecutiveServerErrors).toBe(2);
+    expect(second.needScout).toBe(false);
   });
 
-  it('requires scout when not configured', () => {
-    expect(
-      computeNeedScout({
-        nowMs,
-        lastSuccessAt: null,
-        lastError: null,
-        kind: 'not_configured',
-      }).needScout,
-    ).toBe(true);
+  it('hands off on the 3rd successive server error', () => {
+    const third = computeNeedScout({
+      kind: 'error',
+      source: 'server',
+      lastError: 'HTTP_429',
+      prevConsecutiveServerErrors: 2,
+    });
+    expect(third.consecutiveServerErrors).toBe(3);
+    expect(third.needScout).toBe(true);
+    expect(third.needScoutReason).toMatch(/3 successive/);
+    expect(third.needScoutReason).toMatch(/HTTP_429/);
   });
 
-  it('does not hand off budget_skip while still fresh', () => {
+  it('does not hand off on budget_skip (spacing/cap is not a failure)', () => {
     const r = computeNeedScout({
-      nowMs,
-      lastSuccessAt: '2026-08-10T10:00:00.000Z', // 2h ago
-      lastError: null,
       kind: 'budget_skip',
+      source: 'server',
+      prevConsecutiveServerErrors: 1,
     });
+    expect(r.consecutiveServerErrors).toBe(1);
     expect(r.needScout).toBe(false);
   });
 
-  it('hands off budget_skip after silence threshold', () => {
-    const old = new Date(nowMs - (LATENCY_SCOUT_SILENCE_HOURS + 1) * 3600_000).toISOString();
+  it('keeps handoff open while scout covers (scout success does not reclaim)', () => {
     const r = computeNeedScout({
-      nowMs,
-      lastSuccessAt: old,
-      lastError: null,
-      kind: 'budget_skip',
+      kind: 'success',
+      source: 'scout',
+      prevConsecutiveServerErrors: LATENCY_SCOUT_CONSECUTIVE_ERRORS,
     });
+    expect(r.consecutiveServerErrors).toBe(LATENCY_SCOUT_CONSECUTIVE_ERRORS);
     expect(r.needScout).toBe(true);
-    expect(r.needScoutReason).toMatch(/quiet/);
+    expect(r.needScoutReason).toMatch(/scout covering until server recovers/);
   });
 
-  it('disabled never needs scout', () => {
+  it('disabled never opens handoff', () => {
     expect(
       computeNeedScout({
-        nowMs,
-        lastSuccessAt: null,
-        lastError: null,
         kind: 'disabled',
-      }),
-    ).toEqual({ needScout: false, needScoutReason: null });
+        source: 'server',
+        prevConsecutiveServerErrors: 0,
+      }).needScout,
+    ).toBe(false);
+  });
+
+  it('not_configured opens handoff without requiring 3 errors', () => {
+    const r = computeNeedScout({
+      kind: 'not_configured',
+      source: 'server',
+      prevConsecutiveServerErrors: 0,
+    });
+    expect(r.needScout).toBe(true);
+    expect(r.needScoutReason).toMatch(/not configured/);
   });
 });
 
-describe('recordLatencyProbeOutcome + buildScoutPlan', () => {
+describe('recordLatencyProbeOutcome + plan', () => {
   const kvStore = new Map<string, string>();
   const env = {
     CONFIG_KV: {
@@ -104,28 +125,75 @@ describe('recordLatencyProbeOutcome + buildScoutPlan', () => {
     kvStore.clear();
   });
 
-  it('persists error outcomes as needScout', async () => {
-    const h = await recordLatencyProbeOutcome(env, 'fmp', {
+  it('requires 3 successive server errors before needScout', async () => {
+    const t0 = new Date('2026-08-11T12:00:00.000Z');
+    const e1 = await recordLatencyProbeOutcome(env, 'fmp', {
       kind: 'error',
-      error: 'HTTP_429',
-      fetchedRows: 0,
-      now: new Date('2026-08-10T12:00:00.000Z'),
+      error: 'HTTP_403',
+      now: t0,
     });
-    expect(h.needScout).toBe(true);
-    expect(h.lastError).toBe('HTTP_429');
-    expect(h.lastSource).toBe('server');
+    expect(e1.needScout).toBe(false);
+    expect(e1.consecutiveServerErrors).toBe(1);
+
+    const e2 = await recordLatencyProbeOutcome(env, 'fmp', {
+      kind: 'error',
+      error: 'HTTP_403',
+      now: new Date(t0.getTime() + 60_000),
+    });
+    expect(e2.needScout).toBe(false);
+    expect(e2.consecutiveServerErrors).toBe(2);
+
+    const e3 = await recordLatencyProbeOutcome(env, 'fmp', {
+      kind: 'error',
+      error: 'HTTP_403',
+      now: new Date(t0.getTime() + 120_000),
+    });
+    expect(e3.needScout).toBe(true);
+    expect(e3.consecutiveServerErrors).toBe(3);
   });
 
-  it('buildScoutPlan lists providers and raw notes', async () => {
-    await recordLatencyProbeOutcome(env, 'fmp', {
-      kind: 'error',
-      error: 'blocked',
-      now: new Date('2026-08-10T12:00:00.000Z'),
+  it('server success after handoff reclaims the lane', async () => {
+    for (let i = 0; i < 3; i++) {
+      await recordLatencyProbeOutcome(env, 'fmp', {
+        kind: 'error',
+        error: 'HTTP_429',
+        now: new Date(`2026-08-11T12:0${i}:00.000Z`),
+      });
+    }
+    const ok = await recordLatencyProbeOutcome(env, 'fmp', {
+      kind: 'success',
+      fetchedRows: 10,
+      source: 'server',
+      now: new Date('2026-08-11T12:10:00.000Z'),
     });
-    const plan = await buildScoutPlan(env, new Date('2026-08-10T12:05:00.000Z'));
-    expect(plan.latency.length).toBeGreaterThanOrEqual(1);
-    expect(plan.notes.some((n) => /R2/.test(n))).toBe(true);
-    const fmp = plan.latency.find((p) => p.provider === 'fmp');
-    expect(fmp?.needScout).toBe(true);
+    expect(ok.needScout).toBe(false);
+    expect(ok.consecutiveServerErrors).toBe(0);
+  });
+
+  it('does not open handoff from wall-clock silence alone', async () => {
+    // Seed a stale lastSuccessAt without consecutive errors.
+    await recordLatencyProbeOutcome(env, 'fmp', {
+      kind: 'success',
+      fetchedRows: 5,
+      source: 'server',
+      now: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    const map = await refreshLatencySilenceFromDb(env, new Date('2026-08-11T12:00:00.000Z'));
+    expect(map.fmp?.needScout).toBe(false);
+    expect(map.fmp?.consecutiveServerErrors).toBe(0);
+  });
+
+  it('buildScoutPlan hints secondary FMP key when covering FMP', async () => {
+    for (let i = 0; i < 3; i++) {
+      await recordLatencyProbeOutcome(env, 'fmp', {
+        kind: 'error',
+        error: 'blocked',
+        now: new Date(`2026-08-11T13:0${i}:00.000Z`),
+      });
+    }
+    const plan = await buildScoutPlan(env, new Date('2026-08-11T13:10:00.000Z'));
+    expect(plan.fmpPreferSecondaryKey).toBe(true);
+    expect(plan.latencyNeedScout.some((h) => h.provider === 'fmp')).toBe(true);
+    expect(plan.notes.some((n) => /successive server errors/i.test(n))).toBe(true);
   });
 });

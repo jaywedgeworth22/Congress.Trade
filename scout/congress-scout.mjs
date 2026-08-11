@@ -142,8 +142,16 @@ const FMP_SOURCE_REGISTRY = [
 
 /** Round-robin free-tier key index (persisted in scout state via nextFmpFreeKey). */
 let fmpFreeKeyCursor = 0;
-function nextFmpFreeKey() {
+/**
+ * When preferSecondary=true (server handoff), try key slot 2 first so the Mac
+ * does not burn the same free-tier key the Oracle server is using as primary.
+ */
+function nextFmpFreeKey(preferSecondary = false) {
   if (!FMP_FREE_KEYS.length) return '';
+  if (preferSecondary && FMP_FREE_KEYS.length > 1) {
+    // Start secondary rotation at index 1 on first handoff pick.
+    if (fmpFreeKeyCursor === 0) fmpFreeKeyCursor = 1;
+  }
   const key = FMP_FREE_KEYS[fmpFreeKeyCursor % FMP_FREE_KEYS.length];
   fmpFreeKeyCursor = (fmpFreeKeyCursor + 1) % FMP_FREE_KEYS.length;
   return key;
@@ -386,9 +394,11 @@ async function pollFmpPath(src, freeKey) {
  * RapidAPI off by default (404 product gap).
  */
 /**
+ * @param {{ preferSecondaryKey?: boolean }} [opts]
  * @returns {{ keys: Array, payloads: Array<{provider,fmpPathId,chamberJson}> }}
  */
-async function pollFmpFamily() {
+async function pollFmpFamily(opts = {}) {
+  const preferSecondaryKey = !!opts.preferSecondaryKey;
   const out = [];
   const payloads = [];
   for (const src of FMP_SOURCE_REGISTRY) {
@@ -406,10 +416,11 @@ async function pollFmpFamily() {
       continue;
     }
     // Stable: rotate key; on quota errors try remaining free keys.
+    // Handoff: prefer secondary free key first (server usually owns slot 1).
     const tried = new Set();
     let lastErr = null;
     for (let attempt = 0; attempt < Math.max(1, FMP_FREE_KEYS.length); attempt++) {
-      const freeKey = nextFmpFreeKey();
+      const freeKey = nextFmpFreeKey(preferSecondaryKey);
       if (!freeKey || tried.has(freeKey)) continue;
       tried.add(freeKey);
       try {
@@ -701,7 +712,8 @@ async function cycle(state) {
   // posted to the app and scored as us "winning" a race that never happened.
   const isBaselineCycle = !state.baselineEstablishedAt;
 
-  // Server-first plan: which latency sources the Mac must cover + raw backlog.
+  // Server-first plan: Mac covers a provider only after N successive *server*
+  // errors (not wall-clock silence). SCOUT_LATENCY_ALWAYS overrides for testing.
   const plan = await fetchScoutPlan();
   const needScout = new Set(
     (plan?.latencyNeedScout || []).map((h) => h.provider).filter(Boolean),
@@ -711,20 +723,24 @@ async function cycle(state) {
     needScout.add('unusual_whales');
     needScout.add('quiver');
   }
-  // If plan unavailable, still cover FMP when enabled (historical FMP quiet gap).
-  if (!plan && FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY)) needScout.add('fmp');
+  // Do NOT invent needScout when plan is unavailable — that was the old
+  // "always cover FMP" behavior and burned free-tier quota.
   if (plan?.latencyNeedScout?.length) {
     log(
       'HANDOFF latency',
-      plan.latencyNeedScout.map((h) => `${h.provider}:${(h.needScoutReason || '').slice(0, 48)}`).join(' | ') || 'none',
+      plan.latencyNeedScout.map((h) => `${h.provider}:${(h.needScoutReason || '').slice(0, 64)}`).join(' | ') || 'none',
     );
   }
 
   // Poll FMP only when server needs cover (or ALWAYS), with free-tier spacing/backoff.
   const wantFmpCover = needScout.has('fmp') || needScout.has('fmp_rapidapi') || SCOUT_LATENCY_ALWAYS;
+  const preferSecondaryFmpKey = !!(plan?.fmpPreferSecondaryKey) || wantFmpCover;
   if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY) && wantFmpCover && !fmpQuotaBlocked(state)) {
     try {
-      const fmp = await pollFmpFamily();
+      if (preferSecondaryFmpKey && FMP_FREE_KEYS.length > 1) {
+        log('fmp handoff: preferring secondary free-tier key (server owns primary)');
+      }
+      const fmp = await pollFmpFamily({ preferSecondaryKey: preferSecondaryFmpKey });
       for (const f of fmp.keys) {
         if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
       }

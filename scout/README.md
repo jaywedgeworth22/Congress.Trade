@@ -106,12 +106,15 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 
 ## Server-first latency + residential fallback
 
-1. **Server** (`runDisclosureLatencyProbe` on cron) polls FMP / UW / Quiver when it can.
-2. Outcomes are recorded in CONFIG_KV. Quiet (>6h), errors, or missing keys set `needScout`.
+1. **Server** (`runDisclosureLatencyProbe` on cron) is primary for FMP / UW / Quiver.
+2. Outcomes live in CONFIG_KV. **`needScout` opens only after 3 successive *server* hard
+   errors** (or missing keys). Budget/spacing skips and wall-clock silence do **not** hand off.
 3. **Mac scout** calls `GET /api/ingest/scout-plan` each cycle. For each `needScout` provider it
-   polls the provider from residential egress and `POST /api/ingest/latency-payload` with raw
-   chamber JSON (server re-parses with the same parsers as the cron probe).
-4. **Raw files (R2, not Backblaze):** when the scout detects a filing (or the plan lists a filing
+   polls from residential egress and `POST /api/ingest/latency-payload`. Scout success fills
+   observations; **server success** clears `needScout` and reclaims the lane.
+4. **FMP keys:** when covering FMP handoff, scout prefers the **secondary** free-tier key
+   (`FMP_LATENCY_API_KEY_2` / distinct `FMP_API_KEY`) so the server primary is not double-spent.
+5. **Raw files (R2, not Backblaze):** when the scout detects a filing (or the plan lists a filing
    missing `raw_object_key` / stuck on 403-class fetch), it downloads the PDF/HTML and
    `POST /api/ingest/raw` so Coolify never has to hit Imperva-blocked Senate/House from a
    datacenter IP.
