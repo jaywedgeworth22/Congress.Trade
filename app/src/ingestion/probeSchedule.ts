@@ -758,6 +758,16 @@ function stripUndefined<T extends object>(o: T): Partial<T> {
 // identity, not just the source, so an env retune is picked up immediately.
 const allocationCache = new Map<string, ProbeAllocation>();
 
+/** Compact content signature of a window table. Included in the cache key so
+ *  two different tables can never collide just because they happen to have the
+ *  same number of windows — a live PROBE_SCHEDULE_JSON retune must always be
+ *  seen, never served from a stale entry. */
+function windowsSignature(windows: readonly ProbeWindowSpec[]): string {
+  return windows
+    .map((w) => `${w.tier}:${w.events}:${w.ranges.map(([a, b]) => `${a}-${b}`).join(',')}`)
+    .join(';');
+}
+
 function allocationFor(
   source: ProbeSource,
   dayType: DayType,
@@ -770,7 +780,7 @@ function allocationFor(
     cfg.minIntervalSec, cfg.maxIntervalSec, cfg.weekendMaxIntervalSec,
     cfg.peakTroughRatioCap, cfg.retryHeadroom, cfg.allocationExponent,
     profile.weekdayBudget, profile.weekendBudget,
-    profile.weekday.length, profile.weekend.length,
+    windowsSignature(dayType === 'weekday' ? profile.weekday : profile.weekend),
   ].join('|');
   const hit = allocationCache.get(key);
   if (hit) return hit;
@@ -780,8 +790,8 @@ function allocationFor(
   return fresh;
 }
 
-/** Test hook — the cache is keyed on config identity, but profile CONTENT is
- *  not hashed, so tests that swap window tables must clear it. */
+/** Test hook. The cache key hashes window content, so clearing is not required
+ *  for correctness — this exists only to keep memory-behaviour tests honest. */
 export function _resetProbeScheduleCache(): void {
   allocationCache.clear();
 }

@@ -514,6 +514,29 @@ describe('probeSchedule — configuration', () => {
       .toBe(HOUSE_PROFILE.weekday);
   });
 
+  it('two different window tables with the same shape do not collide in the cache', () => {
+    _resetProbeScheduleCache();
+    const build = (peakStart: number, peakEnd: number): ProbeScheduleConfig =>
+      probeScheduleConfigFromEnv({
+        PROBE_SCHEDULE_JSON: JSON.stringify({
+          house: {
+            weekday: [
+              { tier: 'peak', ranges: [[peakStart, peakEnd]], events: 20 },
+              { tier: 'low', ranges: [[0, peakStart], [peakEnd, 1440]], events: 0 },
+            ],
+          },
+        }),
+      });
+    // Same source, same day type, same window COUNT, same budgets — only the
+    // boundaries differ. No cache reset between the two calls on purpose.
+    const morning = build(540, 600); // 09:00-10:00 ET
+    const evening = build(1020, 1080); // 17:00-18:00 ET
+    const at9 = new Date('2026-08-05T13:30:00.000Z');
+    expect(probeTierAt('house', at9, { config: morning })).toBe('peak');
+    expect(probeTierAt('house', at9, { config: evening })).toBe('low');
+    _resetProbeScheduleCache();
+  });
+
   it('a config with a gap in its window table still probes (fails safe, never silent)', () => {
     _resetProbeScheduleCache();
     const cfg = probeScheduleConfigFromEnv({
