@@ -34,6 +34,7 @@ import {
   type StaticAsset,
 } from './assets.ts';
 import { applyOgMeta, resolveOgMeta } from './ogMeta.ts';
+import { DEFAULT_EXECUTIVE_TITLE, executiveTitleFor } from '../shared/executiveTitles.ts';
 
 /**
  * Analytics injection was removed (CT-AUD-P1-15).
@@ -60,7 +61,7 @@ type MemberShareIdentity = {
 
 /**
  * Format a filer's seat as the compact descriptor politician share cards render
- * in parentheses after the name — `D-CA-17`, `R-AL-Sen`, `D-DE-AL`.
+ * in parentheses after the name — `D-CA-17`, `R-AL-Sen`, `D-DE-AL`, `President`.
  *
  * Shape notes, all confirmed against live `filers` rows:
  *   - `party` is a full word ('Democrat' / 'Republican' / 'Independent') or NULL
@@ -68,12 +69,20 @@ type MemberShareIdentity = {
  *   - `district` is NULL for senators and executive-branch filers, and the
  *     STRING '0' for at-large House seats (AK, DE, VT, WY, …) — '0' must render
  *     'AL', never a literal district zero.
- *   - Executive-branch filers hold no seat at all and carry no state, so they
- *     get no parenthetical rather than a lone party letter.
+ *   - Executive-branch filers hold a POSITION rather than a district seat
+ *     ('President', 'Treasury Secretary', …). That title lives only in the
+ *     curated `shared/executiveTitles.ts` map — neither the OGE source nor the
+ *     `filers` schema captures it — and is keyed by the `EXEC-*` filer id,
+ *     which IS `filers.bioguide_id` for these rows (see the roster join
+ *     `f.bioguide_id = t.filer_id` in delivery/rest.ts).
+ *   - Executive rows may still carry a `state` (e.g. EXEC-MCCORMICK / PA), so
+ *     the chamber must be checked BEFORE the state, or a cabinet official
+ *     would render a congressional-looking `R-PA` seat they never held.
  *
  * Exported for unit tests; there is no D1 dependency in here on purpose.
  */
 export function formatMemberSeat(
+  filerId: string | null | undefined,
   chamber: string | null | undefined,
   party: string | null | undefined,
   state: string | null | undefined,
@@ -81,8 +90,18 @@ export function formatMemberSeat(
 ): string | null {
   const ch = (chamber || '').trim().toLowerCase();
   const st = (state || '').trim().toUpperCase();
-  // No seat to describe: executive filers, or any row missing a state.
-  if (!st || ch === 'executive') return null;
+
+  // Executive branch: show the position, never a district and never the word
+  // "Executive" (owner 2026-08-10 — "just say their position"). An uncurated
+  // EXEC-* filer falls back to a bare name rather than the module's generic
+  // 'Executive Branch' default, which would be exactly the label to avoid.
+  if (ch === 'executive' || (filerId || '').startsWith('EXEC-')) {
+    const title = executiveTitleFor((filerId || '').trim());
+    return title && title !== DEFAULT_EXECUTIVE_TITLE ? title : null;
+  }
+
+  // Congressional: a seat needs a state to be meaningful.
+  if (!st) return null;
 
   const partyInitial = (party || '').trim().charAt(0).toUpperCase();
   const dist = (district || '').trim();
@@ -120,7 +139,7 @@ async function lookupMemberShareIdentity(env: Env, memberId: string): Promise<Me
     if (!row) return empty;
     return {
       displayName: row.full_name?.trim() || null,
-      district: formatMemberSeat(row.chamber, row.party, row.state, row.district),
+      district: formatMemberSeat(id, row.chamber, row.party, row.state, row.district),
     };
   } catch {
     return empty;
