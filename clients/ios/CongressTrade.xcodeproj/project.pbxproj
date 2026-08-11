@@ -32,10 +32,20 @@
 		7F8000010000000000000007 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F8000010000000000000006 /* AppleSignIn.swift */; };
 		F50DFBB7356AAE99705B681E /* ManageSubscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71C91980D0DFD4B129C99CDC /* ManageSubscription.swift */; };
 		C11BDCC769F60D313590590E /* MemberDirectorySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */; };
+		5A3000010000000000000001 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3000010000000000000011 /* UITestSupport.swift */; };
+		5A3000010000000000000002 /* CongressTradeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3000010000000000000012 /* CongressTradeUITests.swift */; };
+		5A3000010000000000000003 /* AppStoreScreenshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3000010000000000000013 /* AppStoreScreenshotTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		5A2000010000000000000090 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5A1000010000000000000070 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5A1000010000000000000040;
+			remoteInfo = CongressTrade;
+		};
+		5A3000010000000000000090 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 5A1000010000000000000070 /* Project object */;
 			proxyType = 1;
@@ -73,6 +83,10 @@
 		7F8000010000000000000006 /* AppleSignIn.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleSignIn.swift; path = Store/AppleSignIn.swift; sourceTree = "<group>"; };
 		71C91980D0DFD4B129C99CDC /* ManageSubscription.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ManageSubscription.swift; path = Store/ManageSubscription.swift; sourceTree = "<group>"; };
 		9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MemberDirectorySearch.swift; sourceTree = "<group>"; };
+		5A3000010000000000000010 /* CongressTradeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongressTradeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A3000010000000000000011 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		5A3000010000000000000012 /* CongressTradeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongressTradeUITests.swift; sourceTree = "<group>"; };
+		5A3000010000000000000013 /* AppStoreScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +98,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5A2000010000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A3000010000000000000020 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -118,6 +139,7 @@
 			children = (
 				5A1000010000000000000031 /* CongressTrade */,
 				5A2000010000000000000031 /* CongressTradeTests */,
+				5A3000010000000000000031 /* CongressTradeUITests */,
 				5A1000010000000000000032 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -146,6 +168,7 @@
 			children = (
 				5A1000010000000000000010 /* CongressTrade.app */,
 				5A2000010000000000000010 /* CongressTradeTests.xctest */,
+				5A3000010000000000000010 /* CongressTradeUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -156,6 +179,16 @@
 				5A2000010000000000000011 /* CongressTradeTests.swift */,
 			);
 			path = CongressTradeTests;
+			sourceTree = "<group>";
+		};
+		5A3000010000000000000031 /* CongressTradeUITests */ = {
+			isa = PBXGroup;
+			children = (
+				5A3000010000000000000011 /* UITestSupport.swift */,
+				5A3000010000000000000012 /* CongressTradeUITests.swift */,
+				5A3000010000000000000013 /* AppStoreScreenshotTests.swift */,
+			);
+			path = CongressTradeUITests;
 			sourceTree = "<group>";
 		};
 		94260E5A51CC4CD31BE5908B /* Delivery */ = {
@@ -246,6 +279,26 @@
 			productReference = 5A2000010000000000000010 /* CongressTradeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		5A3000010000000000000040 /* CongressTradeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A3000010000000000000080 /* Build configuration list for PBXNativeTarget "CongressTradeUITests" */;
+			buildPhases = (
+				5A3000010000000000000050 /* Sources */,
+				5A3000010000000000000020 /* Frameworks */,
+				5A3000010000000000000060 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5A3000010000000000000091 /* PBXTargetDependency */,
+			);
+			name = CongressTradeUITests;
+			packageProductDependencies = (
+			);
+			productName = CongressTradeUITests;
+			productReference = 5A3000010000000000000010 /* CongressTradeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -262,6 +315,12 @@
 						ProvisioningStyle = Automatic;
 					};
 					5A2000010000000000000040 = {
+						CreatedOnToolsVersion = 16.0;
+						DevelopmentTeam = CC8UTF7ATG;
+						ProvisioningStyle = Automatic;
+						TestTargetID = 5A1000010000000000000040;
+					};
+					5A3000010000000000000040 = {
 						CreatedOnToolsVersion = 16.0;
 						DevelopmentTeam = CC8UTF7ATG;
 						ProvisioningStyle = Automatic;
@@ -286,6 +345,7 @@
 			targets = (
 				5A1000010000000000000040 /* CongressTrade */,
 				5A2000010000000000000040 /* CongressTradeTests */,
+				5A3000010000000000000040 /* CongressTradeUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -302,6 +362,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5A2000010000000000000060 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A3000010000000000000060 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -347,6 +414,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5A3000010000000000000050 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A3000010000000000000001 /* UITestSupport.swift in Sources */,
+				5A3000010000000000000002 /* CongressTradeUITests.swift in Sources */,
+				5A3000010000000000000003 /* AppStoreScreenshotTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -354,6 +431,11 @@
 			isa = PBXTargetDependency;
 			target = 5A1000010000000000000040 /* CongressTrade */;
 			targetProxy = 5A2000010000000000000090 /* PBXContainerItemProxy */;
+		};
+		5A3000010000000000000091 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5A1000010000000000000040 /* CongressTrade */;
+			targetProxy = 5A3000010000000000000090 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -571,6 +653,42 @@
 			};
 			name = Release;
 		};
+		5A3000010000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CC8UTF7ATG;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = CongressTrade;
+			};
+			name = Debug;
+		};
+		5A3000010000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CC8UTF7ATG;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = CongressTrade;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -597,6 +715,15 @@
 			buildConfigurations = (
 				5A2000010000000000000081 /* Debug */,
 				5A2000010000000000000082 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5A3000010000000000000080 /* Build configuration list for PBXNativeTarget "CongressTradeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A3000010000000000000081 /* Debug */,
+				5A3000010000000000000082 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

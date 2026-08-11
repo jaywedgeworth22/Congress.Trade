@@ -235,30 +235,35 @@ struct MainTabView: View {
                     Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                 }
                 .tag(AppTab.trends)
+                .accessibilityIdentifier("tab.trends")
 
             FeedDashboardView()
                 .tabItem {
                     Label("Trades", systemImage: "list.bullet.rectangle")
                 }
                 .tag(AppTab.trades)
+                .accessibilityIdentifier("tab.trades")
 
             PeopleDirectoryView()
                 .tabItem {
                     Label("Directory", systemImage: "person.2")
                 }
                 .tag(AppTab.people)
+                .accessibilityIdentifier("tab.people")
 
             DeliveryView()
                 .tabItem {
                     Label("Delivery", systemImage: "bell.badge")
                 }
                 .tag(AppTab.delivery)
+                .accessibilityIdentifier("tab.delivery")
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
                 }
                 .tag(AppTab.settings)
+                .accessibilityIdentifier("tab.settings")
         }
         .tint(.blue)
         .task {
