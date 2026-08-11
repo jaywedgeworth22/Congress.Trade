@@ -187,24 +187,38 @@ actually need**, and read the error code rather than the message:
   scope**, not an expired token — say so, and name the scope needed.
 - A token that verifies but lists **0 zones** is account-scoped with no zone
   permissions.  It cannot do zone work no matter how valid it is.
-- Try the other credentials before concluding anything: there are `CT`, `JAY`,
-  `ST`, and `OLD` variants, plus `_API_KEY` (legacy global key, needs
-  `X-Auth-Email` + `X-Auth-Key`, not `Authorization: Bearer`).
+- Do **not** go credential-hunting.  As of 2026-08-11 there is exactly **one**
+  active Cloudflare credential (below); every legacy `CT` / `JAY` / `ST` / `OLD`
+  token and key has been commented out in `~/.secrets/global-api-keys`
+  specifically so no agent picks one up and re-runs this diagnosis.
 
-**USE `CLOUDFLARE_FLEET_API_TOKEN` (created 2026-08-11).  It is the one that
-works.**  Scoped to **all zones in all four accounts** (Congress.Trade, jay,
-SocraticTrade.com, Usage.Jays.Services) — verified reading 5 zones and writing a
-zone cache ruleset.  Carries Zone Read/Write, Cache Settings Write, Config
-Settings Write, Zone Settings Write, DNS Write, Cache Purge, Workers Routes
-Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.  Reach for
-this first and stop cycling the older per-app credentials.
+### The only Cloudflare credential: `CLOUDFLARE_FLEET_API_TOKEN`
 
-The legacy ones, measured the same day: `CT` token reads its zone but cannot
-write rulesets; `JAY` token is valid but sees **0 zones**; `ST` and `OLD` tokens,
-and the `CT` / `ST` / `OLD` `_API_KEY`s, do not authenticate at all.  Only
-`CLOUDFLARE_JAY_API_KEY` still works as a legacy global key
-(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`) — that is full admin, so use
-it only when the fleet token genuinely cannot do the job.
+Created 2026-08-11.  **Use it for every Cloudflare operation, in every repo.**
+
+It is a **USER-owned** token under `mail@jays.services` — deliberately *not*
+account-owned, so it is not tied to the old `jay` account (which owns no zones
+and has a billing issue).  Its policies grant all four accounts, so one token
+covers the whole fleet:
+
+| Zone | Account |
+|---|---|
+| `congress.trade` | Congress.Trade |
+| `jays.services`, `jaywedgeworth.com` | Usage.Jays.Services |
+| `socratic.trade`, `socratictrade.com` | SocraticTrade.com |
+
+Verified: reads all 5 zones **and** writes a zone cache ruleset — the exact
+operation every legacy token failed.  Carries Zone Read/Write, Cache Settings
+Write, Config Settings Write, Zone Settings Write, DNS Write, Cache Purge,
+Workers Routes Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.
+
+**Break glass.**  If the fleet token is ever revoked or needs replacing, the
+only credential that can mint a new one is `CLOUDFLARE_JAY_API_KEY`, commented
+out at the bottom of the secrets file.  It is a legacy global key
+(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`, *not* `Bearer`), full admin
+and unscoped — which is exactly why it is commented out.  Uncomment it, mint the
+replacement, re-comment it.  Do not use it for routine work.
+
 
 Secret hygiene when testing (the repo hook enforces this):
 extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
