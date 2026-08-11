@@ -1175,11 +1175,14 @@ struct MemberLeaderboardResponse: Decodable {
 /// chamber, state, photoUrl, tradeCount, buyCount, sellCount, estVolumeUsd,
 /// estNetFlowUsd}`.
 ///
-/// NOT AVAILABLE HERE: `district`. The website shows a district on its
-/// Most Active Politicians rows, but that query selects it from a different
-/// source; `buildMemberLeaderboardQuery` does not. Adding a `district` field
-/// to this struct would decode to `nil` forever — exactly the failure mode
-/// documented on `FilingLagSummary`. It needs a backend change first.
+/// NOT AVAILABLE HERE: `district`. `buildMemberLeaderboardQuery`
+/// (`app/src/analytics/builders.ts`) does not select it, and the live response
+/// confirms it is absent. The website's Most Active Politicians row builder
+/// (`dashboardHtml.ts:9811`) *reads* `r.district` off this same payload, so its
+/// district is silently always missing too — JavaScript just renders nothing
+/// for `undefined` instead of complaining. Adding a `district` field here
+/// would decode to `nil` forever, which is exactly the failure mode documented
+/// on `FilingLagSummary`. Both clients need the backend to select it first.
 struct MemberLeaderboardItem: Decodable, Identifiable {
     var id: String { filerId }
     let filerId: String

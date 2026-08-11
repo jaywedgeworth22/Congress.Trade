@@ -275,8 +275,11 @@ final class CongressTradeStore: ObservableObject {
     /// including both fan-out requests. The mutation subsumes any open
     /// debounce-window intents, which is what makes the counter self-healing.
     private func applyingFilterChange(_ body: () async -> Void) async {
-        clearFilterIntents()
+        // Depth first, THEN drop the debounce-window intents this mutation
+        // subsumes: with the depth already raised, clearing them recomputes to
+        // the same `true`, so the flag cannot blink off in between.
         filterApplyDepth += 1
+        clearFilterIntents()
         syncIsApplyingFilters()
         await body()
         filterApplyDepth -= 1
@@ -297,7 +300,9 @@ final class CongressTradeStore: ObservableObject {
     // term would make the two tabs disagree about the same window.
 
     /// Selects the chamber chips and immediately resyncs against that
-    /// selection's own request. Never allows an empty selection.
+    /// selection's own request. An empty selection is legal and means "all
+    /// branches", matching the website's unselected H/S/P chips — the doc
+    /// comment here used to claim the opposite of what the code does.
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
         await applyingFilterChange {
             // Allow empty = all branches (website parity with unselected H/S/P).
