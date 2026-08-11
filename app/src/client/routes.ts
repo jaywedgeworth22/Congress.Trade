@@ -52,6 +52,7 @@ import {
   tickerSummarySql,
 } from './queries.ts';
 import { commandType, mergeClaimedSecret, normalizePreferencePatch } from './commands.ts';
+import { tickerAnalytics, wantsAnalytics } from './tickerAnalytics.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
@@ -167,11 +168,33 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       limit: detailLimit(c.req.query('limit')),
       order: asOrder(c.req.query('order')) ?? 'desc',
     };
+    // Company-drawer parity block (buy pressure, buys/sells over time, top
+    // buyers/sellers, "Performance After Buys"). Opt-in because the backtest
+    // leg scans this ticker's full price history plus the whole SPX series —
+    // see client/tickerAnalytics.ts for why it lives on THIS contract rather
+    // than sending clients to the internal /api/analytics routes.
+    const includeAnalytics = wantsAnalytics(c.req.query('include'));
     const summaryQ = tickerSummarySql(ticker);
-    const [list, summaryRow, refRow] = await Promise.all([
+    const [list, summaryRow, refRow, analytics] = await Promise.all([
       readClientTradeList(c.env, params),
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
       getSecurityRef(c.env, ticker),
+      includeAnalytics
+        ? tickerAnalytics(c.env, ticker, {
+            window: c.req.query('window'),
+            granularity: c.req.query('granularity'),
+          }).catch((err) => {
+            // The trade list is this endpoint's primary job; an analytics
+            // failure degrades that one section to `null` rather than blanking
+            // the whole screen. Clients must treat `analytics: null` as
+            // "unavailable right now", never as "no activity".
+            console.error('client ticker analytics failed', {
+              ticker,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return null;
+          })
+        : Promise.resolve(undefined),
     ]);
     await spendRowBudget(c.env, ip, list.count);
     return c.json({
@@ -181,6 +204,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         ...baseSummary(summaryRow),
         memberCount: num(summaryRow?.member_count),
       },
+      // Omitted entirely unless requested, so existing decoders see byte-for-byte
+      // the response they see today.
+      ...(includeAnalytics ? { analytics } : {}),
       ...list,
     });
   });
