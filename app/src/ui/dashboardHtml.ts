@@ -9868,23 +9868,38 @@ function spCardHtml(p) {
       (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
       '</div>';
   } else {
-    var avg = p.avgLeadSec != null ? p.avgLeadSec : (p.medianLeadSec || 0);
-    var avgDir = leadDirection(avg);
-    var medTxt = p.medianLeadSec != null && p.medianLeadSec !== p.avgLeadSec
-      ? '<div class="sp-lead-sub">Median: ' + leadFigureHtml(p.medianLeadSec, { word: false }) + '</div>'
+    /* HEADLINE = MEDIAN, not the mean. At these sample sizes (n is single
+       digits per provider) one freak race flips the mean's SIGN while the
+       median doesn't move: Unusual Whales on 2026-08-11 read avg -34 sec
+       against a median of +1,466 sec, because a single -3.1 h row outweighed
+       seven +24 min ones. The mean then contradicted this same card's own
+       "Preliminary lead" badge, which is derived from wins vs. losses. The
+       median agrees with the badge, survives an outlier, and is the figure
+       speedBoastProvider()/setPricingProof() already quote — so it is the one
+       that gets to be the big number. The mean is still shown, just demoted. */
+    var headline = p.medianLeadSec != null ? p.medianLeadSec : (p.avgLeadSec || 0);
+    var headlineDir = leadDirection(headline);
+    var avgTxt = p.avgLeadSec != null && p.avgLeadSec !== p.medianLeadSec
+      ? '<div class="sp-lead-sub">Average: ' + leadFigureHtml(p.avgLeadSec, { word: false }) + '</div>'
       : '';
     var p90Txt = p.p90LeadSec != null ? '<div class="sp-lead-sub">P90: ' + leadFigureHtml(p.p90LeadSec, { word: false }) + '</div>' : '';
-    /* "average lead" is only true when we're ahead; say "lag" when we're not,
-       so the sentence under the number can never contradict the sign above it. */
-    var basisNote = avgDir === 'behind'
-      ? 'average lag behind their feed on live imports'
-      : avgDir === 'even'
-        ? 'no measurable average difference vs. their feed on live imports'
-        : 'average lead on live imports vs. their feed';
+    /* Say it out loud when the mean and the median disagree on WHO WON, rather
+       than leaving a reader to spot a stray sign two lines apart. */
+    var splitTxt = (p.avgLeadSec != null && p.medianLeadSec != null &&
+      leadDirection(p.avgLeadSec) !== headlineDir && leadDirection(p.avgLeadSec) !== 'even' && headlineDir !== 'even')
+      ? '<div class="sp-lead-sub">The average disagrees with the median here \\u2014 a few outlier races pull it the other way, so the median is the fair summary.</div>'
+      : '';
+    /* "lead" is only true when we're ahead; say "lag" when we're not, so the
+       sentence under the number can never contradict the sign above it. */
+    var basisNote = headlineDir === 'behind'
+      ? 'typical (median) lag behind their feed on live imports'
+      : headlineDir === 'even'
+        ? 'no measurable typical difference vs. their feed on live imports'
+        : 'typical (median) lead on live imports vs. their feed';
     var labelNote = preliminary ? 'preliminary ' + basisNote + ' (coverage still building)' : basisNote;
     leadHtml = '<div class="sp-lead">' +
-      leadFigureHtml(avg, { cls: 'lead-big' }) +
-      '<div class="sp-lead-label">' + labelNote + medTxt + p90Txt + '</div>' +
+      leadFigureHtml(headline, { cls: 'lead-big' }) +
+      '<div class="sp-lead-label">' + labelNote + avgTxt + p90Txt + splitTxt + '</div>' +
       '</div>';
   }
 
