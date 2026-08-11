@@ -2271,6 +2271,9 @@ export async function maybeRunAgreementAutopublish(
 
   let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
   try {
+    // A2: skip deterministic doc_kinds (text_pdf / senate_html / oge_*) — they
+    // must not consume OpenRouter agreement budget when OR is halted. The
+    // deterministic re-extract drain + normalizer A1 path owns those instead.
     docs = await all<{ doc_id: string; raw_object_key: string | null }>(
       env.DB,
       `SELECT f.doc_id, f.raw_object_key
@@ -2283,6 +2286,8 @@ export async function maybeRunAgreementAutopublish(
             rq.agreement_claim_token IS NULL OR rq.agreement_claimed_at IS NULL OR rq.agreement_claimed_at <= ?
           )
           AND f.raw_object_key IS NOT NULL
+          AND LOWER(COALESCE(f.doc_kind, '')) NOT IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')
+          AND LOWER(COALESCE(f.extractor, '')) NOT IN ('textpdf', 'text_pdf', 'senatehtml', 'senate_html', 'ogetext', 'oge_text', 'oge-text')
           AND NOT EXISTS (
             SELECT 1 FROM transactions t
              WHERE t.doc_id = rq.doc_id AND t.source IN ('primary', 'manual')

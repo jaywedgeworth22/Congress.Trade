@@ -22,7 +22,7 @@ import {
   type ExtractorResult,
   type ExtractorUsage,
 } from '../extractors/types.ts';
-import { normalize } from './normalizer.ts';
+import { isDeterministicExtractor, normalize } from './normalizer.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { enqueueAgreementCheck } from './agreement.ts';
 import { ensureDocClass } from './docClassifier.ts';
@@ -193,7 +193,14 @@ export async function extractAndNormalize(
   // Fast path: a doc that just landed in review gets a cross-vendor agreement
   // check enqueued immediately (self-gates on the flag; the per-minute cron is
   // the backstop). Best-effort — a failure here must not fail the extraction.
-  if (result.needsReview) {
+  //
+  // A2: never enqueue paid agreement for deterministic text/html/OGE extractors.
+  // Those either already published at the lower confidence gate (A1) or belong
+  // in human review for hard flags — OpenRouter quota must not be spent on them.
+  if (
+    result.needsReview
+    && !isDeterministicExtractor(extracted.extractor, extracted.filing.docKind)
+  ) {
     try {
       await lease?.assertOwned();
       await enqueueAgreementCheck(env, extracted.filing.docId, extracted.filing.rawObjectKey);
