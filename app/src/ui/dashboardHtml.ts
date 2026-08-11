@@ -666,6 +666,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     width: 1%;
     white-space: nowrap;
   }
+  /* On a phone the meta column's own nowrap heading ("Branch • Party • State")
+     is wider than any value under it, and it was taking that width out of the
+     politician's name — "Ro Kha…". Let it wrap below 560px: two heading lines
+     buy the name back ~85px and every column still fits without scroll. */
+  @media (max-width: 560px) {
+    .people-table th.col-fit, .people-table td.col-fit { white-space: normal; }
+  }
   .people-table .col-num {
     width: 1%;
     white-space: nowrap;

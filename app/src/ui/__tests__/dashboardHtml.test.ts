@@ -4158,7 +4158,9 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     // No horizontal scroll on directory tables
     expect(DASHBOARD_HTML).toContain('.people-table-wrap {');
     expect(DASHBOARD_HTML).toContain('overflow-x: hidden;');
-    expect(DASHBOARD_HTML).toContain('table-layout: fixed;');
+    // ...which only works if the table shrink-wraps its own columns — see the
+    // "directory columns are reachable" test below for why fixed layout broke it.
+    expect(DASHBOARD_HTML).toContain('table-layout: auto;');
     // Type column removed from Assets table
     expect(DASHBOARD_HTML).not.toMatch(/id="assetsHead"[\s\S]*?data-sort="type"/);
     expect(DASHBOARD_HTML).toContain('id="assetsBody"><tr><td colspan="3"');
@@ -4171,5 +4173,116 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('// Funds/assets without a ticker: no logo; name starts where the ticker would be.');
     expect(DASHBOARD_HTML).toContain("var logo = tkr ? tickerLogoHtml(tkr, nm) : '';");
     expect(DASHBOARD_HTML).toContain('dir-asset-cell');
+  });
+});
+
+/*
+ * LANE W2 — audited web blocking defects.
+ * Each test below pins the FIX for a defect that was reproduced by driving the
+ * real site, so a future refactor cannot quietly restore the broken behaviour.
+ */
+describe('web blocking defects (audited)', () => {
+  it('directory columns are reachable: auto table layout, not the fixed-layout collapse', () => {
+    // width:1% is an AUTO-layout shrink-to-fit idiom. Under table-layout:fixed
+    // it resolves literally (~13px of a 1320px table), so Branch • Party • State,
+    // Trades and Politicians collapsed and were clipped by overflow-x:hidden —
+    // 2 of the 3 columns unreachable at every viewport width.
+    expect(DASHBOARD_HTML).toMatch(
+      /\.people-table \{[^}]*table-layout: auto;[^}]*\}/,
+    );
+    expect(DASHBOARD_HTML).not.toMatch(
+      /\.people-table \{[^}]*table-layout: fixed;[^}]*\}/,
+    );
+    // The fill column soaks up the remainder and still ellipsizes.
+    expect(DASHBOARD_HTML).toMatch(
+      /\.people-table \.col-fill \{\s*width: 100%;[^}]*max-width: 0;/,
+    );
+    // Phone: the meta heading may wrap so it stops stealing the name's width.
+    expect(DASHBOARD_HTML).toContain(
+      '.people-table th.col-fit, .people-table td.col-fit { white-space: normal; }',
+    );
+  });
+
+  it('Trends KPI values are sized off their own tile so they cannot overflow the card', () => {
+    expect(DASHBOARD_HTML).toContain('#trKpis .card { container-type: inline-size; }');
+    expect(DASHBOARD_HTML).toContain('#trKpis .card .v { font-size: min(24px, 19.5cqw); }');
+  });
+
+  it('mirrors TICKER_RESOLVED_SQL client-side and never promises performance without a ticker', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "var TICKER_SENTINELS = { 'NONE': 1, '--': 1, 'N/A': 1, 'NA': 1, 'NULL': 1, '\u2014': 1 };",
+    );
+    expect(DASHBOARD_HTML).toContain('function tickerResolved(t) {');
+    expect(DASHBOARD_HTML).toContain('var hasTicker = tickerResolved(row.ticker);');
+    // Whole section gated, not just the fetch.
+    expect(DASHBOARD_HTML).toContain('var perf = hasTicker');
+    expect(DASHBOARD_HTML).toContain("if (row.id && hasTicker && !row.isOption) {");
+    expect(DASHBOARD_HTML).toContain("var profile = hasTicker ? '<div class=\"drawer-section\"><h3>Company</h3>");
+    // The options note is correct and stays.
+    expect(DASHBOARD_HTML).toContain("var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;");
+    expect(DASHBOARD_HTML).toContain("Performance isn\\'t shown for options");
+    // "market data" wording survives only for the honest case (ticker, no price yet)
+    // and no longer blames an unconfigured API key.
+    expect(DASHBOARD_HTML).toContain(
+      'Price &amp; performance appear here once market data for this asset is cached.',
+    );
+    expect(DASHBOARD_HTML).not.toContain(
+      'Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.',
+    );
+  });
+
+  it('states the trade drawer entity once, not four times', () => {
+    // The duplicate "in TKR | Company" hero line is gone entirely.
+    expect(DASHBOARD_HTML).not.toContain('class="drawer-trade-in"');
+    expect(DASHBOARD_HTML).not.toContain('var inName =');
+    // Identity card stays — that is the one statement of the entity.
+    expect(DASHBOARD_HTML).toContain('drawer-trade-identity');
+    // Sticky nav carries a single token, not "TKR | Company" again.
+    expect(DASHBOARD_HTML).toContain("var topbarAsset = displayTicker || displayAsset || '';");
+    expect(DASHBOARD_HTML).not.toContain('topbarAssetBits');
+    // A "filing note" that only restates the asset name is suppressed.
+    expect(DASHBOARD_HTML).toContain('function entityFingerprint(');
+    expect(DASHBOARD_HTML).toContain(
+      'if (fp && (fp === entityFingerprint(assetName) || fp === entityFingerprint(ticker))) return \'\';',
+    );
+    // The duplicate "View All Trades of X" links are gone; the header buttons
+    // already opened the same drawers.
+    expect(DASHBOARD_HTML).not.toContain("'View All Trades of '");
+    expect(DASHBOARD_HTML).not.toContain("'View All Trades by '");
+    expect(DASHBOARD_HTML).toContain('Company Details</button>');
+    expect(DASHBOARD_HTML).toContain('Politician Details</button>');
+  });
+
+  it('labels what every trade count counts (this filter vs all time)', () => {
+    // Trades tab: the active timeframe sits next to the match count.
+    expect(DASHBOARD_HTML).toContain(
+      '<span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span>',
+    );
+    expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
+    // Trends KPI strip is stamped like every other Trends section.
+    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot <em class="tr-window-label"');
+    // Directory: whole-record scope on the counts, the sub copy and the headers.
+    expect(DASHBOARD_HTML).toContain('trade counts are all time');
+    expect(DASHBOARD_HTML).toContain('Trade counts cover the full record, not the timeframe set on Trades or Trends.');
+    expect(DASHBOARD_HTML).toContain('title="Sort by trade count (all time)"');
+    // Politician drawer loads window=all, so it says so.
+    expect(DASHBOARD_HTML).toContain('<h3>Trade Stats (All Time)</h3>');
+    // Asset drawer subtitle carries the same window as its KPI section.
+    expect(DASHBOARD_HTML).toContain("' approx. volume  |  ' + esc(tickerWindowLabel)");
+  });
+
+  it('names the benchmark once per surface and never prints SPX/SPY', () => {
+    const visible = DASHBOARD_HTML
+      // drop JS/CSS/HTML comments — those may still mention S&P for context.
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const mentions = visible.match(/S&amp;P|S&P/g) || [];
+    expect(mentions.length).toBeLessThanOrEqual(4);
+    // Rows/chips say "excess" instead of restating the index.
+    expect(visible).not.toContain("% vs S&amp;P");
+    expect(visible).not.toContain('avg excess vs S&amp;P');
+    // Ticker symbols for the index are never user-visible.
+    expect(visible).not.toMatch(/>[^<]*\b(SPX|SPY)\b/);
   });
 });
