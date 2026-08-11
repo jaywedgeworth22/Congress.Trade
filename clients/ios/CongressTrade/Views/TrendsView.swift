@@ -516,7 +516,13 @@ struct TrendsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(p.fullName ?? p.filerId), \(p.tradeCount) buys, \(SignedPercentFormat.percent(p.avgExcessReturn)) vs S&P 500")
+                    // Spell the missing case out — VoiceOver would otherwise
+                    // read the em-dash placeholder as "dash vs S and P 500".
+                    .accessibilityLabel(
+                        p.avgExcessReturn == nil
+                            ? "\(p.fullName ?? p.filerId), \(p.tradeCount) buys, no score yet"
+                            : "\(p.fullName ?? p.filerId), \(p.tradeCount) buys, \(SignedPercentFormat.percent(p.avgExcessReturn)) vs S&P 500"
+                    )
                     .accessibilityHint("Opens politician details")
                     if idx < ranked.count - 1 {
                         Divider()
