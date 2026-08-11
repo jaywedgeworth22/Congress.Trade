@@ -121,8 +121,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install test deps
-        run: pip install --disable-pip-version-check pytest
+      # The existing worker tests import checkbox/form_chrome, which pull in
+      # numpy and OpenCV, so the runtime requirements are needed too — not just
+      # pytest.
+      - name: Install deps
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check pytest
 
       - name: Test (includes Dockerfile COPY-vs-imports guard)
         run: python -m pytest tests -q
