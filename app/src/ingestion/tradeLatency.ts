@@ -304,8 +304,16 @@ export interface DisclosureLatencyProviderMetrics {
  *
  * WHAT M IS NOT. It is not "every disclosure Congress filed" — we cannot count
  * filings neither side has seen. M is the union of what the two feeds
- * surfaced, so `providerOnly` is the honest measure of what we missed and
- * `ctOnly` of what the providers missed.
+ * surfaced.
+ *
+ * READ `providerOnly` AS AN UPPER BOUND, NOT A MISS COUNT. A provider "latest"
+ * endpoint returns rows by DISCLOSURE date, and a filing disclosed this week
+ * routinely contains transactions from a year or more ago that congress.trade
+ * already ingested — before this window, so with no in-window candidate to
+ * pair against. Those land in `providerOnly` even though we have the trade.
+ * The number that is unambiguously ours to fix is the subset where we have no
+ * record of the trade at all; measuring that needs a join against
+ * `transactions`, which this function deliberately does not do.
  */
 export interface DisclosureLatencyScope {
   /** Window applied to both clocks (hours). */
