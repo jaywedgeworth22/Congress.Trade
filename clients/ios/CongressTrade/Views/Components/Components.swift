@@ -922,12 +922,24 @@ struct SignInPanel: View {
             }
 
             HStack(spacing: 8) {
-                TextField("you@example.com", text: $magicEmail)
-                    .textFieldStyle(.roundedBorder)
-                    // Same accent leak as the header glyphs: inside a tinted
-                    // Form row the field painted its placeholder — and typed
-                    // text — accent blue.
+                // `verbatim:` is load-bearing. A string LITERAL passed to
+                // `Text`/`TextField` is a `LocalizedStringKey`, which SwiftUI
+                // parses as Markdown — and Markdown autolinks a bare email
+                // address, so `"you@example.com"` rendered as a link in the
+                // accent color. It looked like the tint leak that grey-ed the
+                // header glyphs, but it is not: `.foregroundStyle` on the
+                // field, a `prompt:` styled `.secondary`, a `prompt:` styled
+                // with a concrete color, dropping `.roundedBorder`, and
+                // overriding `.tint` were all tried on device and all stayed
+                // blue, because link styling outranks every one of them.
+                // Not parsing it as Markdown is the fix.
+                TextField(
+                    "",
+                    text: $magicEmail,
+                    prompt: Text(verbatim: "you@example.com")
+                )
                     .foregroundStyle(Color.primary)
+                    .accessibilityLabel("Email address")
                     .urlKeyboard()
                     .neverAutocapitalized()
                     .autocorrectionDisabled()
