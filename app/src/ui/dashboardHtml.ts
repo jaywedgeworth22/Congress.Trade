@@ -1042,7 +1042,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-topbar-title .muted { font-weight:400; }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
-    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text-dim);
+    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text);
     font-size:20px; border:1px solid transparent; border-radius:999px;
     background:color-mix(in srgb, var(--panel) 92%, transparent); line-height:1; touch-action:manipulation;
   }
