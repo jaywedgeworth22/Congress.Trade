@@ -162,6 +162,55 @@ production ingestion jobs unless the user explicitly asks.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
+## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
+
+Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
+or "invalid" when it is fine.  The usual cause is testing it the obvious way.
+
+**Never judge a Cloudflare token by `GET /user/tokens/verify`.**  That endpoint
+only understands *user*-owned tokens.  An **account-owned** token returns
+`success: false` there while working perfectly against real resources.
+Measured 2026-08-11 against `/Users/jay/.secrets/global-api-keys`:
+
+| Credential | `/user/tokens/verify` | Can it actually read `congress.trade`? |
+|---|---|---|
+| `CLOUDFLARE_CT_API_TOKEN` | `success: false` | **Yes** — reads the zone fine |
+| `CLOUDFLARE_JAY_API_TOKEN` | `success: true`, `active` | **No** — sees 0 zones |
+
+Both obvious conclusions are wrong.  Verify by calling the **resource you
+actually need**, and read the error code rather than the message:
+
+- **`10000 "Authentication error"` does NOT reliably mean a bad token.**
+  Cloudflare returns it both for a genuinely invalid credential *and* for a
+  valid credential lacking permission on that resource.  If a token can read
+  something in the zone but 10000s on a write, it is a **missing permission
+  scope**, not an expired token — say so, and name the scope needed.
+- A token that verifies but lists **0 zones** is account-scoped with no zone
+  permissions.  It cannot do zone work no matter how valid it is.
+- Try the other credentials before concluding anything: there are `CT`, `JAY`,
+  `ST`, and `OLD` variants, plus `_API_KEY` (legacy global key, needs
+  `X-Auth-Email` + `X-Auth-Key`, not `Authorization: Bearer`).
+
+**USE `CLOUDFLARE_FLEET_API_TOKEN` (created 2026-08-11).  It is the one that
+works.**  Scoped to **all zones in all four accounts** (Congress.Trade, jay,
+SocraticTrade.com, Usage.Jays.Services) — verified reading 5 zones and writing a
+zone cache ruleset.  Carries Zone Read/Write, Cache Settings Write, Config
+Settings Write, Zone Settings Write, DNS Write, Cache Purge, Workers Routes
+Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.  Reach for
+this first and stop cycling the older per-app credentials.
+
+The legacy ones, measured the same day: `CT` token reads its zone but cannot
+write rulesets; `JAY` token is valid but sees **0 zones**; `ST` and `OLD` tokens,
+and the `CT` / `ST` / `OLD` `_API_KEY`s, do not authenticate at all.  Only
+`CLOUDFLARE_JAY_API_KEY` still works as a legacy global key
+(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`) — that is full admin, so use
+it only when the fleet token genuinely cannot do the job.
+
+Secret hygiene when testing (the repo hook enforces this):
+extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
+the file; pipe command output through `sed "s/$TOK/REDACTED/g"`; send stderr to
+`/dev/null` rather than `2>&1` (error text can echo fragments of the argv).
+
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 
 **Production schema is applied via `POST /api/admin/migrate` (the idempotent
