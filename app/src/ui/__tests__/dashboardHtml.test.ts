@@ -4079,4 +4079,29 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     // Still uses the actionable 401 copy on other admin probes.
     expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin token in the Admin tab access box.");
   });
+
+
+  it('Directory: wide People/Assets toggle, no H-scroll, Type hidden, Asset fill+ellipsis, no logo without ticker', () => {
+    // Toggle nearly as wide as the search field
+    expect(DASHBOARD_HTML).toContain('class="seg dir-mode-seg" id="dirMode"');
+    expect(DASHBOARD_HTML).toContain('#view-people #dirMode.dir-mode-seg {');
+    expect(DASHBOARD_HTML).toContain('flex: 1 1 50%;');
+    expect(DASHBOARD_HTML).toContain('min-height: 42px;');
+    // No horizontal scroll on directory tables
+    expect(DASHBOARD_HTML).toContain('.people-table-wrap {');
+    expect(DASHBOARD_HTML).toContain('overflow-x: hidden;');
+    expect(DASHBOARD_HTML).toContain('table-layout: fixed;');
+    // Type column removed from Assets table
+    expect(DASHBOARD_HTML).not.toMatch(/id="assetsHead"[\s\S]*?data-sort="type"/);
+    expect(DASHBOARD_HTML).toContain('id="assetsBody"><tr><td colspan="3"');
+    // Fit + fill column layout
+    expect(DASHBOARD_HTML).toContain('.people-table .col-fit');
+    expect(DASHBOARD_HTML).toContain('.people-table .col-fill');
+    expect(DASHBOARD_HTML).toContain('.people-table .col-num');
+    expect(DASHBOARD_HTML).toContain('text-overflow: ellipsis;');
+    // No-ticker assets: no logo, name leads
+    expect(DASHBOARD_HTML).toContain('// Funds/assets without a ticker: no logo; name starts where the ticker would be.');
+    expect(DASHBOARD_HTML).toContain("var logo = tkr ? tickerLogoHtml(tkr, nm) : '';");
+    expect(DASHBOARD_HTML).toContain('dir-asset-cell');
+  });
 });

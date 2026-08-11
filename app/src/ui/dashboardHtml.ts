@@ -618,14 +618,85 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  /* Directory table: sticky sortable headers inside scroll box */
-  .people-table-wrap { max-height: min(70vh, 720px); overflow: auto; -webkit-overflow-scrolling: touch; }
-  .people-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  /* Directory table: sticky sortable headers inside scroll box.
+     No horizontal scroll: table-layout fixed + fit numeric/meta cols + fill name/asset. */
+  .people-table-wrap {
+    max-height: min(70vh, 720px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  .people-table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
   .people-table thead th {
     position: sticky; top: 0; z-index: 3; background: var(--panel);
     cursor: pointer; user-select: none; white-space: nowrap;
     box-shadow: 0 1px 0 var(--border);
   }
+  /* People/Assets mode toggle: nearly full search-field width */
+  #view-people #dirMode.dir-mode-seg {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 12px;
+    border-radius: var(--radius-pill);
+  }
+  #view-people #dirMode.dir-mode-seg button {
+    flex: 1 1 50%;
+    min-height: 42px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  /* Shrink-wrap meta/numeric columns; fill column takes remainder + ellipsis */
+  .people-table .col-fit {
+    width: 1%;
+    white-space: nowrap;
+  }
+  .people-table .col-num {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .people-table .col-fill {
+    width: auto;
+    max-width: 0; /* forces remaining width so ellipsis works under table-layout:fixed */
+  }
+  .people-table .col-fill .cell-clip,
+  .people-table .col-fill .member-cell,
+  .people-table .col-fill .dir-asset-cell,
+  .people-table .col-fill .dir-asset-text {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .people-table .dir-asset-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .people-table .dir-asset-cell .tkr-logo {
+    flex: 0 0 auto;
+  }
+  .people-table .dir-asset-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+  }
+  .people-table .dir-asset-text .tkr { margin-right: 6px; }
+  .people-table th.col-fill, .people-table td.col-fill { text-align: left; }
+  .people-table th.col-num, .people-table td.col-num { padding-right: 14px; }
   /* Review Queue + All Filing Decisions: show at most ~7 body rows, then
      scroll inside the wrap with sticky column headings. max-height only —
      empty / single "queue is clear" state stays content-sized (no min-height). */
@@ -2611,7 +2682,7 @@ ${speedProofSectionHtml(false)}
     <div class="section">
       <h3>Directory</h3>
       <p class="sub" id="dirSub">Look up members of Congress and executive filers.&nbsp; Search by name, state (full or abbrev), or party.&nbsp; Click a column heading to sort; click a name for their profile and trades.</p>
-      <div class="seg" id="dirMode" role="group" aria-label="Directory mode" style="margin-bottom:10px">
+      <div class="seg dir-mode-seg" id="dirMode" role="group" aria-label="Directory mode">
         <button type="button" data-mode="people" class="on" onclick="setDirectoryMode('people')">People</button>
         <button type="button" data-mode="assets" onclick="setDirectoryMode('assets')">Assets</button>
       </div>
@@ -2627,21 +2698,20 @@ ${speedProofSectionHtml(false)}
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
-          <th data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
-          <th data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
+          <th class="col-fill" data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
+          <th class="col-fit" data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="peopleCount"></p>
       <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
         <thead><tr id="assetsHead">
-          <th data-sort="name" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind"></span></th>
-          <th data-sort="type" onclick="sortAssetsDirectory('type')" title="Sort by type">Type <span class="sort-ind"></span></th>
-          <th data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
-          <th data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count">Politicians <span class="sort-ind"></span></th>
+          <th class="col-fill" data-sort="name" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count">Politicians <span class="sort-ind"></span></th>
         </tr></thead>
-        <tbody id="assetsBody"><tr><td colspan="4" class="state">Loading directory…</td></tr></tbody>
+        <tbody id="assetsBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="assetsCount" style="display:none"></p>
     </div>
@@ -9052,9 +9122,9 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
-      '<td class="muted">' + branchPartyState + '</td>' +
-      '<td class="muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
+      '<td class="col-fill"><div' + memberAttr + '><span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
+      '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
+      '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
   if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
 }
@@ -9134,7 +9204,7 @@ function loadAssetsDirectory() {
   var body = el('assetsBody');
   var countEl = el('assetsCount');
   if (!body) return Promise.resolve();
-  body.innerHTML = stateRow(4, 'Loading directory…');
+  body.innerHTML = stateRow(3, 'Loading directory…');
   if (countEl) countEl.textContent = '';
   var now = Date.now();
   var useCache = ASSETS_CACHE && (now - ASSETS_CACHE_AT) < ASSETS_TTL_MS;
@@ -9150,7 +9220,7 @@ function loadAssetsDirectory() {
   return fetchRoster
     .then(function (d) { renderAssetsDirectory(d && d.assets ? d.assets : []); })
     .catch(function (e) {
-      body.innerHTML = stateRow(4, 'Could not load directory: ' + e.message);
+      body.innerHTML = stateRow(3, 'Could not load directory: ' + e.message);
     });
 }
 function sortAssetsDirectory(key) {
@@ -9200,18 +9270,29 @@ function renderAssetsDirectory(all) {
   });
   syncAssetsSortIndicators();
   if (!rows.length) {
-    body.innerHTML = stateRow(4, q ? 'No assets match this filter.' : 'No assets in the directory yet.');
+    body.innerHTML = stateRow(3, q ? 'No assets match this filter.' : 'No assets in the directory yet.');
     if (countEl) countEl.textContent = '0 shown';
     return;
   }
   body.innerHTML = rows.map(function (a) {
     var nm = fmtCompany(a.name);
-    return '<tr class="row" data-asset="' + esc(a.ticker) + '" title="Open ' + esc(a.ticker) + '">' +
-      '<td><div class="asset-cell clickable" data-asset="' + esc(a.ticker) + '">' + tickerLogoHtml(a.ticker, nm) +
-        '<div><span class="tkr">' + esc(a.ticker) + '</span>' + (nm ? ' <span class="muted">' + esc(nm) + '</span>' : '') + '</div></div></td>' +
-      '<td class="muted">' + (a.assetClass ? esc(assetClassLabel(a.assetClass)) : '—') + '</td>' +
-      '<td class="muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
-      '<td class="muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
+    var tkr = String(a.ticker || '').trim();
+    // Funds/assets without a ticker: no logo; name starts where the ticker would be.
+    var logo = tkr ? tickerLogoHtml(tkr, nm) : '';
+    var labelHtml = tkr
+      ? ('<span class="tkr">' + esc(tkr) + '</span>' + (nm ? '<span class="muted">' + esc(nm) + '</span>' : ''))
+      : ('<span class="dir-asset-name">' + esc(nm || '—') + '</span>');
+    var title = tkr ? (tkr + (nm ? '  |  ' + nm : '')) : (nm || 'Asset');
+    var openAttr = tkr
+      ? (' data-asset="' + esc(tkr) + '" title="Open ' + esc(tkr) + '"')
+      : (' title="' + esc(title) + '"');
+    var cellClass = tkr ? 'dir-asset-cell clickable' : 'dir-asset-cell';
+    var dataAttr = tkr ? (' data-asset="' + esc(tkr) + '"') : '';
+    return '<tr class="row"' + openAttr + '>' +
+      '<td class="col-fill"><div class="' + cellClass + '"' + dataAttr + '>' + logo +
+        '<div class="dir-asset-text cell-clip" title="' + esc(title) + '">' + labelHtml + '</div></div></td>' +
+      '<td class="col-num muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
+      '<td class="col-num muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
   }).join('');
   if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
 }
