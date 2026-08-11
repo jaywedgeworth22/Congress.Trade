@@ -86,6 +86,31 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: true, ...plan });
   });
 
+  r.post('/mac-heartbeat', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const worker = typeof body.worker === 'string' ? body.worker.trim() : 'mac-host';
+    const nowIso = new Date().toISOString();
+    const payload = {
+      worker,
+      status: body.status || 'ok',
+      uptimeSeconds: typeof body.uptimeSeconds === 'number' ? body.uptimeSeconds : null,
+      activeJobs: typeof body.activeJobs === 'number' ? body.activeJobs : null,
+      lastFiling: typeof body.lastFiling === 'string' ? body.lastFiling : null,
+      timestamp: nowIso,
+    };
+    if (c.env.CONFIG_KV) {
+      await c.env.CONFIG_KV.put(`mac-heartbeat:${worker}`, JSON.stringify(payload), { expirationTtl: 1800 });
+    }
+    return c.json({ ok: true, worker, timestamp: nowIso });
+  });
+
   r.post('/latency-payload', async (c) => {
     const denied = await requireIngestToken(c);
     if (denied) return denied;
