@@ -86,7 +86,8 @@ import {
   readOpenRouterBudgetCircuit,
   resolveOpenRouterBudgetCircuitKnobs,
 } from '../shared/openRouterBudgetCircuit.ts';
-import { readLlmSpend } from '../shared/llmSpend.ts';
+import { readLlmSpend, readLlmSpendWeekAndMonth } from '../shared/llmSpend.ts';
+import { fetchLlamaParseCredits } from '../extraction/llamaParseCredits.ts';
 import { mapFiling } from '../delivery/rows.ts';
 import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
@@ -3475,6 +3476,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         knobs: orKnobs,
       },
     });
+  });
+
+  // --- GET /llm-spend-report -----------------------------------------------
+  // Per-model LLM spend (last 7 / last 30 days, doc counts + USD, grouped by
+  // provider+model) plus the live LlamaParse free-credit balance across every
+  // key in LLAMAPARSE_API_KEY. Two genuinely different data sources: the
+  // spend report reads this app's own metered-cost ledger
+  // (llm_spend_settlements); the LlamaParse credits are fetched live from
+  // LlamaIndex Cloud's own account API (each key is its own free-tier org
+  // with its own 10k/month grant and reset date -- nothing in this repo's
+  // ledger knows that number). Pass ?refreshCredits=1 to bypass the 5-minute
+  // LlamaParse credits cache (each refresh costs 2 external calls per key).
+  r.get('/llm-spend-report', async (c) => {
+    const forceRefresh = c.req.query('refreshCredits') === '1';
+    const [spend, credits] = await Promise.all([
+      readLlmSpendWeekAndMonth(c.env),
+      fetchLlamaParseCredits(c.env, { forceRefresh }),
+    ]);
+    return c.json({ ok: true, spend, llamaParseCredits: credits });
   });
 
   // --- GET /diagnostics ---------------------------------------------------

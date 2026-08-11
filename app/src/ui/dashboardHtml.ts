@@ -3001,6 +3001,25 @@ ${speedProofSectionHtml(true)}
         <tbody id="diagLogins"></tbody>
       </table>
     </div>
+    <div class="section">
+      <h3>LLM Spend &amp; LlamaParse Credits</h3>
+      <p class="sub">Per-model extraction/agreement/benchmark spend, and the live LlamaParse free-credit balance across every key in LLAMAPARSE_API_KEY (each key is its own free-tier account with its own 10,000-credit/month grant and reset date — the credits are fetched live from LlamaIndex Cloud, not from this app's own spend ledger). API HOOK: GET /api/admin/llm-spend-report</p>
+      <div class="row-flex" style="margin-bottom:10px">
+        <button class="btn ghost sm on" id="llmSpendPeriodWeek" onclick="setLlmSpendPeriod('week')">Past 7 Days</button>
+        <button class="btn ghost sm" id="llmSpendPeriodMonth" onclick="setLlmSpendPeriod('month')">Past 30 Days</button>
+        <button class="btn ghost sm" onclick="loadLlmSpendPanel(true)">Refresh Credits</button>
+        <span id="llmSpendMsg" class="note"></span>
+      </div>
+      <h4 style="margin:0 0 8px">LlamaParse Free Credits (live, per account)</h4>
+      <div id="llamaParseCreditsGrid" class="diag-grid" aria-live="polite"></div>
+      <h4 style="margin:18px 0 8px">Spend By Model <span id="llmSpendRangeLabel" class="note"></span></h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Provider</th><th>Model</th><th>Docs</th><th>Calls</th><th>Total Cost</th></tr></thead>
+          <tbody id="llmSpendByModelTable"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
   <footer class="site-footer">
@@ -7125,6 +7144,100 @@ function coverageCard(title, count, total, pct, note) {
     (note ? '<div class="diag-note">' + esc(note) + '</div>' : '') +
   '</div>';
 }
+/* ---- LLM spend + LlamaParse credits panel ---- */
+var llmSpendReportCache = null;
+var llmSpendPeriod = 'week';
+
+function fmtUsdPrecise(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+  var v = Number(n);
+  if (v === 0) return '$0';
+  // Sub-cent amounts are common per-call; show enough precision to be non-zero.
+  var decimals = v < 0.01 ? 4 : 2;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function fmtShortDate(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function setLlmSpendPeriod(period) {
+  llmSpendPeriod = period;
+  var wk = el('llmSpendPeriodWeek'), mo = el('llmSpendPeriodMonth');
+  if (wk) wk.classList.toggle('on', period === 'week');
+  if (mo) mo.classList.toggle('on', period === 'month');
+  renderLlmSpendByModel();
+}
+function llamaParseCreditCard(account) {
+  var title = account.orgName || ('Key ' + account.keyIndex);
+  var status = account.error ? 'unknown' : (account.exhausted ? 'error' : 'ok');
+  var statusText = account.error ? 'Error' : (account.exhausted ? 'Exhausted' : 'OK');
+  var body;
+  if (account.error) {
+    body = '<div class="diag-note">' + esc(account.error) + '</div>';
+  } else {
+    body =
+      '<div class="v">' + esc(fmtCount(account.remaining)) + ' <span style="font-size:12px;color:var(--text-dim)">/ ' + esc(fmtCount(account.total)) + '</span></div>' +
+      '<div class="diag-meta"><span>Resets</span><strong>' + esc(fmtShortDate(account.resetsAt)) + '</strong></div>';
+  }
+  return '<div class="diag-card">' +
+    '<div class="diag-head"><div class="diag-title" title="' + esc(title) + '">' + esc(title) + '</div><span class="diag-status ' + status + '">' + esc(statusText) + '</span></div>' +
+    body +
+  '</div>';
+}
+function renderLlamaParseCredits(credits) {
+  var grid = el('llamaParseCreditsGrid');
+  if (!grid) return;
+  if (!credits) { grid.innerHTML = '<div class="state">No LlamaParse key configured.</div>'; return; }
+  var cards = [
+    '<div class="diag-card" style="border-color:var(--accent)">' +
+      '<div class="diag-head"><div class="diag-title">All Accounts (Total)</div></div>' +
+      '<div class="v">' + esc(fmtCount(credits.totals.remaining)) + ' <span style="font-size:12px;color:var(--text-dim)">/ ' + esc(fmtCount(credits.totals.total)) + '</span></div>' +
+      '<div class="diag-meta"><span>Checked</span><strong>' + esc(credits.totals.accountsChecked) + '</strong><span>Errored</span><strong>' + esc(credits.totals.accountsErrored) + '</strong></div>' +
+    '</div>'
+  ].concat(credits.accounts.map(llamaParseCreditCard));
+  grid.innerHTML = cards.join('');
+}
+function renderLlmSpendByModel() {
+  var tbody = el('llmSpendByModelTable');
+  var label = el('llmSpendRangeLabel');
+  if (!tbody) return;
+  var report = llmSpendReportCache && llmSpendReportCache.spend && llmSpendReportCache.spend[llmSpendPeriod];
+  if (!report) {
+    tbody.innerHTML = '<tr><td colspan="5" class="state">No spend data for this period.</td></tr>';
+    if (label) label.textContent = '';
+    return;
+  }
+  if (label) label.textContent = '(' + report.rangeStart + ' to ' + report.rangeEnd + ' — ' + fmtCount(report.totalDocs) + ' docs, ' + fmtCount(report.totalCalls) + ' calls, ' + fmtUsdPrecise(report.totalUsd) + ' total)';
+  if (!report.byModel.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="state">No paid LLM calls in this period.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = report.byModel.map(function (r) {
+    return '<tr class="row"><td>' + esc(r.provider) + '</td><td>' + esc(r.model) + '</td><td>' + esc(fmtCount(r.docCount)) + '</td><td>' + esc(fmtCount(r.callCount)) + '</td><td>' + esc(fmtUsdPrecise(r.totalUsd)) + '</td></tr>';
+  }).join('');
+}
+function loadLlmSpendPanel(forceRefresh) {
+  var msg = el('llmSpendMsg');
+  if (msg) msg.textContent = 'Loading…';
+  var grid = el('llamaParseCreditsGrid');
+  if (grid && !llmSpendReportCache) grid.innerHTML = '<div class="state">Loading LlamaParse credit balances…</div>';
+  return fetch('/api/admin/llm-spend-report' + (forceRefresh ? '?refreshCredits=1' : ''), { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      llmSpendReportCache = data;
+      renderLlamaParseCredits(data.llamaParseCredits);
+      renderLlmSpendByModel();
+      if (msg) msg.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    })
+    .catch(function (e) {
+      var m = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load spend report: ' + e.message);
+      if (msg) msg.textContent = m;
+      if (grid && !llmSpendReportCache) grid.innerHTML = '<div class="state">' + esc(m) + '</div>';
+    });
+}
+
 function loadMarketCoverage() {
   var box = el('marketCoverage');
   var msg = el('mdMsg');
@@ -11108,7 +11221,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
   };
 });
 
@@ -11678,7 +11791,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }
