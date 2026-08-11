@@ -86,7 +86,8 @@ import {
   readOpenRouterBudgetCircuit,
   resolveOpenRouterBudgetCircuitKnobs,
 } from '../shared/openRouterBudgetCircuit.ts';
-import { readLlmSpend } from '../shared/llmSpend.ts';
+import { readLlmSpend, readLlmSpendWeekAndMonth } from '../shared/llmSpend.ts';
+import { fetchLlamaParseCredits } from '../extraction/llamaParseCredits.ts';
 import { mapFiling } from '../delivery/rows.ts';
 import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
@@ -3475,6 +3476,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         knobs: orKnobs,
       },
     });
+  });
+
+  // --- GET /llm-spend-report -----------------------------------------------
+  // Per-model LLM spend (last 7 / last 30 days, doc counts + USD, grouped by
+  // provider+model) plus the live LlamaParse free-credit balance across every
+  // key in LLAMAPARSE_API_KEY. Two genuinely different data sources: the
+  // spend report reads this app's own metered-cost ledger
+  // (llm_spend_settlements); the LlamaParse credits are fetched live from
+  // LlamaIndex Cloud's own account API (each key is its own free-tier org
+  // with its own 10k/month grant and reset date -- nothing in this repo's
+  // ledger knows that number). Pass ?refreshCredits=1 to bypass the 5-minute
+  // LlamaParse credits cache (each refresh costs 2 external calls per key).
+  r.get('/llm-spend-report', async (c) => {
+    const forceRefresh = c.req.query('refreshCredits') === '1';
+    const [spend, credits] = await Promise.all([
+      readLlmSpendWeekAndMonth(c.env),
+      fetchLlamaParseCredits(c.env, { forceRefresh }),
+    ]);
+    return c.json({ ok: true, spend, llamaParseCredits: credits });
   });
 
   // --- GET /diagnostics ---------------------------------------------------
@@ -6951,11 +6971,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         if (row) docRows.push(row);
       }
     } else {
+      // Same deterministic-format exclusion the autonomous lane applies
+      // (agreement.ts selectAgreementCandidates). Without it this operator
+      // route re-opens the exact lane that burned 2,086 model calls on
+      // senate_html for ZERO rows: the cascade corroborates a MODEL's read,
+      // and these formats are parsed deterministically — there is nothing to
+      // corroborate, and the vision models receive bytes they cannot parse.
       docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
         c.env.DB,
         `SELECT f.doc_id, f.raw_object_key
            FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
           WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+            AND LOWER(COALESCE(f.doc_kind, '')) NOT IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')
+            AND LOWER(COALESCE(f.extractor, '')) NOT IN ('textpdf', 'text_pdf', 'senatehtml', 'senate_html', 'ogetext', 'oge_text', 'oge-text')
           ORDER BY rq.created_at DESC LIMIT ?`,
         [n],
       );

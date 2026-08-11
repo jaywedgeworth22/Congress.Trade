@@ -162,6 +162,69 @@ production ingestion jobs unless the user explicitly asks.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
+## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
+
+Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
+or "invalid" when it is fine.  The usual cause is testing it the obvious way.
+
+**Never judge a Cloudflare token by `GET /user/tokens/verify`.**  That endpoint
+only understands *user*-owned tokens.  An **account-owned** token returns
+`success: false` there while working perfectly against real resources.
+Measured 2026-08-11 against `/Users/jay/.secrets/global-api-keys`:
+
+| Credential | `/user/tokens/verify` | Can it actually read `congress.trade`? |
+|---|---|---|
+| `CLOUDFLARE_CT_API_TOKEN` | `success: false` | **Yes** — reads the zone fine |
+| `CLOUDFLARE_JAY_API_TOKEN` | `success: true`, `active` | **No** — sees 0 zones |
+
+Both obvious conclusions are wrong.  Verify by calling the **resource you
+actually need**, and read the error code rather than the message:
+
+- **`10000 "Authentication error"` does NOT reliably mean a bad token.**
+  Cloudflare returns it both for a genuinely invalid credential *and* for a
+  valid credential lacking permission on that resource.  If a token can read
+  something in the zone but 10000s on a write, it is a **missing permission
+  scope**, not an expired token — say so, and name the scope needed.
+- A token that verifies but lists **0 zones** is account-scoped with no zone
+  permissions.  It cannot do zone work no matter how valid it is.
+- Do **not** go credential-hunting.  As of 2026-08-11 there is exactly **one**
+  active Cloudflare credential (below); every legacy `CT` / `JAY` / `ST` / `OLD`
+  token and key has been commented out in `~/.secrets/global-api-keys`
+  specifically so no agent picks one up and re-runs this diagnosis.
+
+### The only Cloudflare credential: `CLOUDFLARE_FLEET_API_TOKEN`
+
+Created 2026-08-11.  **Use it for every Cloudflare operation, in every repo.**
+
+It is a **USER-owned** token under `mail@jays.services` — deliberately *not*
+account-owned, so it is not tied to the old `jay` account (which owns no zones
+and has a billing issue).  Its policies grant all four accounts, so one token
+covers the whole fleet:
+
+| Zone | Account |
+|---|---|
+| `congress.trade` | Congress.Trade |
+| `jays.services`, `jaywedgeworth.com` | Usage.Jays.Services |
+| `socratic.trade`, `socratictrade.com` | SocraticTrade.com |
+
+Verified: reads all 5 zones **and** writes a zone cache ruleset — the exact
+operation every legacy token failed.  Carries Zone Read/Write, Cache Settings
+Write, Config Settings Write, Zone Settings Write, DNS Write, Cache Purge,
+Workers Routes Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.
+
+**Break glass.**  If the fleet token is ever revoked or needs replacing, the
+only credential that can mint a new one is `CLOUDFLARE_JAY_API_KEY`, commented
+out at the bottom of the secrets file.  It is a legacy global key
+(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`, *not* `Bearer`), full admin
+and unscoped — which is exactly why it is commented out.  Uncomment it, mint the
+replacement, re-comment it.  Do not use it for routine work.
+
+
+Secret hygiene when testing (the repo hook enforces this):
+extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
+the file; pipe command output through `sed "s/$TOK/REDACTED/g"`; send stderr to
+`/dev/null` rather than `2>&1` (error text can echo fragments of the argv).
+
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 
 **Production schema is applied via `POST /api/admin/migrate` (the idempotent
@@ -286,6 +349,16 @@ Client apps (peer clients of the backend, not separate products):
   Dark / System (sun / moon / monitor) matching web + ST console.
 - `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
   in this Linux cloud environment.
+- **Xcode project path: `clients/ios/CongressTrade.xcodeproj`.**  Renamed 2026-08-11 —
+  the period in the old basename tripped up tooling, so the container has no dot.  Scheme
+  and targets stay `CongressTrade` / `CongressTradeTests`; the shipped app identity is
+  unchanged (`PRODUCT_NAME` / display name `Congress.Trade`, bundle `trade.congress.ios`).
+  Build with the stable Xcode only (`/Applications/Xcode.app`, never `Xcode-beta`):
+
+  ```bash
+  xcodebuild -project clients/ios/CongressTrade.xcodeproj -scheme CongressTrade \
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+  ```
 
 ## Delegation & model economics (fleet rule — binding for every agent)
 
@@ -302,6 +375,20 @@ Client apps (peer clients of the backend, not separate products):
   output fails verification — not preemptively.
 - **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
   which model did the work.
+- **Delegate for CONTEXT ECONOMY too — not only for parallelism.**  A sub-agent starts
+  with a fresh, minimal context and only the tools it is granted; a long-running session
+  carries its whole transcript plus every loaded MCP schema and pays for that on every
+  turn.  So a task can be strictly cheaper as a sub-agent even when it runs serially with
+  no parallelism benefit at all.  This matters most for work that reads a lot and returns
+  a little — audits, sweeps, "find every call site", log triage — where bulk reading would
+  otherwise permanently pollute the caller's context; in a sub-agent it is discarded and
+  only the conclusion is kept.  Corollary: grant each sub-agent the fewest tools it
+  needs — unused tool schemas are context the sub-agent pays for on every one of its turns
+  too.  Combine with tiering above: a narrow brief plus a small-tier model is usually the
+  cheapest correct answer.  Counter-rule so this does not become ritual: do not delegate a
+  single trivial step (spawn overhead exceeds the work), and do not delegate a task that
+  needs so much accumulated conversation context that briefing it would cost more than
+  doing it directly.
 - Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
 
 ## Production Deployment Urgency

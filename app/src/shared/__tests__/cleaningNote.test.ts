@@ -21,6 +21,21 @@ describe('plainCleaningNote', () => {
     );
   });
 
+  it('leaves the extraction pipeline’s value-carrying fragments alone', () => {
+    // splitAssetNameDetail writes these directly; they are already display-ready
+    // and must reach the web "Notes" column with the bond terms intact.
+    for (const note of [
+      'coupon 5.0%, matures 05/01/2026',
+      'coupon 0.625%, matures 08/15/2030',
+      'matures Jun 15, 2030',
+      'exchanged for Kenvue Inc.',
+      'disclosed as an exchange',
+      'exchanged for Huntington Bancshares Incorporated; coupon 4.0%, matures 08/15/2031',
+    ]) {
+      expect(plainCleaningNote(note)).toBe(note);
+    }
+  });
+
   it('passes through empty and unknown notes', () => {
     expect(plainCleaningNote(null)).toBe('');
     expect(plainCleaningNote('')).toBe('');

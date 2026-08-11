@@ -1241,6 +1241,19 @@ struct TopPerformerItem: Decodable, Identifiable {
     let partyBucket: String?
     let photoUrl: String?
     let tradeCount: Int
+    /// CANONICAL. Size-weighted average excess return vs the S&P 500 measured
+    /// from the FILING date, winsorized per-trade at ±200%, NOT annualized.
+    /// `GET /api/analytics/member-performance` both SORTS and (on the website)
+    /// DISPLAYS this field, so it is the only one that keeps a row's rank and
+    /// its printed number in agreement. Display this one.
+    let avgExcessReturn: Double?
+    /// Reference/debugging only — do NOT display as the headline stat. The
+    /// backend's own comment (`app/src/analytics/routes.ts`) says it is "NOT
+    /// what the board sorts or displays by (a young trade's ~12x annualization
+    /// multiplier made this misleading)". Painting it next to a list ordered
+    /// by `avgExcessReturn` is what produced the owner's "odd order" report:
+    /// live at window=90d the honest column tops out near 5.7% while this one
+    /// reads 41.4 / 26.4 / 22.5 / 41.2%.
     let avgAnnualizedExcessReturn: Double?
     let winRate: Double?
     let estVolumeUsd: Double?
@@ -1280,12 +1293,38 @@ struct FilingLagResponse: Decodable {
     let topLateFilers: [SlowFilerItem]?
 }
 
+/// Shape of `summary` in `GET /api/analytics/filing-lag`.
+///
+/// VERIFIED AGAINST THE LIVE ENDPOINT (2026-08-11, `?window=90d`): the server
+/// returns exactly `{count, medianLagDays, p90LagDays, overFortyFivePct,
+/// distribution}` — see `summarizeLag` in `app/src/analytics/compute.ts`, which
+/// is the only producer of this object.
+///
+/// This struct previously also declared `avgLagDays` / `maxLagDays` /
+/// `lateCount` / `totalTrades`. None of them have ever been sent. Because every
+/// property is Optional, decoding still succeeded and the Trends tab happily
+/// shipped "Avg Delay: 0 days" and "Late Filings: —" forever. Do not re-add a
+/// field here without first seeing it in a live response body; the website
+/// (Median / P90 / >45-day %) is the reference for what this endpoint offers.
 struct FilingLagSummary: Decodable {
-    let avgLagDays: Double?
+    /// Disclosed trades with a computable lag in the active window — the
+    /// denominator behind every other number in this object.
+    let count: Int?
     let medianLagDays: Double?
-    let maxLagDays: Double?
-    let lateCount: Int?
-    let totalTrades: Int?
+    let p90LagDays: Double?
+    /// Share (0…1, NOT a percent) of `count` filed more than 45 days after the
+    /// trade — i.e. past the STOCK Act deadline. `round(…, 4)` server-side.
+    let overFortyFivePct: Double?
+    let distribution: [FilingLagBucket]?
+}
+
+/// One `LAG_BUCKETS` histogram bar (`0-7d`, `8-14d`, `15-30d`, `31-45d`,
+/// `46-60d`, `60d+`). Shared with the website via the `congress-trading-shared`
+/// package, so the labels arrive pre-formatted — never re-derive them here.
+struct FilingLagBucket: Decodable, Identifiable {
+    var id: String { bucket }
+    let bucket: String
+    let count: Int
 }
 
 struct SlowFilerItem: Decodable, Identifiable {

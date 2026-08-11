@@ -31,7 +31,13 @@ import {
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
 } from './tickerNormalize.ts';
-import { cleanFilerName, isJunkAssetString, cleanAssetString, simplifyCompanyName } from './nameNormalizer.ts';
+import {
+  cleanFilerName,
+  isJunkAssetString,
+  cleanAssetString,
+  simplifyCompanyName,
+  splitAssetNameDetail,
+} from './nameNormalizer.ts';
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { deprecatePredecessorFilingTransactions } from './agreement.ts';
@@ -455,7 +461,12 @@ function buildTransaction(
     rawAssetName = null;
   }
 
-  const cleanedAssetName = cleanAssetString(rawAssetName, rawTicker);
+  // Lift disclosure-form scaffolding (House [GS] codes, footnote markers, the
+  // rigid "Rate/Coupon: … Matures: …" suffix, the "(Exchanged) …" second leg)
+  // out of the displayed name and into the cleaning_note audit column, which
+  // the web surfaces as the "Notes" column.
+  const assetDetail = splitAssetNameDetail(rawAssetName, rawTicker);
+  const cleanedAssetName = assetDetail.name;
   const s = scoreFields(
     p.confidence,
     {
@@ -531,6 +542,7 @@ function buildTransaction(
     firstSeenAt: filing.firstSeenAt,
     filedDate: filing.filedDate,
     createdAt: nowIso,
+    cleaningNote: assetDetail.note,
     // cursor_seq is assigned by the DB trigger on insert.
     cursorSeq: 0,
   };
@@ -907,7 +919,8 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
   raw_text, asset_type_name, filing_status, subholding, location, description,
   supplemental_text, row_key, confidence, source, created_at, cursor_seq,
-  first_seen_at, filed_date, est_value, disclosure_lag_days, stock_act_status
+  first_seen_at, filed_date, est_value, disclosure_lag_days, stock_act_status,
+  cleaning_note
 ) SELECT
   json_extract(value, '$.id'), json_extract(value, '$.docId'),
   json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
@@ -923,7 +936,8 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
   json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate'),
   json_extract(value, '$.estValue'), json_extract(value, '$.disclosureLagDays'),
-  json_extract(value, '$.stockActStatus')
+  json_extract(value, '$.stockActStatus'),
+  json_extract(value, '$.cleaningNote')
   FROM json_each(?)`;
 
 function transactionInsertJson(transactions: Transaction[]): string {
@@ -957,6 +971,7 @@ function transactionInsertJson(transactions: Transaction[]): string {
     estValue: estimateTransactionValue(tx.amountMin, tx.amountMax),
     disclosureLagDays: computeDisclosureLagDays(tx.txDate, tx.filedDate),
     stockActStatus: computeStockActStatus(tx.txDate, tx.filedDate),
+    cleaningNote: tx.cleaningNote ?? null,
   })));
 }
 

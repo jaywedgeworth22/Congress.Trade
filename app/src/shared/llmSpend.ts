@@ -637,6 +637,99 @@ export async function settleAutopilotBudgetReceipt(
   );
 }
 
+export interface LlmSpendByModel {
+  provider: string;
+  model: string;
+  callCount: number;
+  docCount: number;
+  totalUsd: number;
+}
+
+export interface LlmSpendRangeReport {
+  rangeStart: string;
+  rangeEnd: string;
+  totalUsd: number;
+  totalCalls: number;
+  totalDocs: number;
+  byModel: LlmSpendByModel[];
+}
+
+function daysAgoStr(now: Date, days: number): string {
+  const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return dayStr(d);
+}
+
+/**
+ * Metered spend for [sinceDay, throughDay] (inclusive, 'YYYY-MM-DD'),
+ * grouped by provider + model (COALESCE(resolved_model, requested_model) --
+ * the model that actually ran, not just the one first requested before any
+ * fallback substitution). Reads the immutable `llm_spend_settlements` ledger
+ * directly rather than the day+provider-only `llm_spend_settlement_totals`
+ * projection, since that projection can't answer a model-level or
+ * date-range question. Returns null when the meter is unreadable (same
+ * fail-open contract as readLlmSpend) rather than a report with no rows, so
+ * callers can distinguish "genuinely zero spend" from "couldn't read it".
+ */
+export async function readLlmSpendByModel(
+  env: Env,
+  sinceDay: string,
+  throughDay: string,
+): Promise<LlmSpendRangeReport | null> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function') return null;
+  try {
+    const rows = await db.prepare(
+      `SELECT provider, COALESCE(resolved_model, requested_model) AS model,
+              COUNT(*) AS call_count, COUNT(DISTINCT doc_id) AS doc_count, SUM(usd) AS total_usd
+         FROM llm_spend_settlements
+        WHERE day >= ? AND day <= ?
+        GROUP BY provider, model
+        ORDER BY total_usd DESC`,
+    ).bind(sinceDay, throughDay).all<{
+      provider: string; model: string; call_count: number; doc_count: number; total_usd: number;
+    }>();
+    const byModel: LlmSpendByModel[] = (rows?.results ?? []).map((r) => ({
+      provider: r.provider,
+      model: r.model,
+      callCount: Number(r.call_count) || 0,
+      docCount: Number(r.doc_count) || 0,
+      totalUsd: Number(r.total_usd) || 0,
+    }));
+    const totalUsd = byModel.reduce((sum, r) => sum + r.totalUsd, 0);
+    const totalCalls = byModel.reduce((sum, r) => sum + r.callCount, 0);
+    // Doc counts per model can overlap (same doc read by two models) -- a
+    // true "distinct docs touched at all" needs its own query rather than
+    // summing per-model doc counts, which would double-count.
+    const distinctDocsRow = await db.prepare(
+      `SELECT COUNT(DISTINCT doc_id) AS n FROM llm_spend_settlements
+        WHERE day >= ? AND day <= ? AND doc_id IS NOT NULL`,
+    ).bind(sinceDay, throughDay).first<{ n: number }>();
+    return {
+      rangeStart: sinceDay,
+      rangeEnd: throughDay,
+      totalUsd,
+      totalCalls,
+      totalDocs: Number(distinctDocsRow?.n) || 0,
+      byModel,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Convenience wrapper: last-7-days and last-30-days reports in one call. */
+export async function readLlmSpendWeekAndMonth(
+  env: Env,
+  now = new Date(),
+): Promise<{ week: LlmSpendRangeReport | null; month: LlmSpendRangeReport | null }> {
+  const today = dayStr(now);
+  const [week, month] = await Promise.all([
+    readLlmSpendByModel(env, daysAgoStr(now, 6), today),
+    readLlmSpendByModel(env, daysAgoStr(now, 29), today),
+  ]);
+  return { week, month };
+}
+
 export interface LlmSpendSnapshot extends LlmSpendTotals {
   ceilingUsd: number;
   perProviderCeilings: Record<string, number>;
