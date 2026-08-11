@@ -63,10 +63,40 @@ CONGRESS_SOURCE_PAGE = "https://github.com/unitedstates/images"
 BIOGUIDE_IN_URL = re.compile(r"/images/congress/[^/]+/([A-Z]\d{6})\.jpg", re.I)
 
 
-def fetch(url: str, timeout: int = 45) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return res.read()
+# Wikimedia throttles hard (HTTP 429) and asks bots to self-limit. Keep a
+# per-host floor between requests and back off on 429/5xx rather than burning
+# through the run and leaving half the executives unfilled.
+HOST_MIN_INTERVAL = {"upload.wikimedia.org": 1.2, "commons.wikimedia.org": 1.2}
+_last_hit: dict[str, float] = {}
+
+
+def fetch(url: str, timeout: int = 45, attempts: int = 4) -> bytes:
+    host = urllib.parse.urlparse(url).netloc
+    floor = HOST_MIN_INTERVAL.get(host, 0.0)
+    delay = 2.0
+    last: Exception | None = None
+    for attempt in range(attempts):
+        if floor:
+            gap = time.monotonic() - _last_hit.get(host, 0.0)
+            if gap < floor:
+                time.sleep(floor - gap)
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return res.read()
+        except urllib.error.HTTPError as exc:
+            last = exc
+            # 404 is a real answer ("no such portrait"); retrying wastes time.
+            if exc.code not in (429, 500, 502, 503, 504):
+                raise
+        except (urllib.error.URLError, OSError) as exc:
+            last = exc
+        finally:
+            _last_hit[host] = time.monotonic()
+        if attempt < attempts - 1:
+            time.sleep(delay)
+            delay *= 2
+    raise last if last else RuntimeError(f"fetch failed: {url}")
 
 
 def load_members(members_url: str | None, members_json: Path | None) -> list[dict]:
@@ -194,25 +224,50 @@ def main() -> int:
     skipped: list[tuple[str, str]] = []
     wanted = set(args.keys or [])
 
+    # Bioguides unitedstates/images does not carry (newly seated members, and
+    # historical bioguides that predate photography) get a curated PD source.
+    overrides = {o["bioguide"]: o for o in sources.get("congressOverrides", [])}
+
     if args.only != "executive":
         members = load_members(args.members_url, args.members_json)
         targets = congress_targets(members)
-        print(f"congress: {len(targets)} bioguides from {len(members)} members")
+        for bioguide, override in overrides.items():
+            targets.setdefault(bioguide, {"name": override["name"], "filerIds": override.get("filerIds", [])})
+        print(f"congress: {len(targets)} bioguides from {len(members)} members "
+              f"({len(overrides)} curated overrides)")
         for bioguide, meta in sorted(targets.items()):
             key = bioguide
             if wanted and key not in wanted:
                 continue
+            override = overrides.get(bioguide)
+            if override:
+                if not fp.is_public_domain_licence(override.get("licence")):
+                    skipped.append((key, f"licence not public domain: {override.get('licence')!r}"))
+                    continue
+                urls = [override["sourceUrl"]]
+                licence, attribution, source_page = (
+                    override["licence"],
+                    override.get("attribution"),
+                    override.get("sourcePage"),
+                )
+            else:
+                urls = [
+                    CONGRESS_SOURCE.format(bioguide=bioguide),
+                    CONGRESS_FALLBACK.format(bioguide=bioguide),
+                ]
+                licence, attribution, source_page = (
+                    CONGRESS_LICENCE,
+                    CONGRESS_ATTRIBUTION,
+                    CONGRESS_SOURCE_PAGE,
+                )
             entry, err = process(
                 key=key,
                 name=meta["name"],
                 branch="congress",
-                urls=[
-                    CONGRESS_SOURCE.format(bioguide=bioguide),
-                    CONGRESS_FALLBACK.format(bioguide=bioguide),
-                ],
-                licence=CONGRESS_LICENCE,
-                attribution=CONGRESS_ATTRIBUTION,
-                source_page=CONGRESS_SOURCE_PAGE,
+                urls=urls,
+                licence=licence,
+                attribution=attribution,
+                source_page=source_page,
                 pack_dir=pack_dir,
                 bioguide=bioguide,
                 filer_ids=meta["filerIds"],

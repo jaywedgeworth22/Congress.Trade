@@ -65,6 +65,15 @@ def api(params: dict) -> dict:
         return json.load(res)
 
 
+def strip_tracking(url: str | None) -> str | None:
+    """Commons imageinfo URLs carry utm_* analytics params; the file is the same without them."""
+    if not url:
+        return url
+    parsed = urllib.parse.urlsplit(url)
+    kept = [(k, v) for k, v in urllib.parse.parse_qsl(parsed.query) if not k.startswith("utm_")]
+    return urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(kept)))
+
+
 def strip_html(value: str | None) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", value or "")).strip()
 
@@ -100,10 +109,54 @@ def score(title: str, meta: dict, surname: str, given: str) -> int:
         points -= 15
     if height >= width:
         points += 10  # portrait orientation
+    else:
+        points -= 30  # landscape almost always means a scene, not a headshot
     # Screengrabs from hearings are legitimate but a poor face source.
     if re.search(r"\d{4}-\d{2}-\d{2}", t) or "hearing" in t:
         points -= 25
+    # Group/event shots: another person's name in the title means the subject is
+    # not alone in frame, and face detection would happily pick the wrong one.
+    if re.search(r"\b(and|with|alongside)\b", t) or "unveil" in t or "ceremony" in t:
+        points -= 60
     return points
+
+
+def describe(titles: list[str]) -> list[dict]:
+    """Licence + direct URL for exact Commons file titles (for manual overrides).
+
+    Never hand-write an ``upload.wikimedia.org`` URL: the path contains an MD5
+    shard that cannot be derived from the file name. Ask the API for it.
+    """
+    info = api(
+        {
+            "action": "query",
+            "prop": "imageinfo",
+            "iiprop": "url|extmetadata|size",
+            "titles": "|".join(titles),
+        }
+    )
+    out = []
+    for page in info.get("query", {}).get("pages", []):
+        images = page.get("imageinfo") or []
+        if not images:
+            out.append({"title": page.get("title"), "error": "missing on Commons"})
+            continue
+        ii = images[0]
+        em = ii.get("extmetadata") or {}
+        licence = strip_html((em.get("LicenseShortName") or {}).get("value"))
+        out.append(
+            {
+                "title": page.get("title"),
+                "licence": licence,
+                "publicDomain": fp.is_public_domain_licence(licence),
+                "attribution": strip_html((em.get("Artist") or {}).get("value")) or None,
+                "sourceUrl": strip_tracking(ii.get("url")),
+                "sourcePage": ii.get("descriptionurl"),
+                "width": ii.get("width"),
+                "height": ii.get("height"),
+            }
+        )
+    return out
 
 
 def candidates_for(name: str, limit: int = 8) -> list[dict]:
@@ -153,7 +206,7 @@ def candidates_for(name: str, limit: int = 8) -> list[dict]:
                 "usageTerms": strip_html((em.get("UsageTerms") or {}).get("value")),
                 "attribution": strip_html(meta["artist"]) or None,
                 "credit": strip_html((em.get("Credit") or {}).get("value")) or None,
-                "sourceUrl": ii.get("url"),
+                "sourceUrl": strip_tracking(ii.get("url")),
                 "sourcePage": ii.get("descriptionurl"),
                 "width": ii.get("width"),
                 "height": ii.get("height"),
@@ -170,7 +223,19 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="Write sources.json-shaped candidate entries here.")
     ap.add_argument("--show", type=int, default=3, help="Candidates to print per person.")
     ap.add_argument("--sleep", type=float, default=0.4)
+    ap.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="TITLE",
+        help='Describe an exact Commons file ("File:Foo.jpg") instead of searching.',
+    )
     args = ap.parse_args()
+
+    if args.file:
+        for row in describe(args.file):
+            print(json.dumps(row, indent=2))
+        return 0
 
     names = list(args.names)
     if args.names_file:
