@@ -1389,7 +1389,8 @@ export async function runPhotoEnrichment(
   matched: number;
   unmatched: number;
   upgraded: number;
-  executivesFilled: number;
+  /** Pack-by-filer-id UPDATEs queued (executive filers and pack-only bioguides). */
+  packFilerFills: number;
 }> {
   const map = await buildLegislatorMap();
   // Also index by bioguide so filers that already carry resolved_bioguide_id
@@ -1439,14 +1440,16 @@ export async function runPhotoEnrichment(
   // congress-legislators lookup, which is why ~45 of them carried no photo at
   // all. The face pack pins each one to a curated public-domain portrait by
   // filer id; fill those in here. Only NULL/blank photos and stale pack URLs
-  // are touched, so a hand-set photo is never clobbered.
-  let executivesFilled = 0;
+  // are touched, so a hand-set photo is never clobbered — which also means the
+  // count below is UPDATEs queued, not rows actually changed (a re-run is a
+  // no-op at the database and still reports the same number).
+  let packFilerFills = 0;
   const knownFilerIds = new Set(filers.map((f) => f.bioguide_id));
   for (const face of packFacesWithFilerIds()) {
     const url = memberPhotoUrl(face.key, env.APP_BASE_URL ?? 'https://congress.trade');
     for (const filerId of face.filerIds) {
       if (!knownFilerIds.has(filerId)) continue;
-      executivesFilled++;
+      packFilerFills++;
       updates.push(
         env.DB
           .prepare(
@@ -1465,7 +1468,7 @@ export async function runPhotoEnrichment(
     matched,
     unmatched: filers.length - matched,
     upgraded,
-    executivesFilled,
+    packFilerFills,
   };
 }
 
