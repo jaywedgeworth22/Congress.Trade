@@ -6951,11 +6951,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         if (row) docRows.push(row);
       }
     } else {
+      // Same deterministic-format exclusion the autonomous lane applies
+      // (agreement.ts selectAgreementCandidates). Without it this operator
+      // route re-opens the exact lane that burned 2,086 model calls on
+      // senate_html for ZERO rows: the cascade corroborates a MODEL's read,
+      // and these formats are parsed deterministically — there is nothing to
+      // corroborate, and the vision models receive bytes they cannot parse.
       docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
         c.env.DB,
         `SELECT f.doc_id, f.raw_object_key
            FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
           WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+            AND LOWER(COALESCE(f.doc_kind, '')) NOT IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')
+            AND LOWER(COALESCE(f.extractor, '')) NOT IN ('textpdf', 'text_pdf', 'senatehtml', 'senate_html', 'ogetext', 'oge_text', 'oge-text')
           ORDER BY rq.created_at DESC LIMIT ?`,
         [n],
       );
