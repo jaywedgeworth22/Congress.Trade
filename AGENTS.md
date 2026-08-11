@@ -375,6 +375,20 @@ Client apps (peer clients of the backend, not separate products):
   output fails verification — not preemptively.
 - **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
   which model did the work.
+- **Delegate for CONTEXT ECONOMY too — not only for parallelism.**  A sub-agent starts
+  with a fresh, minimal context and only the tools it is granted; a long-running session
+  carries its whole transcript plus every loaded MCP schema and pays for that on every
+  turn.  So a task can be strictly cheaper as a sub-agent even when it runs serially with
+  no parallelism benefit at all.  This matters most for work that reads a lot and returns
+  a little — audits, sweeps, "find every call site", log triage — where bulk reading would
+  otherwise permanently pollute the caller's context; in a sub-agent it is discarded and
+  only the conclusion is kept.  Corollary: grant each sub-agent the fewest tools it
+  needs — unused tool schemas are context the sub-agent pays for on every one of its turns
+  too.  Combine with tiering above: a narrow brief plus a small-tier model is usually the
+  cheapest correct answer.  Counter-rule so this does not become ritual: do not delegate a
+  single trivial step (spawn overhead exceeds the work), and do not delegate a task that
+  needs so much accumulated conversation context that briefing it would cost more than
+  doing it directly.
 - Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
 
 ## Production Deployment Urgency

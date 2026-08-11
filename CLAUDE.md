@@ -51,6 +51,10 @@ Key reminders:
   `POST /api/admin/migrate` in `app/src/admin/routes.ts`, and note the
   migration in the PR body.
 - Run `cd app && npm run typecheck && npm test` before handing back code changes.
+- **Delegate for context economy, not just parallelism**: a sub-agent with a
+  fresh, minimal context can be cheaper than doing the work yourself even
+  serially, especially for read-a-lot-return-little tasks (audits, sweeps,
+  log triage).  See `AGENTS.md` "Delegation & model economics" for the full rule.
 - For mobile/Swift work, keep `app/docs/client-mobile-api.md` and
   `app/docs/mobile-app-roadmap.md` aligned with any `/api/client/v1/*` contract,
   command/status, auth/session, or account-alert changes.
