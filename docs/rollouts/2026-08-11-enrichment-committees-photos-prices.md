@@ -11,7 +11,7 @@ Fixes:
 - Daily filer lane: **identity sync → photo enrichment → committee sync → ticker backfill**.
 - Photos upgraded to **450x550**; re-runs upgrade legacy URLs; photo path uses `resolved_bioguide_id` when name match fails.
 - Committee sync adds **House Clerk MemberData.xml** as secondary bioguide-keyed source (unioned with congress-legislators).
-- Daily market lane backfills `current_price` / `latest_price_date` from local EOD before peer refresh; selection re-picks null `current_price` rows; peer client sorts closes descending.
+- Daily market lane backfills `current_price` / `latest_price_date` from local EOD before peer refresh (does not re-select solely on null `current_price`, which would break price-refresh termination); peer client sorts closes descending.
 
 ## Sources
 

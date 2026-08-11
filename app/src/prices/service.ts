@@ -337,10 +337,11 @@ export async function selectTickersNeedingPrices(
         AND (
           sr.latest_price_date IS NULL
           OR sr.latest_price_date < ?
-          -- Price series may exist (bulk load / partial import) while the
-          -- display-critical current_price anchor was never stamped. Re-select
-          -- those so performance metrics + the peer share path can fill it.
-          OR sr.current_price IS NULL
+          -- Do NOT re-select solely on current_price IS NULL: that would
+          -- perpetually re-queue tickers that already have a fresh
+          -- latest_price_date (termination guarantee). Stamp missing
+          -- current_price from local price_eod via backfillCurrentPricesFromEod
+          -- before the peer refresh instead.
         )
         AND NOT (
           COALESCE(sr.price_unavailable, 0) <> 0
