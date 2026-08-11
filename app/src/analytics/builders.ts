@@ -331,12 +331,17 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
   const { where, params } = buildCommonFilters(p);
   const limit = clampLimit(p.limit, 20, 100);
   const categorySql = canonicalAssetTypeCategorySql('t.asset_type', 't.asset_type_name', 't.is_option');
+  // Same volume/net/breadth shape as market-cap + sector-flow so the Trends
+  // "By Asset Type" card can use the shared flowRow layout (label+value /
+  // full-width bar / buys-sells-net chip) without a one-off hbar layout.
   const sql =
     `SELECT ${categorySql} AS asset_type_category, ` +
     "GROUP_CONCAT(DISTINCT COALESCE(NULLIF(t.asset_type, ''), 'Unknown')) AS raw_asset_types, " +
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `SUM(${MID}) AS est_volume, ` +
+    `SUM(${SIGNED}) AS est_net_flow, ` +
+    'COUNT(DISTINCT t.filer_id) AS unique_members, ' +
     `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers ` +
     ANALYTICS_FROM_JOINS +
     whereSql(where) +
