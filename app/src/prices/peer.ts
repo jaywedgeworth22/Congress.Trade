@@ -71,14 +71,23 @@ export function buildPeerPriceClient(
     }
   }
 
+  /** Normalize to date-descending so service.ts can treat closes[0] as latest
+   *  even if a peer revision ships ascending bars. */
+  function descending(closes: Close[]): Close[] {
+    if (closes.length < 2) return closes;
+    const out = closes.slice();
+    out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    return out;
+  }
+
   async function eodHistory(symbol: string, from: string, to: string): Promise<Close[]> {
     const url = `${origin}/api/market/prices/${encodeURIComponent(symbol)}?from=${from}&to=${to}`;
-    return getCloses(url, 'fetch-peer-price-history');
+    return descending(await getCloses(url, 'fetch-peer-price-history'));
   }
 
   async function spxHistory(from: string, to: string): Promise<Close[]> {
     const url = `${origin}/api/market/spx?from=${from}&to=${to}`;
-    return getCloses(url, 'fetch-peer-spx-history');
+    return descending(await getCloses(url, 'fetch-peer-spx-history'));
   }
 
   return { eodHistory, spxHistory };

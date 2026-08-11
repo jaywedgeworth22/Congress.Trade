@@ -2,11 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   normalize,
   CONFIDENCE_THRESHOLD,
+  DETERMINISTIC_CONFIDENCE_THRESHOLD,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
   persistTransactions,
   TransactionPublishLimitError,
   transactionRowKey,
   clearResolverCache,
+  looksLikeHeaderContaminatedAsset,
+  isMostlyGarbageOcrExtraction,
 } from '../normalizer.ts';
 import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
@@ -170,10 +173,16 @@ describe('normalize', () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const parsed = Array.from(
       { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
-      (_, index) => tx({ rawText: `row ${index}` }),
+      (_, index) => tx({ rawText: `row ${index} $1,001 - $15,000` }),
     );
-    const result = await normalize(env, filing(), parsed);
+    const result = await normalize(
+      env,
+      filing({ docKind: 'scanned_pdf', extractor: 'visionLlm' }),
+      parsed,
+      { extractor: 'visionLlm' },
+    );
     expect(result.needsReview).toBe(true);
+    expect(result.transactions.length).toBe(MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1);
     expect(cap.insertedTx).toHaveLength(0);
     expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded');
     const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
@@ -202,14 +211,17 @@ describe('normalize', () => {
 
   it('atomically retries needs-review state with one deterministic receipt', async () => {
     const { env, cap, allowAudit } = makeEnv([], { failAudit: true });
+    // Use a vision extractor so soft unresolved_ticker still lands in review
+    // (deterministic text/html now autopublishes at a lower confidence gate).
+    const f = filing({ docKind: 'scanned_pdf', extractor: 'visionLlm' });
     const parsed = [tx({ ticker: 'Bank of America Mystery', assetName: 'Mystery Co' })];
-    await expect(normalize(env, filing(), parsed)).rejects.toThrow('audit insert failed');
+    await expect(normalize(env, f, parsed, { extractor: 'visionLlm' })).rejects.toThrow('audit insert failed');
     expect(cap.reviewRows).toHaveLength(0);
     expect(cap.filingUpdates).toHaveLength(0);
 
     allowAudit();
-    await normalize(env, filing(), parsed);
-    await normalize(env, filing(), parsed);
+    await normalize(env, f, parsed, { extractor: 'visionLlm' });
+    await normalize(env, f, parsed, { extractor: 'visionLlm' });
     expect(cap.reviewRows).toHaveLength(2);
     expect(cap.auditRows).toHaveLength(2);
     expect(cap.auditRows[0][0]).toBe('decision:review_opened:doc1');
@@ -551,5 +563,85 @@ describe('normalize', () => {
     ]);
     expect(result2.needsReview).toBe(true);
     expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
+  });
+
+  it('does not false-flag invalid_amount when freeform rawText embeds the same canonical bracket', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'INTC', name: 'Intel Corporation', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-text', chamber: 'house', docKind: 'text_pdf', extractor: 'textPdf' }),
+      [
+        tx({
+          ticker: 'INTC',
+          assetName: 'Intel Corporation',
+          amountMin: 1001,
+          amountMax: 15000,
+          confidence: 0.6,
+          rawText:
+            'SP Intel Corporation - Common Stock (INTC) [ST] S 11/08/2024 12/11/2024 $1,001 - $15,000 F S: New',
+        }),
+      ],
+      { extractor: 'textPdf' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.reviewRows).toHaveLength(0);
+  });
+
+  it('autopublishes deterministic textPdf rows below vision conf threshold when clean', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-det', chamber: 'house', docKind: 'text_pdf', extractor: 'textPdf' }),
+      [tx({ confidence: 0.6, rawText: 'AAPL Apple Inc B $1,001 - $15,000' })],
+      { extractor: 'textPdf' },
+    );
+    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
+  });
+
+  it('parks mostly-garbage OCR as ocr_unusable extract_empty (not 200 fake review rows)', async () => {
+    const { env, cap } = makeEnv([]);
+    const garbage = Array.from({ length: 40 }, (_, i) =>
+      tx({
+        assetName: i % 2 === 0
+          ? 'Member of the U.S. House of Representatives Officer or Employee'
+          : `unreadable asset p1 y${300 + i}`,
+        ticker: null,
+        txDate: null,
+        amountMin: 250001,
+        amountMax: 500000,
+        confidence: 0.19,
+        rawText: 'form chrome',
+      }),
+    );
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-scan', chamber: 'house', docKind: 'scanned_pdf', extractor: 'server_cpu_v1' }),
+      garbage,
+      { extractor: 'server_cpu_v1' },
+    );
+    expect(result.needsReview).toBe(true);
+    expect(result.transactions).toHaveLength(0);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(cap.reviewRows).toHaveLength(1);
+    const reason = String(cap.reviewRows[0][1]);
+    expect(reason).toContain('ocr_unusable');
+    expect(reason).toContain('extract_empty_failure');
+    const payload = JSON.parse(String(cap.reviewRows[0][2])) as { transactionCount: number };
+    expect(payload.transactionCount).toBe(0);
+  });
+
+  it('classifies expanded form-chrome and garbage-ratio helpers', () => {
+    expect(looksLikeHeaderContaminatedAsset('Member of the U.S. House of Representatives')).toBe(true);
+    expect(looksLikeHeaderContaminatedAsset('unreadable asset p1 y331')).toBe(true);
+    expect(looksLikeHeaderContaminatedAsset('Apple Inc.')).toBe(false);
+    expect(isMostlyGarbageOcrExtraction(100, 5, 5)).toBe(true);
+    expect(isMostlyGarbageOcrExtraction(10, 9, 0)).toBe(false);
   });
 });

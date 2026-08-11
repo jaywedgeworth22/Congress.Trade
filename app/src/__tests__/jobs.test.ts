@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   runPhotoEnrichment: vi.fn(),
   runTickerBackfill: vi.fn(),
   runBulkSnapshot: vi.fn(),
+  runCommitteeSync: vi.fn(),
+  runIdentitySync: vi.fn(),
+  backfillCurrentPricesFromEod: vi.fn(),
   createUsageTelemetryClient: vi.fn(),
   isD1RowBudgetExceeded: vi.fn(),
   dbRun: vi.fn(),
@@ -32,6 +35,7 @@ vi.mock('../enrichment/service', () => ({
 }));
 vi.mock('../prices/service', () => ({
   runPriceRefresh: mocks.runPriceRefresh,
+  backfillCurrentPricesFromEod: mocks.backfillCurrentPricesFromEod,
 }));
 vi.mock('../shared/fmpStatus', () => ({
   hasFmpTierFailure: mocks.hasFmpTierFailure,
@@ -48,6 +52,12 @@ vi.mock('../share/freshness', () => ({
 vi.mock('../admin/routes', () => ({
   runPhotoEnrichment: mocks.runPhotoEnrichment,
   runTickerBackfill: mocks.runTickerBackfill,
+}));
+vi.mock('../enrichment/committeeSync', () => ({
+  runCommitteeSync: mocks.runCommitteeSync,
+}));
+vi.mock('../enrichment/identitySync', () => ({
+  runIdentitySync: mocks.runIdentitySync,
 }));
 vi.mock('../export/snapshot', () => ({
   runBulkSnapshot: mocks.runBulkSnapshot,
@@ -120,8 +130,11 @@ describe('maybeRunDailyJobs secret resolution', () => {
     mocks.shareWithPeer.mockResolvedValue({ sent: false, reason: 'not configured' });
     mocks.runFreshnessCheck.mockResolvedValue([]);
     mocks.runBulkSnapshot.mockResolvedValue({ tables: {} });
-    mocks.runPhotoEnrichment.mockResolvedValue(undefined);
+    mocks.runPhotoEnrichment.mockResolvedValue({ filers: 0, matched: 0, unmatched: 0, upgraded: 0 });
     mocks.runTickerBackfill.mockResolvedValue(undefined);
+    mocks.runCommitteeSync.mockResolvedValue({ filersScanned: 0, updated: 0, skipped: 0, unmatched: 0, noBioguide: 0, sourceBioguides: 0 });
+    mocks.runIdentitySync.mockResolvedValue({ filersScanned: 0, bioguideResolved: 0, displayNamesSet: 0, fieldsBackfilled: 0, cleaned: 0, unresolved: 0, dryRun: false });
+    mocks.backfillCurrentPricesFromEod.mockResolvedValue({ currentPriceFilled: 0, latestDateFilled: 0 });
     mocks.dbRun.mockResolvedValue({ meta: { changes: 0 } });
   });
 
@@ -340,8 +353,11 @@ describe('staggered daily lanes', () => {
     mocks.shareWithPeer.mockResolvedValue({ sent: false, reason: 'not configured' });
     mocks.runFreshnessCheck.mockResolvedValue([]);
     mocks.runBulkSnapshot.mockResolvedValue({ tables: {} });
-    mocks.runPhotoEnrichment.mockResolvedValue(undefined);
+    mocks.runPhotoEnrichment.mockResolvedValue({ filers: 0, matched: 0, unmatched: 0, upgraded: 0 });
     mocks.runTickerBackfill.mockResolvedValue(undefined);
+    mocks.runCommitteeSync.mockResolvedValue({ filersScanned: 0, updated: 0, skipped: 0, unmatched: 0, noBioguide: 0, sourceBioguides: 0 });
+    mocks.runIdentitySync.mockResolvedValue({ filersScanned: 0, bioguideResolved: 0, displayNamesSet: 0, fieldsBackfilled: 0, cleaned: 0, unresolved: 0, dryRun: false });
+    mocks.backfillCurrentPricesFromEod.mockResolvedValue({ currentPriceFilled: 0, latestDateFilled: 0 });
     mocks.dbRun.mockResolvedValue({ meta: { changes: 0 } });
   });
 
@@ -356,14 +372,23 @@ describe('staggered daily lanes', () => {
     const env = laneEnv();
     expect(await maybeRunDailyFilerJobs(env, DAY)).toBe('ran');
     expect(await maybeRunDailyFilerJobs(env, DAY)).toBe('stamped');
+    expect(mocks.runIdentitySync).toHaveBeenCalledTimes(1);
     expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runCommitteeSync).toHaveBeenCalledTimes(1);
     expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
   });
 
-  it('filer lane runs photo enrichment and ticker backfill', async () => {
+  it('filer lane runs identity, photos, committees, then ticker backfill', async () => {
     await maybeRunDailyFilerJobs(laneEnv(), DAY);
+    expect(mocks.runIdentitySync).toHaveBeenCalledTimes(1);
     expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runCommitteeSync).toHaveBeenCalledTimes(1);
     expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
+    const idOrder = mocks.runIdentitySync.mock.invocationCallOrder[0];
+    const photoOrder = mocks.runPhotoEnrichment.mock.invocationCallOrder[0];
+    const commOrder = mocks.runCommitteeSync.mock.invocationCallOrder[0];
+    expect(idOrder).toBeLessThan(photoOrder);
+    expect(photoOrder).toBeLessThan(commOrder);
   });
 
   it('retention lane runs both retention sweeps', async () => {
@@ -387,8 +412,12 @@ describe('staggered daily lanes', () => {
   it('combined wrapper runs all four lanes exactly once on a fresh day', async () => {
     await maybeRunDailyJobs(laneEnv(), DAY);
     expect(mocks.runEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.backfillCurrentPricesFromEod).toHaveBeenCalledTimes(1);
+    expect(mocks.runPriceRefresh).toHaveBeenCalledTimes(1);
     expect(mocks.runBulkSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.runIdentitySync).toHaveBeenCalledTimes(1);
     expect(mocks.runPhotoEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runCommitteeSync).toHaveBeenCalledTimes(1);
     expect(mocks.runTickerBackfill).toHaveBeenCalledTimes(1);
     const sqls = mocks.dbRun.mock.calls.map(([, sql]) => sql as string);
     for (const policy of RETENTION_POLICIES) {
