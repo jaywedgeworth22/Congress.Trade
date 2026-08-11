@@ -105,11 +105,6 @@ export function memberPhotoPack(): PackIndex {
   return cachedIndex;
 }
 
-/** Test seam: drop the memoised manifest so a fixture pack can be re-read. */
-export function resetMemberPhotoPackCache(): void {
-  cachedIndex = null;
-}
-
 export function packFaceForKey(key: string | null | undefined): MemberFace | null {
   const normalized = normalizeMemberPhotoKey(key);
   return normalized ? memberPhotoPack().byKey.get(normalized) ?? null : null;
