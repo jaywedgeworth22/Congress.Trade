@@ -255,14 +255,15 @@ would make a genuinely provider-specific cadence measurable.
 ### `filing.firstSeenAt` is NULL on the public feed — a sort-order defect
 
 `GET /api/client/v1/feed` with no params returns `ORDER BY t.cursor_seq ASC`
-(`src/delivery/rows.ts:657`) — **oldest first**.  The oldest 11 820 rows are
+(the `direction` default in `src/delivery/rows.ts`) — **oldest first**.  The oldest 11 820 rows are
 `seed_dataset` rows whose `doc_id`s have no row in `filings` at all, so the
 `LEFT JOIN` nulls `filedDate`, `firstSeenAt` **and** `sourceUrl` together.
 
 - `?limit=3` → `"filing":{"filedDate":null,"firstSeenAt":null,"sourceUrl":null}`
 - `?limit=3&order=desc` → fully populated
 
-The serialization is fine (`rows.ts:210`, `client/utils.ts:235`).  The defect is
+The serialization itself is fine (the row mapper in `rows.ts` and the client
+serializer in `client/utils.ts` both carry the field).  The defect is
 that a public endpoint named `/feed` defaults to oldest-first, silently serving
 the seed block with an empty `filing` object to any client that does not pass
 `order=desc`.  **Not fixed here** — it belongs to the delivery lane, not this
@@ -270,7 +271,7 @@ one.
 
 ### The shipped yield bands were guessed, and guessed wrong
 
-`tradeLatency.ts:402` `DISCLOSURE_PUBLISH_YIELD_WEIGHT` carries the comment
+`tradeLatency.ts`'s `DISCLOSURE_PUBLISH_YIELD_WEIGHT` carries the comment
 *"Politicians almost always file during US business hours"* — an explicit
 guess.  Measured against it, the current curve:
 
@@ -278,7 +279,7 @@ guess.  Measured against it, the current curve:
   for the House;
 - demotes 16:00–20:00 to `mid`, which is precisely the **Senate's peak**.
 
-`shared/config.ts:27` `DEFAULT_SCHEDULE` is live and unmodified (`poll_config`
+`shared/config.ts`'s `DEFAULT_SCHEDULE` is live and unmodified (`poll_config`
 row 1 matches DEFAULT exactly, `aggressive_mode=0`).
 
 ---
@@ -341,10 +342,10 @@ below belong to the lanes that own those files.
 ### 1. `src/ingestion/tradeLatency.ts` — owned by the matcher-fix lane
 
 ```ts
-// line ~552, disclosurePublishYieldBand() body becomes:
+// disclosurePublishYieldBand() body becomes:
 return probeTierAt('provider', now);
 
-// line ~592, disclosurePublishYieldWeight() body becomes:
+// disclosurePublishYieldWeight() body becomes:
 return probeYieldWeightAt('provider', now);
 ```
 
@@ -359,6 +360,10 @@ and still bounded by the hard remaining-budget check.
 
 `DISCLOSURE_PUBLISH_YIELD_WEIGHT` and the 08–12/12–16 band boundaries can then
 be deleted.
+
+Deliberately referenced by **function name, not line number**: these files are
+under active concurrent edit, and line numbers in this doc were already stale
+within hours of being written.
 
 ### 2. `src/shared/config.ts` — `shouldPollNow()`
 
@@ -383,8 +388,8 @@ and can carry a per-source discriminator additively if it is ever wanted.
 ### 3. `src/ingestion/watcher.ts` — two one-line changes
 
 ```ts
-if (shouldPollNow(now, cfg, lastHouse, 'house'))   // line ~781
-if (shouldPollNow(now, cfg, lastSenate, 'senate')) // line ~801
+if (shouldPollNow(now, cfg, lastHouse, 'house'))   // the HOUSE branch
+if (shouldPollNow(now, cfg, lastSenate, 'senate')) // the SENATE branch
 ```
 
 The failure-backoff branch immediately below each call is unaffected.
