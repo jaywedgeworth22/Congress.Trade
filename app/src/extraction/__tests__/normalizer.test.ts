@@ -7,11 +7,15 @@ import {
   TransactionPublishLimitError,
   transactionRowKey,
   clearResolverCache,
+  clearNameIndexCache,
+  scoreFields,
+  type NameIndex,
 } from '../normalizer.ts';
 import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 beforeEach(() => {
   clearResolverCache();
+  clearNameIndexCache();
 });
 
 // ---------------------------------------------------------------------------
@@ -165,17 +169,30 @@ const tx = (over: Partial<ParsedTx> = {}): ParsedTx => ({
   ...over,
 });
 
+// Letters-only per-row tag (no digits) so varying rawText across synthetic
+// fixture rows can't accidentally be mis-sniffed as a dollar amount by
+// parseAmountRange's digit-stripping parser (which would trip a spurious
+// invalid_amount flag unrelated to whatever the test is actually exercising).
+function letterVariant(index: number): string {
+  return String.fromCharCode(97 + (index % 26)) + String.fromCharCode(97 + Math.floor(index / 26));
+}
+
 describe('normalize', () => {
   it('holds an oversized extraction for review and caps its review payload', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const parsed = Array.from(
       { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
-      (_, index) => tx({ rawText: `row ${index}` }),
+      (_, index) => tx({ rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})` }),
     );
     const result = await normalize(env, filing(), parsed);
     expect(result.needsReview).toBe(true);
     expect(cap.insertedTx).toHaveLength(0);
-    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded');
+    // 201 rows, uniform 0.97 confidence, no duplicate content, no ticker
+    // mismatch -> garbage_ratio 0.00 but the perfect confidence uniformity
+    // (itself the H-2025-8221264 tell) still classifies it as likely-garbage.
+    // See the dedicated classifyRowLimitReason tests below for the
+    // needs_reprocess / duplicate-flood branches.
+    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded_likely_garbage:0.00');
     const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
       transactionCount: number; truncated: boolean; transactions: unknown[];
     };
@@ -551,5 +568,87 @@ describe('normalize', () => {
     ]);
     expect(result2.needsReview).toBe(true);
     expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
+  });
+
+  it('classifies an oversized extraction of distinct, varied-confidence rows as needs_reprocess', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const parsed = Array.from(
+      { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
+      (_, index) => tx({
+        rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})`,
+        // Wide, clearly-non-uniform spread (not a razor's-edge value near the
+        // suspiciouslyUniform stdev<0.01 threshold) -- a real large-but-clean
+        // filing's per-row confidence varies well beyond that.
+        confidence: 0.97 - (index % 7) * 0.03,
+      }),
+    );
+    const result = await normalize(env, filing(), parsed);
+    expect(result.needsReview).toBe(true);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded_needs_reprocess:0.00');
+  });
+
+  it('classifies an oversized extraction of duplicated rows as likely_garbage', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const parsed = Array.from({ length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 }, () => tx());
+    const result = await normalize(env, filing(), parsed);
+    expect(result.needsReview).toBe(true);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded_likely_garbage:1.00');
+  });
+});
+
+describe('scoreFields ticker/asset-name consistency (informational, unpenalized)', () => {
+  const passthroughResolve = (ticker: string | null) => ticker;
+  const baseFields = {
+    ticker: 'AAPL',
+    assetName: 'Apple Inc.',
+    amountMin: 1001,
+    amountMax: 15000,
+    txType: 'B',
+    txDate: '2024-06-14',
+    rawText: 'AAPL Apple Inc P $1,001 - $15,000',
+  };
+
+  it('flags ticker_asset_mismatch when the ticker resolves to a known but different company', () => {
+    const nameIndex: NameIndex = new Map([['AAPL', 'apple']]);
+    const scored = scoreFields(
+      0.97,
+      { ...baseFields, ticker: 'AAPL', assetName: 'Tesla Inc' },
+      '2024-07-01',
+      passthroughResolve,
+      nameIndex,
+    );
+    expect(scored.flags).toContain('ticker_asset_mismatch');
+    // Informational only: no confidence penalty, unlike every other flag here.
+    expect(scored.confidence).toBe(0.97);
+  });
+
+  it('does not flag a match (allowing partial/legacy company-name forms)', () => {
+    const nameIndex: NameIndex = new Map([['AAPL', 'apple']]);
+    const scored = scoreFields(0.97, baseFields, '2024-07-01', passthroughResolve, nameIndex);
+    expect(scored.flags).not.toContain('ticker_asset_mismatch');
+  });
+
+  it('does not flag a mismatch when the ticker has no known name (e.g. crypto/bond tickers not in either table)', () => {
+    const nameIndex: NameIndex = new Map(); // no BTC entry -- absence of data is not evidence of mismatch
+    const scored = scoreFields(
+      0.97,
+      { ...baseFields, ticker: 'BTC', assetName: 'BTC' },
+      '2024-07-01',
+      passthroughResolve,
+      nameIndex,
+    );
+    expect(scored.flags).not.toContain('ticker_asset_mismatch');
+  });
+
+  it('does not flag a mismatch when no nameIndex is supplied (backward compatible with existing callers)', () => {
+    const scored = scoreFields(
+      0.97,
+      { ...baseFields, ticker: 'AAPL', assetName: 'Tesla Inc' },
+      '2024-07-01',
+      passthroughResolve,
+    );
+    expect(scored.flags).not.toContain('ticker_asset_mismatch');
   });
 });
