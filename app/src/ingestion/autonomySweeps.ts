@@ -24,6 +24,12 @@ import { all, run } from '../shared/db.ts';
 import { checkPipelineHealth } from '../shared/pipelineHealth.ts';
 import { sendPushover } from '../shared/pushover.ts';
 import { fetchHouseIndex } from './houseSource.ts';
+import {
+  maybeRunDeterministicReviewDrain,
+  sweepRejectedScannedForLocalVision,
+  type DeterministicDrainResult,
+  type LocalVisionRequeueResult,
+} from '../extraction/deterministicDrain.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
  *  routeProviderOnlyObservationsToReview) are working-as-designed synthetic
@@ -546,20 +552,38 @@ export async function runAutonomySweeps(
   env: Env,
   now = new Date(),
   opts: { signal?: AbortSignal } = {},
-): Promise<AutonomySweepResult> {
+): Promise<AutonomySweepResult & {
+  deterministicDrain: DeterministicDrainResult | null;
+  localVisionRequeue: LocalVisionRequeueResult | null;
+}> {
   const errors: string[] = [];
-  const result: AutonomySweepResult = {
+  const result: AutonomySweepResult & {
+    deterministicDrain: DeterministicDrainResult | null;
+    localVisionRequeue: LocalVisionRequeueResult | null;
+  } = {
     ceiling: null,
     stranded: null,
     resolvedDesync: null,
     filedDateBackfill: null,
     ogeUndated: null,
     livenessAlarms: null,
+    deterministicDrain: null,
+    localVisionRequeue: null,
     errors,
   };
   const throwIfAborted = () => {
     if (opts.signal?.aborted) throw new Error('autonomy sweeps aborted');
   };
+
+  // A2 first: free deterministic publish must not wait on OR-halted autopilot.
+  try {
+    throwIfAborted();
+    result.deterministicDrain = await maybeRunDeterministicReviewDrain(env, {
+      signal: opts.signal,
+    });
+  } catch (err) {
+    errors.push(`deterministicDrain: ${(err as Error).message}`);
+  }
 
   try {
     throwIfAborted();
@@ -594,6 +618,14 @@ export async function runAutonomySweeps(
     result.ogeUndated = await sweepOgeUndatedFilingDates(env);
   } catch (err) {
     errors.push(`ogeUndated: ${(err as Error).message}`);
+  }
+
+  // A5/C8: one-shot local-vision requeue for rejected scanned+raw garbage OCR.
+  try {
+    throwIfAborted();
+    result.localVisionRequeue = await sweepRejectedScannedForLocalVision(env);
+  } catch (err) {
+    errors.push(`localVisionRequeue: ${(err as Error).message}`);
   }
 
   try {

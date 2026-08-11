@@ -187,6 +187,7 @@ function isTickAbort(error: unknown): boolean {
 export type MaintenanceLane =
   | 'secrets_refresh'
   | 'watcher'
+  | 'deterministic_drain'
   | 'agreement_autopublish'
   | 'backlog_autopilot'
   | 'ingestion_outbox'
@@ -229,6 +230,7 @@ export interface MaintenancePipelineResult {
   skippedOutboxFlush: boolean;
   aborted: boolean;
   watcher: Awaited<ReturnType<typeof runWatcher>> | null;
+  deterministicDrain: { scanned: number; published: number; stillReview: number; skipped: number; errors: number } | null;
   agreementAutopublish: Awaited<ReturnType<typeof maybeRunAgreementAutopublish>> | null;
   autopilot: Awaited<ReturnType<typeof maybeStartBacklogAutopilot>> | null;
   ingestionOutbox: { claimed: number; enqueued: number; failed: number } | null;
@@ -254,6 +256,7 @@ export async function runMaintenancePipeline(
     skippedOutboxFlush: false,
     aborted: false,
     watcher: null,
+    deterministicDrain: null,
     agreementAutopublish: null,
     autopilot: null,
     ingestionOutbox: null,
@@ -284,6 +287,17 @@ export async function runMaintenancePipeline(
     result.watcher = await runLane('watcher', () => runWatcher(env, now));
     // Autonomy lanes run before the outbox gate so newly enqueued
     // agreement.check / autopilot.tick messages are visible to the gate probe.
+    // A2: deterministic text/html drain runs even when OpenRouter autopilot is
+    // halted on quota — never block free publish paths behind paid agreement.
+    result.deterministicDrain = await runLane(
+      'deterministic_drain',
+      async () => {
+        const { maybeRunDeterministicReviewDrain } = await import(
+          '../extraction/deterministicDrain.ts'
+        );
+        return maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+      },
+    );
     result.agreementAutopublish = await runLane(
       'agreement_autopublish',
       () => maybeRunAgreementAutopublish(env),
