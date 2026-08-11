@@ -118,17 +118,20 @@ if [[ -z "$DEPLOYS_JSON" ]]; then
   exit 1
 fi
 
-read -r RUNNING QUEUED_UUIDS <<<"$(printf '%s' "$DEPLOYS_JSON" | python3 -c '
+read -r RUNNING QUEUED_UUIDS QUEUED_FORCE <<<"$(printf '%s' "$DEPLOYS_JSON" | python3 -c '
 import json,sys
 try:
     d=json.load(sys.stdin)
 except Exception:
-    print("ERR ''"); raise SystemExit
+    print("ERR - 0"); raise SystemExit
 ds=d.get("deployments",[]) if isinstance(d,dict) else []
 running=[x for x in ds if x.get("status") in ("in_progress","building","running")]
 queued=[x for x in ds if x.get("status")=="queued"]
 queued.sort(key=lambda x: x.get("created_at",""))
-print(len(running), ",".join(x["deployment_uuid"] for x in queued) or "-")
+# If any coalesced deploy asked for a cache-busting rebuild, the single deploy
+# that replaces them must honour that intent.
+force=1 if any(x.get("force_rebuild") for x in queued) else 0
+print(len(running), ",".join(x["deployment_uuid"] for x in queued) or "-", force)
 ')"
 
 if [[ "$RUNNING" == "ERR" ]]; then
@@ -188,6 +191,8 @@ if [[ "$QUEUED_UUIDS" != "-" && -n "$QUEUED_UUIDS" ]]; then
     exit 0
   fi
   [[ -f "$PENDING_FILE" ]] || now > "$PENDING_FILE"
+  # Remember a force-rebuild request so the coalesced deploy honours it.
+  [[ "${QUEUED_FORCE:-0}" == "1" ]] && now > "$STATE_DIR/pending_force"
 fi
 
 # --- nothing to do? --------------------------------------------------------
@@ -215,8 +220,13 @@ else
 fi
 
 # --- deploy latest ---------------------------------------------------------
-log "deploying latest main: $REASON"
-RESP=$(api GET "/api/v1/deploy?uuid=${APP_UUID}&force=false")
+FORCE_FLAG=false
+if [[ -f "$STATE_DIR/pending_force" ]]; then
+  FORCE_FLAG=true
+  log "honouring a force-rebuild request from a coalesced deploy"
+fi
+log "deploying latest main (force=${FORCE_FLAG}): $REASON"
+RESP=$(api GET "/api/v1/deploy?uuid=${APP_UUID}&force=${FORCE_FLAG}")
 if printf '%s' "$RESP" | grep -q 'deployment_uuid'; then
   now > "$LAST_DEPLOY_FILE"
   # Remember which deploy is ours so the next tick does not cancel it.
@@ -232,7 +242,7 @@ if isinstance(ds,list) and ds:
 elif isinstance(d,dict):
     print(d.get("deployment_uuid",""), end="")
 ' > "$LAST_DEPLOY_UUID_FILE" 2>/dev/null || : > "$LAST_DEPLOY_UUID_FILE"
-  rm -f "$PENDING_FILE"
+  rm -f "$PENDING_FILE" "$STATE_DIR/pending_force"
   log "deploy queued OK (uuid $(cut -c1-8 < "$LAST_DEPLOY_UUID_FILE" 2>/dev/null))"
 else
   log "deploy trigger FAILED"
