@@ -41,12 +41,24 @@
  *   CT_INGEST_URL         optional: POST each detection here
  *   CT_INGEST_TOKEN       bearer token for CT_INGEST_URL
  *   CT_BASE_URL           base for scout-plan / latency-payload / raw (default derived from CT_INGEST_URL)
- *   SCOUT_LATENCY_ALWAYS  "1" = always post provider payloads (ignore server needScout)
+ *   SCOUT_LATENCY_ALWAYS  "1" = always ASK to cover every provider. It does not
+ *                         bypass the lease: the server still refuses any lane it
+ *                         owns, so this can no longer cause double-polling.
+ *   SCOUT_HOLDER_ID       lease identity (default "mac-<hostname>"); keep stable
  *   SCOUT_RAW_UPLOAD      "1" (default) download + POST raw bytes to R2 when possible
  *   SCOUT_RAW_MAX_BYTES   default 20_000_000
+ *
+ * PROVIDER CALLS ARE LEASED:
+ *   Every FMP/QQ/UW call requires a lease from POST /api/ingest/probe-lease.
+ *   The server grants at most one holder per provider, charges the grant to the
+ *   shared daily budget, and takes the lane back when it recovers or when this
+ *   scout's tenure window expires. If the server is unreachable, this scout
+ *   does NOT poll — it cannot tell whether the server is already polling, and a
+ *   duplicate call is wasted spend.
  */
 
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
@@ -112,6 +124,12 @@ const SCOUT_RAW_MAX_BYTES = Number(process.env.SCOUT_RAW_MAX_BYTES) || 20_000_00
 const SCOUT_LATENCY_MIN_INTERVAL_SEC = Number(process.env.SCOUT_LATENCY_MIN_INTERVAL_SEC) || 15 * 60;
 /** Back off after FMP 402/429 before retrying (seconds). */
 const SCOUT_FMP_QUOTA_BACKOFF_SEC = Number(process.env.SCOUT_FMP_QUOTA_BACKOFF_SEC) || 45 * 60;
+/**
+ * Lease holder identity. Stable across restarts on purpose: the server bounds
+ * how long this scout may hold a lane (tenure), and a fresh id on every restart
+ * would reset that clock and let a crash-looping scout keep the lane forever.
+ */
+const SCOUT_HOLDER_ID = (process.env.SCOUT_HOLDER_ID || `mac-${hostname()}`).trim().slice(0, 120);
 const authHeaders = () =>
   CT_INGEST_TOKEN
     ? { authorization: `Bearer ${CT_INGEST_TOKEN}`, 'content-type': 'application/json' }
@@ -512,6 +530,69 @@ async function fetchScoutPlan() {
   }
 }
 
+/**
+ * Ask the server for permission to poll `provider` this cycle.
+ *
+ * The server is the single arbiter: it holds the lease table in D1 and grants
+ * at most one holder per provider. A grant also charges the shared daily call
+ * ledger, so one grant authorizes exactly one poll — which is why this is
+ * called per cycle rather than once per handoff.
+ *
+ * FAILS CLOSED. If the server is unreachable we cannot know whether it is
+ * already polling this source, and the whole point of the lease is that a
+ * duplicate call is wasted money. Same reasoning as the existing rule against
+ * inventing needScout when the plan is unavailable.
+ */
+async function acquireProbeLease(provider, { ttlSec, fmpSlot } = {}) {
+  if (!CT_BASE_URL || !CT_INGEST_TOKEN) {
+    return { granted: false, denial: 'no_server', detail: 'CT_BASE_URL/CT_INGEST_TOKEN unset' };
+  }
+  try {
+    const res = await fetch(`${CT_BASE_URL}/api/ingest/probe-lease`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        action: 'acquire',
+        provider,
+        holderId: SCOUT_HOLDER_ID,
+        ...(ttlSec ? { ttlSec } : {}),
+        ...(fmpSlot ? { fmpSlot } : {}),
+      }),
+    });
+    if (!res.ok) {
+      warn('probe-lease', new Error(`${provider} HTTP ${res.status}`));
+      return { granted: false, denial: `http_${res.status}` };
+    }
+    const body = await res.json();
+    if (body?.granted) {
+      log('LEASE', provider, 'granted until', body.lease?.expiresAt || '?', `charged=${body.charged ?? 0}`);
+    } else if (body?.denial && body.denial !== 'not_eligible') {
+      // not_eligible is the steady state (server owns the lane); logging it
+      // every 45s would drown the log. Everything else is worth seeing.
+      log('LEASE', provider, 'denied', body.denial, body.detail || '');
+    }
+    return body || { granted: false, denial: 'empty_response' };
+  } catch (e) {
+    warn('probe-lease', e);
+    return { granted: false, denial: 'error', detail: String(e?.message || e) };
+  }
+}
+
+/** Hand a lane back early (clean shutdown), so the server need not wait out the TTL. */
+async function releaseProbeLease(provider) {
+  if (!CT_BASE_URL || !CT_INGEST_TOKEN) return false;
+  try {
+    const res = await fetch(`${CT_BASE_URL}/api/ingest/probe-lease`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ action: 'release', provider, holderId: SCOUT_HOLDER_ID }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 function shouldPostLatency(state, provider) {
   const last = state.latencyPostedAt?.[provider];
   if (!last) return true;
@@ -732,55 +813,64 @@ async function cycle(state) {
     );
   }
 
-  // Poll FMP only when server needs cover (or ALWAYS), with free-tier spacing/backoff.
+  // Every provider call below is gated on a LEASE granted by the server. The
+  // plan's needScout is only an eligibility hint; the lease is the permission,
+  // and the server refuses it whenever it owns the lane itself. Acquiring also
+  // charges the shared daily ledger, so these calls finally count against the
+  // same cap the server spends from.
   const wantFmpCover = needScout.has('fmp') || needScout.has('fmp_rapidapi') || SCOUT_LATENCY_ALWAYS;
   const preferSecondaryFmpKey = !!(plan?.fmpPreferSecondaryKey) || wantFmpCover;
   if (FMP_PROBE_ENABLED && (FMP_KEY || FMP_RAPIDAPI_KEY) && wantFmpCover && !fmpQuotaBlocked(state)) {
-    try {
-      if (preferSecondaryFmpKey && FMP_FREE_KEYS.length > 1) {
-        log('fmp handoff: preferring secondary free-tier key (server owns primary)');
-      }
-      const fmp = await pollFmpFamily({ preferSecondaryKey: preferSecondaryFmpKey });
-      for (const f of fmp.keys) {
-        if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
-      }
-      for (const p of fmp.payloads) {
-        if (needScout.has(p.provider) || (p.provider === 'fmp' && needScout.has('fmp')) || SCOUT_LATENCY_ALWAYS) {
-          await postLatencyPayload(p.provider, p.chamberJson, p.fmpPathId, state);
+    const lease = await acquireProbeLease('fmp', {
+      ttlSec: plan?.leaseTtlSec,
+      fmpSlot: preferSecondaryFmpKey && FMP_FREE_KEYS.length > 1 ? '2' : '1',
+    });
+    if (lease.granted) {
+      try {
+        if (preferSecondaryFmpKey && FMP_FREE_KEYS.length > 1) {
+          log('fmp handoff: preferring secondary free-tier key (server owns primary)');
         }
-      }
-    } catch (e) {
-      warn('fmp', e);
-      const msg = String(e?.message || e);
-      if (/HTTP (402|429)/.test(msg)) {
-        state.fmpQuotaBlockedUntil = new Date(Date.now() + SCOUT_FMP_QUOTA_BACKOFF_SEC * 1000).toISOString();
-        log('fmp quota backoff until', state.fmpQuotaBlockedUntil);
+        const fmp = await pollFmpFamily({ preferSecondaryKey: preferSecondaryFmpKey });
+        for (const f of fmp.keys) {
+          if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso(), pathId: f.pathId, sourceId: f.sourceId };
+        }
+        for (const p of fmp.payloads) {
+          if (needScout.has(p.provider) || (p.provider === 'fmp' && needScout.has('fmp')) || SCOUT_LATENCY_ALWAYS) {
+            await postLatencyPayload(p.provider, p.chamberJson, p.fmpPathId, state);
+          }
+        }
+      } catch (e) {
+        warn('fmp', e);
+        const msg = String(e?.message || e);
+        if (/HTTP (402|429)/.test(msg)) {
+          state.fmpQuotaBlockedUntil = new Date(Date.now() + SCOUT_FMP_QUOTA_BACKOFF_SEC * 1000).toISOString();
+          log('fmp quota backoff until', state.fmpQuotaBlockedUntil);
+        }
       }
     }
   }
-  if (QQ_KEY && (needScout.has('quiver') || SCOUT_LATENCY_ALWAYS)) {
-    try {
-      const qq = await pollQQ();
-      for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
-      if (Object.keys(qq.chamberJson).length) await postLatencyPayload('quiver', qq.chamberJson, undefined, state);
-    } catch (e) { warn('qq', e); }
-  } else if (QQ_KEY) {
-    try {
-      const qq = await pollQQ();
-      for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
-    } catch (e) { warn('qq', e); }
+  // NOTE: Quiver and UW previously had `else` branches that polled anyway and
+  // threw the payload away — ~3,400-5,500 provider calls a day for zero stored
+  // observations, invisible to every budget. There is no unleased path now.
+  if (QQ_KEY) {
+    const lease = await acquireProbeLease('quiver', { ttlSec: plan?.leaseTtlSec });
+    if (lease.granted) {
+      try {
+        const qq = await pollQQ();
+        for (const q of qq.keys) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() };
+        if (Object.keys(qq.chamberJson).length) await postLatencyPayload('quiver', qq.chamberJson, undefined, state);
+      } catch (e) { warn('qq', e); }
+    }
   }
-  if (UW_KEY && (needScout.has('unusual_whales') || SCOUT_LATENCY_ALWAYS)) {
-    try {
-      const uw = await pollUW();
-      for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
-      if (Object.keys(uw.chamberJson).length) await postLatencyPayload('unusual_whales', uw.chamberJson, undefined, state);
-    } catch (e) { warn('uw', e); }
-  } else if (UW_KEY) {
-    try {
-      const uw = await pollUW();
-      for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
-    } catch (e) { warn('uw', e); }
+  if (UW_KEY) {
+    const lease = await acquireProbeLease('unusual_whales', { ttlSec: plan?.leaseTtlSec });
+    if (lease.granted) {
+      try {
+        const uw = await pollUW();
+        for (const u of uw.keys) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() };
+        if (Object.keys(uw.chamberJson).length) await postLatencyPayload('unusual_whales', uw.chamberJson, undefined, state);
+      } catch (e) { warn('uw', e); }
+    }
   }
 
   const detections = [];
@@ -866,9 +956,31 @@ function summarize(state) {
     `scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER}` +
       ` fmp=${fmpOn ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}` +
       ` handoff=${CT_BASE_URL ? 'on' : 'OFF'} rawUpload=${SCOUT_RAW_UPLOAD ? 'on' : 'OFF'}` +
-      ` latencyAlways=${SCOUT_LATENCY_ALWAYS ? 'on' : 'off'}`,
+      ` latencyAlways=${SCOUT_LATENCY_ALWAYS ? 'on' : 'off'} leaseHolder=${SCOUT_HOLDER_ID}`,
   );
   logFmpRegistry();
-  if (ONCE) { await cycle(state); return; }
+
+  // Hand every lane back on a clean exit so the server can resume immediately
+  // instead of waiting out the TTL. A hard kill still self-heals on expiry —
+  // that is what the TTL is for.
+  let releasing = false;
+  const releaseAllLanes = async () => {
+    if (releasing) return;
+    releasing = true;
+    await Promise.all(
+      ['fmp', 'fmp_rapidapi', 'quiver', 'unusual_whales'].map((p) => releaseProbeLease(p)),
+    );
+  };
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      releaseAllLanes().finally(() => process.exit(0));
+    });
+  }
+
+  if (ONCE) {
+    await cycle(state);
+    await releaseAllLanes();
+    return;
+  }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
 })();

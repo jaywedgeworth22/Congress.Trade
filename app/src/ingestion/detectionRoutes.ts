@@ -33,7 +33,18 @@ import {
   recordDisclosureLatencyCandidate,
   type ProviderId,
 } from './tradeLatency.ts';
-import { buildScoutPlan } from './scoutHandoff.ts';
+import {
+  buildScoutPlan,
+  requestMacProbeLease,
+  type LatencyProbeProviderId,
+} from './scoutHandoff.ts';
+import {
+  macLeaseTtlMs,
+  macTenureMs,
+  readAllProbeLeases,
+  releaseProbeLease,
+} from './probeLease.ts';
+import { checkLatencyCallBudget } from './latencyCallLedger.ts';
 import {
   MAX_RAW_FILING_BYTES,
   isSenateAgreementWallBytes,
@@ -84,6 +95,83 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
     if (denied) return denied;
     const plan = await buildScoutPlan(c.env);
     return c.json({ ok: true, ...plan });
+  });
+
+  // Operator surface: who owns each provider lane, until when, and how much of
+  // the shared daily budget is left. This is the answer to "why is nothing
+  // polling?" — a held lease with a far-off expiry, or an exhausted cap.
+  r.get('/probe-leases', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    const now = new Date();
+    const leases = await readAllProbeLeases(c.env, now);
+    const providers: LatencyProbeProviderId[] = [
+      'fmp',
+      'fmp_rapidapi',
+      'unusual_whales',
+      'quiver',
+    ];
+    const budgets = await Promise.all(
+      providers.map(async (provider) => ({
+        provider,
+        ...(await checkLatencyCallBudget(c.env, provider, now)),
+      })),
+    );
+    return c.json({
+      ok: true,
+      now: now.toISOString(),
+      leases,
+      budgets,
+      macLeaseTtlSec: Math.floor(macLeaseTtlMs(c.env) / 1000),
+      macTenureHours: macTenureMs(c.env) / 3600000,
+    });
+  });
+
+  // The scout MUST hold a lane before calling a provider. Grant also charges
+  // the shared daily ledger, so one grant authorizes exactly one poll and Mac
+  // spend counts against the same cap as server spend.
+  r.post('/probe-lease', async (c) => {
+    const denied = await requireIngestToken(c);
+    if (denied) return denied;
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const known: LatencyProbeProviderId[] = [
+      'fmp',
+      'fmp_rapidapi',
+      'unusual_whales',
+      'quiver',
+    ];
+    const raw = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
+    const provider = known.find((id) => id === raw);
+    if (!provider) {
+      return c.json({ error: `provider must be one of ${known.join(', ')}` }, 400);
+    }
+    const holderId =
+      typeof body.holderId === 'string' && body.holderId.trim()
+        ? body.holderId.trim().slice(0, 120)
+        : '';
+    if (!holderId) return c.json({ error: 'holderId is required' }, 400);
+    const action = body.action === 'release' ? 'release' : 'acquire';
+
+    if (action === 'release') {
+      const released = await releaseProbeLease(c.env, provider, 'mac', holderId);
+      return c.json({ ok: true, action, provider, released });
+    }
+
+    const ttlSec =
+      typeof body.ttlSec === 'number' && Number.isFinite(body.ttlSec) ? body.ttlSec : undefined;
+    const fmpSlot = body.fmpSlot === '1' ? '1' : body.fmpSlot === '2' ? '2' : undefined;
+    const result = await requestMacProbeLease(c.env, {
+      provider,
+      holderId,
+      ttlSec,
+      fmpSlot,
+    });
+    return c.json({ ok: true, action, provider, ...result });
   });
 
   r.post('/mac-heartbeat', async (c) => {
