@@ -137,8 +137,20 @@ struct PeopleDirectoryView: View {
                 }
             }
             .background(AppTheme.background)
-            .navigationTitle("Directory")
             .inlineNavigationTitle()
+            // Directory is a browsing tab like Trends and Trades, so it gets
+            // their chrome rather than a text title: the same `BrandTitle`
+            // lockup at the same size, and the same header menu. The ⓘ
+            // disclaimer toggle is Trends/Trades-only — there is no chart or
+            // dollar estimate on this screen for it to qualify.
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    BrandTitle()
+                }
+                ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    HamburgerMenuButton()
+                }
+            }
             .refreshable { await store.loadMembersDirectory(force: true) }
             .task {
                 await store.loadMembersDirectory()
