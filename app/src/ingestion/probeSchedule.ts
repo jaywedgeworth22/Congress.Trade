@@ -298,14 +298,21 @@ export interface ProbeDecision {
  * correct for the measurement window and silently wrong from 2026-11-01, so
  * this goes through Intl like the rest of the codebase.
  */
+// Hoisted: constructing an Intl.DateTimeFormat is expensive (tens of
+// microseconds) and this runs on every cron tick for every source. The
+// formatter is immutable and thread-confined in both Workers and Deno, so one
+// module-level instance is safe and roughly two orders of magnitude cheaper
+// than building it per call.
+const ET_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  weekday: 'short',
+});
+
 export function etClock(now: Date): { minuteOfDayET: number; dayOfWeekET: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    weekday: 'short',
-  }).formatToParts(now);
+  const parts = ET_FORMAT.formatToParts(now);
   const pick = (t: string): string => parts.find((p) => p.type === t)?.value ?? '';
 
   let hour = parseInt(pick('hour'), 10);
