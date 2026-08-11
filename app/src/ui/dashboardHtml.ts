@@ -20,13 +20,16 @@
  * every panel; the "illustrative sample data" banner is removed the moment real
  * feed data loads.
  *
- * The benchmark model catalog is the ONE exception to "no imports": it is
- * serialized from benchmarkSelectableCatalog() into the template at module load
- * so the re-read menus, quick-run select, and custom benchmark model checkboxes
- * can never drift from the server-side catalog again.
+ * The benchmark model catalog and the executive-branch title map are the ONLY
+ * exceptions to "no imports": both are serialized into the template at module
+ * load (from benchmarkSelectableCatalog() and executiveTitleForms()) so the
+ * re-read menus / quick-run select / custom benchmark checkboxes, and every
+ * place the dashboard names a Cabinet official, can never drift from their
+ * server-side sources of truth.
  */
 
 import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
+import { executiveTitleForms } from '../shared/executiveTitles.ts';
 import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
 /**
@@ -3411,13 +3414,85 @@ var COMPANY_BRAND_CASING = [
   [/\\bNvidia\\b/gi, 'NVIDIA'],
   [/\\b3m\\b/gi, '3M'],
 ];
-/* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
+/* "House"/"Senate" are proper nouns here — always capitalize the chamber.
+   NOTE: the 'Exec' branch word is a LAST resort for a row with no filer id to
+   resolve. Never render it in front of a real position — use
+   memberBranchLabel()/memberBranchBits() below, which return the title alone. */
 function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
   if (s === 'house' || s === 'h') return 'House';
   if (s === 'senate' || s === 's') return 'Senate';
   if (s === 'executive' || s === 'oge' || s === 'exec') return 'Exec';
   return c ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+/* ---- Executive-branch positions ----------------------------------------
+   Server-injected from shared/executiveTitles.ts executiveTitleForms(), the
+   same way BENCHMARK_CATALOG is injected, so the web copy of the title list
+   cannot drift from the one delivery/rest.ts and client/utils.ts serve.
+
+   Owner 2026-08-11: "ensure executive branch individuals have their shortest
+   professionally formatted title shown like 'Treasury Secretary' or 'Treasury
+   Sec.' if not room for whole thing and don't say 'exec -' before that at
+   least when displaying them." So an executive filer renders its POSITION and
+   nothing else: no 'Exec' branch word in front of it, and no state/district
+   (they hold an office, not a seat). EXEC_TITLE_FALLBACK stands alone for an
+   uncurated filer — it is never a prefix. */
+var EXEC_TITLE_FORMS = ${JSON.stringify(executiveTitleForms())};
+var EXEC_TITLES = EXEC_TITLE_FORMS.titles;
+var EXEC_TITLES_SHORT = EXEC_TITLE_FORMS.short;
+var EXEC_TITLE_FALLBACK = EXEC_TITLE_FORMS.fallback;
+/* Character budgets by surface, so each caller states its room in one place.
+   FULL fits the longest curated title ('Social Security Commissioner', 28). */
+var EXEC_TITLE_FULL = 28;
+var EXEC_TITLE_TIGHT = 16;
+function isExecutiveFiler(chamber, filerId) {
+  var s = String(chamber == null ? '' : chamber).trim().toLowerCase();
+  if (s === 'executive' || s === 'oge' || s === 'exec' || s.indexOf('exec') !== -1) return true;
+  return String(filerId == null ? '' : filerId).indexOf('EXEC-') === 0;
+}
+/* Mirror of shared/executiveTitles.ts executiveTitleFor(). */
+function execTitleFor(filerId) {
+  var id = String(filerId == null ? '' : filerId).trim();
+  if (!id || id.indexOf('EXEC-') !== 0) return null;
+  return EXEC_TITLES[id] || EXEC_TITLE_FALLBACK;
+}
+/* Mirror of shared/executiveTitles.ts fitExecutiveTitle(): longest form that
+   fits. Falls back to the complete short form rather than a chopped string —
+   a real title the layout may ellipsize beats one this code cut in half. */
+function execTitleFit(title, maxChars) {
+  var t = String(title == null ? '' : title).trim();
+  if (!t) return '';
+  var budget = Number(maxChars);
+  if (!isFinite(budget) || budget <= 0 || t.length <= budget) return t;
+  return EXEC_TITLES_SHORT[t] || t;
+}
+/* Position label for an executive filer. "curated" is the server-supplied
+   title field when the payload carries one (roster / member drawer); the id
+   map covers the payloads that don't. */
+function execDisplayTitle(filerId, curated, maxChars) {
+  var t = String(curated == null ? '' : curated).trim() || execTitleFor(filerId) || EXEC_TITLE_FALLBACK;
+  return execTitleFit(t, maxChars == null ? EXEC_TITLE_FULL : maxChars);
+}
+/* The branch/seat descriptor bits for ANY filer row, in render order.
+   Executive filers get exactly one bit — their position. Congressional filers
+   keep "House"/"Senate" plus, when a state is supplied, the state (and
+   district when present). Callers escape the strings they use. */
+function memberBranchBits(o, maxTitleChars) {
+  var r = o || {};
+  if (isExecutiveFiler(r.chamber, r.filerId)) {
+    return [execDisplayTitle(r.filerId, r.title, maxTitleChars)];
+  }
+  var bits = [];
+  var chLabel = chamberLabel(r.chamber);
+  if (chLabel) bits.push(chLabel);
+  if (r.state) bits.push(String(r.state) + (r.district ? ' - ' + fmtDistrictOrdinal(r.district) : ''));
+  return bits;
+}
+/* Single-bit variant for rows that only have room for one word. */
+function memberBranchLabel(o, maxTitleChars) {
+  var r = o || {};
+  if (isExecutiveFiler(r.chamber, r.filerId)) return execDisplayTitle(r.filerId, r.title, maxTitleChars);
+  return chamberLabel(r.chamber);
 }
 /* Spell out a US state/territory from its 2-letter code for the politician drawer. */
 var US_STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming', DC: 'District of Columbia', PR: 'Puerto Rico', GU: 'Guam', VI: 'U.S. Virgin Islands', AS: 'American Samoa', MP: 'Northern Mariana Islands' };
@@ -4029,7 +4104,9 @@ function amountCellHtml(r) {
 function tradesCardHtml(r) {
   var traded = dateText(r.txdate);
   var lag = shortLagText(r);
-  var chamber = chamberLabel(r.chamber);
+  // Executive filers show their position ("Treasury Sec.") instead of the
+  // "Exec" branch word — row 2 is tight, so it asks for the tight budget.
+  var chamber = memberBranchLabel(r, EXEC_TITLE_TIGHT);
   var member = fmtName(r.member);
   // Whole card opens trade details — no nested data-member/data-asset chips.
   var memberHtml = esc(member) + (r.st ? ', ' + esc(r.st) : '');
@@ -9335,13 +9412,13 @@ function renderPeopleDirectory(all) {
       ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
     var parts = [];
-    var chRaw = String(m.chamber || '').toLowerCase();
-    var isExec = chRaw === 'executive' || chRaw === 'oge' || chRaw === 'exec' || chRaw.indexOf('exec') !== -1;
-    if (isExec) {
-      // Title (e.g. "Treasury Secretary") replaces the generic "Exec" branch
-      // word when curated (see shared/executiveTitles.ts); no state/district
-      // for executive filers — they don't represent one.
-      parts.push(esc(m.title ? String(m.title) : 'Executive'));
+    if (isExecutiveFiler(m.chamber, m.filerId)) {
+      // Title (e.g. "Treasury Secretary") REPLACES the generic "Exec" branch
+      // word (see shared/executiveTitles.ts); no state/district for executive
+      // filers — they don't represent one. An uncurated filer gets the bare
+      // 'Executive Branch' fallback, which stands alone and never prefixes a
+      // real title.
+      parts.push(esc(execDisplayTitle(m.filerId, m.title, EXEC_TITLE_FULL)));
       if (m.party) parts.push(esc(dirPartyLetter(m.party)));
     } else {
       var chLabel = chamberLabel(m.chamber);
@@ -10155,7 +10232,9 @@ function loadTrMembers() {
     if (!rows.length) { body.innerHTML = stateRow(2, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
-      var metaBits = [chamberLabel(r.chamber), r.state ? (String(r.state) + (r.district ? ' - ' + fmtDistrictOrdinal(r.district) : '')) : ''].filter(Boolean).join(' · ');
+      // Executive filers: position only — no "Exec" prefix, and no state or
+      // district, which they do not hold (EXEC-MCCORMICK does carry a state).
+      var metaBits = memberBranchBits(r, EXEC_TITLE_FULL).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
@@ -10243,11 +10322,12 @@ function loadTrLag() {
     else lbox.innerHTML = lf.slice(0, 50).map(function (m) {
       var name = fmtName(m.fullName || m.filerId || 'Unknown');
       var metaStr = '';
-      if (m.chamber || m.state) {
-        var p = [];
-        if (m.chamber) p.push(esc(chamberLabel(m.chamber)));
-        if (m.state) p.push(esc(m.state));
-        metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
+      if (m.chamber || m.state || m.filerId) {
+        // Executive filers collapse to their position alone (no "Exec ·", no
+        // state); congressional filers keep chamber + state as before.
+        var p = memberBranchBits({ chamber: m.chamber, filerId: m.filerId, title: m.title, state: m.state })
+          .map(esc);
+        if (p.length) metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
       }
       var tradeCount = Number(m.tradeCount || 0);
       var avg = Math.round(m.avgLagDays);
@@ -10718,10 +10798,16 @@ function openMember(filerId) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
-    var meta = [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
+    // Executive filers: the drawer headline is their POSITION alone — never
+    // "Exec · Pennsylvania", never a district. The endpoint already serves the
+    // curated title field (analytics/routes.ts), so prefer it over the id map.
+    var isExec = isExecutiveFiler(p.chamber, filerId);
+    var meta = isExec
+      ? execDisplayTitle(filerId, p.title, EXEC_TITLE_FULL)
+      : [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
     var subBits = [];
     if (meta) subBits.push(esc(meta));
-    if (p.district) subBits.push(fmtDistrictOrdinalHtml(p.district) + ' District');
+    if (!isExec && p.district) subBits.push(fmtDistrictOrdinalHtml(p.district) + ' District');
     var partyHtml = partyName ? pdot(p.partyBucket) + esc(partyName) : '';
     var subline = partyHtml + (subBits.length ? (partyHtml ? ' · ' : '') + subBits.join(' · ') : '');
     var committees = p.committees || [];
