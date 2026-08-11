@@ -165,12 +165,18 @@ struct AssetMark: View {
 }
 
 /// Compact money/count formatting (Trends KPIs + trade amount brackets).
-/// Fleet UI copy: lowercase suffixes `$15k`, `$99.8k`, `$1.2m`, `$3.4b`.
+/// Fleet UI copy: lowercase suffixes `$15k`, `$99.8k`, `$1.2m`, `$3.4b`, `$3.62t`.
 enum CompactFormat {
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
         let absV = abs(value)
         let sign = value < 0 ? "-" : ""
+        if absV >= 1_000_000_000_000 {
+            // Trillion+ always shows 2 decimal places ("$3.62t") so a mega-cap
+            // market cap never falls back to a 4+ digit billions number
+            // ("$3622.5b") the way the plain billions branch below would render it.
+            return "\(sign)$\(String(format: "%.2f", absV / 1_000_000_000_000))t"
+        }
         if absV >= 1_000_000_000 {
             return "\(sign)$\(Self.compactNumber(absV / 1_000_000_000))b"
         }

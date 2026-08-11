@@ -1042,7 +1042,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-topbar-title .muted { font-weight:400; }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
-    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text-dim);
+    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text);
     font-size:20px; border:1px solid transparent; border-radius:999px;
     background:color-mix(in srgb, var(--panel) 92%, transparent); line-height:1; touch-action:manipulation;
   }
@@ -3264,6 +3264,10 @@ function fmtBracketAmount(n) {
   if (!Number.isFinite(n)) return '—';
   var abs = Math.abs(n), sign = n < 0 ? '-' : '';
   function clean(v) { return String(v).replace(/\\.0$/, ''); }
+  // Trillion+ always shows 2 decimal places ("$3.62t") so a mega-cap market
+  // cap never falls back to a 4+ digit billions number ("$3622b") the way
+  // the plain 1e9 branch below would render it.
+  if (abs >= 1e12) return sign + '$' + (abs / 1e12).toFixed(2) + 't';
   if (abs >= 1e9) return sign + '$' + clean((abs / 1e9).toFixed(abs >= 10e9 ? 0 : 1)).toLowerCase() + 'b';
   if (abs >= 1e6) return sign + '$' + clean((abs / 1e6).toFixed(abs >= 10e6 ? 0 : 1)).toLowerCase() + 'm';
   if (abs >= 1e3) return sign + '$' + clean((abs / 1e3).toFixed(abs >= 10e3 ? 0 : 1)).toLowerCase() + 'k';
