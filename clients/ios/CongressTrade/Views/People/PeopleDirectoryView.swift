@@ -10,21 +10,50 @@ struct PeopleDirectoryView: View {
     @State private var selectedMemberName: String?
     @State private var sortKey: MemberDirectorySearch.SortKey = .trades
     @State private var sortAscending = false
+    /// 0-indexed page of `filteredMembers`. Purely local: `GET /api/members` is
+    /// a full-roster endpoint (379 members, ~13.7KB gzipped, 30-minute KV
+    /// cache) with no paging parameters, and the whole point of holding it in
+    /// memory is instant search and sort. Paging here is only about not
+    /// rendering 379 cards at once — it must never become a request.
+    @State private var currentPage = 0
+    @State private var pageSize = 50
 
     private var filteredMembers: [MemberDirectoryEntry] {
         let matched = store.members.filter { MemberDirectorySearch.matches($0, query: searchText) }
         return MemberDirectorySearch.sort(matched, key: sortKey, ascending: sortAscending)
     }
 
+    private func totalPages(for count: Int) -> Int {
+        max(1, Int((Double(count) / Double(pageSize)).rounded(.up)))
+    }
+
+    /// Clamped rather than trusted: search text can shrink the result set under
+    /// the current page at any keystroke, and a stale page index would render
+    /// an empty list that looks like "no matches".
+    private func pageSlice(of members: [MemberDirectoryEntry]) -> ArraySlice<MemberDirectoryEntry> {
+        let page = min(currentPage, totalPages(for: members.count) - 1)
+        let start = page * pageSize
+        guard start < members.count else { return members.prefix(pageSize) }
+        return members[start..<min(start + pageSize, members.count)]
+    }
+
     var body: some View {
-        NavigationStack {
+        // Filtering + sorting the whole roster is not free; do it once per
+        // render and hand the same array to the count, the pager and the list.
+        let members = filteredMembers
+        let pages = totalPages(for: members.count)
+        let page = min(currentPage, pages - 1)
+        return NavigationStack {
             VStack(spacing: 0) {
                 VStack(spacing: 10) {
                     PeopleSearchField(text: $searchText, focused: $searchFocused)
                         .accessibilityLabel("Search directory by name, state, or party")
 
                     HStack {
-                        Text("\(filteredMembers.count) of \(store.members.count) shown")
+                        // Truthful by construction: the roster endpoint returns
+                        // every member, so both numbers are real totals — no
+                        // page limit is ever printed here.
+                        Text("\(CompactFormat.count(members.count)) of \(CompactFormat.count(store.members.count)) shown")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 0)
@@ -34,6 +63,10 @@ struct PeopleDirectoryView: View {
                         sortKey: $sortKey,
                         sortAscending: $sortAscending
                     )
+
+                    // Same component the Trades tab uses, top and bottom —
+                    // never a second pager implementation.
+                    directoryPager(page: page, pages: pages)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -54,7 +87,7 @@ struct PeopleDirectoryView: View {
                         if store.isLoadingMembers && store.members.isEmpty {
                             ProgressView("Loading Directory…")
                                 .padding(.top, 40)
-                        } else if filteredMembers.isEmpty {
+                        } else if members.isEmpty {
                             ContentUnavailableView {
                                 Label(
                                     searchText.isEmpty ? "No Politicians Yet" : "No Matches",
@@ -70,7 +103,7 @@ struct PeopleDirectoryView: View {
                             .padding(.top, 40)
                         } else {
                             LazyVStack(spacing: 8) {
-                                ForEach(filteredMembers) { member in
+                                ForEach(pageSlice(of: members)) { member in
                                     Button {
                                         selectedMemberId = member.filerId
                                         selectedMemberName = member.fullName ?? member.filerId
@@ -81,7 +114,13 @@ struct PeopleDirectoryView: View {
                                     .accessibilityHint("Opens politician details")
                                 }
                             }
+
+                            directoryPager(page: page, pages: pages)
+                                .padding(.top, 4)
                         }
+
+                        LegalFooterLinks()
+                            .padding(.top, 8)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
@@ -106,7 +145,29 @@ struct PeopleDirectoryView: View {
                         .presentationCornerRadius(18)
                 }
             }
+            // Any narrowing or reordering invalidates the current page — land
+            // back on the first one instead of on an index that may no longer
+            // exist.
+            .onChange(of: searchText) { _, _ in currentPage = 0 }
+            .onChange(of: sortKey) { _, _ in currentPage = 0 }
+            .onChange(of: sortAscending) { _, _ in currentPage = 0 }
         }
+    }
+
+    private func directoryPager(page: Int, pages: Int) -> some View {
+        PaginationBar(
+            currentPage: page,
+            totalPages: pages,
+            pageSize: pageSize,
+            canGoPrevious: page > 0,
+            canGoNext: page + 1 < pages,
+            onPrevious: { currentPage = max(0, page - 1) },
+            onNext: { currentPage = min(pages - 1, page + 1) },
+            onPageSize: { size in
+                pageSize = size
+                currentPage = 0
+            }
+        )
     }
 }
 
