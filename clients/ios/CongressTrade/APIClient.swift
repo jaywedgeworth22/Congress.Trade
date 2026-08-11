@@ -189,6 +189,17 @@ final class CongressTradeAPIClient {
         try await request(originURL.appendingPathComponent("api/members"))
     }
 
+    /// `GET /api/assets` — the Assets directory roster (web parity: Directory
+    /// tab's People|Assets segmented toggle, `app/src/ui/dashboardHtml.ts`
+    /// `setDirectoryMode`/`loadAssetsDirectory`). Public, unauthenticated,
+    /// no query params — the whole roster (every ticker that has ever
+    /// appeared in a disclosed transaction), server-side 30-minute KV cache
+    /// (`app/src/delivery/rest.ts` `queryAssetsRoster` / `r.get('/assets')`).
+    /// Origin-level like `membersDirectory()`, not under `/api/client/v1/*`.
+    func assetsDirectory() async throws -> AssetDirectoryResponse {
+        try await request(originURL.appendingPathComponent("api/assets"))
+    }
+
     func ticker(_ ticker: String) async throws -> ClientTickerResponse {
         let encoded = ticker.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ticker
         return try await get("ticker/\(encoded)")
@@ -680,6 +691,26 @@ final class CongressTradeAPIClient {
             throw APIError.transport(error)
         }
     }
+}
+
+/// `GET /api/assets` response shape (`app/src/delivery/rest.ts`
+/// `queryAssetsRoster`). No existing iOS Decodable matches this — asset rows
+/// here are ticker-keyed roster entries, not `ClientTrade.asset`'s per-trade
+/// snapshot in `Models.swift`.
+struct AssetDirectoryResponse: Decodable {
+    let assets: [AssetDirectoryEntry]
+    let count: Int
+}
+
+struct AssetDirectoryEntry: Decodable, Identifiable, Hashable {
+    let ticker: String
+    /// LEFT-joined enrichment (`securities_ref`); `nil` for un-enriched tickers.
+    let name: String?
+    let assetClass: String?
+    let txCount: Int?
+    let memberCount: Int?
+
+    var id: String { ticker }
 }
 
 struct APIErrorResponse: Decodable {
