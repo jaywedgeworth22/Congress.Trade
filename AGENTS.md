@@ -334,3 +334,8 @@ refresh on every change). Helper auto-injects/refreshes it.
 **Always** write/update living Completion notes for substantial work; update in place.
 Folder **Coding**, pin when able. Helper: `/Users/jay/apps/apple-notes-coding.sh`
 (`--update`). Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Apple Notes.
+
+## Theme default = light (owner 2026-08-10)
+
+Default product theme is **light**. See `/Users/jay/apps/FLEET-UI-COPY.md` and `/Users/jay/apps/AGENT-SYNC.md`.
+

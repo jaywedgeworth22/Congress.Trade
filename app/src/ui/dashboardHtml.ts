@@ -120,9 +120,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default system; stored pref may be light|dark|system.
+  // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be light|dark|system.
   (function () {
-    var pref = 'system';
+    var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
@@ -3543,14 +3543,14 @@ function fmtMs(ms) {
   return fmtDuration(Math.round(ms / 1000));
 }
 
-/* ---- light / dark / system theme (per-visitor preference; default system) ---- */
+/* ---- light / dark / system theme (per-visitor preference; default LIGHT) ---- */
 /* Mirrors Socratic.Trade console: Light | Dark | System segmented control. */
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
     if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
-  return 'system';
+  return 'light';
 }
 function resolveTheme(pref) {
   if (pref === 'dark' || pref === 'light') return pref;
@@ -11509,7 +11509,7 @@ renderTradesHeader();
 
 window.addEventListener('resize', function () { syncTradesTableWidth(); applyColumnWidthClasses(); });
 
-// Apply resolved theme (default system; respects light|dark|system pref).
+// Apply resolved theme (default light; respects light|dark|system pref).
 applyTheme(resolveTheme(readThemePref()));
 
 // Initial loading states + boot.
