@@ -11,7 +11,6 @@ struct DeliveryView: View {
     @State private var newTicker = ""
     @State private var showPremiumInfo = false
     @State private var showExport = false
-    @State private var editingSubscriptionId: String?
 
     // The four `notify_*` @AppStorage toggles that used to head this screen
     // ("All Trades" / "New Buys" / "New Sells" / "Watchlist") were removed: a
@@ -184,7 +183,7 @@ struct DeliveryView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         if watchlistDraft.isEmpty {
-                            Text("No tickers yet. An empty watchlist delivers everything.")
+                            Text("No tickers yet.  An empty watchlist delivers everything.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }

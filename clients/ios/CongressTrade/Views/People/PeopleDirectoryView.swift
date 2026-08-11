@@ -18,6 +18,8 @@ struct PeopleDirectoryView: View {
     @State private var page = 0
     @AppStorage("directory_page_size") private var pageSize = 50
 
+    private static let listTopAnchor = "directory-list-top"
+
     private var filteredMembers: [MemberDirectoryEntry] {
         let matched = store.members.filter { MemberDirectorySearch.matches($0, query: searchText) }
         return MemberDirectorySearch.sort(matched, key: sortKey, ascending: sortAscending)
@@ -63,8 +65,14 @@ struct PeopleDirectoryView: View {
                 .padding(.bottom, 8)
                 .background(AppTheme.background)
 
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 8) {
+                        // Anchor for the page-change scroll reset below; a new
+                        // page of rows under an unchanged scroll offset drops
+                        // you into the middle of it.
+                        Color.clear.frame(height: 0).id(Self.listTopAnchor)
+
                         if let notice = store.membersNotice {
                             FeedFreshnessView(
                                 isOffline: false,
@@ -121,6 +129,12 @@ struct PeopleDirectoryView: View {
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .onChange(of: page) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(Self.listTopAnchor, anchor: .top)
+                    }
+                }
+                }
             }
             .background(AppTheme.background)
             .navigationTitle("Directory")
