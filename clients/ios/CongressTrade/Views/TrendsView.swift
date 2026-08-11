@@ -478,10 +478,13 @@ struct TrendsView: View {
             // Wording mirrors the `note` field this endpoint returns
             // (`app/src/analytics/routes.ts`); iOS only decodes `members`, so
             // if that note is ever reworded, reword this too.
-            Text("Average excess return vs S&P 500 on disclosed buys, measured from each filing date — what a follower could actually have acted on.  Each trade is capped at ±200% so one outlier can't carry a politician.  Buys only, options excluded.")
+            Text("How far each politician's disclosed buys beat the S&P 500, measured from the filing date — the part a follower could have acted on.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("\(store.selectedTimeRange.label)  •  minimum \(Self.performersMinBuys) buys")
+            // The scope line the owner asked for: an unlabelled small-N guard
+            // and an unlabelled window are what let a short streak read as
+            // skill ("prone to having wild numbers").
+            Text("\(store.selectedTimeRange.label)  •  minimum \(Self.performersMinBuys) buys  •  stocks only  •  each trade capped at ±200%")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
 
