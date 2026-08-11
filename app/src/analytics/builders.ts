@@ -355,18 +355,183 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
 // ---------------------------------------------------------------------------
 
 /**
+ * WHY THIS EXISTS: `securities_ref.sector` is ONE column written by SEVERAL
+ * enrichment providers over the years, each with its own vocabulary. Production
+ * (2026-08-11, window=all) returns 57 distinct buckets over ~57k tickered
+ * trades, and most of the tail is not new information — it is the same sectors
+ * spelled differently ("Health Care" AND "Healthcare"; "Communication Services"
+ * AND "Telecommunication") or a sub-industry filed where a sector belongs
+ * ("Semiconductors", "Banking", "Pharmaceuticals"). The Trends charts then show
+ * a long thin tail and both clients truncate it, so real volume disappears.
+ *
+ * This maps the observed duplicates and unambiguous sub-industries onto the
+ * dominant 11-sector vocabulary already used by the largest buckets
+ * (Technology / Financial Services / Healthcare / Industrials / Consumer
+ * Cyclical / Consumer Defensive / Energy / Basic Materials / Real Estate /
+ * Communication Services / Utilities).
+ *
+ * DELIBERATELY CONSERVATIVE — an unrecognised label keeps its ORIGINAL text
+ * rather than being swallowed into 'Unknown', so nothing silently disappears,
+ * and a label is only mapped when its meaning is unambiguous. Several
+ * plausible-looking merges are REFUSED because the production rows disprove
+ * them (checked ticker-by-ticker against securities_ref, 2026-08-11):
+ *   - "Retail" holds WMT, COST, KR, DLTR (defensive) next to AMZN, HD, TJX,
+ *     ROST (cyclical) — it spans two sectors, so it stays its own bucket.
+ *   - "Mining" holds ESV, CRZO, WPX, NBL — all oil & gas, NOT materials.
+ *   - "Consumer products" holds PG/KMB/CL (defensive) next to DHI/PHM/NVR
+ *     (homebuilders, cyclical).
+ *   - "Manufacturing" / "Services" / "Construction" and the SIC-division
+ *     labels ("Wholesale Trade", "Finance, Insurance & Real Estate",
+ *     "Transportation, Communications, Electric, Gas, And Sanitary Services")
+ *     each span multiple sectors.
+ * The real fix for those is re-enriching the affected tickers, not a label map.
+ */
+const CANONICAL_SECTOR_ALIASES: Readonly<Record<string, string>> = {
+  // --- spelling/casing variants of the canonical eleven ---------------------
+  'basic materials': 'Basic Materials',
+  materials: 'Basic Materials',
+  'communication services': 'Communication Services',
+  'consumer cyclical': 'Consumer Cyclical',
+  'consumer discretionary': 'Consumer Cyclical',
+  'consumer defensive': 'Consumer Defensive',
+  'consumer staples': 'Consumer Defensive',
+  energy: 'Energy',
+  'financial services': 'Financial Services',
+  financial: 'Financial Services',
+  financials: 'Financial Services',
+  'health care': 'Healthcare',
+  healthcare: 'Healthcare',
+  industrials: 'Industrials',
+  'real estate': 'Real Estate',
+  technology: 'Technology',
+  'information technology': 'Technology',
+  utilities: 'Utilities',
+
+  // --- sub-industries filed where a sector belongs (GICS parentage) ---------
+  semiconductors: 'Technology',
+  // "Communications" here is communications EQUIPMENT, not telecom: the only
+  // tickers carrying it are CSCO, ANET, EMKR, HLIT.
+  communications: 'Technology',
+  media: 'Communication Services',
+  telecommunication: 'Communication Services',
+  telecommunications: 'Communication Services',
+  pharmaceuticals: 'Healthcare',
+  biotechnology: 'Healthcare',
+  'life sciences tools & services': 'Healthcare',
+  banking: 'Financial Services',
+  insurance: 'Financial Services',
+  beverages: 'Consumer Defensive',
+  tobacco: 'Consumer Defensive',
+  'food products': 'Consumer Defensive',
+  automobiles: 'Consumer Cyclical',
+  'auto components': 'Consumer Cyclical',
+  'hotels, restaurants & leisure': 'Consumer Cyclical',
+  distributors: 'Consumer Cyclical',
+  'aerospace & defense': 'Industrials',
+  machinery: 'Industrials',
+  'electrical equipment': 'Industrials',
+  'industrial conglomerates': 'Industrials',
+  'professional services': 'Industrials',
+  'trading companies & distributors': 'Industrials',
+  airlines: 'Industrials',
+  'road & rail': 'Industrials',
+  'logistics & transportation': 'Industrials',
+  building: 'Industrials',
+  'building products': 'Industrials',
+  chemicals: 'Basic Materials',
+  'metals & mining': 'Basic Materials',
+  packaging: 'Basic Materials',
+
+  // --- pure duplicate-spelling collapse, no sector claimed ------------------
+  // Both are the same SIC division and it genuinely spans finance + real
+  // estate, so we unify the spelling without asserting a canonical sector.
+  'finance, insurance & real estate': 'Finance, Insurance & Real Estate',
+  'finance, insurance, and real estate': 'Finance, Insurance & Real Estate',
+};
+
+/**
+ * Values that mean "we don't know" but that `NULLIF(sector, '')` does not
+ * catch. Production carries a literal 'N/A' bucket (FSSL, OXLCN, ETV, FUND,
+ * TBBC) that rendered as its own sector next to the real 'Unknown' one.
+ * Mirrors the sentinel list in TICKER_RESOLVED_SQL (analytics/sql.ts).
+ */
+const SECTOR_UNKNOWN_SENTINELS: readonly string[] = [
+  'n/a',
+  'na',
+  'n.a.',
+  '-',
+  '--',
+  '—',
+  'none',
+  'null',
+  'unknown',
+  'unclassified',
+];
+// NOTE: 'Other' is deliberately NOT a sentinel. "we could not classify this"
+// and "the long tail below the chart's cutoff" are different statements, and
+// the clients want a real "Other" row for the second one.
+
+/** SQL string literal with single quotes doubled. */
+function sqlText(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * TS twin of {@link canonicalSectorSql} — same table, same precedence — so the
+ * mapping can be unit-tested as behaviour and reused by backfill/report
+ * tooling. Returns 'Unknown' for junk sentinels and the ORIGINAL trimmed label
+ * for anything unrecognised.
+ */
+export function canonicalSector(raw: string | null | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return 'Unknown';
+  const key = trimmed.toLowerCase();
+  if (SECTOR_UNKNOWN_SENTINELS.includes(key)) return 'Unknown';
+  return CANONICAL_SECTOR_ALIASES[key] ?? trimmed;
+}
+
+/**
+ * CASE expression that canonicalises a raw sector column. Shaped after
+ * `canonicalAssetTypeCategorySql` (shared/assetTypes.ts): compare on
+ * lower(trim(...)) so casing variants ("Consumer products") collapse for free,
+ * and fall through to the original trimmed label so unmapped vocabularies stay
+ * visible instead of vanishing.
+ */
+export function canonicalSectorSql(rawExpr: string): string {
+  const key = `lower(trim(coalesce(${rawExpr}, '')))`;
+  const unknown =
+    `WHEN ${key} = '' OR ${key} IN (` +
+    SECTOR_UNKNOWN_SENTINELS.map(sqlText).join(', ') +
+    `) THEN 'Unknown'`;
+  const aliases = Object.entries(CANONICAL_SECTOR_ALIASES)
+    .map(([from, to]) => `WHEN ${key} = ${sqlText(from)} THEN ${sqlText(to)}`)
+    .join(' ');
+  return `(CASE ${unknown} ${aliases} ELSE trim(${rawExpr}) END)`;
+}
+
+/**
  * Net buy/sell flow by REAL GICS sector (securities_ref.sector) — distinct from
  * buildSectorBreakdownQuery, which groups by the free-text `asset_type` (an
- * instrument class, not a sector). Resolved tickers only; un-enriched/unknown
- * sectors collapse to 'Unknown'. Reports signed net flow so a sector's
+ * instrument class, not a sector). Reports signed net flow so a sector's
  * accumulation vs distribution is visible, plus politician/ticker breadth.
+ *
+ * Labels pass through canonicalSectorSql first, so multi-provider spellings
+ * collapse into one bucket instead of fragmenting the chart.
+ *
+ * SCOPE CAVEAT (shared with buildMarketCapBreakdownQuery): the TICKER_RESOLVED_SQL
+ * gate means trades with no resolved ticker — munis, treasuries, private funds,
+ * real property — are absent from BOTH charts. That is deliberate (securities_ref
+ * is keyed by ticker, so there is nothing to join on), but it means these two
+ * cards describe the tickered subset of activity, not all of it. Do not "fix" it
+ * by dropping the gate; surfacing the excluded share is a product decision.
  */
 export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
   const limit = clampLimit(p.limit, 20, 100);
   const allWhere = [TICKER_RESOLVED_SQL, ...where];
+  const sectorExpr = canonicalSectorSql('sr.sector');
   const sql =
-    "SELECT COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector, " +
+    `SELECT ${sectorExpr} AS sector, ` +
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `SUM(${MID}) AS est_volume, ` +
@@ -375,7 +540,16 @@ export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): Bui
     'COUNT(DISTINCT t.ticker) AS unique_tickers ' +
     ANALYTICS_FROM_JOINS_REF +
     whereSql(allWhere) +
-    'GROUP BY sector ORDER BY trade_count DESC ' +
+    // GROUP BY the EXPRESSION, not the `sector` alias. securities_ref has a
+    // real column called `sector`, and when an output alias collides with a
+    // base column SQLite binds the GROUP BY term to the COLUMN — so
+    // `GROUP BY sector` silently grouped by the raw provider label and only
+    // then painted the bucket name on top. Verified in node:sqlite: three rows
+    // spelled "Health Care"/"Healthcare"/"HEALTHCARE" came back as three
+    // separate groups all labelled "Healthcare". (Pre-existing: the previous
+    // COALESCE/NULLIF version had the same shadowing, which is why a NULL
+    // sector and an empty-string sector could each yield their own "Unknown".)
+    `GROUP BY ${sectorExpr} ORDER BY trade_count DESC ` +
     `LIMIT ${limit}`;
   return { sql, params };
 }
@@ -383,7 +557,8 @@ export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): Bui
 /**
  * Net flow + activity by market-cap bucket (securities_ref.market_cap_bucket:
  * mega…nano). Surfaces a size tilt (e.g. concentration in small/micro caps).
- * Resolved tickers only; un-enriched rows collapse to 'unknown'.
+ * Resolved tickers only; un-enriched rows collapse to 'unknown'. Same
+ * tickered-subset caveat as buildSectorFlowQuery above.
  */
 export function buildMarketCapBreakdownQuery(p: CommonFilters): BuiltQuery {
   const { where, params } = buildCommonFilters(p);

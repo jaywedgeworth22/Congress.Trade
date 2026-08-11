@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
 import {
   asMemberSort,
   asTickerSort,
@@ -26,6 +27,8 @@ import {
   buildSectorBreakdownQuery,
   buildSectorFlowQuery,
   buildMarketCapBreakdownQuery,
+  canonicalSector,
+  canonicalSectorSql,
   buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
@@ -191,13 +194,87 @@ describe('buildSectorBreakdownQuery', () => {
 });
 
 describe('buildSectorFlowQuery (real GICS sector)', () => {
-  it('groups by securities_ref.sector with signed net flow, resolved tickers only', () => {
+  it('groups by a canonicalised securities_ref.sector with signed net flow, resolved tickers only', () => {
     const q = buildSectorFlowQuery({ window: '90d' });
-    expect(q.sql).toContain("COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector");
+    expect(q.sql).toContain('AS sector');
+    expect(q.sql).toContain('lower(trim(coalesce(sr.sector');
     expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
     expect(q.sql).toContain('AS est_net_flow');
-    expect(q.sql).toContain('GROUP BY sector');
+    // GROUP BY must repeat the expression: aliasing it `sector` while
+    // securities_ref HAS a `sector` column makes SQLite group by the raw column.
+    expect(q.sql).toContain('GROUP BY (CASE');
+    expect(q.sql).not.toContain('GROUP BY sector ');
     expect(q.sql).toContain("t.ticker IS NOT NULL AND t.ticker <> ''");
+  });
+});
+
+/**
+ * The sector CASE is executed against real SQLite rather than pattern-matched,
+ * because the thing under test is the GROUP BY behaviour (do two spellings land
+ * in one bucket?), not the SQL text. Mirrors the node:sqlite harness used by
+ * admin/__tests__/reviewQueueTestDb.ts.
+ */
+describe('canonicalSector / canonicalSectorSql', () => {
+  function bucket(labels: (string | null)[]): Record<string, number> {
+    const db = new DatabaseSync(':memory:');
+    db.exec('CREATE TABLE securities_ref (ticker TEXT, sector TEXT)');
+    const ins = db.prepare('INSERT INTO securities_ref (ticker, sector) VALUES (?, ?)');
+    labels.forEach((label, i) => ins.run(`T${i}`, label));
+    const rows = db
+      .prepare(
+        `SELECT ${canonicalSectorSql('sector')} AS sector, COUNT(*) AS c ` +
+          `FROM securities_ref GROUP BY ${canonicalSectorSql('sector')}`,
+      )
+      .all() as { sector: string; c: number }[];
+    db.close();
+    return Object.fromEntries(rows.map((r) => [r.sector, Number(r.c)]));
+  }
+
+  it('collapses junk sentinels into Unknown (NULLIF alone missed these)', () => {
+    expect(bucket(['N/A', 'n/a', 'None', '', '  ', null, 'Unknown', '-'])).toEqual({ Unknown: 8 });
+    expect(canonicalSector('N/A')).toBe('Unknown');
+    expect(canonicalSector(null)).toBe('Unknown');
+  });
+
+  it('collapses "Health Care" and "Healthcare" into one bucket', () => {
+    expect(bucket(['Health Care', 'Healthcare', 'HEALTHCARE'])).toEqual({ Healthcare: 3 });
+    expect(canonicalSector('Health Care')).toBe('Healthcare');
+  });
+
+  it('folds unambiguous sub-industries into their sector', () => {
+    expect(bucket(['Semiconductors', 'Technology', 'Communications'])).toEqual({ Technology: 3 });
+    expect(bucket(['Banking', 'Insurance', 'Financials', 'Financial Services'])).toEqual({
+      'Financial Services': 4,
+    });
+    expect(bucket(['Media', 'Telecommunication', 'Communication Services'])).toEqual({
+      'Communication Services': 3,
+    });
+  });
+
+  it('passes an unrecognised label through with its ORIGINAL text', () => {
+    // Nothing may silently disappear into Unknown.
+    expect(bucket(['Widget Forging', ' Widget Forging '])).toEqual({ 'Widget Forging': 2 });
+    expect(canonicalSector('Widget Forging')).toBe('Widget Forging');
+  });
+
+  it('refuses the merges that production data disproves', () => {
+    // "Retail" spans WMT/COST (defensive) and AMZN/HD (cyclical); "Mining"
+    // holds oil & gas (ESV, WPX, NBL). Both keep their own bucket on purpose.
+    expect(canonicalSector('Retail')).toBe('Retail');
+    expect(canonicalSector('Mining')).toBe('Mining');
+    expect(canonicalSector('Manufacturing')).toBe('Manufacturing');
+    expect(canonicalSector('Consumer products')).toBe('Consumer products');
+  });
+
+  it('unifies the two spellings of the SIC finance division without claiming a sector', () => {
+    expect(bucket(['Finance, Insurance & Real Estate', 'Finance, Insurance, And Real Estate']))
+      .toEqual({ 'Finance, Insurance & Real Estate': 2 });
+  });
+
+  it('is idempotent — canonical output maps to itself', () => {
+    for (const s of ['Healthcare', 'Technology', 'Financial Services', 'Widget Forging']) {
+      expect(canonicalSector(canonicalSector(s))).toBe(canonicalSector(s));
+    }
   });
 });
 

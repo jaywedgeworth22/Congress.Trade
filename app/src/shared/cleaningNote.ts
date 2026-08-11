@@ -36,5 +36,23 @@ export function plainCleaningNote(raw: string | null | undefined): string {
     return s;
   }
 
+  // Disclosure-machinery notes emitted by cleanAssetName()
+  // (extraction/nameNormalizer.ts). These are already written as plain
+  // fragments — the House type code, the footnote markers, the Senate eFD
+  // "Rate/Coupon: … Matures: …" suffix, and the second leg of an exchange —
+  // and several can be joined with "; " on one row. Listed explicitly so the
+  // idempotency contract is visible rather than resting on the pass-through
+  // at the bottom of this function.
+  if (
+    s === 'removed disclosure type code from asset name' ||
+    s === 'removed filing footnote markers from asset name' ||
+    /^\d+(?:\.\d+)?% coupon(?:, matures \d{1,2}\/\d{1,2}\/\d{2,4})?$/.test(s) ||
+    /^matures \d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s) ||
+    /^exchanged for .+$/.test(s) ||
+    s.includes('; ')
+  ) {
+    return s;
+  }
+
   return s;
 }
