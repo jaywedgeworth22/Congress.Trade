@@ -3,6 +3,7 @@ import UIKit
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var tabRouter: TabRouter
     @State private var deliveryMode: DeliveryMode = .sse
     @State private var webhookURL = ""
     @State private var filterChambers: Set<ChamberFilter> = []
@@ -248,8 +249,13 @@ struct DeliveryView: View {
                 DeliveryCredentialView(credential: credential)
             }
             .sheet(isPresented: $showPremiumInfo) {
-                PremiumInfoSheet()
-                    .environmentObject(store)
+                // Sign-in lives on the Settings tab, so the sheet's signed-out
+                // CTA has to switch tabs rather than dead-end here.
+                PremiumInfoSheet(onSignIn: {
+                    showPremiumInfo = false
+                    tabRouter.selection = .settings
+                })
+                .environmentObject(store)
             }
             .sheet(isPresented: $showExport) {
                 ExportCSVSheet()

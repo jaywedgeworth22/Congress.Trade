@@ -145,7 +145,9 @@ struct SettingsView: View {
                 }
             }
             .sheet(isPresented: $showPremiumInfo) {
-                PremiumInfoSheet()
+                // The sheet's signed-out CTA only has to get out of the way —
+                // the sign-in panel is the section directly behind it.
+                PremiumInfoSheet(onSignIn: { showPremiumInfo = false })
                     .environmentObject(store)
             }
         }
