@@ -120,7 +120,7 @@ struct PeopleDirectoryView: View {
                                 .padding(.top, 4)
                         }
 
-                        LegalFooterLinks()
+                        AppLegalFooter()
                             .padding(.top, 8)
                     }
                     .padding(.horizontal, 16)
