@@ -74,13 +74,24 @@ describe('resolveOgMeta', () => {
     expect(m.title).toBe('Rep Example (R-TX-02)');
   });
 
+  // Cap raised 24 -> 40 so real executive-branch positions survive intact:
+  // the longest curated title, 'Social Security Commissioner' (28 chars), was
+  // being cut mid-word to 'Social Security Commissio…'. Still bounded.
   it('truncates an implausibly long district descriptor', () => {
     const m = resolveOgMeta('https://congress.trade/?member=X', 'https://congress.trade', {
       memberDisplayName: 'Rep Example',
-      memberDistrict: 'D-CALIFORNIA-ELEVENTH-DISTRICT-AT-LARGE',
+      memberDistrict: 'D-CALIFORNIA-ELEVENTH-CONGRESSIONAL-DISTRICT-AT-LARGE-SEAT',
     });
-    expect(m.title.length).toBeLessThanOrEqual('Rep Example '.length + 26);
+    expect(m.title.length).toBeLessThanOrEqual('Rep Example '.length + 42);
     expect(m.title).toContain('…');
+  });
+
+  it('keeps a real executive-branch title intact', () => {
+    const m = resolveOgMeta('https://congress.trade/?member=X', 'https://congress.trade', {
+      memberDisplayName: 'Frank J. Bisignano',
+      memberDistrict: 'Social Security Commissioner',
+    });
+    expect(m.title).toBe('Frank J. Bisignano (Social Security Commissioner)');
   });
 });
 

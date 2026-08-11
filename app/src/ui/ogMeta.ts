@@ -62,17 +62,43 @@ export type ResolveOgMetaOptions = {
   memberDisplayName?: string | null;
   /**
    * Optional seat descriptor for ?member=, already formatted by the caller —
-   * e.g. `D-CA-11`, `R-TX-Sen`. Rendered in parentheses after the name so a
-   * shared politician link identifies the district, not just the person.
+   * a congressional seat (`D-CA-11`, `R-TX-Sen`) or an executive-branch
+   * position (`President`, `Treasury Secretary`). Rendered in parentheses
+   * after the name so a shared politician link identifies the office, not
+   * just the person.
    */
   memberDistrict?: string | null;
 };
 
-/** Trim a caller-supplied seat descriptor down to something safe to render. */
+/**
+ * Trim a caller-supplied seat descriptor down to something safe to render.
+ *
+ * The cap has to clear a real executive-branch position, not just a compact
+ * congressional seat code: the longest curated title is 'Social Security
+ * Commissioner' at 28 characters, and a 24-char limit silently truncated five
+ * of them mid-word. 40 leaves headroom for the next cabinet title while still
+ * refusing an unbounded string.
+ */
 function normalizeDistrict(raw: string | null | undefined): string {
-  const s = (raw || '').trim().replace(/^\(+|\)+$/g, '').trim();
+  let s = (raw || '').trim();
   if (!s) return '';
-  return s.length > 24 ? s.slice(0, 23) + '…' : s;
+
+  // Order matters. Unwrap a fully-parenthesised descriptor FIRST — "(R-TX-02)"
+  // -> "R-TX-02" — but only when the parens wrap the whole string. A blanket
+  // /^\(+|\)+$/ strip would eat the closing paren of 'U.S. Senator (PA)' and
+  // leave an unbalanced 'U.S. Senator (PA' for the next step to miss.
+  while (/^\([^()]*\)$/.test(s)) s = s.slice(1, -1).trim();
+
+  // The descriptor is itself rendered inside parentheses, so a remaining
+  // interior pair would nest: the curated title 'U.S. Senator (PA)' would
+  // print as "David McCormick (U.S. Senator (PA))". Flatten it to a comma.
+  s = s.replace(/\s*\(([^)]*)\)\s*/g, ', $1');
+
+  // Anything left unbalanced is caller junk, not structure.
+  s = s.replace(/^[(),\s]+|[(),\s]+$/g, '').trim();
+  if (!s) return '';
+
+  return s.length > 40 ? s.slice(0, 39) + '…' : s;
 }
 
 /**
