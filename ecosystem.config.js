@@ -26,6 +26,32 @@ module.exports = {
       error_file: './scout/scout.err',
       merge_logs: true
     },
+    // Residential Senate eFD relay (Imperva blocks datacenter IPs). Pair with
+    // senate-tunnel (cloudflared quick tunnel) and Coolify SENATE_RELAY_URL.
+    {
+      name: 'senate-relay',
+      script: './scout/run-senate-relay.sh',
+      interpreter: 'bash',
+      cwd: __dirname,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      out_file: './scout/senate-relay.log',
+      error_file: './scout/senate-relay.err',
+      merge_logs: true,
+      autorestart: true,
+    },
+    {
+      name: 'senate-tunnel',
+      // Ephemeral quick tunnel — URL regenerates on restart; update Coolify
+      // SENATE_RELAY_URL when it changes (see docs #1604).
+      script: 'cloudflared',
+      args: 'tunnel --url http://127.0.0.1:8899',
+      cwd: __dirname,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      out_file: './scout/senate-tunnel.log',
+      error_file: './scout/senate-tunnel.err',
+      merge_logs: true,
+      autorestart: true,
+    },
     {
       name: 'vision-worker',
       script: 'worker.py',

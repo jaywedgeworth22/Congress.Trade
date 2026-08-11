@@ -196,4 +196,27 @@ describe('recordLatencyProbeOutcome + plan', () => {
     expect(plan.latencyNeedScout.some((h) => h.provider === 'fmp')).toBe(true);
     expect(plan.notes.some((n) => /successive server errors/i.test(n))).toBe(true);
   });
+
+  it('never hands off fmp_rapidapi when RapidAPI path is not enabled (default stable-only)', async () => {
+    // Stale v1-style claim on rapidapi must not surface in the plan.
+    await recordLatencyProbeOutcome(env, 'fmp_rapidapi', {
+      kind: 'error',
+      error: 'HTTP_404',
+      now: new Date('2026-08-11T14:00:00.000Z'),
+    });
+    await recordLatencyProbeOutcome(env, 'fmp_rapidapi', {
+      kind: 'error',
+      error: 'HTTP_404',
+      now: new Date('2026-08-11T14:01:00.000Z'),
+    });
+    await recordLatencyProbeOutcome(env, 'fmp_rapidapi', {
+      kind: 'error',
+      error: 'HTTP_404',
+      now: new Date('2026-08-11T14:02:00.000Z'),
+    });
+    const plan = await buildScoutPlan(env, new Date('2026-08-11T14:05:00.000Z'));
+    expect(plan.latencyNeedScout.some((h) => h.provider === 'fmp_rapidapi')).toBe(false);
+    const row = plan.latency.find((h) => h.provider === 'fmp_rapidapi');
+    expect(row?.needScout).toBe(false);
+  });
 });

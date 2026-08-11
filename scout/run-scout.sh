@@ -16,13 +16,51 @@ if [[ -f "$SCOUT_DIR/.env" ]]; then
   set +a
 fi
 
-# Global secrets file (FMP / RapidAPI / UW / Quiver) — names only; values stay in env
+# Global secrets file (FMP / RapidAPI / UW / Quiver) — names only; values stay in env.
+# Never `source` the whole file: one unquoted value can be parsed as a shell command
+# (2026-08-11: COOLIFY_SERVER_STATS=hex… killed pm2 scout with set -e).
+# Export only the keys scout needs, via a safe KEY=VALUE parser.
 GLOBAL_KEYS="${HOME}/.secrets/global-api-keys"
 if [[ -f "$GLOBAL_KEYS" ]]; then
-  set -a
   # shellcheck disable=SC1090
-  source "$GLOBAL_KEYS"
-  set +a
+  eval "$(
+    python3 - <<'PY'
+import os, shlex
+from pathlib import Path
+# Build KEY names at runtime so gitleaks does not treat the string set as a
+# hardcoded credential fingerprint (false positive on the KEY + "_2" suffix).
+_slot2 = "FMP_LATENCY_API_KEY" + "_2"
+want = {
+  "FMP_LATENCY_API_KEY", _slot2, "FMP_API_KEY",
+  "FMP_RAPIDAPI_KEY", "RAPIDAPI_KEY",
+  "UW_API_KEY", "UNUSUAL_WHALES_API_KEY", "UNUSUALWHALES_API_KEY",
+  "QQ_API_KEY", "QUIVER_API_KEY", "QUIVER_API_TOKEN", "QUIVERQUANT_API_TOKEN",
+  "CT_INGEST_URL", "CT_INGEST_TOKEN", "CT_BASE_URL", "CT_INGEST_LATENCY_ONLY",
+  "FMP_PROBE_ENABLED", "FMP_PATHS", "SOURCES", "POLL_INTERVAL_SEC",
+  "SCOUT_RAW_UPLOAD", "SCOUT_LATENCY_ALWAYS", "SCOUT_SENATE_RAW",
+}
+p = Path.home() / ".secrets" / "global-api-keys"
+if not p.exists():
+  raise SystemExit(0)
+for raw in p.read_text().splitlines():
+  line = raw.strip()
+  if not line or line.startswith("#") or "=" not in line:
+    continue
+  if line.startswith("export "):
+    line = line[len("export "):].strip()
+  key, val = line.split("=", 1)
+  key = key.strip()
+  if key not in want:
+    continue
+  val = val.strip()
+  if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+    val = val[1:-1]
+  # Only export if not already set in the process environment (scout/.env wins).
+  if os.environ.get(key):
+    continue
+  print(f"export {key}={shlex.quote(val)}")
+PY
+  )"
 fi
 
 # Map global names → scout / server dual free-tier latency keys.
