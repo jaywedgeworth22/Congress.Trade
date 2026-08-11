@@ -47,6 +47,7 @@ import {
   computeLatencyScope,
   isInLatencyScope,
   buildPublicLatencyProviders,
+  repairProviderObservationHashes,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -882,6 +883,81 @@ describe('tradeLatency', () => {
       // the curated legal-name alias — identical to the House/Senate path.
       expect(row.filerName).toBe('Ro Khanna');
       expect(row.tradeHash).toBe('khanna_NVDA_2026-07-30_buy');
+    });
+  });
+
+  describe('repairProviderObservationHashes', () => {
+    function repairEnv(rows: Array<Record<string, unknown>>) {
+      const updates: Array<{ sql: string; params: unknown[] }> = [];
+      return {
+        env: {
+          DB: {
+            prepare(sql: string) {
+              return {
+                params: [] as unknown[],
+                bind(...params: unknown[]) {
+                  this.params = params;
+                  return this;
+                },
+                async all<T>() {
+                  return { results: rows as T[] };
+                },
+                async first<T>() {
+                  return null as T | null;
+                },
+                async run() {
+                  updates.push({ sql, params: this.params });
+                  return { success: true, meta: { changes: 1 } };
+                },
+              };
+            },
+          },
+        } as never,
+        updates,
+      };
+    }
+
+    it('re-hashes a stored FMP row in place, keeping the first_observed_at stamp', async () => {
+      const { env, updates } = repairEnv([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: '20035180',
+          trade_hash: '_PANW_2026-07-31_sell',
+          payload: JSON.stringify({
+            symbol: 'PANW',
+            transactionDate: '2026-07-31',
+            firstName: 'John',
+            lastName: 'McGuire',
+            office: 'John McGuire',
+            type: 'Sale',
+          }),
+        },
+      ]);
+      const result = await repairProviderObservationHashes(env, 10);
+      expect(result).toMatchObject({ scanned: 1, repaired: 1, dropped: 0, unresolved: 0 });
+      // An UPDATE, never a delete-and-reinsert: re-fetching would reset
+      // first_observed_at to now and destroy the race evidence.
+      expect(updates).toHaveLength(1);
+      expect(updates[0]!.sql).toMatch(/UPDATE trade_provider_observations/);
+      expect(updates[0]!.sql).not.toMatch(/first_observed_at/);
+      expect(updates[0]!.params[0]).toBe('mcguire_PANW_2026-07-31_sell');
+      expect(updates[0]!.params[1]).toBe('John McGuire');
+    });
+
+    it('leaves a row alone when the payload still yields no filer', async () => {
+      const { env, updates } = repairEnv([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: 'k',
+          trade_hash: '_PANW_2026-07-31_sell',
+          payload: JSON.stringify({ symbol: 'PANW', transactionDate: '2026-07-31', type: 'Sale' }),
+        },
+      ]);
+      const result = await repairProviderObservationHashes(env, 10);
+      expect(result).toMatchObject({ repaired: 0, unresolved: 1 });
+      expect(updates).toHaveLength(0);
     });
   });
 
