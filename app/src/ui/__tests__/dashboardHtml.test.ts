@@ -735,7 +735,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('.trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr);');
     expect(DASHBOARD_HTML).not.toContain('minmax(260px, .72fr)');
     expect(DASHBOARD_HTML).toContain('buySellText(');
-    expect(DASHBOARD_HTML).toContain('0% means matched the S&P');
+    expect(DASHBOARD_HTML).toContain('0% matched the benchmark');
     expect(DASHBOARD_HTML).toContain('isJunkAssetString');
   });
 
@@ -1440,7 +1440,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('fmtCount(m.txCount)');
     expect(DASHBOARD_HTML).toContain('fmtCount(a.txCount)');
     expect(DASHBOARD_HTML).toContain('fmtCount(a.memberCount)');
-    expect(DASHBOARD_HTML).toContain("fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown'");
+    expect(DASHBOARD_HTML).toContain("fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' politicians");
+    expect(DASHBOARD_HTML).toContain("fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' assets");
     expect(DASHBOARD_HTML).toContain("typeof v === 'number' && Number.isFinite(v)) ? fmtCount(v) : v");
   });
 
@@ -1532,7 +1533,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('drawer-trade-party');
     expect(DASHBOARD_HTML).toContain('drawer-kicker');
     expect(DASHBOARD_HTML).toContain('drawer-trade-headline');
-    expect(DASHBOARD_HTML).toContain('drawer-trade-in');
     // Ticker/company in the trade drawer open the company drawer (app-wide entity clicks).
     expect(DASHBOARD_HTML).toContain('data-asset="\' + esc(displayTicker) + \'"');
   });
@@ -3692,13 +3692,14 @@ describe('MONET web punch list 2 (LANE W1)', () => {
   it('#14 uses "  |  " (two spaces + pipe) for drawer separators (ticker/company, stats row, Market Cap)', () => {
     // The old middle-dot is gone from every ticker/company pairing inside drawers.
     expect(DASHBOARD_HTML).not.toContain('<span class="dot-sep">·</span>');
-    expect(DASHBOARD_HTML).toContain(".drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }");
+    expect(DASHBOARD_HTML).toContain(".drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }");
     // drawerCompanyTitle (ticker drawer's own "TKR | Company" title).
     expect(DASHBOARD_HTML).toContain("(ticker && !sameAsTicker ? '<span class=\"dot-sep\">  |  </span>' : '')");
-    // openTrade's "in TKR | Company" line.
-    expect(DASHBOARD_HTML).toContain("(displayTicker && displayAsset ? '<span class=\"dot-sep\">  |  </span>' : '')");
+    // openTrade's identity card keeps the pairing in its hover title (the
+    // duplicate "in TKR | Company" hero line is gone — see the identity test).
+    expect(DASHBOARD_HTML).toContain("esc((displayTicker ? displayTicker + '  |  ' : '') + assetLabel)");
     // Ticker drawer stats row: "N trades  |  N politicians  |  ~$X approx. volume".
-    expect(DASHBOARD_HTML).toContain("fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>'");
+    expect(DASHBOARD_HTML).toContain("fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  '");
     // Market Cap: "Mega  |  ~$4.8t".
     expect(DASHBOARD_HTML).toContain("(ref.marketCap != null ? (ref.marketCapBucket ? '  |  ' : '') + estUsd(ref.marketCap) : '')");
   });
@@ -3752,12 +3753,12 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   it('#13(d) drops the "est. bracket" caption next to the amount (the bracket is exact)', () => {
     expect(DASHBOARD_HTML).not.toContain('drawer-trade-bracket');
     expect(DASHBOARD_HTML).not.toContain('est. bracket');
-    expect(DASHBOARD_HTML).toContain("'<h2 class=\"drawer-trade-headline\">' + esc(amountText(row.min, row.max)) + '</h2>' + inName +");
+    expect(DASHBOARD_HTML).toContain("'<h2 class=\"drawer-trade-headline\">' + esc(amountText(row.min, row.max)) + '</h2>' +");
   });
 
   it('#13(e) moves Performance above Trade Details, directly under the header block', () => {
     expect(DASHBOARD_HTML).toContain(
-      "var perf = '<div class=\"drawer-section first\"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id=\"tradePerf\">' + perfInit + '</div></div>';",
+      "    ? '<div class=\"drawer-section first\"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id=\"tradePerf\">' + perfInit + '</div></div>'",
     );
     expect(DASHBOARD_HTML).toContain(
       "'<div class=\"drawer-section\"><h3>Trade Details</h3><dl class=\"drawer-kv\">' +",
@@ -3771,7 +3772,7 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || '';");
     // Trade drawer: "SOLD  $1k-$15k  of  ARCC  |  Ares Capital Corp." style summary.
     expect(DASHBOARD_HTML).toContain(
-      "var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +\n    (topbarAssetBits.length ? ' <span class=\"muted\">of</span> ' + topbarAssetBits.join('<span class=\"dot-sep\">  |  </span>') : '');",
+      "var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +\n    (topbarAsset ? ' <span class=\"muted\">of</span> ' + esc(topbarAsset) : '');",
     );
     // Ticker drawer: "TKR | Company".
     expect(DASHBOARD_HTML).toContain(
@@ -3784,8 +3785,8 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   it('#15 wires the trade drawer Company section to the same ticker analytics source as the ticker drawer', () => {
     expect(DASHBOARD_HTML).toContain('<div id="tradeCompany">');
     expect(DASHBOARD_HTML).toContain('var hasLocalRef = !!(rowRef.sector || rowRef.marketCap != null || rowRef.marketCapBucket || rowRef.country || rowRef.exchangeShort || rowRef.assetClass);');
-    expect(DASHBOARD_HTML).toContain('if (row.ticker && !hasLocalRef) {');
-    expect(DASHBOARD_HTML).toContain("aGet('ticker/' + encodeURIComponent(row.ticker)).then(function (d) {\n      var cEl = el('tradeCompany');\n      if (cEl && d && d.ref) cEl.innerHTML = companySectionHtml(d.ref);");
+    expect(DASHBOARD_HTML).toContain('if (hasTicker && !hasLocalRef) {');
+    expect(DASHBOARD_HTML).toContain("aGet('ticker/' + encodeURIComponent(displayTicker)).then(function (d) {\n      var cEl = el('tradeCompany');\n      if (cEl && d && d.ref) cEl.innerHTML = companySectionHtml(d.ref);");
   });
 
   it('#16 swaps a bare "Securities" asset name for the parsed asset type when cheaply available', () => {

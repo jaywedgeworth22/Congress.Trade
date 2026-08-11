@@ -541,13 +541,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-head { padding: 2px 0 6px; }
   .drawer-kicker { display: inline-block; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
   .drawer-trade-headline { margin: 0 0 4px; font-size: 22px; font-weight: 700; color: var(--text); font-family: var(--mono); }
-  .drawer-trade-in { margin: 0; font-size: 14px; color: var(--text-dim); }
-  .drawer-trade-in .tkr { color: var(--accent); font-weight: 700; }
-  .drawer-trade-in .company-name { color: var(--text); }
   /* Owner punch list #14: "  |  " (two literal spaces each side, same
      convention as .fc-sep on the feed) replaces the old "·" between ticker
-     and company name inside drawers. */
-  .drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }
+     and company name inside drawers. (.drawer-trade-in went with the trade
+     drawer's duplicate "in TKR | Company" line — the identity card states the
+     entity now.) */
+  .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }
   .drawer-trade-identity { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
   .drawer-trade-party { min-width:0; border:1px solid var(--border); border-radius:10px; padding:9px 10px; background:color-mix(in srgb,var(--panel-2) 62%,transparent); }
   .drawer-trade-party .asset-cell,
@@ -621,7 +620,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   /* Directory table: sticky sortable headers inside scroll box.
-     No horizontal scroll: table-layout fixed + fit numeric/meta cols + fill name/asset. */
+     No horizontal scroll: shrink-wrapped numeric/meta cols + fill name/asset.
+     table-layout MUST stay auto: the "width:1%" shrink-to-fit idiom below is
+     an auto-layout idiom. Under table-layout:fixed a percentage is taken
+     literally, so col-fit/col-num collapsed to 1% of the table (~13px) and
+     their content — Branch • Party • State, Trades, Politicians — spilled out
+     of a wrap that clips overflow-x, leaving 2 of the 3 columns unreachable at
+     every width. */
   .people-table-wrap {
     max-height: min(70vh, 720px);
     overflow-x: hidden;
@@ -632,7 +637,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table {
     width: 100%;
     max-width: 100%;
-    table-layout: fixed;
+    table-layout: auto;
     border-collapse: separate;
     border-spacing: 0;
   }
@@ -668,8 +673,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     font-variant-numeric: tabular-nums;
   }
   .people-table .col-fill {
-    width: auto;
-    max-width: 0; /* forces remaining width so ellipsis works under table-layout:fixed */
+    width: 100%;  /* soaks up whatever the shrink-wrapped columns leave */
+    max-width: 0; /* caps its max-content contribution so the ellipsis engages */
   }
   .people-table .col-fill .cell-clip,
   .people-table .col-fill .member-cell,
@@ -1627,6 +1632,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; display: flex; flex-direction: column; min-height: 96px; }
     .card .k { font-size:11px; line-height:1.25; }
     .card .v { font-size:24px; }
+    /* Trends snapshot strip is 3-up on phones, so a tile is ~108px wide at
+       375px — a fixed 24px figure spilled a compact money value ("~$126.2m",
+       the widest usdC() can produce at 8 characters) clean outside its own
+       card, over the tile beside it. Size the figure off the tile itself:
+       19.5cqw of the card's content box keeps the widest value inside at any
+       phone width, and min() restores the full 24px as soon as the tile is
+       wide enough to hold it. */
+    #trKpis .card { container-type: inline-size; }
+    #trKpis .card .v { font-size: min(24px, 19.5cqw); }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
     .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
@@ -2427,8 +2441,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
+      <!-- The timeframe is named here, not just in the pill to the left: the same
+           politician reads 988 trades in this window and 22,832 all time in the
+           Directory, and an unlabelled count makes those look like a data bug. -->
       <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">matching trades</span><span class="stat-today"> &middot; <strong id="kpiToday">—</strong> today</span>
+        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span><span class="stat-today"> &middot; <strong id="kpiToday">—</strong> today</span>
       </div>
     </div>
     </div>
@@ -2577,8 +2594,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
-    <!-- KPI strip -->
-    <div class="tf-cap">Snapshot</div>
+    <!-- KPI strip. Every other Trends section stamps the active timeframe on its
+         own heading; this one did not, so "Trades 2,511" read as a corpus total
+         next to an all-time count of the same thing elsewhere. -->
+    <div class="tf-cap">Snapshot <em class="tr-window-label" style="font-style:italic; font-weight:400; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -2673,8 +2692,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out." title="Average performance vs the S&P 500 from each trade's public filing date to now. 0% means matched the S&P; +3% means it went up 3% more than the S&P. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average relative return</strong> (returns matching the S&amp;P = 0%).</p>
+      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out." title="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+      <!-- The one place the benchmark is spelled out for this surface: the rows,
+           the header tooltip and the row tooltips all say "excess" instead. -->
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </details>
 
@@ -2734,7 +2755,7 @@ ${speedProofSectionHtml(false)}
   <section class="view" id="view-people" role="tabpanel" aria-labelledby="tab-people" aria-hidden="true">
     <div class="section">
       <h3>Directory</h3>
-      <p class="sub" id="dirSub">Look up members of Congress and executive filers.&nbsp; Search by name, state (full or abbrev), or party.&nbsp; Click a column heading to sort; click a name for their profile and trades.</p>
+      <p class="sub" id="dirSub">Look up members of Congress and executive filers.&nbsp; Search by name, state (full or abbrev), or party.&nbsp; Click a column heading to sort; click a name for their profile and trades.&nbsp; Trade counts cover the full record, not the timeframe set on Trades or Trends.</p>
       <div class="seg dir-mode-seg" id="dirMode" role="group" aria-label="Directory mode">
         <button type="button" data-mode="people" class="on" onclick="setDirectoryMode('people')">People</button>
         <button type="button" data-mode="assets" onclick="setDirectoryMode('assets')">Assets</button>
@@ -2753,7 +2774,7 @@ ${speedProofSectionHtml(false)}
         <thead><tr id="peopleHead">
           <th class="col-fill" data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
           <th class="col-fit" data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -2761,8 +2782,8 @@ ${speedProofSectionHtml(false)}
       <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
         <thead><tr id="assetsHead">
           <th class="col-fill" data-sort="name" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count">Trades <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count">Politicians <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind"></span></th>
         </tr></thead>
         <tbody id="assetsBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -4377,6 +4398,11 @@ function setAll(sel, fn) {
   for (var i = 0; i < nodes.length; i++) fn(nodes[i], i);
 }
 function updateTradesCountMsg(shown) {
+  // Keep the timeframe stamp beside "matching trades" in step with the shared
+  // window select even when the visitor never opens Trends (deep link, refresh
+  // on the Trades tab) — an unlabelled or stale scope is what made the same
+  // politician's 988 and 22,832 look like contradictory numbers.
+  if (typeof stampWindowChips === 'function') stampWindowChips();
   if (!realDataLoaded) {
     setAll('[data-trades-count]', function (n) { n.textContent = ''; });
     setAll('[data-trades-page]', function (n) { n.textContent = ''; });
@@ -9148,7 +9174,7 @@ function renderPeopleDirectory(all) {
   syncPeopleSortIndicators();
   if (!rows.length) {
     body.innerHTML = stateRow(3, q || chamber ? 'No politicians match this filter.' : 'No politicians in the directory yet.');
-    if (countEl) countEl.textContent = '0 shown';
+    if (countEl) countEl.textContent = '0 politicians shown';
     return;
   }
   body.innerHTML = rows.map(function (m) {
@@ -9179,7 +9205,10 @@ function renderPeopleDirectory(all) {
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
-  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
+  // Say what the Trades column counts. It is the politician's FULL record, so
+  // it deliberately disagrees with the Trades tab, whose count is scoped to the
+  // active time window (Ro Khanna: 22,832 here, 988 in a 3-month window).
+  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' politicians\u00a0\u00a0\u2022\u00a0\u00a0trade counts are all time';
 }
 /* Single-letter party for the compact Branch • Party • State cell. */
 function dirPartyLetter(p) {
@@ -9199,8 +9228,8 @@ function filterPeopleDirectory() {
 
 /* ---- Directory People|Assets toggle ---- */
 var DIRECTORY_MODE = 'people';
-var DIR_SUB_PEOPLE = 'Look up members of Congress and executive filers.\\u00a0 Search by name, state (full or abbrev), or party.\\u00a0 Click a column heading to sort; click a name for their profile and trades.';
-var DIR_SUB_ASSETS = 'Every ticker Congress has disclosed a trade in.\\u00a0 Search by ticker or company name.\\u00a0 Click a column heading to sort; click a row to open its profile.';
+var DIR_SUB_PEOPLE = 'Look up members of Congress and executive filers.\\u00a0 Search by name, state (full or abbrev), or party.\\u00a0 Click a column heading to sort; click a name for their profile and trades.\\u00a0 Trade counts cover the full record, not the timeframe set on Trades or Trends.';
+var DIR_SUB_ASSETS = 'Every ticker Congress has disclosed a trade in.\\u00a0 Search by ticker or company name.\\u00a0 Click a column heading to sort; click a row to open its profile.\\u00a0 Trade counts cover the full record, not the timeframe set on Trades or Trends.';
 function setDirectoryMode(mode) {
   if (mode !== 'people' && mode !== 'assets') return;
   DIRECTORY_MODE = mode;
@@ -9324,7 +9353,7 @@ function renderAssetsDirectory(all) {
   syncAssetsSortIndicators();
   if (!rows.length) {
     body.innerHTML = stateRow(3, q ? 'No assets match this filter.' : 'No assets in the directory yet.');
-    if (countEl) countEl.textContent = '0 shown';
+    if (countEl) countEl.textContent = '0 assets shown';
     return;
   }
   body.innerHTML = rows.map(function (a) {
@@ -9347,7 +9376,9 @@ function renderAssetsDirectory(all) {
       '<td class="col-num muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
       '<td class="col-num muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
   }).join('');
-  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' shown';
+  // Same scope note as the People table: these are whole-record totals, not the
+  // Trends/Trades time window.
+  if (countEl) countEl.textContent = fmtCount(rows.length) + ' of ' + fmtCount((all || []).length) + ' assets\u00a0\u00a0\u2022\u00a0\u00a0trade counts are all time';
 }
 function filterAssetsDirectory() {
   if (!ASSETS_CACHE || !ASSETS_CACHE.assets) {
@@ -9714,7 +9745,7 @@ function loadTrPerformers() {
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
-        '<td title="Average relative performance vs S&amp;P 500 since filing date; 0% means matched the S&amp;P, +3% means it beat the S&amp;P by 3%.">' + pctSigned(r.avgExcessReturn) + '</td></tr>';
+        '<td title="Average excess return since the filing date; 0% matched the benchmark, +3% beat it by 3%.">' + pctSigned(r.avgExcessReturn) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(2, 'Could not load: ' + e.message); });
 }
@@ -10078,7 +10109,24 @@ document.addEventListener('click', function (e) {
   u.searchParams.set(b.getAttribute('data-copy-param'), b.getAttribute('data-copy-value') || '');
   copyText(u.toString());
 });
-var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
+/* Client-side mirror of TICKER_RESOLVED_SQL (src/analytics/sql.ts): the server
+   only treats a ticker as resolved when it is non-empty and not one of the
+   sentinel strings a filing uses for "this has no symbol". Trade rows are a raw
+   passthrough of row.ticker with no sentinel filtering, so anything in the UI
+   that promises symbol-dependent data (price, performance, company profile)
+   has to apply the same test first. */
+var TICKER_SENTINELS = { 'NONE': 1, '--': 1, 'N/A': 1, 'NA': 1, 'NULL': 1, '—': 1 };
+function tickerResolved(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return false;
+  if (isScannedPdfPlaceholder(s)) return false;
+  return !TICKER_SENTINELS[s.toUpperCase()];
+}
+/* Shown ONLY when the row has a resolved ticker but no cached price for it yet
+   — the one case where performance genuinely is coming. Callers must gate on
+   tickerResolved() first: for a muni, a private stake, or any other row with no
+   symbol there is nothing to price, ever, and promising otherwise is a lie. */
+var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance appear here once market data for this asset is cached.</div>';
 var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
 var OPTION_PERF_NOTE = '<div class="tier-gate-note">Performance isn\\'t shown for options — the return depends on strike, expiry, and exercise, which the filing doesn\\'t disclose.</div>';
 /* Render the performance line from /api/analytics/performance. Frames a sale as
@@ -10090,7 +10138,9 @@ function perfLineHtml(d, txType) {
   function perfBlock(label, perf, anchorPrice) {
     if (!perf) return '';
     var cls = perf.assetReturn > 0 ? 'pos' : perf.assetReturn < 0 ? 'neg' : '';
-    var excess = perf.excessReturn == null ? '—' : (perf.excessReturn > 0 ? '+' : '') + (perf.excessReturn * 100).toFixed(1) + '% vs S&amp;P';
+    // The benchmark is named once, by the chip's own leading label — the excess
+    // figure sits right beside it and does not restate it.
+    var excess = perf.excessReturn == null ? '—' : (perf.excessReturn > 0 ? '+' : '') + (perf.excessReturn * 100).toFixed(1) + '% excess';
     var prices = (anchorPrice != null && d.currentPrice != null)
       ? '<div class="chip muted">$' + Number(anchorPrice).toFixed(2) + ' → $' + Number(d.currentPrice).toFixed(2) + (d.currentPriceDate ? ' (' + esc(d.currentPriceDate) + ')' : '') + '</div>'
       : '';
@@ -10154,9 +10204,19 @@ function looksLikeRawTransactionLine(text) {
     /\\b(P|S|E|purchase|sale|exchange)\\b/i.test(t) &&
     /\\$[\\d,]+/.test(t);
 }
-function filingNotesHtml(raw) {
+/* Collapse a string to letters+digits so "Energy Northwest WA Elec Sr A RV BE/R"
+   and "Energy Northwest Wa Elec Sr A RV Be/R" compare equal. */
+function entityFingerprint(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+/* filingNotesHtml(raw, assetName, ticker): assetName/ticker are optional and
+   only used to suppress a "note" that is nothing but the entity restated — the
+   drawer already states the asset once, in its identity card. */
+function filingNotesHtml(raw, assetName, ticker) {
   if (!raw) return '';
   var text = cleanNoteValue(raw);
+  var fp = entityFingerprint(text);
+  if (fp && (fp === entityFingerprint(assetName) || fp === entityFingerprint(ticker))) return '';
   if (isScannedPdfPlaceholder(text)) {
     return '<p class="filing-note">Historical source note: this row came from an unparsed scanned filing. It needs official source backfill before asset-level details are reliable.</p>';
   }
@@ -10328,7 +10388,9 @@ function openAsset(ticker) {
     var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class="dot-sep">  |  </span>' + esc(companyName) : '');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
-	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
+	      // These come from the windowed stats block, same as the KPI strip below —
+	      // name the window here too so the subtitle is not read as an all-time total.
+	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  ' + esc(tickerWindowLabel) + '</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
@@ -10374,13 +10436,14 @@ function tickerBacktestHtml(d) {
     var cell = excess == null
       ? '<span class="muted">n&lt;' + (h.minN || 5) + '</span>'
       : '<span class="net ' + (excess > 0 ? 'pos' : excess < 0 ? 'neg' : '') + '">' +
-          (excess > 0 ? '+' : '') + (excess * 100).toFixed(1) + '% vs S&amp;P</span>' +
+          (excess > 0 ? '+' : '') + (excess * 100).toFixed(1) + '% excess</span>' +
           (ret != null ? ' <span class="muted">(' + (ret > 0 ? '+' : '') + (ret * 100).toFixed(1) + '% asset)</span>' : '');
     return '<div class="hbar ledger hz" style="margin:6px 0"><div class="hlabel">' + esc(hzLabel(h.horizonDays || h.days || h.horizon)) +
       '</div><div class="hval">' + cell +
       ' <span class="muted">· n=' + n + '</span></div></div>';
   }).join('');
-  return '<p class="note" style="margin:0 0 8px">After disclosed <strong>buys</strong> (not sells), equal-weighted forward return vs the S&amp;P. Observational — not a forecast. Cohort: ' +
+  // Names the benchmark once for this section; the rows above just say "excess".
+  return '<p class="note" style="margin:0 0 8px">After disclosed <strong>buys</strong> (not sells), equal-weighted forward return in excess of the S&amp;P 500.&nbsp; Observational — not a forecast.&nbsp; Cohort: ' +
     fmtCount(total) + ' buy event' + (total === 1 ? '' : 's') + '.</p>' + rows;
 }
 
@@ -10426,7 +10489,10 @@ function openMember(filerId) {
     openDrawer(
       '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
-      '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
+      // This drawer is always loaded with window=all, so its figures cover the
+      // whole record — the Trades tab's own count is scoped to the active time
+      // window and will read much smaller for the same politician. Say which.
+      '<div class="drawer-section"><h3>Trade Stats (All Time)</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
 	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
@@ -10468,7 +10534,7 @@ function memberPerfHtml(d) {
     var sizeStyles = isDeemphasized ? 'font-size: 14px; opacity: 0.8;' : '';
     return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.85;' : '') + '">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
-      '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess vs S&amp;P</span></div>' +
+      '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess</span></div>' +
       '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
         ' · Avg return ' + pctSigned(leg.avgReturn) +
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
@@ -10480,7 +10546,7 @@ function memberPerfHtml(d) {
   var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';
   return legBlock(
       'Their timing (approx.)',
-      'Size-weighted average excess return of disclosed equity buys from the trade date to now vs the S&P. Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
+      'Size-weighted average excess return of disclosed equity buys from the trade date to now.  Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
       trade,
       true
     ) +
@@ -10502,22 +10568,15 @@ function openTrade(row) {
     ? '<span class="clickable" data-member="' + esc(row.filerId) + '" title="Open politician">' + esc(fmtName(row.member)) + '</span>'
     : esc(fmtName(row.member));
   var sideWord = row.type === 'B' || row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
-  var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
+  var hasTicker = tickerResolved(row.ticker);
+  var displayTicker = hasTicker ? String(row.ticker).trim() : '';
   var displayAsset = assetNameFallback(cleanAsset(row.asset || ''), row);
-  // Trade drawer leads with the TRANSACTION (kicker + amount). Ticker/company stay
-  // secondary but remain clickable so they open the company drawer anywhere.
-  var inName = (displayTicker || displayAsset)
-    ? '<p class="drawer-trade-in">in ' +
-        (displayTicker
-          ? '<span class="tkr clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayTicker) + '</span>'
-          : '') +
-        (displayTicker && displayAsset ? '<span class="dot-sep">  |  </span>' : '') +
-        (displayAsset
-          ? (displayTicker
-              ? '<span class="company-name clickable" data-asset="' + esc(displayTicker) + '" title="Open company">' + esc(displayAsset) + '</span>'
-              : '<span class="company-name">' + esc(displayAsset) + '</span>')
-          : '') + '</p>'
-    : '';
+  // Trade drawer leads with the TRANSACTION (kicker + amount); the entity is
+  // stated ONCE, as the identity card below. The old "in TKR | Company" line
+  // that sat here repeated, verbatim, the card two rows down — with the sticky
+  // topbar and the filing note that made four copies of the same asset name on
+  // one phone screen. Identity belongs to the card; the topbar keeps only a
+  // short breadcrumb token for when the hero has scrolled away.
   // Owner punch list #13(a)/(c): the "POLITICIAN"/"ASSET" eyebrow labels were
   // dropped (self-evident from the avatar+name / logo+ticker below them), and
   // Owner (Self/Spouse/Joint) moved up beside the politician's name instead
@@ -10557,7 +10616,7 @@ function openTrade(row) {
   var head =
     '<div class="drawer-trade-head">' +
       '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
-      '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' + inName +
+      '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' +
       '<div class="drawer-trade-identity">' + personCard + assetCard + '</div>' +
       entityActions +
     '</div>';
@@ -10576,41 +10635,52 @@ function openTrade(row) {
       (row.source === 'manual' ? kvRow('Source', 'Manual Entry') : '') +
       (row.cleaningNote ? kvRow('Notes', esc(plainCleaningNote(row.cleaningNote))) : '') +
       '</dl><div id="tradeSource"></div></div>';
+  // Performance needs a symbol to price against. A muni, a private stake, a
+  // rental property or anything else filed without a ticker can NEVER be
+  // scored, so the whole section is dropped rather than left showing a promise
+  // that will never come true. Options keep their own honest note: the symbol
+  // is known, the return simply isn't derivable from the filing.
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
   // Owner punch list #13(e): Performance now leads, directly under the
   // name+asset header block, ahead of Trade Details.
-  var perf = '<div class="drawer-section first"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  var perf = hasTicker
+    ? '<div class="drawer-section first"><h3>Performance Since ' + (row.type === 'S' ? 'Sell' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>'
+    : '';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
   var hasLocalRef = !!(rowRef.sector || rowRef.marketCap != null || rowRef.marketCapBucket || rowRef.country || rowRef.exchangeShort || rowRef.assetClass);
-  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3><div id="tradeCompany">' + companySectionHtml(rowRef) + '</div></div>' : '';
-  var notesBody = row.rawText ? filingNotesHtml(row.rawText) : '';
+  var profile = hasTicker ? '<div class="drawer-section"><h3>Company</h3><div id="tradeCompany">' + companySectionHtml(rowRef) + '</div></div>' : '';
+  // Filing notes that only echo the asset name are a third copy of the entity,
+  // not a note — drop them (see the identity comment at the top of openTrade).
+  var notesBody = row.rawText ? filingNotesHtml(row.rawText, displayAsset, displayTicker) : '';
   var notes = notesBody ? '<div class="drawer-section"><h3>Filing Notes</h3>' + notesBody + '</div>' : '';
-  var links = '<div class="drawer-section">' +
-    (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View All Trades of ' + esc(row.ticker) + ' →</a>' : '') +
-    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(fmtName(row.member)) + ' →</a>' : '') +
-    (row.id ? copyLinkHtml('trade', row.id, 'Copy link to this trade') : '') +
-    '</div>';
+  // "View All Trades of X" / "by Y" opened exactly the same company/politician
+  // drawer as the Company Details / Politician Details buttons in the header —
+  // one destination, two controls, and another restatement of both names. The
+  // header buttons win; only the share link stays here.
+  var links = row.id ? '<div class="drawer-section">' + copyLinkHtml('trade', row.id, 'Copy link to this trade') + '</div>' : '';
   // Owner punch list #13(f): sticky-header one-liner instead of an empty bar,
-  // e.g. "SOLD  $1k - $15k  of  ARCC  |  Ares Capital Corporation".
-  var topbarAssetBits = [];
-  if (displayTicker) topbarAssetBits.push(esc(displayTicker));
-  if (displayAsset && displayAsset !== displayTicker) topbarAssetBits.push(esc(displayAsset));
+  // e.g. "SOLD  $1k - $15k  of  ARCC". One entity token only: the ticker when
+  // there is one, the asset name when there isn't — the hero identity card
+  // carries the full "TKR  |  Company" pairing.
+  var topbarAsset = displayTicker || displayAsset || '';
   var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +
-    (topbarAssetBits.length ? ' <span class="muted">of</span> ' + topbarAssetBits.join('<span class="dot-sep">  |  </span>') : '');
+    (topbarAsset ? ' <span class="muted">of</span> ' + esc(topbarAsset) : '');
   openDrawer(head + perf + summary + profile + notes + links, topbarTitle);
   // Owner punch list #15: the ticker drawer already resolves full company
   // facts via /api/analytics/ticker/:t (ref); reuse that same source instead
   // of leaving the placeholder up when this row's own ref fields are empty
   // (enrichment lag, or a row that predates it) even though the SAME
   // company's own ticker drawer has the data.
-  if (row.ticker && !hasLocalRef) {
-    aGet('ticker/' + encodeURIComponent(row.ticker)).then(function (d) {
+  if (hasTicker && !hasLocalRef) {
+    aGet('ticker/' + encodeURIComponent(displayTicker)).then(function (d) {
       var cEl = el('tradeCompany');
       if (cEl && d && d.ref) cEl.innerHTML = companySectionHtml(d.ref);
     }).catch(function () {});
   }
   // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
-  if (row.id && !row.isOption) {
+  // No resolved ticker means no Performance section was rendered at all, so
+  // there is nothing to ask the server for either.
+  if (row.id && hasTicker && !row.isOption) {
     aGet('performance/' + encodeURIComponent(row.id)).then(function (d) {
       var pEl = el('tradePerf'); if (pEl) pEl.innerHTML = perfLineHtml(d, row.type);
     }).catch(function () {});
