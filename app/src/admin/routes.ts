@@ -1012,9 +1012,29 @@ function reviewAssetTypeName(e: EditedTx): string | null {
 // --- Politician photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
 // buildLegislatorMap/normName/Legislator live in ../enrichment/legislators.ts
 // (shared with identitySync.ts's bioguide backfill + display-name sync).
+//
+// Prefer 450x550 over the historical 225x275 — ~3x more pixels, still well
+// under 250KB/image, sharp enough for retina avatars and the politician drawer.
+// `original` (~500KB) is available but overkill for UI faces.
 
-function photoUrlFor(bioguide: string): string {
-  return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
+export const LEGISLATOR_PHOTO_SIZE = '450x550';
+const LEGISLATOR_PHOTO_SIZE_LEGACY = '225x275';
+
+export function photoUrlFor(bioguide: string, size: string = LEGISLATOR_PHOTO_SIZE): string {
+  return `https://unitedstates.github.io/images/congress/${size}/${bioguide}.jpg`;
+}
+
+/** True when the stored URL is missing, legacy-size, or a different bioguide path. */
+export function photoUrlNeedsUpgrade(current: string | null | undefined, bioguide: string): boolean {
+  const want = photoUrlFor(bioguide);
+  const have = (current ?? '').trim();
+  if (!have) return true;
+  if (have === want) return false;
+  // Upgrade any legacy 225x275 unitedstates URL for this bioguide.
+  if (have.includes(`/images/congress/${LEGISLATOR_PHOTO_SIZE_LEGACY}/${bioguide}.jpg`)) return true;
+  // Replace a wrong-bioguide or other CDN path with the canonical one.
+  if (have.includes('unitedstates.github.io/images/congress/')) return true;
+  return false;
 }
 
 /**
@@ -1333,33 +1353,54 @@ async function applyMemberFilerMerge(
 
 export async function runPhotoEnrichment(
   env: Env,
-): Promise<{ filers: number; matched: number; unmatched: number }> {
+): Promise<{ filers: number; matched: number; unmatched: number; upgraded: number }> {
   const map = await buildLegislatorMap();
-  const filers = await all<{ bioguide_id: string; full_name: string | null }>(
+  // Also index by bioguide so filers that already carry resolved_bioguide_id
+  // (from identity sync) get a headshot even when free-text name matching fails.
+  const byBioguide = new Map<string, { bioguide: string; party: string | null; state: string | null; district: string | null }>();
+  for (const m of map.values()) {
+    if (!byBioguide.has(m.bioguide)) byBioguide.set(m.bioguide, m);
+  }
+  const filers = await all<{
+    bioguide_id: string;
+    full_name: string | null;
+    photo_url: string | null;
+    resolved_bioguide_id: string | null;
+  }>(
     env.DB,
-    'SELECT bioguide_id, full_name FROM filers',
+    'SELECT bioguide_id, full_name, photo_url, resolved_bioguide_id FROM filers',
   );
   const updates: D1PreparedStatement[] = [];
   let matched = 0;
+  let upgraded = 0;
   for (const f of filers) {
     // Prefer cleaned/alias-normalized name so "Rohit Khanna" matches "Ro Khanna"
-    // in congress-legislators (official_full / nickname keys).
+    // in congress-legislators (official_full / nickname keys). Fall back to an
+    // already-resolved bioguide so identity sync + photo enrichment compose.
     const cleaned = cleanFilerName(f.full_name);
-    const match =
+    const nameMatch =
       map.get(normName(cleaned || f.full_name)) ??
       map.get(normName(f.full_name));
+    const resolved = (f.resolved_bioguide_id ?? '').trim().toUpperCase();
+    const match =
+      nameMatch ??
+      (resolved ? byBioguide.get(resolved) ?? null : null);
     if (!match) continue;
     matched++;
+    const nextPhoto = photoUrlFor(match.bioguide);
+    if (photoUrlNeedsUpgrade(f.photo_url, match.bioguide)) upgraded++;
     updates.push(
       env.DB
-        .prepare("UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?), resolved_bioguide_id = COALESCE(NULLIF(resolved_bioguide_id, ''), ?) WHERE bioguide_id = ?")
-        .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, match.bioguide, f.bioguide_id),
+        .prepare(
+          "UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?), resolved_bioguide_id = COALESCE(NULLIF(resolved_bioguide_id, ''), ?) WHERE bioguide_id = ?",
+        )
+        .bind(nextPhoto, match.party, match.state, match.district, match.bioguide, f.bioguide_id),
     );
   }
   for (let i = 0; i < updates.length; i += 50) {
     await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
-  return { filers: filers.length, matched, unmatched: filers.length - matched };
+  return { filers: filers.length, matched, unmatched: filers.length - matched, upgraded };
 }
 
 interface BenchmarkGroundTruthTx {
@@ -5011,11 +5052,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //   • extraction_pending_local / classified (wait window no longer gates —
   //     expired waits used to hide the whole backlog once kimi/local workers
   //     stalled)
-  //   • needs_review extract_empty scanned PDFs (server_cpu/Tesseract empty
-  //     reads that need Grok vision re-transcription)
-  // Skips resolved-review, live-transaction docs, and local_vision_exhausted
-  // parks (worker retry-cap terminal class — #1575 vision-spend bucket) so
-  // workers don't burn subscription quota on no-ops.
+  //   • needs_review extract_empty / ocr_unusable scanned PDFs (server_cpu
+  //     letterhead floods — reclaim for local vision, not human review)
+  //   • error + stored raw + no live txs (honest reject of garbage OCR must
+  //     still be re-claimable by Mac/server_cpu vision — 2026-08-10 drain)
+  // Skips published live-transaction docs and local_vision_exhausted parks
+  // (worker retry-cap terminal class — #1575 vision-spend bucket) so workers
+  // don't burn subscription quota on no-ops.
   //
   // STORED COPY ONLY (2026-08-10): requires raw_object_key. Workers must pull
   // bytes via GET /filings/:docId/raw — never re-hit Clerk/eFD/OGE from the
@@ -5042,7 +5085,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             AND f.raw_object_key IS NOT NULL
             AND TRIM(f.raw_object_key) != ''
             AND (
-              f.ingest_status IN ('extraction_pending_local', 'classified')
+              f.ingest_status IN ('extraction_pending_local', 'classified', 'error')
               OR (
                 f.ingest_status = 'needs_review'
                 AND EXISTS (
@@ -5052,6 +5095,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                      AND (
                        rq.reason LIKE '%extract_empty%'
                        OR rq.reason LIKE '%no_transactions_extracted%'
+                       OR rq.reason LIKE '%ocr_unusable%'
+                       OR rq.reason LIKE '%form_chrome%'
                      )
                      AND rq.reason NOT LIKE '%local_vision_exhausted%'
                 )
@@ -5066,7 +5111,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             )
             AND NOT EXISTS (
               SELECT 1 FROM review_queue rq
-               WHERE rq.doc_id = f.doc_id AND rq.resolved = 1
+               WHERE rq.doc_id = f.doc_id
+                 AND rq.resolved = 1
+                 AND rq.resolution_kind = 'published'
             )
             AND NOT EXISTS (
               SELECT 1 FROM transactions tx
@@ -5076,7 +5123,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             CASE f.ingest_status
               WHEN 'extraction_pending_local' THEN 0
               WHEN 'classified' THEN 1
-              ELSE 2
+              WHEN 'error' THEN 2
+              ELSE 3
             END,
             f.first_seen_at DESC
           LIMIT 50`,

@@ -45,6 +45,12 @@ export function parseAmountRange(raw: string): AmountRange {
   const text = (raw || '').trim();
   if (!text) return { min: null, max: null, exact: false };
 
+  // Prefer dollar-amount range tokens embedded in freeform OCR / PTR raw lines.
+  // Full-line split-on-hyphen is unsafe: dates like "12/1/27" and CUSIPs produce
+  // false "exact" brackets and false invalid_amount flags downstream.
+  const embedded = extractEmbeddedDollarRanges(text);
+  if (embedded) return embedded;
+
   // Open-ended top tier: "$50,000,001 +" / "$50,000,000+" / "Over $X".
   if (/\+\s*$/.test(text) || /\bover\b/i.test(text) || /\bgreater than\b/i.test(text)) {
     const nums = (text.match(/[\d,]+(?:\.\d+)?/g) ?? []).map((t) => parseDollar(t)).filter(isNum);
@@ -55,27 +61,30 @@ export function parseAmountRange(raw: string): AmountRange {
     }
   }
 
-  // Split on the range separator (hyphen, en/em dash, or the word "to").
-  const parts = text
-    .split(/\s*(?:-|–|—|to|through|–|—)\s*/i)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  // Split on the range separator (hyphen, en/em dash, or the word "to") only for
+  // short, amount-shaped strings (not multi-field PTR raw lines).
+  if (text.length <= 64 && /\$|^\d/.test(text)) {
+    const parts = text
+      .split(/\s*(?:-|–|—|to|through)\s*/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
 
-  if (parts.length >= 2) {
-    const lo = parseDollar(parts[0]);
-    const hi = parseDollar(parts[parts.length - 1]);
-    if (lo !== null && hi !== null) {
-      const exactB = matchBracket(lo, hi);
-      if (exactB) return { min: exactB.min, max: exactB.max, exact: true };
-      const snapped = snapToBracket(lo, hi);
-      if (snapped) return { min: snapped.min, max: snapped.max, exact: true };
-      return { min: lo, max: hi, exact: false };
+    if (parts.length >= 2) {
+      const lo = parseDollar(parts[0]);
+      const hi = parseDollar(parts[parts.length - 1]);
+      if (lo !== null && hi !== null) {
+        const exactB = matchBracket(lo, hi);
+        if (exactB) return { min: exactB.min, max: exactB.max, exact: true };
+        const snapped = snapToBracket(lo, hi);
+        if (snapped) return { min: snapped.min, max: snapped.max, exact: true };
+        return { min: lo, max: hi, exact: false };
+      }
     }
   }
 
   // Single value present — try to find the bracket whose min matches.
   const single = parseDollar(text);
-  if (single !== null) {
+  if (single !== null && text.length <= 32) {
     const byMin = STOCK_ACT_BRACKETS.find((b: AmountBracket) => b.min === single);
     if (byMin) return { min: byMin.min, max: byMin.max, exact: true };
     const snapped = snapToBracket(single, single);
@@ -84,6 +93,42 @@ export function parseAmountRange(raw: string): AmountRange {
   }
 
   return { min: null, max: null, exact: false };
+}
+
+/**
+ * Find `$1,001 - $15,000` (or open top-tier) style tokens inside a longer line.
+ * Returns the last exact canonical match when several appear (PTR rows put the
+ * amount near the end after dates / asset text).
+ */
+function extractEmbeddedDollarRanges(text: string): AmountRange | null {
+  // Open top tier with a dollar sign nearby.
+  const open = text.match(/\$\s*50[,.]?000[,.]?001\s*\+?|over\s+\$?\s*50[,.]?000[,.]?000/i);
+  if (open) {
+    return { min: 50000001, max: null, exact: true };
+  }
+
+  const re =
+    /\$\s*([\d,]+(?:\.\d+)?)\s*(?:-|–|—|to|through)\s*\$?\s*([\d,]+(?:\.\d+)?)/gi;
+  let lastExact: AmountRange | null = null;
+  let lastAny: AmountRange | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const lo = parseDollar(m[1]);
+    const hi = parseDollar(m[2]);
+    if (lo === null || hi === null) continue;
+    const exactB = matchBracket(lo, hi);
+    if (exactB) {
+      lastExact = { min: exactB.min, max: exactB.max, exact: true };
+      continue;
+    }
+    const snapped = snapToBracket(lo, hi);
+    if (snapped) {
+      lastAny = { min: snapped.min, max: snapped.max, exact: true };
+    } else {
+      lastAny = { min: lo, max: hi, exact: false };
+    }
+  }
+  return lastExact ?? lastAny;
 }
 
 /** Snap an approximate [lo,hi] onto the nearest canonical bracket. */

@@ -334,7 +334,15 @@ export async function selectTickersNeedingPrices(
        FROM transactions t
        LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
       WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
-        AND (sr.latest_price_date IS NULL OR sr.latest_price_date < ?)
+        AND (
+          sr.latest_price_date IS NULL
+          OR sr.latest_price_date < ?
+          -- Do NOT re-select solely on current_price IS NULL: that would
+          -- perpetually re-queue tickers that already have a fresh
+          -- latest_price_date (termination guarantee). Stamp missing
+          -- current_price from local price_eod via backfillCurrentPricesFromEod
+          -- before the peer refresh instead.
+        )
         AND NOT (
           COALESCE(sr.price_unavailable, 0) <> 0
           AND sr.price_checked_at IS NOT NULL
@@ -349,6 +357,47 @@ export async function selectTickersNeedingPrices(
     [freshThrough, firstUnavailableCutoff, unavailableCutoff, limit],
   );
   return rows.map((r) => r.ticker);
+}
+
+/**
+ * Cheap local repair: stamp securities_ref.current_price / current_price_date /
+ * latest_price_date from the newest price_eod row when those anchors are NULL
+ * but history already exists. No provider calls. Fixes the common bulk-load /
+ * partial-import gap where EOD rows landed without the display-critical
+ * current-price columns, which starves performance leaderboards and the UI.
+ */
+export async function backfillCurrentPricesFromEod(
+  env: Env,
+): Promise<{ currentPriceFilled: number; latestDateFilled: number }> {
+  const latest = await run(
+    env.DB,
+    `UPDATE securities_ref
+        SET latest_price_date = (
+          SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
+        )
+      WHERE latest_price_date IS NULL
+        AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
+  );
+  const current = await run(
+    env.DB,
+    `UPDATE securities_ref
+        SET current_price = (
+              SELECT pe.close FROM price_eod pe
+               WHERE pe.ticker = securities_ref.ticker
+               ORDER BY pe.date DESC LIMIT 1
+            ),
+            current_price_date = (
+              SELECT pe.date FROM price_eod pe
+               WHERE pe.ticker = securities_ref.ticker
+               ORDER BY pe.date DESC LIMIT 1
+            )
+      WHERE current_price IS NULL
+        AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
+  );
+  return {
+    currentPriceFilled: current.meta?.changes ?? 0,
+    latestDateFilled: latest.meta?.changes ?? 0,
+  };
 }
 
 export async function runPriceRefresh(
