@@ -51,35 +51,98 @@ import { applyOgMeta, resolveOgMeta } from './ogMeta.ts';
  * and a privacy-policy update. Until those exist, shipping nothing is the
  * honest behaviour.
  */
-/** Best-effort filer display name for politician share cards (never throws). */
-async function lookupMemberDisplayName(env: Env, memberId: string): Promise<string | null> {
+/** What a politician share card needs about a filer: who they are and their seat. */
+type MemberShareIdentity = {
+  displayName: string | null;
+  /** Pre-formatted seat descriptor for `resolveOgMeta`'s `memberDistrict`. */
+  district: string | null;
+};
+
+/**
+ * Format a filer's seat as the compact descriptor politician share cards render
+ * in parentheses after the name — `D-CA-17`, `R-AL-Sen`, `D-DE-AL`.
+ *
+ * Shape notes, all confirmed against live `filers` rows:
+ *   - `party` is a full word ('Democrat' / 'Republican' / 'Independent') or NULL
+ *     for ~14% of filers, so the initial is optional rather than assumed.
+ *   - `district` is NULL for senators and executive-branch filers, and the
+ *     STRING '0' for at-large House seats (AK, DE, VT, WY, …) — '0' must render
+ *     'AL', never a literal district zero.
+ *   - Executive-branch filers hold no seat at all and carry no state, so they
+ *     get no parenthetical rather than a lone party letter.
+ *
+ * Exported for unit tests; there is no D1 dependency in here on purpose.
+ */
+export function formatMemberSeat(
+  chamber: string | null | undefined,
+  party: string | null | undefined,
+  state: string | null | undefined,
+  district: string | null | undefined,
+): string | null {
+  const ch = (chamber || '').trim().toLowerCase();
+  const st = (state || '').trim().toUpperCase();
+  // No seat to describe: executive filers, or any row missing a state.
+  if (!st || ch === 'executive') return null;
+
+  const partyInitial = (party || '').trim().charAt(0).toUpperCase();
+  const dist = (district || '').trim();
+
+  let seat = '';
+  if (ch === 'senate') {
+    seat = 'Sen';
+  } else if (dist) {
+    // '0' (and '00') are the at-large encodings, not a district numbered zero.
+    seat = /^0+$/.test(dist) ? 'AL' : dist.replace(/^0+(?=\d)/, '');
+  }
+
+  return [partyInitial, st, seat].filter(Boolean).join('-');
+}
+
+/** Best-effort filer identity for politician share cards (never throws). */
+async function lookupMemberShareIdentity(env: Env, memberId: string): Promise<MemberShareIdentity> {
+  const empty: MemberShareIdentity = { displayName: null, district: null };
   const id = memberId.trim();
-  if (!id || !env.DB) return null;
+  if (!id || !env.DB) return empty;
   try {
     const row = await env.DB
       .prepare(
-        'SELECT full_name FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
+        'SELECT full_name, chamber, party, state, district FROM filers ' +
+          'WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
       )
       .bind(id)
-      .first<{ full_name: string | null }>();
-    const name = row?.full_name?.trim();
-    return name || null;
+      .first<{
+        full_name: string | null;
+        chamber: string | null;
+        party: string | null;
+        state: string | null;
+        district: string | null;
+      }>();
+    if (!row) return empty;
+    return {
+      displayName: row.full_name?.trim() || null,
+      district: formatMemberSeat(row.chamber, row.party, row.state, row.district),
+    };
   } catch {
-    return null;
+    return empty;
   }
 }
 
 async function renderDashboard(env: Env, requestUrl: string): Promise<string> {
   const logoDisplay = await getLogoDisplay(env);
   let memberDisplayName: string | null = null;
+  let memberDistrict: string | null = null;
   try {
     const u = new URL(requestUrl);
     const member = (u.searchParams.get('member') || '').trim();
-    if (member) memberDisplayName = await lookupMemberDisplayName(env, member);
+    if (member) {
+      const identity = await lookupMemberShareIdentity(env, member);
+      memberDisplayName = identity.displayName;
+      memberDistrict = identity.district;
+    }
   } catch {
     /* ignore bad URL */
   }
-  const og = resolveOgMeta(requestUrl, 'https://congress.trade', { memberDisplayName });
+  const og = resolveOgMeta(requestUrl, 'https://congress.trade', { memberDisplayName, memberDistrict });
   let html = DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
     .split('%GA_SCRIPT%').join('');
