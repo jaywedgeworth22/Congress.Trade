@@ -234,33 +234,73 @@ export async function runRetentionSweep(env: Env, now = new Date()): Promise<Rec
  * safe to prune. Delivery bookkeeping rows (deliveries / delivery_outbox) that
  * reference the batch's transactions are deleted alongside them so the sweep
  * does not orphan delivery rows pointing at removed transactions.
+ *
+ * TWO SAFETY RULES (2026-08-11), both learned the hard way:
+ *
+ * 1. THE ARCHIVED DOCUMENT IS NEVER DESTROYED BY DEFAULT.
+ *    This sweep used to hard-delete the R2 object with no export, no
+ *    tombstone, no bucket versioning and no flag — the stored copy is the
+ *    ONLY durable artifact in the system (everything else is recomputed from
+ *    it), and serving is stored-copy-only, so losing it is unrecoverable: the
+ *    filing cannot be re-read, re-extracted or re-reviewed, ever. The DB rows
+ *    can be rebuilt from the document; the document cannot be rebuilt from the
+ *    rows. Deleting the object is now opt-in via RETENTION_DELETE_RAW_OBJECTS.
+ *
+ * 2. NEVER PRUNE SOMETHING WE ONLY JUST INGESTED.
+ *    The predicate keys on filed_date, so a 2020 PTR discovered by a
+ *    historical backfill TODAY was immediately eligible — the backfill lanes
+ *    (houseCrawler / senateCrawler / seed) exist precisely to ingest filings
+ *    older than the cutoff, so the two lanes fought each other: backfill
+ *    ingests, next day's sweep destroys, forever. Rows first seen within
+ *    RETENTION_MIN_AGE_DAYS are now protected regardless of filed_date.
  */
+export const RETENTION_MIN_AGE_DAYS = 30;
+
+function retentionDeleteRawObjectsEnabled(): boolean {
+  const raw =
+    (typeof Deno !== 'undefined' ? Deno.env.get('RETENTION_DELETE_RAW_OBJECTS') : undefined) ??
+    (typeof process !== 'undefined' ? process.env?.RETENTION_DELETE_RAW_OBJECTS : undefined) ??
+    '';
+  return /^(1|true|yes|on)$/i.test(String(raw).trim());
+}
+
 export async function runFilingRetentionSweep(env: Env, now = new Date()): Promise<number> {
   const fiveYearsAgo = new Date(now.getTime() - 5 * 365 * 86_400_000);
   const cutoff = fiveYearsAgo.toISOString().slice(0, 10); // 'YYYY-MM-DD'
-  
+  // Protects freshly-backfilled history from being destroyed by the next run.
+  const minAge = new Date(now.getTime() - RETENTION_MIN_AGE_DAYS * 86_400_000).toISOString();
+  const deleteRawObjects = retentionDeleteRawObjectsEnabled();
+
   let totalDeleted = 0;
+  let rawKept = 0;
   try {
     for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
       const rows = await all<{ doc_id: string; raw_object_key: string | null }>(
         env.DB,
         `SELECT doc_id, raw_object_key FROM filings
-          WHERE COALESCE(filed_date, substr(first_seen_at, 1, 10)) < ? LIMIT ?`,
-        [cutoff, RETENTION_DELETE_BATCH]
+          WHERE COALESCE(filed_date, substr(first_seen_at, 1, 10)) < ?
+            AND first_seen_at < ?
+          LIMIT ?`,
+        [cutoff, minAge, RETENTION_DELETE_BATCH]
       );
-      
+
       if (rows.length === 0) break;
-      
+
       for (const row of rows) {
-        if (row.raw_object_key) {
-          try {
-            await env.RAW_FILES.delete(row.raw_object_key);
-          } catch (e) {
-            console.warn(`Failed to delete raw file ${row.raw_object_key} from R2`, e);
-          }
+        if (!row.raw_object_key) continue;
+        if (!deleteRawObjects) {
+          // Keep the only durable copy. The DB rows still go, so the sweep
+          // still bounds table growth — but the document stays recoverable.
+          rawKept++;
+          continue;
+        }
+        try {
+          await env.RAW_FILES.delete(row.raw_object_key);
+        } catch (e) {
+          console.warn(`Failed to delete raw file ${row.raw_object_key} from R2`, e);
         }
       }
-      
+
       const docIds = rows.map(r => r.doc_id);
       const placeholders = docIds.map(() => '?').join(',');
       
@@ -309,6 +349,12 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
     }
   } catch (err) {
     console.warn('filing retention sweep failed:', (err as Error).message);
+  }
+  if (rawKept > 0) {
+    console.log(
+      `retention: pruned ${totalDeleted} filing row(s); kept ${rawKept} archived object(s) ` +
+        `(set RETENTION_DELETE_RAW_OBJECTS=1 to delete them too)`,
+    );
   }
   return totalDeleted;
 }
