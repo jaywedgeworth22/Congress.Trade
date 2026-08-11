@@ -19,7 +19,7 @@ struct TradeDetailView: View {
                     VStack(alignment: .center, spacing: 12) {
                         AssetMark(
                             symbol: trade.asset.displayName,
-                            isTicker: trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true)
+                            isTicker: hasResolvedTicker
                         )
                         .scaleEffect(1.3)
                         .padding(.bottom, 8)
@@ -50,37 +50,14 @@ struct TradeDetailView: View {
                     VStack(spacing: 16) {
                         DetailSection("Trade Summary") {
                             if let memberId = trade.member.id {
-                                NavigationLink(
-                                    destination: PoliticianDetailView(
+                                linkedDetailRow("Politician", politicianValue) {
+                                    PoliticianDetailView(
                                         memberId: memberId,
                                         memberName: trade.member.name ?? "Unknown"
                                     )
-                                ) {
-                                    HStack {
-                                        Text("Politician")
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text(trade.member.party?.partyEmoji ?? "")
-                                        Text(trade.member.name ?? "Unknown")
-                                            .fontWeight(.bold)
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption.weight(.bold))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.leading, 2)
-                                    }
-                                    .font(.subheadline)
                                 }
-                                .buttonStyle(.plain)
                             } else {
-                                HStack {
-                                    Text("Politician")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text(trade.member.party?.partyEmoji ?? "")
-                                    Text(trade.member.name ?? "Unknown")
-                                        .fontWeight(.bold)
-                                }
-                                .font(.subheadline)
+                                DetailRow("Politician", politicianValue)
                             }
 
                             DetailRow("Amount", trade.amountLabel)
@@ -88,7 +65,12 @@ struct TradeDetailView: View {
                             DetailRow("Confidence", "\(Int(((trade.confidence ?? 1.0) * 100).rounded()))%")
                         }
 
-                        performanceSection
+                        // Hidden outright without a resolved ticker: the empty
+                        // state used to promise prices "when market data is
+                        // available", which for a ticker-less row is never.
+                        if hasResolvedTicker {
+                            performanceSection
+                        }
 
                         // TODO(ios): dual-axis chart S&P vs stock since filing when
                         // a lightweight Charts series endpoint is available.
@@ -100,27 +82,15 @@ struct TradeDetailView: View {
                         }
 
                         DetailSection("Company Info") {
-                            if let ticker = trade.asset.ticker, !ticker.isEmpty {
-                                NavigationLink(destination: TickerDetailView(ticker: ticker)) {
-                                    HStack {
-                                        Text("Asset")
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text(trade.asset.displayName)
-                                            .fontWeight(.bold)
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption.weight(.bold))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.leading, 2)
-                                    }
-                                    .font(.subheadline)
+                            if hasResolvedTicker, let ticker = trade.asset.ticker {
+                                linkedDetailRow("Asset", trade.asset.displayName) {
+                                    TickerDetailView(ticker: ticker)
                                 }
-                                .buttonStyle(.plain)
                             } else {
                                 DetailRow("Asset", trade.asset.displayName)
                             }
                             DetailRow("Sector", trade.asset.sector ?? "Not Enriched Yet")
-                            DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
+                            DetailRow("Market Cap", trade.asset.marketCapBucket?.capBucketLabel ?? "Not Enriched Yet")
                         }
 
                         filingButtons
@@ -171,6 +141,57 @@ struct TradeDetailView: View {
         }
     }
 
+    /// Party mark + name as ONE value string so the row can go through the
+    /// shared `DetailRow` — the emoji is decoration on the name, not a column.
+    private var politicianValue: String {
+        [trade.member.party?.partyEmoji ?? "", trade.member.name ?? "Unknown"]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// A ledger row that navigates.
+    ///
+    /// The label/value geometry is deliberately NOT re-implemented here: it
+    /// delegates to the shared `DetailRow` so a linked row lines up exactly
+    /// with the plain rows above and below it in the same section. Hand-rolled
+    /// copies of the row (which is what these two call sites used to be) are
+    /// precisely how the linked and unlinked rows drifted apart. The chevron
+    /// rides the trailing edge — the standard iOS disclosure position — rather
+    /// than trailing the value, so it never competes with the value column.
+    @ViewBuilder
+    private func linkedDetailRow<Destination: View>(
+        _ label: String,
+        _ value: String,
+        @ViewBuilder destination: () -> Destination
+    ) -> some View {
+        NavigationLink(destination: destination()) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                DetailRow(label, value)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(label): \(value)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// Mirrors `TICKER_RESOLVED_SQL` (`app/src/analytics/sql.ts`): client rows
+    /// are a raw passthrough of `transactions.ticker`, so the sentinels the
+    /// analytics layer excludes ("NONE", "--", "N/A", "NA", "NULL", "—") arrive
+    /// here verbatim and must be treated as "no ticker", not as a symbol.
+    private var hasResolvedTicker: Bool {
+        Self.isResolvedTicker(trade.asset.ticker)
+    }
+
+    static func isResolvedTicker(_ raw: String?) -> Bool {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return false }
+        return !["NONE", "--", "N/A", "NA", "NULL", "—"].contains(trimmed.uppercased())
+    }
+
     /// Company name at top with ">" link like politician when a ticker exists.
     @ViewBuilder
     private var companyTitle: some View {
@@ -180,7 +201,7 @@ struct TradeDetailView: View {
             return name
         }()
 
-        if let ticker = trade.asset.ticker, !ticker.isEmpty {
+        if hasResolvedTicker, let ticker = trade.asset.ticker {
             NavigationLink(destination: TickerDetailView(ticker: ticker)) {
                 HStack(spacing: 6) {
                     Text(display)
@@ -357,6 +378,9 @@ struct TradeDetailView: View {
         performanceLoaded = false
         performanceFailed = false
         performance = nil
+        // No resolved ticker means no price series will ever exist for this
+        // row, and the section is hidden — don't spend a round trip proving it.
+        guard hasResolvedTicker else { return }
         let txId = trade.id
         let task = Task {
             do {
@@ -399,5 +423,24 @@ struct TradeDetailView: View {
         if chamber == "senate" { return AppTheme.senateColor }
         if chamber == "executive" { return AppTheme.execColor }
         return .blue
+    }
+}
+
+/// `securities_ref.market_cap_bucket` is a storage enum (`mega`…`nano`), not a
+/// label — `.capitalized` shipped a bare "Mega" to the sheet. Same vocabulary
+/// and wording as the web board's `CAP_NAMES` (`app/src/ui/dashboardHtml.ts`).
+/// Deliberately fileprivate: the shared labeler is another lane's file.
+private extension String {
+    var capBucketLabel: String {
+        switch trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "mega": return "Mega Cap"
+        case "large": return "Large Cap"
+        case "mid": return "Mid Cap"
+        case "small": return "Small Cap"
+        case "micro": return "Micro Cap"
+        case "nano": return "Nano Cap"
+        case "unknown", "": return "Unclassified"
+        default: return capitalized
+        }
     }
 }
