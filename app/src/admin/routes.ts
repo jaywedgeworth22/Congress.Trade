@@ -1981,13 +1981,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
     if (await isAuthorizedMaintenance(env, c.req.path, authorization)) return next();
+    // Always resolve the browser session email, even when an Authorization
+    // header is present. A stale/wrong ADMIN_TOKEN in localStorage used to
+    // skip this path (only looked up when !authorization), so allowlisted
+    // Google sessions got 401 on Review Queue and other admin routes while
+    // the UI still showed the admin tabs. isAuthorized still prefers a valid
+    // bearer ADMIN_TOKEN; a bad bearer falls through to session / Access.
     let sessionEmail: string | undefined;
-    if (!authorization) {
-      try {
-        sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
-      } catch {
-        sessionEmail = undefined;
-      }
+    try {
+      sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
+    } catch {
+      sessionEmail = undefined;
     }
     const ok = await isAuthorized(env, {
       authorization,
