@@ -98,3 +98,36 @@ jobs:
 
       - name: Audit
         run: npm audit
+
+  # `app/` gates do not touch services/scan-cpu-worker at all, so a Python
+  # service could break completely and CI stayed green. That is exactly how
+  # PR #1620 shipped an image whose entrypoint could not import (form_chrome.py
+  # added and imported, never added to the Dockerfile COPY list) — the OCR
+  # worker crash-looped in production until 2026-08-11 with no CI signal.
+  scan-cpu-worker:
+    name: scan-cpu-worker (python)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/scan-cpu-worker
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
+        with:
+          python-version: '3.12'
+
+      # The existing worker tests import checkbox/form_chrome, which pull in
+      # numpy and OpenCV, so the runtime requirements are needed too — not just
+      # pytest.
+      - name: Install deps
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check pytest
+
+      - name: Test (includes Dockerfile COPY-vs-imports guard)
+        run: python -m pytest tests -q

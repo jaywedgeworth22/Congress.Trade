@@ -15,8 +15,12 @@ import {
   planCommitteeUpdates,
   fetchBioguideCommitteeMap,
   runCommitteeSync,
+  parseHouseClerkMemberData,
+  mergeBioguideCommitteeMaps,
+  effectiveBioguide,
   COMMITTEES_CURRENT_URL,
   COMMITTEE_MEMBERSHIP_URL,
+  HOUSE_CLERK_MEMBER_DATA_URL,
   type CommitteeRecord,
   type CommitteeMembershipMap,
   type FilerCommitteeRow,
@@ -32,13 +36,21 @@ const FIXTURE_COMMITTEES: CommitteeRecord[] = [
     type: 'house',
     name: 'House Committee on Agriculture',
     thomas_id: 'HSAG',
+    house_committee_id: 'AG',
     subcommittees: [{ thomas_id: '15', name: 'Forestry and Horticulture' }],
   },
   {
     type: 'house',
     name: 'House Committee on Financial Services',
     thomas_id: 'HSBA',
+    house_committee_id: 'BA',
     subcommittees: [{ thomas_id: '20', name: 'Capital Markets' }],
+  },
+  {
+    type: 'house',
+    name: 'House Committee on the Judiciary',
+    thomas_id: 'HSJU',
+    house_committee_id: 'JU',
   },
   {
     type: 'senate',
@@ -206,7 +218,7 @@ describe('planCommitteeUpdates', () => {
     expect(plan.unmatched).toBe(1);
   });
 
-  it('ignores filers with no resolved_bioguide_id entirely (out of scope for this sync)', () => {
+  it('ignores filers with no usable bioguide entirely', () => {
     const filers: FilerCommitteeRow[] = [
       { bioguide_id: 'house-unresolved', resolved_bioguide_id: null, committees: null },
     ];
@@ -214,6 +226,85 @@ describe('planCommitteeUpdates', () => {
     expect(plan.updates).toEqual([]);
     expect(plan.skipped).toBe(0);
     expect(plan.unmatched).toBe(0);
+    expect(plan.noBioguide).toBe(1);
+  });
+
+  it('uses a bioguide-shaped filer PK when resolved_bioguide_id is missing', () => {
+    const filers: FilerCommitteeRow[] = [
+      { bioguide_id: 'B000444', resolved_bioguide_id: null, committees: null },
+    ];
+    const plan = planCommitteeUpdates(filers, bioguideMap);
+    expect(plan.updates).toEqual([
+      {
+        filerId: 'B000444',
+        committees: ['House Committee on Financial Services', 'Senate Committee on Finance'],
+      },
+    ]);
+    expect(plan.noBioguide).toBe(0);
+  });
+});
+
+describe('effectiveBioguide', () => {
+  it('prefers resolved_bioguide_id over the filer PK', () => {
+    expect(
+      effectiveBioguide({ bioguide_id: 'house-x', resolved_bioguide_id: 'K000389' }),
+    ).toBe('K000389');
+  });
+
+  it('falls back to a bioguide-shaped PK', () => {
+    expect(effectiveBioguide({ bioguide_id: 'a000372', resolved_bioguide_id: null })).toBe('A000372');
+  });
+
+  it('returns null for slug filer ids without a resolved bioguide', () => {
+    expect(effectiveBioguide({ bioguide_id: 'house-ca17-ro-khanna', resolved_bioguide_id: null })).toBeNull();
+  });
+});
+
+describe('parseHouseClerkMemberData + merge', () => {
+  const CLERK_XML = `<?xml version="1.0"?>
+    <MemberData>
+      <members>
+        <member>
+          <member-info><bioguideID>M001212</bioguideID></member-info>
+          <committee-assignments>
+            <committee comcode="AG00" rank="15"/>
+            <committee comcode="JU00" rank="13"/>
+            <subcommittee subcomcode="AG15" rank="2"/>
+          </committee-assignments>
+        </member>
+        <member>
+          <member-info><bioguideID>B000444</bioguideID></member-info>
+          <committee-assignments>
+            <committee comcode="BA00" rank="1"/>
+          </committee-assignments>
+        </member>
+      </members>
+    </MemberData>`;
+
+  it('maps Clerk comcodes to congress-legislators display names via house_committee_id', () => {
+    const index = buildCommitteeIndex(FIXTURE_COMMITTEES);
+    const map = parseHouseClerkMemberData(CLERK_XML, index);
+    expect(map.get('M001212')).toEqual([
+      'House Committee on Agriculture',
+      'House Committee on the Judiciary',
+    ]);
+    expect(map.get('B000444')).toEqual(['House Committee on Financial Services']);
+  });
+
+  it('unions primary + secondary maps without losing either source', () => {
+    const primary = new Map<string, string[]>([
+      ['B000444', ['Senate Committee on Finance']],
+    ]);
+    const secondary = new Map<string, string[]>([
+      ['B000444', ['House Committee on Financial Services']],
+      ['M001212', ['House Committee on Agriculture']],
+    ]);
+    const merged = mergeBioguideCommitteeMaps(primary, secondary);
+    expect(merged.get('B000444')).toEqual([
+      'House Committee on Financial Services',
+      'Senate Committee on Finance',
+    ]);
+    expect(merged.get('M001212')).toEqual(['House Committee on Agriculture']);
   });
 });
 
@@ -222,7 +313,7 @@ describe('fetchBioguideCommitteeMap', () => {
     vi.unstubAllGlobals();
   });
 
-  it('fetches both hosted URLs and builds the rolled-up map', async () => {
+  it('fetches congress-legislators + House Clerk and builds the rolled-up map', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === COMMITTEES_CURRENT_URL) {
@@ -231,19 +322,45 @@ describe('fetchBioguideCommitteeMap', () => {
       if (url === COMMITTEE_MEMBERSHIP_URL) {
         return new Response(JSON.stringify(FIXTURE_MEMBERSHIP), { status: 200 });
       }
+      if (url === HOUSE_CLERK_MEMBER_DATA_URL) {
+        return new Response(
+          `<MemberData><member><bioguideID>M001212</bioguideID><committee comcode="AG00"/></member></MemberData>`,
+          { status: 200 },
+        );
+      }
       return new Response('not found', { status: 404 });
     });
     vi.stubGlobal('fetch', fetchImpl);
 
     const map = await fetchBioguideCommitteeMap();
     expect(map.get('C000555')).toEqual(['Senate Committee on Armed Services']);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(map.get('M001212')).toEqual(['House Committee on Agriculture']);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
-  it('throws when a source URL responds non-OK', async () => {
+  it('throws when a primary source URL responds non-OK', async () => {
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 500 }));
     vi.stubGlobal('fetch', fetchImpl);
     await expect(fetchBioguideCommitteeMap()).rejects.toThrow(/fetch failed/i);
+  });
+
+  it('continues when only the House Clerk secondary source fails', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === COMMITTEES_CURRENT_URL) {
+        return new Response(JSON.stringify(FIXTURE_COMMITTEES), { status: 200 });
+      }
+      if (url === COMMITTEE_MEMBERSHIP_URL) {
+        return new Response(JSON.stringify(FIXTURE_MEMBERSHIP), { status: 200 });
+      }
+      if (url === HOUSE_CLERK_MEMBER_DATA_URL) {
+        return new Response('clerk down', { status: 503 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    const map = await fetchBioguideCommitteeMap();
+    expect(map.get('C000555')).toEqual(['Senate Committee on Armed Services']);
   });
 });
 
@@ -288,9 +405,10 @@ describe('runCommitteeSync (integration, in-memory D1)', () => {
 
       const env = { DB: d1 } as unknown as Env;
       const result = await runCommitteeSync(env);
-      expect(result.filersScanned).toBe(2); // resolved_bioguide_id IS NOT NULL rows only
+      expect(result.filersScanned).toBe(3);
       expect(result.updated).toBe(1); // senate-armed-chris
       expect(result.unmatched).toBe(1); // house-no-committees (N000000 has no memberships)
+      expect(result.noBioguide).toBe(1); // house-unresolved
       expect(result.skipped).toBe(0);
 
       const row = await d1.prepare('SELECT committees FROM filers WHERE bioguide_id = ?').bind('senate-armed-chris').first<{
@@ -309,6 +427,7 @@ describe('runCommitteeSync (integration, in-memory D1)', () => {
       expect(second.updated).toBe(0);
       expect(second.skipped).toBe(1);
       expect(second.unmatched).toBe(1);
+      expect(second.noBioguide).toBe(1);
     } finally {
       close();
     }

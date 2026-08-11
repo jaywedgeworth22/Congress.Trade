@@ -20,11 +20,14 @@ import { notifyAdmin } from './alerts/notify.ts';
 import { shareWithPeer, type PeerShareInput } from './share/outbound.ts';
 import { runFreshnessCheck } from './share/freshness.ts';
 import { runPhotoEnrichment, runTickerBackfill } from './admin/routes.ts';
+import { runCommitteeSync } from './enrichment/committeeSync.ts';
+import { runIdentitySync } from './enrichment/identitySync.ts';
 import { runBulkSnapshot } from './export/snapshot.ts';
 import { resolveSecrets } from './secrets/infisical.ts';
 import { recordMeasuredThirdPartyUsage } from './shared/thirdPartyTelemetry.ts';
 import { isD1RowBudgetExceeded } from './shared/d1Budget.ts';
 import { runR2UsageSummary } from './shared/r2Usage.ts';
+import { backfillCurrentPricesFromEod } from './prices/service.ts';
 // NOTE: runHouseReconciler (./ingestion/houseReconciler) is intentionally not
 // imported here yet -- it is reserved for future scheduled-job wiring. Importing
 // it unused would trip noUnusedLocals (enabled in this PR).
@@ -395,6 +398,16 @@ export async function maybeRunDailyMarketDataJobs(
     errors.push('enrichment: ' + (err as Error).message);
   }
   if (await dailyBudgetExceeded(env, 'price refresh')) return 'budget';
+  // Local repair first: stamp current_price from existing price_eod so the
+  // leaderboard / UI don't stay blank while the peer fetch drains the backlog.
+  try {
+    const filled = await backfillCurrentPricesFromEod(env);
+    if (filled.currentPriceFilled > 0 || filled.latestDateFilled > 0) {
+      console.log('current-price backfill from EOD:', JSON.stringify(filled));
+    }
+  } catch (err) {
+    console.warn('current-price backfill failed:', (err as Error).message);
+  }
   try {
     const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
@@ -575,20 +588,51 @@ export async function maybeRunDailySnapshotJob(env: Env, now = new Date()): Prom
 }
 
 /**
- * Daily lane 3 — filer data: politician headshots + party/state/district from
- * congress-legislators (also fills resolved_bioguide_id), then ticker
- * resolution backfill for name-but-no-ticker rows. Both COALESCE-preserving,
- * bounded, and best-effort.
+ * Daily lane 3 — filer data (order matters):
+ *   1. identity sync — resolve bioguide + campaign-sign display names +
+ *      authoritative party/state/district (feeds steps 2–3)
+ *   2. photo enrichment — 450x550 headshots from unitedstates/images
+ *   3. committee sync — filers.committees from congress-legislators + House
+ *      Clerk MemberData (committee sector conflicts + politician drawer)
+ *   4. ticker backfill — name-but-no-ticker row resolution
+ *
+ * All COALESCE-preserving / idempotent, bounded, and best-effort. Committee
+ * sync used to be admin-only and went stale after one-off runs; it is now
+ * part of the daily filer lane so new filers pick up memberships automatically.
  */
 export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
   if (!(await stampDaily(env, LANE_KEY_PREFIX + 'filer', day))) return 'stamped';
+  if (await dailyBudgetExceeded(env, 'identity sync')) return 'budget';
+
+  try {
+    const r = await runIdentitySync(env);
+    console.log('identity sync:', JSON.stringify({
+      scanned: r.filersScanned,
+      bioguideResolved: r.bioguideResolved,
+      displayNamesSet: r.displayNamesSet,
+      unresolved: r.unresolved,
+    }));
+  } catch (err) {
+    console.warn('identity sync failed:', (err as Error).message);
+  }
+
   if (await dailyBudgetExceeded(env, 'photo enrichment')) return 'budget';
 
   try {
-    await runPhotoEnrichment(env);
+    const r = await runPhotoEnrichment(env);
+    console.log('photo enrichment:', JSON.stringify(r));
   } catch (err) {
     console.warn('photo enrichment failed:', (err as Error).message);
+  }
+
+  if (await dailyBudgetExceeded(env, 'committee sync')) return 'budget';
+
+  try {
+    const r = await runCommitteeSync(env);
+    console.log('committee sync:', JSON.stringify(r));
+  } catch (err) {
+    console.warn('committee sync failed:', (err as Error).message);
   }
 
   if (await dailyBudgetExceeded(env, 'ticker backfill')) return 'budget';

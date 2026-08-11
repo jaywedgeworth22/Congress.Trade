@@ -59,4 +59,11 @@ describe('parseAmountRange -> canonical bracket', () => {
     const r2 = parseAmountRange('$1,000');
     expect(r2).toMatchObject({ min: 0, max: 1000, exact: true });
   });
+
+  it('extracts a STOCK Act range from freeform PTR raw lines without date/CUSIP false positives', () => {
+    const r = parseAmountRange(
+      'SP California St Go Call 12/1/27 4% due 12/1/47 [GS] S (partial) 12/02/2024 12/11/2024 $1,001 - $15,000 F S: New S O: Victoria Kelly Trust ICA',
+    );
+    expect(r).toMatchObject({ min: 1001, max: 15000, exact: true });
+  });
 });

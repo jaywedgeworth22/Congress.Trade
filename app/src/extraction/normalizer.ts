@@ -44,7 +44,69 @@ import { canonicalizeTxType } from '../shared/txType.ts';
  * fails), the whole filing is routed to review instead of being published.
  */
 export const CONFIDENCE_THRESHOLD = 0.95;
+/**
+ * Deterministic extractors (House text PDF, Senate HTML, OGE text) already
+ * produce structured rows without vision hallucination. They historically sat
+ * forever in review when OpenRouter agreement was halted because their base
+ * confidence (~0.55–0.65) is below the vision threshold. Publish them when
+ * mechanical hard flags are clean.
+ */
+export const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.55;
 export const MAX_PUBLISH_TRANSACTIONS_PER_FILING = 200;
+
+/** Extractors / doc kinds that do not require multi-model agreement. */
+const DETERMINISTIC_EXTRACTORS = new Set([
+  'textpdf',
+  'text_pdf',
+  'senatehtml',
+  'senate_html',
+  'ogetext',
+  'oge_text',
+  'oge-text',
+]);
+
+export function isDeterministicExtractor(
+  extractor: string | null | undefined,
+  docKind?: string | null,
+): boolean {
+  const compact = (extractor || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (compact) {
+    if (
+      DETERMINISTIC_EXTRACTORS.has(compact)
+      || compact === 'textpdf'
+      || compact === 'senatehtml'
+      || compact === 'ogetext'
+    ) {
+      return true;
+    }
+    // Explicit vision/OCR extractors must never inherit the deterministic
+    // threshold from a text/html doc_kind (scanned reclassifications, etc.).
+    if (
+      compact.includes('vision')
+      || compact.includes('grok')
+      || compact.includes('server_cpu')
+      || compact.includes('openrouter')
+      || compact.includes('anthropic')
+      || compact.includes('mistral')
+      || compact.includes('llamaparse')
+      || compact.includes('local_mac')
+      || compact.includes('local_grok')
+    ) {
+      return false;
+    }
+  }
+  const kind = (docKind || '').trim().toLowerCase();
+  return kind === 'text_pdf' || kind === 'senate_html' || kind === 'oge_html' || kind === 'oge_text';
+}
+
+export function confidenceThresholdFor(
+  extractor: string | null | undefined,
+  docKind?: string | null,
+): number {
+  return isDeterministicExtractor(extractor, docKind)
+    ? DETERMINISTIC_CONFIDENCE_THRESHOLD
+    : CONFIDENCE_THRESHOLD;
+}
 
 export class TransactionPublishLimitError extends Error {}
 
@@ -232,10 +294,25 @@ export async function normalize(
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = hasHardFailureFlags(flagged);
+  const hardFailureCount = flagged.filter((f) =>
+    f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag)),
+  ).length;
   const exceedsPublishLimit = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
+  const ocrUnusable = isMostlyGarbageOcrExtraction(
+    parsed.length,
+    flagged.length,
+    hardFailureCount,
+  );
+  // Deterministic text/html extractors publish at a lower confidence gate so
+  // OpenRouter agreement outages cannot strand already-structured rows.
+  const confThreshold = confidenceThresholdFor(extractorName, filing.docKind);
 
   const needsReview =
-    flagged.length === 0 || minConfidence < CONFIDENCE_THRESHOLD || hasHardFailure || exceedsPublishLimit;
+    flagged.length === 0
+    || minConfidence < confThreshold
+    || hasHardFailure
+    || exceedsPublishLimit
+    || ocrUnusable;
 
   const isAmendment =
     /amend|\(2\)|278t\(\d+\)/i.test(filing.docId) ||
@@ -271,7 +348,7 @@ export async function normalize(
   if (needsReview) {
     let reason = exceedsPublishLimit
       ? classifyRowLimitReason(flagged)
-      : reviewReason(flagged, minConfidence);
+      : reviewReason(flagged, minConfidence, confThreshold);
     // When every extracted row was form chrome (or empty after drop), tag the
     // park reason so ops/dashboard can tell OCR letterhead floods from real
     // low-confidence trades — and agreement can skip burning budget on them.
@@ -280,22 +357,39 @@ export async function normalize(
         ? `form_chrome_only,${reason}`
         : 'form_chrome_only,extract_empty_failure,no_transactions_extracted';
     }
+    // Majority OCR garbage (server_cpu letterhead inventories): do not park
+    // hundreds of fake rows for humans/agreement — empty extract_empty class
+    // so local-vision pending can re-claim the stored raw copy.
+    let reviewFlagged = flagged;
+    if (ocrUnusable && !exceedsPublishLimit) {
+      reason = `ocr_unusable,extract_empty_failure,no_transactions_extracted`;
+      if (droppedFormChrome > 0) reason = `form_chrome_only,${reason}`;
+      reviewFlagged = [];
+    }
     const routed = await routeToReview(
       env,
       filing,
-      flagged,
-      minConfidence,
+      reviewFlagged,
+      ocrUnusable ? 0 : minConfidence,
       nowIso,
       {
         extractor: extractorName,
         modelVersion,
-        reasonOverride: exceedsPublishLimit || (flagged.length === 0 && droppedFormChrome > 0)
-          ? reason
-          : undefined,
+        reasonOverride:
+          exceedsPublishLimit
+          || (flagged.length === 0 && droppedFormChrome > 0)
+          || ocrUnusable
+            ? reason
+            : undefined,
       },
       reviewSnapshot,
     );
-    return { transactions, minConfidence, needsReview: routed, published: false };
+    return {
+      transactions: ocrUnusable ? [] : transactions,
+      minConfidence: ocrUnusable ? 0 : minConfidence,
+      needsReview: routed,
+      published: false,
+    };
   }
 
   const persisted = await persistNormalizedPublish(
@@ -540,19 +634,13 @@ export function scoreFields(
   // Penalize only TRULY unusable amounts (missing, or a nonsensical range). A
   // plausible range that isn't an exact canonical bracket is snapped to the
   // nearest STOCK Act bracket WITHOUT penalty.
+  //
+  // rawText contradiction checks only run against a clear embedded STOCK Act
+  // dollar range (see parseAmountRange). Freeform PTR lines with dates/CUSIPs
+  // must not invent false invalid_amount hard failures on already-canonical
+  // structured brackets (review-queue flood class, 2026-08-10).
   let amountMin = fields.amountMin;
   let amountMax = fields.amountMax;
-
-  if (fields.rawText && amountMin !== null && amountMin !== undefined) {
-    const parsedRange = parseAmountRange(fields.rawText);
-    const snapped = nearestBracket(amountMin, amountMax ?? amountMin);
-    if (parsedRange.min !== null) {
-      if (parsedRange.exact && (snapped.min !== parsedRange.min || (parsedRange.max !== null && snapped.max !== parsedRange.max))) {
-        flags.push('invalid_amount');
-        confidence *= PENALTY_INVALID_BRACKET;
-      }
-    }
-  }
 
   if (amountMin === null || amountMin === undefined) {
     flags.push('no_amount');
@@ -562,6 +650,20 @@ export function scoreFields(
     if (b) {
       amountMin = b.min;
       amountMax = b.max;
+    }
+    // Structured amounts are already a canonical bracket. Only flag when
+    // rawText contains a *different* exact canonical dollar range.
+    if (fields.rawText) {
+      const parsedRange = parseAmountRange(fields.rawText);
+      if (
+        parsedRange.exact
+        && parsedRange.min !== null
+        && (parsedRange.min !== amountMin
+          || (parsedRange.max ?? null) !== (amountMax ?? null))
+      ) {
+        flags.push('invalid_amount');
+        confidence *= PENALTY_INVALID_BRACKET;
+      }
     }
   } else if (amountMin >= 0 && (amountMax === null || amountMax >= amountMin)) {
     const b = nearestBracket(amountMin, amountMax);
@@ -605,9 +707,31 @@ export function scoreFields(
  */
 export function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
   if (!assetName) return false;
-  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:)/i.test(
+  // Expanded 2026-08-10 after server_cpu_v1 review flood: letterhead, member
+  // certification chrome, y-box OCR placeholders, office telephone lines.
+  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:|\bMember of the U\.?S\.?\s+House\b|\bOfficer or Employee\b|\bOffice Telephone\b|\bEmploying Off(?:ice)?\b|\bunreadable asset\b|HOUSE OF\s+REP|\bCfficar\b|\bDiotict\b|Use oSucem|I certify that|Signature of Reporting)/i.test(
     assetName,
   );
+}
+
+/**
+ * True when an OCR extraction is mostly form chrome / unreadable placeholders
+ * and should NOT open a multi-hundred-row review item. Prefer extract_empty /
+ * ocr_unusable so local-vision can requeue without human review noise.
+ */
+export function isMostlyGarbageOcrExtraction(
+  originalCount: number,
+  usableCount: number,
+  hardFailureCount: number,
+): boolean {
+  if (originalCount < 12) return false;
+  if (usableCount === 0 && originalCount > 0) return true;
+  const usableRatio = usableCount / originalCount;
+  if (usableRatio < 0.3) return true;
+  if (usableCount > 0 && hardFailureCount / usableCount >= 0.7 && originalCount >= 20) {
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,7 +1342,11 @@ async function routeToReview(
   return (results[0]?.meta?.changes ?? 0) > 0;
 }
 
-function reviewReason(flagged: FlaggedTx[], minConfidence: number): string {
+function reviewReason(
+  flagged: FlaggedTx[],
+  minConfidence: number,
+  confThreshold: number = CONFIDENCE_THRESHOLD,
+): string {
   const reasons = new Set<string>();
   for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
   // Empty extract is total failure, not a soft "low confidence" park alone.
@@ -1227,7 +1355,7 @@ function reviewReason(flagged: FlaggedTx[], minConfidence: number): string {
     reasons.add('extract_empty_failure');
     reasons.add('no_transactions_extracted');
   }
-  if (flagged.length > 0 && minConfidence < CONFIDENCE_THRESHOLD) {
+  if (flagged.length > 0 && minConfidence < confThreshold) {
     reasons.add('low_confidence');
   }
   return Array.from(reasons).join(',') || 'needs_review';
