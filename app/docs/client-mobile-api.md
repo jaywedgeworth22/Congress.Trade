@@ -213,6 +213,37 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
     "Page X of Y" pager computes total pages from the response's `total` and
     its own page-size (`limit`), independent of the forward `since`-cursor
     poll watermark, which is unaffected.
+  - `assetClass` (added 2026-08-11, owner ask: an extra Trades dropdown
+    offering **"All"** or **"Public Equities, Funds, & ETFs"**) filters by
+    canonical instrument class (`AssetTypeCategory`, `shared/assetTypes.ts`),
+    applied **server-side** in the shared `buildTxFilters` — the page query,
+    the COUNT companion behind `total`, the today-filings aggregate, and the
+    CSV export set all narrow together. This is deliberate: a client-side
+    filter over one already-fetched page would report a count capped at the
+    page size, re-creating the "shows 100 because that's the page size" class
+    of bug. Accepted values:
+    - `all` (or the param simply absent) — no filter, the dropdown's default.
+    - `equities_funds` — the "Public Equities, Funds, & ETFs" option; a named
+      group that expands to `public_equity` (House code `ST`, incl. ADRs)
+      plus `fund` (`EF`/`MF`/`ET`/`MA` — ETF, mutual fund, exchange-traded
+      note, managed account). Defined in `ASSET_CLASS_GROUPS`
+      (`src/delivery/rows.ts`) so a future dropdown option needs no server
+      change to add another named group.
+    - Any raw `AssetTypeCategory` slug (`crypto`, `option`,
+      `fixed_income_government`, `fixed_income_corporate`, `real_estate`,
+      `trust`, `private_equity`, `retirement_or_529`, …) or a CSV mixing a
+      group with raw slugs, e.g. `assetClass=equities_funds,crypto`.
+      Unrecognized tokens are dropped rather than erroring (same lenient
+      fallback as `chamber`/`type`/`party`); unrecognized input across the
+      board falls back to no filter.
+    - `assetCategory` (singular) is accepted as an alias for the same param.
+    - Same parser and param on `GET /api/client/v1/feed`, the public
+      `GET /api/transactions`, the Premium `GET /api/export/transactions.csv`,
+      and `/api/feed.xml`, so every surface narrows identically.
+    - Every feed item's `asset.typeCategory` (machine slug) and
+      `asset.typeCategoryLabel` (display string) — see below — are computed
+      with the exact same canonicalizer the filter matches against, so a
+      client can render the same grouping it filtered on.
 - Chamber filter: `chamber` accepts a CSV multi-selection over
   `house`, `senate`, and `executive` (Presidential trades from OGE Form 278-T
   filings; `member.chamber` can now be `executive`). ABSENT `chamber` means the
