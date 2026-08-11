@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+// For `UNAuthorizationStatus`, which `DeliveryAlertsToggle` switches on below.
+import UserNotifications
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
@@ -20,13 +22,13 @@ struct DeliveryView: View {
     // write-only local state that changed nothing, which is worse than having
     // no switches at all: it is why the owner was "unsure if any options there
     // impact push notifications or not". The one control that really does gate
-    // alerts to this phone is `TradeDisclosureAlertsToggle`, now at the top.
+    // alerts to this phone is `DeliveryAlertsToggle`, now at the top.
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TradeDisclosureAlertsToggle()
+                    DeliveryAlertsToggle()
                 } header: {
                     Text("Alerts on This Phone")
                 } footer: {
@@ -256,7 +258,7 @@ struct DeliveryView: View {
                 // section footer so they read as page chrome, not as a note
                 // about the watchlist above them.
                 Section {
-                    LegalFooterLinks()
+                    AppLegalFooter()
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                 }
@@ -294,6 +296,121 @@ struct DeliveryView: View {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+}
+
+/// The one control on this tab that really does decide whether an alert can
+/// reach this phone — the replacement for the four `notify_*` switches that
+/// decided nothing.
+///
+/// It reflects the OS permission, which is the only thing that actually gates
+/// delivery, so it cannot drift out of sync with reality and it cannot lie.
+/// Two honest consequences:
+/// - Turning it OFF opens iOS Settings, because an app cannot revoke its own
+///   notification permission. The status line says so rather than pretending
+///   the flip worked.
+/// - Once permission is denied, iOS never shows the system prompt again, so
+///   re-tapping routes to Settings instead of silently doing nothing.
+///
+/// Named distinctly from the components lane's in-flight shared version so the
+/// two can coexist on main; swapping this call site for that one later is a
+/// mechanical rename.
+struct DeliveryAlertsToggle: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var pushManager: PushNotificationManager
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: binding) {
+                Text("Trade Disclosure Alerts")
+                    .font(.body.weight(.medium))
+            }
+            .tint(.blue)
+
+            // Exactly one short sentence-case line — never a paragraph
+            // explaining what a notification is.
+            Text(statusLine)
+                .font(.caption)
+                .foregroundStyle(statusColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task { await pushManager.checkPermissionStatus() }
+        // Coming back from iOS Settings is the one way this state changes
+        // behind the app's back.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await pushManager.checkPermissionStatus() }
+        }
+    }
+
+    private var binding: Binding<Bool> {
+        Binding(
+            get: { pushManager.isAuthorized },
+            set: { wantsOn in
+                if wantsOn {
+                    turnOn()
+                } else {
+                    openSystemSettings()
+                }
+            }
+        )
+    }
+
+    private func turnOn() {
+        switch pushManager.authorizationStatus {
+        case .denied:
+            openSystemSettings()
+        case .notDetermined:
+            Task {
+                await pushManager.requestAuthorization()
+                await syncIfPossible()
+            }
+        default:
+            Task { await syncIfPossible() }
+        }
+    }
+
+    private func syncIfPossible() async {
+        guard pushManager.isAuthorized, store.signedIn else { return }
+        await pushManager.syncTokenWithBackend(api: store.api, force: true)
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        openURL(url)
+    }
+
+    private var statusLine: String {
+        switch pushManager.authorizationStatus {
+        case .denied:
+            return "blocked in iOS Settings — tap to open them"
+        case .notDetermined:
+            return "off"
+        default:
+            break
+        }
+        if !store.signedIn {
+            return "sign in to receive alerts on this device"
+        }
+        if pushManager.isBackendSynced {
+            return "on — new disclosures alert this device"
+        }
+        if pushManager.isRegistering {
+            return "registering this device…"
+        }
+        if pushManager.lastError != nil {
+            return "this device could not be registered — toggle again to retry"
+        }
+        return "on — waiting for this device to register"
+    }
+
+    private var statusColor: Color {
+        if pushManager.authorizationStatus == .denied { return .orange }
+        if pushManager.isBackendSynced { return .green }
+        if pushManager.lastError != nil { return .red }
+        return .secondary
     }
 }
 

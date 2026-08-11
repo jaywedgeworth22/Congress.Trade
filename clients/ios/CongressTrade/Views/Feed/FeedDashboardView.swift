@@ -171,7 +171,7 @@ struct FeedDashboardView: View {
                     // looking while they wait, and reserves its own height in
                     // both states so nothing below it shifts under a thumb
                     // mid-tap.
-                    FilterActivityIndicator(isActive: store.isTradesUpdating && !cachedTrades.isEmpty)
+                    TradesFilterActivityRow(isActive: store.isTradesUpdating && !cachedTrades.isEmpty)
 
                     // Only real offline/error notices — never cancellation noise.
                     if let notice = store.feedNotice,
@@ -234,7 +234,7 @@ struct FeedDashboardView: View {
                         FeedPaginationBar()
                     }
 
-                    LegalFooterLinks()
+                    AppLegalFooter()
                         .padding(.top, 8)
                 }
                 .padding(.horizontal, 16)
@@ -600,6 +600,66 @@ struct FeedControlBar: View {
             next.insert(chamber)
         }
         Task { await store.setChamberSelection(next) }
+    }
+}
+
+// MARK: - Shared tab chrome
+//
+// These two live here rather than in `Components.swift` on purpose. The
+// components lane owns that file and is landing its own `LegalFooterLinks` /
+// `FilterActivityIndicator`; deliberately different names mean the two can
+// coexist on main without a duplicate-declaration break, and swapping these
+// call sites for the shared versions afterwards is a mechanical rename.
+
+/// Privacy / Terms / Pricing / Support, small and grey, closing every tab.
+/// App Store review expects these reachable from inside the app, and the owner
+/// asked for them on all tabs rather than buried in Settings.
+///
+/// One Markdown `Text` rather than an `HStack` of `Link`s so it wraps to a
+/// second line at large Dynamic Type instead of being squeezed or clipped.
+/// `.tint` is what colours Markdown links, so it is set explicitly — without it
+/// these render accent-blue like everything else and read as a call to action.
+struct AppLegalFooter: View {
+    var body: some View {
+        Text(
+            "[Privacy](https://Congress.Trade/privacy-policy)  •  " +
+            "[Terms](https://Congress.Trade/terms-of-service)  •  " +
+            "[Pricing](https://Congress.Trade/pricing)  •  " +
+            "[Support](mailto:congress.trade@jays.services)"
+        )
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .tint(Color.secondary)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+    }
+}
+
+/// "It is working, wait" — for the 3-5 seconds a filter change takes.
+///
+/// Reserves its height whether or not it is active, so appearing and
+/// disappearing never shoves the list under the user's thumb mid-tap. That is
+/// the whole reason this is a view and not an inline `if isActive`.
+struct TradesFilterActivityRow: View {
+    let isActive: Bool
+
+    @ScaledMetric(relativeTo: .caption2) private var rowHeight: CGFloat = 18
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isActive {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Updating results…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(height: rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .accessibilityHidden(!isActive)
     }
 }
 

@@ -769,35 +769,3 @@ struct ThemeSegmentControl: View {
         .accessibilityLabel("Theme")
     }
 }
-
-// ==== TEMPORARY LOCAL BUILD STAND-INS (Lane 2 owns the real ones) ====
-struct LegalFooterLinks: View {
-    var body: some View {
-        Text("[Privacy](https://Congress.Trade/privacy-policy)  •  [Terms](https://Congress.Trade/terms-of-service)")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .tint(Color.secondary)
-            .frame(maxWidth: .infinity)
-    }
-}
-
-struct FilterActivityIndicator: View {
-    let isActive: Bool
-    var body: some View {
-        HStack(spacing: 6) {
-            if isActive {
-                ProgressView().controlSize(.mini)
-                Text("Updating results…").font(.caption2).foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct TradeDisclosureAlertsToggle: View {
-    @EnvironmentObject private var pushManager: PushNotificationManager
-    var body: some View {
-        Toggle("Trade Disclosure Alerts", isOn: .constant(pushManager.isAuthorized))
-    }
-}
