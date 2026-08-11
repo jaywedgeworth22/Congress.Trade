@@ -349,8 +349,8 @@ Client apps (peer clients of the backend, not separate products):
   Dark / System (sun / moon / monitor) matching web + ST console.
 - `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
   in this Linux cloud environment.
-- **Xcode project path: `clients/ios/CongressTrade.xcodeproj`** (renamed from
-  `Congress.Trade.xcodeproj` on 2026-08-11 — the period tripped up tooling).  Scheme
+- **Xcode project path: `clients/ios/CongressTrade.xcodeproj`.**  Renamed 2026-08-11 —
+  the period in the old basename tripped up tooling, so the container has no dot.  Scheme
   and targets stay `CongressTrade` / `CongressTradeTests`; the shipped app identity is
   unchanged (`PRODUCT_NAME` / display name `Congress.Trade`, bundle `trade.congress.ios`).
   Build with the stable Xcode only (`/Applications/Xcode.app`, never `Xcode-beta`):
