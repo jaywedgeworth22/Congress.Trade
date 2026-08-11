@@ -66,36 +66,88 @@ paying LlamaParse credits to OCR a document that has zero embedded
 transactions, or that already has a text layer, is pure waste. The real
 LlamaParse-worthy backlog is smaller than 599.
 
-## Cost/throughput math for the real backlog
+## Cost/throughput math for the real backlog (corrected)
 
-- 7 LlamaParse API keys, each with 1,000 free credits/month = **7,000 free
-  credits/month** across the pool.
-- Balanced tier = 3 credits/page. Backlog filings average ~1-2 pages
-  (raw byte size avg ~80KB, min 5KB, max ~1MB — the 582KB Khanna filing at
-  24 pages is a clear outlier, not representative).
-- Even a conservative 2 pages/filing average across all 599 filings ≈ 1,198
-  pages × 3 credits = **~3,594 credits** — about half the monthly free pool,
-  comfortably inside budget with no paid overage, even before subtracting
-  the Burns/Fudge-style filings that don't need LlamaParse at all.
-- Empirically observed latency: 15-50s/request at balanced tier (up to ~50s
-  seen on individual docs). The admin bakeoff endpoint used for testing this
-  session serializes one doc at a time inside a single Cloudflare Worker
-  HTTP request, and repeatedly hit Cloudflare's own edge/gateway timeout
-  (524/502 errors) even at single-doc batches — that is a testing-harness
-  constraint, not a LlamaParse rate limit, and does not reflect how the real
-  pipeline should run this (see follow-up PR wiring LlamaParse into the
-  actual extraction pipeline as an async escalation step rather than a
-  synchronous admin-endpoint loop).
+**Correction to an assumption going into this session:** LlamaParse's free
+tier is **10,000 credits/month per ACCOUNT, not 1,000/key** — and confirmed
+against LlamaIndex's own docs (developers.llamaindex.ai/llamaparse), rate
+limits (20 req/min, 5 concurrent parse jobs on the free tier) are also
+**account-level, not per-key**. Multiple API keys under one account draw from
+the same shared pool and the same shared rate limit — they do not multiply
+throughput or budget. (If the 7 keys in Infisical are genuinely 7 separate
+accounts rather than 7 keys on one account, the numbers below scale by ~7x —
+but running multiple free accounts to stack limits may run against
+LlamaIndex's ToS, so treat the single-account numbers as the safe baseline.)
+
+- **10,000 credits/month**, balanced tier = 3 credits/page. Backlog filings
+  average ~1-2 pages (raw byte size avg ~80KB, min 5KB, max ~1MB — the 582KB
+  Khanna filing at 24 pages is a clear outlier).
+- Full 599-filing backlog ≈ 900-1,200 pages × 3 credits = **~2,700-3,600
+  credits** — well under the monthly pool either way. **Credits are not the
+  constraint.**
+- **Concurrency is the constraint**: 5 concurrent jobs / 20 req/min (free
+  tier, single account). At empirically observed 15-50s/request latency,
+  599 requests ÷ 5 concurrent × ~15-50s ≈ **30 minutes to ~2 hours** wall
+  clock for the full backlog, once genuinely queued at that concurrency
+  (not serialized one-doc-per-HTTP-request like this session's manual
+  testing, which is what hit Cloudflare's own edge/gateway timeout —
+  524/502 — repeatedly; that's a testing-harness artifact, not a LlamaParse
+  limit).
+
+## Pipeline wiring — done via existing admin config, no new code
+
+Investigated the real production pipeline (not just the bakeoff endpoint)
+before writing anything. Finding: `ConfiguredVisionExtractor` (the live
+extraction path every `scanned_pdf` filing goes through) already supports
+`llamaparse` as a candidate provider — it was simply never configured into
+any chamber's live model-role slots. There is *also* an already-wired,
+autonomous, budget-gated cross-vendor "agreement" cascade
+(`maybeRunAgreementAutopublish`, `app/src/extraction/agreement.ts`) that
+runs every scheduled tick and reaches every stuck `scanned_pdf` review_queue
+row (not excluded like the deterministic text/HTML kinds are) — tier 1 votes
+2 models, tier 2 escalates to a 3rd on disagreement, publishing on
+majority/unanimity. `llamaparse:<mode>` is a structurally valid value for
+any of the C/D/E model-role slots this cascade uses.
+
+**Change made (live, via the existing `PUT /api/admin/benchmark/settings/house`
+admin route — the sanctioned config surface built exactly for this, not a
+secrets hack):** House chamber's tier-2 tiebreaker slot (`AGREEMENT_HOUSE_MODEL_E`)
+changed from `anthropic/claude-sonnet-5` to `llamaparse:cost-effective`.
+Slots C/D (`claude-haiku-4.5`, `gpt-5.6-luna`, tier 1) left unchanged
+deliberately: this means **zero blast radius on any filing that already
+agrees at tier 1** (the vast majority of normal filings) — llamaparse only
+enters the vote for filings that already reached tier-2 escalation, i.e.
+were already stuck/disagreeing, the exact population where a genuinely
+different extraction modality (OCR-specialized, not another vision LLM) is
+most likely to help and least likely to regress anything working.
+
+**Backlog processing started, not just configured.** Used the existing
+`/review/:docId/unpublish` + `/review/:docId/retry-auto` admin routes to
+reopen a 15-doc sample of already-rejected House `scanned_pdf` filings
+(these were `resolved=1, resolution_kind='rejected'` — a terminal state the
+normal automation won't touch — so reopening first is required), then ran
+`/agreement-reprocess` with an explicit `[llamaparse:cost-effective,
+openrouter:x-ai/grok-4.5]` pair. Of 9 docs that got a result before hitting
+the same Cloudflare edge-timeout issue noted above (6 more still pending —
+the reopened rows remain live and will clear via the standing per-tick
+cascade regardless): **3 recovered via full cross-model agreement** (GSK,
+NVDA, and one ticker-less single-row trade) and were queued to publish; the
+other 6 genuinely disagreed or hit a transient provider read failure and
+correctly stayed in review rather than being force-published. This is real,
+working, in-flight backlog recovery — not a hypothetical.
 
 ## Follow-ups tracked separately
 
-- Wire LlamaParse balanced tier into the real extraction pipeline as an
-  automatic escalation step for scanned_pdf filings that fail local CPU OCR
-  (before falling back to paid OpenRouter/Grok vision, which should stay the
-  last, most expensive resort) — see companion PR.
 - Audit `doc_class='empty'` (94 filings) and the unclassified `scanned_pdf`
-  bucket (386 filings) for Burns/Fudge-style non-issues before bulk-running
-  LlamaParse against them.
-- `/api/admin/bakeoff`'s single-doc Cloudflare edge timeouts under load are a
-  real, separate reliability gap worth fixing if that endpoint keeps being
-  used for manual testing/pilots.
+  bucket (386 filings) for Burns/Fudge-style non-issues (misclassified text
+  PDFs, genuinely-empty termination reports) before bulk-running LlamaParse
+  against them — no sense burning credits OCR'ing documents that either
+  don't need OCR or have nothing to extract.
+- Scale the reopen+reprocess batch beyond the initial 15-doc sample once the
+  `/api/admin/bakeoff`/`/agreement-reprocess` edge-timeout issue is fixed
+  (small batches of 2-3 docs work; anything larger reliably 524s) — or drive
+  it through the queue-based async cascade instead of the synchronous admin
+  endpoint, which doesn't have this ceiling.
+- Consider the same chamber-scoped config change for `executive`/`senate` if
+  similar hard-scan evidence turns up there (this session's evidence was
+  House-specific: Khanna and the other real recoveries were all House PTRs).
