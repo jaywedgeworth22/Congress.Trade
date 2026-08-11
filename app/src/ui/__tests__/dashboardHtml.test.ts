@@ -1541,9 +1541,76 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('def-grid');
     // Label/value pairs render on ONE line (label column ~35%, value 1fr) —
     // not label-above-value stacked, which the owner flagged as unreadable.
-    expect(DASHBOARD_HTML).toContain('.def-grid { display: grid; grid-template-columns: 35% 1fr;');
+    // The label column is capped at 180px and the block at 560px so a wide
+    // desktop drawer cannot re-open the void the 35% rule closes on phones.
+    expect(DASHBOARD_HTML).toContain('.def-grid { display: grid; grid-template-columns: min(35%, 180px) 1fr;');
+    expect(DASHBOARD_HTML).toContain('max-width: 560px; }');
     expect(DASHBOARD_HTML).toContain('.def-item { display: contents; }');
     expect(DASHBOARD_HTML).toContain("item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '')");
+  });
+
+  // ---- ledger rows: label and value read as ONE unit -----------------------
+  // Owner, verbatim: "there are too many places where I see things like the
+  // 'First Trade' and 'Last Trade' for Coca Cola having date on far right of
+  // screen ... while there is 70+% of the screen width blank between them and
+  // its hard to even tell if they are related". .drawer-kv already had the fix
+  // (bounded label column, value LEFT-aligned in column 2 on one shared entry
+  // guide); these lock it in everywhere else so nobody reintroduces an
+  // edge-push. Measured on Trends at 1440x900 before this landed: 19 flow rows
+  // with a 67-88% blank run; after: 6-24%, all 19 on one guide.
+  describe('ledger rows (label + value on one shared entry guide)', () => {
+    it('gives the Trends flow rows the .drawer-kv contract instead of space-between', () => {
+      expect(DASHBOARD_HTML).toContain(
+        '.flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr;',
+      );
+      // The value is left-aligned at the start of column 2, never pinned right.
+      expect(DASHBOARD_HTML).toContain('.flowrow .fval { justify-self: start;');
+      expect(DASHBOARD_HTML).not.toContain('.flowrow .ftop { display: flex;');
+      // A label is shortened, never truncated — .flabel must not ellipsize.
+      expect(DASHBOARD_HTML).not.toContain('.flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden;');
+    });
+
+    it('caps the drawer ledger so a wide desktop drawer cannot re-open the void', () => {
+      expect(DASHBOARD_HTML).toContain(
+        '.drawer-kv { display:grid; grid-template-columns:min(35%, 180px) 1fr;',
+      );
+      expect(DASHBOARD_HTML).toContain('align-items:center; max-width:560px; }');
+    });
+
+    it('converts trackless .hbar rows (Top Buyers / Top Sellers / Most-Traded) to the ledger contract', () => {
+      expect(DASHBOARD_HTML).toContain('.hbar.ledger { display:grid; grid-template-columns:min(62%, 220px) 1fr;');
+      // No right-aligned values: a ragged left edge makes the eye re-find the
+      // start of every number.
+      expect(DASHBOARD_HTML).toContain('.hbar.ledger .hval { width:auto; min-width:0; text-align:left; justify-self:start; }');
+      // Every trackless render site opts in.
+      expect(DASHBOARD_HTML).toContain('<div class="hbar ledger" style="margin:5px 0">');
+      expect(DASHBOARD_HTML).toContain('<div class="hbar ledger hz" style="margin:6px 0">');
+      // Rows that DO have a bar between label and value keep the chart layout.
+      expect(DASHBOARD_HTML).toContain('.lag-dist .hbar .hlabel');
+    });
+
+    it('shares one label column across the chart tooltip rows', () => {
+      expect(DASHBOARD_HTML).toContain('.chart-tooltip-row { display: contents; }');
+      expect(DASHBOARD_HTML).toContain('.chart-tooltip-title { grid-column: 1 / -1;');
+    });
+
+    it('treats the admin connection card meta as a ledger, not two equal columns', () => {
+      expect(DASHBOARD_HTML).toContain('.diag-meta { display:grid; grid-template-columns:auto 1fr;');
+    });
+
+    it('shortens the one drawer label that ellipsized at 375px instead of truncating it', () => {
+      // "Avg. Disclosure Lag" needed 126px in a 107px label column on a 375px
+      // phone. "Avg. Lag" fits, and matches the existing "Median Lag" KPI.
+      expect(DASHBOARD_HTML).not.toContain('Avg. Disclosure Lag');
+      expect(DASHBOARD_HTML).toContain("kvRow('Avg. Lag'");
+    });
+
+    it('does not introduce leader dots', () => {
+      // Leaders are a table-of-contents device for values pinned to a page
+      // edge; nothing here has that constraint, and the audit rejected them.
+      expect(DASHBOARD_HTML).not.toContain('leader-dots');
+      expect(DASHBOARD_HTML).not.toContain("content: '.'");
+    });
   });
 
   it('drops the collapsible Trends disclaimer banner (owner punch list #3) but keeps tap-to-reveal tooltips', () => {
@@ -3272,7 +3339,7 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       expect(DASHBOARD_HTML).toContain('function openMember(filerId)');
       // Most-Traded rows open the ticker/asset drawer.
       expect(DASHBOARD_HTML).toContain(
-        'return \'<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="\' + esc(t.ticker) + \'" style="width:auto;flex:1">\' +',
+        'return \'<div class="hbar ledger" style="margin:5px 0"><div class="hlabel clickable" data-asset="\' + esc(t.ticker) + \'">\' +',
       );
       // Recent Trades rows open the trade view; the ticker chip inside each
       // row is itself a second, nested entity link to the asset drawer.
