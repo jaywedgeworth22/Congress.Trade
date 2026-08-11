@@ -365,6 +365,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("aGet('member-performance?'");
   });
 
+  it('renders By Asset Type with the same flowRow layout as By Market Cap (not crushed hbar labels)', () => {
+    // Regression: #trSectors used inline .hbar with max-width:50% label/track
+    // so long labels like "Government / Municipal Bonds" looked broken.
+    expect(DASHBOARD_HTML).toContain('function loadTrSectors(');
+    expect(DASHBOARD_HTML).toContain("aGet('sector-breakdown?'");
+    // loadTrSectors must call the shared flowRowHtml helper (same as cap/party).
+    const sectorsFn = DASHBOARD_HTML.match(/function loadTrSectors\(\) \{[\s\S]*?\n\}/);
+    expect(sectorsFn?.[0] ?? '').toContain('flowRowHtml(');
+    expect(sectorsFn?.[0] ?? '').not.toContain('class="hbar"');
+    // And the broken special-case CSS must stay gone.
+    expect(DASHBOARD_HTML).not.toContain('#trSectors .hbar .hlabel');
+    expect(DASHBOARD_HTML).not.toContain('#trSectors .hbar .htrack');
+  });
+
   it('wires the configurable column registry + chooser', () => {
     expect(DASHBOARD_HTML).toContain('var TRADES_COLS');
     expect(DASHBOARD_HTML).toContain('function renderTradesHeader(');

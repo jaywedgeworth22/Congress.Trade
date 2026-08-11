@@ -664,9 +664,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         buyCount: num(row.buy_count),
         sellCount: num(row.sell_count),
         estVolumeUsd: usd(row.est_volume),
+        estNetFlowUsd: usd(row.est_net_flow),
+        uniqueMembers: num(row.unique_members),
         uniqueTickers: num(row.unique_tickers),
       }));
-      return meta(f, { count: sectors.length, sectors });
+      return meta(f, { count: sectors.length, sectors, estimatedAmounts: true });
     });
     return c.json(data);
   });

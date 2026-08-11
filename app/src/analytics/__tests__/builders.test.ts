@@ -181,6 +181,13 @@ describe('buildSectorBreakdownQuery', () => {
     expect(q.sql).toContain("THEN 'fixed_income_government'");
     expect(q.sql).toContain('GROUP BY asset_type_category');
   });
+
+  it('includes net flow + member breadth for Trends flowRow parity with market cap', () => {
+    const q = buildSectorBreakdownQuery({ window: '90d' });
+    expect(q.sql).toContain('AS est_net_flow');
+    expect(q.sql).toContain('AS unique_members');
+    expect(q.sql).toContain('AS unique_tickers');
+  });
 });
 
 describe('buildSectorFlowQuery (real GICS sector)', () => {

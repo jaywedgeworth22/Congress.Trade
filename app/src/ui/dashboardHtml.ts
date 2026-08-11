@@ -745,11 +745,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
-  /* By Asset Type: labels vary in length ("Stock Options" etc.) — auto-size
-     the label column so they don't ellipsis-cut, and cap the bar track so a
-     long label doesn't squeeze it away entirely. */
-  #trSectors .hbar .hlabel { width: auto; max-width: 50%; }
-  #trSectors .hbar .htrack { flex: 0 1 50%; max-width: 50%; }
+  /* By Asset Type uses the same .flowrow layout as By Market Cap / By Party
+     (label+value on top, full-width bar, stats chip). Do not use the inline
+     .hbar fixed-label layout here — long labels like "Government / Municipal
+     Bonds" crush the bar track and look broken. */
   .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr); align-items: stretch; gap: 29px; }
   .timeliness-panel { min-width: 0; display: flex; flex-direction: column; height: 100%; }
   .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; margin-bottom: 4px; }
@@ -9768,12 +9767,24 @@ function loadTrSectors() {
   aGet('sector-breakdown?' + trParams() + '&limit=8').then(function (d) {
     var rows = d.sectors || [];
     if (!rows.length) { box.innerHTML = '<div class="note">No data in this window.</div>'; return; }
-    var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
+    // Same visual language as By Market Cap / By Party: stacked flowrow
+    // (label + $ on top, full-width proportion bar, buy/sell/breadth/net chip).
+    // Rank by estimated volume so the longest bar is always first.
+    rows.sort(function (a, b) { return Number(b.estVolumeUsd || 0) - Number(a.estVolumeUsd || 0); });
+    var max = 1; rows.forEach(function (r) { max = Math.max(max, Number(r.estVolumeUsd || 0)); });
     box.innerHTML = rows.map(function (r) {
-      var w = Math.round(100 * r.estVolumeUsd / max);
-      return '<div class="hbar"><div class="hlabel" title="' + esc(r.assetType) + '">' + esc(assetTypeLabel(r.assetType)) + '</div>' +
-        '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-        '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>';
+      var label = r.assetType || 'Unknown';
+      var tip = (r.rawAssetTypes && r.rawAssetTypes.length)
+        ? (label + ' — ' + r.rawAssetTypes.join(', '))
+        : label;
+      return flowRowHtml(label, {
+        estVolumeUsd: r.estVolumeUsd,
+        estNetFlowUsd: r.estNetFlowUsd,
+        buyCount: r.buyCount,
+        sellCount: r.sellCount,
+        uniqueMembers: r.uniqueMembers,
+        uniqueTickers: r.uniqueTickers,
+      }, max, tip);
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
