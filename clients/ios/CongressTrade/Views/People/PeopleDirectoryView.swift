@@ -27,12 +27,13 @@ struct PeopleDirectoryView: View {
         max(1, Int((Double(count) / Double(pageSize)).rounded(.up)))
     }
 
-    /// Clamped rather than trusted: search text can shrink the result set under
-    /// the current page at any keystroke, and a stale page index would render
-    /// an empty list that looks like "no matches".
-    private func pageSlice(of members: [MemberDirectoryEntry]) -> ArraySlice<MemberDirectoryEntry> {
-        let page = min(currentPage, totalPages(for: members.count) - 1)
-        let start = page * pageSize
+    /// Takes the already-clamped page rather than re-deriving it, so the rows,
+    /// the pager and the page label can never disagree about which page this
+    /// is. Clamping matters because search text can shrink the result set under
+    /// the current page at any keystroke, and a stale index would render an
+    /// empty list that reads as "no matches".
+    private func pageSlice(of members: [MemberDirectoryEntry], page: Int) -> ArraySlice<MemberDirectoryEntry> {
+        let start = max(0, page) * pageSize
         guard start < members.count else { return members.prefix(pageSize) }
         return members[start..<min(start + pageSize, members.count)]
     }
@@ -103,7 +104,7 @@ struct PeopleDirectoryView: View {
                             .padding(.top, 40)
                         } else {
                             LazyVStack(spacing: 8) {
-                                ForEach(pageSlice(of: members)) { member in
+                                ForEach(pageSlice(of: members, page: page)) { member in
                                     Button {
                                         selectedMemberId = member.filerId
                                         selectedMemberName = member.fullName ?? member.filerId
