@@ -418,8 +418,14 @@ struct TrendsView: View {
                     // BOTH numeric columns right-aligned so the eye reads one
                     // straight edge of digits. The old 80pt money column
                     // truncated a signed 8-character value like "+$15.7m".
+                    // Ordered mega → nano with Unknown last. The endpoint emits
+                    // a bare `GROUP BY bucket`, which arrives alphabetically
+                    // (Large, Mega, Micro, Mid, Nano, Small) — a size ladder
+                    // shuffled into nonsense. Size is the only order that means
+                    // anything here.
+                    let caps = MarketCapOrder.sorted(store.marketCapBuckets)
                     VStack(spacing: 0) {
-                        ForEach(Array(store.marketCapBuckets.enumerated()), id: \.element.id) { idx, cap in
+                        ForEach(Array(caps.enumerated()), id: \.element.id) { idx, cap in
                             HStack(spacing: 8) {
                                 Text(cap.bucket.capitalized)
                                     .font(.subheadline.weight(.medium))
@@ -427,7 +433,7 @@ struct TrendsView: View {
                                     .minimumScaleFactor(0.8)
                                     .frame(maxWidth: 92, alignment: .leading)
                                 Spacer(minLength: 4)
-                                Text("\(cap.tradeCount) trades")
+                                Text("\(cap.tradeCount) \(cap.tradeCount == 1 ? "trade" : "trades")")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -440,7 +446,7 @@ struct TrendsView: View {
                                     .frame(width: 104, alignment: .trailing)
                             }
                             .padding(.vertical, 8)
-                            if idx < store.marketCapBuckets.count - 1 {
+                            if idx < caps.count - 1 {
                                 Divider()
                             }
                         }
@@ -758,6 +764,26 @@ enum SignedPercentFormat {
     }
 }
 
+/// Size ladder for the market-cap buckets `securities_ref.market_cap_bucket`
+/// emits. `/market-cap-breakdown` runs a bare `GROUP BY bucket` with no ORDER
+/// BY, so rows arrive alphabetically — Large above Mega, Micro above Mid. Any
+/// label the ladder does not know (including the `unknown` sentinel) sorts to
+/// the end rather than into the middle of the ladder.
+enum MarketCapOrder {
+    private static let rank = ["mega": 0, "large": 1, "mid": 2, "small": 3, "micro": 4, "nano": 5]
+
+    static func sorted(_ buckets: [MarketCapItem]) -> [MarketCapItem] {
+        buckets.sorted { a, b in
+            let ra = rank[a.bucket.lowercased()] ?? Int.max
+            let rb = rank[b.bucket.lowercased()] ?? Int.max
+            // Stable tail: two unranked labels keep a predictable A→Z order
+            // instead of whatever the server happened to emit.
+            if ra == rb { return a.bucket.lowercased() < b.bucket.lowercased() }
+            return ra < rb
+        }
+    }
+}
+
 /// One rendered row of "Net Flow by Sector".
 ///
 /// `GET /api/analytics/sector-flow` returns the most-traded sectors ordered by
@@ -768,6 +794,18 @@ enum SignedPercentFormat {
 /// lands somewhere: the top 8 by name, the remainder folded into one "Other"
 /// row that says how many sectors it covers, and "Unknown" kept as its own
 /// trailing row so unenriched trades are never quietly mixed into "Other".
+///
+/// DUPLICATE LABELS ARE EXPECTED AND MUST BE MERGED. Verified live on
+/// 2026-08-11 at `?window=90d`: the payload carried 'Technology' twice,
+/// 'Healthcare' three times, 'Communication Services' three times and
+/// 'Industrials' three times, each as its own bucket. (The canonicalizing
+/// `CASE` is in the SELECT list while `GROUP BY sector` binds to the underlying
+/// `sr.sector` column, so the server groups on the raw vocabulary and only
+/// relabels — a backend defect, reported separately.) Two consequences the view
+/// cannot ignore: identical `id`s corrupt a SwiftUI `ForEach`, and two rows
+/// reading "Healthcare  −$40k" side by side is worse than either number alone.
+/// Rows are therefore merged by label and given index-derived ids. When the
+/// backend groups correctly the merge is a no-op.
 private struct SectorFlowRow: Identifiable {
     let id: String
     let label: String
@@ -776,21 +814,54 @@ private struct SectorFlowRow: Identifiable {
     /// not a sector anyone chose to trade.
     let isAggregate: Bool
 
-    static func rows(from sectors: [SectorFlowItem], topCount: Int) -> [SectorFlowRow] {
-        // "Unknown" is pulled out BEFORE ranking. Leaving it in would let a
-        // data-quality bucket win a top-8 slot from a real sector.
-        let unknown = sectors.filter { $0.sector.caseInsensitiveCompare("Unknown") == .orderedSame }
-        let named = sectors.filter { $0.sector.caseInsensitiveCompare("Unknown") != .orderedSame }
+    /// A label's combined trade count and net flow. `netFlow` stays nil until a
+    /// bucket actually reports one, so "no figure" never becomes a $0 claim.
+    private struct Merged {
+        var label: String
+        var tradeCount: Int
+        var netFlow: Double?
+    }
 
-        var out = named.prefix(topCount).map {
-            SectorFlowRow(id: $0.sector, label: $0.sector, estNetFlowUsd: $0.estNetFlowUsd, isAggregate: false)
+    static func rows(from sectors: [SectorFlowItem], topCount: Int) -> [SectorFlowRow] {
+        // Fold duplicate labels first, preserving first-seen order so the
+        // server's trade-count ranking still drives the result when the payload
+        // is already clean.
+        var order: [String] = []
+        var merged: [String: Merged] = [:]
+        for item in sectors {
+            let key = item.sector.lowercased()
+            if merged[key] == nil {
+                order.append(key)
+                merged[key] = Merged(label: item.sector, tradeCount: 0, netFlow: nil)
+            }
+            var entry = merged[key] ?? Merged(label: item.sector, tradeCount: 0, netFlow: nil)
+            entry.tradeCount += item.tradeCount ?? 0
+            if let flow = item.estNetFlowUsd {
+                entry.netFlow = (entry.netFlow ?? 0) + flow
+            }
+            merged[key] = entry
+        }
+        // Re-rank after merging: two halves of one sector each looked smaller
+        // than they are, so the pre-merge order can no longer be trusted.
+        let ranked = order.compactMap { merged[$0] }.sorted { $0.tradeCount > $1.tradeCount }
+
+        // "Unknown" is pulled out BEFORE ranking is applied to the top slots.
+        // Leaving it in would let a data-quality bucket take a top-8 slot from a
+        // real sector.
+        let unknown = ranked.filter { $0.label.caseInsensitiveCompare("Unknown") == .orderedSame }
+        let named = ranked.filter { $0.label.caseInsensitiveCompare("Unknown") != .orderedSame }
+
+        var out = named.prefix(topCount).enumerated().map { idx, m in
+            // Index-derived id: a repeated label can never collide even if the
+            // merge above is ever bypassed.
+            SectorFlowRow(id: "\(idx)-\(m.label)", label: m.label, estNetFlowUsd: m.netFlow, isAggregate: false)
         }
 
         let rest = named.dropFirst(topCount)
         if !rest.isEmpty {
             // Sum only the sectors that reported a figure; if none did, stay an
             // em-dash rather than claiming a $0 net.
-            let scored = rest.compactMap(\.estNetFlowUsd)
+            let scored = rest.compactMap(\.netFlow)
             out.append(
                 SectorFlowRow(
                     id: "__other__",
@@ -802,7 +873,7 @@ private struct SectorFlowRow: Identifiable {
         }
 
         if !unknown.isEmpty {
-            let scored = unknown.compactMap(\.estNetFlowUsd)
+            let scored = unknown.compactMap(\.netFlow)
             out.append(
                 SectorFlowRow(
                     id: "__unknown__",
