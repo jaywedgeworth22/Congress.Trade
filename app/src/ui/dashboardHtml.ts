@@ -5139,12 +5139,10 @@ function decisionReasonText(d) {
 }
 function decisionDocHtml(d) {
   var docId = d.docId || '';
-  var url = d.pdfUrl || safeDocUrl(d.sourceUrl);
-  if (!url && docId) {
-    url = '/api/documents/' + encodeURIComponent(docId) + '/pdf';
-  }
+  var url = reviewDocUrl(d);
   if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
-  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
+  // Same stored-copy path as the Review Queue — never government sourceUrl.
+  return '<a class="tkr review-stored-doc" href="' + esc(url) + '" data-doc-id="' + esc(docId) + '" target="_blank" rel="noopener noreferrer" title="Open stored filing document">' + esc(docId) + '</a>';
 }
 function renderDecisionHistory(available) {
   var body = el('decisionBody');
@@ -5296,27 +5294,80 @@ function safeDocUrl(url) {
     return '';
   }
 }
-/* Owner 2026-08-10: review links must open OUR stored copy of the document
-   (/api/documents/:id/pdf serves the raw R2 bytes) instead of bouncing
-   through the government site — the Senate source URL lands on the eFD
-   agreement wall on every click and re-pesters the source. The stored route
-   itself falls back to a source redirect server-side when no raw copy
-   exists, so preferring it is always safe. */
+/* Owner 2026-08-10 (+ follow-up): Review Queue + Filing Decisions must open
+   OUR stored R2 copy — never House Clerk / Senate eFD / OGE source URLs.
+   Use the admin stored-raw route (auth via session allowlist OR ADMIN_TOKEN).
+   Plain <a href> cannot send the bearer from localStorage, so clicks are
+   handled by openStoredFiling() which fetches with adminHeaders() and opens
+   a blob URL. href stays set for accessibility / middle-click fallbacks. */
+function storedFilingHref(docId) {
+  var id = String(docId || '').trim();
+  if (!id) return '';
+  return '/api/admin/filings/' + encodeURIComponent(id) + '/raw';
+}
 function reviewDocUrl(r) {
-  var docId = r.docId || '';
-  if (r.rawObjectKey || r.pdfUrl || docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
-    return '/api/documents/' + encodeURIComponent(docId) + '/pdf';
-  }
-  return safeDocUrl(r.sourceUrl);
+  // Always prefer stored admin path when we have a doc id. Never government sourceUrl.
+  return storedFilingHref(r && (r.docId || r.doc_id));
+}
+function reviewStoredDocAttrs(docId, url) {
+  return 'class="review-stored-doc" href="' + esc(url) + '" data-doc-id="' + esc(docId) +
+    '" target="_blank" rel="noopener noreferrer" title="Open stored filing document"';
 }
 function reviewDocHtml(r) {
   var docId = r.docId || '';
   var url = reviewDocUrl(r);
   var idHtml = '<span class="tkr">' + esc(docId) + '</span>';
   if (!url) return idHtml;
-  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open stored filing document">' + esc(docId) + '</a>' +
-    '<a class="review-doc-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">View Document</a>';
+  return '<a class="tkr" ' + reviewStoredDocAttrs(docId, url) + '>' + esc(docId) + '</a>' +
+    '<a class="review-doc-link" ' + reviewStoredDocAttrs(docId, url) + '>View Document</a>';
 }
+function openStoredFiling(docId) {
+  var id = String(docId || '').trim();
+  if (!id) return;
+  var url = storedFilingHref(id);
+  // credentials:include so Google session cookies reach admin auth when the
+  // operator is on ADMIN_EMAILS without a pasted bearer token.
+  fetch(url, { headers: adminHeaders(), credentials: 'include' })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) {
+        throw new Error('Admin auth required — save a valid ADMIN_TOKEN (or sign in with an allowlisted account).');
+      }
+      if (r.status === 404) {
+        throw new Error('Stored copy not available for ' + id + ' (not fetched into R2 yet).');
+      }
+      if (!r.ok) throw new Error('Could not open stored filing (HTTP ' + r.status + ')');
+      var ct = r.headers.get('content-type') || 'application/pdf';
+      return r.blob().then(function (blob) {
+        return { blob: blob, ct: ct };
+      });
+    })
+    .then(function (o) {
+      var typed = o.blob && o.blob.type ? o.blob : new Blob([o.blob], { type: o.ct });
+      var objUrl = URL.createObjectURL(typed);
+      var w = window.open(objUrl, '_blank', 'noopener');
+      if (!w) {
+        // Popup blocked — navigate this tab as last resort (still our origin blob).
+        window.location.href = objUrl;
+      }
+      setTimeout(function () { try { URL.revokeObjectURL(objUrl); } catch (e) {} }, 120000);
+    })
+    .catch(function (e) {
+      showToast(e && e.message ? e.message : 'Could not open stored filing', true);
+    });
+}
+document.addEventListener('click', function (e) {
+  if (!e || !e.target || !e.target.closest) return;
+  var a = e.target.closest('a.review-stored-doc');
+  if (!a) return;
+  var docId = a.getAttribute('data-doc-id') || '';
+  if (!docId) return;
+  // Let modified clicks (new tab with modifier) still go through default only
+  // if the href is same-origin admin raw — but bearer won't attach. Always
+  // intercept primary click so the admin token path works.
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+  e.preventDefault();
+  openStoredFiling(docId);
+});
 /* Coloured status pill for a review document. */
 var STATUS_COLORS = { pending: '#b08900', published: '#1a7f37', rejected: '#c0362c', modified: '#6f42c1', resolved: '#57606a', verified_empty: '#0969da', unverified_empty: '#c0362c', orphan_deleted: '#57606a' };
 function statusBadge(status) {
@@ -5383,7 +5434,9 @@ function renderReview() {
     var payload = payloadText(r.payload);
     var queuedRows = reviewPayloadTransactions(r.payload);
     var url = reviewDocUrl(r);
-    var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
+    var docAction = url
+      ? '<a class="review-doc-link inline" ' + reviewStoredDocAttrs(r.docId, url) + '>Document</a>'
+      : '';
     var nModels = (r.models && r.models.length) || 0;
     var modelsBtn = '<button class="btn ghost sm" onclick="toggleModels(\\'' + esc(r.docId) + '\\')">Bake-Off Runs (' + nModels + ')</button>';
     var retryAutoBtn = r.agreementSuppressedAt

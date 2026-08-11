@@ -2236,7 +2236,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         resolvedAt: row.resolved_at ?? null,
         ingestStatus: row.ingest_status ?? '',
         sourceUrl: row.source_url ?? '',
-        pdfUrl: row.raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
+        // Admin UI opens stored R2 bytes only (never government source_url).
+        // /api/documents/.../pdf is Premium-gated; admin raw accepts admin auth.
+        pdfUrl: `/api/admin/filings/${encodeURIComponent(row.doc_id)}/raw`,
+        storedDocumentUrl: `/api/admin/filings/${encodeURIComponent(row.doc_id)}/raw`,
         rawObjectKey: row.raw_object_key ?? '',
         docKind: row.doc_kind ?? '',
         chamber: row.chamber ?? '',

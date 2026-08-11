@@ -4005,14 +4005,21 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).not.toContain("buys + 'B / ' + sells + 'S'");
   });
 
-  it('review-queue Document links open the stored copy, never the source agreement wall', () => {
-    // Both render paths (the docId/View Document pair AND the inline
-    // Document action) route through reviewDocUrl, which prefers
-    // /api/documents/:id/pdf (our stored R2 bytes; server-side source
-    // fallback) over the raw sourceUrl.
+  it('review-queue + decision-history Document links open stored copy only (never government sourceUrl)', () => {
+    // Admin surfaces always use /api/admin/filings/:id/raw + openStoredFiling
+    // (fetch with adminHeaders). Never safeDocUrl(sourceUrl) / Clerk / eFD.
     expect(DASHBOARD_HTML).toContain('function reviewDocUrl(r)');
+    expect(DASHBOARD_HTML).toContain('function storedFilingHref(docId)');
+    expect(DASHBOARD_HTML).toContain('function openStoredFiling(docId)');
+    expect(DASHBOARD_HTML).toContain("return '/api/admin/filings/' + encodeURIComponent(id) + '/raw'");
+    expect(DASHBOARD_HTML).toContain('// Always prefer stored admin path when we have a doc id. Never government sourceUrl.');
+    expect(DASHBOARD_HTML).toContain('a.review-stored-doc');
+    expect(DASHBOARD_HTML).toContain('function decisionDocHtml(d)');
+    expect(DASHBOARD_HTML).toContain('var url = reviewDocUrl(d);');
+    // Must not navigate decision/history docs via government sourceUrl.
+    expect(DASHBOARD_HTML).not.toContain("var url = d.pdfUrl || safeDocUrl(d.sourceUrl);");
+    expect(DASHBOARD_HTML).not.toContain('return safeDocUrl(r.sourceUrl);');
     expect(DASHBOARD_HTML).toContain('var url = reviewDocUrl(r);');
-    expect(DASHBOARD_HTML).not.toContain('var url = safeDocUrl(r.sourceUrl);');
   });
 
   it('Trends wide-desktop cards get an intrinsic table width + crush floor (post-#1613 regression)', () => {

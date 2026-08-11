@@ -97,6 +97,9 @@ describe('review queue admin API', () => {
       docId: 'H-2026-2003695',
       sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/2003695.pdf',
       rawObjectKey: 'raw/H-2026-2003695',
+      // Document open path is admin stored-raw (not Premium /api/documents or gov).
+      pdfUrl: '/api/admin/filings/H-2026-2003695/raw',
+      storedDocumentUrl: '/api/admin/filings/H-2026-2003695/raw',
       docKind: 'scanned_pdf',
       chamber: 'house',
       reviewRevision: 7,
