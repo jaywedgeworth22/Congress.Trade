@@ -1440,8 +1440,13 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
  * {@link matchDisclosureCandidate} rejects unconditionally — an unmatchable
  * row by construction.
  *
- * `nameKeys` is the per-provider list of full-name keys, tried in order. When
- * none of them carry a value we compose `firstName lastName` before giving up.
+ * Resolution order, most to least trustworthy:
+ *   1. `nameKeys` — the provider's declared full-name field.
+ *   2. `firstName` + `lastName` — unambiguous structured name parts.
+ *   3. `fallbackNameKeys` — display fields that USUALLY hold a person but are
+ *      not contractually a name (FMP's `office`), tried last so a provider
+ *      that ever repurposes one cannot outrank the structured parts.
+ *
  * The result goes through {@link cleanFilerName} — the SAME normalizer the
  * House/Senate extraction path uses on our own side of the race — so both
  * sides strip honorifics, flip "Last, First", and apply the curated
@@ -1451,14 +1456,17 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
 export function providerFilerName(
   payload: Record<string, unknown>,
   nameKeys: string[],
+  fallbackNameKeys: string[] = [],
 ): string | null {
-  const direct = fieldString(payload, nameKeys);
   const composed =
-    direct ??
     [fieldString(payload, ['firstName', 'first_name']), fieldString(payload, ['lastName', 'last_name'])]
       .filter(Boolean)
-      .join(' ');
-  const cleaned = cleanFilerName(composed || null).trim();
+      .join(' ') || null;
+  const raw =
+    fieldString(payload, nameKeys) ??
+    composed ??
+    (fallbackNameKeys.length ? fieldString(payload, fallbackNameKeys) : null);
+  const cleaned = cleanFilerName(raw).trim();
   return cleaned || null;
 }
 
@@ -1618,16 +1626,15 @@ export function parseFmpDisclosureRows(
     const text = rowText(payload);
     const docToken = providerKeyFromUrl(sourceUrl) ?? fieldString(payload, ['docId', 'documentId', 'reportId', 'disclosureId', 'disclosure_id']);
     const providerKey = docToken ? String(docToken).toLowerCase() : simpleHash(text);
-    // `office` is FMP's display-name field ("John McGuire"); firstName/lastName
-    // are the compose fallback. The legacy full-name keys stay in the list so
-    // an older /api/v4 payload shape still parses.
-    const filerName = providerFilerName(payload, [
-      'representative',
-      'senator',
-      'filerName',
-      'name',
-      'office',
-    ]);
+    // FMP's /stable/{house,senate}-latest ships no full-name key at all: the
+    // person arrives as firstName + lastName, repeated in `office` as a
+    // display string ("Tommy Tuberville"). The legacy full-name keys stay in
+    // the primary list so an older /api/v4 payload shape still parses.
+    const filerName = providerFilerName(
+      payload,
+      ['representative', 'senator', 'filerName', 'name'],
+      ['office'],
+    );
     return {
       provider: providerId,
       chamber,
@@ -3965,6 +3972,9 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
     const target = isFmpFamilyProvider(providerId) ? 'fmp' : providerId;
     if (lane !== target) continue;
     const strength = matchStrength(row.match_method);
+    // No method means no pairing. Never index it — an unpaired row landing in
+    // the weak set would make a genuine coverage miss read as a match.
+    if (strength === 'none') continue;
     const key = row.provider_key ? `${row.chamber}:${row.provider_key}` : null;
     if (key && row.trade_hash) idx.canonicalByKey.set(key, row.trade_hash);
     if (strength === 'strong') {
@@ -4315,6 +4325,8 @@ export function computeLatencyScope(opts: {
   const strengthByHash = new Map<string, MatchStrength>();
   for (const row of coverageRows) {
     const strength = matchStrength(row.match_method);
+    // No method means no pairing — do not canonicalise or credit it.
+    if (strength === 'none') continue;
     if (row.provider_key) {
       const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
       if (row.trade_hash) canonical.set(key, row.trade_hash);

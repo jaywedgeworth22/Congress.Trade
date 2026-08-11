@@ -165,7 +165,10 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.windowDays).toBe(7);
     expect(body.maxConcurrentDeltaHours).toBe(336);
     expect(body.totals.racedDisclosures).toBe(3);
-    expect(body.totals.matched).toBe(2);
+    // hash_a is a `trade-hash` pairing; hash_b is `fuzzy-no-ticker`, which
+    // never verified WHICH security was traded. Only the strong one is allowed
+    // to carry the speed claim.
+    expect(body.totals.matched).toBe(1);
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
       // Public scoreboard collapses stable + RapidAPI into one "FMP" lane.
@@ -174,13 +177,15 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       // not intentional OFF (grey — only when FMP_LATENCY_PROBE_ENABLED=false).
       operationalStatus: 'stopped',
       candidates: 2,
-      matched: 2,
-      strongMatched: 2,
-      usFirstCount: 2,
+      matched: 1,
+      strongMatched: 1,
+      // Reported beside the headline, never inside it.
+      weakMatched: 1,
+      usFirstCount: 1,
       providerFirstCount: 0,
-      // deltas: +5400s and +1800s -> median/avg 3600s
-      medianLeadSec: 3600,
-      avgLeadSec: 3600,
+      // Only hash_a's delta (+5400s) times the race; hash_b's +1800s is weak.
+      medianLeadSec: 5400,
+      avgLeadSec: 5400,
     });
     // RapidAPI must not appear as a separate public provider.
     expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
