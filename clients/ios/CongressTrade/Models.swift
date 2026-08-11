@@ -1241,7 +1241,17 @@ struct TopPerformerItem: Decodable, Identifiable {
     let partyBucket: String?
     let photoUrl: String?
     let tradeCount: Int
+    /// Annualized excess vs SPX — reference/debugging only. The route's own
+    /// comment says a young trade's ~12x annualization multiplier makes this
+    /// misleading, and it is NOT what `/member-performance` sorts by. Kept
+    /// decoded so the field is available, never rendered as the headline stat.
     let avgAnnualizedExcessReturn: Double?
+    /// Size-weighted average excess vs the S&P 500, winsorized per-trade at
+    /// ±200%, NOT annualized. This is the field the API sorts by and the one
+    /// the web board displays — rank only matches the number shown when the
+    /// client renders THIS field (iOS rendered the annualized one, which is
+    /// why the board looked mis-ordered and the percentages looked wild).
+    let avgExcessReturn: Double?
     let winRate: Double?
     let estVolumeUsd: Double?
 }
@@ -1280,12 +1290,24 @@ struct FilingLagResponse: Decodable {
     let topLateFilers: [SlowFilerItem]?
 }
 
+/// Mirrors what `GET /api/analytics/filing-lag` actually returns
+/// (`summarizeLag` in `app/src/analytics/compute.ts`): `count`,
+/// `medianLagDays`, `p90LagDays`, `overFortyFivePct`, `distribution`.
+/// The previous shape decoded `avgLagDays` / `maxLagDays` / `lateCount` /
+/// `totalTrades` — none of which the endpoint has ever emitted. Because every
+/// property was optional the decode never failed; it just silently produced
+/// nils, and the Trends tiles rendered "Avg Delay: 0 days" and "Late Filings: —"
+/// forever. Optional fields hide contract drift, so keep this in step with the
+/// route whenever it changes.
 struct FilingLagSummary: Decodable {
-    let avgLagDays: Double?
+    /// Disclosures the histogram is built from — the denominator behind the
+    /// percentile figures, shown so the numbers carry their own sample size.
+    let count: Int?
     let medianLagDays: Double?
-    let maxLagDays: Double?
-    let lateCount: Int?
-    let totalTrades: Int?
+    let p90LagDays: Double?
+    /// Fraction (not percent) of disclosures filed more than 45 days after the
+    /// trade — i.e. past the STOCK Act deadline. `0.0021` means 0.2%.
+    let overFortyFivePct: Double?
 }
 
 struct SlowFilerItem: Decodable, Identifiable {
