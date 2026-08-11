@@ -38,6 +38,21 @@ final class CongressTradeStore: ObservableObject {
     ///    than silently picking one.
     @Published private(set) var selectedParties: Set<PartyFilter> = []
     @Published private(set) var isLoadingTrends = false
+    /// TRUE from the instant the user touches a filter control until the rows
+    /// that change produced are on screen — deliberately spanning the view's
+    /// debounce window, the request itself, and any coalesced re-run.
+    ///
+    /// WHY THIS IS NOT `isRefreshing`. A filter change takes 3-5s end to end,
+    /// and across that window `isRefreshing` is not a trustworthy signal:
+    /// it is false during the view's debounce (nothing has been requested
+    /// yet), it can drop between two coalesced passes of what the user
+    /// experienced as one action, and a chamber/party change fans out to two
+    /// independent requests (`refresh()` for Trades, `refreshTrends()` for
+    /// Trends) that finish at different times. Binding the "still working"
+    /// indicator here is the only way it stays lit for the whole wait — which
+    /// is exactly the "so you don't think that it just isn't working"
+    /// feedback the owner asked for.
+    @Published private(set) var isApplyingFilters = false
     @Published private(set) var trendsNotice: String?
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var commands: [ClientCommand] = []
@@ -56,17 +71,12 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
-    /// Page size for the visible feed snapshot (newest first). Not a multi-page crawl.
-    @Published var viewLimit: Int = 100 {
-        didSet {
-            if oldValue != viewLimit {
-                // A different page size shifts every page boundary — stay on
-                // a page that's guaranteed to exist under the new size.
-                currentPage = 0
-                Task { await refresh() }
-            }
-        }
-    }
+    /// Page size for the visible feed snapshot (newest first). Not a multi-page
+    /// crawl. `private(set)` with `setPageSize(_:)` as the only mutator: the old
+    /// `didSet` fired a detached `Task { await refresh() }`, so nobody could
+    /// await a page-size change and the "updating" indicator had no way to
+    /// cover it.
+    @Published private(set) var viewLimit: Int = 100
     /// 0-indexed page of the current filtered/sorted snapshot (owner punch
     /// list #2, item 8). `refresh()` sends it as `offset = currentPage *
     /// pageLimit`; every filter/sort/page-size change below resets it to 0
@@ -110,10 +120,29 @@ final class CongressTradeStore: ObservableObject {
     private var pendingWatchlistMutation: PendingWatchlistMutation?
     private var pendingDeliveryMutation: PendingDeliveryMutation?
     private var pendingSubscriptionMutations: [String: PendingSubscriptionMutation] = [:]
-    /// Set when a `refresh()` is requested while one is already running (e.g. the
-    /// user toggles chambers mid catch-up). The in-flight refresh re-runs once
-    /// against the latest selection when it finishes.
-    private var refreshQueued = false
+    /// Set when a `refresh()` is requested while one is already running (e.g.
+    /// the user toggles chambers mid catch-up). The active runner picks it up
+    /// and makes one more pass against the latest selection before finishing,
+    /// so a filter change is never dropped — see `refresh()`.
+    private var refreshRequested = false
+    /// The single in-flight refresh loop, if any. Every caller of `refresh()`
+    /// awaits *this*, so `await refresh()` means "the feed now reflects my
+    /// change", not "someone else's request happened to be running".
+    private var refreshRunner: Task<Void, Never>?
+    /// Same request/runner pair for the Trends analytics fan-out.
+    private var trendsRequested = false
+    private var trendsRunner: Task<Void, Never>?
+    /// Filter edits the user has made that have not yet reached a request —
+    /// i.e. we are inside a view-side debounce window.
+    private var pendingFilterIntents = 0
+    /// Filter-driven refreshes currently running (or queued for a coalesced
+    /// re-run). Nested, because one filter change fans out to both tabs.
+    private var filterApplyDepth = 0
+    /// Fail-safe for `pendingFilterIntents`: a view that opens an intent and
+    /// then never lands a store mutation (its debounced edit turned out to be
+    /// local-search-only, say) must not be able to strand the indicator on.
+    private var filterIntentWatchdog: Task<Void, Never>?
+    private static let filterIntentWatchdogSeconds: UInt64 = 8
     /// Foreground poll timer driven by the feed's `nextPollAfterSec`
     /// (`ClientFeedResponse`). Cancelled while the app is backgrounded.
     private var autoRefreshTask: Task<Void, Never>?
@@ -187,53 +216,146 @@ final class CongressTradeStore: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
+    // MARK: - Filter-pending indicator
+
+    /// Call the moment the user touches a filter control — BEFORE any
+    /// view-side debounce — so the "updating" indicator lights immediately
+    /// instead of after the debounce has already burned half the wait.
+    ///
+    /// Must be balanced by `endFilterChange()` when the debounce fires,
+    /// whether or not it ends up calling a store setter (a purely local search
+    /// narrowing never does). Landing a real filter setter also clears every
+    /// open intent, and the watchdog clears them after
+    /// `filterIntentWatchdogSeconds` regardless: a briefly dark indicator is a
+    /// far cheaper bug than a spinner that never stops.
+    func beginFilterChange() {
+        pendingFilterIntents += 1
+        armFilterIntentWatchdog()
+        syncIsApplyingFilters()
+    }
+
+    /// Balances `beginFilterChange()`. Safe to over-call.
+    func endFilterChange() {
+        guard pendingFilterIntents > 0 else { return }
+        pendingFilterIntents -= 1
+        if pendingFilterIntents == 0 {
+            filterIntentWatchdog?.cancel()
+            filterIntentWatchdog = nil
+        }
+        syncIsApplyingFilters()
+    }
+
+    private func clearFilterIntents() {
+        guard pendingFilterIntents > 0 else { return }
+        pendingFilterIntents = 0
+        filterIntentWatchdog?.cancel()
+        filterIntentWatchdog = nil
+        syncIsApplyingFilters()
+    }
+
+    private func armFilterIntentWatchdog() {
+        filterIntentWatchdog?.cancel()
+        filterIntentWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.filterIntentWatchdogSeconds * 1_000_000_000)
+            guard !Task.isCancelled, let self, self.pendingFilterIntents > 0 else { return }
+            self.pendingFilterIntents = 0
+            self.syncIsApplyingFilters()
+        }
+    }
+
+    private func syncIsApplyingFilters() {
+        let next = pendingFilterIntents > 0 || filterApplyDepth > 0
+        if next != isApplyingFilters { isApplyingFilters = next }
+    }
+
+    /// Runs a filter mutation with the indicator held up for its whole life,
+    /// including both fan-out requests. The mutation subsumes any open
+    /// debounce-window intents, which is what makes the counter self-healing.
+    private func applyingFilterChange(_ body: () async -> Void) async {
+        // Raise the depth FIRST, then drop the debounce-window intents this
+        // mutation subsumes: with the depth already up, clearing them
+        // recomputes to the same `true`, so the flag cannot blink off between
+        // the two.
+        filterApplyDepth += 1
+        clearFilterIntents()
+        syncIsApplyingFilters()
+        await body()
+        filterApplyDepth -= 1
+        syncIsApplyingFilters()
+    }
+
+    // MARK: - Filter setters
+
     /// Selects the chamber chips and immediately resyncs against that
-    /// selection's own request. Never allows an empty selection.
+    /// selection's own request. An empty selection is legal and means "all
+    /// branches", matching the website's unselected H/S/P chips.
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
-        // Allow empty = all branches (website parity with unselected H/S/P).
-        selectedChambers = chambers
-        currentPage = 0
-        async let r1: Void = refresh()
-        async let r2: Void = refreshTrends()
-        _ = await (r1, r2)
+        await applyingFilterChange {
+            // Allow empty = all branches (website parity with unselected H/S/P).
+            selectedChambers = chambers
+            currentPage = 0
+            async let r1: Void = refresh()
+            async let r2: Void = refreshTrends()
+            _ = await (r1, r2)
+        }
     }
 
     func setTimeRange(_ range: TimeRange) async {
-        guard range != selectedTimeRange else { return }
-        selectedTimeRange = range
-        currentPage = 0
-        async let r1: Void = refresh()
-        async let r2: Void = refreshTrends()
-        _ = await (r1, r2)
+        guard range != selectedTimeRange else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            selectedTimeRange = range
+            currentPage = 0
+            async let r1: Void = refresh()
+            async let r2: Void = refreshTrends()
+            _ = await (r1, r2)
+        }
     }
 
     /// Sets the full Buy/Sell/Exchange multi-selection and immediately
     /// resyncs. Empty = all sides.
     func setTradeTypeSelection(_ types: Set<TradeTypeFilter>) async {
-        guard types != selectedTradeTypes else { return }
-        selectedTradeTypes = types
-        currentPage = 0
-        async let r1: Void = refresh()
-        async let r2: Void = refreshTrends()
-        _ = await (r1, r2)
+        guard types != selectedTradeTypes else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            selectedTradeTypes = types
+            currentPage = 0
+            async let r1: Void = refresh()
+            async let r2: Void = refreshTrends()
+            _ = await (r1, r2)
+        }
     }
 
     /// Trades-only politician name filter (server `memberName=`).
     func setPoliticianFilter(_ text: String) async {
         let next = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard next != politicianFilter else { return }
-        politicianFilter = next
-        currentPage = 0
-        await refresh()
+        guard next != politicianFilter else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            politicianFilter = next
+            currentPage = 0
+            await refresh()
+        }
     }
 
     /// Trades-only asset/ticker filter (server `ticker=`).
     func setAssetFilter(_ text: String) async {
         let next = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard next != assetFilter else { return }
-        assetFilter = next
-        currentPage = 0
-        await refresh()
+        guard next != assetFilter else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            assetFilter = next
+            currentPage = 0
+            await refresh()
+        }
     }
 
     // MARK: - Trades sort control (owner punch list #2, item 7)
@@ -242,21 +364,28 @@ final class CongressTradeStore: ObservableObject {
     /// existing direction; selecting Amount is a local re-sort only (no
     /// backend `amount` sort key — see `FeedSortKey.isServerSort`).
     func setFeedSortKey(_ key: FeedSortKey) async {
-        guard key != feedSortKey else { return }
-        feedSortKey = key
-        guard key.isServerSort else { return }
-        currentPage = 0
-        await refresh()
+        guard key != feedSortKey else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            feedSortKey = key
+            guard key.isServerSort else { return }
+            currentPage = 0
+            await refresh()
+        }
     }
 
     /// Flips asc/desc for whichever sort key is active. Only a server-sort
     /// key (currently Date) needs a refetch; Amount just re-renders the
     /// already-loaded page in the new direction.
     func toggleFeedSortDirection() async {
-        feedSortDirection = feedSortDirection.toggled
-        guard feedSortKey.isServerSort else { return }
-        currentPage = 0
-        await refresh()
+        await applyingFilterChange {
+            feedSortDirection = feedSortDirection.toggled
+            guard feedSortKey.isServerSort else { return }
+            currentPage = 0
+            await refresh()
+        }
     }
 
     // MARK: - Pagination (owner punch list #2, item 8)
@@ -283,21 +412,95 @@ final class CongressTradeStore: ObservableObject {
 
     func goToNextPage() async {
         guard canGoToNextPage else { return }
-        currentPage += 1
-        await refresh()
+        await applyingFilterChange {
+            currentPage += 1
+            await refresh()
+        }
     }
 
     func goToPreviousPage() async {
         guard canGoToPreviousPage else { return }
-        currentPage -= 1
-        await refresh()
+        await applyingFilterChange {
+            currentPage -= 1
+            await refresh()
+        }
     }
 
-    /// Rows-per-page control. Routes through `viewLimit`'s existing `didSet`
-    /// (which already resets `currentPage` and refetches) so there is one
-    /// path for "page size changed," not two.
-    func setPageSize(_ size: Int) {
-        viewLimit = size
+    /// Rows-per-page control — the one mutator of `viewLimit`.
+    func setPageSize(_ size: Int) async {
+        guard size != viewLimit else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            viewLimit = size
+            // A different page size shifts every page boundary — land on a
+            // page that is guaranteed to exist under the new size.
+            currentPage = 0
+            await refresh()
+        }
+    }
+
+    // MARK: - "Updating" indicator inputs
+
+    /// Whether the Trades list is currently being recomputed — a filter change
+    /// (including its debounce window), a sort change, a page turn, or a poll.
+    var isTradesUpdating: Bool { isApplyingFilters || isRefreshing }
+
+    // MARK: - Truthful trade count
+
+    /// Whether the visible list is narrowed by something the SERVER never saw,
+    /// which makes `tradeTotal` an overstatement of what is actually shown.
+    ///
+    /// Three narrowings are client-only, each for a documented reason:
+    ///  - **Party** — `/api/client/v1/feed` has no `party` param at all
+    ///    (`filtersFromQuery`), so it is applied in
+    ///    `FeedDashboardView.filteredTrades`. Selecting every party narrows
+    ///    nothing, so that case is excluded.
+    ///  - **2+ trade types** — `type=` is single-valued (`asTxType`), so the
+    ///    request goes out unfiltered and the sides are applied locally.
+    ///    Selecting every side narrows nothing either.
+    ///  - **Local search text** — lives in the view and is the one input this
+    ///    store genuinely cannot see, so callers pass it in. Taking it as a
+    ///    parameter beats mirroring the view's debounced text into the store:
+    ///    a second copy is a second source of truth to keep in sync, and every
+    ///    drift here is a wrong number shown to the user.
+    func hasClientOnlyNarrowing(localSearchText: String = "") -> Bool {
+        let partyNarrows = !selectedParties.isEmpty && selectedParties.count < PartyFilter.allCases.count
+        let sidesNarrow = selectedTradeTypes.count > 1 && selectedTradeTypes.count < TradeTypeFilter.allCases.count
+        let searchNarrows = !localSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return partyNarrows || sidesNarrow || searchNarrows
+    }
+
+    /// The only count the Trades header is allowed to print.
+    ///
+    /// The header used to show `filteredTrades.count`, which under the default
+    /// 100-row page size is the PAGE SIZE and not a count of anything — hence
+    /// the owner seeing a permanent "100". This never returns a page limit
+    /// dressed up as a total, and never invents one either.
+    ///
+    /// - Parameters:
+    ///   - visibleCount: rows the view is actually rendering, after its own
+    ///     client-side predicates.
+    ///   - localSearchText: the view's live search text (see
+    ///     `hasClientOnlyNarrowing`).
+    func tradeCountSummary(visibleCount: Int, localSearchText: String = "") -> TradeCountSummary {
+        guard feed != nil else { return .unknown }
+        guard hasClientOnlyNarrowing(localSearchText: localSearchText) else {
+            // Every active filter is one the server applied, so its COUNT(*)
+            // describes exactly this result set — including a truthful zero,
+            // which the `feed != nil` guard above separates from "not loaded".
+            return .total(tradeTotal)
+        }
+        // Client-only narrowing normally makes a true total unknowable: the
+        // local predicate only ever sees the loaded page. The one exception is
+        // a result set that already fits inside a single page — then the page
+        // IS the whole set, so counting it locally is exact rather than a page
+        // artifact.
+        if currentPage == 0, tradeTotal > 0, tradeTotal <= pageLimit {
+            return .total(visibleCount)
+        }
+        return .narrowed(visible: visibleCount)
     }
 
     /// Applies a server-side search filter (submit path; typing alone keeps
@@ -306,10 +509,15 @@ final class CongressTradeStore: ObservableObject {
     func setSearch(_ term: String?) async {
         let trimmed = (term ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let next = trimmed.isEmpty ? nil : trimmed
-        guard next != searchTerm else { return }
-        searchTerm = next
-        currentPage = 0
-        await refresh()
+        guard next != searchTerm else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            searchTerm = next
+            currentPage = 0
+            await refresh()
+        }
     }
 
     /// Short all-caps tokens are treated as ticker symbols (`ticker=`);
@@ -345,12 +553,56 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    /// Resyncs the Trades feed against the CURRENT filter selection, and does
+    /// not return until that has actually happened.
+    ///
+    /// COALESCE, NEVER DROP. The old shape was
+    /// `guard !isRefreshing else { refreshQueued = true; return }`, which made
+    /// `await refresh()` a lie whenever a request was already in flight: the
+    /// call returned immediately, so a filter setter awaiting it finished
+    /// while the screen still showed the *previous* filter's rows, and every
+    /// caller keyed off `isRefreshing` — a flag about someone else's request.
+    /// With a 3-5s round trip and an auto-poll timer running, that is easy to
+    /// hit just by toggling a chip at the wrong moment, and the symptom is
+    /// precisely the owner's "it just isn't working".
+    ///
+    /// Now there is one runner loop: callers mark a request and await the
+    /// runner, the runner re-runs while requests keep arriving, and it clears
+    /// itself only after a pass during which none did. Every `await refresh()`
+    /// — the first caller, a caller that arrived mid-flight, the auto-poll —
+    /// returns with the newest selection already applied. Coalescing is
+    /// bounded: N requests during one pass collapse into exactly one extra
+    /// pass, and because this is a loop rather than the previous tail-recursive
+    /// re-entry there is no call-stack growth under a burst of chip taps.
+    ///
+    /// The check/clear sequence at the bottom of the loop needs no lock: the
+    /// class is `@MainActor`, and between the failing `while` test and
+    /// `refreshRunner = nil` there is no suspension point, so no caller can
+    /// observe a live-but-finished runner and have its request dropped.
     func refresh() async {
-        guard !isRefreshing else {
-            refreshQueued = true
+        refreshRequested = true
+        // Held across the whole coalesced sequence rather than per pass, so an
+        // indicator bound to it cannot blink off between two passes of what the
+        // user experienced as a single action.
+        isRefreshing = true
+        if let runner = refreshRunner {
+            await runner.value
             return
         }
-        isRefreshing = true
+        let runner = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.refreshRequested {
+                self.refreshRequested = false
+                await self.performRefresh()
+            }
+            self.refreshRunner = nil
+            self.isRefreshing = false
+        }
+        refreshRunner = runner
+        await runner.value
+    }
+
+    private func performRefresh() async {
         feedNotice = nil
         let chambers = selectedChambers
         let chamberParam = Self.chamberQueryValue(for: chambers)
@@ -400,6 +652,12 @@ final class CongressTradeStore: ObservableObject {
             )
             try replaceCache(with: response)
             feed = response
+            // `total` is the server's COUNT(*) over the SERVER-side filters,
+            // independent of limit/offset (`readClientTradeList`), so it is a
+            // real total and not the page size. It is omitted only on a
+            // zero-delta `?since=` poll, which this store never sends — hence
+            // the plain `if let` rather than a reset to 0, which would blank a
+            // valid count if the server ever started omitting it.
             if let total = response.total { tradeTotal = total }
             bootstrap = try await bootstrapTask
             lastSuccessfulRefresh = Date()
@@ -430,13 +688,9 @@ final class CongressTradeStore: ObservableObject {
                     : error.localizedDescription
             }
         }
-        isRefreshing = false
-        if refreshQueued {
-            refreshQueued = false
-            await refresh()
-        }
-        // Arm the next foreground poll from this feed's cadence hint. A queued
-        // re-refresh above re-enters and re-arms, so this is at most one timer.
+        // Arm the next foreground poll from this feed's cadence hint. A
+        // coalesced re-run calls this again and `scheduleAutoRefresh` cancels
+        // the previous timer first, so this is at most one timer.
         scheduleAutoRefresh()
     }
 
@@ -444,16 +698,51 @@ final class CongressTradeStore: ObservableObject {
     /// (client-side-filtered) Trades feed and Trends analytics. Empty = all
     /// parties.
     func setPartySelection(_ parties: Set<PartyFilter>) async {
-        guard parties != selectedParties else { return }
-        selectedParties = parties
-        currentPage = 0
-        async let r1: Void = refreshTrends()
-        async let r2: Void = refresh()
-        _ = await (r1, r2)
+        guard parties != selectedParties else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            selectedParties = parties
+            currentPage = 0
+            async let r1: Void = refreshTrends()
+            async let r2: Void = refresh()
+            _ = await (r1, r2)
+        }
     }
 
+    /// Resyncs the Trends analytics fan-out, and does not return until that has
+    /// happened.
+    ///
+    /// Serialized by the same runner shape as `refresh()`, for a different
+    /// reason: this had NO overlap guard at all, so two filter changes in quick
+    /// succession raced one eleven-request fan-out against another. Whichever
+    /// finished first cleared `isLoadingTrends` while the other was still
+    /// running, and whichever response landed last won each property — so the
+    /// board could settle on the OLDER selection's numbers with no spinner and
+    /// nothing on screen admitting it. Serializing makes last-write-wins mean
+    /// last-*requested*-wins.
     func refreshTrends() async {
+        trendsRequested = true
         isLoadingTrends = true
+        if let runner = trendsRunner {
+            await runner.value
+            return
+        }
+        let runner = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.trendsRequested {
+                self.trendsRequested = false
+                await self.performTrendsRefresh()
+            }
+            self.trendsRunner = nil
+            self.isLoadingTrends = false
+        }
+        trendsRunner = runner
+        await runner.value
+    }
+
+    private func performTrendsRefresh() async {
         trendsNotice = nil
         // All-time + calendar-year analytics map through analyticsWindow.
         let analyticsWindow = selectedTimeRange.analyticsWindow
@@ -509,7 +798,6 @@ final class CongressTradeStore: ObservableObject {
                 trendsNotice = error.localizedDescription
             }
         }
-        isLoadingTrends = false
     }
 
     private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
@@ -923,4 +1211,32 @@ enum DeliveryMode: String, CaseIterable, Identifiable {
     case webhook = "Webhook"
 
     var id: String { rawValue }
+}
+
+/// What the Trades header is allowed to say about "how many trades".
+/// Built by `CongressTradeStore.tradeCountSummary(visibleCount:localSearchText:)`
+/// — see there for why each case exists. There is deliberately no case for
+/// "some number we hope is right".
+enum TradeCountSummary: Equatable {
+    /// Nothing has loaded yet — print nothing rather than a placeholder zero.
+    case unknown
+    /// A true count of every trade matching the active filters and search.
+    case total(Int)
+    /// Client-only narrowing over a result set larger than one page, so only
+    /// what is loaded can be counted. Never presented as a total.
+    case narrowed(visible: Int)
+
+    /// Ready-to-render text, or `nil` when the honest answer is to show
+    /// nothing. Sentence case; thousands separators, never a compacted "1.2k"
+    /// — a count the user may reconcile against the pager deserves its digits.
+    var label: String? {
+        switch self {
+        case .unknown:
+            return nil
+        case .total(let count):
+            return count == 1 ? "1 trade" : "\(count.formatted(.number.grouping(.automatic))) trades"
+        case .narrowed(let visible):
+            return visible == 1 ? "1 shown on this page" : "\(visible.formatted(.number.grouping(.automatic))) shown on this page"
+        }
+    }
 }

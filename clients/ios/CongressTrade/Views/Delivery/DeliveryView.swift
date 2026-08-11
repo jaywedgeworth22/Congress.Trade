@@ -10,52 +10,52 @@ struct DeliveryView: View {
     @State private var watchlistDraft: [String] = []
     @State private var newTicker = ""
     @State private var showSubscribe = false
-    @State private var editingSubscriptionId: String?
+    @State private var showExportSheet = false
 
-    @AppStorage("notify_all_trades") private var notifyAllTrades = true
-    @AppStorage("notify_new_buys") private var notifyNewBuys = false
-    @AppStorage("notify_new_sells") private var notifyNewSells = false
-    @AppStorage("notify_watchlist") private var notifyWatchlist = false
+    // DELETED, deliberately: a "Notifications" section of four @AppStorage
+    // toggles (`notify_all_trades` / `notify_new_buys` / `notify_new_sells` /
+    // `notify_watchlist`). A grep of the whole iOS tree found those four keys
+    // referenced in this file and nowhere else — no request builder, no
+    // PushNotificationManager path, no subscription filter read them. They were
+    // write-only local state that changed nothing, which is worse than having
+    // no switches at all: it is why the owner was "unsure if any options there
+    // impact push notifications or not". The one control that really does gate
+    // alerts to this phone is `TradeDisclosureAlertsToggle`, now at the top.
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Notifications") {
-                    Toggle("All Trades", isOn: Binding(
-                        get: { notifyAllTrades },
-                        set: { isOn in
-                            notifyAllTrades = isOn
-                            if isOn {
-                                notifyNewBuys = false
-                                notifyNewSells = false
-                                notifyWatchlist = false
-                            }
-                        }
-                    ))
-                    Toggle("New Buys", isOn: Binding(
-                        get: { notifyNewBuys },
-                        set: { isOn in
-                            notifyNewBuys = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("New Sells", isOn: Binding(
-                        get: { notifyNewSells },
-                        set: { isOn in
-                            notifyNewSells = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("Watchlist", isOn: Binding(
-                        get: { notifyWatchlist },
-                        set: { isOn in
-                            notifyWatchlist = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
+                Section {
+                    TradeDisclosureAlertsToggle()
+                } header: {
+                    Text("Alerts on This Phone")
+                } footer: {
+                    Text("The same switch as in the header menu — turning it on here turns it on everywhere.")
                 }
 
-                Section("Create Delivery") {
+                // Export sits beside the upgrade entry point on purpose (owner
+                // asked for that adjacency): the thing you want and the thing
+                // that unlocks it should not be on different screens.
+                Section {
+                    Button {
+                        showExportSheet = true
+                    } label: {
+                        Label("Export CSV", systemImage: "arrow.down.circle")
+                    }
+                    if !store.isPremium {
+                        Button {
+                            showSubscribe = true
+                        } label: {
+                            Label("Subscribe with Apple", systemImage: "apple.logo")
+                        }
+                    }
+                } header: {
+                    Text("Premium")
+                } footer: {
+                    Text("CSV export uses the filters set on the Trades tab, plus the dates you pick.  Premium is $5/month or $50/year, with a 1-month free trial.")
+                }
+
+                Section {
                     if !store.signedIn {
                         VStack(alignment: .leading, spacing: 10) {
                             DeliveryMethodExplainer()
@@ -167,6 +167,12 @@ struct DeliveryView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
                     }
+                } header: {
+                    Text("Create Delivery")
+                } footer: {
+                    // The single line that has to land for a non-developer:
+                    // this whole tab is about machines, not this phone.
+                    Text("Deliveries send filings to a server you run — they are not alerts on this phone.  For those, use Trade Disclosure Alerts above.")
                 }
 
                 Section("Existing Subscriptions") {
@@ -245,6 +251,15 @@ struct DeliveryView: View {
                 } footer: {
                     Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
                 }
+
+                // Footer links live in their own borderless row rather than a
+                // section footer so they read as page chrome, not as a note
+                // about the watchlist above them.
+                Section {
+                    LegalFooterLinks()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
@@ -256,6 +271,12 @@ struct DeliveryView: View {
             .sheet(isPresented: $showSubscribe) {
                 SubscribeView()
                     .environmentObject(store)
+            }
+            .sheet(isPresented: $showExportSheet) {
+                ExportCSVSheet()
+                    .environmentObject(store)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
             .onAppear {
                 watchlistDraft = store.watchlist
