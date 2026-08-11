@@ -1421,6 +1421,37 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
   });
 
+  it('rolls billions up to trillions instead of a 4+ digit "b" number (executed)', () => {
+    // Pull the real shipped fmtBracketAmount source out of DASHBOARD_HTML and
+    // run it directly, so this exercises the shipped logic rather than a
+    // reimplementation. A market cap like $3,622,500,000,000 previously
+    // rendered as "$3623b" (or, below the 10B rounding threshold, a stray
+    // 4-digit "$3622.5b") because the function had no >= 1e12 branch.
+    const marker = 'function fmtBracketAmount(';
+    const start = DASHBOARD_HTML.indexOf(marker);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const braceStart = DASHBOARD_HTML.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < DASHBOARD_HTML.length; i++) {
+      if (DASHBOARD_HTML[i] === '{') depth++;
+      else if (DASHBOARD_HTML[i] === '}') {
+        depth--;
+        if (depth === 0) { i++; break; }
+      }
+    }
+    const src = DASHBOARD_HTML.slice(start, i);
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const fmtBracketAmount = new Function(src + '\nreturn fmtBracketAmount;')() as (n: number) => string;
+
+    expect(fmtBracketAmount(3622500000000)).toBe('$3.62t');
+    expect(fmtBracketAmount(1000000000000)).toBe('$1.00t');
+    expect(fmtBracketAmount(-2500000000000)).toBe('-$2.50t');
+    // Existing billions/millions/thousands precision stays untouched.
+    expect(fmtBracketAmount(3500000000)).toBe('$3.5b');
+    expect(fmtBracketAmount(23000000000)).toBe('$23b');
+  });
+
   it('formats district ordinals with superscript suffixes (display-only)', () => {
     expect(DASHBOARD_HTML).toContain('function ordinalSuffix(');
     expect(DASHBOARD_HTML).toContain('function fmtDistrictOrdinal(');
