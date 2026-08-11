@@ -51,7 +51,12 @@ STUCK_ALERT_MULTIPLIER="${STUCK_ALERT_MULTIPLIER:-3}"
 mkdir -p "$STATE_DIR"
 PENDING_FILE="$STATE_DIR/pending_since"
 LAST_DEPLOY_FILE="$STATE_DIR/last_deploy"
+LAST_DEPLOY_UUID_FILE="$STATE_DIR/last_deploy_uuid"
 NOTIFY_FILE="$STATE_DIR/last_notify"
+# A deploy we just triggered sits "queued" for a moment before Coolify starts
+# it. Without this grace the next tick would cancel our OWN deploy and then
+# hold for a full interval, so nothing would ever ship.
+SELF_GRACE_SEC="${SELF_GRACE_SEC:-600}"
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -138,7 +143,32 @@ fi
 
 # --- coalesce queued deploys ----------------------------------------------
 if [[ "$QUEUED_UUIDS" != "-" && -n "$QUEUED_UUIDS" ]]; then
-  IFS=',' read -r -a QU <<<"$QUEUED_UUIDS"
+  IFS=',' read -r -a QU_ALL <<<"$QUEUED_UUIDS"
+
+  # Never cancel the deploy this guard just triggered.
+  OWN_UUID=""
+  [[ -f "$LAST_DEPLOY_UUID_FILE" ]] && OWN_UUID=$(cat "$LAST_DEPLOY_UUID_FILE" 2>/dev/null || echo "")
+  OWN_TS=0
+  [[ -f "$LAST_DEPLOY_FILE" ]] && OWN_TS=$(cat "$LAST_DEPLOY_FILE" 2>/dev/null || echo 0)
+
+  if [[ -n "$OWN_UUID" && $(( $(now) - OWN_TS )) -lt "$SELF_GRACE_SEC" ]]; then
+    QU=()
+    for u in "${QU_ALL[@]}"; do
+      [[ "$u" == "$OWN_UUID" ]] && continue
+      QU+=("$u")
+    done
+    if [[ "${#QU[@]}" -lt "${#QU_ALL[@]}" ]]; then
+      log "leaving our own queued deploy ${OWN_UUID:0:8} alone (within ${SELF_GRACE_SEC}s grace)"
+    fi
+  else
+    QU=("${QU_ALL[@]}")
+  fi
+
+  if [[ "${#QU[@]}" -eq 0 ]]; then
+    log "only our own deploy is queued; nothing to coalesce"
+    exit 0
+  fi
+
   log "coalescing ${#QU[@]} queued deploy(s) into one"
   cancel_failed=0
   for u in "${QU[@]}"; do
@@ -189,8 +219,21 @@ log "deploying latest main: $REASON"
 RESP=$(api GET "/api/v1/deploy?uuid=${APP_UUID}&force=false")
 if printf '%s' "$RESP" | grep -q 'deployment_uuid'; then
   now > "$LAST_DEPLOY_FILE"
+  # Remember which deploy is ours so the next tick does not cancel it.
+  printf '%s' "$RESP" | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    raise SystemExit
+ds=d.get("deployments") if isinstance(d,dict) else None
+if isinstance(ds,list) and ds:
+    print(ds[0].get("deployment_uuid",""), end="")
+elif isinstance(d,dict):
+    print(d.get("deployment_uuid",""), end="")
+' > "$LAST_DEPLOY_UUID_FILE" 2>/dev/null || : > "$LAST_DEPLOY_UUID_FILE"
   rm -f "$PENDING_FILE"
-  log "deploy queued OK"
+  log "deploy queued OK (uuid $(cut -c1-8 < "$LAST_DEPLOY_UUID_FILE" 2>/dev/null))"
 else
   log "deploy trigger FAILED"
   notify "Deploy guard could not trigger a deploy via the Coolify API."
