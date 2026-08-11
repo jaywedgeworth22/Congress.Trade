@@ -2476,20 +2476,22 @@ describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () =>
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
 
+    const { OG_IMAGE_VERSION: v } = await import('../assets.ts');
+
     const trends = await (await app.request('http://localhost/?view=trends', {}, { } as never)).text();
-    expect(trends).toContain('og-image-trends.png?v=22');
-    expect(trends).toContain('content="Trends · Congress.Trade"');
+    expect(trends).toContain(`og-image-trends.png?v=${v}`);
+    expect(trends).toContain('content="Trends"');
 
     const company = await (await app.request('http://localhost/?ticker=AAPL', {}, { } as never)).text();
-    expect(company).toContain('og-image-company.png?v=22');
-    expect(company).toContain('content="AAPL · Congress.Trade"');
+    expect(company).toContain(`og-image-company.png?v=${v}`);
+    expect(company).toContain('content="AAPL"');
 
     const pol = await (await app.request('http://localhost/?member=P000197', {}, { } as never)).text();
-    expect(pol).toContain('og-image-politician.png?v=22');
-    expect(pol).toContain('content="P000197 · Congress.Trade"');
+    expect(pol).toContain(`og-image-politician.png?v=${v}`);
+    expect(pol).toContain('content="P000197"');
 
     const home = await (await app.request('http://localhost/', {}, { } as never)).text();
-    expect(home).toContain('og-image.png?v=22');
+    expect(home).toContain(`og-image.png?v=${v}`);
     expect(home).not.toContain('og-image-trends.png');
   });
 });
