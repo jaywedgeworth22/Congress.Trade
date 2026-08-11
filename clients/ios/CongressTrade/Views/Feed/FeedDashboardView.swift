@@ -16,7 +16,6 @@ struct FeedDashboardView: View {
     /// list item 2b) — never a per-view `@State` that resets on tab switch.
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
-    @State private var showExportSheet = false
     @FocusState private var searchFocused: Bool
 
     /// Orders the loaded page per the active Trades sort control (owner
@@ -111,8 +110,64 @@ struct FeedDashboardView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    // MARK: - Truthful trade count (owner: "the # of trades says 100 … we need
+    // no number there or ideally the actual count of total that matches that
+    // filter and search")
+
+    /// True when the visible list is narrowed by something the server never
+    /// saw, which makes `store.tradeTotal` — the feed API's `COUNT(*)` for the
+    /// *server-side* filters — bigger than the real match count:
+    ///  - **Party** is client-only: `/api/client/v1/feed` has no `party=`
+    ///    param at all (`CongressTradeStore.selectedParties`).
+    ///  - **2+ sides**: server `type=` is single-valued, so
+    ///    `tradeTypeQueryValue` omits it and `filteredTrades` does the work.
+    ///  - **All chambers selected**: `chamberQueryValue` omits `chamber=`
+    ///    entirely in that case (so unresolved-chamber rows come back), yet
+    ///    `filteredTrades` still drops every row whose chamber will not parse.
+    ///  - **Local search text**: `TradeSearch.matches` is multi-token across
+    ///    name / ticker / state / party — strictly narrower than the single
+    ///    `ticker=` or `memberName=` the server was given.
+    private var clientOnlyFilteringActive: Bool {
+        if !store.selectedParties.isEmpty { return true }
+        if store.selectedTradeTypes.count > 1 { return true }
+        if store.selectedChambers.count == ChamberFilter.allCases.count { return true }
+        return hasActiveTextFilter
+    }
+
+    /// Never the page limit. Three honest cases, in order:
+    ///  1. No client-only narrowing and a live server total → that total, which
+    ///     really is every trade matching the filters (not just this page).
+    ///  2. Otherwise, when the whole result set fits on one page, the locally
+    ///     filtered count *is* the true total — say so plainly.
+    ///  3. Otherwise the true total is genuinely unknowable client-side (we
+    ///     only hold one page to filter), so scope the number to what it
+    ///     actually counts rather than printing a wrong integer.
+    private func tradeCountLabel(showing shown: Int) -> String {
+        if !clientOnlyFilteringActive, !store.isOffline, store.tradeTotal > 0 {
+            return "\(CompactFormat.count(store.tradeTotal)) trades"
+        }
+        if store.totalPages <= 1 {
+            return "\(CompactFormat.count(shown)) trades"
+        }
+        return "\(CompactFormat.count(shown)) on this page"
+    }
+
+    /// Every filter, sort and page mutator funnels through
+    /// `CongressTradeStore.refresh()` (each one resets `currentPage` then
+    /// refetches), so `isRefreshing` *is* the filter-pending signal — this one
+    /// property is the only thing to re-point if the store ever grows a
+    /// dedicated flag. Suppressed on a cold start because the full-screen
+    /// ProgressView overlay already covers that case.
+    private var isFilterPending: Bool {
+        store.isRefreshing && !cachedTrades.isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        // Read once per render. `filteredTrades` sorts the entire loaded page
+        // every time it is touched, and the body needs it for the count, the
+        // empty state and the list — three full sorts per frame before this.
+        let trades = filteredTrades
+        return NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
                     DisclaimerBanner(isExpanded: $disclaimerExpanded)
@@ -138,13 +193,36 @@ struct FeedDashboardView: View {
                         scheduleSearchDebounce()
                     }
 
+                    // The pending indicator takes the count's own slot rather
+                    // than adding a row: the number is exactly what the user
+                    // is waiting on, the row's height is fixed either way, so
+                    // nothing below it moves when a refresh starts or ends
+                    // (owner: filter changes "take 3-5 seconds … there should
+                    // be some indicator so you don't think that it just isn't
+                    // working").
                     HStack(spacing: 8) {
                         FeedSortControl()
                         Spacer(minLength: 0)
-                        Text("\(filteredTrades.count) trades")
+                        if isFilterPending {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text("Updating…")
+                            }
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
+                            .transition(.opacity)
+                            .accessibilityLabel("Updating trades for the new filters")
+                        } else {
+                            Text(tradeCountLabel(showing: trades.count))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .contentTransition(.numericText())
+                                .accessibilityLabel(tradeCountLabel(showing: trades.count))
+                        }
                     }
+                    .frame(minHeight: 22)
+                    .animation(.easeInOut(duration: 0.18), value: isFilterPending)
 
                     // Only real offline/error notices — never cancellation noise.
                     if let notice = store.feedNotice,
@@ -157,7 +235,7 @@ struct FeedDashboardView: View {
                         )
                     }
 
-                    if filteredTrades.isEmpty && !store.isRefreshing {
+                    if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
                                 hasActiveTextFilter ? "No Matching Trades" : "No Trades in Range",
@@ -177,28 +255,38 @@ struct FeedDashboardView: View {
                         .padding(.top, 40)
                     }
 
+                    // Same component top and bottom, reading the same store —
+                    // never a second copy of the paging logic (owner: the
+                    // pagination features are "way at bottom and missing from
+                    // top of the list of trades").
+                    if !trades.isEmpty {
+                        FeedPaginationBar()
+                    }
+
                     LazyVStack(spacing: 8) {
-                        ForEach(filteredTrades) { trade in
-                            Button {
-                                selectedTrade = trade
-                            } label: {
-                                TradeCard(trade: trade, onPoliticianTap: {
-                                    if let memberId = trade.member.id {
+                        ForEach(trades) { trade in
+                            TradeCard(
+                                trade: trade,
+                                onRowTap: { selectedTrade = trade },
+                                onPoliticianTap: trade.member.id.map { memberId in
+                                    {
                                         selectedPoliticianName = trade.member.name
                                         selectedPoliticianId = memberId
                                     }
-                                }, onTickerTap: trade.asset.ticker.map { ticker in
+                                },
+                                onTickerTap: trade.asset.ticker.map { ticker in
                                     { selectedTicker = ticker }
-                                })
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Opens trade details")
+                                }
+                            )
                         }
                     }
 
-                    if !filteredTrades.isEmpty {
+                    if !trades.isEmpty {
                         FeedPaginationBar()
                     }
+
+                    legalFooter
+                        .padding(.top, 8)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -208,9 +296,12 @@ struct FeedDashboardView: View {
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Swapped vs the old layout (owner punch list item 3): ⓘ now
-                // leads (where the export arrow used to be), arrow trails —
-                // matching Trends' ⓘ side after its own swap below.
+                // Exactly Trends' three slots — ⓘ leading, brand principal,
+                // hamburger trailing. CSV export moved into the header menu
+                // and Delivery, and dropping that second trailing item is
+                // also what un-squeezes the principal slot, so the lockup is
+                // no longer rendered smaller here than on Trends (owner: "The
+                // Trades tab shouldn't have a smaller logo").
                 ToolbarItem(placement: .topBarLeading) {
                     HeaderIconButton(
                         systemImage: "info.circle",
@@ -222,13 +313,7 @@ struct FeedDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    HeaderIconButton(
-                        systemImage: "arrow.down.circle",
-                        accessibilityLabel: "Export CSV"
-                    ) {
-                        showExportSheet = true
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
                     HamburgerMenuButton()
                 }
                 ToolbarItemGroup(placement: .keyboard) {
@@ -285,18 +370,35 @@ struct FeedDashboardView: View {
                         .presentationCornerRadius(18)
                 }
             }
-            .sheet(isPresented: $showExportSheet) {
-                ExportCSVSheet()
-                    .environmentObject(store)
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
-            }
             .onDisappear { filterTask?.cancel() }
             .simultaneousGesture(
                 TapGesture().onEnded { searchFocused = false }
             )
         }
     }
+
+    /// Quiet legal links closing the scroll content (owner: "there should be
+    /// small link to privacy policy and other legal docs at bottom of all iOS
+    /// app tabs"). Secondary-tinted rather than accent blue so it reads as
+    /// footer chrome, not a call to action, and uses the owner's wide "  •  "
+    /// separator. Same two documents the web footer links.
+    /// Declared here as a view property, not a top-level struct, so it cannot
+    /// collide with the shared `LegalFooterLinks` the components lane is
+    /// landing — swapping this body for that call is a one-line change.
+    private var legalFooter: some View {
+        HStack(spacing: 0) {
+            Link("Privacy Policy", destination: Self.privacyPolicyURL)
+            Text(verbatim: "  •  ")
+            Link("Terms of Service", destination: Self.termsOfServiceURL)
+        }
+        .font(.caption2)
+        .tint(.secondary)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+    }
+
+    private static let privacyPolicyURL = URL(string: "https://congress.trade/privacy-policy")!
+    private static let termsOfServiceURL = URL(string: "https://congress.trade/terms-of-service")!
 
     private func scheduleFilterApply(_ work: @escaping @MainActor () async -> Void) {
         filterTask?.cancel()
@@ -542,11 +644,47 @@ struct FeedControlBar: View {
     }
 }
 
+/// The one chrome every interactive control on this screen wears — filter
+/// pills, both sort controls, and both pagination bars. Before this the screen
+/// carried three unrelated languages at once: capsule pills for filters, a 30pt
+/// bordered circle for sort direction, and an `ultraThinMaterial` rounded panel
+/// for the pager (owner: "the sort by and sort direction buttons look like they
+/// are different styles and they also look like different style from the
+/// pagination features"). The pill's geometry won because it was already the
+/// dominant language here *and* the one shared with Trends, so unifying inward
+/// changed the fewest pixels the owner had already signed off on.
+///
+/// `isActive` is the only appearance variant — filled accent means a non-default
+/// value is applied. `compact` trims 2pt of horizontal padding for icon-only
+/// content so a lone glyph still lands on a ~32pt near-square target rather than
+/// a wide slab. `isEnabled` only dims: `.disabled()` still has to be applied by
+/// the caller, since a chip is a label and cannot refuse its own taps.
+struct ControlChip<Content: View>: View {
+    var isActive: Bool = false
+    var isEnabled: Bool = true
+    var compact: Bool = false
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, compact ? 10 : 12)
+            .padding(.vertical, 8)
+            .foregroundStyle(isActive ? .white : .primary)
+            .background(
+                isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
+                in: Capsule()
+            )
+            .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.35)
+    }
+}
+
 /// Trades-only sort control (owner punch list #2, item 7) — mirrors the
 /// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
 /// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
 /// Amount) plus a separate direction button that flips asc/desc for
-/// whichever key is active.
+/// whichever key is active. Both halves are `ControlChip`s, so they match each
+/// other, the filter pills above them, and the pager below.
 struct FeedSortControl: View {
     @EnvironmentObject private var store: CongressTradeStore
 
@@ -578,13 +716,15 @@ struct FeedSortControl: View {
             Button {
                 Task { await store.toggleFeedSortDirection() }
             } label: {
-                Image(systemName: store.feedSortDirection.systemImage)
-                    .font(.caption.weight(.bold))
-                    .frame(width: 30, height: 30)
-                    .foregroundStyle(.secondary)
-                    .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                ControlChip(compact: true) {
+                    Image(systemName: store.feedSortDirection.systemImage)
+                        .font(.caption.weight(.bold))
+                }
             }
+            // `.plain` so the chip's own foregroundStyle wins: the TabView's
+            // `.tint(.blue)` otherwise repaints a default-styled Button's label
+            // accent-blue and the chip stops matching its neighbours.
+            .buttonStyle(.plain)
             .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
         }
     }
@@ -595,38 +735,59 @@ struct FeedSortControl: View {
 /// (`app/src/ui/dashboardHtml.ts`). Reads `total`/`limit` from the feed's own
 /// response metadata via the store's `totalPages`/`pageSize`; never a
 /// client-side estimate.
+///
+/// Rendered twice — above and below the list — as the *same* view over the same
+/// store, so there is exactly one paging code path and the two bars can never
+/// disagree. The page controls hide themselves on a single-page result (nothing
+/// to page to) while rows-per-page stays, which is a branch inside the one
+/// component rather than a second, trimmed-down copy of it.
+///
+/// The former `ultraThinMaterial` panel is gone: every control is a
+/// `ControlChip`, the same shape the filters and sort controls wear.
 struct FeedPaginationBar: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     private static let pageSizeOptions = [50, 100, 200]
 
+    private var pageLabel: String {
+        "Page \(CompactFormat.count(store.currentPage + 1)) of \(CompactFormat.count(store.totalPages))"
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Button {
-                Task { await store.goToPreviousPage() }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 30, height: 30)
-            }
-            .disabled(!store.canGoToPreviousPage)
-            .accessibilityLabel("Previous page")
+        HStack(spacing: 8) {
+            if store.totalPages > 1 {
+                Button {
+                    Task { await store.goToPreviousPage() }
+                } label: {
+                    ControlChip(isEnabled: store.canGoToPreviousPage, compact: true) {
+                        Image(systemName: "chevron.left")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!store.canGoToPreviousPage)
+                .accessibilityLabel("Previous page")
 
-            Text("Page \(store.currentPage + 1) of \(store.totalPages)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 84)
-                .accessibilityLabel("Page \(store.currentPage + 1) of \(store.totalPages)")
+                // Plain text, never a chip: it is a readout, and giving it the
+                // tappable shape would promise an action it does not have.
+                Text(pageLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .accessibilityLabel(pageLabel)
 
-            Button {
-                Task { await store.goToNextPage() }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 30, height: 30)
+                Button {
+                    Task { await store.goToNextPage() }
+                } label: {
+                    ControlChip(isEnabled: store.canGoToNextPage, compact: true) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!store.canGoToNextPage)
+                .accessibilityLabel("Next page")
             }
-            .disabled(!store.canGoToNextPage)
-            .accessibilityLabel("Next page")
 
             Spacer(minLength: 8)
 
@@ -644,24 +805,19 @@ struct FeedPaginationBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    Text("\(store.pageSize)/page")
-                        .font(.caption.weight(.semibold))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .opacity(0.5)
+                ControlChip {
+                    HStack(spacing: 4) {
+                        Text("\(store.pageSize) / page")
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .opacity(0.5)
+                            .padding(.leading, 2)
+                    }
                 }
-                .foregroundStyle(.secondary)
             }
             .accessibilityLabel("Rows per page, \(store.pageSize)")
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 
@@ -686,35 +842,36 @@ struct SidesFilterMenuLabel: View {
     private var dimColor: Color { isActive ? .white.opacity(0.45) : .secondary }
 
     var body: some View {
-        HStack(spacing: 4) {
-            HStack(spacing: 1) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(isOn(.buy) ? Color.green : dimColor)
-                Image(systemName: "arrow.down")
-                    .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(isOn(.sell) ? Color.red : dimColor)
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 8, weight: .heavy))
-                    .foregroundStyle(isOn(.exchange) ? Color.orange : dimColor)
+        ControlChip(isActive: isActive, compact: !isActive) {
+            HStack(spacing: 4) {
+                HStack(spacing: 1) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(isOn(.buy) ? Color.green : dimColor)
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(isOn(.sell) ? Color.red : dimColor)
+                    // Black, matching the buy/sell arrows' treatment rather
+                    // than shouting in orange (owner: "make the double arrow
+                    // symbol for exchanges be black … in same style as the up
+                    // and down buy and sell arrows"). `Color.primary`, not a
+                    // literal `.black`, because a literal black arrow is
+                    // invisible against the dark-mode chip. Size/weight now
+                    // match the siblings exactly — it was a point smaller.
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(isOn(.exchange) ? Color.primary : dimColor)
+                }
+                if isActive {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .opacity(0.5)
+                    .padding(.leading, 2)
             }
-            if isActive {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-            }
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .opacity(0.5)
-                .padding(.leading, 2)
         }
-        .padding(.horizontal, isActive ? 12 : 10)
-        .padding(.vertical, 8)
-        .foregroundStyle(isActive ? .white : .primary)
-        .background(
-            isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
-            in: Capsule()
-        )
-        .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
         .accessibilityLabel("Trade side filter, \(title)")
     }
 }
@@ -733,26 +890,20 @@ struct FilterMenuLabel: View {
     private var showsLabel: Bool { alwaysShowLabel || isActive }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption.weight(.bold))
-            if showsLabel {
-                Text(title)
-                    .font(.caption.weight(.semibold))
+        ControlChip(isActive: isActive, compact: !showsLabel) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption.weight(.bold))
+                if showsLabel {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .opacity(0.5)
+                    .padding(.leading, 2)
             }
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .opacity(0.5)
-                .padding(.leading, 2)
         }
-        .padding(.horizontal, showsLabel ? 12 : 10)
-        .padding(.vertical, 8)
-        .foregroundStyle(isActive ? .white : .primary)
-        .background(
-            isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
-            in: Capsule()
-        )
-        .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
         .accessibilityLabel(accessibilityLabel ?? title)
     }
 }
@@ -981,8 +1132,22 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 // MARK: - Compact trade row
 
+/// Row in the Trades list. Three destinations live here — the trade sheet, the
+/// politician sheet and the ticker sheet — and which one a tap reaches used to
+/// depend on undefined behaviour: the whole row was a `Button` whose *label*
+/// contained two more `Button`s, so a tap near the row's centre landed on the
+/// politician button's stretched frame and opened the wrong sheet.
+///
+/// The fix is structural rather than a hit-testing tweak: the row is no longer
+/// a Button at all. It carries a `contentShape` + tap gesture for "open this
+/// trade", and the politician / ticker controls are ordinary sibling Buttons
+/// that win inside their own frames because SwiftUI resolves the innermost
+/// gesture first. Nothing is nested inside anything, so every tap has exactly
+/// one owner. The asset title is *also* a Button for the row action, which is
+/// what gives VoiceOver a real target — a bare tap gesture is invisible to it.
 struct TradeCard: View {
     let trade: ClientTrade
+    var onRowTap: (() -> Void)? = nil
     var onPoliticianTap: (() -> Void)? = nil
     var onTickerTap: (() -> Void)? = nil
 
@@ -991,22 +1156,27 @@ struct TradeCard: View {
             // Only reserve logo column when a ticker exists; AssetMark is EmptyView
             // until a real logo loads (no blue monogram tiles that steal width).
             if trade.asset.ticker != nil {
-                Button {
-                    onTickerTap?()
-                } label: {
+                if let onTickerTap {
+                    Button(action: onTickerTap) {
+                        AssetMark(symbol: assetTitle, isTicker: true, size: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View \(assetTitle) Trades")
+                } else {
                     AssetMark(symbol: assetTitle, isTicker: true, size: 40)
+                        .accessibilityLabel(assetTitle)
                 }
-                .buttonStyle(.plain)
-                .disabled(onTickerTap == nil)
-                .accessibilityLabel(onTickerTap == nil ? assetTitle : "View \(assetTitle) Trades")
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(assetTitle)
-                        .font(.subheadline.weight(.bold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    if let onRowTap {
+                        Button(action: onRowTap) { assetTitleText }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens trade details")
+                    } else {
+                        assetTitleText
+                    }
                     StatusPill(
                         text: shortTypeLabel,
                         color: trade.transaction.type.tint,
@@ -1014,17 +1184,15 @@ struct TradeCard: View {
                     )
                 }
 
-                Button {
-                    onPoliticianTap?()
-                } label: {
-                    Text(politicianLine)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                // Rendered as a plain Text when there is no member to open, so
+                // a dead Button never sits between the finger and the row.
+                if let onPoliticianTap {
+                    Button(action: onPoliticianTap) { politicianText }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens politician details")
+                } else {
+                    politicianText
                 }
-                .buttonStyle(.plain)
-                .disabled(onPoliticianTap == nil)
             }
 
             Spacer(minLength: 4)
@@ -1047,6 +1215,25 @@ struct TradeCard: View {
                 .stroke(AppTheme.borderColor.opacity(0.55), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        // Whole-card affordance for everything that is not one of the two
+        // sub-destinations: the amount, the date, the badge, the padding.
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture { onRowTap?() }
+    }
+
+    private var assetTitleText: some View {
+        Text(assetTitle)
+            .font(.subheadline.weight(.bold))
+            .lineLimit(2)
+            .multilineTextAlignment(.leading)
+    }
+
+    private var politicianText: some View {
+        Text(politicianLine)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .multilineTextAlignment(.leading)
     }
 
     private var assetTitle: String {
