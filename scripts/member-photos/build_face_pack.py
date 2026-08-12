@@ -17,8 +17,17 @@ Sources
   re-run this script, and they join the pack.
 * **Executive** -- curated entries in ``sources.json``, each carrying the
   Commons file, direct source URL, licence and attribution that
-  ``discover_commons.py`` verified.  Only public-domain licences are accepted;
-  anything else is reported and skipped so the gap stays visible.
+  ``discover_commons.py`` verified.  A licence must be *recorded* to admit an
+  entry, but it no longer has to be public domain -- see ``facepack.py`` for
+  why, and ``facepack.licence_tier`` for how PD is still preferred when it is
+  available.  An entry with no recorded licence at all is reported and
+  skipped so the gap stays visible.
+* **Filer aliases** -- ``sources.json``'s ``filerIdAliases`` maps a filer id
+  with no bioguide of its own onto a bioguide that already has a photo in this
+  run (duplicate identities under a legal-name variant, e.g. a Senate-side
+  extraction using someone's full legal first name against a House filer
+  already resolved by their common name). Reuses the existing image byte for
+  byte; downloads nothing new.
 
 Usage
 -----
@@ -26,6 +35,10 @@ Usage
     .venv/bin/pip install -r scripts/member-photos/requirements.txt
     .venv/bin/python scripts/member-photos/build_face_pack.py
     .venv/bin/python scripts/member-photos/build_face_pack.py --contact-sheet /tmp/faces.png
+
+    # Flip whether attributionCaption is shown to end users. Patches the
+    # manifest in place -- no network calls, no re-crop, safe to run any time.
+    .venv/bin/python scripts/member-photos/build_face_pack.py --set-attribution-display on
 
 ``--contact-sheet`` writes a labelled grid of every produced face.  Look at it.
 It is the only cheap way to catch a detector that quietly framed somebody's
@@ -61,6 +74,15 @@ CONGRESS_ATTRIBUTION = "unitedstates/images — public-domain congressional port
 CONGRESS_SOURCE_PAGE = "https://github.com/unitedstates/images"
 
 BIOGUIDE_IN_URL = re.compile(r"/images/congress/[^/]+/([A-Z]\d{6})\.jpg", re.I)
+# Once a bioguide is packed, `runPhotoEnrichment` rewrites `filers.photo_url`
+# to point at our OWN pack route instead of the raw CDN (see
+# memberPhotoPack.ts) -- so on a live run, most already-packed members no
+# longer match BIOGUIDE_IN_URL at all. Recognise both shapes, or a rebuild
+# against the live API only ever "discovers" the handful of brand-new members
+# still pointing at the raw CDN, silently losing any newly-added filerId for
+# everyone already packed (see also filerIdAliases below, which depends on
+# this).
+BIOGUIDE_IN_PACK_URL = re.compile(r"/api/photos/member\?key=([A-Z]\d{6})(?:$|&)", re.I)
 
 
 # Wikimedia throttles hard (HTTP 429) and asks bots to self-limit. Keep a
@@ -110,7 +132,8 @@ def congress_targets(members: list[dict]) -> dict[str, dict]:
     """bioguide -> {name, filerIds} for every member already keyed to the CDN."""
     targets: dict[str, dict] = {}
     for m in members:
-        match = BIOGUIDE_IN_URL.search(m.get("photoUrl") or "")
+        url = m.get("photoUrl") or ""
+        match = BIOGUIDE_IN_URL.search(url) or BIOGUIDE_IN_PACK_URL.search(url)
         if not match:
             continue
         bioguide = match.group(1).upper()
@@ -143,8 +166,14 @@ def process(
     pack_dir: Path,
     bioguide: str | None = None,
     filer_ids: list[str] | None = None,
+    attribution_caption: str | None = None,
 ) -> tuple[fp.FaceEntry | None, str | None]:
-    """Download the first URL that works, crop, write. Returns (entry, error)."""
+    """Download the first URL that works, crop, write. Returns (entry, error).
+
+    ``attribution_caption`` is passed through when a curated ``sources.json``
+    entry already froze one at discovery time; omitted, ``FaceEntry`` computes
+    it from ``licence``/``attribution``/``source_page`` instead.
+    """
     last_error = None
     for url in urls:
         try:
@@ -170,6 +199,7 @@ def process(
                 source_page=source_page,
                 licence=licence,
                 attribution=attribution,
+                attribution_caption=attribution_caption,
                 crop_mode=mode,
                 bytes=len(data),
                 sha256=fp.sha256_bytes(data),
@@ -207,7 +237,36 @@ def main() -> int:
     ap.add_argument("--prune", action="store_true", help="Delete pack files no longer in the input set.")
     ap.add_argument("--contact-sheet", type=Path, help="Write a labelled QA grid of every face here.")
     ap.add_argument("--sleep", type=float, default=0.15, help="Delay between source fetches.")
+    ap.add_argument(
+        "--set-attribution-display",
+        choices=["on", "off"],
+        help=(
+            "Flip whether attributionCaption is shown to end users and exit. "
+            "Patches manifest.json in place -- no network calls, no re-crop."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.set_attribution_display is not None:
+        manifest_path = args.pack_dir / "manifest.json"
+        current = fp.load_manifest(manifest_path)
+        if not current.get("faces"):
+            print(f"no manifest at {manifest_path} to patch — build the pack first", file=sys.stderr)
+            return 1
+        enabled = args.set_attribution_display == "on"
+        entries = [
+            fp.FaceEntry(
+                key=f["key"], name=f["name"], branch=f["branch"], file=f["file"],
+                source_url=f["sourceUrl"], source_page=f.get("sourcePage"), licence=f["licence"],
+                attribution=f.get("attribution"), attribution_caption=f.get("attributionCaption"),
+                crop_mode=f.get("cropMode", "face"), bytes=f["bytes"], sha256=f["sha256"],
+                bioguide=f.get("bioguide"), filer_ids=f.get("filerIds", []),
+            )
+            for f in current["faces"]
+        ]
+        fp.write_manifest(entries, manifest_path, attribution_display=enabled)
+        print(f"attributionDisplayEnabled -> {enabled} ({manifest_path}, no images touched)")
+        return 0
 
     if not fp.face_detection_available():
         print(
@@ -225,31 +284,46 @@ def main() -> int:
     wanted = set(args.keys or [])
 
     # Bioguides unitedstates/images does not carry (newly seated members, and
-    # historical bioguides that predate photography) get a curated PD source.
+    # historical bioguides that predate photography) get a curated source.
+    # Licence must be RECORDED to admit an entry; it no longer has to be
+    # public domain (facepack.py; PD is still preferred where available via
+    # discover_commons.py's ranking, before anything reaches this file).
     overrides = {o["bioguide"]: o for o in sources.get("congressOverrides", [])}
+    # Duplicate identities that will never carry their own bioguide-shaped
+    # photoUrl (a MANUAL-* or otherwise-orphaned filer id that is provably the
+    # same person as an already-resolved bioguide, e.g. extracted under a
+    # legal-name variant). Reuses that bioguide's image; no new download.
+    filer_id_aliases: dict[str, str] = sources.get("filerIdAliases", {})
 
     if args.only != "executive":
         members = load_members(args.members_url, args.members_json)
         targets = congress_targets(members)
         for bioguide, override in overrides.items():
             targets.setdefault(bioguide, {"name": override["name"], "filerIds": override.get("filerIds", [])})
+        alias_hits = 0
+        for alias_filer_id, bioguide in filer_id_aliases.items():
+            target = targets.get(bioguide)
+            if not target:
+                print(f"note: filerIdAlias {alias_filer_id!r} -> {bioguide!r} but that bioguide has no target this run")
+                continue
+            if alias_filer_id not in target["filerIds"]:
+                target["filerIds"].append(alias_filer_id)
+                alias_hits += 1
         print(f"congress: {len(targets)} bioguides from {len(members)} members "
-              f"({len(overrides)} curated overrides)")
+              f"({len(overrides)} curated overrides, {alias_hits} filer-id aliases)")
         for bioguide, meta in sorted(targets.items()):
             key = bioguide
             if wanted and key not in wanted:
                 continue
             override = overrides.get(bioguide)
             if override:
-                if not fp.is_public_domain_licence(override.get("licence")):
-                    skipped.append((key, f"licence not public domain: {override.get('licence')!r}"))
+                licence = (override.get("licence") or "").strip()
+                if not licence:
+                    skipped.append((key, "no licence recorded — leaving a gap"))
                     continue
                 urls = [override["sourceUrl"]]
-                licence, attribution, source_page = (
-                    override["licence"],
-                    override.get("attribution"),
-                    override.get("sourcePage"),
-                )
+                attribution, source_page = override.get("attribution"), override.get("sourcePage")
+                attribution_caption = override.get("attributionCaption")
             else:
                 urls = [
                     CONGRESS_SOURCE.format(bioguide=bioguide),
@@ -260,6 +334,7 @@ def main() -> int:
                     CONGRESS_ATTRIBUTION,
                     CONGRESS_SOURCE_PAGE,
                 )
+                attribution_caption = None
             entry, err = process(
                 key=key,
                 name=meta["name"],
@@ -271,6 +346,7 @@ def main() -> int:
                 pack_dir=pack_dir,
                 bioguide=bioguide,
                 filer_ids=meta["filerIds"],
+                attribution_caption=attribution_caption,
             )
             if entry:
                 entries.append(entry)
@@ -285,9 +361,9 @@ def main() -> int:
             key = item["key"]
             if wanted and key not in wanted:
                 continue
-            licence = item.get("licence") or ""
-            if not fp.is_public_domain_licence(licence):
-                skipped.append((key, f"licence not public domain: {licence!r}"))
+            licence = (item.get("licence") or "").strip()
+            if not licence:
+                skipped.append((key, "no licence recorded — leaving a gap"))
                 continue
             if not item.get("sourceUrl"):
                 skipped.append((key, "no sourceUrl — left as a gap for the owner"))
@@ -302,6 +378,7 @@ def main() -> int:
                 source_page=item.get("sourcePage"),
                 pack_dir=pack_dir,
                 filer_ids=item.get("filerIds", []),
+                attribution_caption=item.get("attributionCaption"),
             )
             if entry:
                 entries.append(entry)
@@ -311,7 +388,8 @@ def main() -> int:
 
     # Merge with anything already in the manifest that this run did not touch,
     # so `--only` / `--keys` runs never silently drop the other half.
-    existing = {f["key"]: f for f in fp.load_manifest(pack_dir / "manifest.json").get("faces", [])}
+    existing_manifest = fp.load_manifest(pack_dir / "manifest.json")
+    existing = {f["key"]: f for f in existing_manifest.get("faces", [])}
     produced = {e.key for e in entries}
     merged = list(entries)
     for key, raw in existing.items():
@@ -329,6 +407,7 @@ def main() -> int:
                 source_page=raw.get("sourcePage"),
                 licence=raw["licence"],
                 attribution=raw.get("attribution"),
+                attribution_caption=raw.get("attributionCaption"),
                 crop_mode=raw.get("cropMode", "face"),
                 bytes=raw["bytes"],
                 sha256=raw["sha256"],
@@ -344,11 +423,22 @@ def main() -> int:
                 path.unlink()
                 print(f"pruned {path.name}")
 
-    payload = fp.write_manifest(merged, pack_dir / "manifest.json")
+    # A partial (`--only` / `--keys`) run must not silently reset the display
+    # flag to its code default -- carry forward whatever is already on disk.
+    attribution_display = existing_manifest.get("attributionDisplayEnabled", fp.ATTRIBUTION_DISPLAY_ENABLED)
+    payload = fp.write_manifest(merged, pack_dir / "manifest.json", attribution_display=attribution_display)
 
     fallbacks = [e.key for e in merged if e.crop_mode == "fallback"]
     print(f"\nwrote {payload['count']} faces, {payload['totalBytes'] / 1e6:.2f} MB total")
     print(f"face-detected crops: {payload['count'] - len(fallbacks)}, fallback crops: {len(fallbacks)}")
+    print(
+        f"licence: {payload['count'] - payload['nonPublicDomainCount']} public domain, "
+        f"{payload['nonPublicDomainCount']} not (attributionDisplayEnabled={payload['attributionDisplayEnabled']})"
+    )
+    if payload["nonPublicDomainCount"]:
+        for e in sorted(merged, key=lambda e: e.key):
+            if fp.licence_tier(e.licence) != 0:
+                print(f"  non-PD: {e.key} ({e.name}) — {e.licence}")
     if fallbacks:
         print("  fallback (eyeball these on the contact sheet): " + ", ".join(sorted(fallbacks)))
     if skipped:

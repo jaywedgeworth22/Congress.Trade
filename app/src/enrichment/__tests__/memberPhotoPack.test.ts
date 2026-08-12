@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  attributionDisplayEnabled,
   handleMemberPhotoRequest,
   isMemberPhotoPackUrl,
   memberPhotoPack,
@@ -23,6 +24,7 @@ import {
   packKeyFromUrl,
   tryLocalMemberPhoto,
   upstreamCongressPhotoUrl,
+  visibleAttributionCaption,
 } from '../memberPhotoPack.ts';
 
 const PACK_DIR = join(
@@ -94,6 +96,13 @@ describe('committed pack contents', () => {
     expect(pack.totalBytes).toBeLessThan(8_000_000);
   });
 
+  it('captures a licence and an attribution caption for every face, PD or not — capture is unconditional', () => {
+    for (const face of pack.byKey.values()) {
+      expect(face.attributionCaption, `${face.key} has no attributionCaption`).toBeTruthy();
+      expect(typeof face.licenceTier, `${face.key} has no licenceTier`).toBe('number');
+    }
+  });
+
   it('indexes executive faces by filer id', () => {
     const withFilers = packFacesWithFilerIds();
     expect(withFilers.length).toBeGreaterThan(0);
@@ -106,6 +115,66 @@ describe('committed pack contents', () => {
     expect(packFaceForKey('definitely-not-a-member')).toBeNull();
     expect(packFaceForFilerId('NOT-A-FILER')).toBeNull();
     expect(packFaceForFilerId('')).toBeNull();
+  });
+});
+
+describe('attribution display flag', () => {
+  it('defaults OFF — the committed manifest ships with display disabled', () => {
+    expect(attributionDisplayEnabled()).toBe(false);
+  });
+
+  it('never surfaces a caption while the flag is off, even for a real face with a caption', () => {
+    const withCaption = [...memberPhotoPack().byKey.values()].find((f) => !!f.attributionCaption);
+    expect(withCaption).toBeTruthy();
+    expect(visibleAttributionCaption(withCaption)).toBeNull();
+  });
+
+  it('returns null for a missing face without throwing', () => {
+    expect(visibleAttributionCaption(null)).toBeNull();
+    expect(visibleAttributionCaption(undefined)).toBeNull();
+  });
+});
+
+/**
+ * The flag is only worth having if flipping it changes what we actually serve.
+ * These two assert the wiring end to end — flag OFF, no header; flag ON, the
+ * face's real caption on the real response — so the "flip the flag" remedy
+ * cannot silently rot back into a no-op.
+ */
+describe('attribution display flag drives the served response', () => {
+  const packedKeyWithCaption = () =>
+    [...memberPhotoPack().byKey.values()].find((f) => !!f.attributionCaption)!.key;
+
+  it('omits x-photo-attribution while the flag is off', async () => {
+    expect(attributionDisplayEnabled()).toBe(false);
+    const res = await handleMemberPhotoRequest(
+      new URL(`https://x.test/api/photos/member?key=${packedKeyWithCaption()}`),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-photo-attribution')).toBeNull();
+  });
+
+  it('emits the face’s caption as x-photo-attribution once the flag is on', async () => {
+    const index = memberPhotoPack();
+    const key = packedKeyWithCaption();
+    const face = index.byKey.get(key)!;
+    index.attributionDisplayEnabled = true;
+    try {
+      const res = await handleMemberPhotoRequest(
+        new URL(`https://x.test/api/photos/member?key=${key}`),
+      );
+      expect(res.status).toBe(200);
+      const header = res.headers.get('x-photo-attribution');
+      expect(header).toBeTruthy();
+      // Header values are latin-1, so the em dash is downgraded — but the
+      // substantive parts of the credit line must survive intact.
+      expect(header).not.toContain('?');
+      for (const word of face.attributionCaption!.split(/[^A-Za-z0-9.]+/).filter((w) => w.length > 3)) {
+        expect(header, `caption word "${word}" missing from header`).toContain(word);
+      }
+    } finally {
+      index.attributionDisplayEnabled = false;
+    }
   });
 });
 

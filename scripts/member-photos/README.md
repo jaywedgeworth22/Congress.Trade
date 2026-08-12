@@ -2,7 +2,8 @@
 
 Our own repository of member portraits: one square, head-focused 256px WebP per
 person under `app/public/assets/member-photos/`, plus a `manifest.json` that
-records where each original came from and under what licence.
+records where each original came from, under what licence, and a ready-to-use
+attribution caption.
 
 ## Why it exists
 
@@ -42,17 +43,59 @@ detection are prefixed `!` on the sheet and listed in the run output.
 
 ## Sources and licences
 
-Only public-domain originals ship.  `facepack.is_public_domain_licence` gates
-every entry, and the licence is copied into `manifest.json` next to the image.
+**Policy (owner decision, 2026-08): the licence check is a RECORD, not a gate.**
+Public domain is no longer required to ship a face — a non-free portrait's real
+exposure is a DMCA takedown to Apple (which pulls the app), not a lawsuit, and
+that risk is accepted. What is *not* negotiable:
+
+1. **A licence must still be recorded.** `facepack.is_public_domain_licence`
+   still runs on every candidate and the result is still written to
+   `manifest.json` (`licence`, `licenceTier`) — it just no longer rejects.
+   The only thing that drops a candidate on licence grounds now is having
+   **no** recognisable licence at all (rare: Commons requires one to host a
+   file). A gap stays cheaper than a face nobody can attribute.
+2. **Public domain is still preferred where it exists.**
+   `facepack.licence_tier` ranks every admitted candidate 0 (public domain) ..
+   1 (plain-attribution CC BY) .. 2 (CC BY-SA) .. 3 (everything else, incl.
+   NC/ND-restricted combinations), and `discover_commons.py` sorts by that
+   before score, so widening the net never bumps a clean image in favour of an
+   encumbered one for the same person.
+3. **Attribution is always captured, never optional.** Every entry — PD or
+   not — gets `licence`, `attribution` (the author/Artist) and
+   `attributionCaption` (a frozen "Author — Licence, via Site" string). That
+   data is free to capture at discovery time and expensive to reconstruct
+   later if a page gets re-edited or a file gets renamed on Commons.
+4. **Attribution *display* is a separate, flagged decision, default OFF.**
+   `manifest.json`'s `attributionDisplayEnabled` (and
+   `memberPhotoPack.ts`'s `visibleAttributionCaption()`) gate whether the
+   captured caption is surfaced at all. Today that flag drives exactly one
+   thing: the `x-photo-attribution` response header on pack-served photos.
+   No visible credit line exists in the web UI or the SwiftUI clients yet —
+   see [Attribution display flag](#attribution-display-flag) for what the
+   flag does and does not cover.
+5. **The identity bar does not move.** Widening licence never widens who
+   counts as "the right person" — see Cropping/contact-sheet below. A wrong
+   face is a worse product bug than an unattributed one; an unlicensed-but-
+   correct face is now an accepted, recorded trade-off.
+
+Where each face comes from:
 
 * **Congress** — `unitedstates/images`, public domain, keyed by bioguide.
   Nothing to curate; the script resolves these automatically.
 * **Executive, and bioguides upstream does not carry** — curated in
   `sources.json`.  Each entry names the Wikimedia Commons file, the direct
-  source URL, the verified licence and the attribution.
+  source URL, the verified licence, the attribution and (frozen at discovery
+  time) the attribution caption.
+* **Filer-id aliases** — `sources.json`'s `filerIdAliases` maps a filer id that
+  will never carry its own bioguide-shaped `photoUrl` (a duplicate identity
+  extracted under a legal-name variant, e.g. a `MANUAL-*` Senate-side inject of
+  someone already packed under their common name) onto the bioguide that
+  already has the image. Reuses the byte-identical file; nothing new to
+  download or licence.
 
-`discover_commons.py` produces those entries.  It searches Commons, then asks
-the API for `extmetadata.LicenseShortName` and keeps only public-domain files:
+`discover_commons.py` produces `sources.json` candidate entries. It searches
+Commons, then asks the API for `extmetadata.LicenseShortName` /
+`Artist` / `UsageTerms` and records — never discards — whatever it finds:
 
 ```bash
 .venv/bin/python scripts/member-photos/discover_commons.py \
@@ -64,14 +107,60 @@ the API for `extmetadata.LicenseShortName` and keeps only public-domain files:
     --file "File:ED Sec Linda McMahon (cropped).jpg"
 ```
 
-Candidates are scored, not blindly taken: the file title must contain the
-subject's surname, and group shots, landscape framing and hearing screengrabs
-are pushed down.  **The licence check is automatic; the identity check is not.**
-Review the candidate list, then verify the built faces on the contact sheet.
+Candidates are scored for identity first, independent of licence: the file
+title must contain the subject's surname, and group shots, landscape framing
+and hearing screengrabs are pushed down. Licence only breaks ties between
+identity-plausible candidates (point 2 above). **The licence and identity
+checks are both automated; only the identity check needs a human.** Review the
+candidate list, then verify the built faces on the contact sheet.
 
-If a person has no public-domain portrait, leave them out and record why in the
-`unresolved` block of `sources.json`.  A gap is cheaper than an unlicensed face
-on a public site.
+If a person has no candidate with a recorded licence at all, or no candidate
+anyone is confident is actually them, leave them out and record why in the
+`unresolved` block of `sources.json`. A gap is cheaper than a wrong or
+unattributable face on a public site.
+
+## Attribution display flag
+
+`manifest.json` always carries `attributionDisplayEnabled` (boolean,
+top-level) and, per face, `attributionCaption` (string, always populated).
+Capture and display are deliberately decoupled:
+
+```bash
+# Flip the flag. Patches manifest.json in place — no network calls, no
+# re-crop, no re-source. Safe to run any time; the images never move.
+.venv/bin/python scripts/member-photos/build_face_pack.py \
+    --set-attribution-display on
+.venv/bin/python scripts/member-photos/build_face_pack.py \
+    --set-attribution-display off
+```
+
+On the serving side, `memberPhotoPack.ts` exposes `attributionDisplayEnabled()`
+and `visibleAttributionCaption(face)` — the latter returns `null` while the
+flag is off, and the caption once it's on.
+
+**What the flag actually reaches today — be precise about this.** Its one live
+consumer is `tryLocalMemberPhoto`: with the flag ON, every pack-served photo
+comes back with an `x-photo-attribution` response header carrying that face's
+credit line; with it OFF, the header is absent. That is the complete list.
+There is **no visible caption** under any avatar — not in the dashboard HTML,
+not in any `/api/client/v1/*` payload, not in the SwiftUI clients. Attribution
+is *recorded* for every face and *served as a header*; it is not *displayed*.
+
+So flipping the flag is not, on its own, a complete answer to a takedown
+request. It is the lever that makes what we serve self-describing, and it is
+the single switch a future credit-line UI hooks into. Two limits worth stating
+plainly:
+
+* **Building the visible surface is still work.** When someone adds a credit
+  line under an avatar, it must call `visibleAttributionCaption()` rather than
+  reading `face.attributionCaption` directly — that is what keeps one flag
+  governing every surface instead of an audit per call site.
+* **Caching delays the flip.** Pack images are served with a one-year
+  `max-age`, so a flag flip changes the origin immediately but reaches
+  already-cached clients only as their copies expire.
+
+An actual takedown for a specific face is still handled the direct way: drop
+the entry from `sources.json`, rebuild, and the face is gone.
 
 ## Cropping
 

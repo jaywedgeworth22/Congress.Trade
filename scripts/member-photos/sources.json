@@ -1,6 +1,11 @@
 {
-  "note": "Curated public-domain source portraits for the face pack. Congressional members are resolved automatically from unitedstates/images by bioguide (see build_face_pack.py) and are NOT listed here. Every entry below was produced by discover_commons.py, whose licence check only admits public-domain files, and then eyeballed on a contact sheet. Leave an entry out entirely rather than shipping a face whose provenance is unclear.",
-  "congressOverridesNote": "Members whose bioguide has no image in unitedstates/images yet (newly seated, or a historical bioguide that predates portraits). Same licence rule as the executive list: verified public domain only.",
+  "note": "Curated source portraits for the face pack. Congressional members are resolved automatically from unitedstates/images by bioguide (see build_face_pack.py) and are NOT listed here. Every entry below was produced by discover_commons.py and then eyeballed on a contact sheet. The licence check is a RECORD, not a gate (owner decision, 2026-08): every entry still carries its verified licence, author/Artist and a ready-to-use attributionCaption, but public domain is no longer required to ship -- see facepack.py's licence_tier for how PD is still preferred where available. Leave an entry out entirely only when NO licence can be recorded, or the right-person identification is not confident -- a gap is still cheaper than a wrong face or an unattributable one.",
+  "filerIdAliasesNote": "filerId -> bioguide for duplicate identities that will never carry their own bioguide-shaped photoUrl (a MANUAL-* or otherwise-orphaned filer extracted under a legal-name variant of someone already packed under their common name, e.g. Congress's own disclosure pipeline producing a second filer id for the same person). Reuses that bioguide's already-built image byte for byte -- no new download, no new licence to track.",
+  "filerIdAliases": {
+    "MANUAL-CAWTHORN": "C001104",
+    "MANUAL-HOLLINGSWORTH": "H001074"
+  },
+  "congressOverridesNote": "Members whose bioguide has no image in unitedstates/images yet (newly seated, or a historical bioguide that predates portraits) or whose bioguide the live /api/members identity matcher has not linked a photoUrl to yet even though unitedstates/images already carries the portrait. Same licence-as-record rule as the executive list; congress members still get public domain wherever it exists (unitedstates/images always is).",
   "congressOverrides": [
     {
       "key": "B001323",
@@ -53,6 +58,19 @@
       "sourcePage": "https://commons.wikimedia.org/wiki/File:Sen._Jon_Husted_official_portrait,_119th_Congress_(cropped).jpg",
       "licence": "Public domain",
       "attribution": "United States Senate"
+    },
+    {
+      "key": "T000479",
+      "bioguide": "T000479",
+      "name": "Nicholas V. Taylor",
+      "filerIds": [
+        "house-tx03-nicholas-v-taylor"
+      ],
+      "note": "Van Taylor (legal name Nicholas Van Campen Taylor), TX-03 2019-2023. The live /api/members identity matcher has not linked this filer id to a photoUrl even though unitedstates/images already carries T000479 (verified 200 on both /original/ and /450x550/) -- pointed straight at the standard PD CDN rather than a Commons search.",
+      "sourceUrl": "https://unitedstates.github.io/images/congress/original/T000479.jpg",
+      "sourcePage": "https://github.com/unitedstates/images",
+      "licence": "Public domain (CC0 1.0 Universal)",
+      "attribution": "unitedstates/images — public-domain congressional portraits"
     }
   ],
   "executives": [
@@ -447,6 +465,21 @@
       "attribution": "The White House"
     },
     {
+      "key": "sara-bailey",
+      "name": "Sara Bailey",
+      "filerIds": [
+        "EXEC-SARA-BAILEY",
+        "MANUAL-BAILEY"
+      ],
+      "note": "Sara A. Carter Bailey (bylines as \"Sara Carter\"), confirmed ONDCP Director (\"drug czar\") Jan 2026, 52-48. No public-domain ONDCP/White House portrait found on Commons yet (agency likely has not uploaded one) -- widened net: candid Gage Skidmore press photo, CC BY-SA 2.0, single subject, already cropped tight to head/shoulders. Re-check for a PD official portrait on a future run; swap it in if one appears (facepack.licence_tier ranks PD above this automatically).",
+      "commonsFile": "File:Sara A. Carter (45564638675) (cropped).jpg",
+      "sourceUrl": "https://upload.wikimedia.org/wikipedia/commons/8/80/Sara_A._Carter_%2845564638675%29_%28cropped%29.jpg",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Sara_A._Carter_(45564638675)_(cropped).jpg",
+      "licence": "CC BY-SA 2.0",
+      "attribution": "Gage Skidmore",
+      "attributionCaption": "Gage Skidmore — CC BY-SA 2.0, via Wikimedia Commons"
+    },
+    {
       "key": "tommy-beaudreau",
       "name": "Tommy Beaudreau",
       "filerIds": [
@@ -465,36 +498,21 @@
         "MANUAL-MODY"
       ],
       "name": "Arjun Mody",
-      "why": "No public official of this name found; likely an extraction artefact. Needs owner triage before any photo is sourced."
+      "why": "CORRECTION (2026-08, was wrongly marked \"likely an extraction artefact\"): real, currently-serving official -- confirmed Deputy Commissioner of Social Security, Senate vote 53-43 on 2025-12-18 (PN379-20). No Commons portrait found for him yet (SSA does not appear to have uploaded an official one). Re-run discover_commons.py for him periodically; not a right-person problem, purely a no-source-yet problem."
     },
     {
       "filerIds": [
-        "EXEC-SARA-BAILEY",
-        "MANUAL-BAILEY"
+        "MANUAL-ELVIRA"
       ],
-      "name": "Sara Bailey",
-      "why": "Name too common to identify a specific official with confidence. Left as a gap."
-    },
-    {
-      "filerIds": [
-        "MANUAL-HOLLINGSWORTH"
-      ],
-      "name": "Joseph Hollingsworth",
-      "why": "Plausibly former Rep. Trey Hollingsworth (legal name Joseph A. Hollingsworth III, bioguide H001074), but the filer is a Senate-side MANUAL inject with no state. Not auto-mapped; owner confirmation needed."
+      "name": "Maria Elvira",
+      "why": "New gap since the last pass (was not previously in this list). Given name only, no surname, filed under chamber=senate. The only prominent \"Maria Elvira\" in federal politics is Rep. Maria Elvira Salazar (FL-27, House, already covered under her own bioguide S001211) -- but the chamber mismatch and dropped surname are exactly the shape of a name-extraction artefact, not a confident match to her. Not sourcing a photo on a first-name-only coincidence: a wrong face here would misattribute a real, recognisable sitting member's likeness to unverified trading data. Needs filer-identity confirmation before any photo is sourced."
     },
     {
       "filerIds": [
         "house-pr00-ada-norah-henriquez"
       ],
       "name": "Ada Norah Henriquez",
-      "why": "No member of Congress by this name (PR's representative is Pablo Jose Hernandez). Looks like a name-extraction artefact."
-    },
-    {
-      "filerIds": [
-        "house-tx03-nicholas-v-taylor"
-      ],
-      "name": "Nicholas V Taylor",
-      "why": "No member of Congress by this name (TX-03 is Keith Self). Looks like a name-extraction artefact."
+      "why": "CORRECTION (2026-08, was wrongly marked \"no member of Congress by this name\"): she is real -- the Republican candidate defeated by Jenniffer Gonzalez-Colon for PR Resident Commissioner in 2020 -- but never held office, so it is unclear why she would appear as a filer with trades at all (PR's current, and only, non-voting seat is Pablo Jose Hernandez). Whether this filer id genuinely maps to her is a filer-identity question outside this pack's scope; sourcing her (real, publicly identifiable) photo before that is confirmed risks attributing someone else's trades to her face. Left as a gap pending identity-sync triage."
     }
   ]
 }

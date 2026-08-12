@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Find public-domain official portraits for executive-branch filers.
+"""Find official portraits for executive-branch filers, on Wikimedia Commons.
 
 Congressional members are covered by ``unitedstates/images``.  Cabinet
 secretaries, agency heads and Senate-confirmed nominees are not in any
 bioguide-keyed set, so their portraits have to be sourced individually.
 
 This script searches Wikimedia Commons, then **verifies the licence through the
-Commons API** (``extmetadata.LicenseShortName`` / ``UsageTerms`` / ``Artist``)
-and keeps only files whose licence is public domain — which official US federal
-government portraits are.  Anything with a non-PD, unclear or missing licence is
-reported and dropped: a gap is cheaper than an unlicensed face on a public site.
+Commons API** (``extmetadata.LicenseShortName`` / ``UsageTerms`` / ``Artist``).
+The licence check is a RECORD, not a gate: every candidate's licence, author and
+a ready-to-use attribution caption are captured (see ``facepack.format_attribution``)
+regardless of what the licence is, because that data is free to capture now and
+expensive to reconstruct later.  The only thing that drops a candidate outright is
+having no recognisable licence at all -- Commons requires every hosted file to
+carry one, so this is rare in practice.
 
-Candidates are *scored*, not blindly taken:
+What the licence DOES still do is rank: among candidates that plausibly show the
+right person, public domain is preferred, then plain-attribution Creative Commons,
+then share-alike, then everything else (``facepack.licence_tier``).  Widening the
+net must never cause a licence-encumbered image to be chosen over a clean one that
+exists for the same person.
+
+Candidates are *scored* for identity first, independent of licence:
 
 * the file title must contain the subject's surname (so a fuzzy search hit on
   somebody else is rejected outright), and
@@ -144,14 +153,18 @@ def describe(titles: list[str]) -> list[dict]:
         ii = images[0]
         em = ii.get("extmetadata") or {}
         licence = strip_html((em.get("LicenseShortName") or {}).get("value"))
+        attribution = strip_html((em.get("Artist") or {}).get("value")) or None
+        source_page = ii.get("descriptionurl")
         out.append(
             {
                 "title": page.get("title"),
                 "licence": licence,
+                "licenceTier": fp.licence_tier(licence),
                 "publicDomain": fp.is_public_domain_licence(licence),
-                "attribution": strip_html((em.get("Artist") or {}).get("value")) or None,
+                "attribution": attribution,
+                "attributionCaption": fp.format_attribution(licence, attribution, source_page),
                 "sourceUrl": strip_tracking(ii.get("url")),
-                "sourcePage": ii.get("descriptionurl"),
+                "sourcePage": source_page,
                 "width": ii.get("width"),
                 "height": ii.get("height"),
             }
@@ -198,21 +211,28 @@ def candidates_for(name: str, limit: int = 8) -> list[dict]:
         }
         title = page.get("title", "")
         rank = score(title, meta, surname, given)
+        attribution = strip_html(meta["artist"]) or None
+        credit = strip_html((em.get("Credit") or {}).get("value")) or None
+        source_page = ii.get("descriptionurl")
         out.append(
             {
                 "title": title,
                 "score": rank,
                 "licence": licence,
+                "licenceTier": fp.licence_tier(licence),
                 "usageTerms": strip_html((em.get("UsageTerms") or {}).get("value")),
-                "attribution": strip_html(meta["artist"]) or None,
-                "credit": strip_html((em.get("Credit") or {}).get("value")) or None,
+                "attribution": attribution,
+                "credit": credit,
+                "attributionCaption": fp.format_attribution(licence, attribution or credit, source_page),
                 "sourceUrl": strip_tracking(ii.get("url")),
-                "sourcePage": ii.get("descriptionurl"),
+                "sourcePage": source_page,
                 "width": ii.get("width"),
                 "height": ii.get("height"),
                 "publicDomain": fp.is_public_domain_licence(licence),
             }
         )
+    # Identity score only here -- this is the full candidate list (including
+    # rejects) printed for operator review, not the selection order.
     return sorted(out, key=lambda c: -c["score"])
 
 
@@ -254,18 +274,27 @@ def main() -> int:
             print(f"### {name}\n    ERROR {exc}")
             unresolved.append((name, str(exc)))
             continue
-        usable = [c for c in cands if c["publicDomain"] and c["score"] >= 0]
+        # Identity gates (score >= 0); licence no longer does. Sort what
+        # remains by (licenceTier, -score) so a public-domain candidate always
+        # wins over a same-or-lower-scored non-free one for the same person.
+        usable = sorted(
+            (c for c in cands if c["score"] >= 0 and c["licence"]),
+            key=lambda c: (c["licenceTier"], -c["score"]),
+        )
         print(f"### {name}")
         if not usable:
             rejected = [f"{c['title']} [{c['licence'] or 'no licence'}]" for c in cands[: args.show]]
-            print("    NO PUBLIC-DOMAIN CANDIDATE — leaving a gap")
+            print("    NO CANDIDATE — leaving a gap")
             for r in rejected:
                 print(f"      rejected: {r}")
-            unresolved.append((name, "no public-domain candidate"))
+            unresolved.append((name, "no usable candidate (right person + a recorded licence)"))
             continue
         for c in usable[: args.show]:
-            print(f"    {c['score']:>4}  {c['title']}  [{c['licence']}]  {c['width']}x{c['height']}")
+            pd_flag = "PD " if c["publicDomain"] else f"T{c['licenceTier']} "
+            print(f"    {c['score']:>4}  {pd_flag}{c['title']}  [{c['licence']}]  {c['width']}x{c['height']}")
         best = usable[0]
+        if not best["publicDomain"]:
+            print(f"    note: best candidate is NOT public domain ({best['licence']}) — recorded, not gated")
         chosen.append(
             {
                 "key": fp.slugify(name),
@@ -276,11 +305,17 @@ def main() -> int:
                 "sourcePage": best["sourcePage"],
                 "licence": best["licence"],
                 "attribution": best["attribution"] or best["credit"],
+                "attributionCaption": best["attributionCaption"],
             }
         )
         time.sleep(args.sleep)
 
+    non_pd_chosen = [c for c in chosen if fp.licence_tier(c["licence"]) != 0]
     print(f"\n{len(chosen)} candidates, {len(unresolved)} unresolved")
+    if non_pd_chosen:
+        print(f"  {len(non_pd_chosen)} of those are NOT public domain (attribution captured, display stays off by default):")
+        for c in non_pd_chosen:
+            print(f"    {c['name']}: {c['licence']}")
     for name, why in unresolved:
         print(f"  UNRESOLVED {name}: {why}")
     if args.json:
