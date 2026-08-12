@@ -45,6 +45,9 @@ import { resolveSecret } from '../secrets/infisical.ts';
  * (`429|402|too many requests|quota exceeded|rate[- ]?limit|payment required`). */
 export const LLM_BUDGET_ERROR_MARKER = 'llm daily usd budget exceeded';
 
+export const LLAMAPARSE_CREDITS_PER_USD = 800;
+export const LLAMAPARSE_USD_PER_CREDIT = 0.00125;
+
 export interface LlmSpendDecision {
   allowed: boolean;
   /** Which ceiling tripped when not allowed. */
@@ -52,6 +55,8 @@ export interface LlmSpendDecision {
   provider: string;
   spentUsd: number;
   ceilingUsd: number;
+  spentCredits?: number;
+  ceilingCredits?: number;
 }
 
 /** Fail-closed budget halt. `errorClass: 'budget'` is the stable class name. */
@@ -65,6 +70,12 @@ export class LlmBudgetExceededError extends Error {
 
 /** Stable, secret-safe budget-halt message carrying the classification marker. */
 export function llmBudgetHaltMessage(decision: LlmSpendDecision): string {
+  if (decision.provider.trim().toLowerCase() === 'llamaparse' && decision.ceilingCredits != null && decision.spentCredits != null) {
+    return (
+      `${LLM_BUDGET_ERROR_MARKER} (${decision.scope}:${decision.provider}): ` +
+      `${Math.round(decision.spentCredits)} of ${Math.round(decision.ceilingCredits)} credits spent today`
+    );
+  }
   return (
     `${LLM_BUDGET_ERROR_MARKER} (${decision.scope}` +
     `${decision.scope === 'provider' ? `:${decision.provider}` : ''}): ` +
@@ -96,6 +107,15 @@ function usdVar(value: string | undefined, fallback: number | null): number | nu
 
 function providerCeilingKeys(provider: string): string[] {
   const tag = provider.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  if (tag === 'LLAMAPARSE') {
+    return [
+      'LLAMAPARSE_DAILY_CREDIT_CEILING',
+      'LLAMAPARSE_DAILY_CREDITS_CEILING',
+      'LLM_DAILY_CREDIT_CEILING_LLAMAPARSE',
+      'LLM_DAILY_USD_CEILING_LLAMAPARSE',
+      'LLAMAPARSE_DAILY_USD_CEILING',
+    ];
+  }
   return [`LLM_DAILY_USD_CEILING_${tag}`, `${tag}_DAILY_USD_CEILING`];
 }
 
@@ -411,12 +431,39 @@ export async function checkLlmSpendCeiling(
   if (spend.totalUsd >= totalCeiling) {
     return { allowed: false, scope: 'total', provider, spentUsd: spend.totalUsd, ceilingUsd: totalCeiling };
   }
-  const providerCeiling = await resolveUsdKnob(env, providerCeilingKeys(provider), null);
+  let providerCeiling = await resolveUsdKnob(env, providerCeilingKeys(provider), null);
   const providerSpend = spend.perProvider[provider] ?? 0;
-  if (providerCeiling != null && providerSpend >= providerCeiling) {
-    return { allowed: false, scope: 'provider', provider, spentUsd: providerSpend, ceilingUsd: providerCeiling };
+  let spentCredits: number | undefined;
+  let ceilingCredits: number | undefined;
+
+  if (provider.trim().toLowerCase() === 'llamaparse') {
+    spentCredits = providerSpend * LLAMAPARSE_CREDITS_PER_USD;
+    const rawCreditCap = (await resolveSecret(env, 'LLAMAPARSE_DAILY_CREDIT_CEILING')).value
+      ?? (await resolveSecret(env, 'LLAMAPARSE_DAILY_CREDITS_CEILING')).value
+      ?? env.LLAMAPARSE_DAILY_CREDIT_CEILING
+      ?? env.LLAMAPARSE_DAILY_CREDITS_CEILING;
+
+    if (rawCreditCap != null && rawCreditCap.trim() !== '') {
+      const parsedCredits = usdVar(rawCreditCap, null);
+      if (parsedCredits != null) {
+        ceilingCredits = parsedCredits;
+        providerCeiling = parsedCredits * LLAMAPARSE_USD_PER_CREDIT;
+      }
+    }
   }
-  return { ...allowed, spentUsd: spend.totalUsd, ceilingUsd: totalCeiling };
+
+  if (providerCeiling != null && providerSpend >= providerCeiling) {
+    return {
+      allowed: false,
+      scope: 'provider',
+      provider,
+      spentUsd: providerSpend,
+      ceilingUsd: providerCeiling,
+      spentCredits,
+      ceilingCredits,
+    };
+  }
+  return { ...allowed, spentUsd: spend.totalUsd, ceilingUsd: totalCeiling, spentCredits, ceilingCredits };
 }
 
 /** Throw a fail-closed LlmBudgetExceededError when the ceiling is exhausted. */

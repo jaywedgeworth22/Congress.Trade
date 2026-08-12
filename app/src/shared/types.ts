@@ -835,6 +835,8 @@ export interface Env {
   LLM_DAILY_USD_CEILING_XAI?: string;
   LLM_DAILY_USD_CEILING_LLAMAPARSE?: string;
   LLAMAPARSE_DAILY_USD_CEILING?: string;
+  LLAMAPARSE_DAILY_CREDIT_CEILING?: string;
+  LLAMAPARSE_DAILY_CREDITS_CEILING?: string;
   /**
    * Governor 2: D1 write governor (shared/d1Budget.ts). Env-only like the
    * usage-telemetry circuit limits: read synchronously on the hot write path.

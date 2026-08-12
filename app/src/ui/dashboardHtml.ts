@@ -7307,7 +7307,10 @@ function renderLlmSpendByModel() {
     return;
   }
   tbody.innerHTML = report.byModel.map(function (r) {
-    return '<tr class="row"><td>' + esc(r.provider) + '</td><td>' + esc(r.model) + '</td><td>' + esc(fmtCount(r.docCount)) + '</td><td>' + esc(fmtCount(r.callCount)) + '</td><td>' + esc(fmtUsdPrecise(r.totalUsd)) + '</td></tr>';
+    var spendCell = r.provider === 'llamaparse'
+      ? esc(fmtCount(Math.round(r.totalUsd * 800))) + ' credits <span style="font-size:11px;color:var(--text-dim)">(' + esc(fmtUsdPrecise(r.totalUsd)) + ')</span>'
+      : esc(fmtUsdPrecise(r.totalUsd));
+    return '<tr class="row"><td>' + esc(r.provider) + '</td><td>' + esc(r.model) + '</td><td>' + esc(fmtCount(r.docCount)) + '</td><td>' + esc(fmtCount(r.callCount)) + '</td><td>' + spendCell + '</td></tr>';
   }).join('');
 }
 function renderExtraction30d(m) {
