@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { probeScheduleConfigFromEnv } from '../probeSchedule.ts';
 import {
   generateTradeHash,
   extractLastName,
@@ -248,38 +249,65 @@ describe('tradeLatency', () => {
       expect(fmpLatencyIntervalSec(noon, 1)).toBe(45 * 60); // < CALLS_PER_RUN
     });
 
-    it('uses 4-level ET yield bands with peak ~3× denser than mid', () => {
-      // 2026-08-05 is a Wednesday.
-      // 14:00 UTC = 10:00 ET → peak
-      expect(disclosurePublishYieldBand(new Date('2026-08-05T14:00:00.000Z'))).toBe('peak');
-      // 17:00 UTC = 13:00 ET → high
-      expect(disclosurePublishYieldBand(new Date('2026-08-05T17:00:00.000Z'))).toBe('high');
-      // 21:00 UTC = 17:00 ET → mid
-      expect(disclosurePublishYieldBand(new Date('2026-08-05T21:00:00.000Z'))).toBe('mid');
-      // 04:00 UTC = 00:00 ET → low
-      expect(disclosurePublishYieldBand(new Date('2026-08-05T04:00:00.000Z'))).toBe('low');
-      expect(disclosurePublishYieldWeight(new Date('2026-08-05T14:00:00.000Z'))).toBe(3);
-      expect(disclosurePublishYieldWeight(new Date('2026-08-05T17:00:00.000Z'))).toBe(2);
-      expect(disclosurePublishYieldWeight(new Date('2026-08-05T21:00:00.000Z'))).toBe(1);
-      expect(disclosurePublishYieldWeight(new Date('2026-08-05T04:00:00.000Z'))).toBe(0.4);
-      // Weekend peak downgrades (Sat 2026-08-08 10:00 ET = 14:00 UTC).
-      expect(disclosurePublishYieldBand(new Date('2026-08-08T14:00:00.000Z'))).toBe('high');
+    it('reads its bands from the MEASURED provider windows, not the old guess', () => {
+      // 2026-08-05 is a Wednesday. Provider profile = union of both chambers'
+      // peaks: PEAK 09-10 ET (House burst), HIGH 16-18 ET (Senate afternoon),
+      // MID 10-16 + 18-21 ET, LOW 21-09 ET (measured zero for both chambers).
+      //
+      // These deliberately DISAGREE with the pre-measurement table this call
+      // used to return, and the disagreement is the point: 10:00 ET used to be
+      // called "peak" (08-12 was one flat block) when the measurement puts the
+      // House burst at 09:00-09:06, median 09:02. An hour of burst-rate probing
+      // was landing after the burst was over.
+      const band = (iso: string) => disclosurePublishYieldBand(new Date(iso));
+
+      expect(band('2026-08-05T13:30:00.000Z')).toBe('peak'); // 09:30 ET
+      expect(band('2026-08-05T14:00:00.000Z')).toBe('mid'); //  10:00 ET (was 'peak')
+      expect(band('2026-08-05T17:00:00.000Z')).toBe('mid'); //  13:00 ET (was 'high')
+      expect(band('2026-08-05T21:00:00.000Z')).toBe('high'); // 17:00 ET (was 'mid')
+      expect(band('2026-08-05T04:00:00.000Z')).toBe('low'); //  00:00 ET
+      expect(band('2026-08-06T01:00:00.000Z')).toBe('low'); //  21:00 ET — dead
+
+      // Weights are a mean-1 DENSITY (budget-neutral by construction), not the
+      // old absolute 3.0/2.0/1.0/0.4 multipliers. Only the ordering is pinned;
+      // pinning exact values here would just duplicate probeSchedule's own tests.
+      const w = (iso: string) => disclosurePublishYieldWeight(new Date(iso));
+      expect(w('2026-08-05T13:30:00.000Z')).toBeGreaterThan(w('2026-08-05T21:00:00.000Z'));
+      expect(w('2026-08-05T21:00:00.000Z')).toBeGreaterThan(w('2026-08-05T17:00:00.000Z'));
+      expect(w('2026-08-05T17:00:00.000Z')).toBeGreaterThan(w('2026-08-05T04:00:00.000Z'));
+
+      // Weekend is one flat LOW tier (publication-side weekend volume is ~0).
+      expect(band('2026-08-08T14:00:00.000Z')).toBe('low'); // Sat 10:00 ET
+    });
+
+    it('restores the pre-measurement bands when the schedule is switched off', () => {
+      // The kill switch has to land somewhere KNOWN-GOOD, not somewhere
+      // untested: PROBE_SCHEDULE_ENABLED=0 must reproduce the old behaviour
+      // exactly, so an operator who flips it gets today's system back.
+      const off = probeScheduleConfigFromEnv({ PROBE_SCHEDULE_ENABLED: '0' });
+      expect(off.enabled).toBe(false);
+      // 14:00 UTC = 10:00 ET → the old table's 08-12 "peak" block.
+      expect(disclosurePublishYieldBand(new Date('2026-08-05T14:00:00.000Z'), off)).toBe('peak');
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T14:00:00.000Z'), off)).toBe(3);
+      expect(disclosurePublishYieldWeight(new Date('2026-08-05T04:00:00.000Z'), off)).toBe(0.4);
+      // And the old weekend downgrade rule comes back with it.
+      expect(disclosurePublishYieldBand(new Date('2026-08-08T14:00:00.000Z'), off)).toBe('high');
     });
 
     it('weights peak ET hours denser than overnight (2–3×+)', () => {
-      // America/New_York: 2026-08-05 14:00 UTC = 10:00 ET (peak weekday)
-      const peak = fmpLatencyEtHourWeight(new Date('2026-08-05T14:00:00.000Z'));
+      // America/New_York: 2026-08-05 13:30 UTC = 09:30 ET (measured peak).
+      const peak = fmpLatencyEtHourWeight(new Date('2026-08-05T13:30:00.000Z'));
       // 2026-08-05 04:00 UTC = 00:00 ET (overnight)
       const night = fmpLatencyEtHourWeight(new Date('2026-08-05T04:00:00.000Z'));
       expect(peak).toBeGreaterThanOrEqual(night * 2);
       // Peak spacing should be shorter than overnight for same remaining budget.
       const remaining = 100;
-      const peakIv = fmpLatencyIntervalSec(new Date('2026-08-05T14:00:00.000Z'), remaining);
+      const peakIv = fmpLatencyIntervalSec(new Date('2026-08-05T13:30:00.000Z'), remaining);
       const nightIv = fmpLatencyIntervalSec(new Date('2026-08-05T04:00:00.000Z'), remaining);
       expect(peakIv).toBeLessThan(nightIv);
       // Shared budgeted helper used by UW/QQ as well.
       const peakShared = budgetedProbeIntervalSec({
-        now: new Date('2026-08-05T14:00:00.000Z'),
+        now: new Date('2026-08-05T13:30:00.000Z'),
         remainingRuns: 50,
         minIntervalSec: 60,
         maxIntervalSec: 45 * 60,
@@ -320,7 +348,8 @@ describe('tradeLatency', () => {
         UW_LATENCY_DAILY_CAP: '10',
         QUIVER_LATENCY_DAILY_CAP: '12',
       } as never;
-      const peakNow = new Date('2026-08-05T14:00:00.000Z');
+      // 13:30 UTC = 09:30 ET — inside the MEASURED provider peak (09-10 ET).
+      const peakNow = new Date('2026-08-05T13:30:00.000Z');
       const uw = await selectLatencySourceProbe(env, 'unusual_whales', peakNow, { force: true });
       expect(uw?.cap).toBe(10);
       expect(uw?.callsPerRun).toBe(1);

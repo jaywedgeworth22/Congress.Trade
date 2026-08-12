@@ -491,11 +491,16 @@ describe('one shared daily ledger across both hosts', () => {
   });
 
   it('charges once per renewal, so one grant buys exactly one poll', async () => {
+    // Spacing is 40 minutes, not the scout's 45-second loop, because the
+    // measured cadence now gates renewals (see the off_cadence test below).
+    // T0 = 08:00 ET is the provider LOW tier (21:00-09:00), interval 1800s;
+    // 40 minutes clears it, so each iteration is a genuine new authorization
+    // and this test measures what it means to measure — ledger accounting.
     for (let i = 0; i < 4; i++) {
       await requestMacProbeLease(h.env, {
         provider: 'quiver',
         holderId: 'mac-laptop',
-        now: new Date(T0.getTime() + i * 45_000),
+        now: new Date(T0.getTime() + i * 40 * 60_000),
       });
     }
     expect(h.kv.get(dayKey)).toBe(String(4 * PROVIDER_CALLS_PER_RUN.quiver));

@@ -33,6 +33,27 @@ import {
   logLatencyCapHit,
   type FmpFreeKeySlot,
 } from './latencyCallLedger.ts';
+import {
+  DEFAULT_PROBE_SCHEDULE_CONFIG,
+  probeScheduleConfigFromEnv,
+  probeTierAt,
+  shouldProbeNow,
+  type ProbeScheduleConfig,
+  type ProbeTier,
+} from './probeSchedule.ts';
+import { logProbeCadence } from './probeCadenceLog.ts';
+
+/**
+ * Live cadence config from env. Total and non-throwing by construction; a hard
+ * failure falls back to the shipped measured table rather than stalling probes.
+ */
+function macScheduleConfig(env: Env): ProbeScheduleConfig {
+  try {
+    return probeScheduleConfigFromEnv(env as unknown as Record<string, string | undefined>);
+  } catch {
+    return DEFAULT_PROBE_SCHEDULE_CONFIG;
+  }
+}
 
 /** Bumped when handoff semantics change so stale "quiet 6h" claims do not stick. */
 export const LATENCY_PROBE_HEALTH_KV_KEY = 'latency-probe-health:v2';
@@ -732,6 +753,12 @@ export interface LeasedLatencyProbeOutcome<T> {
  * with an empty list: tradeLatency's `requestedProviderIds` treats an empty
  * `providers` array as "unset" and falls back to probing every provider, which
  * would silently defeat the whole mechanism.
+ *
+ * COMPOSITION: this is the WHO half. The HOW OFTEN half runs strictly inside
+ * `runProbe` — tradeLatency's evaluateLatencySourceProbe() consults the
+ * measured cadence per provider, and only for the providers handed to it here.
+ * Nested, not side by side: a lane the lease declined is never even offered to
+ * the schedule, and the schedule can only decline a lane the lease granted.
  */
 export async function runLeasedLatencyProbe<T>(
   env: Env,
@@ -747,8 +774,33 @@ export async function runLeasedLatencyProbe<T>(
           skipped.map((lane) => `${lane.provider} (${lane.action})`).join(', '),
       );
     }
+    // A lease denial is decided WITHOUT consulting the schedule, so the tier is
+    // genuinely unknown here; reporting one would be a lie. `tier=none` plus
+    // `authority=lease` is the honest rendering, and it keeps the lane visible
+    // in the same log stream as its cadence skips.
+    for (const lane of skipped) {
+      logProbeCadence(
+        {
+          lane: `server:${lane.provider}`,
+          source: 'provider',
+          probe: false,
+          tier: 'none',
+          dayType: 'n/a',
+          intervalSec: 0,
+          elapsedSec: Infinity,
+          authority: 'lease',
+          reason: lane.action,
+        },
+        now,
+      );
+    }
     return { plan, result: null, released: [], skipped };
   }
+  console.log(
+    `latency probe: server holds ${plan.probeProviders.join(', ')} at ` +
+      `${probeTierAt('provider', now, { config: macScheduleConfig(env) })} cadence; ` +
+      'per-provider spacing decided inside the probe',
+  );
   const result = await runProbe(plan.probeProviders);
   const released = await releaseHandedOffServerLanes(env, plan.probeProviders, now);
   return { plan, result, released, skipped };
@@ -768,15 +820,80 @@ export interface MacLeaseResult extends ProbeLeaseDecision {
   charged: number;
   /** Ledger state after the decision, for scout-side logging. */
   budget: Awaited<ReturnType<typeof checkLatencyCallBudget>> | null;
+  /** Measured cadence tier this decision was taken in, for scout-side logging.
+   *  Null when the lease declined before the schedule was ever consulted. */
+  tier?: ProbeTier | null;
+  /** Target seconds between Mac probes of this lane at this instant. */
+  cadenceIntervalSec?: number | null;
+}
+
+/**
+ * Per-provider clock for MAC probes, so the cadence gate below has a
+ * `lastProbeAt` to reason about.
+ *
+ * Deliberately its OWN key rather than the server's `last_poll:` stamp for the
+ * lane. Reusing that stamp would make a Mac grant look like a server poll to
+ * every liveness check that reads it — masking a server outage behind scout
+ * activity, which is precisely the failure the handoff receipts exist to catch.
+ */
+function macCadenceKey(provider: LatencyProbeProviderId): string {
+  return `latency-cadence:mac:${provider}`;
+}
+
+async function readMacLastProbeAt(
+  env: Env,
+  provider: LatencyProbeProviderId,
+): Promise<Date | null> {
+  try {
+    const raw = await env.CONFIG_KV?.get(macCadenceKey(provider));
+    if (!raw) return null;
+    const ms = Date.parse(raw);
+    return Number.isFinite(ms) ? new Date(ms) : null;
+  } catch {
+    // FAIL OPEN, unlike the lease itself. Exclusivity is already guaranteed by
+    // the lease we are nested inside, so a lost cadence clock can only cost one
+    // extra poll — it can never cause a double-poll. Failing closed here would
+    // instead silence the scout on a KV blip, which is strictly worse.
+    return null;
+  }
+}
+
+async function stampMacProbe(
+  env: Env,
+  provider: LatencyProbeProviderId,
+  now: Date,
+): Promise<void> {
+  try {
+    await env.CONFIG_KV?.put(macCadenceKey(provider), now.toISOString(), {
+      expirationTtl: 172800,
+    });
+  } catch {
+    /* best effort; worst case the next grant is not paced */
+  }
 }
 
 /**
  * Mac scout asks for a provider lane.
  *
- * Order matters: eligibility, then budget, then the atomic claim, then the
- * charge. The charge happens only on a granted lease, and every grant charges
- * — so one acquire/renew authorizes exactly one poll and the shared cap counts
- * Mac calls the same way it counts server calls.
+ * Order matters: eligibility, then tenure, then budget, then THE MEASURED
+ * CADENCE, then the atomic claim, then the charge. The charge happens only on a
+ * granted lease, and every grant charges — so one acquire/renew authorizes
+ * exactly one poll and the shared cap counts Mac calls the same way it counts
+ * server calls.
+ *
+ * ---------------------------------------------------------------------------
+ * THE COMPOSITION RULE (probeLease + probeSchedule)
+ * ---------------------------------------------------------------------------
+ * The lease decides WHO probes; the schedule decides HOW OFTEN. They are
+ * NESTED, not side by side: the cadence check is only ever reached for a
+ * provider whose lease conditions already passed, and it can only ever DECLINE.
+ * It can never grant a lane on its own. If the two sat side by side, a provider
+ * would be probed by whichever check passed first and the daily-budget
+ * guarantee would evaporate.
+ *
+ * The cadence gate sits just BEFORE the claim rather than just after, for one
+ * reason: the claim charges the shared ledger. Granting and then discovering it
+ * was too soon would spend a call to learn nothing.
  */
 export async function requestMacProbeLease(
   env: Env,
@@ -829,6 +946,44 @@ export async function requestMacProbeLease(
     return deny('daily_cap', budget.detail ?? 'daily cap reached', current, budget);
   }
 
+  // ---- HOW OFTEN — nested inside the lease-granted branch, never beside it --
+  const schedule = macScheduleConfig(env);
+  const cadence = shouldProbeNow({
+    source: 'provider',
+    now,
+    lastProbeAt: await readMacLastProbeAt(env, req.provider),
+    config: schedule,
+  });
+  // `disabled` means the operator switched the schedule off; that must restore
+  // today's unpaced behaviour, not silence the scout.
+  if (schedule.enabled && !cadence.probe) {
+    logProbeCadence(
+      {
+        lane: `mac:${req.provider}`,
+        source: 'provider',
+        probe: false,
+        tier: cadence.tier,
+        dayType: cadence.dayType,
+        intervalSec: cadence.intervalSec,
+        elapsedSec: cadence.elapsedSec,
+        authority: 'schedule',
+        reason: cadence.reason,
+      },
+      now,
+    );
+    return {
+      ...deny(
+        'off_cadence',
+        `measured ${cadence.tier} cadence for ${req.provider} is ${cadence.intervalSec}s; ` +
+          `${Math.round(cadence.elapsedSec)}s elapsed`,
+        current,
+        budget,
+      ),
+      tier: cadence.tier,
+      cadenceIntervalSec: cadence.intervalSec,
+    };
+  }
+
   const ttlMs = req.ttlSec ? Math.max(1000, req.ttlSec * 1000) : macLeaseTtlMs(env);
   const decision = await acquireProbeLease(env, {
     provider: req.provider,
@@ -839,12 +994,34 @@ export async function requestMacProbeLease(
     now,
   });
   if (!decision.granted) {
-    return { ...decision, charged: 0, budget };
+    return { ...decision, charged: 0, budget, tier: cadence.tier, cadenceIntervalSec: cadence.intervalSec };
   }
 
   const { charged } = await chargeLatencyCalls(env, req.provider, {
     fmpSlot: req.fmpSlot ?? '2',
     now,
   });
-  return { ...decision, charged, budget };
+  // Stamp only on a granted, charged lease: that is exactly one authorized poll.
+  await stampMacProbe(env, req.provider, now);
+  logProbeCadence(
+    {
+      lane: `mac:${req.provider}`,
+      source: 'provider',
+      probe: true,
+      tier: cadence.tier,
+      dayType: cadence.dayType,
+      intervalSec: cadence.intervalSec,
+      elapsedSec: cadence.elapsedSec,
+      authority: 'schedule',
+      reason: schedule.enabled ? cadence.reason : 'schedule-disabled',
+    },
+    now,
+  );
+  return {
+    ...decision,
+    charged,
+    budget,
+    tier: cadence.tier,
+    cadenceIntervalSec: cadence.intervalSec,
+  };
 }
