@@ -80,9 +80,17 @@ notify() {
 }
 
 # HTTP status only; 000 means "no response at all" (DNS, TCP, TLS, timeout).
+#
+# Do NOT write this as `curl ... || echo 000`. On a connection failure curl
+# prints 000 from -w *and* exits non-zero, so the fallback appends a second one
+# and yields "000000" — which silently defeats every `== "000"` test below. That
+# made a dead relay report as "tunnel-side" and, when both legs were down, made
+# two equal non-"000" values compare as healthy. Caught in the failure-path test.
 probe_code() {
-  local max_time="$1" url="$2"
-  curl -sS -o /dev/null -w '%{http_code}' --max-time "$max_time" "$url" 2>/dev/null || echo 000
+  local max_time="$1" url="$2" code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$max_time" "$url" 2>/dev/null)"
+  [[ "$code" =~ ^[0-9]{3}$ ]] || code=000
+  printf '%s' "$code"
 }
 
 CF_BIN="${CLOUDFLARED_BIN:-$(command -v cloudflared || true)}"
