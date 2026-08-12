@@ -1,5 +1,24 @@
 # Current Handoff
 
+## 2026-08-12 — Effort Issues Sync: page too large, not a flake (CLAUDE)
+
+#1800 added transport retry to `scripts/sync-effort-issues.py` assuming the
+`IncompleteRead` failures were transient. They are not. With that fix live, run
+`31626620379` shows all three retries firing with correct 2s/4s/8s backoff and
+every attempt dying at ~712KB of a ~722KB body on the SAME page
+(`issues?per_page=100&page=3&state=all`). Deterministic — retrying a
+byte-identical request cannot fix it. Cause: this board's issue bodies are
+unusually large (effort-log rows run to thousands of characters), so 100
+issues/page is ~720KB, too big to cross this runner's link intact.
+`_get_all_pages` now halves `per_page` and restarts the listing on
+`IncompleteRead`, floor 10, re-raising at the floor. Restart rather than
+mid-stream shrink because GitHub's `page` is relative to `per_page` — changing
+size partway would skip or duplicate rows. `HTTP_TIMEOUT_SECONDS` 30 -> 60.
+Branch `claude/effort-sync-page-shrink`. Rollout:
+`docs/rollouts/2026-08-12-effort-sync-page-shrink.md`.
+**Open:** the runner's link to github.com is slow enough that a 720KB response
+is unreliable at all — worth a look at that host's network.
+
 ## 2026-08-12 — Sentry CI reporter fingerprint + cron key (CLAUDE)
 
 `scripts/sentry-ci-report.py` no longer fingerprints CI failures on the branch
