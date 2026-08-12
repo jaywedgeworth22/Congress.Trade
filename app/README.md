@@ -201,9 +201,31 @@ Worker secrets are migration fallback only. Important groups:
 | Delivery | `WEBHOOK_SIGNING_KEY` |
 | Public auth/email | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `APP_BASE_URL`, `ALERT_EMAIL` |
 | Billing | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `STRIPE_TRIAL_DAYS` |
+| Litestream B2 backup | `LITESTREAM_S3_BUCKET`, `LITESTREAM_S3_ENDPOINT`, `LITESTREAM_S3_REGION`, `LITESTREAM_S3_ACCESS_KEY_ID`, `LITESTREAM_S3_SECRET_ACCESS_KEY` |
 
 The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
 configured. `ADMIN_OPEN_IN_DEV=true` is a local-only escape hatch.
+
+### Continuous backup (Litestream -> Backblaze B2)
+
+The Coolify `congress-app` container replicates
+`/data/congress-trade/db.sqlite` continuously to Backblaze B2
+(`jays-congress-trade-eu`) via Litestream running as a sibling process inside
+the same container — the pattern already proven by Socratic.Trade
+(`litestream.coolify.yml`) and Usage-Monitor (`litestream.yml`). See
+`app/litestream.yml` for the replica config and
+`app/scripts/start-with-litestream.sh` for the entrypoint that resolves the
+`LITESTREAM_S3_*` secrets from Infisical (reusing the app's existing
+`INFISICAL_APP_CLIENT_ID`/`INFISICAL_APP_CLIENT_SECRET` bootstrap identity)
+and execs `litestream replicate -exec "deno run ..."` as PID 1. Deliberately
+uses **separate** `LITESTREAM_S3_*` secret names rather than the app's
+existing `AWS_S3_*`/`AWS_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
+secrets — those already point at Cloudflare R2 and back the `raw/`
+filing-PDF object store consumed in-process by `src/deno/main.ts`; reusing
+those names for the DB backup replica would have silently repointed PDF
+storage at the B2 bucket. When `LITESTREAM_S3_*` are absent (local/preview),
+the container falls straight through to the unmodified `deno run ...` with no
+Litestream wrapper.
 
 ---
 
