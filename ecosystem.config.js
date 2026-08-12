@@ -41,10 +41,16 @@ module.exports = {
     },
     {
       name: 'senate-tunnel',
-      // Ephemeral quick tunnel — URL regenerates on restart; update Coolify
-      // SENATE_RELAY_URL when it changes (see docs #1604).
-      script: 'cloudflared',
-      args: 'tunnel --url http://127.0.0.1:8899',
+      // Ephemeral quick tunnel — URL regenerates on restart; Coolify's
+      // SENATE_RELAY_URL must be updated when it changes (see docs #1604).
+      // That manual step is exactly what failed on 2026-08-11: the tunnel
+      // restarted 3x, minted 3 new hostnames, and nothing announced it, so the
+      // server dialled a dead host while this entry looked "online" in pm2.
+      // run-senate-tunnel.sh keeps the same quick tunnel but records the
+      // hostname, alerts the owner the moment it rotates, and exits when the
+      // relay stops answering through it so pm2 restarts it.
+      script: './scout/run-senate-tunnel.sh',
+      interpreter: 'bash',
       cwd: __dirname,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       out_file: './scout/senate-tunnel.log',
