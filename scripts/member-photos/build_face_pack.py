@@ -36,8 +36,9 @@ Usage
     .venv/bin/python scripts/member-photos/build_face_pack.py
     .venv/bin/python scripts/member-photos/build_face_pack.py --contact-sheet /tmp/faces.png
 
-    # Flip whether attributionCaption is shown to end users. Patches the
-    # manifest in place -- no network calls, no re-crop, safe to run any time.
+    # Flip whether attributionCaption is surfaced (today: the x-photo-attribution
+    # response header, not a visible caption). Patches the manifest in place --
+    # no network calls, no re-crop, safe to run any time.
     .venv/bin/python scripts/member-photos/build_face_pack.py --set-attribution-display on
 
 ``--contact-sheet`` writes a labelled grid of every produced face.  Look at it.
@@ -241,8 +242,10 @@ def main() -> int:
         "--set-attribution-display",
         choices=["on", "off"],
         help=(
-            "Flip whether attributionCaption is shown to end users and exit. "
-            "Patches manifest.json in place -- no network calls, no re-crop."
+            "Flip whether attributionCaption is surfaced and exit. ON means pack-served "
+            "photos carry an x-photo-attribution response header; there is no visible "
+            "caption anywhere yet. Patches manifest.json in place -- no network calls, "
+            "no re-crop."
         ),
     )
     args = ap.parse_args()
