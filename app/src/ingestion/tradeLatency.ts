@@ -199,6 +199,12 @@ export interface DisclosureLatencyProbeResult {
   providers: DisclosureLatencyProviderRun[];
 }
 
+/**
+ * Whether a lane's coverage ratio is trustworthy enough to publish.
+ * `contradiction` is a self-check failure, not a measurement.
+ */
+export type CoverageIntegrity = 'ok' | 'contradiction';
+
 export interface DisclosureLatencyProviderMetrics {
   provider: ProviderId;
   label: string;
@@ -245,6 +251,21 @@ export interface DisclosureLatencyProviderMetrics {
   providerCoveragePct: number | null;
   /** Jaccard overlap of the two matured observed cohorts. */
   overlapPct: number | null;
+  /**
+   * `contradiction` means the coverage JOIN is broken, NOT that coverage is
+   * zero. Set when this lane observed matured provider rows, matched none of
+   * them, yet holds strong pairings in `trade_latency_candidates`. Both cannot
+   * be true, so `ctCoveragePct` and `overlapPct` are suppressed to `null`
+   * rather than published as a 0% we did not measure. See the guard in
+   * {@link computeProviderMetrics}.
+   */
+  coverageIntegrity: CoverageIntegrity;
+  /**
+   * Strong CT <-> provider pairings on file for this lane in the coverage
+   * window. The evidence behind `coverageIntegrity` — with `maturedMatched`
+   * it makes the contradiction legible instead of requiring a DB query.
+   */
+  coverageStrongPairingsOnFile: number;
   /** insufficient = too few matured rows; limited = coverage too low for a
    *  full claim; preliminary = enough matched timing for a soft claim;
    *  usable = coverage + sample gates pass for a full Ahead/Behind claim. */
@@ -3961,6 +3982,13 @@ interface CoverageIndex {
   weakHashes: Set<string>;
   /** Canonical CT trade_hash for an observation, by key then by hash. */
   canonicalByKey: Map<string, string>;
+  /**
+   * Strong pairings this lane holds in the DB, counted as ROWS (not set size).
+   * Used only by the contradiction guard: it answers "does congress.trade
+   * believe it has ever matched this provider?" independently of whether any
+   * of those pairings can be found from the observation side.
+   */
+  strongPairings: number;
 }
 
 /**
@@ -3974,6 +4002,7 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
     weakKeys: new Set(),
     weakHashes: new Set(),
     canonicalByKey: new Map(),
+    strongPairings: 0,
   };
   for (const row of rows) {
     const lane = isFmpFamilyProvider(row.provider) ? 'fmp' : row.provider;
@@ -3986,6 +4015,7 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
     const key = row.provider_key ? `${row.chamber}:${row.provider_key}` : null;
     if (key && row.trade_hash) idx.canonicalByKey.set(key, row.trade_hash);
     if (strength === 'strong') {
+      idx.strongPairings += 1;
       if (key) idx.strongKeys.add(key);
       if (row.trade_hash) idx.strongHashes.add(row.trade_hash);
     } else {
@@ -4231,14 +4261,48 @@ function computeProviderMetrics(opts: {
   const matchedMaturedCandidates = maturedCandidates.filter(
     (row) => rowMatchStrength(row) === 'strong',
   ).length;
-  const ctCoveragePct = maturedProviderObserved
-    ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
-    : null;
+  // CONTRADICTION GUARD.
+  //
+  // Coverage is a JOIN, and a join has a failure mode a ratio cannot express:
+  // when the two sides stop sharing an identity, the numerator collapses to
+  // zero and the ratio dutifully reports 0% — a number indistinguishable from
+  // the honest finding "the provider saw things we never did". That is exactly
+  // what shipped for months: `unmatchedProvider = 567 of 567` while D1 held
+  // hundreds of rows with `status='matched'` for those same providers.
+  //
+  // These two facts cannot both be true. If congress.trade has strong pairings
+  // on file for this lane, then at least one matured observation should find
+  // one; zero means the lookup is broken (mismatched clocks, a changed hash
+  // shape, a lane-id split), not that coverage is genuinely nil. Publishing 0%
+  // in that state states a measurement we did not make.
+  //
+  // So we refuse to publish the ratio and say why. Suppressing it also fails
+  // the `coverageOk` gate below, which keeps `comparisonStatus` out of
+  // `usable` — a broken join can never be laundered into a public claim.
+  //
+  // KNOWN BENIGN TRIGGER, accepted deliberately: a lane whose only pairings are
+  // newer than `maturityCutoff` (e.g. the hours right after a matcher fix
+  // lands) has strong pairings on file and zero matured matches without
+  // anything being broken. We still suppress, because the alternative is
+  // publishing 0% during precisely the window when 0% is most wrong. `null`
+  // says "not yet known"; 0% says "we checked, and the answer is none". Only
+  // the first is true here.
+  const coverageContradiction =
+    maturedProviderObserved > 0 && maturedMatched === 0 && coverageIndex.strongPairings > 0;
+  const coverageIntegrity: CoverageIntegrity = coverageContradiction ? 'contradiction' : 'ok';
+
+  const ctCoveragePct =
+    coverageContradiction || !maturedProviderObserved
+      ? null
+      : Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10;
   const providerCoveragePct = maturedCandidates.length
     ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
     : null;
   const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
-  const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
+  const overlapPct =
+    coverageContradiction || union <= 0
+      ? null
+      : Math.round((maturedMatched / union) * 1000) / 10;
   const coverageOk =
     (ctCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT &&
     (providerCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT;
@@ -4267,6 +4331,8 @@ function computeProviderMetrics(opts: {
     ctCoveragePct,
     providerCoveragePct,
     overlapPct,
+    coverageIntegrity,
+    coverageStrongPairingsOnFile: coverageIndex.strongPairings,
     comparisonStatus: comparisonStatusFromSample({ timingN, sampleOk, coverageOk }),
     comparisonBasis: 'matched-overlap-only',
     // "Monitor" fields carry the effective race deltas (provider stamp with fallback).

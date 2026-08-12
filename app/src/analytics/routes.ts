@@ -1283,6 +1283,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           // candidates.
           coveragePct: p.ctCoveragePct,
           overlapPct: p.overlapPct,
+          // `contradiction` means the coverage join is broken and the ratios
+          // above are deliberately null. Consumers must render that as
+          // "unavailable", never as 0%.
+          coverageIntegrity: p.coverageIntegrity,
+          coverageStrongPairingsOnFile: p.coverageStrongPairingsOnFile,
           comparisonStatus: p.comparisonStatus,
           comparisonBasis: p.comparisonBasis,
           // Effective race deltas (monitor* fields already include provider-stamp
