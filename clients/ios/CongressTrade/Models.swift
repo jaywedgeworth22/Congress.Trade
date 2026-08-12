@@ -73,7 +73,10 @@ final class ClientTrade: Decodable, Identifiable {
         set { storedFiling = newValue }
     }
 
-    enum Source: String, Codable {
+    /// `CaseIterable` so `ClientTradeCacheSchema` can fingerprint the raw values:
+    /// dropping a case leaves cached rows holding a raw value that no longer maps
+    /// to anything, and SwiftData traps on the fault rather than returning nil.
+    enum Source: String, Codable, CaseIterable {
         case primary
         case seedDataset = "seed_dataset"
         case competitorBackfill = "competitor_backfill"
@@ -238,6 +241,115 @@ final class ClientTrade: Decodable, Identifiable {
         storedFiling = item.storedFiling
         confidence = item.confidence
         source = item.source
+    }
+}
+
+/// Identity of the **persisted** shape of the `ClientTrade` cache, compared at
+/// launch by `CongressTradeApp.makeTradeCacheContainer()` so a store written by
+/// a differently-shaped build is discarded instead of trapping.
+///
+/// WHY THIS EXISTS — the crash it fixes
+/// -----------------------------------
+/// `ClientTrade` is a `@Model` whose stored properties are Codable *structs*
+/// (`Member`/`Asset`/`Transaction`/`Filing`). SwiftData persists each of those
+/// as an `NSCompositeAttributeDescription` — one sub-attribute per struct field,
+/// not an opaque blob. When a field's presence or optionality changes between
+/// builds, an existing store still holds the old sub-attributes, and SwiftData
+/// **traps** (`_assertionFailure`, `EXC_BREAKPOINT`) the moment that property is
+/// faulted. Four such crash reports exist from 2026-08-10; every one dies in
+/// `ClientTrade.storedAsset.getter` while `TradeCard.body` builds its `HStack`.
+///
+/// Two facts make this the only workable defence:
+///  1. Opening the container does **not** catch it. In a standalone repro the
+///     container opened, the fetch returned rows, and only the property fault
+///     trapped — so a `do`/`catch` around `ModelContainer(...)` is necessary but
+///     nowhere near sufficient.
+///  2. The trap is a Swift runtime trap, not a thrown error and not an ObjC
+///     exception. Nothing in the language can intercept it: no `try?`, no
+///     `catch`, no top-level handler. The only way to survive a mismatched
+///     store is to never fault a row out of one.
+///
+/// So the shape is stamped next to the store and compared *before* the store is
+/// opened. If it differs, the store is deleted. That is always safe here: this
+/// store is a pure cache of `GET /api/client/v1/feed` (see
+/// `CongressTradeStore.replaceCache`) and the only reader is
+/// `FeedDashboardView`'s `@Query`. Watchlist, delivery and account state live
+/// server-side, so a wipe costs one refetch and loses nothing.
+///
+/// The stamp is derived automatically wherever that is possible, because the
+/// proximate cause of the crash was a shape change landing without anyone
+/// realising a hand-maintained version needed bumping.
+enum ClientTradeCacheSchema {
+    /// Bump when the persisted shape changes in a way the automatic signature
+    /// below cannot see — e.g. adding/removing a `@Model` stored property whose
+    /// Swift type name is unchanged, changing an `@Attribute` option, or a
+    /// SwiftData/OS-level storage format change we need to force past.
+    ///
+    /// Forgetting to bump a version like this is exactly what shipped the crash,
+    /// which is why almost everything here is derived rather than hand-written:
+    /// treat this constant as the escape hatch, not the primary mechanism.
+    static let persistedShapeVersion = 1
+
+    /// Stable across launches and across processes — deliberately **not**
+    /// `Hashable.hashValue`, which is seeded per-process and would report a
+    /// mismatch on every single launch.
+    static var identity: String {
+        "v\(persistedShapeVersion)-\(fnv1a(signature))"
+    }
+
+    /// Everything that determines whether an existing store can be faulted by
+    /// this build:
+    ///
+    /// * SwiftData's own view of the entity (property names + value types).
+    ///   This catches renames like `asset` -> `storedAsset` and any added or
+    ///   dropped `@Model` property.
+    /// * The interior of each Codable struct. `Schema` reports these only as
+    ///   `Optional<Asset>` and stops there, yet the interior is precisely what
+    ///   traps — `Asset.name` going `String` -> `String?` (commit 8f917f85) is
+    ///   invisible to `Schema` and fatal to an old store.
+    /// * `Source`'s raw values. A dropped case leaves rows whose stored raw
+    ///   value no longer maps to anything, which traps the same way.
+    private static var signature: String {
+        var parts: [String] = []
+
+        for entity in Schema([ClientTrade.self]).entities.sorted(by: { $0.name < $1.name }) {
+            let properties = entity.properties
+                .map { "\($0.name):\($0.valueType):\($0.isOptional ? "opt" : "req")" }
+                .sorted()
+                .joined(separator: ",")
+            parts.append("\(entity.name)[\(properties)]")
+        }
+
+        parts.append(structSignature("Member", ClientTrade.Member()))
+        parts.append(structSignature("Asset", ClientTrade.Asset()))
+        parts.append(structSignature("Transaction", ClientTrade.Transaction(type: "B")))
+        parts.append(structSignature("Filing", ClientTrade.Filing()))
+        parts.append("Source[\(ClientTrade.Source.allCases.map(\.rawValue).sorted().joined(separator: ","))]")
+
+        return parts.joined(separator: "|")
+    }
+
+    /// `Mirror` reports a stored property's declared type even when its value is
+    /// `nil`, so a default-constructed value is enough to fingerprint the shape:
+    /// `name:Optional<String>` and `name:String` are different signatures, which
+    /// is the distinction that matters to the store.
+    private static func structSignature(_ name: String, _ value: Any) -> String {
+        let fields = Mirror(reflecting: value)
+            .children
+            .map { "\($0.label ?? "?"):\(type(of: $0.value))" }
+            .sorted()
+            .joined(separator: ",")
+        return "\(name)[\(fields)]"
+    }
+
+    /// FNV-1a — small, dependency-free, and identical on every launch.
+    private static func fnv1a(_ input: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in input.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 }
 
@@ -1129,6 +1241,19 @@ struct TopPerformerItem: Decodable, Identifiable {
     let partyBucket: String?
     let photoUrl: String?
     let tradeCount: Int
+    /// CANONICAL. Size-weighted average excess return vs the S&P 500 measured
+    /// from the FILING date, winsorized per-trade at ±200%, NOT annualized.
+    /// `GET /api/analytics/member-performance` both SORTS and (on the website)
+    /// DISPLAYS this field, so it is the only one that keeps a row's rank and
+    /// its printed number in agreement. Display this one.
+    let avgExcessReturn: Double?
+    /// Reference/debugging only — do NOT display as the headline stat. The
+    /// backend's own comment (`app/src/analytics/routes.ts`) says it is "NOT
+    /// what the board sorts or displays by (a young trade's ~12x annualization
+    /// multiplier made this misleading)". Painting it next to a list ordered
+    /// by `avgExcessReturn` is what produced the owner's "odd order" report:
+    /// live at window=90d the honest column tops out near 5.7% while this one
+    /// reads 41.4 / 26.4 / 22.5 / 41.2%.
     let avgAnnualizedExcessReturn: Double?
     let winRate: Double?
     let estVolumeUsd: Double?
@@ -1168,12 +1293,38 @@ struct FilingLagResponse: Decodable {
     let topLateFilers: [SlowFilerItem]?
 }
 
+/// Shape of `summary` in `GET /api/analytics/filing-lag`.
+///
+/// VERIFIED AGAINST THE LIVE ENDPOINT (2026-08-11, `?window=90d`): the server
+/// returns exactly `{count, medianLagDays, p90LagDays, overFortyFivePct,
+/// distribution}` — see `summarizeLag` in `app/src/analytics/compute.ts`, which
+/// is the only producer of this object.
+///
+/// This struct previously also declared `avgLagDays` / `maxLagDays` /
+/// `lateCount` / `totalTrades`. None of them have ever been sent. Because every
+/// property is Optional, decoding still succeeded and the Trends tab happily
+/// shipped "Avg Delay: 0 days" and "Late Filings: —" forever. Do not re-add a
+/// field here without first seeing it in a live response body; the website
+/// (Median / P90 / >45-day %) is the reference for what this endpoint offers.
 struct FilingLagSummary: Decodable {
-    let avgLagDays: Double?
+    /// Disclosed trades with a computable lag in the active window — the
+    /// denominator behind every other number in this object.
+    let count: Int?
     let medianLagDays: Double?
-    let maxLagDays: Double?
-    let lateCount: Int?
-    let totalTrades: Int?
+    let p90LagDays: Double?
+    /// Share (0…1, NOT a percent) of `count` filed more than 45 days after the
+    /// trade — i.e. past the STOCK Act deadline. `round(…, 4)` server-side.
+    let overFortyFivePct: Double?
+    let distribution: [FilingLagBucket]?
+}
+
+/// One `LAG_BUCKETS` histogram bar (`0-7d`, `8-14d`, `15-30d`, `31-45d`,
+/// `46-60d`, `60d+`). Shared with the website via the `congress-trading-shared`
+/// package, so the labels arrive pre-formatted — never re-derive them here.
+struct FilingLagBucket: Decodable, Identifiable {
+    var id: String { bucket }
+    let bucket: String
+    let count: Int
 }
 
 struct SlowFilerItem: Decodable, Identifiable {

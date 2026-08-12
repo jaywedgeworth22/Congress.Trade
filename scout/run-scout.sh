@@ -38,6 +38,11 @@ want = {
   "CT_INGEST_URL", "CT_INGEST_TOKEN", "CT_BASE_URL", "CT_INGEST_LATENCY_ONLY",
   "FMP_PROBE_ENABLED", "FMP_PATHS", "SOURCES", "POLL_INTERVAL_SEC",
   "SCOUT_RAW_UPLOAD", "SCOUT_LATENCY_ALWAYS", "SCOUT_SENATE_RAW",
+  # Owner escalation channel for the source circuit breaker. Without these the
+  # scout can detect a 32-hour outage and still have no way to say so: the
+  # 2026-08-11 Senate outage was found by a server-side sweep a day late, while
+  # the process that had 1,385 first-hand failures stayed silent.
+  "PUSHOVER_APP_TOKEN", "PUSHOVER_CT_API_TOKEN", "PUSHOVER_USER_KEY",
 }
 p = Path.home() / ".secrets" / "global-api-keys"
 if not p.exists():

@@ -26,6 +26,7 @@ import {
   buildSectorBreakdownQuery,
   buildSectorFlowQuery,
   buildMarketCapBreakdownQuery,
+  canonicalSectorSql,
   buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
@@ -190,14 +191,122 @@ describe('buildSectorBreakdownQuery', () => {
   });
 });
 
-describe('buildSectorFlowQuery (real GICS sector)', () => {
-  it('groups by securities_ref.sector with signed net flow, resolved tickers only', () => {
+describe('buildSectorFlowQuery (real sector)', () => {
+  it('groups by a canonicalized securities_ref.sector with signed net flow, resolved tickers only', () => {
     const q = buildSectorFlowQuery({ window: '90d' });
-    expect(q.sql).toContain("COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector");
+    expect(q.sql).toContain('AS sector');
     expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
     expect(q.sql).toContain('AS est_net_flow');
     expect(q.sql).toContain('GROUP BY sector');
     expect(q.sql).toContain("t.ticker IS NOT NULL AND t.ticker <> ''");
+    // The old COALESCE(NULLIF(...)) form only nulled the empty string, so a
+    // literal 'N/A' shipped as its own sector bucket.
+    expect(q.sql).not.toContain("COALESCE(NULLIF(sr.sector, ''), 'Unknown')");
+  });
+});
+
+/**
+ * These run the generated CASE through real SQLite rather than asserting on the
+ * SQL text: the point is what the expression RETURNS for the vocabularies
+ * actually present in securities_ref, not how it is spelled.
+ */
+describe('canonicalSectorSql', () => {
+  async function classify(labels: (string | null)[]): Promise<Record<string, string>> {
+    // Dynamic module name keeps Worker production types free of Node-only APIs
+    // (same trick as src/admin/__tests__/migrations.test.ts).
+    const moduleName = 'node:sqlite';
+    const sqlite = (await import(moduleName)) as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...p: unknown[]): unknown; all(...p: unknown[]): Record<string, unknown>[] };
+        close(): void;
+      };
+    };
+    const db = new sqlite.DatabaseSync(':memory:');
+    db.exec('CREATE TABLE sr (sector TEXT)');
+    const insert = db.prepare('INSERT INTO sr (sector) VALUES (?)');
+    for (const label of labels) insert.run(label);
+    const rows = db
+      .prepare(`SELECT sector AS input, ${canonicalSectorSql('sr.sector')} AS out FROM sr`)
+      .all() as { input: string | null; out: string }[];
+    db.close();
+    const result: Record<string, string> = {};
+    for (const row of rows) result[row.input ?? '<null>'] = row.out;
+    return result;
+  }
+
+  it('folds junk sentinels into Unknown, not their own bucket', async () => {
+    const out = await classify([null, '', '   ', 'N/A', 'n/a', 'NA', '-', '--', 'None', 'null', 'Unknown']);
+    expect(out['<null>']).toBe('Unknown');
+    expect(out['']).toBe('Unknown');
+    expect(out['   ']).toBe('Unknown');
+    expect(out['N/A']).toBe('Unknown');
+    expect(out['n/a']).toBe('Unknown');
+    expect(out.NA).toBe('Unknown');
+    expect(out['-']).toBe('Unknown');
+    expect(out['--']).toBe('Unknown');
+    expect(out.None).toBe('Unknown');
+    expect(out.null).toBe('Unknown');
+    expect(out.Unknown).toBe('Unknown');
+  });
+
+  it('collapses duplicate spellings onto one bucket', async () => {
+    const out = await classify(['Healthcare', 'Health Care', 'HEALTH CARE', 'Health  Care']);
+    expect(new Set(Object.values(out))).toEqual(new Set(['Healthcare']));
+  });
+
+  it('rolls sub-industries up to their unambiguous parent sector', async () => {
+    const out = await classify([
+      'Semiconductors',
+      'Pharmaceuticals',
+      'Biotechnology',
+      'Banking',
+      'Insurance',
+      'Media',
+      'Telecommunication',
+      'Machinery',
+      'Airlines',
+      'Beverages',
+      'Tobacco',
+      'Automobiles',
+      'Chemicals',
+    ]);
+    expect(out.Semiconductors).toBe('Technology');
+    expect(out.Pharmaceuticals).toBe('Healthcare');
+    expect(out.Biotechnology).toBe('Healthcare');
+    expect(out.Banking).toBe('Financial Services');
+    expect(out.Insurance).toBe('Financial Services');
+    expect(out.Media).toBe('Communication Services');
+    expect(out.Telecommunication).toBe('Communication Services');
+    expect(out.Machinery).toBe('Industrials');
+    expect(out.Airlines).toBe('Industrials');
+    expect(out.Beverages).toBe('Consumer Defensive');
+    expect(out.Tobacco).toBe('Consumer Defensive');
+    expect(out.Automobiles).toBe('Consumer Cyclical');
+    expect(out.Chemicals).toBe('Basic Materials');
+  });
+
+  it('passes an unrecognised label through unchanged instead of swallowing it', async () => {
+    // Nothing may silently disappear into Unknown: an unmapped provider label
+    // still has to show up as its own honest bucket.
+    const out = await classify(['Quantum Widgets', 'Retail', 'Manufacturing', 'Services', '  Retail Trade  ']);
+    expect(out['Quantum Widgets']).toBe('Quantum Widgets');
+    expect(out.Retail).toBe('Retail');
+    expect(out.Manufacturing).toBe('Manufacturing');
+    expect(out.Services).toBe('Services');
+    expect(out['  Retail Trade  ']).toBe('Retail Trade');
+  });
+
+  it('leaves the labels whose obvious mapping production data disproves', async () => {
+    // 'Financials' is a provider catch-all (Treasury CUSIPs, mutual funds, a
+    // '--'), 'Communications' is networking hardware, 'Mining' is oil & gas.
+    // Folding any of them would misattribute real trades.
+    const out = await classify(['Financials', 'Communications', 'Mining', 'Electrical Equipment', 'Packaging']);
+    expect(out.Financials).toBe('Financials');
+    expect(out.Communications).toBe('Communications');
+    expect(out.Mining).toBe('Mining');
+    expect(out['Electrical Equipment']).toBe('Electrical Equipment');
+    expect(out.Packaging).toBe('Packaging');
   });
 });
 

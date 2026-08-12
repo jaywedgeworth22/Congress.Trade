@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+// For `UNAuthorizationStatus`, which `DeliveryAlertsToggle` switches on below.
+import UserNotifications
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
@@ -10,52 +12,52 @@ struct DeliveryView: View {
     @State private var watchlistDraft: [String] = []
     @State private var newTicker = ""
     @State private var showSubscribe = false
-    @State private var editingSubscriptionId: String?
+    @State private var showExportSheet = false
 
-    @AppStorage("notify_all_trades") private var notifyAllTrades = true
-    @AppStorage("notify_new_buys") private var notifyNewBuys = false
-    @AppStorage("notify_new_sells") private var notifyNewSells = false
-    @AppStorage("notify_watchlist") private var notifyWatchlist = false
+    // DELETED, deliberately: a "Notifications" section of four @AppStorage
+    // toggles (`notify_all_trades` / `notify_new_buys` / `notify_new_sells` /
+    // `notify_watchlist`). A grep of the whole iOS tree found those four keys
+    // referenced in this file and nowhere else — no request builder, no
+    // PushNotificationManager path, no subscription filter read them. They were
+    // write-only local state that changed nothing, which is worse than having
+    // no switches at all: it is why the owner was "unsure if any options there
+    // impact push notifications or not". The one control that really does gate
+    // alerts to this phone is `DeliveryAlertsToggle`, now at the top.
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Notifications") {
-                    Toggle("All Trades", isOn: Binding(
-                        get: { notifyAllTrades },
-                        set: { isOn in
-                            notifyAllTrades = isOn
-                            if isOn {
-                                notifyNewBuys = false
-                                notifyNewSells = false
-                                notifyWatchlist = false
-                            }
-                        }
-                    ))
-                    Toggle("New Buys", isOn: Binding(
-                        get: { notifyNewBuys },
-                        set: { isOn in
-                            notifyNewBuys = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("New Sells", isOn: Binding(
-                        get: { notifyNewSells },
-                        set: { isOn in
-                            notifyNewSells = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
-                    Toggle("Watchlist", isOn: Binding(
-                        get: { notifyWatchlist },
-                        set: { isOn in
-                            notifyWatchlist = isOn
-                            if isOn { notifyAllTrades = false }
-                        }
-                    ))
+                Section {
+                    DeliveryAlertsToggle()
+                } header: {
+                    Text("Alerts on This Phone")
+                } footer: {
+                    Text("The same switch as in the header menu — turning it on here turns it on everywhere.")
                 }
 
-                Section("Create Delivery") {
+                // Export sits beside the upgrade entry point on purpose (owner
+                // asked for that adjacency): the thing you want and the thing
+                // that unlocks it should not be on different screens.
+                Section {
+                    Button {
+                        showExportSheet = true
+                    } label: {
+                        Label("Export CSV", systemImage: "arrow.down.circle")
+                    }
+                    if !store.isPremium {
+                        Button {
+                            showSubscribe = true
+                        } label: {
+                            Label("Subscribe with Apple", systemImage: "apple.logo")
+                        }
+                    }
+                } header: {
+                    Text("Premium")
+                } footer: {
+                    Text("CSV export uses the filters set on the Trades tab, plus the dates you pick.  Premium is $5/month or $50/year, with a 1-month free trial.")
+                }
+
+                Section {
                     if !store.signedIn {
                         VStack(alignment: .leading, spacing: 10) {
                             DeliveryMethodExplainer()
@@ -167,6 +169,12 @@ struct DeliveryView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
                     }
+                } header: {
+                    Text("Create Delivery")
+                } footer: {
+                    // The single line that has to land for a non-developer:
+                    // this whole tab is about machines, not this phone.
+                    Text("Deliveries send filings to a server you run — they are not alerts on this phone.  For those, use Trade Disclosure Alerts above.")
                 }
 
                 Section("Existing Subscriptions") {
@@ -245,6 +253,15 @@ struct DeliveryView: View {
                 } footer: {
                     Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
                 }
+
+                // Footer links live in their own borderless row rather than a
+                // section footer so they read as page chrome, not as a note
+                // about the watchlist above them.
+                Section {
+                    AppLegalFooter()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
@@ -256,6 +273,12 @@ struct DeliveryView: View {
             .sheet(isPresented: $showSubscribe) {
                 SubscribeView()
                     .environmentObject(store)
+            }
+            .sheet(isPresented: $showExportSheet) {
+                ExportCSVSheet()
+                    .environmentObject(store)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
             .onAppear {
                 watchlistDraft = store.watchlist
@@ -273,6 +296,121 @@ struct DeliveryView: View {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+}
+
+/// The one control on this tab that really does decide whether an alert can
+/// reach this phone — the replacement for the four `notify_*` switches that
+/// decided nothing.
+///
+/// It reflects the OS permission, which is the only thing that actually gates
+/// delivery, so it cannot drift out of sync with reality and it cannot lie.
+/// Two honest consequences:
+/// - Turning it OFF opens iOS Settings, because an app cannot revoke its own
+///   notification permission. The status line says so rather than pretending
+///   the flip worked.
+/// - Once permission is denied, iOS never shows the system prompt again, so
+///   re-tapping routes to Settings instead of silently doing nothing.
+///
+/// Named distinctly from the components lane's in-flight shared version so the
+/// two can coexist on main; swapping this call site for that one later is a
+/// mechanical rename.
+struct DeliveryAlertsToggle: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var pushManager: PushNotificationManager
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: binding) {
+                Text("Trade Disclosure Alerts")
+                    .font(.body.weight(.medium))
+            }
+            .tint(.blue)
+
+            // Exactly one short sentence-case line — never a paragraph
+            // explaining what a notification is.
+            Text(statusLine)
+                .font(.caption)
+                .foregroundStyle(statusColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task { await pushManager.checkPermissionStatus() }
+        // Coming back from iOS Settings is the one way this state changes
+        // behind the app's back.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await pushManager.checkPermissionStatus() }
+        }
+    }
+
+    private var binding: Binding<Bool> {
+        Binding(
+            get: { pushManager.isAuthorized },
+            set: { wantsOn in
+                if wantsOn {
+                    turnOn()
+                } else {
+                    openSystemSettings()
+                }
+            }
+        )
+    }
+
+    private func turnOn() {
+        switch pushManager.authorizationStatus {
+        case .denied:
+            openSystemSettings()
+        case .notDetermined:
+            Task {
+                await pushManager.requestAuthorization()
+                await syncIfPossible()
+            }
+        default:
+            Task { await syncIfPossible() }
+        }
+    }
+
+    private func syncIfPossible() async {
+        guard pushManager.isAuthorized, store.signedIn else { return }
+        await pushManager.syncTokenWithBackend(api: store.api, force: true)
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        openURL(url)
+    }
+
+    private var statusLine: String {
+        switch pushManager.authorizationStatus {
+        case .denied:
+            return "blocked in iOS Settings — tap to open them"
+        case .notDetermined:
+            return "off"
+        default:
+            break
+        }
+        if !store.signedIn {
+            return "sign in to receive alerts on this device"
+        }
+        if pushManager.isBackendSynced {
+            return "on — new disclosures alert this device"
+        }
+        if pushManager.isRegistering {
+            return "registering this device…"
+        }
+        if pushManager.lastError != nil {
+            return "this device could not be registered — toggle again to retry"
+        }
+        return "on — waiting for this device to register"
+    }
+
+    private var statusColor: Color {
+        if pushManager.authorizationStatus == .denied { return .orange }
+        if pushManager.isBackendSynced { return .green }
+        if pushManager.lastError != nil { return .red }
+        return .secondary
     }
 }
 

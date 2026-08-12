@@ -11,7 +11,10 @@ import { describe, it, expect } from 'vitest';
 import { runFilingRetentionSweep } from '../jobs.ts';
 import type { Env } from '../shared/types.ts';
 
-function makeEnv(batchRows: Array<{ doc_id: string; raw_object_key: string | null }>) {
+function makeEnv(
+  batchRows: Array<{ doc_id: string; raw_object_key: string | null }>,
+  opts: { captureDeletes?: string[] } = {},
+) {
   const ranSql: string[] = [];
   const selectSql: string[] = [];
   let selectCalls = 0;
@@ -39,7 +42,11 @@ function makeEnv(batchRows: Array<{ doc_id: string; raw_object_key: string | nul
   });
   const env = {
     DB: { prepare } as unknown as D1Database,
-    RAW_FILES: { delete: async () => {} },
+    RAW_FILES: {
+      delete: async (key: string) => {
+        opts.captureDeletes?.push(key);
+      },
+    },
   } as unknown as Env;
   return { env, ranSql, selectSql };
 }
@@ -74,5 +81,51 @@ describe('runFilingRetentionSweep', () => {
     const deleted = await runFilingRetentionSweep(env, new Date('2026-07-28T00:00:00Z'));
     expect(deleted).toBe(0);
     expect(ranSql).toHaveLength(0);
+  });
+});
+
+/**
+ * 2026-08-11 — the archived document is the ONLY durable artifact in the
+ * system. Extracted text, OCR output, rasterised pages and transaction rows
+ * are all recomputed from it, and serving is stored-copy-only (the routes
+ * 404 rather than redirecting to the Clerk). Destroying it is therefore
+ * unrecoverable — the DB rows can be rebuilt from the document, the document
+ * cannot be rebuilt from the rows. It must never be deleted implicitly.
+ */
+describe('runFilingRetentionSweep — archive safety', () => {
+  const FLAG = 'RETENTION_DELETE_RAW_OBJECTS';
+
+  it('does NOT delete the archived object unless the operator opts in', async () => {
+    delete process.env[FLAG];
+    const deletes: string[] = [];
+    const { env } = makeEnv([{ doc_id: 'H-1', raw_object_key: 'raw/H-1' }], {
+      captureDeletes: deletes,
+    });
+    const pruned = await runFilingRetentionSweep(env, new Date('2026-07-28T00:00:00Z'));
+    // DB rows are still pruned, so table growth stays bounded...
+    expect(pruned).toBe(1);
+    // ...but the only durable copy of the document survives.
+    expect(deletes).toEqual([]);
+  });
+
+  it('deletes the archived object when the operator explicitly opts in', async () => {
+    process.env[FLAG] = '1';
+    const deletes: string[] = [];
+    const { env } = makeEnv([{ doc_id: 'H-1', raw_object_key: 'raw/H-1' }], {
+      captureDeletes: deletes,
+    });
+    await runFilingRetentionSweep(env, new Date('2026-07-28T00:00:00Z'));
+    expect(deletes).toEqual(['raw/H-1']);
+    delete process.env[FLAG];
+  });
+
+  it('never prunes a filing we only just ingested, whatever its filed_date', async () => {
+    // The predicate keys on filed_date, so a 2020 PTR discovered by a
+    // historical backfill TODAY was immediately eligible: the backfill lanes
+    // exist to ingest filings older than the cutoff, so backfill and sweep
+    // fought each other — ingest, destroy, repeat.
+    const { env, selectSql } = makeEnv([{ doc_id: 'H-1', raw_object_key: null }]);
+    await runFilingRetentionSweep(env, new Date('2026-07-28T00:00:00Z'));
+    expect(selectSql[0]).toContain('first_seen_at < ?');
   });
 });

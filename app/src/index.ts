@@ -74,6 +74,44 @@ app.use('/api/*', publicApiGuard);
 
 // --- IMPLEMENTED health check -------------------------------------------------
 app.get('/health', (c) => c.json({ ok: true }));
+app.get('/api/health/mac', async (c) => {
+  const now = Date.now();
+  let scoutHb: Record<string, unknown> | null = null;
+  let cpuWorkerHb: Record<string, unknown> | null = null;
+  if (c.env.CONFIG_KV) {
+    try {
+      const sRaw = await c.env.CONFIG_KV.get('mac-heartbeat:scout');
+      if (sRaw) scoutHb = JSON.parse(sRaw) as Record<string, unknown>;
+      const cRaw = await c.env.CONFIG_KV.get('mac-heartbeat:scan-cpu-worker');
+      if (cRaw) cpuWorkerHb = JSON.parse(cRaw) as Record<string, unknown>;
+    } catch {
+      // KV failure degrades gracefully
+    }
+  }
+  const scoutTs = typeof scoutHb?.timestamp === 'string' ? scoutHb.timestamp : null;
+  const cpuTs = typeof cpuWorkerHb?.timestamp === 'string' ? cpuWorkerHb.timestamp : null;
+  const scoutAge = scoutTs ? Math.floor((now - Date.parse(scoutTs)) / 1000) : null;
+  const cpuWorkerAge = cpuTs ? Math.floor((now - Date.parse(cpuTs)) / 1000) : null;
+
+  const MAX_AGE_SEC = 900; // 15 minutes max age threshold
+  const scoutStalled = scoutAge === null || scoutAge > MAX_AGE_SEC;
+  const cpuStalled = cpuWorkerAge === null || cpuWorkerAge > MAX_AGE_SEC;
+  const ok = !scoutStalled || !cpuStalled; // ok if at least one Mac worker is reporting
+
+  return c.json(
+    {
+      ok,
+      status: ok ? 'ok' : 'degraded',
+      workers: {
+        scout: { heartbeat: scoutHb, ageSeconds: scoutAge, stalled: scoutStalled },
+        cpuWorker: { heartbeat: cpuWorkerHb, ageSeconds: cpuWorkerAge, stalled: cpuStalled },
+      },
+      thresholdSeconds: MAX_AGE_SEC,
+      checkedAt: new Date().toISOString(),
+    },
+    ok ? 200 : 503,
+  );
+});
 
 /**
  * Mount the app routers defensively: a build failure is logged and does not take

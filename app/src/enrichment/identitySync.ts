@@ -53,6 +53,7 @@ import {
   type LegislatorMatch,
 } from './legislators.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { dedupeSplitFilerIdentities } from '../admin/filerIdentityDedupe.ts';
 
 export interface IdentityFilerRow {
   bioguide_id: string;
@@ -404,6 +405,9 @@ export async function runIdentitySync(
   for (let i = 0; i < statements.length; i += 50) {
     await batchPrepared(env.DB, statements.slice(i, i + 50));
   }
+
+  // Post-sync deduplication sweep: merges any split filers sharing the same bioguide or name key
+  await dedupeSplitFilerIdentities(env).catch(() => {});
 
   return {
     filersScanned: plan.filersScanned,
