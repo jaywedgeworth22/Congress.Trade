@@ -98,6 +98,15 @@ export type ProbeLeaseDenial =
   | 'tenure_exhausted'
   /** The shared daily call ledger for this provider is exhausted. */
   | 'daily_cap'
+  /**
+   * The lease conditions PASSED, but the measured cadence in probeSchedule.ts
+   * says it is not yet time — see the composition rule in
+   * scoutHandoff.requestMacProbeLease: the lease decides WHO probes, the
+   * schedule decides HOW OFTEN, and the schedule is consulted only inside a
+   * lease-granted branch. A caller that sees this should retry later, not
+   * escalate: the lane is healthy and is ours to take when it is due.
+   */
+  | 'off_cadence'
   /** Lease storage is unavailable (fail-closed for the Mac). */
   | 'storage_unavailable';
 

@@ -21,6 +21,14 @@ import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
+import {
+  DEFAULT_PROBE_SCHEDULE_CONFIG,
+  probeScheduleConfigFromEnv,
+  probeTierAt,
+  probeYieldWeightAt,
+  type ProbeScheduleConfig,
+} from './probeSchedule.ts';
+import { logProbeCadence } from './probeCadenceLog.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -656,10 +664,20 @@ function etHourAndWeekday(now: Date): { hour: number; weekday: string; isWeekend
 }
 
 /**
- * Classify current America/New_York time into a 4-level filing-yield band.
- * Weekends never get `peak` (shift down one band) — low filing volume.
+ * PRE-MEASUREMENT band table: hand-picked ET hour ranges, kept only as the
+ * fallback for `PROBE_SCHEDULE_ENABLED=0`.
+ *
+ * Superseded by the measured windows in probeSchedule.ts. It was wrong in a
+ * specific and expensive way: it called 08:00-12:00 ET uniformly "peak", but
+ * the measurement found 21 of 27 House filing days landing inside a SIX-MINUTE
+ * window (09:00-09:06 ET, median 09:02) — so three of those four hours were
+ * being probed at burst rate for nothing while the actual burst got the same
+ * cadence as 11:45. Retained (rather than deleted) so the kill switch restores
+ * a known-good behaviour instead of an untested one.
  */
-export function disclosurePublishYieldBand(now: Date = new Date()): DisclosurePublishYieldBand {
+export function legacyDisclosurePublishYieldBand(
+  now: Date = new Date(),
+): DisclosurePublishYieldBand {
   const { hour, isWeekend } = etHourAndWeekday(now);
   let band: DisclosurePublishYieldBand;
   if (hour >= 8 && hour < 12) band = 'peak';
@@ -676,40 +694,75 @@ export function disclosurePublishYieldBand(now: Date = new Date()): DisclosurePu
 }
 
 /**
- * Relative probe frequency weight for the current ET yield band.
- * Peak (~3.0) is ~3× mid and ~7.5× overnight low — owner request for 2–3×
- * denser attempts during the high-yield filing window.
+ * Which measured cadence tier the current instant falls in for the metered
+ * latency providers. One provider call covers both chambers, so the `provider`
+ * profile is the UNION of the House and Senate peaks (09:00-10:00 and
+ * 16:00-18:00 ET).
+ *
+ * Delegates to probeSchedule.ts, which is pure: same instant in, same tier out.
+ * `schedule.enabled === false` restores the pre-measurement band table above.
  */
-export function disclosurePublishYieldWeight(now: Date = new Date()): number {
-  return DISCLOSURE_PUBLISH_YIELD_WEIGHT[disclosurePublishYieldBand(now)];
+export function disclosurePublishYieldBand(
+  now: Date = new Date(),
+  schedule: ProbeScheduleConfig = DEFAULT_PROBE_SCHEDULE_CONFIG,
+): DisclosurePublishYieldBand {
+  if (!schedule.enabled) return legacyDisclosurePublishYieldBand(now);
+  return probeTierAt('provider', now, { config: schedule });
+}
+
+/**
+ * Relative probe-density weight for the current measured window.
+ *
+ * BUDGET-NEUTRAL BY CONSTRUCTION: probeYieldWeightAt is normalised so its
+ * time-average across the day is 1.0, and budgetedProbeIntervalSec computes
+ * `interval = (secLeft / runsLeft) / weight`. A mean-1 weight therefore
+ * RESHAPES the day's spend without changing the daily total — the property
+ * this function has to have, since the provider daily caps are hard.
+ */
+export function disclosurePublishYieldWeight(
+  now: Date = new Date(),
+  schedule: ProbeScheduleConfig = DEFAULT_PROBE_SCHEDULE_CONFIG,
+): number {
+  if (!schedule.enabled) {
+    return DISCLOSURE_PUBLISH_YIELD_WEIGHT[legacyDisclosurePublishYieldBand(now)];
+  }
+  return probeYieldWeightAt('provider', now, { config: schedule });
 }
 
 /**
  * @deprecated Prefer disclosurePublishYieldWeight — kept for existing imports/tests.
- * Same 4-level ET weight used by all latency sources.
+ * Same ET weight used by all latency sources.
  */
-export function fmpLatencyEtHourWeight(now: Date = new Date()): number {
-  return disclosurePublishYieldWeight(now);
+export function fmpLatencyEtHourWeight(
+  now: Date = new Date(),
+  schedule: ProbeScheduleConfig = DEFAULT_PROBE_SCHEDULE_CONFIG,
+): number {
+  return disclosurePublishYieldWeight(now, schedule);
 }
 
 /**
  * Spread remaining probe runs across the rest of the UTC day, denser in
- * high-yield ET bands. Shared by FMP, Unusual Whales, and Quiver.
+ * measured high-yield ET windows. Shared by FMP, Unusual Whales, and Quiver.
  *
  * interval ≈ (secLeft / runsLeft) / yieldWeight, clamped to [min, max].
+ *
+ * The 0.25 weight floor is deliberate and fail-safe: the shipped LOW weight is
+ * ~0.22, so overnight is clamped very slightly TOWARD more probing rather than
+ * less. The hard remaining-budget check upstream still bounds total spend.
  */
 export function budgetedProbeIntervalSec(opts: {
   now: Date;
   remainingRuns: number;
   minIntervalSec: number;
   maxIntervalSec: number;
+  schedule?: ProbeScheduleConfig;
 }): number {
   const { now, remainingRuns, minIntervalSec, maxIntervalSec } = opts;
   if (remainingRuns < 1) return maxIntervalSec;
   const endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
   const secLeft = Math.max(60, Math.floor((endUtc - now.getTime()) / 1000));
   const uniform = secLeft / remainingRuns;
-  const weight = Math.max(0.25, disclosurePublishYieldWeight(now));
+  const weight = Math.max(0.25, disclosurePublishYieldWeight(now, opts.schedule));
   const weighted = uniform / weight;
   // Peak floor can be as low as minIntervalSec; overnight still respects min.
   return Math.max(minIntervalSec, Math.min(maxIntervalSec, Math.round(weighted)));
@@ -724,6 +777,7 @@ export function fmpLatencyIntervalSec(
   now: Date,
   remainingCalls: number,
   callsPerRun: number = FMP_LATENCY_CALLS_PER_RUN,
+  schedule?: ProbeScheduleConfig,
 ): number {
   if (remainingCalls < callsPerRun) return FMP_LATENCY_MAX_INTERVAL_SEC;
   const runsLeft = Math.max(1, Math.floor(remainingCalls / callsPerRun));
@@ -732,7 +786,22 @@ export function fmpLatencyIntervalSec(
     remainingRuns: runsLeft,
     minIntervalSec: FMP_LATENCY_MIN_INTERVAL_SEC,
     maxIntervalSec: FMP_LATENCY_MAX_INTERVAL_SEC,
+    schedule,
   });
+}
+
+/**
+ * Live cadence config for the metered providers, read from env.
+ *
+ * Never throws: probeScheduleConfigFromEnv is total, and a hard failure falls
+ * back to the shipped measured table rather than stalling the probe.
+ */
+export function latencyScheduleConfig(env: Env): ProbeScheduleConfig {
+  try {
+    return probeScheduleConfigFromEnv(env as unknown as Record<string, string | undefined>);
+  } catch {
+    return DEFAULT_PROBE_SCHEDULE_CONFIG;
+  }
 }
 
 function sourceBudgetDayKey(spec: LatencySourceBudgetSpec, now = new Date()): string {
@@ -791,43 +860,145 @@ export interface LatencySourceProbeSelection {
 }
 
 /**
- * Decide whether UW/QQ may spend HTTP this cycle given remaining daily budget
- * and yield-weighted spacing. force=true bypasses spacing (still respects cap).
+ * Why a lane did not spend HTTP this cycle. `daily_cap` and `off_cadence` used
+ * to be the same `null`, which made "the schedule is pacing us, correctly"
+ * indistinguishable from "we are out of budget" — and both indistinguishable
+ * from "the cadence silently broke".
  */
-export async function selectLatencySourceProbe(
+export type LatencySourceSkipReason = 'daily_cap' | 'off_cadence';
+
+export interface LatencySourceProbeDecision {
+  source: LatencyBudgetSourceId;
+  probe: boolean;
+  skip: LatencySourceSkipReason | null;
+  /** Present iff `probe` — the same object selectLatencySourceProbe returns. */
+  selection: LatencySourceProbeSelection | null;
+  band: DisclosurePublishYieldBand;
+  intervalSec: number;
+  /** Seconds since the last probe of this lane; Infinity when never probed. */
+  elapsedSec: number;
+  used: number;
+  cap: number;
+  remaining: number;
+}
+
+/**
+ * Decide whether UW/QQ/FMP-RapidAPI may spend HTTP this cycle, given remaining
+ * daily budget and the measured cadence. force=true bypasses cadence spacing
+ * (it still respects the hard daily cap).
+ *
+ * COMPOSITION: this is the "HOW OFTEN" half. It runs strictly INSIDE the
+ * lease-granted branch — runLeasedLatencyProbe() hands runDisclosureLatencyProbe
+ * only the providers the server holds a lease on, and this is consulted per
+ * provider from there. The two are nested, never side by side: the schedule can
+ * only ever decline a lane the lease already granted, and can never authorise a
+ * call on its own.
+ */
+export async function evaluateLatencySourceProbe(
   env: Env,
   source: LatencyBudgetSourceId,
   now: Date = new Date(),
-  opts: { force?: boolean } = {},
-): Promise<LatencySourceProbeSelection | null> {
+  opts: { force?: boolean; schedule?: ProbeScheduleConfig } = {},
+): Promise<LatencySourceProbeDecision> {
   const spec = LATENCY_SOURCE_BUDGETS[source];
+  const schedule = opts.schedule ?? latencyScheduleConfig(env);
   const cap = await latencySourceDailyCap(env, source);
   const used = await getLatencySourceUsed(env, source, now);
   const remaining = Math.max(0, cap - used);
-  if (remaining < spec.callsPerRun) return null;
+  const band = disclosurePublishYieldBand(now, schedule);
 
-  const runsLeft = Math.max(1, Math.floor(remaining / spec.callsPerRun));
+  const runsLeft = Math.max(1, Math.floor(Math.max(0, remaining) / spec.callsPerRun));
   const intervalSec = budgetedProbeIntervalSec({
     now,
     remainingRuns: runsLeft,
     minIntervalSec: spec.minIntervalSec,
     maxIntervalSec: spec.maxIntervalSec,
+    schedule,
   });
 
+  if (remaining < spec.callsPerRun) {
+    return {
+      source, probe: false, skip: 'daily_cap', selection: null,
+      band, intervalSec, elapsedSec: Infinity, used, cap, remaining,
+    };
+  }
+
+  let elapsedSec = Infinity;
   if (!opts.force) {
     const last = await getLastPollAt(env, spec.pollSource);
-    if (last && now.getTime() - last.getTime() < intervalSec * 1000) return null;
+    if (last) {
+      elapsedSec = (now.getTime() - last.getTime()) / 1000;
+      if (elapsedSec < intervalSec) {
+        return {
+          source, probe: false, skip: 'off_cadence', selection: null,
+          band, intervalSec, elapsedSec, used, cap, remaining,
+        };
+      }
+    }
   }
 
   return {
     source,
+    probe: true,
+    skip: null,
+    selection: {
+      source,
+      used,
+      cap,
+      remaining,
+      intervalSec,
+      callsPerRun: spec.callsPerRun,
+      band,
+    },
+    band,
+    intervalSec,
+    elapsedSec,
     used,
     cap,
     remaining,
-    intervalSec,
-    callsPerRun: spec.callsPerRun,
-    band: disclosurePublishYieldBand(now),
   };
+}
+
+/**
+ * Emit one greppable cadence line for a metered provider lane.
+ *
+ * Deliberately reports the SKIP REASON, not just the fact of a skip: a lane
+ * that is pacing correctly through the measured trough and a lane whose cadence
+ * has quietly broken both produce "no fetch", and only the tier + interval in
+ * this line tells them apart. Throttled in probeCadenceLog.ts.
+ */
+export function logLatencyLaneCadence(
+  source: LatencyBudgetSourceId,
+  decision: LatencySourceProbeDecision,
+  now: Date,
+): void {
+  logProbeCadence(
+    {
+      lane: `provider:${source}`,
+      source: 'provider',
+      probe: decision.probe,
+      tier: decision.band,
+      dayType: 'n/a',
+      intervalSec: decision.intervalSec,
+      elapsedSec: decision.elapsedSec,
+      authority: 'schedule',
+      reason: decision.probe ? 'due' : (decision.skip ?? 'unknown'),
+    },
+    now,
+  );
+}
+
+/**
+ * Back-compat wrapper: selection when the lane may spend, null when it may not.
+ * Prefer evaluateLatencySourceProbe at call sites that need to log WHY.
+ */
+export async function selectLatencySourceProbe(
+  env: Env,
+  source: LatencyBudgetSourceId,
+  now: Date = new Date(),
+  opts: { force?: boolean; schedule?: ProbeScheduleConfig } = {},
+): Promise<LatencySourceProbeSelection | null> {
+  return (await evaluateLatencySourceProbe(env, source, now, opts)).selection;
 }
 
 export interface FmpLatencyKeySelection {
@@ -933,9 +1104,10 @@ async function resolveFmpLatencyKeyMaterial(
 export async function selectFmpLatencyKey(
   env: Env,
   now: Date = new Date(),
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; schedule?: ProbeScheduleConfig } = {},
 ): Promise<FmpLatencyKeySelection | null> {
   const cap = await fmpLatencyDailyCap(env);
+  const schedule = opts.schedule ?? latencyScheduleConfig(env);
   const candidates: FmpLatencyKeySelection[] = [];
 
   const primary = await resolveFmpLatencyKeyMaterial(env, '1');
@@ -949,10 +1121,28 @@ export async function selectFmpLatencyKey(
     const remaining = Math.max(0, cap - used);
     if (remaining < FMP_LATENCY_CALLS_PER_RUN) continue;
 
-    const intervalSec = fmpLatencyIntervalSec(now, remaining);
+    const intervalSec = fmpLatencyIntervalSec(now, remaining, FMP_LATENCY_CALLS_PER_RUN, schedule);
     if (!opts.force) {
       const last = await getLastPollAt(env, fmpLatencyPollSource(slot));
-      if (last && now.getTime() - last.getTime() < intervalSec * 1000) continue;
+      if (last && now.getTime() - last.getTime() < intervalSec * 1000) {
+        // Off-cadence for this key, not out of budget. Logged per key slot so
+        // "both free keys are pacing" reads differently from "both are spent".
+        logProbeCadence(
+          {
+            lane: `provider:fmp:key${slot}`,
+            source: 'provider',
+            probe: false,
+            tier: disclosurePublishYieldBand(now, schedule),
+            dayType: 'n/a',
+            intervalSec,
+            elapsedSec: (now.getTime() - last.getTime()) / 1000,
+            authority: 'schedule',
+            reason: 'off-cadence',
+          },
+          now,
+        );
+        continue;
+      }
     }
 
     candidates.push({
@@ -3308,6 +3498,9 @@ async function runProviderProbe(
   if (!provider.supportsDirectLatest || !provider.fetchRows) {
     return { ...base, enabled: false, fetchedRows: 0, pending: 0, matched: 0, errors };
   }
+  // Read once per provider run: the schedule is pure, so one config read feeds
+  // every cadence question below and an env retune is picked up next tick.
+  const schedule = latencyScheduleConfig(env);
 
   const recordHandoff = async (
     kind: 'success' | 'error' | 'budget_skip' | 'not_configured' | 'disabled',
@@ -3404,11 +3597,18 @@ async function runProviderProbe(
           reason: 'FMP_RAPIDAPI_KEY / RAPIDAPI_KEY missing (marketplace key required; free-tier FMP_LATENCY_* not valid on RapidAPI)',
         };
       }
-      sourceBudget = await selectLatencySourceProbe(env, 'fmp_rapidapi', now, { force: opts.force });
+      const rapidDecision = await evaluateLatencySourceProbe(env, 'fmp_rapidapi', now, {
+        force: opts.force,
+        schedule,
+      });
+      logLatencyLaneCadence('fmp_rapidapi', rapidDecision, now);
+      sourceBudget = rapidDecision.selection;
       if (!sourceBudget) {
         capSkipped = true;
         errors.push(
-          'FMP RapidAPI at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)',
+          rapidDecision.skip === 'daily_cap'
+            ? 'FMP RapidAPI at daily cap; skipped latest fetch (DB re-match still runs)'
+            : `FMP RapidAPI off-cadence (${rapidDecision.band} tier, ${rapidDecision.intervalSec}s interval); skipped latest fetch (DB re-match still runs)`,
         );
         await recordHandoff('budget_skip');
       } else {
@@ -3416,7 +3616,7 @@ async function runProviderProbe(
         await setLastPollAt(env, LATENCY_SOURCE_BUDGETS.fmp_rapidapi.pollSource, now);
       }
     } else {
-      fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force });
+      fmpSelection = await selectFmpLatencyKey(env, now, { force: opts.force, schedule });
       if (!fmpSelection) {
         const anyKey = await resolveProviderSecret(env, provider);
         if (!anyKey) {
@@ -3473,13 +3673,20 @@ async function runProviderProbe(
           : `${provider.secretNames[0]} missing`,
       };
     }
-    // Per-source daily budget + yield-weighted spacing (UW / Quiver).
+    // Per-source daily budget + measured-cadence spacing (UW / Quiver).
     if (budgetSourceId) {
-      sourceBudget = await selectLatencySourceProbe(env, budgetSourceId, now, { force: opts.force });
+      const decision = await evaluateLatencySourceProbe(env, budgetSourceId, now, {
+        force: opts.force,
+        schedule,
+      });
+      logLatencyLaneCadence(budgetSourceId, decision, now);
+      sourceBudget = decision.selection;
       if (!sourceBudget) {
         capSkipped = true;
         errors.push(
-          `${provider.label} at daily cap or yield-weighted spacing; skipped latest fetch (DB re-match still runs)`,
+          decision.skip === 'daily_cap'
+            ? `${provider.label} at daily cap; skipped latest fetch (DB re-match still runs)`
+            : `${provider.label} off-cadence (${decision.band} tier, ${decision.intervalSec}s interval); skipped latest fetch (DB re-match still runs)`,
         );
         await recordHandoff('budget_skip');
       } else {

@@ -2,8 +2,10 @@
  * src/ingestion/watcher.ts
  * OWNER: ingestion agent
  *
- * Cron entrypoint logic. Runs every minute; decides via shouldPollNow whether
- * to actually poll House + Senate disclosure indexes. For each NEW filing,
+ * Cron entrypoint logic. Runs every minute; decides via decideSourcePoll (which
+ * consults the measured cadence in probeSchedule.ts, falling back to the legacy
+ * poll_config windows) whether to actually poll House + Senate disclosure
+ * indexes. For each NEW filing,
  * inserts a 'new' filings row (INSERT OR IGNORE) and enqueues a
  * {type:'filing.new'} INGEST_QUEUE message. Records cadence in ingest_log and
  * updates last-poll via setLastPollAt after successful source polls.
@@ -23,6 +25,16 @@ import {
   setLastPollAt,
   shouldPollNow,
 } from '../shared/config.ts';
+import type { PollConfig } from '../shared/types.ts';
+import {
+  DEFAULT_PROBE_SCHEDULE_CONFIG,
+  probeScheduleConfigFromEnv,
+  shouldProbeNow,
+  type DayType,
+  type ProbeScheduleConfig,
+  type ProbeTier,
+} from './probeSchedule.ts';
+import { logProbeCadence, type ProbeCadenceAuthority } from './probeCadenceLog.ts';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource.ts';
 import { fetchSenatePtrFilings } from './senateSource.ts';
 import { recordDisclosureLatencyCandidate, storageMissing } from './tradeLatency.ts';
@@ -738,6 +750,12 @@ export interface WatcherResult {
   house: SourceAttemptOutcome | 'skipped';
   senate: SourceAttemptOutcome | 'skipped';
   executive: SourceAttemptOutcome | 'skipped';
+  /** Why House/Senate polled or skipped this tick — which tier, which window,
+   *  which authority. `'skipped'` on its own cannot distinguish "correctly
+   *  off-peak" from "the cadence quietly stopped", which is the whole point.
+   *  Optional so existing structural consumers of WatcherResult are unaffected. */
+  houseCadence?: SourcePollDecision;
+  senateCadence?: SourcePollDecision;
 }
 
 /**
@@ -771,14 +789,131 @@ export async function pollExecutive(
   return newCount;
 }
 
+/**
+ * The composed poll decision for one direct source. PURE — no I/O, no clock
+ * read, no env read. Every input is passed in; the caller owns the reads.
+ *
+ * COMPOSITION (see probeSchedule.ts header and app/docs/probe-schedule.md):
+ * probeSchedule decides HOW OFTEN. There is no lease on House/Senate — the
+ * lease covers only the metered latency providers — so here the schedule is
+ * the sole authority, and the legacy poll_config windows are the fallback.
+ *
+ * Two paths, never both:
+ *   • SCHEDULE  — the measured windows own the cadence. This is the default.
+ *   • POLL-WINDOW — the legacy fixed-interval poll_config path, used when the
+ *     schedule is switched off (PROBE_SCHEDULE_ENABLED=0) or when the owner
+ *     has explicitly asked for aggressiveMode.
+ *
+ * WHY aggressiveMode FALLS BACK rather than being ignored: it is an owner-
+ * facing "poll as hard as you can" switch. Under the measured schedule the
+ * 08:55-09:40 peak already runs at 60s — five times faster than aggressive
+ * mode's 180s — but the 12:00-20:00 window would drop from 180s to ~10min,
+ * so honouring the switch means honouring the legacy path wholesale. The
+ * decision reports which authority ran, and the caller logs it, so this is
+ * never a silent downgrade.
+ */
+export interface SourcePollDecision {
+  readonly poll: boolean;
+  readonly authority: ProbeCadenceAuthority;
+  readonly tier: ProbeTier | 'none';
+  readonly dayType: DayType | 'n/a';
+  readonly intervalSec: number;
+  readonly elapsedSec: number;
+  readonly reason: string;
+}
+
+export function decideSourcePoll(args: {
+  source: 'house' | 'senate';
+  now: Date;
+  cfg: PollConfig;
+  lastPollAt: Date | null;
+  schedule?: ProbeScheduleConfig;
+}): SourcePollDecision {
+  const schedule = args.schedule ?? DEFAULT_PROBE_SCHEDULE_CONFIG;
+  const legacy = (reason: string): SourcePollDecision => {
+    const poll = shouldPollNow(args.now, args.cfg, args.lastPollAt);
+    return {
+      poll,
+      authority: 'poll-window',
+      tier: 'none',
+      dayType: 'n/a',
+      intervalSec: 0,
+      elapsedSec: args.lastPollAt
+        ? (args.now.getTime() - args.lastPollAt.getTime()) / 1000
+        : Infinity,
+      reason: poll ? `${reason}:due` : `${reason}:not-due`,
+    };
+  };
+
+  // Kill switch first: a disabled schedule must restore the OLD behaviour, not
+  // stop polling. shouldProbeNow() reports `disabled` with probe=false, and
+  // treating that as "do not poll" would silently halt ingestion the moment
+  // someone set PROBE_SCHEDULE_ENABLED=0.
+  if (!schedule.enabled) return legacy('schedule-disabled');
+  if (args.cfg.aggressiveMode) return legacy('aggressive-mode');
+
+  const decision = shouldProbeNow({
+    source: args.source,
+    now: args.now,
+    lastProbeAt: args.lastPollAt,
+    config: schedule,
+  });
+  return {
+    poll: decision.probe,
+    authority: 'schedule',
+    tier: decision.tier,
+    dayType: decision.dayType,
+    intervalSec: decision.intervalSec,
+    elapsedSec: decision.elapsedSec,
+    reason: decision.reason,
+  };
+}
+
+/**
+ * Build the live schedule config from env. Never throws — every unparseable
+ * value falls back to the shipped table (see probeScheduleConfigFromEnv), so a
+ * fat-fingered retune degrades to the measured default instead of stalling
+ * ingestion.
+ */
+function scheduleConfigFor(env: Env): ProbeScheduleConfig {
+  try {
+    return probeScheduleConfigFromEnv(env as unknown as Record<string, string | undefined>);
+  } catch {
+    return DEFAULT_PROBE_SCHEDULE_CONFIG;
+  }
+}
+
 export async function runWatcher(env: Env, now: Date = new Date()): Promise<WatcherResult> {
   const cfg = await getConfig(env);
+  const schedule = scheduleConfigFor(env);
   const result: WatcherResult = { house: 'skipped', senate: 'skipped', executive: 'skipped' };
 
   // HOUSE -----------------------------------------------------------------
   try {
     const lastHouse = await getLastPollAt(env, 'house');
-    if (shouldPollNow(now, cfg, lastHouse)) {
+    const houseDecision = decideSourcePoll({
+      source: 'house',
+      now,
+      cfg,
+      lastPollAt: lastHouse,
+      schedule,
+    });
+    logProbeCadence(
+      {
+        lane: 'house',
+        source: 'house',
+        probe: houseDecision.poll,
+        tier: houseDecision.tier,
+        dayType: houseDecision.dayType,
+        intervalSec: houseDecision.intervalSec,
+        elapsedSec: houseDecision.elapsedSec,
+        authority: houseDecision.authority,
+        reason: houseDecision.reason,
+      },
+      now,
+    );
+    result.houseCadence = houseDecision;
+    if (houseDecision.poll) {
       const lastAttempt = await getLastAttemptAt(env, 'house');
       const elapsedSec = lastAttempt ? (now.getTime() - lastAttempt.getTime()) / 1000 : Infinity;
       const lastAttemptFailed = lastAttempt && (!lastHouse || lastHouse.getTime() < lastAttempt.getTime());
@@ -798,7 +933,29 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   // SENATE ----------------------------------------------------------------
   try {
     const lastSenate = await getLastPollAt(env, 'senate');
-    if (shouldPollNow(now, cfg, lastSenate)) {
+    const senateDecision = decideSourcePoll({
+      source: 'senate',
+      now,
+      cfg,
+      lastPollAt: lastSenate,
+      schedule,
+    });
+    logProbeCadence(
+      {
+        lane: 'senate',
+        source: 'senate',
+        probe: senateDecision.poll,
+        tier: senateDecision.tier,
+        dayType: senateDecision.dayType,
+        intervalSec: senateDecision.intervalSec,
+        elapsedSec: senateDecision.elapsedSec,
+        authority: senateDecision.authority,
+        reason: senateDecision.reason,
+      },
+      now,
+    );
+    result.senateCadence = senateDecision;
+    if (senateDecision.poll) {
       const lastAttempt = await getLastAttemptAt(env, 'senate');
       const elapsedSec = lastAttempt ? (now.getTime() - lastAttempt.getTime()) / 1000 : Infinity;
       const lastAttemptFailed = lastAttempt && (!lastSenate || lastSenate.getTime() < lastAttempt.getTime());
