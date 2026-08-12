@@ -399,7 +399,7 @@ describe("CongressTransactionSchema", () => {
     assetName: "Apple Inc.",
     ticker: "AAPL",
     assetType: "stock",
-    txType: "B",
+    txType: "P",
     amountMin: 1001,
     amountMax: 15000,
     estValue: 8000,
@@ -514,7 +514,7 @@ describe("TransactionsPageSchema", () => {
     assetName: "Apple Inc.",
     ticker: "AAPL",
     assetType: "stock",
-    txType: "B",
+    txType: "P",
     amountMin: 1001,
     amountMax: 15000,
     estValue: 8000,
@@ -873,7 +873,7 @@ describe("SharePayloadSchema", () => {
           sourceUrl: "https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf",
           filerName: "Nancy Pelosi",
           ticker: "NVDA",
-          txType: "B",
+          txType: "P",
           transactionDate: "2026-07-15",
           transactionTimestamp: "2026-07-15T00:00:00Z",
           disclosureDate: "2026-07-22",
@@ -952,7 +952,7 @@ describe("CongressEventSchema", () => {
       id: "evt-1",
       seq: 1,
       emittedAt: "2024-01-15T10:00:00Z",
-      data: { ticker: "AAPL", txType: "B" },
+      data: { ticker: "AAPL", txType: "P" },
     });
     expect(result.success).toBe(true);
   });
@@ -1054,7 +1054,7 @@ describe("ClusterBuySchema", () => {
     const result = ClusterBuySchema.safeParse({
       ticker: "AAPL",
       name: "Apple Inc.",
-      txType: "B",
+      txType: "P",
       memberCount: 5,
       tradeCount: 10,
       estVolumeUsd: 2_000_000,
@@ -1090,6 +1090,7 @@ describe("MemberPerformanceSchema", () => {
       medianExcess: 0.005,
       avgReturn: 0.01,
       avgExcess: 0.003,
+      avgAnnualizedExcess: 0.04,
     });
     expect(result.success).toBe(true);
   });
@@ -1101,6 +1102,22 @@ describe("MemberPerformanceSchema", () => {
       medianExcess: null,
       avgReturn: null,
       avgExcess: null,
+      avgAnnualizedExcess: null,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("MemberDualPerformanceSchema", () => {
+  it("parses dual-anchor envelope from App A", async () => {
+    const { MemberDualPerformanceSchema } = await import("../schemas");
+    const result = MemberDualPerformanceSchema.safeParse({
+      filerId: "P000197",
+      side: "buys",
+      buyCount: 20,
+      tradeDate: { scoredCount: 15, avgExcess: 0.02, winRate: 0.6 },
+      filingDate: { scoredCount: 14, avgExcess: 0.01, avgAnnualizedExcess: 0.03, winRate: 0.55 },
+      performance: { scoredCount: 15, avgExcess: 0.02 },
     });
     expect(result.success).toBe(true);
   });
@@ -1140,7 +1157,7 @@ describe("TickerBacktestSchema", () => {
   it("parses valid backtest data", () => {
     const result = TickerBacktestSchema.safeParse({
       ticker: "AAPL",
-      txType: "B",
+      txType: "P",
       totalBuyEvents: 25,
       pricedDays: 20,
       horizons: [
@@ -1157,7 +1174,7 @@ describe("CommitteeConflictSchema", () => {
       id: "conflict-1",
       ticker: "AAPL",
       sector: "Technology",
-      txType: "B",
+      txType: "P",
       txDate: "2024-01-15",
       filerId: "f1",
       memberName: "John Doe",

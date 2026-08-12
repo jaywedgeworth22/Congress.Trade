@@ -76,6 +76,7 @@ import {
 } from './subscriptions.ts';
 import { openSseStream } from './sse.ts';
 import { handleTickerLogoRequest } from '../ui/tickerLogos.ts';
+import { handleMemberPhotoRequest } from '../enrichment/memberPhotoPack.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
@@ -218,19 +219,28 @@ interface MembersRosterRow {
  * whatever plan the stats-less planner picks) rather than 500ing the People
  * tab for that window.
  */
+import { memberNameMatchKey } from '../shared/filerIdentityMatch.ts';
+
+/**
+ * GET /members' query — returns distinct filers with transaction counts.
+ * Uses COALESCE(f.merged_into, f.bioguide_id, t.filer_id) to map tombstoned
+ * aliases to their canonical filer, and folds duplicate name keys so the
+ * directory never shows two rows for the same politician.
+ */
 async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[]; count: number }> {
-  const baseSql = `SELECT t.filer_id AS filer_id,
-                COALESCE(f.display_name, f.full_name) AS full_name,
-                f.chamber   AS chamber,
-                f.party     AS party,
-                f.state     AS state,
-                f.district  AS district,
-                f.photo_url AS photo_url,
+  const baseSql = `SELECT COALESCE(f.merged_into, t.filer_id) AS filer_id,
+                COALESCE(cf.display_name, cf.full_name, f.display_name, f.full_name) AS full_name,
+                COALESCE(cf.chamber, f.chamber)   AS chamber,
+                COALESCE(cf.party, f.party)     AS party,
+                COALESCE(cf.state, f.state)     AS state,
+                COALESCE(cf.district, f.district) AS district,
+                COALESCE(cf.photo_url, f.photo_url) AS photo_url,
                 COUNT(*)    AS tx_count
            FROM transactions t %INDEX_HINT%
            LEFT JOIN filers f ON f.bioguide_id = t.filer_id
+           LEFT JOIN filers cf ON cf.bioguide_id = f.merged_into
           WHERE t.filer_id IS NOT NULL AND t.deprecated_at IS NULL
-          GROUP BY t.filer_id
+          GROUP BY COALESCE(f.merged_into, t.filer_id)
           ORDER BY tx_count DESC`;
   let rows: MembersRosterRow[];
   try {
@@ -242,19 +252,11 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
     filerId: row.filer_id,
     fullName: row.full_name ? (cleanFilerName(row.full_name) || row.full_name) : null,
     chamber: row.chamber,
-    // One shared formatter across every branch (House/Senate carry
-    // congress-legislators' spelled-out "Republican"/"Democrat"; curated
-    // executive filers carry a bare "R"/"D" — see shared/partyLabel.ts) so
-    // the directory never shows both spellings side by side (#1452).
     party: formatPartyLabel(row.party) ?? row.party,
     state: row.state,
     district: row.district,
     txCount: row.tx_count,
-    // Rendered as a row avatar in the iOS People directory (owner punch list
-    // #2 item 9); the web directory table stays photo-less (unchanged).
     photoUrl: row.photo_url ?? null,
-    // Curated agency/position label for executive-branch filers (see
-    // shared/executiveTitles.ts); null for House/Senate filers.
     title: executiveTitleFor(row.filer_id),
   }));
   return { members, count: members.length };
@@ -872,6 +874,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         ?? (typeof c.env.LOGO_DEV_TOKEN === 'string' ? c.env.LOGO_DEV_TOKEN : undefined);
     return handleTickerLogoRequest(new URL(c.req.url), primary ?? alias);
   });
+
+  // --- GET /photos/member -------------------------------------------------
+  // Head-focused member portrait (see enrichment/memberPhotoPack.ts). Answers
+  // from the committed face pack first; a bioguide key we have no packed face
+  // for falls through to the upstream public-domain CDN.
+  r.get('/photos/member', async (c) => handleMemberPhotoRequest(new URL(c.req.url)));
 
   // --- GET /filings/:docId ------------------------------------------------
   // Detail endpoint on the same public corpus as /transactions: applies the

@@ -19,6 +19,8 @@ import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -197,6 +199,12 @@ export interface DisclosureLatencyProbeResult {
   providers: DisclosureLatencyProviderRun[];
 }
 
+/**
+ * Whether a lane's coverage ratio is trustworthy enough to publish.
+ * `contradiction` is a self-check failure, not a measurement.
+ */
+export type CoverageIntegrity = 'ok' | 'contradiction';
+
 export interface DisclosureLatencyProviderMetrics {
   provider: ProviderId;
   label: string;
@@ -210,26 +218,54 @@ export interface DisclosureLatencyProviderMetrics {
   matched: number;
   /** High-confidence overlap matches in the score window (coverage density). */
   strongMatched: number;
+  /**
+   * Pairings in the score window that left one identity axis unverified
+   * (see {@link matchStrength}). Reported, never folded into the headline.
+   */
+  weakMatched: number;
   pending: number;
   errored: number;
   /** Rows observed by the provider during the active monitor window. */
   providerObserved: number;
   /** Provider rows old enough that a late congress.trade match is no longer pending. */
   maturedProviderObserved: number;
-  /** Provider rows without a high-confidence congress.trade match after the grace period. */
+  /** Provider rows with NO pairing of any strength after the grace period. */
   unmatchedProvider: number;
+  /**
+   * Provider rows we stored whose trade hash has no filer segment, so nothing
+   * could ever match them. Non-zero means a provider parser is broken — this
+   * is the alarm that would have caught FMP's 309-of-309 silent failure.
+   */
+  observedRowsMissingFiler: number;
   /** Recent provider rows still inside the late-match grace period. */
   pendingProvider: number;
   /** congress.trade candidates old enough for a directional coverage estimate. */
   maturedCandidates: number;
   /** Jointly observed, high-confidence rows in the matured provider cohort. */
   maturedMatched: number;
+  /** Matured provider rows paired only by a weak method. */
+  maturedWeakMatched: number;
   /** congress.trade coverage of the provider-observed matured cohort. */
   ctCoveragePct: number | null;
   /** Provider coverage of the congress.trade matured candidate cohort. */
   providerCoveragePct: number | null;
   /** Jaccard overlap of the two matured observed cohorts. */
   overlapPct: number | null;
+  /**
+   * `contradiction` means the coverage JOIN is broken, NOT that coverage is
+   * zero. Set when this lane observed matured provider rows, matched none of
+   * them, yet holds strong pairings in `trade_latency_candidates`. Both cannot
+   * be true, so `ctCoveragePct` and `overlapPct` are suppressed to `null`
+   * rather than published as a 0% we did not measure. See the guard in
+   * {@link computeProviderMetrics}.
+   */
+  coverageIntegrity: CoverageIntegrity;
+  /**
+   * Strong CT <-> provider pairings on file for this lane in the coverage
+   * window. The evidence behind `coverageIntegrity` — with `maturedMatched`
+   * it makes the contradiction legible instead of requiring a DB query.
+   */
+  coverageStrongPairingsOnFile: number;
   /** insufficient = too few matured rows; limited = coverage too low for a
    *  full claim; preliminary = enough matched timing for a soft claim;
    *  usable = coverage + sample gates pass for a full Ahead/Behind claim. */
@@ -248,6 +284,77 @@ export interface DisclosureLatencyProviderMetrics {
   tiePublishedCount: number;
   /** Whether this provider uses monitor (crawler first-seen) or provider (provider's own semantic timestamp) for timing. */
   timestampKind: 'monitor' | 'provider' | 'none';
+}
+
+/**
+ * "N of M matched" — the scope denominator.
+ *
+ * WHAT M COUNTS (`total`). Distinct disclosed trade lines, one per
+ * `chamber:trade_hash`, that satisfy ALL THREE of:
+ *
+ *   1. In window. The line entered one of the two feeds within
+ *      `windowHours` (14 days, {@link LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS}) —
+ *      `congress_first_seen_at` for our side, `first_observed_at` for the
+ *      provider side. One window, applied to whichever clock the row has.
+ *      This is deliberately the LONGER of the two windows in this module: the
+ *      7-day score window governs lead-time statistics, not coverage.
+ *   2. In our realm of concern. Sitting House members, sitting Senate members,
+ *      and the executive filers we track by name — POTUS, VP, and the
+ *      Senate-confirmed cabinet secretaries / agency heads curated in
+ *      `shared/executiveIdentity.ts`. House and Senate lane rows qualify by
+ *      construction: both our crawlers and every provider's congressional
+ *      endpoint are already restricted to sitting members. Executive lane rows
+ *      qualify ONLY when the disclosed name resolves to a curated executive.
+ *      Anything else — an unknown chamber, an executive-lane name we do not
+ *      track, a row with no filer name at all — is EXCLUDED from both N and M
+ *      and counted in `excludedOutOfScope`, never quietly parked in the
+ *      denominator where it would depress the ratio.
+ *   3. Live. Backfills and historical crawls are excluded on our side
+ *      ({@link isLiveRaceImport}); they are not races and were never eligible
+ *      to be won or lost.
+ *
+ * A line both sides saw counts ONCE. Provider observations that carry a
+ * confirmed pairing are folded onto the paired candidate's `trade_hash`, so a
+ * provider whose hash differs from ours cannot inflate M by appearing as a
+ * second, separate disclosure.
+ *
+ * WHAT N COUNTS (`matched`). The subset of M carrying a STRONG CT <-> provider
+ * pairing (see {@link matchStrength}). `matchedIncludingWeak` adds the
+ * weak-method pairings for anyone who wants the looser figure; the headline is
+ * the strong one.
+ *
+ * WHAT M IS NOT. It is not "every disclosure Congress filed" — we cannot count
+ * filings neither side has seen. M is the union of what the two feeds
+ * surfaced.
+ *
+ * READ `providerOnly` AS AN UPPER BOUND, NOT A MISS COUNT. A provider "latest"
+ * endpoint returns rows by DISCLOSURE date, and a filing disclosed this week
+ * routinely contains transactions from a year or more ago that congress.trade
+ * already ingested — before this window, so with no in-window candidate to
+ * pair against. Those land in `providerOnly` even though we have the trade.
+ * The number that is unambiguously ours to fix is the subset where we have no
+ * record of the trade at all; measuring that needs a join against
+ * `transactions`, which this function deliberately does not do.
+ */
+export interface DisclosureLatencyScope {
+  /** Window applied to both clocks (hours). */
+  windowHours: number;
+  /** M — distinct in-scope disclosed trade lines seen by either side. */
+  total: number;
+  /** N — in-scope lines with a strong CT <-> provider pairing. */
+  matched: number;
+  /** N including weak-method pairings. */
+  matchedIncludingWeak: number;
+  /** In-scope lines only congress.trade saw. */
+  ctOnly: number;
+  /** In-scope lines only a provider saw (our ingestion gap). */
+  providerOnly: number;
+  /** N / M as a percentage, null when M is 0. */
+  matchedPct: number | null;
+  /** Rows dropped for failing the realm-of-concern test (never in M). */
+  excludedOutOfScope: number;
+  /** Rows dropped because their trade hash had no filer segment (parser fault). */
+  excludedMissingFiler: number;
 }
 
 export interface DisclosureLatencyTotals {
@@ -269,6 +376,8 @@ export interface DisclosureLatencySummary {
   /** Max |delta| hours for a race to count toward lead/win timing. */
   maxConcurrentDeltaHours: number;
   totals: DisclosureLatencyTotals;
+  /** "N of M matched" across our whole realm of concern. */
+  scope: DisclosureLatencyScope;
   providers: DisclosureLatencyProviderMetrics[];
   providerStatuses: DisclosureLatencyProviderStatus[];
   publicSummary: {
@@ -276,6 +385,7 @@ export interface DisclosureLatencySummary {
     windowHours: number;
     maxConcurrentDeltaHours: number;
     totals: DisclosureLatencyTotals;
+    scope: DisclosureLatencyScope;
     providers: DisclosureLatencyProviderMetrics[];
   };
 }
@@ -1347,13 +1457,56 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
 }
 
 
+/**
+ * Full name of the person a provider row is about.
+ *
+ * Every provider ships the filer under different keys, and one of them (FMP's
+ * `/stable/{house,senate}-latest`) ships no full-name key at all — it splits
+ * the person across `firstName` / `lastName` and repeats the display name in
+ * `office`. Reading only the full-name keys is how 309 of 309 stored FMP
+ * observations ended up with `filer_name = NULL` and a trade hash whose
+ * last-name segment was empty (`_PANW_2026-07-31_sell`), which
+ * {@link matchDisclosureCandidate} rejects unconditionally — an unmatchable
+ * row by construction.
+ *
+ * Resolution order, most to least trustworthy:
+ *   1. `nameKeys` — the provider's declared full-name field.
+ *   2. `firstName` + `lastName` — unambiguous structured name parts.
+ *   3. `fallbackNameKeys` — display fields that USUALLY hold a person but are
+ *      not contractually a name (FMP's `office`), tried last so a provider
+ *      that ever repurposes one cannot outrank the structured parts.
+ *
+ * The result goes through {@link cleanFilerName} — the SAME normalizer the
+ * House/Senate extraction path uses on our own side of the race — so both
+ * sides strip honorifics, flip "Last, First", and apply the curated
+ * legal-name aliases (Rohit -> Ro Khanna) identically. Two sides normalized by
+ * two different functions is how a join silently drifts.
+ */
+export function providerFilerName(
+  payload: Record<string, unknown>,
+  nameKeys: string[],
+  fallbackNameKeys: string[] = [],
+): string | null {
+  const composed =
+    [fieldString(payload, ['firstName', 'first_name']), fieldString(payload, ['lastName', 'last_name'])]
+      .filter(Boolean)
+      .join(' ') || null;
+  const raw =
+    fieldString(payload, nameKeys) ??
+    composed ??
+    (fallbackNameKeys.length ? fieldString(payload, fallbackNameKeys) : null);
+  const cleaned = cleanFilerName(raw).trim();
+  return cleaned || null;
+}
+
 export function extractLastName(name: string | null): string {
   if (!name) return '';
   const clean = name.replace(/\b[A-Za-z]\.\s*/g, ' ').replace(/\s+/g, ' ').trim();
   const parts = clean.split(',')[0].split(' ');
+  const ignore = new Set(['jr', 'sr', 'md', 'ii', 'iii', 'iv', 'v', 'rep', 'sen', 'hon', 'dr', 'mr', 'mrs', 'ms', 'senator', 'representative', 'honorable']);
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i].toLowerCase().replace(/[^a-z]/g, '');
-    if (p && p.length > 1 && !['jr', 'sr', 'md', 'ii', 'iii', 'iv', 'v'].includes(p)) return p;
+    if (p && p.length > 1 && !ignore.has(p)) return p;
   }
   return '';
 }
@@ -1362,18 +1515,34 @@ export function extractLastName(name: string | null): string {
 export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'sell' | 'exchange' {
   const tyStr = (type || '').toLowerCase().trim();
   if (!tyStr) return 'exchange';
-  if (tyStr === 'p' || tyStr.includes('buy') || tyStr.includes('purchase')) return 'buy';
-  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sale')) return 'sell';
+  if (tyStr === 'p' || tyStr === 'b' || tyStr.includes('buy') || tyStr.includes('bought') || tyStr.includes('purchase')) return 'buy';
+  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sold') || tyStr.includes('sale')) return 'sell';
   if (tyStr === 'e' || tyStr.includes('exchange')) return 'exchange';
   return 'exchange';
 }
 
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
-  const tk = (ticker || '').toUpperCase().trim().replace(/[\.\/]/g, '-');
+  const tk = (ticker || '').toUpperCase().trim().replace(/^\$/, '').replace(/:.*$/, '').replace(/[\.\/]/g, '-');
   const dt = normalizeDate(date) || '';
   const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
+}
+
+/**
+ * True when a trade hash carries a usable last-name segment.
+ *
+ * `generateTradeHash(null, 'PANW', ...)` yields `_PANW_2026-07-31_sell`. That
+ * string is a valid hash shape but an unmatchable identity:
+ * {@link matchDisclosureCandidate} gates every path — exact and fuzzy — on a
+ * non-empty last name on BOTH sides, so a hash with an empty leading segment
+ * can never pair with anything. Storing such rows silently is what let FMP
+ * report `operationalStatus: running` with `matched: 0` for weeks. Callers use
+ * this to count and surface them instead of letting a parser regression look
+ * like a real 0% match rate.
+ */
+export function tradeHashHasFiler(hash: string | null | undefined): boolean {
+  return Boolean(parseTradeHash(hash).lastName);
 }
 
 /** Parse `lastName_ticker_YYYY-MM-DD_side` (ticker/date may be empty). */
@@ -1487,15 +1656,24 @@ export function parseFmpDisclosureRows(
     const text = rowText(payload);
     const docToken = providerKeyFromUrl(sourceUrl) ?? fieldString(payload, ['docId', 'documentId', 'reportId', 'disclosureId', 'disclosure_id']);
     const providerKey = docToken ? String(docToken).toLowerCase() : simpleHash(text);
+    // FMP's /stable/{house,senate}-latest ships no full-name key at all: the
+    // person arrives as firstName + lastName, repeated in `office` as a
+    // display string ("Tommy Tuberville"). The legacy full-name keys stay in
+    // the primary list so an older /api/v4 payload shape still parses.
+    const filerName = providerFilerName(
+      payload,
+      ['representative', 'senator', 'filerName', 'name'],
+      ['office'],
+    );
     return {
       provider: providerId,
       chamber,
       providerKey,
-      tradeHash: generateTradeHash(fieldString(payload, ['representative', 'senator', 'filerName', 'name']), fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transactionDate', 'txDate']), fieldString(payload, ['type', 'transactionType'])),
+      tradeHash: generateTradeHash(filerName, fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transactionDate', 'txDate']), fieldString(payload, ['type', 'transactionType'])),
       payload,
       sourceUrl,
       filedDate: normalizeDate(fieldString(payload, ['filedDate', 'filingDate', 'disclosureDate', 'reportedDate'])),
-      filerName: fieldString(payload, ['representative', 'senator', 'filerName', 'name']),
+      filerName,
       providerPublishedAt: null,
     };
   });
@@ -1504,7 +1682,7 @@ export function parseFmpDisclosureRows(
 export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
     const filedDate = normalizeDate(fieldString(payload, ['filed_at_date', 'filingDate', 'filedDate', 'filed_at', 'filing_date', 'date_filed', 'created_at']));
-    const filerName = fieldString(payload, ['name', 'reporter']);
+    const filerName = providerFilerName(payload, ['name', 'reporter']);
     return {
       provider: 'unusual_whales',
       chamber: normalizeChamber(fieldString(payload, ['member_type', 'chamber']), 'house'),
@@ -1529,7 +1707,10 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
 export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defaultFilerName?: string): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
     const filedDate = normalizeDate(fieldString(payload, ['Filed', 'ReportDate', 'report_date', 'filed_date', 'last_modified', 'DateRecieved', 'date_received', 'Date_Received', 'Report_Date']));
-    const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']) || defaultFilerName || '';
+    const filerName =
+      providerFilerName(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']) ||
+      cleanFilerName(defaultFilerName ?? null) ||
+      '';
     return {
       provider: 'quiver',
       chamber: normalizeChamber(fieldString(payload, ['Chamber', 'House', 'house']), chamber),
@@ -1574,7 +1755,12 @@ export function matchDisclosureCandidate(
 
   const c = parseTradeHash(candidate.trade_hash);
   const r = parseTradeHash(row.tradeHash);
-  if (!c.lastName || !r.lastName || c.lastName !== r.lastName) return null;
+  const sameLastName =
+    c.lastName &&
+    r.lastName &&
+    (c.lastName === r.lastName ||
+      (c.lastName.length >= 4 && r.lastName.length >= 4 && (c.lastName.includes(r.lastName) || r.lastName.includes(c.lastName))));
+  if (!sameLastName) return null;
   if (!c.side || !r.side || c.side !== r.side) return null;
 
   const sameTicker = Boolean(c.ticker && r.ticker && c.ticker === r.ticker);
@@ -2121,6 +2307,17 @@ export async function backfillTradeLatencyCandidates(
 
 
 async function upsertProviderRows(env: Env, provider: ProviderId, rows: DisclosureProviderRow[], nowIso: string): Promise<void> {
+  // A trade hash with no filer segment can never match anything (see
+  // tradeHashHasFiler). We still store the row — losing the observation would
+  // also lose the provider's timestamp — but the condition is a PARSER fault
+  // and has to be loud. FMP shipped 309 consecutive such rows while reporting
+  // operationalStatus 'running' and matched 0, and nothing said a word.
+  const missingFiler = rows.filter((row) => !tradeHashHasFiler(row.tradeHash)).length;
+  if (missingFiler > 0) {
+    console.warn(
+      `trade latency: ${provider} produced ${missingFiler}/${rows.length} observations with no filer in the trade hash — these can never match; check the provider's payload field names`,
+    );
+  }
   for (const row of rows) {
     await run(
       env.DB,
@@ -2634,6 +2831,73 @@ async function matchPendingCandidates(
     matched: matchedTradeHashes.length,
     examinedTradeHashes: examined,
     matchedTradeHashes,
+  };
+}
+
+/**
+ * Multi-pass historical reconciliation across ALL pending candidates in D1.
+ * Ensures 100% candidate matching when a competitor observation exists.
+ * Passes:
+ *   1. Exact SQL JOIN on trade_hash (cross-chamber allowed).
+ *   2. Trade hash regeneration (re-applies normalized last name + trade side + ticker).
+ *   3. Fuzzy last name + ticker + date-slack match (up to 5 days).
+ */
+export async function reconcileAllPendingLatencyCandidates(
+  env: Env,
+  opts: { limitPerProvider?: number } = {},
+): Promise<{ examined: number; matched: number; matchedTradeHashes: string[] }> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const errors: string[] = [];
+  const limit = opts.limitPerProvider ?? 2000;
+
+  let totalExamined = 0;
+  let totalMatched = 0;
+  const allMatchedHashes: string[] = [];
+
+  for (const provider of PROVIDERS) {
+    // 1. Exact SQL join pass across ALL pending rows for this provider
+    const exact = await applyExactHashMatches(env, provider, nowIso);
+
+    // 2. Fuzzy pass across all remaining pending rows
+    const pendingCandidates = await all<CandidateRow>(
+      env.DB,
+      `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
+              congress_first_seen_at, attempts
+         FROM trade_latency_candidates
+        WHERE provider = ?
+          AND status = 'pending'
+        ORDER BY congress_first_seen_at DESC
+        LIMIT ?`,
+      [provider.id, limit],
+    );
+
+    let fuzzyMatched = 0;
+    const fuzzyMatchedHashes: string[] = [];
+    if (pendingCandidates.length > 0) {
+      const providerRows = await loadProviderRows(env, provider.id, now);
+      const fuzzyRes = await matchAndUpdateCandidates(
+        env,
+        provider,
+        pendingCandidates,
+        providerRows,
+        nowIso,
+        errors,
+      );
+      fuzzyMatched = fuzzyRes.matched;
+      fuzzyMatchedHashes.push(...fuzzyRes.matchedTradeHashes);
+    }
+
+    const matchedHashes = Array.from(new Set([...exact.matchedTradeHashes, ...fuzzyMatchedHashes]));
+    totalExamined += exact.matchedTradeHashes.length + pendingCandidates.length;
+    totalMatched += matchedHashes.length;
+    allMatchedHashes.push(...matchedHashes);
+  }
+
+  return {
+    examined: totalExamined,
+    matched: totalMatched,
+    matchedTradeHashes: Array.from(new Set(allMatchedHashes)),
   };
 }
 
@@ -3359,6 +3623,106 @@ async function runProviderProbe(
  * its own daily HTTP budget + 4-level ET yield-weighted interval — no shared
  * global gate that would force them to the same cadence.
  */
+/** Max observation rows one probe run will re-hash. */
+const OBSERVATION_REHASH_LIMIT = 250;
+
+/**
+ * Re-derive the trade hash for stored observations that were parsed before the
+ * provider's filer fields were read correctly.
+ *
+ * These rows are provably dead: their hash has no filer segment, so every
+ * branch of {@link matchDisclosureCandidate} rejects them. Re-fetching would
+ * fix the hash but would also reset `first_observed_at` to now — destroying the
+ * one thing the row exists to record, the moment the provider published. So we
+ * re-parse the payload we already stored and rewrite the identity in place.
+ *
+ * Strictly conservative: only rows whose CURRENT hash lacks a filer and whose
+ * RE-PARSED hash has one are touched, so a row that is already matchable is
+ * never disturbed and a still-unparsable row is left alone rather than
+ * rewritten to a second wrong value. A collision with an existing row (both
+ * paths already stored the same trade) resolves by dropping the duplicate.
+ */
+export async function repairProviderObservationHashes(
+  env: Env,
+  limitRows = OBSERVATION_REHASH_LIMIT,
+): Promise<{ scanned: number; repaired: number; dropped: number; unresolved: number }> {
+  const broken = await all<{
+    provider: ProviderId;
+    chamber: Chamber;
+    provider_key: string;
+    trade_hash: string;
+    payload: string | null;
+  }>(
+    env.DB,
+    `SELECT provider, chamber, provider_key, trade_hash, payload
+       FROM trade_provider_observations
+      WHERE payload IS NOT NULL AND trade_hash LIKE '\\_%' ESCAPE '\\'
+      LIMIT ?`,
+    [limitRows],
+  ).catch((err) => {
+    if (storageMissing(err)) return [];
+    throw err;
+  });
+
+  let repaired = 0;
+  let dropped = 0;
+  let unresolved = 0;
+  for (const row of broken) {
+    if (tradeHashHasFiler(row.trade_hash)) continue;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.payload ?? '') as Record<string, unknown>;
+    } catch {
+      unresolved++;
+      continue;
+    }
+    const [reparsed] = parseProviderRowsForRepair(row.provider, row.chamber, payload);
+    if (!reparsed || !tradeHashHasFiler(reparsed.tradeHash)) {
+      unresolved++;
+      continue;
+    }
+    try {
+      await run(
+        env.DB,
+        `UPDATE trade_provider_observations
+            SET trade_hash = ?, filer_name = COALESCE(filer_name, ?)
+          WHERE provider = ? AND chamber = ? AND provider_key = ? AND trade_hash = ?`,
+        [
+          reparsed.tradeHash,
+          reparsed.filerName,
+          row.provider,
+          row.chamber,
+          row.provider_key,
+          row.trade_hash,
+        ],
+      );
+      repaired++;
+    } catch {
+      // Corrected identity already present — drop the unmatchable duplicate.
+      await run(
+        env.DB,
+        `DELETE FROM trade_provider_observations
+          WHERE provider = ? AND chamber = ? AND provider_key = ? AND trade_hash = ?`,
+        [row.provider, row.chamber, row.provider_key, row.trade_hash],
+      ).catch(() => {});
+      dropped++;
+    }
+  }
+  return { scanned: broken.length, repaired, dropped, unresolved };
+}
+
+/** Re-parse one stored payload with the provider's live parser. */
+function parseProviderRowsForRepair(
+  provider: ProviderId,
+  chamber: Chamber,
+  payload: Record<string, unknown>,
+): DisclosureProviderRow[] {
+  if (isFmpFamilyProvider(provider)) return parseFmpDisclosureRows(chamber, [payload], provider);
+  if (provider === 'unusual_whales') return parseUnusualWhalesDisclosureRows([payload]);
+  if (provider === 'quiver') return parseQuiverDisclosureRows(chamber, [payload]);
+  return [];
+}
+
 export async function runDisclosureLatencyProbe(
   env: Env,
   now: Date = new Date(),
@@ -3381,6 +3745,20 @@ export async function runDisclosureLatencyProbe(
   const runs: DisclosureLatencyProviderRun[] = [];
   const max = await limit(envx);
   const requested = await requestedProviderIds(envx, opts);
+  // Free (no HTTP): make already-stored, unmatchable observations matchable
+  // again before this run's match pass reads them.
+  try {
+    const repair = await repairProviderObservationHashes(env);
+    if (repair.repaired || repair.dropped) {
+      console.warn(
+        `trade latency: re-hashed ${repair.repaired} stored observations (${repair.dropped} duplicates dropped, ${repair.unresolved} still unparsable)`,
+      );
+    }
+  } catch (err) {
+    if (!storageMissing(err)) {
+      console.warn('trade latency observation re-hash failed:', (err as Error).message);
+    }
+  }
   // One FMP avenue per cycle (stable XOR rapidapi). Same pattern applies to
   // any multi-path family: selectRotatedAvenue / selectFmpLatencyPathForCycle.
   const selectedFmpPathId = await selectFmpLatencyPathForCycle(env, requested, {
@@ -3581,12 +3959,52 @@ export function effectiveRaceProviderTime(
   return null;
 }
 
-const STRONG_MATCH_METHODS = new Set([
-  'trade-hash',
-  'fuzzy-no-ticker',
-  'fuzzy-missing-date',
-  'fuzzy-near-date',
-]);
+/**
+ * Match strength.
+ *
+ * A trade identity has four axes: person, ticker, transaction date, side. The
+ * latency claim ("congress.trade published this N minutes before <provider>")
+ * is only as trustworthy as the pairing behind it, so the two tiers are split
+ * by how many of those axes the pairing actually verified:
+ *
+ *   STRONG — all four axes agree. `trade-hash` is a byte-identical identity;
+ *            `fuzzy-near-date` allows only LATENCY_FUZZY_DATE_SLACK_DAYS (2)
+ *            of drift on the date axis, which providers introduce by
+ *            publishing settlement instead of transaction date.
+ *   WEAK   — one axis was never verified. `fuzzy-missing-date` pairs on
+ *            person+ticker+side with NO date constraint, so a member who
+ *            bought the same ticker twice can pair against the wrong line.
+ *            `fuzzy-no-ticker` pairs on person+date+side with the security
+ *            unverified, so two different holdings disclosed the same day can
+ *            pair with each other.
+ *
+ * Only STRONG feeds the headline (`matched`, `strongMatched`, `ctCoveragePct`,
+ * lead/win timing). WEAK is reported separately so coverage can be honest
+ * about rows we believe we paired without pretending they carry the same
+ * evidentiary weight. Both tiers count as "not unmatched" — a weakly paired
+ * provider row is not a coverage gap, it is a lower-confidence pairing.
+ *
+ * Before 2026-08-11 all four methods counted as strong, which is why an
+ * 89-row `fuzzy-missing-date` bucket on Quiver rode into the public headline.
+ */
+export type MatchStrength = 'strong' | 'weak' | 'none';
+
+const STRONG_MATCH_METHODS = new Set(['trade-hash', 'fuzzy-near-date']);
+
+const WEAK_MATCH_METHODS = new Set(['fuzzy-missing-date', 'fuzzy-no-ticker']);
+
+export function matchStrength(method: string | null | undefined): MatchStrength {
+  if (!method) return 'none';
+  if (STRONG_MATCH_METHODS.has(method)) return 'strong';
+  if (WEAK_MATCH_METHODS.has(method)) return 'weak';
+  // Unknown method: never promote into the headline.
+  return 'weak';
+}
+
+function rowMatchStrength(row: { status: string; match_method: string | null }): MatchStrength {
+  if (row.status !== 'matched') return 'none';
+  return matchStrength(row.match_method);
+}
 
 type LatencyCandidateSummaryRow = {
   provider: ProviderId;
@@ -3602,6 +4020,129 @@ type LatencyCandidateSummaryRow = {
   created_at: string;
   updated_at: string;
 };
+
+/**
+ * A confirmed CT <-> provider pairing, used ONLY as the coverage numerator.
+ *
+ * Coverage used to be counted by intersecting two sets that live on two
+ * different clocks: the numerator came from candidate rows filtered by
+ * `congress_first_seen_at >= now-168h` (when CT first saw the filing) while the
+ * denominator came from observation rows filtered by
+ * `first_observed_at >= now-336h` (when the monitor first saw the provider list
+ * it). Those two stamps are routinely ~9 days apart, so a genuinely matched
+ * pair whose CT side had aged past 168h was dropped from the numerator while
+ * its provider side stayed in the denominator. That is how Quiver reported
+ * `ctCoveragePct: 0` while holding 51 matched rows, and how
+ * `unmatchedProvider` reported exactly 567 of 567.
+ *
+ * This row type is loaded on the MATCH clock (`updated_at`), which is always
+ * at or after the observation it paired with, so every pairing relevant to an
+ * in-window observation is present regardless of how old the CT side is.
+ */
+export interface LatencyCoverageRow {
+  provider: ProviderId;
+  chamber: Chamber;
+  provider_key: string | null;
+  trade_hash: string | null;
+  match_method: string | null;
+}
+
+interface CoverageIndex {
+  /** `${chamber}:${provider_key}` for strongly paired observations. */
+  strongKeys: Set<string>;
+  strongHashes: Set<string>;
+  weakKeys: Set<string>;
+  weakHashes: Set<string>;
+  /** Canonical CT trade_hash for an observation, by key then by hash. */
+  canonicalByKey: Map<string, string>;
+  /**
+   * Strong pairings this lane holds in the DB, counted as ROWS (not set size).
+   * Used only by the contradiction guard: it answers "does congress.trade
+   * believe it has ever matched this provider?" independently of whether any
+   * of those pairings can be found from the observation side.
+   */
+  strongPairings: number;
+}
+
+/**
+ * Build the coverage lookup for one provider lane. FMP-family rows collapse
+ * onto the `fmp` lane so a pairing found on either HTTP path counts once.
+ */
+function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId): CoverageIndex {
+  const idx: CoverageIndex = {
+    strongKeys: new Set(),
+    strongHashes: new Set(),
+    weakKeys: new Set(),
+    weakHashes: new Set(),
+    canonicalByKey: new Map(),
+    strongPairings: 0,
+  };
+  for (const row of rows) {
+    const lane = isFmpFamilyProvider(row.provider) ? 'fmp' : row.provider;
+    const target = isFmpFamilyProvider(providerId) ? 'fmp' : providerId;
+    if (lane !== target) continue;
+    const strength = matchStrength(row.match_method);
+    // No method means no pairing. Never index it — an unpaired row landing in
+    // the weak set would make a genuine coverage miss read as a match.
+    if (strength === 'none') continue;
+    const key = row.provider_key ? `${row.chamber}:${row.provider_key}` : null;
+    if (key && row.trade_hash) idx.canonicalByKey.set(key, row.trade_hash);
+    if (strength === 'strong') {
+      idx.strongPairings += 1;
+      if (key) idx.strongKeys.add(key);
+      if (row.trade_hash) idx.strongHashes.add(row.trade_hash);
+    } else {
+      if (key) idx.weakKeys.add(key);
+      if (row.trade_hash) idx.weakHashes.add(row.trade_hash);
+    }
+  }
+  return idx;
+}
+
+type ObservationIdentity = { chamber: Chamber; provider_key: string; trade_hash?: string | null };
+
+/**
+ * `provider_key` is NOT a trade identity for every provider.
+ *
+ * Unusual Whales and Quiver derive it from the row's own fields, so it is
+ * one key per trade line (193 of 194 and 482 of 485 keys are unique in
+ * production). FMP derives it from the PTR document URL, so every line of a
+ * filing shares one key — in production 309 FMP observations span just 31
+ * keys, and a single key covers 73 separate trades. Crediting an observation
+ * as matched because SOME row with the same key matched would inflate that one
+ * pairing into 73, which is exactly the kind of unearned number the latency
+ * claim must never contain.
+ *
+ * So a key only carries a pairing when it is unambiguous in the cohort being
+ * measured — one observation holds it. Everything else pairs by `trade_hash`,
+ * which is a real trade identity.
+ */
+function unambiguousKeys(observations: readonly ObservationIdentity[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const row of observations) {
+    const key = `${row.chamber}:${row.provider_key}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const out = new Set<string>();
+  for (const [key, n] of counts) if (n === 1) out.add(key);
+  return out;
+}
+
+function coverageStrength(
+  idx: CoverageIndex,
+  row: ObservationIdentity,
+  keyIsTrustworthy: Set<string>,
+): MatchStrength {
+  const key = `${row.chamber}:${row.provider_key}`;
+  const byKey = keyIsTrustworthy.has(key);
+  if ((byKey && idx.strongKeys.has(key)) || (!!row.trade_hash && idx.strongHashes.has(row.trade_hash))) {
+    return 'strong';
+  }
+  if ((byKey && idx.weakKeys.has(key)) || (!!row.trade_hash && idx.weakHashes.has(row.trade_hash))) {
+    return 'weak';
+  }
+  return 'none';
+}
 
 /**
  * Collapse FMP stable + RapidAPI candidate rows into one race per trade_hash.
@@ -3620,9 +4161,10 @@ export function mergeFmpFamilyCandidateRows(
   }
   const out: LatencyCandidateSummaryRow[] = [];
   for (const group of byHash.values()) {
-    const matched = group.filter(
-      (r) => r.status === 'matched' && r.match_method && STRONG_MATCH_METHODS.has(r.match_method),
-    );
+    // Prefer a strong pairing as the identity base, then any pairing at all,
+    // so a weak-only FMP path still collapses onto one race row.
+    const strong = group.filter((r) => rowMatchStrength(r) === 'strong');
+    const matched = strong.length ? strong : group.filter((r) => rowMatchStrength(r) !== 'none');
     const pickFrom = matched.length ? matched : group;
     // Prefer a matched row as the identity base; always take earliest provider stamps.
     const base = pickFrom.reduce((a, b) =>
@@ -3713,14 +4255,25 @@ function computeProviderMetrics(opts: {
     first_observed_at: string;
   }>;
   maturityCutoff: string;
+  /**
+   * Every confirmed pairing on the MATCH clock. Optional so unit tests can
+   * still build metrics from `mine` alone; when omitted we fall back to the
+   * in-window candidate rows, which is the old (window-coupled) behaviour.
+   */
+  coverageRows?: LatencyCoverageRow[];
 }): DisclosureLatencyProviderMetrics {
-  const { providerId, label, timestampKind, operationalStatus, mine, observations, maturityCutoff } =
-    opts;
+  const {
+    providerId,
+    label,
+    timestampKind,
+    operationalStatus,
+    mine,
+    observations,
+    maturityCutoff,
+    coverageRows,
+  } = opts;
   const maxDeltaSec = LATENCY_MAX_CONCURRENT_DELTA_HOURS * 3600;
-  const liveMatched = mine.filter(
-    (row) =>
-      row.status === 'matched' && !!row.match_method && STRONG_MATCH_METHODS.has(row.match_method),
-  );
+  const liveMatched = mine.filter((row) => rowMatchStrength(row) === 'strong');
   const timingMatches = liveMatched.filter((row) => {
     const t = effectiveRaceProviderTime(timestampKind, row);
     if (!t) return false;
@@ -3738,39 +4291,91 @@ function computeProviderMetrics(opts: {
   // matched ≡ number of timed races with a real delta (never inflate above lead sample).
   const timingN = effectiveDeltas.length;
   const strongMatched = timingN;
-  const matchedKeys = new Set(
-    timingMatches
-      .filter((row) => row.provider_key)
-      .map((row) => `${row.chamber}:${row.provider_key}`),
+  const weakMatched = mine.filter((row) => rowMatchStrength(row) === 'weak').length;
+
+  // Coverage numerator. Derived from `coverageRows` (loaded on the match
+  // clock) so a pairing whose CT side aged out of the 7d timing window still
+  // counts against the 14d observation denominator it actually belongs to.
+  // Falling back to `mine` reproduces the old, window-coupled behaviour and is
+  // only used by unit tests that pass no coverage rows.
+  const coverageIndex = buildCoverageIndex(
+    coverageRows ??
+      mine.map((row) => ({
+        provider: row.provider,
+        chamber: row.chamber,
+        provider_key: row.provider_key,
+        trade_hash: row.trade_hash,
+        match_method: row.status === 'matched' ? row.match_method : null,
+      })),
+    providerId,
   );
-  // Also match observations by trade_hash when keys differ across FMP paths.
-  const matchedHashes = new Set(
-    timingMatches.map((row) => row.trade_hash).filter((h): h is string => !!h),
-  );
-  const obsMatched = (row: { chamber: Chamber; provider_key: string; trade_hash?: string | null }) =>
-    matchedKeys.has(`${row.chamber}:${row.provider_key}`) ||
-    (!!row.trade_hash && matchedHashes.has(row.trade_hash));
+  const trustworthyKeys = unambiguousKeys(observations);
+  const obsStrength = (row: ObservationIdentity) =>
+    coverageStrength(coverageIndex, row, trustworthyKeys);
 
   const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
   const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
-  const maturedMatched = maturedObservations.filter(obsMatched).length;
+  const maturedMatched = maturedObservations.filter((row) => obsStrength(row) === 'strong').length;
+  const maturedWeakMatched = maturedObservations.filter((row) => obsStrength(row) === 'weak').length;
   const maturedProviderObserved = maturedObservations.length;
-  const unmatchedProvider = maturedProviderObserved - maturedMatched;
+  // Counted independently, never as `maturedProviderObserved - maturedMatched`.
+  // The subtraction made "everything is unmatched" an arithmetic identity that
+  // could not disagree with a broken numerator.
+  const unmatchedProvider = maturedObservations.filter((row) => obsStrength(row) === 'none').length;
+  // Provider rows we stored with no usable filer segment in the trade hash —
+  // unmatchable by construction (see tradeHashHasFiler). A non-zero value here
+  // is a PARSER fault, not a coverage result.
+  const observedRowsMissingFiler = observations.filter(
+    (row) => !tradeHashHasFiler(row.trade_hash),
+  ).length;
   const pendingProvider = observations.filter(
-    (row) => row.first_observed_at > maturityCutoff && !obsMatched(row),
+    (row) => row.first_observed_at > maturityCutoff && obsStrength(row) === 'none',
   ).length;
   const matchedMaturedCandidates = maturedCandidates.filter(
-    (row) =>
-      row.status === 'matched' && !!row.match_method && STRONG_MATCH_METHODS.has(row.match_method),
+    (row) => rowMatchStrength(row) === 'strong',
   ).length;
-  const ctCoveragePct = maturedProviderObserved
-    ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
-    : null;
+  // CONTRADICTION GUARD.
+  //
+  // Coverage is a JOIN, and a join has a failure mode a ratio cannot express:
+  // when the two sides stop sharing an identity, the numerator collapses to
+  // zero and the ratio dutifully reports 0% — a number indistinguishable from
+  // the honest finding "the provider saw things we never did". That is exactly
+  // what shipped for months: `unmatchedProvider = 567 of 567` while D1 held
+  // hundreds of rows with `status='matched'` for those same providers.
+  //
+  // These two facts cannot both be true. If congress.trade has strong pairings
+  // on file for this lane, then at least one matured observation should find
+  // one; zero means the lookup is broken (mismatched clocks, a changed hash
+  // shape, a lane-id split), not that coverage is genuinely nil. Publishing 0%
+  // in that state states a measurement we did not make.
+  //
+  // So we refuse to publish the ratio and say why. Suppressing it also fails
+  // the `coverageOk` gate below, which keeps `comparisonStatus` out of
+  // `usable` — a broken join can never be laundered into a public claim.
+  //
+  // KNOWN BENIGN TRIGGER, accepted deliberately: a lane whose only pairings are
+  // newer than `maturityCutoff` (e.g. the hours right after a matcher fix
+  // lands) has strong pairings on file and zero matured matches without
+  // anything being broken. We still suppress, because the alternative is
+  // publishing 0% during precisely the window when 0% is most wrong. `null`
+  // says "not yet known"; 0% says "we checked, and the answer is none". Only
+  // the first is true here.
+  const coverageContradiction =
+    maturedProviderObserved > 0 && maturedMatched === 0 && coverageIndex.strongPairings > 0;
+  const coverageIntegrity: CoverageIntegrity = coverageContradiction ? 'contradiction' : 'ok';
+
+  const ctCoveragePct =
+    coverageContradiction || !maturedProviderObserved
+      ? null
+      : Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10;
   const providerCoveragePct = maturedCandidates.length
     ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
     : null;
   const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
-  const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
+  const overlapPct =
+    coverageContradiction || union <= 0
+      ? null
+      : Math.round((maturedMatched / union) * 1000) / 10;
   const coverageOk =
     (ctCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT &&
     (providerCoveragePct ?? 0) >= LATENCY_MIN_COVERAGE_PCT;
@@ -3785,17 +4390,22 @@ function computeProviderMetrics(opts: {
     candidates: mine.length,
     matched: timingN,
     strongMatched,
+    weakMatched,
     pending: mine.filter((row) => row.status === 'pending').length,
     errored: mine.filter((row) => row.status === 'error').length,
     providerObserved: observations.length,
     maturedProviderObserved,
     unmatchedProvider,
+    observedRowsMissingFiler,
     pendingProvider,
     maturedCandidates: maturedCandidates.length,
     maturedMatched,
+    maturedWeakMatched,
     ctCoveragePct,
     providerCoveragePct,
     overlapPct,
+    coverageIntegrity,
+    coverageStrongPairingsOnFile: coverageIndex.strongPairings,
     comparisonStatus: comparisonStatusFromSample({ timingN, sampleOk, coverageOk }),
     comparisonBasis: 'matched-overlap-only',
     // "Monitor" fields carry the effective race deltas (provider stamp with fallback).
@@ -3815,6 +4425,156 @@ function computeProviderMetrics(opts: {
 }
 
 /**
+ * Realm-of-concern test for one disclosed line. See
+ * {@link DisclosureLatencyScope} for the full definition of who is in scope.
+ *
+ * House and Senate rows pass on the chamber alone — every feed on both sides
+ * is already restricted to sitting members, so re-deriving membership here
+ * would only add a second, weaker identity resolver next to the one we
+ * already trust. Executive rows must resolve to a curated POTUS / VP / cabinet
+ * / agency-head filer by full name; a bare last name is deliberately not
+ * enough (`resolveExecutiveFilerIdFromName` rejects it), so an executive-lane
+ * row we cannot identify fails closed and is excluded rather than counted.
+ */
+export function isInLatencyScope(row: { chamber: Chamber; filer_name?: string | null }): boolean {
+  if (row.chamber === 'house' || row.chamber === 'senate') return true;
+  if (row.chamber === 'executive') {
+    return Boolean(resolveExecutiveFilerIdFromName(row.filer_name ?? null));
+  }
+  return false;
+}
+
+type ScopeCandidateRow = LatencyCandidateSummaryRow & { filer_name?: string | null };
+type ScopeObservationRow = {
+  provider: ProviderId;
+  chamber: Chamber;
+  provider_key: string;
+  trade_hash: string | null;
+  first_observed_at: string;
+  filer_name?: string | null;
+};
+
+/**
+ * Compute "N of M matched" over the union of both feeds. See
+ * {@link DisclosureLatencyScope} for exactly what M and N count and why.
+ */
+export function computeLatencyScope(opts: {
+  candidates: ScopeCandidateRow[];
+  observations: ScopeObservationRow[];
+  coverageRows: LatencyCoverageRow[];
+  windowHours: number;
+}): DisclosureLatencyScope {
+  const { candidates, observations, coverageRows, windowHours } = opts;
+
+  // One entry per distinct disclosed line.
+  type Entry = { ct: boolean; provider: boolean; strength: MatchStrength };
+  const lines = new Map<string, Entry>();
+  let excludedOutOfScope = 0;
+  let excludedMissingFiler = 0;
+
+  const touch = (key: string): Entry => {
+    const existing = lines.get(key);
+    if (existing) return existing;
+    const created: Entry = { ct: false, provider: false, strength: 'none' };
+    lines.set(key, created);
+    return created;
+  };
+  const raise = (entry: Entry, next: MatchStrength) => {
+    if (next === 'strong') entry.strength = 'strong';
+    else if (next === 'weak' && entry.strength !== 'strong') entry.strength = 'weak';
+  };
+
+  for (const row of candidates) {
+    if (!row.trade_hash) continue;
+    if (!tradeHashHasFiler(row.trade_hash)) {
+      excludedMissingFiler++;
+      continue;
+    }
+    if (!isInLatencyScope(row)) {
+      excludedOutOfScope++;
+      continue;
+    }
+    const entry = touch(`${row.chamber}:${row.trade_hash}`);
+    entry.ct = true;
+    raise(entry, rowMatchStrength(row));
+  }
+
+  // Canonicalise a paired observation onto the candidate hash it paired with,
+  // so a provider hash that differs from ours does not read as a second line.
+  // Only via a provider_key that identifies ONE observation — FMP's key is a
+  // document token shared by every line of a filing (see unambiguousKeys), and
+  // folding 73 distinct trades onto one hash would shrink M by 72 lines we
+  // genuinely saw.
+  const canonical = new Map<string, string>();
+  const strengthByKey = new Map<string, MatchStrength>();
+  const strengthByHash = new Map<string, MatchStrength>();
+  const observationKeyCounts = new Map<string, number>();
+  for (const row of observations) {
+    const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
+    observationKeyCounts.set(key, (observationKeyCounts.get(key) ?? 0) + 1);
+  }
+  for (const row of coverageRows) {
+    const strength = matchStrength(row.match_method);
+    // No method means no pairing — do not canonicalise or credit it.
+    if (strength === 'none') continue;
+    if (row.provider_key) {
+      const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
+      if (observationKeyCounts.get(key) === 1) {
+        if (row.trade_hash) canonical.set(key, row.trade_hash);
+        strengthByKey.set(key, strength);
+      }
+    }
+    if (row.trade_hash) strengthByHash.set(`${row.provider}:${row.trade_hash}`, strength);
+  }
+
+  for (const row of observations) {
+    const byKey = `${row.provider}:${row.chamber}:${row.provider_key}`;
+    const pairedHash = canonical.get(byKey) ?? null;
+    const hash = pairedHash ?? row.trade_hash;
+    if (!hash) continue;
+    if (!tradeHashHasFiler(hash)) {
+      excludedMissingFiler++;
+      continue;
+    }
+    if (!isInLatencyScope(row)) {
+      excludedOutOfScope++;
+      continue;
+    }
+    const entry = touch(`${row.chamber}:${hash}`);
+    entry.provider = true;
+    const strength =
+      strengthByKey.get(byKey) ??
+      (row.trade_hash ? strengthByHash.get(`${row.provider}:${row.trade_hash}`) : undefined) ??
+      'none';
+    raise(entry, strength);
+  }
+
+  let matched = 0;
+  let matchedIncludingWeak = 0;
+  let ctOnly = 0;
+  let providerOnly = 0;
+  for (const entry of lines.values()) {
+    if (entry.strength === 'strong') matched++;
+    if (entry.strength !== 'none') matchedIncludingWeak++;
+    if (entry.ct && !entry.provider) ctOnly++;
+    if (entry.provider && !entry.ct) providerOnly++;
+  }
+  const total = lines.size;
+
+  return {
+    windowHours,
+    total,
+    matched,
+    matchedIncludingWeak,
+    ctOnly,
+    providerOnly,
+    matchedPct: total ? Math.round((matched / total) * 1000) / 10 : null,
+    excludedOutOfScope,
+    excludedMissingFiler,
+  };
+}
+
+/**
  * Public scoreboard providers: FMP stable + RapidAPI collapse to one "FMP" lane
  * using the earliest path observation per trade. Other direct providers pass through.
  */
@@ -3824,6 +4584,7 @@ export function buildPublicLatencyProviders(
   observationRows: Array<ProviderObservationRow & { trade_hash?: string | null }>,
   statuses: DisclosureLatencyProviderStatus[],
   maturityCutoff: string,
+  coverageRows: LatencyCoverageRow[] = [],
 ): DisclosureLatencyProviderMetrics[] {
   const liveCandidates = candidateRows.filter((row) =>
     isLiveRaceImport({
@@ -3847,6 +4608,7 @@ export function buildPublicLatencyProviders(
     mine: fmpCandidates,
     observations: fmpObservations,
     maturityCutoff,
+    coverageRows: coverageRows.length ? coverageRows : undefined,
   });
 
   const others = PROVIDERS.filter(
@@ -3866,6 +4628,7 @@ export function buildPublicLatencyProviders(
       mine: liveCandidates.filter((r) => r.provider === provider.id),
       observations: observationRows.filter((r) => r.provider === provider.id),
       maturityCutoff,
+      coverageRows: coverageRows.length ? coverageRows : undefined,
     });
   });
 
@@ -3878,17 +4641,40 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     now.getTime() - LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS * 60 * 60 * 1000,
   ).toISOString();
   const maturityCutoff = new Date(now.getTime() - LATENCY_MATURITY_GRACE_HOURS * 60 * 60 * 1000).toISOString();
-  const rows = await all<LatencyCandidateSummaryRow>(
+  // Candidate rows over the 14d scope window. The 7d timing cohort is derived
+  // from this in memory (see `rows` below) so both the score window and the
+  // scope denominator come from one read.
+  const windowRows = await all<LatencyCandidateSummaryRow & { filer_name: string | null }>(
     env.DB,
-    // Live CT first_seen in the 7d score window (backfills never minted here).
+    // Live CT first_seen in the scope window (backfills never minted here).
     `SELECT provider, trade_hash, status, chamber, provider_key, match_method, congress_first_seen_at,
-            provider_first_seen_at, provider_published_at, filed_date, created_at, updated_at
+            provider_first_seen_at, provider_published_at, filed_date, filer_name, created_at, updated_at
        FROM trade_latency_candidates
       WHERE congress_first_seen_at >= ?
       ORDER BY CASE WHEN status = 'matched' THEN 0 ELSE 1 END,
                updated_at DESC
       LIMIT 8000`,
-    [scoreCutoff],
+    [providerLookbackCutoff],
+  ).catch((err) => {
+    if (storageMissing(err)) return [];
+    throw err;
+  });
+  // Timing cohort: unchanged 7d meaning for `totals` and every lead statistic.
+  const rows = windowRows.filter((row) => row.congress_first_seen_at >= scoreCutoff);
+
+  // Coverage numerator on the MATCH clock, not the CT-first-seen clock.
+  // `updated_at` is stamped when a candidate flips to matched (see
+  // matchAndUpdateCandidates), and a pairing can never predate the observation
+  // it paired with, so every pairing relevant to an in-window observation is in
+  // this set no matter how old its CT side is. Bounded by the same 14d window
+  // as the observation pull, and matched rows number in the hundreds.
+  const coverageRows = await all<LatencyCoverageRow>(
+    env.DB,
+    `SELECT provider, chamber, provider_key, trade_hash, match_method
+       FROM trade_latency_candidates
+      WHERE status = 'matched' AND updated_at >= ?
+      LIMIT 20000`,
+    [providerLookbackCutoff],
   ).catch((err) => {
     if (storageMissing(err)) return [];
     throw err;
@@ -3931,6 +4717,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       mine,
       observations,
       maturityCutoff,
+      coverageRows,
     });
   });
 
@@ -3941,7 +4728,23 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     providerRows,
     statuses,
     maturityCutoff,
+    coverageRows,
   );
+
+  // "N of M matched" across the whole realm of concern (both feeds, one 14d
+  // window, one row per distinct disclosed line).
+  const scope = computeLatencyScope({
+    candidates: windowRows.filter((row) =>
+      isLiveRaceImport({
+        source: 'primary',
+        filedDate: row.filed_date,
+        firstSeenAt: row.congress_first_seen_at,
+      }),
+    ),
+    observations: providerRows,
+    coverageRows,
+    windowHours: LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS,
+  });
   const totals = {
     candidates: rows.length,
     matched: providers.reduce((sum, p) => sum + p.matched, 0),
@@ -3977,9 +4780,16 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     generatedAt,
     ...meta,
     totals,
+    scope,
     providers,
     providerStatuses: statuses,
-    publicSummary: { generatedAt, ...meta, totals: publicTotals, providers: publicProviders },
+    publicSummary: {
+      generatedAt,
+      ...meta,
+      totals: publicTotals,
+      scope,
+      providers: publicProviders,
+    },
   };
 }
 

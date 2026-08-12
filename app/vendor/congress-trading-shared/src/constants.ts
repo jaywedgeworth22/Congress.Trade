@@ -102,7 +102,7 @@ export const LAG_BUCKETS = Object.freeze([
   Object.freeze({ label: "8-14d", max: 14 }),
   Object.freeze({ label: "15-30d", max: 30 }),
   Object.freeze({ label: "31-45d", max: 45 }),
-  Object.freeze({ label: "46-60d", max: 60 }),
+  Object.freeze({ label: "46-59d", max: 59 }),
   Object.freeze({ label: "60d+", max: null }),
 ] as const);
 
