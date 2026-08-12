@@ -2,17 +2,19 @@ import SwiftUI
 import SwiftData
 import OSLog
 
-/// Tab identity shared with `TabRouter` so any screen (e.g. the header
-/// hamburger menu's "Sign In" entry) can programmatically switch tabs.
-/// Order matches `MainTabView`: Trends | Trades | Directory | Delivery | Settings
-/// (owner punch list #2, item 9 — Directory inserted between Trades and Delivery).
+/// Tab identity shared with `TabRouter` so any screen can programmatically
+/// switch tabs.
+/// Order matches `MainTabView`: Trends | Trades | Directory | Delivery
+/// (owner punch list #2, item 9 — Directory inserted between Trades and
+/// Delivery).  There is no Settings tab: account, alerts, theme, export and
+/// legal all live in the header hamburger's `AccountQuickMenu`, which is a
+/// strict superset of the old tab.
 enum AppTab: Hashable {
     case trends, trades, people, delivery
 }
 
-/// Cross-tab navigation used by the header hamburger menu (`AccountQuickMenu`)
-/// to jump to Settings for sign-in, without duplicating the OAuth flow.
-/// Trends is the default/leftmost tab (owner punch list item 1).
+/// Cross-tab navigation for any screen that needs to move the user to another
+/// tab.  Trends is the default/leftmost tab (owner punch list item 1).
 @MainActor
 final class TabRouter: ObservableObject {
     @Published var selection: AppTab = .trends
