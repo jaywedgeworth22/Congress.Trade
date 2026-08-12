@@ -10,6 +10,12 @@ const errors = [];
 const allowedRunners = new Set([
   "[self-hosted, oracle-ci]",
   "[self-hosted, congress-ci]",
+  // Owned Mac runner (mac-xcode26-congress on the owner's Mac) — Xcode builds
+  // ONLY. It exists so App Store binaries are always compiled by stable
+  // Xcode 26.x, never the side-by-side beta (beta-SDK builds pass TestFlight
+  // but are rejected at submission as INVALID_BINARY). Do not schedule
+  // non-Xcode jobs onto it.
+  "[self-hosted, macOS, ARM64, xcode26]",
   "self-hosted",
   "ubuntu-latest",
 ]);
