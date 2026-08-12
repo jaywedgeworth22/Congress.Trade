@@ -1002,33 +1002,42 @@ struct SignInPanel: View {
         isAuthenticatingWithGoogle = true
 
         let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: "congresstrade") { callbackURL, error in
-            isAuthenticatingWithGoogle = false
-            if let error {
-                if let authError = error as? ASWebAuthenticationSessionError,
-                   authError.code == .canceledLogin {
+            Task { @MainActor in
+                GoogleAuthSession.current = nil
+                isAuthenticatingWithGoogle = false
+                if let error {
+                    if let authError = error as? ASWebAuthenticationSessionError,
+                       authError.code == .canceledLogin {
+                        return
+                    }
+                    store.setAccountNotice("Google sign-in failed: \(error.localizedDescription)")
                     return
                 }
-                store.setAccountNotice("Google sign-in failed: \(error.localizedDescription)")
-                return
-            }
-            guard let callbackURL else {
-                store.setAccountNotice("Google sign-in did not return a session.")
-                return
-            }
+                guard let callbackURL else {
+                    store.setAccountNotice("Google sign-in did not return a session.")
+                    return
+                }
 
-            // Expected URL: congresstrade://auth?token=XYZ
-            guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
-                  !token.isEmpty else {
-                store.setAccountNotice("Google sign-in did not return a usable session token.")
-                return
-            }
+                // Expected URL: congresstrade://auth?token=XYZ
+                guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+                      let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
+                      !token.isEmpty else {
+                    store.setAccountNotice("Google sign-in did not return a usable session token.")
+                    return
+                }
 
-            if store.saveSessionToken(token) { onSignedIn() }
+                if store.saveSessionToken(token) { onSignedIn() }
+            }
         }
 
         session.presentationContextProvider = AuthPresentationContext.shared
-        session.start()
+        // Must outlive `start()` — see `GoogleAuthSession`.
+        GoogleAuthSession.current = session
+        if !session.start() {
+            GoogleAuthSession.current = nil
+            isAuthenticatingWithGoogle = false
+            store.setAccountNotice("Google sign-in could not start.")
+        }
     }
 }
 

@@ -3,6 +3,63 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Owner-facing copy for a Sign in with Apple failure.
+///
+/// Apple's controller often wraps `AKAuthenticationError -7003` (not available
+/// on this device / no iCloud Apple ID) as `ASAuthorizationError.canceled`
+/// (code 1001).  Treating every 1001 as a quiet user-cancel made the button
+/// look dead on the Simulator.
+enum AppleSignInNotice {
+    static let unavailableMessage =
+        "Sign in with Apple isn't available here.  Sign into iCloud in Settings, or use Google or email."
+
+    static let simulatorCanceledMessage =
+        "Sign in with Apple on the Simulator needs an Apple ID in Settings.  Use Google or email, or try on a device."
+
+    /// `nil` means stay quiet (a real user-cancel on a device).
+    static func message(for error: Error) -> String? {
+        let nsError = error as NSError
+        if isAppleUnavailable(nsError) {
+            return unavailableMessage
+        }
+        if let authError = error as? ASAuthorizationError {
+            switch authError.code {
+            case .canceled:
+                if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+                   isAppleUnavailable(underlying) {
+                    return unavailableMessage
+                }
+                #if targetEnvironment(simulator)
+                return simulatorCanceledMessage
+                #else
+                return nil
+                #endif
+            case .failed, .unknown, .notHandled:
+                return "Sign in with Apple was not completed.  Please try again."
+            default:
+                break
+            }
+        }
+        if nsError.domain == ASAuthorizationError.errorDomain,
+           nsError.code == ASAuthorizationError.Code.canceled.rawValue {
+            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+               isAppleUnavailable(underlying) {
+                return unavailableMessage
+            }
+            #if targetEnvironment(simulator)
+            return simulatorCanceledMessage
+            #else
+            return nil
+            #endif
+        }
+        return "Sign in with Apple failed: \(error.localizedDescription)"
+    }
+
+    static func isAppleUnavailable(_ error: NSError) -> Bool {
+        error.domain == "AKAuthenticationError"
+    }
+}
+
 /// Generates the replay-protection nonce for Sign in with Apple
 /// (`ASAuthorizationAppleIDRequest.nonce`). The backend verifies the
 /// identity token's `nonce` claim against the exact string the client sends
@@ -41,22 +98,16 @@ extension CongressTradeStore {
     ///   in-app surface does — the backend simply skips nonce verification
     ///   in that case).
     ///
-    /// Cancel is handled quietly (no notice); any other failure surfaces
+    /// True user-cancel on a device stays quiet.  Simulator cancel and
+    /// `AKAuthenticationError` (not available / no iCloud Apple ID) surface
     /// through `watchlistNotice`, the same account-status notice channel the
-    /// Google/email flows already use in `SettingsView`.
+    /// Google/email flows already use.
     func handleAppleSignIn(_ result: Result<ASAuthorization, Error>, rawNonce: String? = nil) async {
         switch result {
         case .failure(let error):
-            if let authError = error as? ASAuthorizationError {
-                if authError.code == .canceled {
-                    return
-                }
-                if authError.code == .failed || authError.code == .unknown || authError.code == .notHandled {
-                    setAccountNotice("Sign in with Apple was not completed. Please try again.")
-                    return
-                }
+            if let notice = AppleSignInNotice.message(for: error) {
+                setAccountNotice(notice)
             }
-            setAccountNotice("Sign in with Apple failed: \(error.localizedDescription)")
 
         case .success(let authorization):
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
