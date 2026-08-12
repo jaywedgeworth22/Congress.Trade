@@ -9,8 +9,11 @@ name: Sentry CI Report
 # Two independent signals per completed run:
 #   1. On conclusion == failure: a Sentry error event, tagged with
 #      {app, workflow, branch, actor}, carrying the run URL, fingerprinted on
-#      [app, workflow, branch] so repeated failures on the same branch group
-#      together instead of paging separately every time. The `app` tag +
+#      [app, workflow] so every failure of one workflow groups into ONE Sentry
+#      issue instead of paging separately every time. The branch is a TAG only,
+#      never a fingerprint component (it was until 2026-08-12, which minted a
+#      permanent issue per feature branch — ~85 of the fleet's unresolved
+#      fleet-infra issues). The `app` tag +
 #      fingerprint component are REQUIRED here (not in the Socratic.Trade
 #      copy): the fleet-infra project is shared across repos, and this repo
 #      shares workflow names ("CI", "Deploy", "Security") with Socratic.Trade,
@@ -43,10 +46,14 @@ name: Sentry CI Report
 #     scripts/sentry-ci-report.py (margin/runtime tuned for a 5-min cadence).
 #
 # Cron schedules mirrored for the check-in step (must match the source
-# workflow's `schedule:` block; keep in sync if those change):
+# workflow's `schedule:` block AND its `name:`; keep in sync if those change).
+# The reporter validates these keys against the real workflow names on every
+# run and raises a Sentry issue on drift, so a rename cannot silently kill a
+# monitor the way "Shared package pin check" did between 2026-07-27 and
+# 2026-08-12:
 #   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml, daily)
 #   Security                 -> "41 10 * * 1" (security.yml, Mondays)
-#   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml, Mondays)
+#   Shared Package Pin Check -> "0 13 * * 1"  (shared-package-pin-check.yml, Mondays)
 
 on:
   workflow_run:

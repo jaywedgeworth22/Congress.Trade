@@ -1,5 +1,19 @@
 # Current Handoff
 
+## 2026-08-12 — Sentry CI reporter fingerprint + cron key (CLAUDE)
+
+`scripts/sentry-ci-report.py` no longer fingerprints CI failures on the branch
+(`["ci-failure", APP, workflow]` now; branch stays a tag/extra). That one line
+minted a permanent `fleet-infra` issue per (workflow, branch) pair and produced
+~85 of the project's 200+ unresolved issues. Same PR fixes the `CRON_SCHEDULES`
+key `Shared package pin check` -> `Shared Package Pin Check` (renamed 2026-07-27,
+so that weekly Crons check-in had never fired) and hardens the lookup with a
+case-folded index plus drift validation against the real workflow `name:`s.
+Branch `claude/ci-report-fingerprint`. Rollout:
+`docs/rollouts/2026-08-12-sentry-ci-fingerprint-and-cron-key.md`.
+**Open:** the ~85 existing stale issues still need a bulk resolve in Sentry, and
+Socratic.Trade carries the same ancestor script.
+
 ## 2026-08-06 — Latency week focus (GROK)
 
 Track latency probes + provider publish/first-seen timestamps through 2026-08-13.
