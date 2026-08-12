@@ -4323,3 +4323,425 @@ describe('web blocking defects (audited)', () => {
     expect(visible).not.toMatch(/>[^<]*\b(SPX|SPY)\b/);
   });
 });
+
+/* ------------------------------------------------------------------------
+ * Owner feedback 2026-08-11 (Filing Latency Comparison + executive titles):
+ *   1. "it has minus signs for time ahead and time behind, lets make it have
+ *      + sign and stay in red when behind on time"
+ *   2. "N of M matched" with a plain-English note saying what M counts
+ *   3. "ensure executive branch individuals have their shortest professionally
+ *      formatted title shown … and don't say 'exec -' before that"
+ * ---------------------------------------------------------------------- */
+
+/** Extracts single-line `var NAME = …` declarations (the function extractor
+ *  above only handles `function` blocks). */
+function loadDashboardVars(names: string[]): string[] {
+  return names.map((name) => {
+    const match = DASHBOARD_HTML.match(new RegExp(`^var ${name} = [^\\n]*$`, 'm'));
+    if (!match) throw new Error(`var ${name} was not found in DASHBOARD_HTML`);
+    return match[0];
+  });
+}
+
+function loadLeadHelpers() {
+  const sources = loadDashboardFunctions([
+    'esc',
+    'fmtLead',
+    'leadDirection',
+    'leadSignChar',
+    'leadArrowChar',
+    'leadWord',
+    'fmtLeadSigned',
+    'leadDescription',
+    'leadFigureHtml',
+  ]);
+  return new Function(
+    sources.join('\n\n') +
+      '\nreturn { fmtLead: fmtLead, leadDirection: leadDirection, fmtLeadSigned: fmtLeadSigned,' +
+      ' leadDescription: leadDescription, leadFigureHtml: leadFigureHtml };',
+  )() as {
+    fmtLead: (s: number) => string;
+    leadDirection: (s: number | null) => string;
+    fmtLeadSigned: (s: number) => string;
+    leadDescription: (s: number) => string;
+    leadFigureHtml: (s: number, opts?: Record<string, unknown>) => string;
+  };
+}
+
+const MINUS = '−'; // U+2212 MINUS SIGN, not a hyphen
+const UP = '▲';
+const DOWN = '▼';
+
+describe('signed lead figures (owner: "+ sign … and stay in red when behind")', () => {
+  it('fmtLead is magnitude-only, so no caller can accidentally emit a bare hyphen', () => {
+    const { fmtLead } = loadLeadHelpers();
+    expect(fmtLead(82)).toBe('82 sec');
+    expect(fmtLead(-82)).toBe('82 sec');
+    expect(fmtLead(-5560)).toBe('1.5 hr');
+    expect(fmtLead(1466)).toBe('24 min');
+    for (const secs of [-1, -60, -3600, -90000, -900000]) {
+      expect(fmtLead(secs)).not.toContain('-');
+      expect(fmtLead(secs)).not.toContain(MINUS);
+    }
+  });
+
+  it('ahead carries an explicit "+" and behind a true minus sign (never a bare hyphen)', () => {
+    const { fmtLeadSigned } = loadLeadHelpers();
+    expect(fmtLeadSigned(1466)).toBe('+24 min');
+    expect(fmtLeadSigned(-1466)).toBe(`${MINUS}24 min`);
+    expect(fmtLeadSigned(-34)).toBe(`${MINUS}34 sec`);
+    expect(fmtLeadSigned(-1466)).not.toContain('-');
+    expect(fmtLeadSigned(0)).toBe('±0 sec');
+  });
+
+  it('classifies direction from the sign (positive = Congress.Trade first)', () => {
+    const { leadDirection } = loadLeadHelpers();
+    expect(leadDirection(1466)).toBe('ahead');
+    expect(leadDirection(-34)).toBe('behind');
+    expect(leadDirection(0)).toBe('even');
+    expect(leadDirection(0.4)).toBe('even'); // sub-second rounds to even, not "ahead"
+    expect(leadDirection(null)).toBe('even');
+    expect(leadDirection(Number.NaN)).toBe('even');
+  });
+
+  it('behind renders red via --lag, ahead green via --good — and neither relies on colour alone', () => {
+    const { leadFigureHtml } = loadLeadHelpers();
+    const behind = leadFigureHtml(-1466);
+    const ahead = leadFigureHtml(1466);
+
+    // Colour channel
+    expect(behind).toContain('lead-fig lead-behind');
+    expect(ahead).toContain('lead-fig lead-ahead');
+    // Non-colour channels: sign, arrow glyph, and the literal word
+    expect(behind).toContain(`${MINUS}24 min`);
+    expect(behind).toContain(DOWN);
+    expect(behind).toContain('>behind<');
+    expect(ahead).toContain('+24 min');
+    expect(ahead).toContain(UP);
+    expect(ahead).toContain('>ahead<');
+    // Screen readers get the whole sentence
+    expect(behind).toContain('aria-label="');
+    expect(behind).toContain('the provider published first.');
+    expect(ahead).toContain('Congress.Trade published first.');
+    // Arrows are decorative next to the word/sign, so they are not announced twice
+    expect(behind).toContain('class="lead-arrow" aria-hidden="true"');
+  });
+
+  it('drops the word (never the sign or the arrow) when a caller asks for the compact form', () => {
+    const { leadFigureHtml } = loadLeadHelpers();
+    const compact = leadFigureHtml(-1466, { word: false });
+    expect(compact).not.toContain('>behind<');
+    expect(compact).toContain(`${MINUS}24 min`);
+    expect(compact).toContain(DOWN);
+    expect(compact).toContain('aria-label="');
+    expect(compact).toContain('behind'); // still spelled out in the aria-label
+  });
+
+  it('.lead-behind is wired to a RED variable, not the neutral provider gray', () => {
+    expect(DASHBOARD_HTML).toContain('.lead-fig.lead-behind { color:var(--lag); }');
+    expect(DASHBOARD_HTML).toContain('.lead-fig.lead-ahead { color:var(--good); }');
+    // --lag aliases --sell (theme-following red); it is deliberately not --rival.
+    expect(DASHBOARD_HTML).toMatch(/--lag:\s*var\(--sell\);/);
+    expect(DASHBOARD_HTML).not.toContain('.lead-fig.lead-behind { color:var(--rival)');
+    // The old colour-only, sign-dropping card number is gone for good.
+    expect(DASHBOARD_HTML).not.toContain("var sign = isPos ? '+' : '';");
+    expect(DASHBOARD_HTML).not.toContain('sp-lead-num');
+  });
+
+  it('every lead/lag figure in the scorecard + raw data table goes through the signed formatter', () => {
+    // Card headline, median/P90 sublines, all three table columns, alerts strip.
+    expect(DASHBOARD_HTML).toContain("leadFigureHtml(headline, { cls: 'lead-big' })");
+    expect(DASHBOARD_HTML).toContain('leadFigureHtml(p.medianLeadSec, { word: false })');
+    expect(DASHBOARD_HTML).toContain('leadFigureHtml(p.avgLeadSec, { word: false })');
+    expect(DASHBOARD_HTML).toContain('leadFigureHtml(p.p90LeadSec, { word: false })');
+    expect(DASHBOARD_HTML).toContain('leadFigureHtml(best.medianLeadSec, { word: false })');
+    // setPricingProof is the one documented exception: prose that states the
+    // direction in words, reachable only for a positive median.
+    expect(DASHBOARD_HTML).toContain("'Right now: filings land here a median ' + fmtLead(best.medianLeadSec) + ' before '");
+  });
+});
+
+function loadSpCardHtml() {
+  const sources = [
+    ...loadDashboardVars(['SPEED_LANE_MIN_MATCHED', 'SPEED_SCOPE_NOTE_DEFAULT']),
+    ...loadDashboardFunctions([
+      'esc',
+      'fmtCount',
+      'fmtLead',
+      'leadDirection',
+      'leadSignChar',
+      'leadArrowChar',
+      'leadWord',
+      'fmtLeadSigned',
+      'leadDescription',
+      'leadFigureHtml',
+      'spScopeCounts',
+      'spScopeCountHtml',
+      'spScopeHtml',
+      'spScopeNoteHtml',
+      'spCardHtml',
+    ]),
+  ];
+  return new Function(
+    sources.join('\n\n') + '\nreturn { spCardHtml: spCardHtml, spScopeNoteHtml: spScopeNoteHtml };',
+  )() as {
+    spCardHtml: (p: Record<string, unknown>) => string;
+    spScopeNoteHtml: (totals: Record<string, unknown> | null) => string;
+  };
+}
+
+/** Unusual Whales' real 2026-08-11 shape: 8 matched, median +1466s but a mean
+ *  of -34s dragged negative by one large outlier — i.e. a card that must show a
+ *  RED, minus-signed headline sitting above a positive median. */
+const UW_LIVE = {
+  provider: 'unusual_whales',
+  label: 'Unusual Whales',
+  operationalStatus: 'running',
+  candidates: 85,
+  matched: 8,
+  strongMatched: 8,
+  providerObserved: 101,
+  maturedProviderObserved: 82,
+  unmatchedProvider: 82,
+  comparisonStatus: 'preliminary',
+  usFirstCount: 7,
+  providerFirstCount: 1,
+  tieCount: 0,
+  medianLeadSec: 1466,
+  avgLeadSec: -34,
+  p90LeadSec: 1796,
+};
+
+describe('provider scorecard card (live Unusual Whales shape)', () => {
+  it('headlines the MEDIAN, so one outlier race cannot flip the card against its own badge', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    const html = spCardHtml(UW_LIVE);
+    // avg is -34s but the median is +1466s off 7 wins / 1 loss: the badge says
+    // "Preliminary lead", and the headline now agrees with it.
+    expect(html).toContain('Preliminary lead');
+    expect(html).toContain('lead-fig lead-ahead lead-big');
+    expect(html).toContain('+24 min');
+    expect(html).toContain('preliminary typical (median) lead on live imports vs. their feed');
+  });
+
+  it('demotes the mean to a subline and signs it red when it disagrees', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    const html = spCardHtml(UW_LIVE);
+    expect(html).toContain('Average: <span class="lead-fig lead-behind"');
+    expect(html).toContain(`${MINUS}34 sec`);
+    expect(html).toContain(DOWN);
+    expect(html).toContain('P90: <span class="lead-fig lead-ahead"');
+    expect(html).toContain('+30 min');
+    // The disagreement is stated in words rather than left to be spotted.
+    expect(html).toContain('The average disagrees with the median here');
+  });
+
+  it('stays silent about the mean/median split when they agree', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    const html = spCardHtml({ ...UW_LIVE, avgLeadSec: 1500, comparisonStatus: 'usable' });
+    expect(html).not.toContain('The average disagrees with the median');
+    expect(html).toContain('typical (median) lead on live imports vs. their feed');
+  });
+
+  it('renders a red, minus-signed headline and says "lag" when the median says behind', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    const html = spCardHtml({
+      ...UW_LIVE, medianLeadSec: -2400, avgLeadSec: -3600, p90LeadSec: -30,
+      usFirstCount: 1, providerFirstCount: 7, comparisonStatus: 'usable',
+    });
+    expect(html).toContain('lead-fig lead-behind lead-big');
+    expect(html).toContain(`${MINUS}40 min`);
+    expect(html).toContain(DOWN);
+    // ...and never describes a negative number as a "lead".
+    expect(html).toContain('typical (median) lag behind their feed on live imports');
+    expect(html).not.toContain('(median) lead on live imports');
+  });
+});
+
+describe('"N of M matched" scope line (denominator the matcher lane exposes)', () => {
+  it('renders nothing at all while the scope fields are absent — never a substituted denominator', () => {
+    const { spCardHtml, spScopeNoteHtml } = loadSpCardHtml();
+    expect(spScopeNoteHtml(null)).toBe('');
+    expect(spScopeNoteHtml({ racedDisclosures: 421, matched: 109, maturedProviderObserved: 567 })).toBe('');
+    expect(spCardHtml(UW_LIVE)).not.toContain('sp-scope');
+  });
+
+  it('renders "N of M matched" plus the plain-English note once the fields arrive', () => {
+    const { spScopeNoteHtml } = loadSpCardHtml();
+    const html = spScopeNoteHtml({ scopeMatched: 3412, scopeTotal: 4102 });
+    expect(html).toContain('<strong>3,412</strong> of <strong>4,102</strong> matched');
+    // What M counts, in words, with the owner's two-space sentence gaps.
+    expect(html).toContain('every filer we track');
+    expect(html).toContain('all House and Senate members');
+    expect(html).toContain('the President and Vice President');
+    expect(html).toContain('Cabinet secretaries and agency heads');
+    expect(html).toContain('matched.&nbsp; ');
+  });
+
+  it('honours a server-supplied scopeLabel override, escaped', () => {
+    const { spScopeNoteHtml } = loadSpCardHtml();
+    const html = spScopeNoteHtml({ scopeMatched: 1, scopeTotal: 2, scopeLabel: 'House only <b>x</b>' });
+    expect(html).toContain('House only &lt;b&gt;x&lt;/b&gt;');
+    expect(html).not.toContain('every filer we track');
+  });
+
+  it('shows a per-provider scope line only when that provider carries its own pair', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    const html = spCardHtml({ ...UW_LIVE, scopeMatched: 41, scopeTotal: 102 });
+    expect(html).toContain('<div class="sp-scope"><strong>41</strong> of <strong>102</strong> matched</div>');
+  });
+
+  it('rejects a nonsense denominator rather than printing "N of 0"', () => {
+    const { spScopeNoteHtml } = loadSpCardHtml();
+    expect(spScopeNoteHtml({ scopeMatched: 5, scopeTotal: 0 })).toBe('');
+    expect(spScopeNoteHtml({ scopeMatched: 5, scopeTotal: -1 })).toBe('');
+    expect(spScopeNoteHtml({ scopeMatched: 'x', scopeTotal: 10 })).toBe('');
+    expect(spScopeNoteHtml({ scopeTotal: 10 })).toBe('');
+  });
+
+  it('both placements own a scope-note element that starts hidden', () => {
+    expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNote" hidden></p>');
+    expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNoteAdmin" hidden></p>');
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals)");
+  });
+});
+
+function loadExecTitleHelpers() {
+  const sources = [
+    ...loadDashboardVars([
+      'EXEC_TITLE_FORMS',
+      'EXEC_TITLES',
+      'EXEC_TITLES_SHORT',
+      'EXEC_TITLE_FALLBACK',
+      'EXEC_TITLE_FULL',
+      'EXEC_TITLE_TIGHT',
+    ]),
+    ...loadDashboardFunctions([
+      'chamberLabel',
+      'ordinalSuffix',
+      'fmtDistrictOrdinal',
+      'isExecutiveFiler',
+      'execTitleFor',
+      'execTitleFit',
+      'execDisplayTitle',
+      'memberBranchBits',
+      'memberBranchLabel',
+    ]),
+  ];
+  return new Function(
+    sources.join('\n\n') +
+      '\nreturn { isExecutiveFiler: isExecutiveFiler, execTitleFor: execTitleFor, execTitleFit: execTitleFit,' +
+      ' execDisplayTitle: execDisplayTitle, memberBranchBits: memberBranchBits, memberBranchLabel: memberBranchLabel,' +
+      ' EXEC_TITLE_TIGHT: EXEC_TITLE_TIGHT, EXEC_TITLE_FULL: EXEC_TITLE_FULL };',
+  )() as {
+    isExecutiveFiler: (chamber: unknown, filerId?: unknown) => boolean;
+    execTitleFor: (filerId: unknown) => string | null;
+    execTitleFit: (title: unknown, maxChars: number) => string;
+    execDisplayTitle: (filerId: unknown, curated?: unknown, maxChars?: number) => string;
+    memberBranchBits: (o: Record<string, unknown>, maxTitleChars?: number) => string[];
+    memberBranchLabel: (o: Record<string, unknown>, maxTitleChars?: number) => string;
+    EXEC_TITLE_TIGHT: number;
+    EXEC_TITLE_FULL: number;
+  };
+}
+
+describe('executive titles in the dashboard (owner: "don\'t say \'exec -\' before that")', () => {
+  it('inlines the shared title map instead of keeping a hand-copied one', () => {
+    const { execTitleFor } = loadExecTitleHelpers();
+    expect(execTitleFor('EXEC-BESSENT')).toBe('Treasury Secretary');
+    expect(execTitleFor('EXEC-DJT')).toBe('President');
+    expect(execTitleFor('EXEC-FRANK-J-BISIGNANO')).toBe('Social Security Commissioner');
+    // Uncurated EXEC-* falls back; congressional filers get no title at all.
+    expect(execTitleFor('EXEC-SOMEONE-NEW')).toBe('Executive Branch');
+    expect(execTitleFor('house-tx10-jane-smith')).toBeNull();
+    expect(execTitleFor('')).toBeNull();
+  });
+
+  it('picks the longest form that fits the caller budget', () => {
+    const { execTitleFit } = loadExecTitleHelpers();
+    expect(execTitleFit('Treasury Secretary', 28)).toBe('Treasury Secretary');
+    expect(execTitleFit('Treasury Secretary', 16)).toBe('Treasury Sec.');
+    expect(execTitleFit('Social Security Commissioner', 28)).toBe('Social Security Commissioner');
+    expect(execTitleFit('Social Security Commissioner', 16)).toBe('SSA Commissioner');
+    expect(execTitleFit('Executive Branch', 16)).toBe('Executive Branch');
+    expect(execTitleFit('Executive Branch', 12)).toBe('Executive');
+    // Never chopped mid-word, even when the short form still overflows.
+    expect(execTitleFit('MCC Chief Executive Officer', 4)).toBe('MCC CEO');
+  });
+
+  it('matches the server helper (shared/executiveTitles.ts) form for form', async () => {
+    const { execTitleFit } = loadExecTitleHelpers();
+    const { EXECUTIVE_TITLES, fitExecutiveTitle } = await import('../../shared/executiveTitles.ts');
+    for (const title of Object.values(EXECUTIVE_TITLES)) {
+      for (const budget of [8, 12, 14, 16, 20, 28]) {
+        expect(execTitleFit(title, budget)).toBe(fitExecutiveTitle(title, budget));
+      }
+    }
+  });
+
+  it('renders the position ALONE — no branch word in front of it, no state, no district', () => {
+    const { memberBranchBits, memberBranchLabel, EXEC_TITLE_TIGHT } = loadExecTitleHelpers();
+    // EXEC-MCCORMICK really does carry a state in `filers`; it must not leak.
+    const bits = memberBranchBits({
+      chamber: 'executive', filerId: 'EXEC-BESSENT', state: 'SC', district: '3',
+    });
+    expect(bits).toEqual(['Treasury Secretary']);
+    expect(bits.join(' · ')).not.toMatch(/exec/i);
+    expect(memberBranchLabel({ chamber: 'executive', filerId: 'EXEC-BESSENT' }, EXEC_TITLE_TIGHT))
+      .toBe('Treasury Sec.');
+    expect(memberBranchLabel({ chamber: 'oge', filerId: 'EXEC-DJT' })).toBe('President');
+  });
+
+  it('prefers the server-supplied title field when the payload carries one', () => {
+    const { execDisplayTitle, memberBranchBits } = loadExecTitleHelpers();
+    expect(execDisplayTitle('EXEC-BRAND-NEW', 'Commerce Secretary')).toBe('Commerce Secretary');
+    expect(memberBranchBits({ chamber: 'executive', filerId: 'EXEC-BRAND-NEW', title: 'Commerce Secretary' }))
+      .toEqual(['Commerce Secretary']);
+  });
+
+  it('never emits the fallback as a PREFIX to a real title', () => {
+    const { execDisplayTitle } = loadExecTitleHelpers();
+    for (const id of ['EXEC-BESSENT', 'EXEC-DJT', 'EXEC-SEAN-DUFFY', 'EXEC-SARA-BAILEY']) {
+      for (const budget of [10, 14, 20, 28]) {
+        const label = execDisplayTitle(id, null, budget);
+        expect(label.startsWith('Executive')).toBe(false);
+        expect(label).not.toMatch(/^exec\b/i);
+        expect(label).not.toMatch(/^(exec|executive)\s*[-–—]/i);
+      }
+    }
+    // Uncurated filers may still say "Executive Branch" — but only on its own.
+    expect(execDisplayTitle('EXEC-NOBODY', null, 28)).toBe('Executive Branch');
+  });
+
+  it('leaves congressional rows exactly as they were', () => {
+    const { memberBranchBits, memberBranchLabel } = loadExecTitleHelpers();
+    expect(memberBranchBits({ chamber: 'house', filerId: 'H001', state: 'CA', district: '17' }))
+      .toEqual(['House', 'CA - 17th']);
+    expect(memberBranchBits({ chamber: 'senate', filerId: 'S001', state: 'PA' }))
+      .toEqual(['Senate', 'PA']);
+    expect(memberBranchLabel({ chamber: 'house', filerId: 'H001' })).toBe('House');
+  });
+
+  it('treats an EXEC-* filer as executive even when the chamber column is blank', () => {
+    const { isExecutiveFiler, memberBranchBits } = loadExecTitleHelpers();
+    expect(isExecutiveFiler('', 'EXEC-DJT')).toBe(true);
+    expect(isExecutiveFiler('house', 'H001')).toBe(false);
+    expect(memberBranchBits({ chamber: '', filerId: 'EXEC-DJT' })).toEqual(['President']);
+  });
+
+  it('every render site of a filer descriptor goes through the shared helpers', () => {
+    // Trades card row 2, Trends politician leaderboard, top-late-filers list,
+    // People directory, politician drawer.
+    expect(DASHBOARD_HTML).toContain('var chamber = memberBranchLabel(r, EXEC_TITLE_TIGHT);');
+    expect(DASHBOARD_HTML).toContain('var metaBits = memberBranchBits(r, EXEC_TITLE_FULL).join');
+    expect(DASHBOARD_HTML).toContain('var p = memberBranchBits({ chamber: m.chamber, filerId: m.filerId, title: m.title, state: m.state })');
+    expect(DASHBOARD_HTML).toContain('if (isExecutiveFiler(m.chamber, m.filerId)) {');
+    expect(DASHBOARD_HTML).toContain('var isExec = isExecutiveFiler(p.chamber, filerId);');
+    expect(DASHBOARD_HTML).toContain('execDisplayTitle(filerId, p.title, EXEC_TITLE_FULL)');
+    // The old hard-coded bare-word fallback is gone.
+    expect(DASHBOARD_HTML).not.toContain("parts.push(esc(m.title ? String(m.title) : 'Executive'));");
+    // And a district never tags along behind an executive position.
+    expect(DASHBOARD_HTML).toContain("if (!isExec && p.district) subBits.push(");
+  });
+});
