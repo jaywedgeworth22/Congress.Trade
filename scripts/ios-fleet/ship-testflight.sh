@@ -245,7 +245,16 @@ resolve_seq_floor() {
     # ASC unknown. The local cache alone is exactly the silent-duplicate
     # failure mode; refuse to guess when it is missing too.
     logerr "seq sources: local=${l} asc=UNVERIFIED project=${p} -> floor=${floor}"
-    if [[ "$l" -eq 0 && "$p" -eq 0 && "$ALLOW_UNVERIFIED_SEQ" -eq 0 ]]; then
+    # ASC is the ONLY record that is advanced by shipping. The local cache can
+    # be lost (cache purge, re-imaged runner, a run under a different HOME) and
+    # project.pbxproj is NEVER advanced by this script -- .github/workflows/
+    # ios-ship.yml invokes the wrapper with no arguments, so --sync-project-version
+    # never runs, and that job holds `contents: read` so it could not commit the
+    # value back anyway. Gating the abort on `p -eq 0` therefore made it
+    # unreachable: p is 4 today and stays 4 forever, so the guard never fired and
+    # a lost cache + unreachable ASC would silently reuse a build number.
+    # Treat "ASC unverified" as fatal on its own.
+    if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 0 ]]; then
       die "cannot determine the next build number.
   App Store Connect could not be reached AND there is no local sequence
   (${STATE_DIR}/build-seq-${APP_KEY}.txt) and no ${prefix}.N in project.pbxproj.
@@ -253,7 +262,10 @@ resolve_seq_floor() {
   Fix one of these, then re-run:
     1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
        run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
-    2) or pass the number explicitly:  --build <N>  (see TestFlight for the last one)
+    2) or pass the number explicitly:  --version ${prefix}.<N>   (NOT --build <N>:
+       a bare --build leaves MARKETING at ${DEFAULT_MARKETING}, and Apple requires a
+       strictly greater build within that train, so it is rejected after the full
+       archive+upload. --version sets both fields to the same string.)
     3) or, only if you are certain this train is empty, re-run with --allow-unverified-seq"
     fi
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 1 ]]; then
@@ -271,6 +283,19 @@ next_build_seq() {
   mkdir -p "$STATE_DIR"
   local tries=0
   until mkdir "$lock_dir" 2>/dev/null; do
+    # Reclaim a stale lock. Without this, ANY abnormal exit between mkdir and
+    # rmdir below (a cancelled CI job, the 90-minute workflow timeout, or a
+    # failed seq-file write under `set -e` on a full disk) leaves the lockdir
+    # behind permanently and wedges every future ship with no self-heal.
+    if [[ -d "$lock_dir" ]]; then
+      local age
+      age=$(( $(date +%s) - $(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || date +%s) ))
+      if [[ "$age" -gt 900 ]]; then
+        echo "next_build_seq: reclaiming stale lock (${age}s old) at ${lock_dir}" >&2
+        rmdir "$lock_dir" 2>/dev/null || true
+        continue
+      fi
+    fi
     tries=$((tries + 1))
     if [[ "$tries" -gt 300 ]]; then
       echo "next_build_seq: lock timeout on ${lock_dir}" >&2
@@ -278,6 +303,8 @@ next_build_seq() {
     fi
     sleep 0.1
   done
+  # Release on ANY exit path, not just the happy one.
+  trap 'rmdir "'"$lock_dir"'" 2>/dev/null || true' EXIT
   # Re-read under the lock: a concurrent ship may have advanced it since the
   # floor was computed.
   local n
@@ -287,6 +314,7 @@ next_build_seq() {
   n=$((n + 1))
   printf '%s' "$n" > "$seq_file"
   rmdir "$lock_dir" 2>/dev/null || true
+  trap - EXIT
   printf '%s' "$n"
 }
 
