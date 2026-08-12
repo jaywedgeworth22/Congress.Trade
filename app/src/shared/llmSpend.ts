@@ -93,8 +93,20 @@ export function isLlmBudgetHalt(error: unknown): boolean {
 export const DEFAULT_LLM_DAILY_USD_CEILING = 10;
 /** Soft default per-doc lifetime LLM spend (all purposes). Override via LLM_DOC_USD_CEILING. */
 export const DEFAULT_LLM_DOC_USD_CEILING = 0.25;
-/** Default daily LlamaParse credit ceiling: 7,000 credits / 40 days pace = 175 credits/day per key account. */
-export const DEFAULT_LLAMAPARSE_DAILY_CREDIT_CEILING = 175;
+/**
+ * Default daily LlamaParse credit ceiling, in credits, FLEET-WIDE.
+ *
+ * This governor is enforced against `llm_spend_settlements`, whose only
+ * provider dimension is `provider` — there is no per-key column — so the
+ * number below caps the whole `LLAMAPARSE_API_KEY` pool combined, not one
+ * account. The pool is 7 keys, each its own free-tier org with its own
+ * 10,000-credit/month grant (see `extraction/llamaParseCredits.ts`), i.e.
+ * 70,000 credits/month. Paced over 40 days so a month's grant can never be
+ * exhausted before the accounts reset: 70,000 / 40 = 1,750 credits/day.
+ *
+ * Override via LLAMAPARSE_DAILY_CREDIT_CEILING (prod already sets 1750).
+ */
+export const DEFAULT_LLAMAPARSE_DAILY_CREDIT_CEILING = 1750;
 export const LLM_DOC_BUDGET_ERROR_MARKER = 'llm per-doc usd budget exceeded';
 export const LLM_DOC_ALREADY_EXTRACTED_MARKER = 'llm skip: doc already has transactions';
 
