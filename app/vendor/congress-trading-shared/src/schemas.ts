@@ -189,6 +189,7 @@ export const TransactionsQuerySchema = z.object({
   limit: z.number().int().positive().optional(),
   order: z.enum(["asc", "desc"]).optional(),
 });
+export type TransactionsQueryInput = z.input<typeof TransactionsQuerySchema>;
 export type TransactionsQuery = z.infer<typeof TransactionsQuerySchema>;
 
 // ---- Import/Share payload (App B → App A) ----
@@ -333,6 +334,18 @@ export const CongressEventSchema = z.object({
 });
 export type CongressEvent = z.infer<typeof CongressEventSchema>;
 
+export const CongressTradeDataSchema = z.object({
+  trades: z.array(CongressTransactionSchema).optional(),
+  transaction: CongressTransactionSchema.optional(),
+});
+export type CongressTradeData = z.infer<typeof CongressTradeDataSchema>;
+
+export const CongressTradeEventSchema = CongressEventSchema.extend({
+  type: z.literal("congress.trade").or(z.literal("trade.new")),
+  data: CongressTradeDataSchema.optional(),
+});
+export type CongressTradeEvent = z.infer<typeof CongressTradeEventSchema>;
+
 // ---- Analytics ----
 
 export const ConvictionTickerSchema = z.object({
@@ -407,6 +420,7 @@ export const MemberLeaderSchema = z.object({
 });
 export type MemberLeader = z.infer<typeof MemberLeaderSchema>;
 
+/** One performance leg (trade-date skill or filing-date copy-trade). */
 export const MemberPerformanceSchema = z.object({
   tradeCount: z.number().optional(),
   scoredCount: z.number().optional(),
@@ -415,8 +429,29 @@ export const MemberPerformanceSchema = z.object({
   medianExcess: z.number().nullable().optional(),
   avgReturn: z.number().nullable().optional(),
   avgExcess: z.number().nullable().optional(),
+  /** Filing-date leg only: excess annualized for Top Performers parity. */
+  avgAnnualizedExcess: z.number().nullable().optional(),
 });
 export type MemberPerformance = z.infer<typeof MemberPerformanceSchema>;
+
+/**
+ * Dual-anchor member performance from App A
+ * `GET /api/analytics/member/:filerId/performance`.
+ *
+ * - `tradeDate` — stock move since the politician's trade vs S&P (timing skill)
+ * - `filingDate` — move since public disclosure vs S&P (copy-trade for App B)
+ * - `performance` — legacy alias of `tradeDate` for older clients
+ */
+export const MemberDualPerformanceSchema = z.object({
+  filerId: z.string().optional(),
+  side: z.string().optional(),
+  buyCount: z.number().optional(),
+  tradeDate: MemberPerformanceSchema.nullable().optional(),
+  filingDate: MemberPerformanceSchema.nullable().optional(),
+  performance: MemberPerformanceSchema.nullable().optional(),
+  note: z.string().optional(),
+});
+export type MemberDualPerformance = z.infer<typeof MemberDualPerformanceSchema>;
 
 export const BacktestHorizonSchema = z.object({
   days: z.number(),

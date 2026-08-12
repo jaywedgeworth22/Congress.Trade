@@ -62,7 +62,7 @@ export const MAX_PUBLIC_TX_OFFSET = 2_000;
  * browser-shaped user agent and are authenticated by signature verification
  * (JWS chain / HMAC), not by looking human.
  */
-const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos', '/api/webhooks'];
+const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos', '/api/photos', '/api/webhooks'];
 
 /**
  * Paths under an EXEMPT_PREFIXES prefix that are NOT token-gated and must

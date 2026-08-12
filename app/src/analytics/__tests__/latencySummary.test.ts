@@ -98,7 +98,9 @@ function fairnessEnv() {
   const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const candidates = Array.from({ length: 20 }, (_, i) => ({
     provider: 'fmp',
-    trade_hash: `fmp-hash-${i}`,
+    // Realistic `lastName_TICKER_DATE_side` shape — the scope denominator
+    // rejects hashes with no filer segment, so a synthetic id would drop out.
+    trade_hash: `pelosi_TICK${i}_2026-06-01_buy`,
     status: i < 10 ? 'matched' : 'pending',
     chamber: 'house',
     provider_key: i < 10 ? `fmp-key-${i}` : null,
@@ -114,7 +116,9 @@ function fairnessEnv() {
     provider: 'fmp',
     chamber: 'house',
     provider_key: `fmp-key-${i}`,
-    trade_hash: `fmp-hash-${i}`,
+    // Realistic `lastName_TICKER_DATE_side` shape — the scope denominator
+    // rejects hashes with no filer segment, so a synthetic id would drop out.
+    trade_hash: `pelosi_TICK${i}_2026-06-01_buy`,
     first_observed_at: old,
     last_observed_at: old,
     provider_published_at: null,
@@ -165,7 +169,10 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.windowDays).toBe(7);
     expect(body.maxConcurrentDeltaHours).toBe(336);
     expect(body.totals.racedDisclosures).toBe(3);
-    expect(body.totals.matched).toBe(2);
+    // hash_a is a `trade-hash` pairing; hash_b is `fuzzy-no-ticker`, which
+    // never verified WHICH security was traded. Only the strong one is allowed
+    // to carry the speed claim.
+    expect(body.totals.matched).toBe(1);
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
       // Public scoreboard collapses stable + RapidAPI into one "FMP" lane.
@@ -174,13 +181,15 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       // not intentional OFF (grey — only when FMP_LATENCY_PROBE_ENABLED=false).
       operationalStatus: 'stopped',
       candidates: 2,
-      matched: 2,
-      strongMatched: 2,
-      usFirstCount: 2,
+      matched: 1,
+      strongMatched: 1,
+      // Reported beside the headline, never inside it.
+      weakMatched: 1,
+      usFirstCount: 1,
       providerFirstCount: 0,
-      // deltas: +5400s and +1800s -> median/avg 3600s
-      medianLeadSec: 3600,
-      avgLeadSec: 3600,
+      // Only hash_a's delta (+5400s) times the race; hash_b's +1800s is weak.
+      medianLeadSec: 5400,
+      avgLeadSec: 5400,
     });
     // RapidAPI must not appear as a separate public provider.
     expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
@@ -216,6 +225,34 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
       // 10 concurrent races + incomplete coverage → preliminary soft claim, not full usable.
       comparisonStatus: 'preliminary',
       comparisonBasis: 'matched-overlap-only',
+    });
+  });
+
+  it('publishes the "N of M matched" scope denominator both clients render', async () => {
+    const res = await app.request('http://localhost/latency-summary', {}, fairnessEnv());
+    const body = (await res.json()) as {
+      scope: {
+        windowHours: number;
+        total: number;
+        matched: number;
+        ctOnly: number;
+        providerOnly: number;
+        matchedPct: number | null;
+        excludedOutOfScope: number;
+        excludedMissingFiler: number;
+      };
+    };
+    // 20 House lines; both sides saw all 20 (one line, not two), and 10 are
+    // strongly paired. M is the union, never the sum.
+    expect(body.scope).toMatchObject({
+      windowHours: 336,
+      total: 20,
+      matched: 10,
+      ctOnly: 0,
+      providerOnly: 0,
+      matchedPct: 50,
+      excludedOutOfScope: 0,
+      excludedMissingFiler: 0,
     });
   });
 

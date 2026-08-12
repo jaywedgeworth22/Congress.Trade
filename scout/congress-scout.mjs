@@ -233,12 +233,172 @@ function keyFromLink(link) {
   return null;
 }
 
+// --- upstream backoff + circuit breaker -------------------------------------
+// 2026-08-10/11 outage post-mortem. eFD's /search/report/data/ started serving
+// a static Akamai "WEBSITE TEMPORARILY UNAVAILABLE DUE TO MAINTENANCE" 503
+// while every other eFD path kept answering normally from gunicorn. The scout
+// had no backoff and no escalation, so it reran the identical failing
+// handshake every cycle for 32 hours — 1,385 consecutive failures, each one a
+// console.warn in a file nobody reads.
+//
+// Two independent defects, both fixed here:
+//   1. Hammering. Re-issuing a request an upstream is already refusing, once a
+//      minute forever, is how a temporary upstream outage turns into a
+//      permanent ban of this Mac's residential IP — the one asset that makes
+//      Senate polling possible at all.
+//   2. Silence. 1,385 identical failures produced no escalation of any kind.
+//      There must be a point at which a source stops retrying, says so out
+//      loud, and waits.
+const BREAKER_BASE_MS = Number(process.env.SOURCE_BREAKER_BASE_MS) || 60_000;
+const BREAKER_MAX_MS = Number(process.env.SOURCE_BREAKER_MAX_MS) || 30 * 60_000;
+const BREAKER_ALERT_AFTER = Number(process.env.SOURCE_BREAKER_ALERT_AFTER) || 5;
+const BREAKER_RENOTIFY_MS = Number(process.env.SOURCE_BREAKER_RENOTIFY_MS) || 6 * 3_600_000;
+const BREAKER_FILE = process.env.BREAKER_FILE
+  || STATE_FILE.replace(/(\.json)?$/i, '') + '-breakers.json';
+
+const PUSHOVER_APP_TOKEN = process.env.PUSHOVER_APP_TOKEN || process.env.PUSHOVER_CT_API_TOKEN || '';
+const PUSHOVER_USER_KEY = process.env.PUSHOVER_USER_KEY || '';
+
+/**
+ * Owner-visible escalation. Never throws and never logs the token: an alert
+ * channel that can take the scout down, or that leaks a credential into a log
+ * file, is worse than no alert channel.
+ */
+async function alertOwner({ title, message, priority = 1 }) {
+  if (!PUSHOVER_APP_TOKEN || !PUSHOVER_USER_KEY) return { sent: false, reason: 'pushover unconfigured' };
+  try {
+    const res = await fetch('https://api.pushover.net/1/messages.json', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        token: PUSHOVER_APP_TOKEN, user: PUSHOVER_USER_KEY, title, message, priority: String(priority),
+      }).toString(),
+    });
+    return res.ok ? { sent: true } : { sent: false, reason: `pushover HTTP ${res.status}` };
+  } catch (e) {
+    return { sent: false, reason: e?.message || String(e) };
+  }
+}
+
+const breakers = (() => {
+  try {
+    return existsSync(BREAKER_FILE) ? JSON.parse(readFileSync(BREAKER_FILE, 'utf8')) : {};
+  } catch {
+    return {};
+  }
+})();
+// Breaker state is persisted because pm2 restarts it 3+ times on a bad day. An
+// in-memory-only breaker resets to "closed" on every restart, which would let a
+// restart loop reproduce exactly the hammering this exists to prevent.
+const saveBreakers = () => {
+  try { writeFileSync(BREAKER_FILE, JSON.stringify(breakers, null, 2)); } catch {}
+};
+const breaker = (name) => (breakers[name] ??= {
+  fails: 0, openUntil: 0, firstFailAt: 0, notifiedAt: 0, lastReason: '', lastSkipLogAt: 0,
+});
+
+function breakerDelayMs(fails) {
+  const raw = Math.min(BREAKER_BASE_MS * 2 ** (fails - 1), BREAKER_MAX_MS);
+  // +/-25% jitter: without it every restart, and every peer that shares this
+  // upstream, re-synchronises its retries onto the same second.
+  return Math.round(raw * (0.75 + Math.random() * 0.5));
+}
+
+/** True when the breaker is open — callers must skip the request entirely. */
+function breakerOpen(name, now = Date.now()) {
+  const b = breaker(name);
+  if (b.openUntil <= now) return false;
+  // Rate-limit the skip line itself; a chatty skip is just a cheaper flood.
+  if (now - (b.lastSkipLogAt || 0) >= 10 * 60_000) {
+    b.lastSkipLogAt = now;
+    saveBreakers();
+    log(`~ ${name}: breaker OPEN (${b.fails} consecutive failures, ${b.lastReason}) — `
+      + `next attempt in ${Math.round((b.openUntil - now) / 1000)}s`);
+  }
+  return true;
+}
+
+async function recordFailure(name, reason, now = Date.now()) {
+  const b = breaker(name);
+  b.fails += 1;
+  b.lastReason = reason;
+  if (!b.firstFailAt) b.firstFailAt = now;
+  b.openUntil = now + breakerDelayMs(b.fails);
+  const downMin = Math.round((now - b.firstFailAt) / 60_000);
+  const renotifyDue = now - (b.notifiedAt || 0) >= BREAKER_RENOTIFY_MS;
+  if (b.fails >= BREAKER_ALERT_AFTER && (!b.notifiedAt || renotifyDue)) {
+    const res = await alertOwner({
+      title: `CT scout DOWN: ${name}`,
+      message: `${name} has failed ${b.fails} consecutive polls over ${downMin}m.\nLast: ${reason}\n`
+        + `Backing off; next attempt in ${Math.round((b.openUntil - now) / 60_000)}m.`,
+      priority: 1,
+    });
+    // Record the notification only on confirmed delivery, so an undelivered
+    // alarm retries next cycle instead of silently counting as "notified".
+    if (res.sent) b.notifiedAt = now;
+    else warn(name, `escalation NOT delivered (${res.reason})`);
+  }
+  saveBreakers();
+}
+
+async function recordSuccess(name, now = Date.now()) {
+  const b = breaker(name);
+  if (!b.fails) return;
+  const downMin = Math.round((now - (b.firstFailAt || now)) / 60_000);
+  log(`+ ${name}: recovered after ${b.fails} consecutive failures (${downMin}m down)`);
+  if (b.notifiedAt) {
+    await alertOwner({
+      title: `CT scout recovered: ${name}`,
+      message: `${name} is polling again after ${b.fails} failures over ${downMin}m.`,
+      priority: 0,
+    });
+  }
+  breakers[name] = { fails: 0, openUntil: 0, firstFailAt: 0, notifiedAt: 0, lastReason: '', lastSkipLogAt: 0 };
+  saveBreakers();
+}
+
 // --- Senate eFD (3-step CSRF/agreement/DataTables; residential IP required) --
 function fmtSenate(d) {
   const p = (n) => String(n).padStart(2, '0');
   return `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
+
+/**
+ * Distinguishes failure classes that look identical at the status line but
+ * have opposite responses. The 2026-08-11 outage was `upstream-maintenance`:
+ * a site-wide Akamai intercept on one path, confirmed by the maintenance page
+ * being served from `AkamaiNetStorage` while /search/home/ still answered 200
+ * from gunicorn on the same connection. Retrying harder could not have fixed
+ * it, and would only have risked the IP.
+ */
+const MAINTENANCE_RE = /site under maintenance|temporarily unavailable due to maintenance/i;
+function classifyUpstream(status, body) {
+  if (status === 503 && MAINTENANCE_RE.test(body || '')) {
+    return 'upstream-maintenance (static maintenance page — upstream outage, not our IP)';
+  }
+  if (status === 403 || status === 401) return 'blocked (IP or session rejected)';
+  if (status === 429) return 'throttled (back off harder)';
+  if (status >= 500) return 'upstream-error';
+  return `http-${status}`;
+}
+
+/**
+ * Breaker-guarded entry point. The unguarded handshake lives in
+ * detectSenateOnce; everything that decides *whether* to run it lives here.
+ */
 async function detectSenate() {
+  if (breakerOpen('senate')) return [];
+  try {
+    const out = await detectSenateOnce();
+    await recordSuccess('senate');
+    return out;
+  } catch (e) {
+    await recordFailure('senate', e?.message || String(e));
+    throw e;
+  }
+}
+
+async function detectSenateOnce() {
   const jar = new Map();
   const H = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' };
   let res = await fetch(`${SENATE}/search/`, { headers: H, redirect: 'manual' });
@@ -249,7 +409,10 @@ async function detectSenate() {
     res = await fetch(new URL(loc, `${SENATE}/search/`).href, { headers: { ...H, cookie: cookieHeader(jar) }, redirect: 'manual' });
     absorb(jar, res);
   }
-  if (!res.ok) throw new Error(`GET /search/ HTTP ${res.status}`);
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => '')).slice(0, 2000);
+    throw new Error(`GET /search/ HTTP ${res.status} — ${classifyUpstream(res.status, snippet)}`);
+  }
   const html = await res.text();
   // The hidden input's name/value attribute order isn't guaranteed by eFD's
   // template, so try both orders (mirrors app/src/ingestion/senateSource.ts
@@ -283,7 +446,14 @@ async function detectSenate() {
     headers: { ...H, 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', cookie: cookieHeader(jar), referer: `${SENATE}/search/`, origin: SENATE, 'x-csrftoken': jar.get('csrftoken') || token, 'x-requested-with': 'XMLHttpRequest', accept: 'application/json,text/javascript,*/*; q=0.01' },
     body: body.toString(),
   });
-  if (!data.ok) throw new Error(`report/data/ HTTP ${data.status}`);
+  if (!data.ok) {
+    // Read a bounded slice of the body before throwing. The old code threw on
+    // the status alone, which is why 1,385 log lines said "HTTP 503" and none
+    // said "the Senate is in a maintenance window" — the answer was in the
+    // response body the whole time.
+    const snippet = (await data.text().catch(() => '')).slice(0, 2000);
+    throw new Error(`report/data/ HTTP ${data.status} — ${classifyUpstream(data.status, snippet)}`);
+  }
   const json = await data.json();
   const rows = Array.isArray(json.data) ? json.data : [];
   const out = [];

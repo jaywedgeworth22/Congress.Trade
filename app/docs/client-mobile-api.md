@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-08-09
+Last updated: 2026-08-11
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -170,17 +170,74 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
 - `bootstrap` currently returns `serverTime`, `auth`, `capabilities`, and an
   `endpoints` map for the current client surface.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
-  `memberName`, `chamber`, `type`, `minAmount`, `from`, `to`, `sort`, `order`,
-  `offset`, and `limit`, and returns the cursor/count/total metadata used by
-  polling clients. `minAmount` (server-side `filtersFromQuery`/`TxQueryParams`,
-  same as the website's shared `qMinAmt`/`trMinAmt` pill) filters to
-  `amountMin >= minAmount`. **iOS does not send `minAmount` and has no $/size
-  filter UI** (owner reversal, 2026-08-09: the iOS `$`-threshold pill added
-  earlier the same day was removed — no $/size dropdown on any platform).
-  `GET /api/export/transactions.csv` still accepts the full filter set
-  (including `minAmount`) for Premium CSV export; iOS's export call simply
-  never populates that param. This endpoint has no `party` param at all —
-  see the iOS multi-select note below.
+  `memberName`, `chamber`, `party`, `type`, `minAmount`, `maxAmount`, `from`,
+  `to`, `sort`, `order`, `offset`, and `limit`, and returns the
+  cursor/count/total metadata used by polling clients.
+
+  **Default order (fixed 2026-08-11 — was oldest-first).** `order` defaults to
+  `desc` (newest-first) whenever the request has **no forward cursor**
+  (`since` absent). The underlying query builder (`buildTransactionsQuery`,
+  `app/src/delivery/rows.ts`) still defaults to `cursor_seq ASC` so an
+  incremental `since=`-cursor poll keeps resuming gap-free — that ASC default
+  is preserved whenever `since` is present, **including the explicit
+  `since=0`** (a legitimate "start of history, but I am a resumable-cursor
+  client" value, distinct from omitting `since` entirely). The bug: a plain
+  `GET /feed` with no params used to return the oldest ~11,820 rows first —
+  bulk-imported `seed_dataset` rows with no owning `filings` row at all, so
+  `filing.filedDate` / `filing.firstSeenAt` / `filing.sourceUrl` all came back
+  `null` on every one of them. iOS is unaffected either way: it always sends
+  its own explicit `order` and never sends `since`
+  (`clients/ios/CongressTrade/Store/CongressTradeStore.swift`). An explicit
+  `order=` query param always wins over this default. Pinned by
+  `app/src/client/__tests__/routes.test.ts` ("client API feed: default order
+  (oldest-first-seed-rows bug)").
+
+  **`$` amount bounds (`minAmount` / `maxAmount`).** Both are parsed by
+  `filtersFromQuery` (`app/src/client/utils.ts`, via `asNonNegativeNumber`) and
+  land on `TxQueryParams`; `buildTxFilters` (`app/src/delivery/rows.ts`) turns
+  them into `t.amount_min >= ?` and `t.amount_min <= ?`. Note that **both
+  bounds compare against `transactions.amount_min` — the disclosed STOCK Act
+  bracket FLOOR, not a trade value.** No true trade value is ever disclosed, so
+  `maxAmount=50000` means "brackets that *start* at or below \$50,000", not
+  "trades worth at most \$50,000": a `$15,001–$50,000` row matches, and so
+  would a `$50,001–$100,000` row under `maxAmount=50001`. Pass ladder-aligned
+  floors (`1001`, `15001`, `50001`, `100001`, `250001`, `500001`, `1000001`,
+  `5000001`, `25000001`, `50000001`) rather than arbitrary dollar amounts.
+  Absent/empty/negative/non-numeric values are ignored rather than rejected,
+  and an inverted band (`minAmount > maxAmount`) is simply unsatisfiable
+  (empty page, `total: 0`).
+
+  Both bounds are applied by `buildTransactionsCountQuery` as well as the page
+  query, so **`total` is recomputed under the filter** — the pager's "Page X of
+  Y" stays truthful. This is exactly why the bounds must stay server-side: a
+  client-side amount filter would hide rows while leaving `total` reporting the
+  unfiltered corpus. Pinned by
+  `app/src/client/__tests__/feedAmountFilter.test.ts`.
+
+  Surface differences worth knowing: `/api/client/v1/feed` accepts **both**
+  bounds, while `/api/transactions` (the website's own feed, and the
+  `GET /api/export/transactions.csv` Premium export that shares its parser in
+  `app/src/delivery/rest.ts`) parses **`minAmount` only** — there is no
+  `maxAmount` on that path.
+
+  **UI status: there is no `$`/size filter on ANY platform, by owner
+  decision.** The web Trades tab's `$ Minimum` pill was removed in owner
+  follow-up batch #21 (see `app/src/ui/dashboardHtml.ts` — "the $ Minimum
+  pill/select was removed entirely — no $/size dropdown on any platform"), and
+  the iOS `$`-threshold pill was removed the same way on 2026-08-09. The only
+  surviving `minAmount` control anywhere is the **Delivery/webhook subscription
+  form**'s `newMinAmt` "Minimum Trade Size" select, which filters an alert
+  stream, not a browse list. The query params above are a supported contract
+  for direct API consumers and CSV export; **do not add a `$` filter UI to iOS
+  as "web parity" — the web does not have one, and re-adding it would reverse
+  an explicit owner decision.**
+
+  **`party` IS a server param** (corrected 2026-08-11; the note below saying it
+  is not was stale). `filtersFromQuery` parses `party` through `asPartyBuckets`
+  and it is CSV multi-select capable (`?party=D,R`), on both this endpoint and
+  `/api/transactions`; it narrows `total` like every other server filter.
+  Verified in production: unfiltered `total` 89,422 vs `party=D` 48,443 and
+  `party=R` 39,126.
   - iOS's Chamber/Party/Trade Type filter pills are multi-select (owner
     directive, 2026-08-09), matching the web's own multi-select chip
     semantics: `chamber` is genuinely CSV-capable server-side (`asChambers`),
@@ -190,13 +247,22 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
     web's own `qSideGroup`/`selectedSideParam` single-value fallback) and
     otherwise narrows the fetched page to the selected sides client-side, so
     a 2+ selection still filters correctly on-device even though the
-    request itself is unfiltered. Party has **no feed-level server param at
-    all** — `filtersFromQuery` (`app/src/client/utils.ts`) never parses a
-    `party` value for `feed`/`transactions.csv` — so iOS's Party pill
-    filters the Trades list entirely client-side, for any number of parties
-    selected; Trends analytics' `party=` (`asPartyBucket`,
-    `app/src/analytics/sql.ts`) is separately single-valued and only
-    receives it when exactly one party is selected.
+    request itself is unfiltered.
+
+    **Party (corrected 2026-08-11 — the previous text here was wrong).** This
+    paragraph used to say party had "no feed-level server param at all". That
+    has not been true since PR #1594: `filtersFromQuery`
+    (`app/src/client/utils.ts`) parses `party` via `asPartyBuckets`, which is
+    CSV multi-select capable (`?party=D,R`, buckets `D`/`R`/`O`, with `I`
+    folded into `O`), and `buildTxFilters` applies it to the page **and** the
+    count. iOS still filters its Party pill entirely client-side, which means
+    the Trades `total` (and therefore "Page X of Y") is computed over the
+    unfiltered corpus whenever a party is selected — the same class of bug the
+    asset-class and amount filters were moved server-side to avoid. iOS should
+    forward `party=` as CSV and drop the on-device pass. Note the two layers
+    take different shapes: the feed takes a CSV **list**, while Trends
+    analytics' `party=` (`asPartyBucket`, `app/src/analytics/sql.ts`) is
+    single-valued and should still only be sent when exactly one is selected.
   - `sort` accepts `published`, `cursor` (default), or `tx_date` (fixed
     2026-08-09 — `tx_date` was already a valid `TxQueryParams`/SQL sort key
     for `/api/transactions` but this endpoint's query parser silently dropped
@@ -243,6 +309,121 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
   - `GET /api/client/v1/trade/:id`
   - `GET /api/client/v1/ticker/:ticker`
   - `GET /api/client/v1/member/:memberIdOrName`
+
+### Company drawer parity — `GET /api/client/v1/ticker/:ticker?include=analytics`
+
+The website's company drawer shows four things the plain ticker read did not:
+**Buy Pressure**, the **buys/sells over time** chart, **Top Buyers/Sellers**,
+and the **"Performance After Buys"** backtest. The web builds those from two
+internal routes (`GET /api/analytics/ticker/:t` plus `.../backtest`).
+
+**Decision (2026-08-11): enrich this contract; do NOT point clients at
+`/api/analytics/ticker/:t`.** Reasons, in order of weight:
+
+1. **Contract ownership.** The repo rule is that the backend owns one
+   `/api/client/v1/*` contract for clients. `/api/analytics/*` is the
+   website's internal shape: it stamps a web-shaped `meta()` envelope and its
+   ticker route returns `recentTrades[].rawText` — raw filing text the phone
+   never renders. Binding an App-Store-frozen binary to a surface the
+   analytics layer reshapes freely is how a shipped app breaks.
+2. **Round trips on cellular.** The drawer would cost two extra requests, and
+   iOS would decode a *second* copy of the recent-trade list it already has in
+   `items`.
+3. **Cost control.** The backtest leg reads this ticker's full `price_eod`
+   history *and* the entire `spx_eod` table. That is fine for a drawer the
+   user deliberately opened; it is not fine as unconditional work on the same
+   endpoint iOS uses for a plain trade list.
+
+So the block is **opt-in** via `?include=analytics` and is computed from the
+*same* analytics builders the website uses (`buildTickerSummaryQuery`,
+`buildTickerTimeSeriesQuery`, `buildTickerTopTradersQuery`,
+`buildTickerBacktestCohortQuery` + `aggregateTickerBacktest`), so the phone and
+the web drawer cannot drift. Implementation: `app/src/client/tickerAnalytics.ts`.
+
+- `include` is a **CSV token list**; unknown tokens are ignored, not an error
+  (`?include=asset,analytics` works).
+- **Without the token the `analytics` key is absent entirely** — existing
+  decoders see byte-for-byte the response they see today.
+- Optional `window` and `granularity` narrow the block. `window` uses the
+  analytics vocabulary — `all` (default here), `<N>d` (e.g. `90d`, `365d`),
+  `this_cy`, `last_cy`. **There is no `1y` token**; an unrecognized value
+  silently falls back to `all` rather than erroring, so do not invent one.
+  `granularity` (`day`/`week`/`month`) defaults from the window.
+- Chamber/party/source are deliberately **not** accepted: the web drawer does
+  not scope by them either, and each extra dimension multiplies the cache
+  keyspace for a screen opened one ticker at a time.
+- The whole block is cached in `CONFIG_KV` for 600s under one key — the same
+  TTL as the analytics route it mirrors — so a re-open pays for the trade list
+  only.
+
+Shape (all dollar figures are whole-dollar bracket-midpoint **estimates**;
+`estimatedAmounts: true`):
+
+- `analytics.summary` — `totalTrades`, `buyCount`, `sellCount`, `memberCount`,
+  `estVolumeUsd`, `estNetFlowUsd`, `firstTrade`, `lastTrade`, and
+  **`netSentiment`** = buy pressure as a `0..1` fraction (`buys / (buys +
+  sells)`), computed server-side so no client re-derives it, and `null` when
+  the window holds no directional trade. **This summary is windowed and is
+  therefore distinct from the envelope's top-level `summary`, which stays
+  all-time** so existing decoders keep their current meaning.
+- `analytics.series[]` — `{ period, buys, sells, estBuyVolUsd, estSellVolUsd }`
+  for the buys/sells chart.
+- `analytics.topBuyers[]` / `analytics.topSellers[]` — `{ filerId, fullName,
+  partyBucket (D/R/O), photoUrl, tradeCount, estVolumeUsd }`, names already run
+  through `cleanFilerName`.
+- `analytics.backtest` — `{ totalBuyEvents, pricedDays, minN, horizons[] }`,
+  horizons at 21/63/126/252 trading days, each `{ days, tradeCount, n,
+  medianReturn, avgReturn, winRate, medianExcess, avgExcess }`. **Honesty
+  rules a client must respect:** `n` is how many buy events actually scored at
+  that horizon (a horizon without enough forward price history reports `n: 0`),
+  and every derived statistic is `null` below `minN` (5) rather than published
+  on a thin sample. `totalBuyEvents` stays the full cohort at every horizon, so
+  render "6 buys, 0 scored at 252d" — never "0 buys".
+
+**Failure semantics.** The trade list is this endpoint's primary job, so an
+analytics failure degrades that one section: the response is still `200` with
+`analytics: null` and a full `items` array. **Clients must treat
+`analytics: null` as "unavailable right now", never as "no activity"** — the
+key being present-and-null is distinct from the key being absent (not
+requested). Pinned by `app/src/client/__tests__/tickerAnalytics.test.ts`.
+
+### Trends sections served directly from `/api/analytics/*`
+
+Three Trends sections have no `/api/client/v1/*` equivalent and are read
+straight from the analytics router (public, unauthenticated, `meta()`
+envelope with `window`/`chamber`/`party`/`source`/`estimatedAmounts`/`asOf`).
+iOS already reaches this router via `APIClient.analytics(path:)`. All three
+were verified live on 2026-08-11 and pinned by
+`app/src/analytics/__tests__/trendsRoutes.test.ts`:
+
+- **`GET /api/analytics/party-split`** (+ `window`, `granularity`) — Party
+  Split. Returns `overall` as a map that **always contains all three buckets
+  `D`/`R`/`O`, zero-filled** (so "no independents traded" is distinguishable
+  from a missing key), each `{ buys, sells, estVolumeUsd, estNetFlowUsd,
+  members }`; plus `byPeriod[]`, one record per period with **flat** keys
+  `{ period, D_buys, D_sells, R_buys, R_sells, O_buys, O_sells }` (the server
+  pivots the per-(period,party) rows for you).
+- **`GET /api/analytics/sector-breakdown`** (+ `window`, `limit`) — Sector
+  Breakdown. `{ count, sectors[] }` where each entry is `{ assetType,
+  assetTypeCategory, rawAssetTypes[], tradeCount, buyCount, sellCount,
+  estVolumeUsd, estNetFlowUsd, uniqueMembers, uniqueTickers }`. **Key logic off
+  the stable slug `assetTypeCategory` and display the label `assetType`.**
+  This groups by disclosed **instrument type** (`transactions.asset_type`) and
+  is a *different card* from `GET /api/analytics/sector-flow`, which groups by
+  real **GICS sector** (`securities_ref.sector`) and which iOS already renders.
+- **`GET /api/analytics/conflicts`** (+ `window`, `limit`, max 500, default
+  100) — Committee Sector Conflicts. `{ count, conflicts[] }`, each `{ id,
+  ticker, sector, txType, txDate, filerId, memberName, chamber, partyBucket,
+  viaCommittees[], estAmountUsd }`. The route applies the curated
+  committee→sector map (`app/src/analytics/conflicts.ts`) in the handler, so
+  only genuine conflicts are published, and `limit` bounds the *published*
+  count.
+  - **Gap:** this envelope has **no `photoUrl`**, unlike every other
+    member-bearing list the phone renders (feed rows, `/api/members`, and the
+    company drawer's top buyers/sellers all carry one). Adding it needs
+    `fl.photo_url` in `buildConflictCandidatesQuery`
+    (`app/src/analytics/builders.ts`) plus a passthrough in the route. Until
+    then a conflicts list must render monograms, not avatars.
 - `GET /api/members` (public roster, origin-level — not `/api/client/v1/*`,
   same pattern as `/api/transactions`, `auth/*`, and the logo proxy that
   `APIClient.swift` already calls at `originURL`) returns

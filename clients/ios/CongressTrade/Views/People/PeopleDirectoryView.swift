@@ -4,6 +4,7 @@ import SwiftUI
 /// multi-token name/state/party search + column sort).
 struct PeopleDirectoryView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var selectedMemberId: String?
@@ -103,6 +104,20 @@ struct PeopleDirectoryView: View {
                             }
                             .padding(.top, 40)
                         } else {
+                        if horizontalSizeClass == .regular {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 540), spacing: 12)], spacing: 12) {
+                                ForEach(pageSlice(of: members, page: page)) { member in
+                                    Button {
+                                        selectedMemberId = member.filerId
+                                        selectedMemberName = member.fullName ?? member.filerId
+                                    } label: {
+                                        PersonRow(member: member)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens politician details")
+                                }
+                            }
+                        } else {
                             LazyVStack(spacing: 8) {
                                 ForEach(pageSlice(of: members, page: page)) { member in
                                     Button {
@@ -115,6 +130,7 @@ struct PeopleDirectoryView: View {
                                     .accessibilityHint("Opens politician details")
                                 }
                             }
+                        }
 
                             directoryPager(page: page, pages: pages)
                                 .padding(.top, 4)

@@ -100,10 +100,17 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   reviewBacklogWarn: 25,
   txAgeHours: 96,
   strandedFilingsWarn: 1,
-  // House/Senate poll on the minutely watcher cadence — 6h of no success is
-  // unambiguously wrong. Executive (OGE) self-gates to a ~6h cadence and
-  // filings land every few weeks, so allow two missed cycles + slack.
-  pollSuccessMaxAgeHours: { house: 6, senate: 6, executive: 26 },
+  // House/Senate poll on the minutely watcher cadence, so 6h of no success was
+  // already generous — ~240 consecutive failed cycles. The 2026-08-11 Senate
+  // outage showed 6h is still too slow for a source that publishes daily: the
+  // owner learned of it from a phone alert a day in. 3h is ~120 failed cycles,
+  // still far past any transient blip, and halves the worst-case blind window.
+  // Safe against quiet days: liveness records a *poll* success, not a filing —
+  // a poll that returns zero rows still counts (see recordProbeOutcome, where
+  // kind:'success' is independent of fetchedRows).
+  // Executive (OGE) self-gates to a ~6h cadence and filings land every few
+  // weeks, so it keeps two missed cycles + slack.
+  pollSuccessMaxAgeHours: { house: 3, senate: 3, executive: 26 },
   latencyObservationMaxAgeHours: 24,
   latencyProviderSilenceHours: 48,
 };

@@ -1042,7 +1042,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-topbar-title .muted { font-weight:400; }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
-    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text-dim);
+    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text);
     font-size:20px; border:1px solid transparent; border-radius:999px;
     background:color-mix(in srgb, var(--panel) 92%, transparent); line-height:1; touch-action:manipulation;
   }
@@ -3083,9 +3083,11 @@ ${speedProofSectionHtml(true)}
       </table>
     </div>
     <div class="section">
-      <h3>LLM Spend &amp; LlamaParse Credits</h3>
-      <p class="sub">Per-model extraction/agreement/benchmark spend, and the live LlamaParse free-credit balance across every key in LLAMAPARSE_API_KEY (each key is its own free-tier account with its own 10,000-credit/month grant and reset date — the credits are fetched live from LlamaIndex Cloud, not from this app's own spend ledger). API HOOK: GET /api/admin/llm-spend-report</p>
-      <div class="row-flex" style="margin-bottom:10px">
+      <h3>LLM Spend &amp; Extraction Metrics (30 Days)</h3>
+      <p class="sub">Past 30-day extraction method breakdown (deterministic vs paid LLMs, average/P90/highest cost per doc), per-model spend, and live LlamaParse credit balances. API HOOK: GET /api/admin/llm-spend-report</p>
+      <h4 style="margin:12px 0 8px">30-Day Document Extraction Summary</h4>
+      <div id="extraction30dGrid" class="diag-grid" aria-live="polite"></div>
+      <div class="row-flex" style="margin-top:16px;margin-bottom:10px">
         <button class="btn ghost sm on" id="llmSpendPeriodWeek" onclick="setLlmSpendPeriod('week')">Past 7 Days</button>
         <button class="btn ghost sm" id="llmSpendPeriodMonth" onclick="setLlmSpendPeriod('month')">Past 30 Days</button>
         <button class="btn ghost sm" onclick="loadLlmSpendPanel(true)">Refresh Credits</button>
@@ -3264,6 +3266,10 @@ function fmtBracketAmount(n) {
   if (!Number.isFinite(n)) return '—';
   var abs = Math.abs(n), sign = n < 0 ? '-' : '';
   function clean(v) { return String(v).replace(/\\.0$/, ''); }
+  // Trillion+ always shows 2 decimal places ("$3.62t") so a mega-cap market
+  // cap never falls back to a 4+ digit billions number ("$3622b") the way
+  // the plain 1e9 branch below would render it.
+  if (abs >= 1e12) return sign + '$' + (abs / 1e12).toFixed(2) + 't';
   if (abs >= 1e9) return sign + '$' + clean((abs / 1e9).toFixed(abs >= 10e9 ? 0 : 1)).toLowerCase() + 'b';
   if (abs >= 1e6) return sign + '$' + clean((abs / 1e6).toFixed(abs >= 10e6 ? 0 : 1)).toLowerCase() + 'm';
   if (abs >= 1e3) return sign + '$' + clean((abs / 1e3).toFixed(abs >= 10e3 ? 0 : 1)).toLowerCase() + 'k';
@@ -7301,9 +7307,41 @@ function renderLlmSpendByModel() {
     return;
   }
   tbody.innerHTML = report.byModel.map(function (r) {
-    return '<tr class="row"><td>' + esc(r.provider) + '</td><td>' + esc(r.model) + '</td><td>' + esc(fmtCount(r.docCount)) + '</td><td>' + esc(fmtCount(r.callCount)) + '</td><td>' + esc(fmtUsdPrecise(r.totalUsd)) + '</td></tr>';
+    var spendCell = r.provider === 'llamaparse'
+      ? esc(fmtCount(Math.round(r.totalUsd * 800))) + ' credits <span style="font-size:11px;color:var(--text-dim)">(' + esc(fmtUsdPrecise(r.totalUsd)) + ')</span>'
+      : esc(fmtUsdPrecise(r.totalUsd));
+    return '<tr class="row"><td>' + esc(r.provider) + '</td><td>' + esc(r.model) + '</td><td>' + esc(fmtCount(r.docCount)) + '</td><td>' + esc(fmtCount(r.callCount)) + '</td><td>' + spendCell + '</td></tr>';
   }).join('');
 }
+function renderExtraction30d(m) {
+  var grid = el('extraction30dGrid');
+  if (!grid) return;
+  if (!m) { grid.innerHTML = '<div class="state">No 30-day extraction metrics available.</div>'; return; }
+  var detMethods = Object.keys(m.deterministic.byMethod || {}).map(function (k) {
+    return esc(k) + ': ' + esc(fmtCount(m.deterministic.byMethod[k]));
+  }).join(' · ') || 'None';
+  var paid = m.paidLlm || {};
+  var maxDocStr = paid.highestCostDocId ? (' (Doc: ' + esc(paid.highestCostDocId) + ')') : '';
+  grid.innerHTML =
+    '<div class="diag-card">' +
+      '<div class="diag-head"><div class="diag-title">Total Identified Docs</div></div>' +
+      '<div class="v">' + esc(fmtCount(m.totalIdentifiedDocs)) + '</div>' +
+      '<div class="diag-meta"><span>30-Day Window</span><strong>' + esc(m.sinceDay) + ' to ' + esc(m.throughDay) + '</strong></div>' +
+    '</div>' +
+    '<div class="diag-card">' +
+      '<div class="diag-head"><div class="diag-title">Deterministic Method Docs</div></div>' +
+      '<div class="v">' + esc(fmtCount(m.deterministic.totalDocs)) + '</div>' +
+      '<div class="diag-meta"><span>By Method</span><strong>' + detMethods + '</strong></div>' +
+    '</div>' +
+    '<div class="diag-card" style="border-color:var(--accent)">' +
+      '<div class="diag-head"><div class="diag-title">Paid LLM Method Docs</div></div>' +
+      '<div class="v">' + esc(fmtCount(paid.totalDocs)) + '</div>' +
+      '<div class="diag-meta"><span>Average Cost</span><strong>' + esc(fmtUsdPrecise(paid.avgCostUsd)) + '</strong>' +
+      '<span>P90 Cost</span><strong>' + esc(fmtUsdPrecise(paid.p90CostUsd)) + '</strong>' +
+      '<span>Highest Cost</span><strong>' + esc(fmtUsdPrecise(paid.maxCostUsd)) + maxDocStr + '</strong></div>' +
+    '</div>';
+}
+
 function loadLlmSpendPanel(forceRefresh) {
   var msg = el('llmSpendMsg');
   if (msg) msg.textContent = 'Loading…';
@@ -7313,6 +7351,7 @@ function loadLlmSpendPanel(forceRefresh) {
     .then(okOrThrow)
     .then(function (data) {
       llmSpendReportCache = data;
+      renderExtraction30d(data.extraction30d);
       renderLlamaParseCredits(data.llamaParseCredits);
       renderLlmSpendByModel();
       if (msg) msg.textContent = 'Updated ' + new Date().toLocaleTimeString();
