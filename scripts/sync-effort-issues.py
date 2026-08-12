@@ -149,7 +149,14 @@ RATE_LIMIT_BACKOFF_BASE_SECONDS = 15.0
 RATE_LIMIT_BACKOFF_MAX_SECONDS = 120.0
 # Socket timeout for a single API call. Without one, urlopen blocks forever on a
 # half-open connection and the job only ends when Actions kills the whole run.
-HTTP_TIMEOUT_SECONDS = 30.0
+# 60s rather than 30s because the self-hosted runner's link to github.com is
+# demonstrably slow (a shallow clone of this repo took ~20 minutes on the same
+# box), and a large list response must finish inside one timeout window.
+HTTP_TIMEOUT_SECONDS = 60.0
+# Page size for list endpoints, and the floor we will shrink to when a response
+# is too large to transfer intact. See GitHubClient._get_all_pages.
+PAGE_SIZE_DEFAULT = 100
+PAGE_SIZE_MIN = 10
 # Transport-level (not HTTP-level) retries. A truncated response body raises
 # http.client.IncompleteRead out of resp.read() *after* a 200, so it never
 # reaches the rate-limit retry in GitHubClient._request and used to abort the
@@ -430,22 +437,57 @@ class GitHubClient:
             )
             time.sleep(wait)
 
-    def _get_all_pages(self, path: str, params: str = "") -> list[dict]:
+    def _collect_pages(self, path: str, params: str, per_page: int) -> list[dict]:
         results: list[dict] = []
         page = 1
         while True:
             sep = "&" if params else ""
-            url = f"{API_BASE}/repos/{self.repo}/{path}?per_page=100&page={page}{sep}{params}"
+            url = (
+                f"{API_BASE}/repos/{self.repo}/{path}"
+                f"?per_page={per_page}&page={page}{sep}{params}"
+            )
             status, payload = self._request("GET", url)
             if status >= 300:
                 raise RuntimeError(f"GET {path} failed: {status} {payload}")
             if not payload:
                 break
             results.extend(payload)
-            if len(payload) < 100:
+            if len(payload) < per_page:
                 break
             page += 1
         return results
+
+    def _get_all_pages(self, path: str, params: str = "") -> list[dict]:
+        """Page through a list endpoint, shrinking per_page if a page won't transfer.
+
+        Retrying an identical request is useless when the truncation is
+        deterministic rather than flaky, which is what this repo actually hits:
+        `issues?state=all` page 3 failed on EVERY attempt at ~712KB of a ~722KB
+        body (run 31626620379 -- the transport retry added earlier fired all
+        three times, with correct backoff, and still could not finish the read).
+        This board's issue bodies are unusually large (effort-log rows run to
+        thousands of characters each), so 100 issues/page is simply too big to
+        get across this runner's link.
+
+        Halving per_page and restarting the listing makes each response small
+        enough to complete. The restart re-fetches earlier pages, which is
+        wasteful, but it only happens after a failure and page numbering is
+        per_page-relative -- so the size cannot be changed mid-listing without
+        silently skipping or duplicating rows.
+        """
+        per_page = PAGE_SIZE_DEFAULT
+        while True:
+            try:
+                return self._collect_pages(path, params, per_page)
+            except http.client.IncompleteRead as e:
+                if per_page <= PAGE_SIZE_MIN:
+                    raise
+                per_page = max(PAGE_SIZE_MIN, per_page // 2)
+                print(
+                    f"truncated response on {path} ({e}) -- retrying the whole "
+                    f"listing at per_page={per_page}",
+                    file=sys.stderr,
+                )
 
     def list_labels(self) -> set[str]:
         labels = self._get_all_pages("labels")
