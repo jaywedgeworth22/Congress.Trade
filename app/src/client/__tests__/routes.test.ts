@@ -1717,3 +1717,88 @@ describe('client API feed: offset-paged snapshots (iOS punch list #2, item 8)', 
     expect(page2Body.items.map((i) => i.id)).toEqual(['tx-oldest']);
   });
 });
+
+describe('client API feed: default order (oldest-first-seed-rows bug)', () => {
+  it('defaults to cursor_seq DESC (newest-first) when neither since nor order is given', async () => {
+    // Reproduces the diagnosed defect: the raw builder default is
+    // `cursor_seq ASC`, so a plain `GET /feed` used to surface the oldest
+    // `seed_dataset` rows first — rows with no owning `filings` row at all,
+    // so filedDate/firstSeenAt/sourceUrl all come back null. The route must
+    // now default to DESC so a caller with no forward cursor sees recent,
+    // fully-populated rows.
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({
+        id: 'seed-oldest',
+        cursor_seq: 1,
+        source: 'seed_dataset',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filing_source_url: undefined,
+      }),
+      feedRow({
+        id: 'seed-older',
+        cursor_seq: 2,
+        source: 'seed_dataset',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filing_source_url: undefined,
+      }),
+      feedRow({ id: 'live-newest', cursor_seq: 3 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?limit=2', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ id: string; filing: { filedDate: string | null } }>;
+    };
+    expect(body.items.map((i) => i.id)).toEqual(['live-newest', 'seed-older']);
+    expect(body.items[0].filing.filedDate).not.toBeNull();
+  });
+
+  it('keeps ASC (oldest-of-the-new-batch-first) on a since-cursor poll even without an explicit order', async () => {
+    // The forward-cursor paging contract (a client re-feeds the returned max
+    // cursor back as `since=`) must keep resuming gap-free — the new DESC
+    // default only applies when there is no cursor at all.
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({ id: 'tx-a', cursor_seq: 10 }),
+      feedRow({ id: 'tx-b', cursor_seq: 11 }),
+      feedRow({ id: 'tx-c', cursor_seq: 12 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?since=5', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(['tx-a', 'tx-b', 'tx-c']);
+  });
+
+  it('treats an explicit since=0 the same as any other cursor value (stays ASC)', async () => {
+    // since=0 is a legitimate "start of history, but I AM a resumable cursor
+    // client" value (parseIntOrUndef("0") -> 0, not undefined) — it must not
+    // be treated the same as "no cursor at all".
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({ id: 'tx-a', cursor_seq: 1 }),
+      feedRow({ id: 'tx-b', cursor_seq: 2 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?since=0', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(['tx-a', 'tx-b']);
+  });
+
+  it('an explicit order always wins over the new no-cursor default', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({ id: 'tx-a', cursor_seq: 1 }),
+      feedRow({ id: 'tx-b', cursor_seq: 2 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?order=asc', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(['tx-a', 'tx-b']);
+  });
+});
