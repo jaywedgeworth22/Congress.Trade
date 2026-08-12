@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Thin wrapper: ship this app's native iOS binary to TestFlight (no Xcode UI).
-# Canonical implementation: /Users/jay/apps/ios-fleet/ship-testflight.sh
+# Canonical implementation: scripts/ios-fleet/ship-testflight.sh (in this repo).
+# The host copy at /Users/jay/apps/ios-fleet/ is a runtime install of the same
+# file and is used ONLY as a fallback when the in-repo copy is missing.
 #
 # STABLE XCODE IS MANDATORY (owner, reaffirmed 2026-08-11).
 # Xcode-beta's SDK breaks TestFlight / App Store Connect compatibility: a binary
 # built against a beta SDK is accepted into TestFlight but rejected at
 # submission as INVALID_BINARY. Version 1.0 has now hit INVALID_BINARY twice.
 #
-# The fleet script carries its own beta guard, but it lives outside this repo
-# and is unversioned — exactly the fragility that left ct-reattach-proxy.sh
-# host-only until 2026-08-11. This wrapper therefore enforces the rule itself,
-# so the guarantee survives the fleet script being changed, moved, or missing.
+# The fleet script carries its own beta guard. It used to live only outside
+# this repo, unversioned — exactly the fragility that left ct-reattach-proxy.sh
+# host-only until 2026-08-11 — and is now vendored under scripts/ios-fleet/.
+# This wrapper still enforces the rule itself, so the guarantee survives the
+# fleet script being changed, moved, or missing.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -56,4 +59,31 @@ fi
 echo "[ios-ship] DEVELOPER_DIR=${DEVELOPER_DIR}"
 xcodebuild -version | sed 's/^/[ios-ship] /'
 
-exec bash /Users/jay/apps/ios-fleet/ship-testflight.sh congress --repo-root "$ROOT" "$@"
+# Prefer the reviewed, version-controlled copy. Fall back to the host install
+# only if it is absent, and say so loudly — a silent fallback would put an
+# unreviewed script back in charge of release numbering, which is the exact
+# failure this vendoring was meant to end.
+IN_REPO="${ROOT}/scripts/ios-fleet/ship-testflight.sh"
+HOST_COPY="/Users/jay/apps/ios-fleet/ship-testflight.sh"
+
+if [[ -f "$IN_REPO" ]]; then
+  SHIP_SCRIPT="$IN_REPO"
+  echo "[ios-ship] using in-repo fleet script: ${SHIP_SCRIPT}"
+elif [[ -f "$HOST_COPY" ]]; then
+  SHIP_SCRIPT="$HOST_COPY"
+  echo "[ios-ship] ===================================================================" >&2
+  echo "[ios-ship] WARNING: in-repo fleet script missing (${IN_REPO})." >&2
+  echo "[ios-ship] WARNING: falling back to the UNVERSIONED host copy at" >&2
+  echo "[ios-ship] WARNING:   ${HOST_COPY}" >&2
+  echo "[ios-ship] WARNING: that copy is outside git — no history, no review. It may" >&2
+  echo "[ios-ship] WARNING: number this release differently than the repo would." >&2
+  echo "[ios-ship] WARNING: Restore scripts/ios-fleet/ before relying on this build." >&2
+  echo "[ios-ship] ===================================================================" >&2
+else
+  echo "ERROR: no fleet ship script found." >&2
+  echo "       looked for: ${IN_REPO}" >&2
+  echo "                   ${HOST_COPY}" >&2
+  exit 1
+fi
+
+exec bash "$SHIP_SCRIPT" congress --repo-root "$ROOT" "$@"

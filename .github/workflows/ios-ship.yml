@@ -49,5 +49,7 @@ jobs:
 
       - name: Ship CongressTrade to TestFlight
         run: |
-          bash /Users/jay/apps/ios-fleet/ship-testflight.sh congress \
-            --repo-root "$GITHUB_WORKSPACE"
+          # Wrapper resolves the in-repo fleet script (scripts/ios-fleet/) and
+          # enforces the stable-Xcode rule; it falls back to the host copy only
+          # if the repo copy is missing, and logs loudly when it does.
+          bash "$GITHUB_WORKSPACE/scripts/ios-ship-testflight.sh"

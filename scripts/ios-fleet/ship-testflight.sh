@@ -14,6 +14,15 @@
 #   --skip-xcodegen    Do not regenerate .xcodeproj
 #   --allow-dirty      Allow shipping from a dirty git worktree
 #   --force-ship       Bypass min-interval + same-HEAD skip (emergency / owner)
+#   --sync-project-version  Write the resolved version into project.pbxproj
+#   --allow-unverified-seq  Ship even if App Store Connect cannot be consulted
+#                           AND no local/project sequence exists (dangerous:
+#                           may reuse a build number ASC rejects as duplicate)
+#
+# Version numbering (owner directive 2026-08-12): 1.0.<seq>, +1 every rebuild,
+# the same dotted string in MARKETING_VERSION and CURRENT_PROJECT_VERSION. The
+# sequence is max(local cache, App Store Connect, project.pbxproj) + 1, so a
+# lost or reset local counter cannot silently reuse a shipped build number.
 #
 # Rate limit (uploads only; export-only is free):
 #   Default min interval between successful TestFlight ships per app: 2.5h
@@ -30,13 +39,19 @@
 
 set -euo pipefail
 
+# LaunchAgents inherit a tiny PATH (no Homebrew). Node is required for
+# ensure-tf-ready. Keep this before any `node` / `xcodegen` call.
+export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH}"
+
 FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
 APPS_JSON="${FLEET_DIR}/apps.json"
 TEAM_ID="CC8UTF7ATG"
 SECRETS_ENV="${HOME}/.secrets/appstore-connect.env"
 # 2.5 hours — middle of the owner 2–3h band; not Apple compute, local/process hygiene.
 DEFAULT_MIN_INTERVAL_SEC=9000
-STATE_DIR="${HOME}/.cache/ios-fleet"
+# Overridable so the sequence/rate-limit state can be pointed at a scratch dir
+# for testing without touching real ship history.
+STATE_DIR="${IOS_FLEET_STATE_DIR:-${HOME}/.cache/ios-fleet}"
 
 APP_KEY=""
 REPO_ROOT=""
@@ -48,12 +63,18 @@ DRY_RUN=0
 SKIP_XCODEGEN=0
 ALLOW_DIRTY=0
 FORCE_SHIP=0
+ALLOW_UNVERIFIED_SEQ=0
+SYNC_PROJECT_VERSION=0
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "[ios-ship] $*"; }
+# Same prefix, but on stderr — for use inside $(...) helpers whose stdout is
+# the return value and must stay clean.
+logerr() { echo "[ios-ship] $*" >&2; }
 
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  # Print the header comment block: everything before the first non-comment line.
+  sed -n '2,${/^[^#]/q;p;}' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -135,26 +156,134 @@ link_private_key() {
 # Each version string is its own train with exactly one build, which also
 # sidesteps Apple's must-be-higher-than-previous rule against the old huge
 # timestamp builds (e.g. 202608101310) stuck in the 1.0.0 train.
-# Sequence state: ${STATE_DIR}/build-seq-<app>.txt (flock-guarded).
+#
+# Sequence state: ${STATE_DIR}/build-seq-<app>.txt (atomic-mkdir-guarded).
 # NOTE: flock(1) does not exist on macOS — under `set -e` a flock call would
 # kill the subshell and yield an EMPTY sequence ("1.0."), so the mutex is an
 # atomic mkdir instead (portable to Apple bash 3.2, per the header contract).
+#
+# That local file is a CACHE, not the source of truth. It is one unbacked file
+# on one machine: if it is lost, reset, or a ship runs from a second machine,
+# a bare "+1" reuses a build number and App Store Connect rejects the upload as
+# a duplicate. So the next sequence is
+#     max(local cache, App Store Connect, project.pbxproj) + 1
+# which is monotonic against every record we have. Taking the max can skip a
+# number (harmless — numbers are free); reusing one is fatal.
+local_seq() {
+  local n
+  n=$(cat "${STATE_DIR}/build-seq-${APP_KEY}.txt" 2>/dev/null || echo 0)
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "$n"
+}
+
+# Highest N in MARKETING_VERSION = <prefix>.N across the project's build
+# configurations. 0 when the file is unreadable or holds no on-train value.
+project_marketing_seq() {
+  local proj_file="$1" prefix="$2" quiet="${3:-}" best=0 v n off_train=""
+  if [[ ! -f "$proj_file" ]]; then
+    printf '0'
+    return 0
+  fi
+  while IFS= read -r v; do
+    [[ -n "$v" ]] || continue
+    n="${v#${prefix}.}"
+    if [[ "$n" =~ ^[0-9]+$ && "$n" != "$v" ]]; then
+      [[ "$n" -gt "$best" ]] && best="$n"
+    else
+      off_train="$v"
+    fi
+  done < <(grep -o 'MARKETING_VERSION = [^;]*;' "$proj_file" \
+             | sed 's/MARKETING_VERSION = //; s/;$//' | sort -u)
+  if [[ -n "$off_train" && -z "$quiet" ]]; then
+    logerr "WARNING: project.pbxproj has MARKETING_VERSION=${off_train}, which is not on the ${prefix}.N train."
+    logerr "WARNING: that value is ignored for sequencing. If you meant to start a new train,"
+    logerr "WARNING: update marketingVersionDefault for '${APP_KEY}' in ${APPS_JSON}."
+  fi
+  printf '%s' "$best"
+}
+
+# Highest N already uploaded to App Store Connect for the <prefix>.N train.
+# Returns 1 (and prints nothing) when ASC cannot be consulted — the caller must
+# distinguish "no builds yet" (0) from "unknown" (failure).
+asc_latest_seq() {
+  local prefix="$1" out rc
+  if ! command -v node >/dev/null 2>&1; then
+    logerr "asc-seq: node not on PATH; cannot verify against App Store Connect"
+    return 1
+  fi
+  if [[ ! -f "$SECRETS_ENV" ]]; then
+    logerr "asc-seq: no ${SECRETS_ENV}; cannot verify against App Store Connect"
+    return 1
+  fi
+  set +e
+  out=$(node "${FLEET_DIR}/asc-api.mjs" latest-build-seq "$BUNDLE_ID" "$prefix" 2>/dev/null)
+  rc=$?
+  set -e
+  if [[ $rc -ne 0 || ! "$out" =~ ^[0-9]+$ ]]; then
+    logerr "asc-seq: query failed (rc=${rc}); cannot verify against App Store Connect"
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+# The floor the next sequence must exceed: the highest N any record knows about.
+resolve_seq_floor() {
+  local prefix="$1" proj_file="$2"
+  local l p a floor
+  l="$(local_seq)"
+  p="$(project_marketing_seq "$proj_file" "$prefix")"
+  floor="$l"
+  [[ "$p" -gt "$floor" ]] && floor="$p"
+
+  set +e
+  a="$(asc_latest_seq "$prefix")"
+  set -e
+  if [[ -n "${a:-}" ]]; then
+    [[ "$a" -gt "$floor" ]] && floor="$a"
+    logerr "seq sources: local=${l} asc=${a} project=${p} -> floor=${floor}"
+  else
+    # ASC unknown. The local cache alone is exactly the silent-duplicate
+    # failure mode; refuse to guess when it is missing too.
+    logerr "seq sources: local=${l} asc=UNVERIFIED project=${p} -> floor=${floor}"
+    if [[ "$l" -eq 0 && "$p" -eq 0 && "$ALLOW_UNVERIFIED_SEQ" -eq 0 ]]; then
+      die "cannot determine the next build number.
+  App Store Connect could not be reached AND there is no local sequence
+  (${STATE_DIR}/build-seq-${APP_KEY}.txt) and no ${prefix}.N in project.pbxproj.
+  Shipping now would very likely reuse a build number and be rejected as a duplicate.
+  Fix one of these, then re-run:
+    1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
+       run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
+    2) or pass the number explicitly:  --build <N>  (see TestFlight for the last one)
+    3) or, only if you are certain this train is empty, re-run with --allow-unverified-seq"
+    fi
+    if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 1 ]]; then
+      logerr "WARNING: --allow-unverified-seq set; proceeding without ASC confirmation"
+    fi
+  fi
+  printf '%s' "$floor"
+}
+
+# Commit floor+1 to the cache under the lock and return it.
 next_build_seq() {
+  local floor="$1"
   local seq_file="${STATE_DIR}/build-seq-${APP_KEY}.txt"
   local lock_dir="${seq_file}.lockdir"
   mkdir -p "$STATE_DIR"
   local tries=0
   until mkdir "$lock_dir" 2>/dev/null; do
     tries=$((tries + 1))
-    if [[ "$tries" -gt 50 ]]; then
+    if [[ "$tries" -gt 300 ]]; then
       echo "next_build_seq: lock timeout on ${lock_dir}" >&2
       return 1
     fi
     sleep 0.1
   done
+  # Re-read under the lock: a concurrent ship may have advanced it since the
+  # floor was computed.
   local n
   n=$(cat "$seq_file" 2>/dev/null || echo 0)
   [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  [[ "$floor" -gt "$n" ]] && n="$floor"
   n=$((n + 1))
   printf '%s' "$n" > "$seq_file"
   rmdir "$lock_dir" 2>/dev/null || true
@@ -250,6 +379,8 @@ while [[ $# -gt 0 ]]; do
     --skip-xcodegen) SKIP_XCODEGEN=1; shift ;;
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
     --force-ship) FORCE_SHIP=1; shift ;;
+    --allow-unverified-seq) ALLOW_UNVERIFIED_SEQ=1; shift ;;
+    --sync-project-version) SYNC_PROJECT_VERSION=1; shift ;;
     -h|--help) usage ;;
     *) die "unknown arg: $1 (try --help)" ;;
   esac
@@ -316,20 +447,60 @@ if [[ -z "$UPLOAD_ONLY_IPA" && "$DRY_RUN" -eq 0 ]]; then
   fi
 fi
 
+# Where the version the project itself declares lives. Best-effort: for
+# XcodeGen apps the .xcodeproj may not exist until it is generated below, in
+# which case the project contributes 0 to the floor and says so.
+PBXPROJ=""
+if _proj_dir="$(resolve_project "$REPO_ROOT" "$PROJECT_REL" "$PROJECT_REL_ALT" 2>/dev/null)"; then
+  PBXPROJ="${_proj_dir}/project.pbxproj"
+fi
+
+MARKETING_PREFIX="$(marketing_prefix)"
+
 if [[ -n "$FORCE_BUILD" || -n "$FORCE_VERSION" ]]; then
   # Explicit operator override: honour exactly what was asked.
   BUILD_NUM="${FORCE_BUILD:-$FORCE_VERSION}"
   MARKETING="${FORCE_VERSION:-$DEFAULT_MARKETING}"
-elif [[ "$DRY_RUN" -eq 1 ]]; then
-  # Dry-run must not consume a sequence number — peek at what the next real
-  # rebuild would get.
-  PEEK=$(( $(cat "${STATE_DIR}/build-seq-${APP_KEY}.txt" 2>/dev/null || echo 0) + 1 ))
-  MARKETING="$(marketing_prefix).${PEEK}"
-  BUILD_NUM="$MARKETING"
+  log "version: operator override (--build/--version); sequence not consulted"
 else
-  SEQ="$(next_build_seq)"
-  MARKETING="$(marketing_prefix).${SEQ}"
+  # resolve_seq_floor runs in a subshell, so its die() cannot exit this script
+  # on its own — check explicitly rather than leaning on set -e.
+  SEQ_FLOOR="$(resolve_seq_floor "$MARKETING_PREFIX" "$PBXPROJ")" || exit 1
+  [[ "$SEQ_FLOOR" =~ ^[0-9]+$ ]] || die "could not resolve a build sequence floor (got '${SEQ_FLOOR}')"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    # Dry-run must not consume a sequence number — peek only.
+    SEQ=$((SEQ_FLOOR + 1))
+  else
+    SEQ="$(next_build_seq "$SEQ_FLOOR")"
+  fi
+  MARKETING="${MARKETING_PREFIX}.${SEQ}"
   BUILD_NUM="$MARKETING"
+fi
+
+# The project file and the shipped version must never disagree silently. The
+# version above is passed on the xcodebuild command line and overrides whatever
+# project.pbxproj says, so a stale value there is invisible without this check.
+PROJECT_SEQ_NOW="$(project_marketing_seq "$PBXPROJ" "$MARKETING_PREFIX" quiet)"
+if [[ -z "$PBXPROJ" ]]; then
+  log "project version: .xcodeproj not resolvable yet; skipping agreement check"
+elif [[ "${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}" != "$MARKETING" ]]; then
+  log "NOTICE: project.pbxproj says MARKETING_VERSION=${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}, shipping ${MARKETING}."
+  log "NOTICE: the shipped value wins (passed to xcodebuild). To record it in the repo, run:"
+  log "NOTICE:   bash $0 ${APP_KEY} --repo-root ${REPO_ROOT} --sync-project-version --dry-run"
+  log "NOTICE:   then commit clients/ios/*.xcodeproj/project.pbxproj"
+fi
+
+# Write the resolved version into project.pbxproj so the repo records what
+# shipped. Opt-in: it dirties the worktree, and the ship path itself requires a
+# clean one.
+if [[ "$SYNC_PROJECT_VERSION" -eq 1 ]]; then
+  [[ -n "$PBXPROJ" && -f "$PBXPROJ" ]] || die "--sync-project-version: project.pbxproj not found under $REPO_ROOT"
+  /usr/bin/sed -i '' \
+    -e "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = ${MARKETING};/g" \
+    -e "s/CURRENT_PROJECT_VERSION = [^;]*;/CURRENT_PROJECT_VERSION = ${BUILD_NUM};/g" \
+    "$PBXPROJ"
+  log "synced project.pbxproj -> MARKETING_VERSION=${MARKETING} CURRENT_PROJECT_VERSION=${BUILD_NUM}"
+  log "commit that change; it is the repo's record of this version"
 fi
 AUTH_MODE="none"
 load_secrets
