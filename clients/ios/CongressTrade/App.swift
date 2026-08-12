@@ -7,7 +7,7 @@ import OSLog
 /// Order matches `MainTabView`: Trends | Trades | Directory | Delivery | Settings
 /// (owner punch list #2, item 9 — Directory inserted between Trades and Delivery).
 enum AppTab: Hashable {
-    case trends, trades, people, delivery, settings
+    case trends, trades, people, delivery
 }
 
 /// Cross-tab navigation used by the header hamburger menu (`AccountQuickMenu`)
@@ -253,12 +253,6 @@ struct MainTabView: View {
                     Label("Delivery", systemImage: "bell.badge")
                 }
                 .tag(AppTab.delivery)
-
-            SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .tag(AppTab.settings)
         }
         .tint(.blue)
         .task {

@@ -1480,6 +1480,8 @@ struct ThemeSegmentControl: View {
                             .font(.system(size: 13, weight: .semibold))
                         Text(option.label)
                             .font(.caption.weight(selection == option.id ? .semibold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)

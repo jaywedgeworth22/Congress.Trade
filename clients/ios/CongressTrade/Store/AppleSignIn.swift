@@ -47,8 +47,14 @@ extension CongressTradeStore {
     func handleAppleSignIn(_ result: Result<ASAuthorization, Error>, rawNonce: String? = nil) async {
         switch result {
         case .failure(let error):
-            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
-                return
+            if let authError = error as? ASAuthorizationError {
+                if authError.code == .canceled {
+                    return
+                }
+                if authError.code == .failed || authError.code == .unknown || authError.code == .notHandled {
+                    setAccountNotice("Sign in with Apple was not completed. Please try again.")
+                    return
+                }
             }
             setAccountNotice("Sign in with Apple failed: \(error.localizedDescription)")
 
