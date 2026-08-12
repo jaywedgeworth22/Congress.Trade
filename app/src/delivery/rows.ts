@@ -416,6 +416,17 @@ export interface TxQueryParams {
    * resumable forward pager, so incremental-sync consumers should keep the
    * default. Only the closed `'asc'|'desc'` literal reaches the SQL, never raw
    * caller text.
+   *
+   * NOTE: `GET /api/client/v1/feed` (src/client/routes.ts) applies its own
+   * default ON TOP of this one — `undefined` here becomes `'desc'` before it
+   * ever reaches this builder, but ONLY when the request also has no `since`
+   * cursor. The oldest rows in cursor_seq order are bulk-imported
+   * `seed_dataset` rows with no owning `filings` row (null filedDate/
+   * firstSeenAt/sourceUrl), so an unparameterized public "feed" defaulting to
+   * oldest-first served a wall of empty filing objects. `/api/transactions`
+   * (src/delivery/rest.ts, the website) and `/feed.xml` are unaffected — they
+   * either pass their own explicit `order` or accept this builder's ASC
+   * default unchanged.
    */
   order?: 'asc' | 'desc';
 }

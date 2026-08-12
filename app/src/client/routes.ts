@@ -103,6 +103,28 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
+    // Default to newest-first when the caller has no forward cursor. The raw
+    // ordering `buildTransactionsQuery` falls back to is `cursor_seq ASC`
+    // (oldest first) so a `since=`-cursor poll can resume gap-free — but that
+    // means an unparameterized first call also got oldest-first, and the
+    // oldest ~11,820 rows are `seed_dataset` bulk-import rows with no owning
+    // `filings` row at all (no filedDate/firstSeenAt/sourceUrl — see
+    // mapFeedTransaction). A public endpoint called "feed" defaulting to a
+    // wall of filing-less historical rows is the actual defect; the fix is
+    // scoped to *default direction only*, not the paging contract itself:
+    // - `since` present (including `since=0`, an explicit "start of history"
+    //   cursor) => leave `order` as the caller set it (undefined stays ASC in
+    //   buildTransactionsQuery) so incremental sync keeps walking forward.
+    // - `since` absent AND caller didn't pass `order` => default to `desc` so
+    //   a plain `GET /feed` (or `GET /feed?limit=…&ticker=…`, etc.) shows
+    //   recent, fully-populated rows. iOS always sends its own explicit
+    //   `order` (clients/ios/CongressTrade/Store/CongressTradeStore.swift) and
+    //   never sends `since`, so it is unaffected either way; webhook/SSE
+    //   delivery (src/delivery/{webhook,sse}.ts) hardcode their own
+    //   `cursor_seq ASC` SQL and never go through this parser at all.
+    if (params.since === undefined && params.order === undefined) {
+      params.order = 'desc';
+    }
     // Same public offset depth cap as /api/transactions (src/delivery/rest.ts)
     // — deep offset walks are Premium CSV export's job, not a free scrape path.
     if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
