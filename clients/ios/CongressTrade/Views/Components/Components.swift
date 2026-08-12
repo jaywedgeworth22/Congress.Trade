@@ -751,6 +751,20 @@ struct AccountQuickMenu: View {
                         .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                 }
 
+                if store.signedIn || store.hasStoredSessionToken {
+                    Section {
+                        Button(role: .destructive) {
+                            Task { await store.signOut() }
+                        } label: {
+                            Label(
+                                store.isLoggingOut ? "Signing Out…" : "Sign Out",
+                                systemImage: "rectangle.portrait.and.arrow.right"
+                            )
+                        }
+                        .disabled(store.isLoggingOut)
+                    }
+                }
+
                 Section {
                     LegalFooterLinks()
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -801,16 +815,15 @@ struct AccountQuickMenu: View {
                 }
             }
             .accessibilityElement(children: .combine)
-
-            Button(role: .destructive) {
-                Task { await store.signOut() }
+        } else if store.hasStoredSessionToken {
+            Text("Session could not be verified.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await store.refresh() }
             } label: {
-                Label(
-                    store.isLoggingOut ? "Signing Out…" : "Sign Out",
-                    systemImage: "rectangle.portrait.and.arrow.right"
-                )
+                Label("Retry", systemImage: "arrow.clockwise")
             }
-            .disabled(store.isLoggingOut)
         } else {
             SignInPanel(onSignedIn: { isPresented = false })
                 .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))

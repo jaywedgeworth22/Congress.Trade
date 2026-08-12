@@ -61,7 +61,7 @@ enum MemberDirectorySearch {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .name: return "Politician"
+            case .name: return "Name"
             case .chamber: return "Branch"
             case .party: return "Party"
             case .state: return "State"
@@ -418,40 +418,42 @@ private struct AssetDirectorySortHeader: View {
     @Binding var sortAscending: Bool
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(AssetDirectorySearch.SortKey.allCases) { key in
-                    Button {
-                        if sortKey == key {
-                            sortAscending.toggle()
-                        } else {
-                            sortKey = key
-                            // Matches web's sortAssetsDirectory: trades/members
-                            // default descending (most-active first), name
-                            // defaults ascending (A→Z).
-                            sortAscending = key == .name
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(key.label)
-                                .font(.caption.weight(.semibold))
+        SortRow {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(AssetDirectorySearch.SortKey.allCases) { key in
+                        Button {
                             if sortKey == key {
-                                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 9, weight: .bold))
+                                sortAscending.toggle()
+                            } else {
+                                sortKey = key
+                                // Matches web's sortAssetsDirectory: trades/members
+                                // default descending (most-active first), name
+                                // defaults ascending (A→Z).
+                                sortAscending = key == .name
                             }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(key.label)
+                                    .font(.caption.weight(.semibold))
+                                if sortKey == key {
+                                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                sortKey == key
+                                    ? Color.accentColor.opacity(0.16)
+                                    : Color(uiColor: .secondarySystemBackground),
+                                in: Capsule()
+                            )
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            sortKey == key
-                                ? Color.accentColor.opacity(0.16)
-                                : Color(uiColor: .secondarySystemBackground),
-                            in: Capsule()
-                        )
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Sort by \(key.label)")
+                        .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Sort by \(key.label)")
-                    .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
                 }
             }
         }
