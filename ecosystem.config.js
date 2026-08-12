@@ -27,8 +27,8 @@ module.exports = {
       merge_logs: true
     },
     // Residential Senate eFD relay (Imperva blocks datacenter IPs). Reached by
-    // the server through the senate-tunnel entry below at the permanent
-    // hostname https://scout.congress.trade (Coolify SENATE_RELAY_URL).
+    // the server through Jay's Tunnel (launchd system service) at the permanent
+    // hostname https://scout.jays.services (Coolify SENATE_RELAY_URL).
     {
       name: 'senate-relay',
       script: './scout/run-senate-relay.sh',
@@ -42,8 +42,9 @@ module.exports = {
     },
     {
       name: 'senate-tunnel',
-      // NAMED tunnel `ct-mac-scout` — permanent hostname
-      // https://scout.congress.trade. Restarting this entry is safe and
+      // HEALTH WATCHER only — the tunnel itself is Jay's Tunnel, a launchd
+      // system service.  Permanent hostname
+      // https://scout.jays.services. Restarting this entry is safe and
       // changes nothing on the server: SENATE_RELAY_URL is set once and never
       // needs updating again. There is no manual step here anymore.
       //
