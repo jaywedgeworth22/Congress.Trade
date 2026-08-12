@@ -253,12 +253,12 @@ export function resolveCongressPushoverAppToken(
   );
 }
 
-/** Own backup reminder: shallow R2 litestream + Hetzner ~24h volume floor. */
+/** Own backup reminder: fleet cron B2 snapshots + Hetzner ~24h volume floor. */
 export function formatOwnBackupRegimenLine(killEngaged = false): string {
   if (killEngaged) {
-    return 'Backup: R2 litestream paused (free-tier). Hetzner volume snapshots remain the ~24h PITR floor.';
+    return 'Backup: B2 6h snapshots (fleet cron). Hetzner volume snapshots remain the ~24h PITR floor.';
   }
-  return 'Backup: own litestream→R2 (15m/24h policy) + Hetzner ~24h volume floor.';
+  return 'Backup: 6h full-DB snapshots to B2 (fleet cron) + Hetzner ~24h volume floor.';
 }
 
 /** Compact message body for the Pushover notification. */
