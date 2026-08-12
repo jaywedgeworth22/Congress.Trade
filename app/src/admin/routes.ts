@@ -5198,11 +5198,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                  AND rq.resolved = 0
                  AND rq.reason LIKE '%local_vision_exhausted%'
             )
+            -- Never advertise a doc whose result the ingest path will throw away.
+            --
+            -- normalize() treats ANY resolved review row as authoritative and
+            -- returns {published:false, needsReview:false} without persisting
+            -- (extraction/normalizer.ts, "a completed decision is authoritative").
+            -- This used to exclude only resolution_kind='published', so docs
+            -- resolved as rejected/verified_empty stayed in this list forever —
+            -- and 1,081 rows were closed as agreement_cascade_unresolved during
+            -- an OpenRouter budget outage, i.e. closed by a spend artifact rather
+            -- than a judgement about the document.
+            --
+            -- Cost of the old predicate, measured 2026-08-12: scan-cpu-worker sat
+            -- at 283% CPU (3 of 8 cores) continuously re-OCRing those documents
+            -- and logging "published=False needsReview=False" on every submit —
+            -- full OCR work, every result discarded, forever.
             AND NOT EXISTS (
               SELECT 1 FROM review_queue rq
                WHERE rq.doc_id = f.doc_id
                  AND rq.resolved = 1
-                 AND rq.resolution_kind = 'published'
             )
             AND NOT EXISTS (
               SELECT 1 FROM transactions tx

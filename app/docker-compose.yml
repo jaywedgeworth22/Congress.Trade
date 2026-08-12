@@ -1,5 +1,20 @@
 version: '3.8'
 
+# RESOURCE CEILINGS (2026-08-12)
+# Every service is capped. On 2026-08-12 scan-cpu-worker — which had NO limit —
+# ran at 283% CPU (about 3 of the box's 8 cores) continuously, re-OCRing
+# documents whose results the ingest path was discarding. Nothing stopped it
+# because nothing bounded it.
+#
+# Ceilings are set well above observed working peaks (roughly 2-3x) so normal
+# work is never throttled; they exist to bound absurd runaway, not to tune
+# performance. cpus/mem_limit/pids_limit are the Compose v2 short-form keys,
+# which Coolify's docker-compose deployment honours directly.
+#
+#   observed steady CPU  ->  ceiling
+#   congress-app   ~1.5%     2.0 cpu / 3g
+#   scan-cpu-worker 283%(!)  2.0 cpu / 1g   (OCR is the legitimate heavy one)
+#   sqlite-web      ~0%      0.5 cpu / 512m
 services:
   # NOTE: do NOT add a `build.args` block here.
   #
@@ -18,6 +33,9 @@ services:
   congress-app:
     build: .
     container_name: congress-app
+    cpus: '2.0'
+    mem_limit: 3g
+    pids_limit: 512
     restart: unless-stopped
     ports:
       - "127.0.0.1:5000:5000"
@@ -44,6 +62,9 @@ services:
       context: .
       dockerfile: Dockerfile.sqlite-web
     container_name: congress-sqlite-web
+    cpus: '0.5'
+    mem_limit: 512m
+    pids_limit: 128
     # on-failure (not unless-stopped): empty SQLITE_WEB_PASSWORD used to
     # crash-loop forever and Coolify marked the whole multi-service stack
     # exited:unhealthy, taking congress.trade to 502. Admin UI is non-critical.
@@ -67,6 +88,9 @@ services:
     build:
       context: ../services/scan-cpu-worker
     container_name: congress-scan-cpu-worker
+    cpus: '2.0'
+    mem_limit: 1g
+    pids_limit: 256
     restart: unless-stopped
     env_file:
       - .env
