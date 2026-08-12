@@ -429,6 +429,46 @@ describe('mapFeedTransaction', () => {
     expect((tx as typeof tx & { estValue: number | null }).estValue).toBe(8000.5);
   });
 
+  it('falls back to the transaction row\'s own filed_date/first_seen_at when there is no matching filings row (competitor_backfill)', () => {
+    // competitor_backfill rows (doc_id LIKE 'COMPETITOR-%') have no OGE/clerk
+    // filing behind them, so the `filings` LEFT JOIN never matches and
+    // filing_filed_date/filing_first_seen_at come back null — but
+    // persistTransactions() still wrote a real filedDate/firstSeenAt onto the
+    // transaction row itself (see scripts/inject_competitor_data.ts). The
+    // mapper must recover that value instead of reporting it as unknown.
+    const tx = mapFeedTransaction(
+      feedRow({
+        doc_id: 'COMPETITOR-abc123',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filing_source_url: undefined,
+        filed_date: '2026-07-20',
+        first_seen_at: '2026-07-20T09:00:00.000Z',
+      }),
+    );
+    expect(tx.filedDate).toBe('2026-07-20');
+    expect(tx.firstSeenAt).toBe('2026-07-20T09:00:00.000Z');
+  });
+
+  it('stays honestly null when neither the filing join nor the transaction row has a value (seed_dataset)', () => {
+    // Seed-dataset rows (bulk historical import, no filing PDF ever polled)
+    // set firstSeenAt/filedDate to null at construction time (see
+    // backfill/seed.ts) — the fallback must not fabricate a value from
+    // created_at or any other proxy.
+    const tx = mapFeedTransaction(
+      feedRow({
+        doc_id: 'seed-senate',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filing_source_url: undefined,
+        filed_date: null,
+        first_seen_at: null,
+      }),
+    );
+    expect(tx.filedDate).toBeNull();
+    expect(tx.firstSeenAt).toBeNull();
+  });
+
   it('canonicalizes malformed stored filer names at the API boundary', () => {
     const tx = mapFeedTransaction(feedRow({ filer_full_name: 'Richard Dean Dr McCormick' }));
     expect(tx.fullName).toBe('Richard Dean McCormick');
