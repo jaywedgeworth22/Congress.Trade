@@ -19,8 +19,14 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
 
 /// Settings is deliberately short: an account, a switch, a theme, the legal
 /// row. Sign-in, alerts and Premium are all shared components (`SignInPanel`,
-/// `TradeDisclosureAlertsToggle`, `PremiumInfoSheet`) so this tab and the
+/// `TradeDisclosureAlertsToggle`, `PremiumInfoSheet`) so this view and the
 /// header account sheet cannot drift apart again.
+///
+/// NOTE: no longer mounted as a tab — `AccountQuickMenu` (the header hamburger
+/// sheet) is a strict superset of this screen and is the single account
+/// surface. Kept because it is built entirely from those shared components, so
+/// it costs nothing to keep in sync; `AuthPresentationContext` above is still
+/// live and is used by `SignInPanel`'s Google hop.
 struct SettingsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
