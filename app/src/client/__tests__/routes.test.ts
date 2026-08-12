@@ -1716,7 +1716,9 @@ describe('client API feed: asset-class filter (?assetClass=)', () => {
     const res = await app.request('http://localhost/feed?assetClass=equities_funds', {}, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string }>; count: number };
-    expect(body.items.map((item) => item.id)).toEqual(['stock', 'etf', 'mutual-fund']);
+    // Cursorless `/feed` is newest-first (PR #1767), so the matching rows come
+    // back in descending `cursor_seq`: mutual-fund(3), etf(2), stock(1).
+    expect(body.items.map((item) => item.id)).toEqual(['mutual-fund', 'etf', 'stock']);
     expect(body.count).toBe(3);
   });
 
@@ -1732,7 +1734,9 @@ describe('client API feed: asset-class filter (?assetClass=)', () => {
     const res = await app.request('http://localhost/feed?limit=2&assetClass=equities_funds', {}, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string }>; count: number; total: number };
-    expect(body.items.map((item) => item.id)).toEqual(['stock', 'etf']);
+    // Newest-first (PR #1767): the 2-row page is the TOP of the match set,
+    // mutual-fund(3) and etf(2) — stock(1) is the one that falls off.
+    expect(body.items.map((item) => item.id)).toEqual(['mutual-fund', 'etf']);
     expect(body.count).toBe(2);
     expect(body.total).toBe(3);
   });
