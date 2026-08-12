@@ -94,19 +94,29 @@ function usdVar(value: string | undefined, fallback: number | null): number | nu
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-function providerCeilingKey(provider: string): string {
+function providerCeilingKeys(provider: string): string[] {
   const tag = provider.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
-  return `LLM_DAILY_USD_CEILING_${tag}`;
+  return [`LLM_DAILY_USD_CEILING_${tag}`, `${tag}_DAILY_USD_CEILING`];
 }
 
-async function resolveUsdKnob(env: Env, key: string, fallback: number | null): Promise<number | null> {
-  try {
-    const live = (await resolveSecret(env, key as keyof Env & string)).value
-      ?? (env[key as keyof Env] as string | undefined);
-    return usdVar(live, fallback);
-  } catch {
-    return usdVar(env[key as keyof Env] as string | undefined, fallback);
+async function resolveUsdKnob(
+  env: Env,
+  key: string | string[],
+  fallback: number | null,
+): Promise<number | null> {
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    try {
+      const live = (await resolveSecret(env, k as keyof Env & string)).value
+        ?? (env[k as keyof Env] as string | undefined);
+      const val = usdVar(live, null);
+      if (val != null) return val;
+    } catch {
+      const val = usdVar(env[k as keyof Env] as string | undefined, null);
+      if (val != null) return val;
+    }
   }
+  return fallback;
 }
 
 export interface LlmSpendTotals {
@@ -401,7 +411,7 @@ export async function checkLlmSpendCeiling(
   if (spend.totalUsd >= totalCeiling) {
     return { allowed: false, scope: 'total', provider, spentUsd: spend.totalUsd, ceilingUsd: totalCeiling };
   }
-  const providerCeiling = await resolveUsdKnob(env, providerCeilingKey(provider), null);
+  const providerCeiling = await resolveUsdKnob(env, providerCeilingKeys(provider), null);
   const providerSpend = spend.perProvider[provider] ?? 0;
   if (providerCeiling != null && providerSpend >= providerCeiling) {
     return { allowed: false, scope: 'provider', provider, spentUsd: providerSpend, ceilingUsd: providerCeiling };
@@ -744,7 +754,7 @@ export async function inspectLlmSpend(env: Env, now = new Date()): Promise<LlmSp
     ?? DEFAULT_LLM_DAILY_USD_CEILING;
   const perProviderCeilings: Record<string, number> = {};
   for (const provider of Object.keys(spend.perProvider)) {
-    const providerCeiling = await resolveUsdKnob(env, providerCeilingKey(provider), null);
+    const providerCeiling = await resolveUsdKnob(env, providerCeilingKeys(provider), null);
     if (providerCeiling != null) perProviderCeilings[provider] = providerCeiling;
   }
   return {
