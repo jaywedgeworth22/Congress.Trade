@@ -65,7 +65,8 @@ describe('lagBucket', () => {
     expect(lagBucket(8)).toBe('8-14d');
     expect(lagBucket(30)).toBe('15-30d');
     expect(lagBucket(45)).toBe('31-45d');
-    expect(lagBucket(60)).toBe('46-60d');
+    expect(lagBucket(50)).toBe('46-59d');
+    expect(lagBucket(60)).toBe('60d+');
     expect(lagBucket(900)).toBe('60d+');
   });
 });
@@ -92,7 +93,7 @@ describe('summarizeLag', () => {
     const rows: LagRow[] = [
       { lagDays: 3, count: 5 }, // 0-7d
       { lagDays: 12, count: 3 }, // 8-14d
-      { lagDays: 50, count: 2 }, // 46-60d, also > 45
+      { lagDays: 50, count: 2 }, // 46-59d, also > 45
     ];
     const s = summarizeLag(rows);
     expect(s.count).toBe(10);
@@ -101,7 +102,7 @@ describe('summarizeLag', () => {
     const byBucket = Object.fromEntries(s.distribution.map((d) => [d.bucket, d.count]));
     expect(byBucket['0-7d']).toBe(5);
     expect(byBucket['8-14d']).toBe(3);
-    expect(byBucket['46-60d']).toBe(2);
+    expect(byBucket['46-59d']).toBe(2);
     // every fixed bucket is present (zero-filled)
     expect(s.distribution).toHaveLength(6);
   });
