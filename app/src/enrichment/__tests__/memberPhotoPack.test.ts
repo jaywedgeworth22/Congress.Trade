@@ -135,6 +135,49 @@ describe('attribution display flag', () => {
   });
 });
 
+/**
+ * The flag is only worth having if flipping it changes what we actually serve.
+ * These two assert the wiring end to end — flag OFF, no header; flag ON, the
+ * face's real caption on the real response — so the "flip the flag" remedy
+ * cannot silently rot back into a no-op.
+ */
+describe('attribution display flag drives the served response', () => {
+  const packedKeyWithCaption = () =>
+    [...memberPhotoPack().byKey.values()].find((f) => !!f.attributionCaption)!.key;
+
+  it('omits x-photo-attribution while the flag is off', async () => {
+    expect(attributionDisplayEnabled()).toBe(false);
+    const res = await handleMemberPhotoRequest(
+      new URL(`https://x.test/api/photos/member?key=${packedKeyWithCaption()}`),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-photo-attribution')).toBeNull();
+  });
+
+  it('emits the face’s caption as x-photo-attribution once the flag is on', async () => {
+    const index = memberPhotoPack();
+    const key = packedKeyWithCaption();
+    const face = index.byKey.get(key)!;
+    index.attributionDisplayEnabled = true;
+    try {
+      const res = await handleMemberPhotoRequest(
+        new URL(`https://x.test/api/photos/member?key=${key}`),
+      );
+      expect(res.status).toBe(200);
+      const header = res.headers.get('x-photo-attribution');
+      expect(header).toBeTruthy();
+      // Header values are latin-1, so the em dash is downgraded — but the
+      // substantive parts of the credit line must survive intact.
+      expect(header).not.toContain('?');
+      for (const word of face.attributionCaption!.split(/[^A-Za-z0-9.]+/).filter((w) => w.length > 3)) {
+        expect(header, `caption word "${word}" missing from header`).toContain(word);
+      }
+    } finally {
+      index.attributionDisplayEnabled = false;
+    }
+  });
+});
+
 describe('handleMemberPhotoRequest', () => {
   it('400s without a key', async () => {
     const res = await handleMemberPhotoRequest(new URL('https://x.test/api/photos/member'));

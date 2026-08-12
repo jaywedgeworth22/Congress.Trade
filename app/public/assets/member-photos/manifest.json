@@ -2,7 +2,7 @@
   "version": 1,
   "note": "Head-focused member portraits. Every entry records its original source URL, licence and a ready-to-use attribution caption; the licence is a RECORD, not a gate -- public domain is preferred but not required. Regenerate with scripts/member-photos/build_face_pack.py.",
   "attributionDisplayEnabled": false,
-  "attributionDisplayNote": "Whether `attributionCaption` should be SHOWN to end users; the caption itself is always captured regardless. Flip with `build_face_pack.py --set-attribution-display on|off` -- a manifest-only patch, no network calls and no re-crop, so a takedown request never requires a rebuild.",
+  "attributionDisplayNote": "Whether the recorded `attributionCaption` is surfaced at all; the caption itself is always captured regardless. ON means pack-served photos carry an `x-photo-attribution` response header -- that is its only consumer today; no visible credit line exists in the web UI or the SwiftUI clients. Flip with `build_face_pack.py --set-attribution-display on|off` -- a manifest-only patch, no network calls and no re-crop.",
   "outputSize": 256,
   "count": 346,
   "totalBytes": 2424834,

@@ -366,10 +366,12 @@ def write_manifest(
         ),
         "attributionDisplayEnabled": attribution_display,
         "attributionDisplayNote": (
-            "Whether `attributionCaption` should be SHOWN to end users; the caption "
-            "itself is always captured regardless. Flip with `build_face_pack.py "
-            "--set-attribution-display on|off` -- a manifest-only patch, no network "
-            "calls and no re-crop, so a takedown request never requires a rebuild."
+            "Whether the recorded `attributionCaption` is surfaced at all; the caption "
+            "itself is always captured regardless. ON means pack-served photos carry an "
+            "`x-photo-attribution` response header -- that is its only consumer today; "
+            "no visible credit line exists in the web UI or the SwiftUI clients. Flip "
+            "with `build_face_pack.py --set-attribution-display on|off` -- a "
+            "manifest-only patch, no network calls and no re-crop."
         ),
         "outputSize": OUTPUT_SIZE,
         "count": len(ordered),

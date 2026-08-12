@@ -23,10 +23,21 @@
  * `sources.json`. The licence is a RECORD, not a gate (owner decision,
  * 2026-08): public domain is preferred but no longer required to ship, so a
  * face's `attribution`/`licence` are not proof it is free to display. Whether
- * `attributionCaption` should actually be shown to end users is a single
+ * the recorded `attributionCaption` is surfaced at all is a single
  * manifest-level flag (`attributionDisplayEnabled`, default OFF) — read it via
  * `attributionDisplayEnabled()` and `visibleAttributionCaption()` below rather
- * than showing `attributionCaption` unconditionally.
+ * than reading `attributionCaption` unconditionally.
+ *
+ * What the flag actually does today, precisely: with it ON, every pack-served
+ * photo carries an `x-photo-attribution` response header with that face's
+ * credit line; with it OFF, no header. That is the whole of it. **There is no
+ * visible caption anywhere in the web UI or the SwiftUI clients yet** — no
+ * template and no client response renders a credit line under an avatar. So
+ * the flag is a real, wired lever over what we serve, but it is not by itself
+ * a complete "now we display attribution" answer: a UI that wants a visible
+ * credit line still has to be built, and when it is, it must call
+ * `visibleAttributionCaption()` rather than reading the raw field, so the flag
+ * keeps governing every surface at once.
  *
  * Serving mirrors `ui/tickerLogos.ts`: one cached proxy route so the client
  * only ever sees `/api/photos/member?key=…`, the pack answers first, and a
@@ -131,9 +142,14 @@ export function attributionDisplayEnabled(): boolean {
 }
 
 /**
- * `face.attributionCaption` gated by the display flag — this is what a renderer
- * should call, never `face.attributionCaption` directly, so a takedown request
- * is answered by flipping the flag rather than auditing every call site.
+ * `face.attributionCaption` gated by the display flag — this is what any
+ * surfacing code should call, never `face.attributionCaption` directly, so the
+ * flag governs every call site at once instead of needing an audit.
+ *
+ * Live callers today: `tryLocalMemberPhoto` only, which turns the result into
+ * the `x-photo-attribution` response header. Note that pack images are cached
+ * for a year, so a flag flip changes what the origin serves immediately but
+ * reaches already-cached clients only as their copies expire.
  */
 export function visibleAttributionCaption(face: MemberFace | null | undefined): string | null {
   if (!face || !attributionDisplayEnabled()) return null;
@@ -200,18 +216,39 @@ function contentTypeFor(file: string): string {
   return 'image/jpeg';
 }
 
-function imageResponse(bytes: Uint8Array, contentType: string, source: string, maxAge: number): Response {
+function imageResponse(
+  bytes: Uint8Array,
+  contentType: string,
+  source: string,
+  maxAge: number,
+  attribution?: string | null,
+): Response {
   // Fresh ArrayBuffer-backed copy so Response accepts it under Deno and Node.
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
-  return new Response(copy, {
-    headers: {
-      'cache-control': `public, max-age=${maxAge}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
-      'content-type': contentType,
-      'content-length': String(copy.byteLength),
-      'x-photo-source': source,
-    },
-  });
+  const headers: Record<string, string> = {
+    'cache-control': `public, max-age=${maxAge}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
+    'content-type': contentType,
+    'content-length': String(copy.byteLength),
+    'x-photo-source': source,
+  };
+  // Header values are latin-1 on the wire; captions carry em dashes and
+  // accented author names, so strip anything outside that range rather than
+  // letting a non-ASCII credit line throw and take the whole photo down.
+  if (attribution) headers['x-photo-attribution'] = toHeaderSafe(attribution);
+  return new Response(copy, { headers });
+}
+
+/** Collapse a caption to a header-safe single line (printable ASCII, no CR/LF). */
+function toHeaderSafe(value: string): string {
+  return value
+    .replace(/[‐-―]/g, '-')
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[^\x20-\x7E]/g, '?')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 512);
 }
 
 /** Read the committed file for a pack entry, or null when it is missing/empty. */
@@ -228,7 +265,13 @@ export function tryLocalMemberPhoto(key: string): Response | null {
     if (bytes.byteLength < MIN_IMAGE_BYTES) return null;
     // Faces are content-addressed by the manifest and only change when the pack
     // is rebuilt and redeployed, so they can be cached for a year.
-    return imageResponse(bytes, contentTypeFor(face.file), `pack:${face.file}`, ONE_YEAR_SECONDS);
+    return imageResponse(
+      bytes,
+      contentTypeFor(face.file),
+      `pack:${face.file}`,
+      ONE_YEAR_SECONDS,
+      visibleAttributionCaption(face),
+    );
   } catch {
     return null;
   }

@@ -68,10 +68,11 @@ that risk is accepted. What is *not* negotiable:
 4. **Attribution *display* is a separate, flagged decision, default OFF.**
    `manifest.json`'s `attributionDisplayEnabled` (and
    `memberPhotoPack.ts`'s `visibleAttributionCaption()`) gate whether the
-   caption is actually shown to end users. If a takedown request ever
-   arrives, the owner flips `attributionDisplayEnabled` — see
-   [Attribution display flag](#attribution-display-flag) — instead of
-   re-sourcing or rebuilding anything.
+   captured caption is surfaced at all. Today that flag drives exactly one
+   thing: the `x-photo-attribution` response header on pack-served photos.
+   No visible credit line exists in the web UI or the SwiftUI clients yet —
+   see [Attribution display flag](#attribution-display-flag) for what the
+   flag does and does not cover.
 5. **The identity bar does not move.** Widening licence never widens who
    counts as "the right person" — see Cropping/contact-sheet below. A wrong
    face is a worse product bug than an unattributed one; an unlicensed-but-
@@ -135,10 +136,31 @@ Capture and display are deliberately decoupled:
 
 On the serving side, `memberPhotoPack.ts` exposes `attributionDisplayEnabled()`
 and `visibleAttributionCaption(face)` — the latter returns `null` while the
-flag is off, and the caption once it's on. **Any UI that wants to show a
-credit line under an avatar should call `visibleAttributionCaption()`, never
-read `face.attributionCaption` directly** — that keeps the flag meaningful:
-flipping it is the entire remediation, with no per-surface follow-up needed.
+flag is off, and the caption once it's on.
+
+**What the flag actually reaches today — be precise about this.** Its one live
+consumer is `tryLocalMemberPhoto`: with the flag ON, every pack-served photo
+comes back with an `x-photo-attribution` response header carrying that face's
+credit line; with it OFF, the header is absent. That is the complete list.
+There is **no visible caption** under any avatar — not in the dashboard HTML,
+not in any `/api/client/v1/*` payload, not in the SwiftUI clients. Attribution
+is *recorded* for every face and *served as a header*; it is not *displayed*.
+
+So flipping the flag is not, on its own, a complete answer to a takedown
+request. It is the lever that makes what we serve self-describing, and it is
+the single switch a future credit-line UI hooks into. Two limits worth stating
+plainly:
+
+* **Building the visible surface is still work.** When someone adds a credit
+  line under an avatar, it must call `visibleAttributionCaption()` rather than
+  reading `face.attributionCaption` directly — that is what keeps one flag
+  governing every surface instead of an audit per call site.
+* **Caching delays the flip.** Pack images are served with a one-year
+  `max-age`, so a flag flip changes the origin immediately but reaches
+  already-cached clients only as their copies expire.
+
+An actual takedown for a specific face is still handled the direct way: drop
+the entry from `sources.json`, rebuild, and the face is gone.
 
 ## Cropping
 
