@@ -153,6 +153,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --exch:      #eab308;
     --warn:      #f59e0b;
     --good:      #34d399;
+    /* Party dots (replaces the old donkey/elephant/eagle glyphs everywhere a
+       member's party is shown — filter chips, drawers, Trends): red for
+       Republican, blue for Democrat, purple for Independent/Other. Same
+       values the .pdot table/member-row dots already used; centralized here
+       so every party-color surface shares one source of truth. */
+    --party-d:   #3b82f6;
+    --party-r:   #ef4444;
+    --party-o:   #a78bfa;
     /* "Rival" gray for the speed-vs-providers race lanes: providers are one
        de-emphasized neutral (never buy/sell green/red — those mean trades). */
     --rival:     #7b8dab;
@@ -812,7 +820,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .est, .est-money { color: var(--text-dim); }
   .est-money::first-letter { font-size: .82em; vertical-align: .3em; margin-right: .5px; }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
-  .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
+  .pdot.D { background:var(--party-d); } .pdot.R { background:var(--party-r); } .pdot.O { background:var(--party-o); }
+  /* Standalone party dot for the filter-chip toggles and the pictograph
+     legend popover — same colors as .pdot but no trailing margin, since
+     those spots have no adjacent label text to space away from. */
+  .party-dot { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:middle; background: var(--text-dim); }
+  .party-dot.D { background:var(--party-d); } .party-dot.R { background:var(--party-r); } .party-dot.O { background:var(--party-o); }
   .rank { color: var(--text-dim); font-family: var(--mono); font-size:12px; width:22px; text-align:right; }
   .net.pos { color: var(--buy); } .net.neg { color: var(--sell); }
   /* buy/sell split bar */
@@ -1323,7 +1336,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   /* ---- Branch / Party / Type chip multi-select ---- */
   /* Three segmented strips sit adjacent on the shared filter row: H·S·P
-     (branch), 🫏🐘🦅 (party), ▲▼⇄ (buy/sell/exchange). All three share the
+     (branch), party dots (red/blue/purple), ▲▼⇄ (buy/sell/exchange). All three share the
      exact same joined-segment treatment (single outer border, no internal
      gaps, divider between buttons) so the row reads as one filter cluster.
      One combined ⓘ (.filters-info-wrap) sits after them explaining every
@@ -2413,9 +2426,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
         <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
         </div>
         <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by trade type">
           <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
@@ -2428,9 +2441,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
             <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
             <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
+            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
+            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
+            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
@@ -2575,9 +2588,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
         <div class="party-chips" id="trPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span aria-hidden="true">🫏</span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span aria-hidden="true">🐘</span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span aria-hidden="true">🦅</span></button>
+          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
+          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
+          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
         </div>
         <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by trade type">
           <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
@@ -2590,9 +2603,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
             <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
             <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (independent, etc.)</span></div>
+            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
+            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
+            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
             <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
@@ -8949,7 +8962,14 @@ function partyCountHtml(n, full, abbr) {
   var suf = n === 1 ? '' : 's';
   return fmtCount(n) + ' <span class="party-full">' + full + suf + '</span><span class="party-abbr">' + abbr + suf + '</span>';
 }
-function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
+/* Colored party dot (red/blue/purple) with an accessible name — the dot is
+   often the only party signal in a row (e.g. next to a member's name), so it
+   needs its own aria-label/title, not just a hidden decorative color swatch. */
+function pdot(b) {
+  if (!b) return '';
+  var name = (typeof PARTY_NAME !== 'undefined' && PARTY_NAME[b]) || b;
+  return '<span class="pdot ' + esc(b) + '" role="img" aria-label="' + esc(name) + '" title="' + esc(name) + '"></span>';
+}
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
 /* Spacious surfaces (KPI strip, flow chips, drawers): always spell out. */
 function polFull(n) { n = Number(n || 0); return fmtCount(n) + ' politician' + (n === 1 ? '' : 's'); }
