@@ -19,7 +19,9 @@ struct PoliticianDetailView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     if isLoading {
-                        ProgressView("Loading Profile...")
+                        // The nav bar carries the entity class ("Politician"),
+                        // so the name has to live here while the hero is empty.
+                        ProgressView("Loading \(memberName)…")
                             .padding(.top, 40)
                     } else if let error = error {
                         ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
@@ -68,7 +70,7 @@ struct PoliticianDetailView: View {
                                     performanceLegBlock(
                                         title: "Their timing (approx.)",
                                         leg: trade,
-                                        showAnnualized: false
+                                        matchesTopPerformers: false
                                     )
                                 } else if perf.scoredCount > 0 {
                                     // Legacy flat trade-date payload
@@ -86,7 +88,7 @@ struct PoliticianDetailView: View {
                                     performanceLegBlock(
                                         title: "If you bought at filing",
                                         leg: filing,
-                                        showAnnualized: true
+                                        matchesTopPerformers: true
                                     )
                                 }
 
@@ -119,7 +121,10 @@ struct PoliticianDetailView: View {
                 .padding(.bottom, 24)
             }
             .background(AppTheme.background)
-            .navigationTitle(memberName)
+            // Nav bar carries the entity CLASS, the hero carries the identity —
+            // titling the bar with the member's name restated the hero one line
+            // below it (owner, on the same duplication in the ticker sheet).
+            .navigationTitle("Politician")
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
@@ -142,11 +147,22 @@ struct PoliticianDetailView: View {
         }
     }
     
+    /// One anchor leg of the buys-only skill aggregate.
+    ///
+    /// `matchesTopPerformers` marks the FILING-date leg, the only one whose
+    /// Avg Excess is the same statistic the Top Performers board ranks and
+    /// prints (`GET /member-performance` → `avgExcessReturn`; see the anchor
+    /// note in `app/src/analytics/routes.ts`). The annualized figure that used
+    /// to be captioned "matches Top Performers" here never did — the backend
+    /// keeps `avgAnnualizedExcess` for reference/debugging only, because a
+    /// young trade's ~12x annualization multiplier made it misleading as a
+    /// headline. It is gone rather than relabelled: the honest number is
+    /// already the tile above, so restating it would just be a second copy.
     @ViewBuilder
     private func performanceLegBlock(
         title: String,
         leg: ClientMemberResponse.PerformanceLeg,
-        showAnnualized: Bool
+        matchesTopPerformers: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -165,8 +181,8 @@ struct PoliticianDetailView: View {
                     value: leg.medianExcess != nil ? String(format: "%+.1f%%", leg.medianExcess! * 100) : "N/A"
                 )
             }
-            if showAnnualized, let ann = leg.avgAnnualizedExcess {
-                Text("Annualized \(String(format: "%+.1f%%", ann * 100)) vs S&P (matches Top Performers)")
+            if matchesTopPerformers, leg.avgExcess != nil {
+                Text("Avg Excess is the statistic Top Performers ranks by.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

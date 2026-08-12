@@ -14,6 +14,17 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(tickers, ["AAPL", "MSFT", "NVDA"])
     }
 
+    func testCompactFormatUsdRollsBillionsUpToTrillions() {
+        // A market cap like $3,622,500,000,000 previously rendered as
+        // "$3622.5b" because CompactFormat.usd had no >= 1e12 branch.
+        XCTAssertEqual(CompactFormat.usd(3_622_500_000_000), "$3.62t")
+        XCTAssertEqual(CompactFormat.usd(1_000_000_000_000), "$1.00t")
+        XCTAssertEqual(CompactFormat.usd(-2_500_000_000_000), "-$2.50t")
+        // Existing billions/millions/thousands precision stays untouched.
+        XCTAssertEqual(CompactFormat.usd(3_500_000_000), "$3.5b")
+        XCTAssertEqual(CompactFormat.usd(23_000_000_000), "$23b")
+    }
+
     func testActiveOnlySubscriptionCommandPreservesFilters() async throws {
         let session = makeSession()
         let client = CongressTradeAPIClient(

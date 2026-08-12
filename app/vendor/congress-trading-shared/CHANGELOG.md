@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.2] — 2026-08-11
+
+### Changed
+- `TxTypeSchema`: accepts `"B"`, `"S"`, `"E"`, and legacy `"P"` (coercing `"P"` to `"B"`).
+- `STOCK_ACT_BRACKETS`: includes sub-$1,001 `$0 – $1,000` (`min: 0, max: 1_000`) amount bracket tier.
+
+### Added
+- `TransactionsQueryInput` export for query parameters accepting raw letter forms.
+
+## [2.5.1] — 2026-08-04
+
+### Fixed
+- Release tag note for dual-anchor performance on mainline.
+
+## [2.5.0] — 2026-08-04
+
+### Added
+- `MemberDualPerformanceSchema` / `MemberDualPerformance` for App A dual-anchor
+  member skill: `filingDate` (copy-trade since disclosure) + `tradeDate` (politician timing).
+- `avgAnnualizedExcess` on `MemberPerformanceSchema` (filing-date leg).
+- `getMemberPerformance` returns the full dual envelope (legacy `{ performance }` still accepted).
+
+## [2.3.0] — 2026-07-24
+
+### Added
+- Pure date-time helper functions `isIsoDateTime` and `toIsoUtcString` in `src/utils.ts` to normalize Date objects, epoch timestamps, or date strings into canonical ISO 8601 UTC format (`YYYY-MM-DDTHH:mm:ss.SSSZ`).
+- Exported `IsoDateTimeSchema` and type `IsoDateTime` in `src/schemas.ts` for strict ISO 8601 UTC date-time string validation.
+
+## [2.2.0] — 2026-07-23
+
+### Added
+- Usage Monitor API route constants: `API_USAGE_MONITOR_HEALTH_PATH` (`/api/health`), `API_USAGE_MONITOR_READY_PATH` (`/api/ready`).
+- Usage Monitor producer identity enum & schema (`USAGE_TELEMETRY_PRODUCERS`, `UsageTelemetryProducerSchema`, `UsageTelemetryProducer`).
+- Usage Monitor known provider enum & schema (`USAGE_TELEMETRY_KNOWN_PROVIDERS`, `UsageTelemetryKnownProviderSchema`, `UsageTelemetryKnownProvider`).
+- Pure helper function `createUsageTelemetryV2Event` for validating and creating strict v2 telemetry events with automatic UUID eventId fallback.
+
+### Changed
+- Updated `publint` dependency to `^0.3.22`.
+
+## [2.1.0] — 2026-07-22
+
+### Added
+- Added `normalizeCompanyName()` utility with state-suffix stripping.
+
 ## [2.0.0] — 2026-07-21
 
 ### Changed

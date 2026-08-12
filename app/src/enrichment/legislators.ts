@@ -131,11 +131,39 @@ export function diminutiveKeyVariants(key: string): string[] {
 }
 
 /**
- * Normalize a politician name for matching: lowercase, strip punctuation, drop
- * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
+ * Fold a name to plain ASCII letters for matching.
+ *
+ * Two failure modes this exists to kill, both observed live as members with no
+ * photo at all:
+ *
+ *   - **Diacritics.** congress-legislators stores the accented spelling
+ *     ("Nanette Diaz Barragán", "Raúl M. Grijalva", "Linda T. Sánchez") while
+ *     disclosure filings carry the unaccented one. Without folding, those keys
+ *     never meet and the member falls out of every name-driven enrichment.
+ *   - **Typographic apostrophes.** The roster writes "O’Halleran" with U+2019;
+ *     filings write "O'Halleran" with an ASCII quote. Same name, different
+ *     bytes. Apostrophes are dropped entirely so both collapse to "ohalleran".
+ *
+ * Folding cannot create a false match here: two names that differ only by
+ * accent or apostrophe style are the same name.
+ */
+export function foldNameChars(s: string): string {
+  return s
+    .normalize('NFD')
+    // Combining diacritical marks.
+    .replace(/[̀-ͯ]/g, '')
+    // Curly quotes/apostrophes and hyphen variants that survive NFD.
+    .replace(/[‘’ʼ′']/g, '')
+    .replace(/[‐-―]/g, '-');
+}
+
+/**
+ * Normalize a politician name for matching: fold accents/apostrophes,
+ * lowercase, strip punctuation, drop middle initials (single letters) and
+ * suffixes. "Ron L Wyden" -> "ron wyden"; "Raúl M. Grijalva" -> "raul grijalva".
  */
 export function normName(s: string | null | undefined): string {
-  return (s ?? '')
+  return foldNameChars(s ?? '')
     .toLowerCase()
     .replace(/[.,]/g, ' ')
     .split(/\s+/)
@@ -225,7 +253,7 @@ export function indexLegislators(list: readonly Legislator[]): Map<string, Legis
  * a trailing disclosure year that must not become part of a name key).
  */
 export function fallbackNameTokens(raw: string | null | undefined): string[] {
-  return String(raw ?? '')
+  return foldNameChars(String(raw ?? ''))
     .toLowerCase()
     .replace(/[.,]/g, ' ')
     .split(/\s+/)

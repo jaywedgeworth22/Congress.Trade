@@ -355,18 +355,171 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
 // ---------------------------------------------------------------------------
 
 /**
- * Net buy/sell flow by REAL GICS sector (securities_ref.sector) — distinct from
+ * Junk sentinels that providers write into `securities_ref.sector` instead of
+ * leaving it NULL. `COALESCE(NULLIF(sector, ''), 'Unknown')` only ever caught
+ * the empty string, so a literal 'N/A' shipped as its own sector bucket in the
+ * chart. Compared against the lower-cased, trimmed label.
+ */
+const SECTOR_UNKNOWN_SENTINELS = [
+  '',
+  '-',
+  '--',
+  'n/a',
+  'n\\a',
+  'na',
+  'none',
+  'null',
+  'nil',
+  'unknown',
+  'not available',
+  'not applicable',
+];
+
+/**
+ * Duplicate spellings and sub-industries that several enrichment providers write
+ * into ONE `securities_ref.sector` column, mapped onto the canonical vocabulary
+ * already dominant in that column (FMP's eleven: Basic Materials, Communication
+ * Services, Consumer Cyclical, Consumer Defensive, Energy, Financial Services,
+ * Healthcare, Industrials, Real Estate, Technology, Utilities). Without this the
+ * chart paints "Healthcare" and "Health Care" as two sectors, and ranks
+ * "Semiconductors" against "Technology" as if they were peers.
+ *
+ * Keys are lower-cased/space-collapsed, so casing variants fold in for free —
+ * the canonical labels are listed as identity entries for exactly that reason.
+ *
+ * DELIBERATELY NOT MAPPED (verified against the tickers actually carrying each
+ * label in production, 2026-08-11 — the obvious mapping is wrong for every one):
+ *   - 'Financials'      → a provider catch-all, NOT the finance sector: it holds
+ *                         Treasury CUSIPs (91282CGH8), mutual funds (ABYIX,
+ *                         TGBAX), an option symbol (SPY160219P00180000), index
+ *                         tickers (^MWE) and a literal '--'.
+ *   - 'Communications'  → ANET/CSCO/EMKR/HLIT — networking HARDWARE, which the
+ *                         canonical vocabulary files under Technology, not
+ *                         Communication Services.
+ *   - 'Mining'          → CRZO/ESV/NBL/WPX — oil & gas names, i.e. Energy.
+ *   - 'Electrical Equipment' → splits APH/GLW/TEL (Technology) against
+ *                         ETN/HUBB/ROK/GEV (Industrials).
+ *   - 'Packaging'       → GICS says Materials, FMP says Consumer Cyclical; the
+ *                         column already speaks FMP, so either choice is a lie.
+ *   - 'Retail', 'Retail Trade', 'Wholesale Trade', 'Consumer products',
+ *     'Manufacturing', 'Services', 'Construction', 'Building', 'Distributors',
+ *     'Transportation & Utilities', 'Finance, Insurance & Real Estate',
+ *     'Transportation, Communications, Electric, Gas, And Sanitary Services'
+ *                       → SIC-style divisions that genuinely span two or more
+ *                         canonical sectors (e.g. 'Retail' carries both WMT/KR
+ *                         and AMZN/HD).
+ * Those fall through to their ORIGINAL label rather than being folded into a
+ * wrong bucket or swallowed into 'Unknown' — nothing disappears silently.
+ */
+const SECTOR_CANONICAL_ALIASES: Record<string, string> = {
+  // Canonical labels, as identity entries (folds in casing/spacing variants).
+  'basic materials': 'Basic Materials',
+  'communication services': 'Communication Services',
+  'consumer cyclical': 'Consumer Cyclical',
+  'consumer defensive': 'Consumer Defensive',
+  energy: 'Energy',
+  'financial services': 'Financial Services',
+  healthcare: 'Healthcare',
+  industrials: 'Industrials',
+  'real estate': 'Real Estate',
+  technology: 'Technology',
+  utilities: 'Utilities',
+
+  // Spelling variants.
+  'health care': 'Healthcare',
+
+  // Sub-industries whose parent sector is unambiguous in BOTH GICS and FMP.
+  banking: 'Financial Services',
+  insurance: 'Financial Services',
+
+  biotechnology: 'Healthcare',
+  'life sciences tools & services': 'Healthcare',
+  'life sciences tools and services': 'Healthcare',
+  pharmaceuticals: 'Healthcare',
+
+  semiconductors: 'Technology',
+
+  media: 'Communication Services',
+  telecommunication: 'Communication Services',
+  telecommunications: 'Communication Services',
+
+  'aerospace & defense': 'Industrials',
+  'aerospace and defense': 'Industrials',
+  airlines: 'Industrials',
+  'industrial conglomerates': 'Industrials',
+  'logistics & transportation': 'Industrials',
+  'logistics and transportation': 'Industrials',
+  machinery: 'Industrials',
+  marine: 'Industrials',
+  'professional services': 'Industrials',
+  'road & rail': 'Industrials',
+  'road and rail': 'Industrials',
+  'trading companies & distributors': 'Industrials',
+  'trading companies and distributors': 'Industrials',
+
+  'auto components': 'Consumer Cyclical',
+  automobiles: 'Consumer Cyclical',
+  'diversified consumer services': 'Consumer Cyclical',
+  'hotels, restaurants & leisure': 'Consumer Cyclical',
+  'hotels, restaurants and leisure': 'Consumer Cyclical',
+
+  beverages: 'Consumer Defensive',
+  'food products': 'Consumer Defensive',
+  tobacco: 'Consumer Defensive',
+
+  chemicals: 'Basic Materials',
+  'metals & mining': 'Basic Materials',
+  'metals and mining': 'Basic Materials',
+  'paper & forest': 'Basic Materials',
+  'paper and forest': 'Basic Materials',
+};
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * SQL CASE that folds the multi-vocabulary `securities_ref.sector` column onto
+ * one canonical label. Same shape as `canonicalAssetTypeCategorySql`: normalize
+ * once, list the known aliases, fall through to the untouched original so an
+ * unrecognised label stays visible instead of vanishing.
+ *
+ * `sectorExpr` must be a bare column reference — it is inlined several times.
+ */
+export function canonicalSectorSql(sectorExpr = 'sr.sector'): string {
+  // Flatten tabs/newlines, trim, then collapse internal runs so 'Health  Care'
+  // and a tab-padded ' Healthcare\t' fold onto the same key. SQLite's trim()
+  // only strips spaces, hence the explicit char(9)/char(10) pass first.
+  const flat = `replace(replace(coalesce(${sectorExpr}, ''), char(9), ' '), char(10), ' ')`;
+  const raw = `trim(${flat})`;
+  const norm = `replace(replace(lower(${raw}), '  ', ' '), '  ', ' ')`;
+  const unknownWhen = SECTOR_UNKNOWN_SENTINELS.map((s) => sqlStringLiteral(s)).join(', ');
+  const aliasWhen = Object.entries(SECTOR_CANONICAL_ALIASES)
+    .map(([alias, canonical]) => `WHEN ${norm} = ${sqlStringLiteral(alias)} THEN ${sqlStringLiteral(canonical)}`)
+    .join(' ');
+  return `(CASE WHEN ${norm} IN (${unknownWhen}) THEN 'Unknown' ${aliasWhen} ELSE ${raw} END)`;
+}
+
+/**
+ * Net buy/sell flow by REAL sector (securities_ref.sector) — distinct from
  * buildSectorBreakdownQuery, which groups by the free-text `asset_type` (an
- * instrument class, not a sector). Resolved tickers only; un-enriched/unknown
- * sectors collapse to 'Unknown'. Reports signed net flow so a sector's
+ * instrument class, not a sector). Reports signed net flow so a sector's
  * accumulation vs distribution is visible, plus politician/ticker breadth.
+ *
+ * Sector labels are canonicalized (see `canonicalSectorSql`) so provider
+ * vocabularies collapse into one bucket per sector.
+ *
+ * TICKER GATE (product decision, unchanged): `TICKER_RESOLVED_SQL` restricts
+ * this chart to trades whose ticker resolved, so munis, funds and other
+ * non-tickered assets are absent from BOTH this and the market-cap chart. The
+ * trade counts here therefore do NOT reconcile with the corpus-wide totals.
  */
 export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
   const limit = clampLimit(p.limit, 20, 100);
   const allWhere = [TICKER_RESOLVED_SQL, ...where];
   const sql =
-    "SELECT COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector, " +
+    `SELECT ${canonicalSectorSql()} AS sector, ` +
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `SUM(${MID}) AS est_volume, ` +
@@ -383,7 +536,12 @@ export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): Bui
 /**
  * Net flow + activity by market-cap bucket (securities_ref.market_cap_bucket:
  * mega…nano). Surfaces a size tilt (e.g. concentration in small/micro caps).
- * Resolved tickers only; un-enriched rows collapse to 'unknown'.
+ * Un-enriched rows collapse to 'unknown'.
+ *
+ * Shares the sector chart's TICKER_RESOLVED_SQL gate (product decision, left
+ * as-is): a trade without a resolved ticker has no securities_ref row, so it
+ * cannot carry a market cap. Both charts therefore describe the tickered subset
+ * of the corpus, not the whole of it.
  */
 export function buildMarketCapBreakdownQuery(p: CommonFilters): BuiltQuery {
   const { where, params } = buildCommonFilters(p);

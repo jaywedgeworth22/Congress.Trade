@@ -52,6 +52,7 @@ import {
   tickerSummarySql,
 } from './queries.ts';
 import { commandType, mergeClaimedSecret, normalizePreferencePatch } from './commands.ts';
+import { tickerAnalytics, wantsAnalytics } from './tickerAnalytics.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
@@ -102,6 +103,28 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
+    // Default to newest-first when the caller has no forward cursor. The raw
+    // ordering `buildTransactionsQuery` falls back to is `cursor_seq ASC`
+    // (oldest first) so a `since=`-cursor poll can resume gap-free — but that
+    // means an unparameterized first call also got oldest-first, and the
+    // oldest ~11,820 rows are `seed_dataset` bulk-import rows with no owning
+    // `filings` row at all (no filedDate/firstSeenAt/sourceUrl — see
+    // mapFeedTransaction). A public endpoint called "feed" defaulting to a
+    // wall of filing-less historical rows is the actual defect; the fix is
+    // scoped to *default direction only*, not the paging contract itself:
+    // - `since` present (including `since=0`, an explicit "start of history"
+    //   cursor) => leave `order` as the caller set it (undefined stays ASC in
+    //   buildTransactionsQuery) so incremental sync keeps walking forward.
+    // - `since` absent AND caller didn't pass `order` => default to `desc` so
+    //   a plain `GET /feed` (or `GET /feed?limit=…&ticker=…`, etc.) shows
+    //   recent, fully-populated rows. iOS always sends its own explicit
+    //   `order` (clients/ios/CongressTrade/Store/CongressTradeStore.swift) and
+    //   never sends `since`, so it is unaffected either way; webhook/SSE
+    //   delivery (src/delivery/{webhook,sse}.ts) hardcode their own
+    //   `cursor_seq ASC` SQL and never go through this parser at all.
+    if (params.since === undefined && params.order === undefined) {
+      params.order = 'desc';
+    }
     // Same public offset depth cap as /api/transactions (src/delivery/rest.ts)
     // — deep offset walks are Premium CSV export's job, not a free scrape path.
     if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
@@ -167,11 +190,33 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       limit: detailLimit(c.req.query('limit')),
       order: asOrder(c.req.query('order')) ?? 'desc',
     };
+    // Company-drawer parity block (buy pressure, buys/sells over time, top
+    // buyers/sellers, "Performance After Buys"). Opt-in because the backtest
+    // leg scans this ticker's full price history plus the whole SPX series —
+    // see client/tickerAnalytics.ts for why it lives on THIS contract rather
+    // than sending clients to the internal /api/analytics routes.
+    const includeAnalytics = wantsAnalytics(c.req.query('include'));
     const summaryQ = tickerSummarySql(ticker);
-    const [list, summaryRow, refRow] = await Promise.all([
+    const [list, summaryRow, refRow, analytics] = await Promise.all([
       readClientTradeList(c.env, params),
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
       getSecurityRef(c.env, ticker),
+      includeAnalytics
+        ? tickerAnalytics(c.env, ticker, {
+            window: c.req.query('window'),
+            granularity: c.req.query('granularity'),
+          }).catch((err) => {
+            // The trade list is this endpoint's primary job; an analytics
+            // failure degrades that one section to `null` rather than blanking
+            // the whole screen. Clients must treat `analytics: null` as
+            // "unavailable right now", never as "no activity".
+            console.error('client ticker analytics failed', {
+              ticker,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return null;
+          })
+        : Promise.resolve(undefined),
     ]);
     await spendRowBudget(c.env, ip, list.count);
     return c.json({
@@ -181,6 +226,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         ...baseSummary(summaryRow),
         memberCount: num(summaryRow?.member_count),
       },
+      // Omitted entirely unless requested, so existing decoders see byte-for-byte
+      // the response they see today.
+      ...(includeAnalytics ? { analytics } : {}),
       ...list,
     });
   });
