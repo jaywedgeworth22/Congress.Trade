@@ -22,7 +22,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ## Execution Workflow
 
-- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (e.g., Oracle hosts). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
+- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (the Hetzner fleet box `fleet-hetzner-nbg1` — see "Current Shape"; the old Oracle host is decommissioned). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
 
 
 - **Always Tagged**: Always explicitly identify as AG or Antigravity in Slack messages and commits to avoid "untagged" ghost work.
@@ -31,7 +31,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 - **Socialize First**: For cross-app changes (like API SDKs or UX overhauls), socialize the design in #agent-sync before executing.
 - **Never Say "Can Be Viewed Locally"**: NEVER tell the user that a task is finished and that it "can be viewed locally" (unless explicitly told to build local-only). Work is NOT finished until it is merged to `main` and fully deployed to production. Saying a task is done when it is only runnable locally leads to duplicate work and confusion. Always merge and run the production deployment script (`bash app/scripts/ship.sh`) as part of completing the task.
 - **Always Keep Branches Updated with Main**: All agents MUST merge or rebase `main` into their feature branch (`git fetch origin main && git merge origin/main`) before running final verification, before requesting review, and immediately before merging. Never leave active feature branches or PRs lagging behind `main`.
-- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners (`coolify-oracle-congress` / `congress-ci` on Coolify, `socratic-ci`). NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
+- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners now living on the Hetzner fleet box (`hetzner-ct-ci-1` / `hetzner-ct-ci-2`, labels `congress-ci` / `hetzner-ci`; the `oracle-ci` label string is kept ONLY so existing `runs-on` selectors keep matching — it names a label, not a location — see `docs/rollouts/2026-08-08-runners-hetzner-migration.md`), `socratic-ci`. NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
 
 
 At session start in any repo, run one agent-sync poll pass:
@@ -48,7 +48,19 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Coolify (Docker container with Deno runtime)** on an Oracle ARM64 host (`141.148.182.224`), reading/writing a **local SQLite file** at `/data/congress-trade/db.sqlite` on the host block volume (migrated off Turso 2026-07-30; `TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` is set as a Coolify env override). Deno KV lives alongside at `/data/congress-trade/kv.sqlite`.
+- The backend app runs on **Coolify (Docker container with Deno runtime)** on the **Hetzner
+  fleet box `fleet-hetzner-nbg1`** (167.233.254.55, x86_64; `ssh coolify` — same box also
+  answers as `host.jays.services`), reading/writing a **local SQLite file** at
+  `/data/congress-trade/db.sqlite` on the host disk (migrated off Turso 2026-07-30;
+  `TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` is set as a Coolify env override;
+  file measured 1.88GB on 2026-08-11).  Deno KV lives alongside at
+  `/data/congress-trade/kv.sqlite`.
+  **The Oracle ARM64 host (`141.148.182.224`) that ran this before 2026-08-08 is
+  DECOMMISSIONED — it is gone, not just idle.  Do not ssh to it, do not diagnose "the box is
+  down" against it, and treat any doc/script that still names it as historical.**  See
+  `docs/rollouts/2026-08-08-runners-hetzner-migration.md`,
+  `docs/rollouts/2026-08-09-offsite-backups-b2-r2.md`, and
+  `docs/rollouts/2026-08-10-box-disk-hygiene.md` for the current-truth record.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
 - Queues are emulated using a custom `deno_runtime_queue` table in SQLite, polled via an internal Deno cron.
 - Root files are supporting context:
@@ -133,7 +145,8 @@ npm test
 ```
 
 Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as production-affecting until proven otherwise.
-Note that the backend deployment targets Coolify on the Oracle ARM64 host (`141.148.182.224`).
+Note that the backend deployment targets Coolify on the Hetzner fleet box `fleet-hetzner-nbg1`
+(`ssh coolify`) — the Oracle ARM64 host is decommissioned (see "Current Shape" above).
 
 Preview deploys are the default review path after verified app changes. If
 `app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
@@ -224,6 +237,49 @@ Secret hygiene when testing (the repo hook enforces this):
 extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
 the file; pipe command output through `sed "s/$TOK/REDACTED/g"`; send stderr to
 `/dev/null` rather than `2>&1` (error text can echo fragments of the argv).
+
+## Admin/secrets credentials (READ THIS — a missing browser UA looks exactly like a dead credential)
+
+Same failure shape as the Cloudflare section above: an agent tests a credential the obvious
+way, gets a non-200, and declares it dead — when the credential is actually fine and the test
+was wrong.  Re-verified live 2026-08-11 after a diagnosis session reported ALL of the below as
+dead ("`CT_ADMIN_TOKEN` 401s", "all four Infisical identities fail with Invalid credentials").
+That diagnosis was wrong.  Every path below is currently live:
+
+| Credential | Where | Verified 2026-08-11 |
+|---|---|---|
+| `CT_ADMIN_TOKEN` (`~/.secrets/global-api-keys`) | bearer for `/api/admin/*` on `https://congress.trade` | **200** on `POST /api/admin/debug-sql` with `{"query":"SELECT 1"}`; a deliberately-wrong token on the same request correctly 401s (sanity-checks the test itself) |
+| `INFISICAL_CT_CLIENT_ID`/`SECRET` | universal-auth login, congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290` env `prod` | login succeeds; `infisical secrets get ADMIN_TOKEN` returns a value whose SHA-256 hash **matches** the `CT_ADMIN_TOKEN` file value byte-for-byte — Infisical and the secrets file agree |
+| `INFISICAL_ST_CLIENT_ID`/`SECRET`, `INFISICAL_SHARED_CLIENT_ID`/`SECRET`, `INFISICAL_AUTOMATION_CLIENT_ID`/`SECRET` | universal-auth login | all three log in successfully |
+
+**The likely cause of the false-dead diagnosis:** `congress.trade` sits behind a Cloudflare
+managed challenge that blocks non-browser User-Agents (same mechanism as the Cloudflare-token
+section above). Measured with the identical token: a browser UA gets **200**; the default curl
+UA on the exact same request gets **502** from the Cloudflare edge — a response an agent can
+easily misread as "the token is dead" when it is actually an edge block that never reached the
+app's auth check.  **Always spoof a browser UA when testing `/api/admin/*` by hand:**
+
+```bash
+UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+TOK=$(grep -m1 '^CT_ADMIN_TOKEN=' ~/.secrets/global-api-keys | cut -d= -f2-)
+curl -sS -A "$UA" -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -X POST "https://congress.trade/api/admin/debug-sql" -d '{"query":"SELECT 1"}'
+```
+
+If that genuinely 401s with the browser UA in place (not a 403/502 edge response), THEN treat
+the token as actually rejected — that has happened for real once before (2026-07-30: Coolify's
+runtime `ADMIN_TOKEN` had drifted from Infisical's because `INFISICAL_APP_PROJECT_ID` was unset
+on Coolify, so the app silently fell back to an older image-baked value; see `docs/EFFORT-LOG.md`
+2026-07-30 KIMI entries and PR #1192 for the full forensics). **How to re-sync if it happens
+again:** set `INFISICAL_APP_PROJECT_ID=f61a79de-8d77-4f0b-9361-4b7208598290` and
+`INFISICAL_SHARED_PROJECT_ID` (Socratic-shared project id) as Coolify **runtime env vars** on
+the `congress-app` service, then redeploy — the app re-reads Infisical on the ~600s secrets
+cache TTL with no rebuild needed.  `ADMIN_TOKEN` itself lives in Infisical's congress-trade
+project (`f61a79de-…`), env `prod`, key `ADMIN_TOKEN` — that is the source of truth; do not mint
+a new one without owner sign-off (production-intent, see the migration/deploy rules below).
+
+Verify without ever printing a secret value — extract with `grep -m1`, reduce Infisical fetches
+to length/hash only, and use the wrong-token sanity check above so a 401 you see is trusted.
 
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 
