@@ -112,19 +112,44 @@ site_is_down() {
 }
 
 # --- read deployment state -------------------------------------------------
-DEPLOYS_JSON=$(api GET "/api/v1/deployments/applications/${APP_UUID}?take=15")
+# Use the GLOBAL in-flight endpoint, not the per-app history one.
+#
+# /api/v1/deployments/applications/{uuid}?take=N returns deployment HISTORY with
+# every row's full logs inline. CT has 200+ deployments, some carrying ~280KB of
+# log text, so the query grew past Coolify's FastCGI timeout: measured
+# 2026-08-12, take=15 -> TIMEOUT, take=3 -> 0.63s. The guard went blind and stood
+# down every minute while 4 CT deploys piled up behind one running build.
+#
+# Shrinking take= would have been WRONG: that endpoint is newest-first, and the
+# running deployment is the OLDEST in-flight row, so a small take= silently hides
+# it and the guard would stack a new deploy on top of a live build.
+#
+# /api/v1/deployments returns exactly the running + queued set across all apps
+# (measured 3.4s, 10.7KB) — it cannot miss the running one, and it is bounded by
+# how much is in flight rather than by history size.
+DEPLOYS_JSON=$(api GET "/api/v1/deployments")
 if [[ -z "$DEPLOYS_JSON" ]]; then
   log "could not read deployments (API unreachable)"
   exit 1
 fi
 
-read -r RUNNING QUEUED_UUIDS QUEUED_FORCE <<<"$(printf '%s' "$DEPLOYS_JSON" | python3 -c '
-import json,sys
+read -r RUNNING QUEUED_UUIDS QUEUED_FORCE <<<"$(printf '%s' "$DEPLOYS_JSON" | APP_UUID="$APP_UUID" python3 -c '
+import json,os,sys
 try:
     d=json.load(sys.stdin)
 except Exception:
     print("ERR - 0"); raise SystemExit
-ds=d.get("deployments",[]) if isinstance(d,dict) else []
+rows = d if isinstance(d,list) else d.get("data", d.get("deployments", []))
+if not isinstance(rows, list):
+    print("ERR - 0"); raise SystemExit
+# Global endpoint: keep only THIS app. Match on either the uuid or the name so a
+# Coolify payload change in either field cannot silently widen the scope.
+app_uuid = os.environ.get("APP_UUID","")
+def mine(x):
+    return (x.get("application_id") == app_uuid
+            or x.get("application_uuid") == app_uuid
+            or x.get("application_name") == "congress-trade")
+ds = [x for x in rows if mine(x)]
 running=[x for x in ds if x.get("status") in ("in_progress","building","running")]
 queued=[x for x in ds if x.get("status")=="queued"]
 queued.sort(key=lambda x: x.get("created_at",""))
@@ -139,9 +164,23 @@ if [[ "$RUNNING" == "ERR" ]]; then
   exit 1
 fi
 
+# A build being in progress must NOT stop us coalescing the queue behind it.
+#
+# Until 2026-08-12 this exited immediately whenever anything was running, so the
+# queue was only ever collapsed in the gaps BETWEEN builds. With
+# concurrent_builds=1 and CT builds taking minutes, webhooks arrive faster than
+# builds drain and there is rarely a gap — measured that day: one CT build
+# waited 65 minutes for its turn while 3 more CT deploys queued up behind it,
+# untouched, plus 2 for another app.
+#
+# Cancelling a QUEUED deploy is safe at any time — it has not started, owns no
+# containers, and Coolify always deploys branch HEAD so a later single deploy
+# still delivers the newest commit. Only the TRIGGER step must wait, so we never
+# stack a second build on a live one.
+RUNNING_NOW=0
 if [[ "${RUNNING:-0}" -gt 0 ]]; then
-  log "deploy in progress (${RUNNING}); standing down"
-  exit 0
+  RUNNING_NOW=1
+  log "deploy in progress (${RUNNING}); will coalesce the queue but not trigger"
 fi
 
 # --- coalesce queued deploys ----------------------------------------------
@@ -197,6 +236,14 @@ fi
 
 # --- nothing to do? --------------------------------------------------------
 if [[ ! -f "$PENDING_FILE" ]]; then
+  exit 0
+fi
+
+# Queue collapsed above; the trigger itself waits until the running build ends,
+# so we never stack a second build on a live one. PENDING persists, so the next
+# tick after the build finishes ships the newest commit.
+if [[ "$RUNNING_NOW" -eq 1 ]]; then
+  log "main is ahead; holding trigger until the in-flight build finishes"
   exit 0
 fi
 
