@@ -1077,6 +1077,98 @@ describe('tradeLatency', () => {
       expect(fmp.ctCoveragePct).toBe(20);
     });
 
+    describe('contradiction guard: 0% coverage while holding pairings is not publishable', () => {
+      // The production shape this guard exists for: many matured provider rows,
+      // none of them matched, while trade_latency_candidates holds strong
+      // pairings for the same lane. Those two facts cannot both be true.
+      const observations = Array.from({ length: 12 }, (_, i) => ({
+        ...observation,
+        provider_key: `qq-${100 + i}`,
+        trade_hash: `member${i}_ACME_2026-07-2${i % 10}_buy`,
+      }));
+
+      it('suppresses ctCoveragePct instead of publishing a 0% it did not measure', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, [
+          // Real pairings on file — but for trades the observation cohort does
+          // not contain, which is the signature of a broken lookup.
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-other',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+
+        expect(quiver.maturedProviderObserved).toBe(12);
+        expect(quiver.maturedMatched).toBe(0);
+        expect(quiver.coverageStrongPairingsOnFile).toBe(1);
+        expect(quiver.coverageIntegrity).toBe('contradiction');
+        // The whole point: not 0.
+        expect(quiver.ctCoveragePct).toBeNull();
+        expect(quiver.overlapPct).toBeNull();
+        // A broken join must never reach a publishable claim.
+        expect(quiver.comparisonStatus).not.toBe('usable');
+      });
+
+      it('still reports an honest 0% when there are genuinely no pairings on file', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, []).filter(
+          (p) => p.provider === 'fmp' || p.provider === 'quiver',
+        );
+        expect(quiver.coverageStrongPairingsOnFile).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        // Nothing contradicts this zero, so it is a measurement and it stands.
+        expect(quiver.ctCoveragePct).toBe(0);
+        expect(quiver.unmatchedProvider).toBe(12);
+      });
+
+      it('does not fire on weak-only pairings, which are excluded from the headline by design', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-other',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'fuzzy-missing-date',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        // maturedMatched counts strong only, so a weak pairing on file is not
+        // in tension with a strong-zero. This 0% is honest.
+        expect(quiver.coverageStrongPairingsOnFile).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBe(0);
+      });
+
+      it('stays quiet on a healthy lane', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], [observation], [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBe(100);
+      });
+
+      it('does not fire when a lane observed nothing matured (no ratio to contradict)', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], [], [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        expect(quiver.maturedProviderObserved).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBeNull();
+      });
+    });
+
     it('flags stored observations that can never match instead of calling them a coverage miss', () => {
       const [fmp] = buildPublicLatencyProviders(
         [],
