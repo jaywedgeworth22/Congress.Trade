@@ -60,6 +60,11 @@ module.exports = {
       error_file: './scout/senate-tunnel.err',
       merge_logs: true,
       autorestart: true,
+      // The wrapper exits non-zero on purpose (unhealthy probe, missing
+      // credentials, no connection) so pm2 restarts it. Without a delay, the
+      // fail-fast paths return in under a second and pm2 would spin them in a
+      // hot loop; 10s keeps recovery prompt without hammering.
+      restart_delay: 10000,
     },
     {
       name: 'vision-worker',
