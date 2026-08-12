@@ -18,10 +18,14 @@
 # All 0.5.x releases share the LTX replica format, so staying within 0.5.x is
 # replica-compatible.
 #
-# A download or checksum failure leaves the binary absent. That is
-# deploy-safe while replication is disabled; if LITESTREAM_S3_* creds resolve
-# at startup, the startup wrapper fails closed instead of silently dropping
-# the backup path (see scripts/start-with-litestream.sh REQUIRED_KEYS).
+# A download or checksum failure leaves the binary absent and exits 0, so that
+# `bash scripts/fetch-litestream.sh` alone never decides deploy policy. The
+# Dockerfile is what enforces it: `RUN bash scripts/fetch-litestream.sh &&
+# test -x bin/litestream` fails the BUILD when the binary did not install.
+# That matters because the startup wrapper treats a missing binary as
+# "run the app without replication" — a live site with no backup, announced
+# only by one WARNING line. Catching it at build time keeps the previous
+# container serving instead.
 set -euo pipefail
 
 LITESTREAM_VERSION="0.5.13"

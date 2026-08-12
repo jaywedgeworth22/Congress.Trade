@@ -13,11 +13,17 @@ RUN apk add --no-cache curl bash tar ca-certificates
 # Litestream binary (pinned + sha256-verified) for continuous SQLite -> B2
 # replication. See scripts/fetch-litestream.sh for the pin rationale (0.5.13,
 # not 0.5.14 — Socratic.Trade hit a socket-churn regression in 0.5.14 on this
-# same Coolify/Hetzner box). A download/checksum failure here leaves
-# ./bin/litestream absent, which is deploy-safe: scripts/start-with-litestream.sh
-# only requires the binary when B2 replica credentials actually resolve.
+# same Coolify/Hetzner box).
+#
+# The `test -x` is load-bearing. fetch-litestream.sh deliberately exits 0 on a
+# download failure, a checksum mismatch, or an unsupported arch, so without
+# this assertion the build would happily produce an image whose only symptom
+# is one WARNING line at startup and NO BACKUPS AT ALL — the exact silent
+# failure this replication work exists to prevent. Failing the build instead
+# is the safe direction: Coolify keeps the previous container serving, so a
+# transient GitHub outage costs a deploy, never uptime and never the backup.
 COPY scripts/fetch-litestream.sh scripts/fetch-litestream.sh
-RUN bash scripts/fetch-litestream.sh
+RUN bash scripts/fetch-litestream.sh && test -x bin/litestream
 
 # Infisical CLI, via Alpine's official apk repo (the generic linux-glibc
 # release tarball Socratic.Trade/Usage-Monitor use on Debian does not

@@ -43,18 +43,28 @@ CT_ENV="${INFISICAL_ENV:-prod}"
 
 litestream_enabled=false
 
-if [[ -z "${INFISICAL_APP_CLIENT_ID:-}" || -z "${INFISICAL_APP_CLIENT_SECRET:-}" ]]; then
-  log "INFISICAL_APP_CLIENT_ID/SECRET not set — running without Litestream (expected for local/preview)."
+# Accept the same two spellings of the bootstrap identity that the app itself
+# accepts (src/secrets/infisical.ts: `INFISICAL_APP_CLIENT_ID ||
+# INFISICAL_CLIENT_ID`). Coolify historically set the un-prefixed pair and
+# still has both on this service. If this script recognised only the _APP_
+# spelling, dropping those duplicates would leave the app resolving secrets
+# perfectly while replication silently switched itself off — nothing would
+# look broken until a restore was needed.
+BOOTSTRAP_CLIENT_ID="${INFISICAL_APP_CLIENT_ID:-${INFISICAL_CLIENT_ID:-}}"
+BOOTSTRAP_CLIENT_SECRET="${INFISICAL_APP_CLIENT_SECRET:-${INFISICAL_CLIENT_SECRET:-}}"
+
+if [[ -z "${BOOTSTRAP_CLIENT_ID}" || -z "${BOOTSTRAP_CLIENT_SECRET}" ]]; then
+  log "no Infisical bootstrap identity (INFISICAL_APP_CLIENT_ID/SECRET or INFISICAL_CLIENT_ID/SECRET) — running without Litestream (expected for local/preview)."
 elif ! command -v infisical >/dev/null 2>&1; then
-  log "WARNING: infisical CLI not found in image — running without Litestream."
+  log "ERROR-LEVEL WARNING: infisical CLI missing from the image — THE DATABASE IS NOT BEING BACKED UP. Starting the app anyway (uptime over backup); rebuild the image to restore replication."
 elif [[ ! -x "${LITESTREAM_BIN}" ]]; then
-  log "WARNING: litestream binary not found at ${LITESTREAM_BIN} — running without Litestream."
+  log "ERROR-LEVEL WARNING: litestream binary missing at ${LITESTREAM_BIN} — THE DATABASE IS NOT BEING BACKED UP. Starting the app anyway (uptime over backup); the Dockerfile's 'test -x bin/litestream' should have caught this at build time."
 else
   # Mint a short-lived token from the app's existing bootstrap identity. Do
   # not log the token or any secret value at any point below.
   TOKEN="$(
-    INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="${INFISICAL_APP_CLIENT_ID}" \
-    INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="${INFISICAL_APP_CLIENT_SECRET}" \
+    INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="${BOOTSTRAP_CLIENT_ID}" \
+    INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="${BOOTSTRAP_CLIENT_SECRET}" \
     infisical login --method=universal-auth --silent --plain 2>/dev/null || true
   )"
   if [[ -z "${TOKEN}" ]]; then
@@ -65,6 +75,8 @@ else
     # injects the full project secret set into the `sh -c` child's env, but
     # only these 5 named values are ever printed (to this captured variable,
     # never to stdout/stderr of the container).
+    # shellcheck disable=SC2016  # single quotes are required: these expand in
+    # the `sh -c` child, whose env `infisical run` populates — not here.
     mapfile -t _ls_secrets < <(
       INFISICAL_TOKEN="${TOKEN}" infisical run \
         --env "${CT_ENV}" --path / --projectId "${CT_PROJECT_ID}" --silent -- \
