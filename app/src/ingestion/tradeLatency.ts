@@ -1503,9 +1503,10 @@ export function extractLastName(name: string | null): string {
   if (!name) return '';
   const clean = name.replace(/\b[A-Za-z]\.\s*/g, ' ').replace(/\s+/g, ' ').trim();
   const parts = clean.split(',')[0].split(' ');
+  const ignore = new Set(['jr', 'sr', 'md', 'ii', 'iii', 'iv', 'v', 'rep', 'sen', 'hon', 'dr', 'mr', 'mrs', 'ms', 'senator', 'representative', 'honorable']);
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i].toLowerCase().replace(/[^a-z]/g, '');
-    if (p && p.length > 1 && !['jr', 'sr', 'md', 'ii', 'iii', 'iv', 'v'].includes(p)) return p;
+    if (p && p.length > 1 && !ignore.has(p)) return p;
   }
   return '';
 }
@@ -1514,15 +1515,15 @@ export function extractLastName(name: string | null): string {
 export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'sell' | 'exchange' {
   const tyStr = (type || '').toLowerCase().trim();
   if (!tyStr) return 'exchange';
-  if (tyStr === 'p' || tyStr.includes('buy') || tyStr.includes('purchase')) return 'buy';
-  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sale')) return 'sell';
+  if (tyStr === 'p' || tyStr === 'b' || tyStr.includes('buy') || tyStr.includes('bought') || tyStr.includes('purchase')) return 'buy';
+  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sold') || tyStr.includes('sale')) return 'sell';
   if (tyStr === 'e' || tyStr.includes('exchange')) return 'exchange';
   return 'exchange';
 }
 
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
-  const tk = (ticker || '').toUpperCase().trim().replace(/[\.\/]/g, '-');
+  const tk = (ticker || '').toUpperCase().trim().replace(/^\$/, '').replace(/:.*$/, '').replace(/[\.\/]/g, '-');
   const dt = normalizeDate(date) || '';
   const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
@@ -1754,7 +1755,12 @@ export function matchDisclosureCandidate(
 
   const c = parseTradeHash(candidate.trade_hash);
   const r = parseTradeHash(row.tradeHash);
-  if (!c.lastName || !r.lastName || c.lastName !== r.lastName) return null;
+  const sameLastName =
+    c.lastName &&
+    r.lastName &&
+    (c.lastName === r.lastName ||
+      (c.lastName.length >= 4 && r.lastName.length >= 4 && (c.lastName.includes(r.lastName) || r.lastName.includes(c.lastName))));
+  if (!sameLastName) return null;
   if (!c.side || !r.side || c.side !== r.side) return null;
 
   const sameTicker = Boolean(c.ticker && r.ticker && c.ticker === r.ticker);

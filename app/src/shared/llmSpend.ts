@@ -81,7 +81,7 @@ export function isLlmBudgetHalt(error: unknown): boolean {
 
 export const DEFAULT_LLM_DAILY_USD_CEILING = 10;
 /** Soft default per-doc lifetime LLM spend (all purposes). Override via LLM_DOC_USD_CEILING. */
-export const DEFAULT_LLM_DOC_USD_CEILING = 3;
+export const DEFAULT_LLM_DOC_USD_CEILING = 0.25;
 export const LLM_DOC_BUDGET_ERROR_MARKER = 'llm per-doc usd budget exceeded';
 export const LLM_DOC_ALREADY_EXTRACTED_MARKER = 'llm skip: doc already has transactions';
 
@@ -753,4 +753,115 @@ export async function inspectLlmSpend(env: Env, now = new Date()): Promise<LlmSp
     perProviderCeilings,
     exhausted: spend.totalUsd >= ceilingUsd,
   };
+}
+
+export interface DocExtractionMetrics30d {
+  sinceDay: string;
+  throughDay: string;
+  totalIdentifiedDocs: number;
+  deterministic: {
+    totalDocs: number;
+    byMethod: Record<string, number>;
+  };
+  paidLlm: {
+    totalDocs: number;
+    totalUsd: number;
+    avgCostUsd: number;
+    p90CostUsd: number;
+    maxCostUsd: number;
+    highestCostDocId: string | null;
+  };
+}
+
+/** Admin 30-day breakdown of identified docs, deterministic vs paid LLM, avg/p90/max cost. */
+export async function read30DayExtractionMetrics(
+  env: Env,
+  now = new Date(),
+): Promise<DocExtractionMetrics30d | null> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function') return null;
+
+  const today = dayStr(now);
+  const sinceDay = daysAgoStr(now, 29);
+  const cutoffIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const identifiedRow = await db
+      .prepare(`SELECT COUNT(*) AS n FROM filings WHERE first_seen_at >= ?`)
+      .bind(cutoffIso)
+      .first<{ n: number }>();
+    const totalIdentifiedDocs = Number(identifiedRow?.n) || 0;
+
+    const detRows = await db
+      .prepare(
+        `SELECT COALESCE(extractor, 'unknown') AS method, COUNT(*) AS n
+           FROM filings
+          WHERE first_seen_at >= ?
+          GROUP BY method`,
+      )
+      .bind(cutoffIso)
+      .all<{ method: string; n: number }>();
+
+    const byMethod: Record<string, number> = {};
+    let detTotal = 0;
+    for (const r of detRows?.results ?? []) {
+      const count = Number(r.n) || 0;
+      byMethod[r.method] = count;
+      if (['text_pdf', 'senate_html', 'oge_text', 'scan-cpu-worker', 'local_mac', 'server_cpu', 'tesseract'].includes(r.method)) {
+        detTotal += count;
+      }
+    }
+
+    const paidDocRows = await db
+      .prepare(
+        `SELECT doc_id, SUM(usd) AS doc_usd
+           FROM llm_spend_settlements
+          WHERE day >= ? AND day <= ? AND doc_id IS NOT NULL
+          GROUP BY doc_id
+          ORDER BY doc_usd ASC`,
+      )
+      .bind(sinceDay, today)
+      .all<{ doc_id: string; doc_usd: number }>();
+
+    const paidList = (paidDocRows?.results ?? []).map((r) => ({
+      docId: r.doc_id,
+      usd: Number(r.doc_usd) || 0,
+    }));
+
+    const paidTotalDocs = paidList.length;
+    const paidTotalUsd = paidList.reduce((acc, x) => acc + x.usd, 0);
+    const avgCostUsd = paidTotalDocs > 0 ? paidTotalUsd / paidTotalDocs : 0;
+
+    let p90CostUsd = 0;
+    let maxCostUsd = 0;
+    let highestCostDocId: string | null = null;
+
+    if (paidTotalDocs > 0) {
+      const p90Idx = Math.min(Math.floor(paidTotalDocs * 0.9), paidTotalDocs - 1);
+      p90CostUsd = paidList[p90Idx].usd;
+      const highest = paidList[paidTotalDocs - 1];
+      maxCostUsd = highest.usd;
+      highestCostDocId = highest.docId;
+    }
+
+    return {
+      sinceDay,
+      throughDay: today,
+      totalIdentifiedDocs,
+      deterministic: {
+        totalDocs: detTotal,
+        byMethod,
+      },
+      paidLlm: {
+        totalDocs: paidTotalDocs,
+        totalUsd: paidTotalUsd,
+        avgCostUsd,
+        p90CostUsd,
+        maxCostUsd,
+        highestCostDocId,
+      },
+    };
+  } catch {
+    return null;
+  }
 }
