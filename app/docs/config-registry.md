@@ -87,6 +87,25 @@ budget-status polling, see Tunables & flags below)
   **Yield-weighted spacing (all three):** 4 America/New_York bands
   (peak 08–12 / high 12–16 / mid 06–08+16–20 / low nights; weekends downshifted)
   so daily budgets run **~2–3× denser in peak filing hours** and sparse overnight.
+  These band boundaries were **guessed, and measurement showed them wrong** —
+  see `docs/probe-schedule.md` for the replacement curve and the adoption diff.
+- Adaptive probe cadence (`src/ingestion/probeSchedule.ts`, measured windows —
+  full reference in **`docs/probe-schedule.md`**): `PROBE_SCHEDULE_ENABLED`
+  (default on), `PROBE_SCHEDULE_MIN_INTERVAL_SEC` (default `60`, politeness
+  floor), `PROBE_SCHEDULE_MAX_INTERVAL_SEC` (default `1800` — the **coverage
+  floor**: no window ever goes longer than this between probes),
+  `PROBE_SCHEDULE_WEEKEND_MAX_INTERVAL_SEC` (default `3600`),
+  `PROBE_SCHEDULE_PEAK_TROUGH_RATIO` (default `30`; R = 4 is measurably worse
+  than today at peak — table in the doc),
+  `PROBE_SCHEDULE_RETRY_HEADROOM` (default `0.1`),
+  `PROBE_SCHEDULE_ALLOCATION_EXPONENT` (default `1` = proportional),
+  `PROBE_SCHEDULE_HOUSE_BUDGET` / `PROBE_SCHEDULE_SENATE_BUDGET` (default `171`
+  probes/weekday each — a self-imposed politeness budget, **not** a documented
+  Clerk rate limit), `PROBE_SCHEDULE_PROVIDER_BUDGET` (default `240` runs),
+  and `PROBE_SCHEDULE_JSON` for a full window-table override.  Every key is
+  optional and total: a malformed value degrades to the shipped default rather
+  than stalling ingestion, so the windows can be retuned live when Congress
+  recesses or the Clerk changes publication times — no redeploy.
   Production should keep these set in Infisical:
   `DISCLOSURE_LATENCY_WATCH_ENABLED=true`,
   `DISCLOSURE_LATENCY_PROVIDERS=fmp,unusual_whales,quiver` (add `fmp_rapidapi` only if product supports congress),

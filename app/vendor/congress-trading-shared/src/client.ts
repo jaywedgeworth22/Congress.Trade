@@ -2,6 +2,7 @@ import { API_PATHS, DEFAULT_CONGRESS_TRADE_BASE_URL, MAX_REFS_BATCH } from "./co
 import type {
   BundleResponse,
   TransactionsPage,
+  TransactionsQueryInput,
   TransactionsQuery,
   PriceClose,
   PriceSeries,
@@ -13,7 +14,7 @@ import type {
   TickerLeader,
   ClusterBuy,
   MemberLeader,
-  MemberPerformance,
+  MemberDualPerformance,
   ConvictionTicker,
   TickerBacktest,
   CommitteeConflict,
@@ -27,6 +28,7 @@ import {
   FundamentalRowSchema,
   InsiderReadRowSchema,
   MemberLeaderSchema,
+  MemberDualPerformanceSchema,
   MemberPerformanceSchema,
   PriceCloseSchema,
   PriceSeriesSchema,
@@ -307,7 +309,7 @@ export class CongressTradeClient {
     ));
   }
 
-  async getTransactions(query: TransactionsQuery = {}): Promise<TransactionsPage> {
+  async getTransactions(query: TransactionsQueryInput = {}): Promise<TransactionsPage> {
     const parsedQuery = TransactionsQuerySchema.parse(query);
     const params = new URLSearchParams();
     if (parsedQuery.since !== undefined) params.set("since", String(parsedQuery.since));
@@ -359,16 +361,33 @@ export class CongressTradeClient {
     ).members;
   }
 
-  async getMemberPerformance(filerId: string): Promise<MemberPerformance | null> {
+  /**
+   * Dual-anchor member performance (filingDate = copy-trade, tradeDate = politician timing).
+   * Prefer `filingDate` for App B trading decisions; keep `tradeDate` as context.
+   * Legacy single-leg clients can still read `performance` (= tradeDate).
+   */
+  async getMemberPerformance(filerId: string): Promise<MemberDualPerformance | null> {
     if (!filerId) return null;
-    const data = parseResponse(
-      z.object({ performance: MemberPerformanceSchema.nullable() }),
-      await this.getJson<unknown>(
-        `${API_PATHS.ANALYTICS_MEMBER_PERFORMANCE}/${encodeURIComponent(filerId)}/performance`
-      ),
-      "member performance",
+    const raw = await this.getJson<unknown>(
+      `${API_PATHS.ANALYTICS_MEMBER_PERFORMANCE}/${encodeURIComponent(filerId)}/performance`
     );
-    return data.performance;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("Invalid member performance response");
+    }
+    const obj = raw as Record<string, unknown>;
+    // Require at least one known performance key so meta-only / garbage envelopes fail closed.
+    const hasKeys = "filingDate" in obj || "tradeDate" in obj || "performance" in obj;
+    if (!hasKeys) throw new Error("Invalid member performance response");
+
+    const dual = MemberDualPerformanceSchema.safeParse(raw);
+    if (!dual.success) throw new Error("Invalid member performance response");
+    const d = dual.data;
+    // Legacy clients only sent `performance` (= trade-date skill). Normalize so
+    // callers always see tradeDate when that is the only leg present.
+    if (d.performance && !d.tradeDate) d.tradeDate = d.performance;
+    if (d.filingDate || d.tradeDate || d.performance) return d;
+    // Explicit nulls only (no scored legs yet)
+    return null;
   }
 
   async getConviction(opts: { window?: string; limit?: number } = {}): Promise<ConvictionTicker[]> {

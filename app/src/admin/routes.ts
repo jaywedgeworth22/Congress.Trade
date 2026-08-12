@@ -48,6 +48,12 @@ import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared
 import { uuid } from '../shared/ids.ts';
 import { runCommitteeSync } from '../enrichment/committeeSync.ts';
 import { buildLegislatorMap, normName } from '../enrichment/legislators.ts';
+import {
+  isMemberPhotoPackUrl,
+  memberPhotoUrl,
+  packFaceForKey,
+  packFacesWithFilerIds,
+} from '../enrichment/memberPhotoPack.ts';
 import { runIdentitySync } from '../enrichment/identitySync.ts';
 import {
   assertSubscriptionQuota,
@@ -1025,9 +1031,31 @@ export function photoUrlFor(bioguide: string, size: string = LEGISLATOR_PHOTO_SI
   return `https://unitedstates.github.io/images/congress/${size}/${bioguide}.jpg`;
 }
 
-/** True when the stored URL is missing, legacy-size, or a different bioguide path. */
-export function photoUrlNeedsUpgrade(current: string | null | undefined, bioguide: string): boolean {
-  const want = photoUrlFor(bioguide);
+/**
+ * The photo URL a legislator *should* carry.
+ *
+ * Prefer our own cropped face pack when it has this bioguide: a 256px
+ * head-focused WebP served from our origin beats a 200KB head-and-torso
+ * hotlink, and it keeps working when the upstream CDN does not have the image
+ * (nine stored bioguides 404 there today). Anything not in the pack keeps the
+ * upstream URL, so this can never turn a working photo into a blank one.
+ */
+export function desiredPhotoUrlFor(bioguide: string, baseUrl: string | undefined): string {
+  return packFaceForKey(bioguide)
+    ? memberPhotoUrl(bioguide, baseUrl ?? 'https://congress.trade')
+    : photoUrlFor(bioguide);
+}
+
+/**
+ * True when the stored URL is missing, legacy-size, points at a different
+ * bioguide, or predates the face pack. `want` defaults to the upstream URL so
+ * existing callers keep their old meaning.
+ */
+export function photoUrlNeedsUpgrade(
+  current: string | null | undefined,
+  bioguide: string,
+  want: string = photoUrlFor(bioguide),
+): boolean {
   const have = (current ?? '').trim();
   if (!have) return true;
   if (have === want) return false;
@@ -1035,6 +1063,8 @@ export function photoUrlNeedsUpgrade(current: string | null | undefined, bioguid
   if (have.includes(`/images/congress/${LEGISLATOR_PHOTO_SIZE_LEGACY}/${bioguide}.jpg`)) return true;
   // Replace a wrong-bioguide or other CDN path with the canonical one.
   if (have.includes('unitedstates.github.io/images/congress/')) return true;
+  // A pack URL for some other key (or a stale origin) is also stale.
+  if (isMemberPhotoPackUrl(have)) return true;
   return false;
 }
 
@@ -1354,7 +1384,14 @@ async function applyMemberFilerMerge(
 
 export async function runPhotoEnrichment(
   env: Env,
-): Promise<{ filers: number; matched: number; unmatched: number; upgraded: number }> {
+): Promise<{
+  filers: number;
+  matched: number;
+  unmatched: number;
+  upgraded: number;
+  /** Pack-by-filer-id UPDATEs queued (executive filers and pack-only bioguides). */
+  packFilerFills: number;
+}> {
   const map = await buildLegislatorMap();
   // Also index by bioguide so filers that already carry resolved_bioguide_id
   // (from identity sync) get a headshot even when free-text name matching fails.
@@ -1388,8 +1425,8 @@ export async function runPhotoEnrichment(
       (resolved ? byBioguide.get(resolved) ?? null : null);
     if (!match) continue;
     matched++;
-    const nextPhoto = photoUrlFor(match.bioguide);
-    if (photoUrlNeedsUpgrade(f.photo_url, match.bioguide)) upgraded++;
+    const nextPhoto = desiredPhotoUrlFor(match.bioguide, env.APP_BASE_URL);
+    if (photoUrlNeedsUpgrade(f.photo_url, match.bioguide, nextPhoto)) upgraded++;
     updates.push(
       env.DB
         .prepare(
@@ -1398,10 +1435,41 @@ export async function runPhotoEnrichment(
         .bind(nextPhoto, match.party, match.state, match.district, match.bioguide, f.bioguide_id),
     );
   }
+
+  // Executive-branch filers have no bioguide and are invisible to every
+  // congress-legislators lookup, which is why ~45 of them carried no photo at
+  // all. The face pack pins each one to a curated public-domain portrait by
+  // filer id; fill those in here. Only NULL/blank photos and stale pack URLs
+  // are touched, so a hand-set photo is never clobbered — which also means the
+  // count below is UPDATEs queued, not rows actually changed (a re-run is a
+  // no-op at the database and still reports the same number).
+  let packFilerFills = 0;
+  const knownFilerIds = new Set(filers.map((f) => f.bioguide_id));
+  for (const face of packFacesWithFilerIds()) {
+    const url = memberPhotoUrl(face.key, env.APP_BASE_URL ?? 'https://congress.trade');
+    for (const filerId of face.filerIds) {
+      if (!knownFilerIds.has(filerId)) continue;
+      packFilerFills++;
+      updates.push(
+        env.DB
+          .prepare(
+            "UPDATE filers SET photo_url = ? WHERE bioguide_id = ? AND (photo_url IS NULL OR TRIM(photo_url) = '' OR (photo_url LIKE '%/api/photos/member?key=%' AND photo_url <> ?))",
+          )
+          .bind(url, filerId, url),
+      );
+    }
+  }
+
   for (let i = 0; i < updates.length; i += 50) {
     await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
-  return { filers: filers.length, matched, unmatched: filers.length - matched, upgraded };
+  return {
+    filers: filers.length,
+    matched,
+    unmatched: filers.length - matched,
+    upgraded,
+    packFilerFills,
+  };
 }
 
 interface BenchmarkGroundTruthTx {
@@ -3378,6 +3446,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'USAGE_MONITOR_INGEST_TOKEN', 'USAGE_MONITOR_ENVIRONMENT',
       ],
       tunables: [
+        'LLM_DOC_USD_CEILING', 'LLM_DAILY_USD_CEILING', 'OPENROUTER_DAILY_USD_CEILING', 'OPENROUTER_MIN_BALANCE_USD', 'LLAMAPARSE_DAILY_CREDIT_CEILING', 'LLAMAPARSE_DAILY_CREDITS_CEILING', 'LLAMAPARSE_DAILY_USD_CEILING',
         'APP_BASE_URL', 'PRICE_PROVIDER', 'FMP_DAILY_CALL_CAP', 'FMP_MAX_PER_MINUTE', 'EDGAR_MAX_PER_MINUTE',
         'SCRAPE_GUARD_ENABLED', 'DISCLOSURE_LATENCY_WATCH_ENABLED', 'DISCLOSURE_LATENCY_PROVIDERS',
         'DISCLOSURE_LATENCY_WATCH_LIMIT', 'FMP_DISCLOSURE_WATCH_ENABLED', 'FMP_DISCLOSURE_WATCH_LIMIT',

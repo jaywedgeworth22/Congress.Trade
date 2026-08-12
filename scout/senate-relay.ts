@@ -254,8 +254,23 @@ async function fetchAllRows(sinceIso: string, nowIso: string, pageSize: number):
 const port = Number(Deno.args[0]) || 8899;
 console.log(`senate-relay listening on 127.0.0.1:${port}`);
 
+const startedAt = Date.now();
+
 Deno.serve({ port, hostname: '127.0.0.1' }, async (req) => {
   const url = new URL(req.url);
+
+  // Liveness probe. Its absence is why the 2026-08-11 investigation could not
+  // tell "relay is wedged" from "relay is fine": every probe of /health got a
+  // 404 from the catch-all below, which is indistinguishable from a dead
+  // route. A supervisor cannot heal what it cannot measure, so this endpoint
+  // is deliberately dependency-free -- it reports that this process is up and
+  // serving, and makes no upstream call of its own.
+  if (req.method === 'GET' && url.pathname === '/health') {
+    return new Response(
+      JSON.stringify({ ok: true, service: 'senate-relay', uptimeSeconds: Math.round((Date.now() - startedAt) / 1000) }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  }
 
   // Document proxy: fetch one efdsearch PTR/paper document through the
   // residential session. Body: {url}. Upstream status + content-type are
