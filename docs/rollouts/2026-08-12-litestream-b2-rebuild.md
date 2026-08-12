@@ -6,11 +6,26 @@ CT had **no litestream process running at all** after the Oracle->Hetzner
 migration — the old host-level systemd unit (`litestream-congress`,
 `/etc/litestream/congress.yml`) was Oracle-box-specific and never recreated on
 Hetzner. Confirmed live via `docker top` on the `congress-app` container:
-only the Deno process runs. Until this change, CT's only PITR path was the
-Hetzner volume's ~24h snapshot floor — up to a 6h+ data-loss window, worse
-than the sibling apps' near-real-time in-container replication (Socratic.Trade
-`litestream.coolify.yml`, Usage-Monitor `litestream.yml`, both already
-proven working on the same Coolify/Hetzner box).
+only the Deno process runs.
+
+**Correction (verified live 2026-08-12 09:45Z).**  The original draft of this
+doc said the Hetzner volume's ~24h snapshot floor was CT's *only* remaining
+PITR path.  That was wrong, and the claim mattered because it overstated the
+risk this change removes.  A fleet cron is also writing 6h full-DB snapshots
+to the *same* B2 bucket under the `hetzner/` prefix, and it is current — 16
+snapshots present, most recent `hetzner/congress-trade-20260812T072754Z.db` at
+07:32Z, on cadence.  (This is the layer `main` had already started describing
+in `formatOwnBackupRegimenLine()` while this branch was in flight.)
+
+So the accurate before/after is: CT's tightest RPO was **~6h** (the cron), not
+~24h, and this change takes it to **~5m** without removing either coarser
+layer.  The three are independent and complementary — Litestream LTX under
+`congress-trade/`, 6h self-contained full-DB snapshots under `hetzner/`
+(disjoint prefixes, no collision), and the Hetzner volume floor.  A ~6h window
+was still well behind the sibling apps' near-real-time in-container
+replication (Socratic.Trade `litestream.coolify.yml`, Usage-Monitor
+`litestream.yml`, both already proven working on the same Coolify/Hetzner
+box), which is what motivated the rebuild.
 
 ## What changed
 
@@ -44,8 +59,12 @@ Rebuilt the **in-container** pattern (litestream as a sibling process inside
   `CMD` changed from the raw `deno run ...` to
   `bash scripts/start-with-litestream.sh`.
 - `app/src/shared/r2Usage.ts` — `formatOwnBackupRegimenLine()` (Pushover
-  digest reminder line) updated from the stale "own litestream→R2 (15m/24h
-  policy)" text to the new B2 backup description.
+  digest reminder line) now reports all three layers: continuous
+  litestream→B2, the fleet cron's 6h full-DB snapshots, and the Hetzner ~24h
+  volume floor.  The rebase onto `main` had a real conflict here, not a
+  mechanical one: `main` had replaced the old R2 text with a cron-snapshots
+  line while this branch replaced it with a litestream line.  Neither
+  supersedes the other, so the resolution reports both.
 
 ## Deliberately separate secret names
 
