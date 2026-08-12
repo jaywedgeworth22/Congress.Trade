@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-08-09
+Last updated: 2026-08-11
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -173,6 +173,24 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
   `memberName`, `chamber`, `party`, `type`, `minAmount`, `maxAmount`, `from`,
   `to`, `sort`, `order`, `offset`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
+
+  **Default order (fixed 2026-08-11 — was oldest-first).** `order` defaults to
+  `desc` (newest-first) whenever the request has **no forward cursor**
+  (`since` absent). The underlying query builder (`buildTransactionsQuery`,
+  `app/src/delivery/rows.ts`) still defaults to `cursor_seq ASC` so an
+  incremental `since=`-cursor poll keeps resuming gap-free — that ASC default
+  is preserved whenever `since` is present, **including the explicit
+  `since=0`** (a legitimate "start of history, but I am a resumable-cursor
+  client" value, distinct from omitting `since` entirely). The bug: a plain
+  `GET /feed` with no params used to return the oldest ~11,820 rows first —
+  bulk-imported `seed_dataset` rows with no owning `filings` row at all, so
+  `filing.filedDate` / `filing.firstSeenAt` / `filing.sourceUrl` all came back
+  `null` on every one of them. iOS is unaffected either way: it always sends
+  its own explicit `order` and never sends `since`
+  (`clients/ios/CongressTrade/Store/CongressTradeStore.swift`). An explicit
+  `order=` query param always wins over this default. Pinned by
+  `app/src/client/__tests__/routes.test.ts` ("client API feed: default order
+  (oldest-first-seed-rows bug)").
 
   **`$` amount bounds (`minAmount` / `maxAmount`).** Both are parsed by
   `filtersFromQuery` (`app/src/client/utils.ts`, via `asNonNegativeNumber`) and
