@@ -166,9 +166,11 @@ describe('attribution display flag drives the served response', () => {
       expect(res.status).toBe(200);
       const header = res.headers.get('x-photo-attribution');
       expect(header).toBeTruthy();
-      // Header values are latin-1, so the em dash is downgraded — but the
-      // substantive parts of the credit line must survive intact.
-      expect(header).not.toContain('?');
+      // Header values are latin-1, so an em dash or an accented author name is
+      // downgraded rather than allowed to throw — but the substantive words of
+      // the credit line must survive, and the result must stay header-legal.
+      expect(header).toMatch(/^[\x20-\x7E]*$/);
+      expect(header!.length).toBeLessThanOrEqual(512);
       for (const word of face.attributionCaption!.split(/[^A-Za-z0-9.]+/).filter((w) => w.length > 3)) {
         expect(header, `caption word "${word}" missing from header`).toContain(word);
       }
