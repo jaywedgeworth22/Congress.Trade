@@ -104,7 +104,7 @@ printf 'Authorization: Bearer %s\n' "$COOLIFY_TOKEN" > "$HDR_FILE"
 
 api() {
   local method="$1" path="$2"
-  curl -sS -m 45 -X "$method" -H @"$HDR_FILE" -H 'Accept: application/json' \
+  curl -sS -m 120 -X "$method" -H @"$HDR_FILE" -H 'Accept: application/json' \
     "${COOLIFY_BASE_URL%/}${path}" 2>/dev/null
 }
 
@@ -115,11 +115,28 @@ app_is_down() {
   [[ "$code" != "200" ]]
 }
 
-DEPLOYS_JSON=$(api GET "/api/v1/deployments")
-if [[ -z "$DEPLOYS_JSON" ]]; then
-  log "could not read deployments (API unreachable)"
+# One retry, and a generous timeout: when a build is IN FLIGHT this endpoint
+# inlines that deployment's growing log blob, and at 45s the response was
+# truncated mid-JSON — the guard then logged "could not parse deployments
+# payload" every tick and went blind for the whole build (observed 2026-08-12:
+# four UM deploys queued up unconalesced behind one failing build).
+read_deployments() {
+  local attempt json
+  for attempt in 1 2; do
+    json=$(api GET "/api/v1/deployments")
+    if [[ -n "$json" ]] && printf '%s' "$json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+      printf '%s' "$json"
+      return 0
+    fi
+    [[ "$attempt" -eq 1 ]] && sleep 5
+  done
+  return 1
+}
+
+DEPLOYS_JSON=$(read_deployments) || {
+  log "could not read deployments (unreachable or truncated after retry)"
   exit 1
-fi
+}
 
 read -r RUNNING QUEUED_UUIDS QUEUED_FORCE <<<"$(printf '%s' "$DEPLOYS_JSON" \
   | APP_UUID="$APP_UUID" APP_NAME="$APP_NAME" python3 -c '
