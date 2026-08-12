@@ -175,6 +175,31 @@ production ingestion jobs unless the user explicitly asks.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
+## `SENATE_RELAY_URL` is static (READ THIS — it must never need a manual update)
+
+Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Worker
+reaches it through a relay on the owner's Mac.  The address is permanent:
+
+```
+SENATE_RELAY_URL=https://scout.jays.services
+```
+
+That hostname is served by the **named** Cloudflare tunnel `Jay's Tunnel`
+(`6fa2a97c-b4f8-420d-94ae-bd9858aff4b6`), run by the `senate-tunnel` pm2 entry
+via `scout/run-senate-tunnel.sh`.  Ingress is configured Cloudflare-side
+(`config_src=cloudflare`) and pushed to cloudflared on connect; there is no
+local `config.yml` to drift.  Restarting the tunnel, rebooting the Mac, or
+reinstalling cloudflared all reconnect to the **same** hostname.
+
+**Never "fix" a Senate outage by updating `SENATE_RELAY_URL` to a new URL.**
+Before 2026-08-12 the tunnel was a TryCloudflare quick tunnel that minted a new
+random hostname on every start, and updating the env var by hand was documented
+as the remedy.  That manual step is what silently failed on 2026-08-11 — four
+hostnames across three restarts while the server dialled a dead one, with pm2
+reporting the tunnel "online" throughout.  If the Senate path is down now, the
+cause is the relay, the tunnel process, or upstream — not the URL.  See
+`scout/README.md` "Senate relay tunnel".
+
 ## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
 
 Owner-reported recurring complaint: agents declare a Cloudflare token "expired"

@@ -119,6 +119,58 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
    `POST /api/ingest/raw` so Coolify never has to hit Imperva-blocked Senate/House from a
    datacenter IP.
 
+## Senate relay tunnel — the hostname is permanent
+
+Senate document fetches from the Worker are routed to the residential relay on
+this Mac.  The server finds it at one address, forever:
+
+```
+SENATE_RELAY_URL=https://scout.jays.services
+```
+
+**This value never changes and must never need a manual update.**  If the Senate
+path breaks, do not go looking for a new URL to paste somewhere — that was the
+old failure mode, and it is gone.  Debug the tunnel or the relay instead.
+
+| | |
+|---|---|
+| pm2 entry | `senate-tunnel` (`scout/run-senate-tunnel.sh`) |
+| tunnel | Jay's Tunnel (launchd system service), id `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6` |
+| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` |
+| ingress | configured **in Cloudflare** (`config_src=cloudflare`), pushed to cloudflared at connect |
+| credentials | `~/.cloudflared/<tunnel-id>.json`, mode 600, not in the repo |
+
+Ingress deliberately lives only in Cloudflare — there is no local `config.yml`,
+because a second copy of the routing rules is a second thing to drift.  On
+startup cloudflared warns "No ingress rules were defined"; that describes the
+local config that intentionally does not exist, and the edge supersedes it a
+beat later with `Updated to new configuration ... scout.jays.services`.
+
+The runner is invoked by **UUID with `--cred-file`**, not by tunnel name.
+Resolving a tunnel *name* requires an origin certificate, and there is no
+`cert.pem` on this box, so `cloudflared tunnel run` (not used — launchd runs it) fails with
+"Cannot determine default origin certificate path".
+
+Beyond running cloudflared, the wrapper probes the relay through the public
+hostname and compares the status with a direct local probe; when they disagree
+(or the public probe answers nothing) three times running it exits non-zero so
+pm2 restarts it.  That covers a real observed failure: a cloudflared whose DNS
+resolver had died stayed "online" in pm2 indefinitely while serving nothing.
+Restarts are cheap now — a named tunnel reconnects to the *same* hostname.
+
+### Why this replaced the quick tunnel
+
+Until 2026-08-12 the tunnel was `cloudflared tunnel --url http://127.0.0.1:8899`
+— a TryCloudflare **quick** tunnel, which mints a brand-new random
+`*.trycloudflare.com` hostname on every start and kills the previous one.  The
+server dialled the static `SENATE_RELAY_URL`, so every restart silently
+repointed the tunnel while the server kept calling a dead host.  It rotated four
+hostnames across three restarts on 2026-08-11 with nothing announcing it.  The
+documented remedy was "update `SENATE_RELAY_URL` when it changes" — a manual
+step in a machine's restart path, which is a defect rather than a procedure, and
+it is exactly what failed.  The named tunnel removes the rotation, so the
+hostname-recording and rotation-alerting machinery built around it is gone too.
+
 ## Feeding the app (official residential ingest)
 
 Point the scout at production:

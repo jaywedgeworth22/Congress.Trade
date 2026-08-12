@@ -8,6 +8,13 @@ on:
   schedule:
     - cron: "41 10 * * 1"
 
+env:
+  # Pinned to the same engine version gitleaks-action@e0c47f4 installed, so the
+  # ruleset and findings are unchanged by this migration.
+  GITLEAKS_VERSION: "8.24.3"
+  GITLEAKS_SHA256_X64: "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
+  GITLEAKS_SHA256_ARM64: "5f2edbe1f49f7b920f9e06e90759947d3c5dfc16f752fb93aaafc17e9d14cf07"
+
 jobs:
   gitleaks:
     # Self-hosted CI with automatic hosted fallback. Dependabot forced to hosted
@@ -16,10 +23,11 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ vars.CT_CI_RUNNER != '' && github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
+      # pull-requests: read is gone with the action — nothing writes or reads
+      # PR metadata through the API any more.
       contents: read
-      pull-requests: read
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
@@ -44,17 +52,105 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-      - name: Clean stale gitleaks installer temp files
+
+      # gitleaks-action@e0c47f4 was replaced by a direct binary invocation.
+      # The scan itself was never the problem: it logged "no leaks found" and
+      # then hung for ~6.5 more minutes in its POST-scan phase (job summary /
+      # PR annotation writes through the GitHub API) until the job-level timeout
+      # killed it and marked a green PR red. That blocked four PRs
+      # (#1747 #1749 #1776 #1777) inside one hour on 2026-08-12, each needing a
+      # manual `gh run rerun`; identical commits then passed in ~2m50s. The hang
+      # correlates with contention on the self-hosted hetzner-ct-ci runners.
+      #
+      # Running the binary directly removes every GitHub-API code path (job
+      # summary, PR annotations, SARIF artifact upload, and the action's
+      # keygen.sh licence check) while keeping the identical engine and ruleset.
+      # PR annotations are not load-bearing: findings print to the job log, which
+      # is what anyone debugging a failure actually reads.
+      - name: Install pinned gitleaks
+        timeout-minutes: 3
         shell: bash
         run: |
           set -euo pipefail
-          tmp_root="${TMPDIR:-/tmp}"
-          tmp_root="${tmp_root%/}"
+          tmp_root="${TMPDIR:-/tmp}"; tmp_root="${tmp_root%/}"
+          # The old action left these behind; a stale copy could poison a later
+          # run on a persistent self-hosted runner.
           rm -f "$tmp_root/gitleaks.tmp"
-          rm -rf "$tmp_root/gitleaks-8.24.3"
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+          rm -rf "$tmp_root/gitleaks-${GITLEAKS_VERSION}"
+
+          case "$(uname -m)" in
+            x86_64|amd64)  arch="x64";   want="$GITLEAKS_SHA256_X64" ;;
+            aarch64|arm64) arch="arm64"; want="$GITLEAKS_SHA256_ARM64" ;;
+            *) echo "::error::unsupported runner arch $(uname -m)"; exit 1 ;;
+          esac
+
+          tarball="$tmp_root/gitleaks.tar.gz"
+          curl -fsSL --retry 3 --retry-delay 2 --max-time 120 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${arch}.tar.gz" \
+            -o "$tarball"
+
+          # Verify before extracting: pinning a version alone does not protect
+          # against a swapped release asset.
+          got="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::gitleaks checksum mismatch (expected $want, got $got)"
+            exit 1
+          fi
+
+          mkdir -p "$tmp_root/gitleaks-${GITLEAKS_VERSION}"
+          tar -xzf "$tarball" -C "$tmp_root/gitleaks-${GITLEAKS_VERSION}" gitleaks
+          echo "$tmp_root/gitleaks-${GITLEAKS_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Scan for secrets
+        # Step-level bound so a hang fails fast and legibly AT THE STEP that
+        # hung, instead of silently eating the whole job budget and surfacing as
+        # an unexplained "The operation was canceled."
+        timeout-minutes: 8
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Avoid the action's GitHub artifact upload path and storage charge;
-          # the scan result and PR annotations remain enabled.
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          gitleaks version
+
+          # Preserve the action's scan SCOPE exactly. This matters for more than
+          # speed: a full-history scan of this repo (1,589 commits / 524MB .git)
+          # did not finish in 120s when measured locally, so scanning everything
+          # on every PR would trade an intermittent hang for a consistently slow
+          # job. The same repo's PR-range scan finishes in under a second.
+          case "$EVENT" in
+            pull_request)
+              # base..head is exactly the set of commits the PR introduces.
+              range="${PR_BASE}..${PR_HEAD}"
+              ;;
+            push)
+              # An all-zeroes "before" means a new branch / first push, so there
+              # is no usable range — fall back to full history rather than
+              # silently scanning nothing.
+              if [ -z "${PUSH_BEFORE:-}" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+                range=""
+              else
+                range="${PUSH_BEFORE}..${PUSH_AFTER}"
+              fi
+              ;;
+            *)
+              # schedule / manual: full history. This weekly sweep is what
+              # catches anything a range scan structurally cannot see.
+              range=""
+              ;;
+          esac
+
+          if [ -n "$range" ]; then
+            echo "scanning commit range: $range"
+            # --redact so a finding never prints the secret itself into a job
+            # log readable by anyone with repo access.
+            gitleaks git --no-banner --redact --exit-code 1 --log-opts "$range" .
+          else
+            echo "scanning full history"
+            gitleaks git --no-banner --redact --exit-code 1 .
+          fi
+          echo "No leaks detected."
