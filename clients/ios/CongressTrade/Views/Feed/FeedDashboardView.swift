@@ -717,6 +717,22 @@ struct ControlChip<Content: View>: View {
     }
 }
 
+/// Leading "Sort:" label shared by every sort row (Trades, Directory People,
+/// Directory Assets) so the chips are not a floating unlabeled cluster.
+struct SortRow<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("Sort:")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// Trades-only sort control (owner punch list #2, item 7) — mirrors the
 /// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
 /// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
@@ -727,43 +743,45 @@ struct FeedSortControl: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        HStack(spacing: 6) {
-            Menu {
-                ForEach(FeedSortKey.allCases) { key in
-                    Button {
-                        Task { await store.setFeedSortKey(key) }
-                    } label: {
-                        HStack {
-                            Text(key.label)
-                            if store.feedSortKey == key {
-                                Image(systemName: "checkmark")
+        SortRow {
+            HStack(spacing: 6) {
+                Menu {
+                    ForEach(FeedSortKey.allCases) { key in
+                        Button {
+                            Task { await store.setFeedSortKey(key) }
+                        } label: {
+                            HStack {
+                                Text(key.label)
+                                if store.feedSortKey == key {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    FilterMenuLabel(
+                        title: store.feedSortKey.label,
+                        icon: "arrow.up.arrow.down",
+                        isActive: false,
+                        alwaysShowLabel: true,
+                        accessibilityLabel: "Sort by \(store.feedSortKey.label)"
+                    )
                 }
-            } label: {
-                FilterMenuLabel(
-                    title: store.feedSortKey.label,
-                    icon: "arrow.up.arrow.down",
-                    isActive: false,
-                    alwaysShowLabel: true,
-                    accessibilityLabel: "Sort by \(store.feedSortKey.label)"
-                )
-            }
 
-            Button {
-                Task { await store.toggleFeedSortDirection() }
-            } label: {
-                ControlChip(compact: true) {
-                    Image(systemName: store.feedSortDirection.systemImage)
-                        .font(.caption.weight(.bold))
+                Button {
+                    Task { await store.toggleFeedSortDirection() }
+                } label: {
+                    ControlChip(compact: true) {
+                        Image(systemName: store.feedSortDirection.systemImage)
+                            .font(.caption.weight(.bold))
+                    }
                 }
+                // `.plain` so the chip's own foregroundStyle wins: the TabView's
+                // `.tint(.blue)` otherwise repaints a default-styled Button's label
+                // accent-blue and the chip stops matching its neighbours.
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
             }
-            // `.plain` so the chip's own foregroundStyle wins: the TabView's
-            // `.tint(.blue)` otherwise repaints a default-styled Button's label
-            // accent-blue and the chip stops matching its neighbours.
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
         }
     }
 }

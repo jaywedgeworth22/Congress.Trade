@@ -4,9 +4,9 @@ struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
-    /// dismissed/expanded state is one truth across both tabs (owner punch
-    /// list item 2b), and identical top/side insets keep its position/size
-    /// pixel-identical to Trades (item 2a).
+    /// dismissed/expanded state is one truth across both tabs.  The filter
+    /// strip lives in the same place as Trades (after the disclaimer, same
+    /// 12pt gap, same 16/8 insets) so the chips and the top background match.
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
     @State private var selectedTicker: String?
@@ -17,7 +17,13 @@ struct TrendsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    // Same first two rows as Trades (disclaimer, then the
+                    // shared filter strip) so the chips land at the same
+                    // position and the top of the tab is the same background.
+                    VStack(alignment: .leading, spacing: 12) {
+                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                        FeedControlBar(showMetrics: false)
+                    }
 
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
@@ -73,23 +79,6 @@ struct TrendsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
-            }
-            // STICKY FILTERS. Every number on this tab is scoped by the window
-            // / branch / party chips, so scrolling them off screen was the
-            // fastest way to misread a section. A top safe-area inset pins the
-            // bar and lets content slide *under* it — a plain row inside the
-            // ScrollView scrolls away, and a row above it eats layout height
-            // and leaves a dead gap. Owner chose sticky-bar-only over
-            // per-section timeframe labels; that is safe because
-            // `refreshTrends()` hands the SAME `analyticsWindow` to every
-            // analytics call, so one bar honestly describes the whole tab.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                FeedControlBar(showMetrics: false)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
-                    .padding(.bottom, 6)
-                    .background(.bar)
-                    .overlay(alignment: .bottom) { Divider() }
             }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)

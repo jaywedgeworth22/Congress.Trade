@@ -26,6 +26,13 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(CompactFormat.usd(23_000_000_000), "$23b")
     }
 
+    func testDirectoryNameSortLabelIsNameNotPolitician() {
+        XCTAssertEqual(MemberDirectorySearch.SortKey.name.label, "Name")
+        XCTAssertEqual(MemberDirectorySearch.SortKey.chamber.label, "Branch")
+        XCTAssertEqual(MemberDirectorySearch.SortKey.trades.label, "Trades")
+        XCTAssertEqual(AssetDirectorySearch.SortKey.name.label, "Asset")
+    }
+
     func testActiveOnlySubscriptionCommandPreservesFilters() async throws {
         let session = makeSession()
         let client = CongressTradeAPIClient(
