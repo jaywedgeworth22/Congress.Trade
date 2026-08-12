@@ -125,7 +125,7 @@ Senate document fetches from the Worker are routed to the residential relay on
 this Mac.  The server finds it at one address, forever:
 
 ```
-SENATE_RELAY_URL=https://scout.congress.trade
+SENATE_RELAY_URL=https://scout.jays.services
 ```
 
 **This value never changes and must never need a manual update.**  If the Senate
@@ -135,8 +135,8 @@ old failure mode, and it is gone.  Debug the tunnel or the relay instead.
 | | |
 |---|---|
 | pm2 entry | `senate-tunnel` (`scout/run-senate-tunnel.sh`) |
-| tunnel | named tunnel `ct-mac-scout`, id `60b9bdbd-df7d-42f9-99b2-91110548df70` |
-| hostname | `scout.congress.trade` -> `http://127.0.0.1:8899` |
+| tunnel | Jay's Tunnel (launchd system service), id `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6` |
+| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` |
 | ingress | configured **in Cloudflare** (`config_src=cloudflare`), pushed to cloudflared at connect |
 | credentials | `~/.cloudflared/<tunnel-id>.json`, mode 600, not in the repo |
 
@@ -144,11 +144,11 @@ Ingress deliberately lives only in Cloudflare — there is no local `config.yml`
 because a second copy of the routing rules is a second thing to drift.  On
 startup cloudflared warns "No ingress rules were defined"; that describes the
 local config that intentionally does not exist, and the edge supersedes it a
-beat later with `Updated to new configuration ... scout.congress.trade`.
+beat later with `Updated to new configuration ... scout.jays.services`.
 
 The runner is invoked by **UUID with `--cred-file`**, not by tunnel name.
 Resolving a tunnel *name* requires an origin certificate, and there is no
-`cert.pem` on this box, so `cloudflared tunnel run ct-mac-scout` fails with
+`cert.pem` on this box, so `cloudflared tunnel run` (not used — launchd runs it) fails with
 "Cannot determine default origin certificate path".
 
 Beyond running cloudflared, the wrapper probes the relay through the public

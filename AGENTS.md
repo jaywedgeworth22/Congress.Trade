@@ -181,11 +181,11 @@ Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Worker
 reaches it through a relay on the owner's Mac.  The address is permanent:
 
 ```
-SENATE_RELAY_URL=https://scout.congress.trade
+SENATE_RELAY_URL=https://scout.jays.services
 ```
 
-That hostname is served by the **named** Cloudflare tunnel `ct-mac-scout`
-(`60b9bdbd-df7d-42f9-99b2-91110548df70`), run by the `senate-tunnel` pm2 entry
+That hostname is served by the **named** Cloudflare tunnel `Jay's Tunnel`
+(`6fa2a97c-b4f8-420d-94ae-bd9858aff4b6`), run by the `senate-tunnel` pm2 entry
 via `scout/run-senate-tunnel.sh`.  Ingress is configured Cloudflare-side
 (`config_src=cloudflare`) and pushed to cloudflared on connect; there is no
 local `config.yml` to drift.  Restarting the tunnel, rebooting the Mac, or

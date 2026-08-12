@@ -1,54 +1,45 @@
 #!/usr/bin/env bash
-# PM2 entrypoint for the Senate residential relay tunnel.
+# ---------------------------------------------------------------------------
+# senate-tunnel — HEALTH WATCHER.  It does NOT run cloudflared.
 #
-# THE HOSTNAME IS STATIC.  https://scout.congress.trade  — forever.
-# ------------------------------------------------------------------
-# This runs the **named** Cloudflare tunnel `ct-mac-scout`
-# (60b9bdbd-df7d-42f9-99b2-91110548df70).  A named tunnel owns one permanent
-# hostname, so `SENATE_RELAY_URL` never has to be touched again.  If you are
-# here because the Senate path is down, the fix is NOT to go update a URL
-# somewhere — that era is over.  See "History" at the bottom.
+# THE HOSTNAME IS STATIC:  https://scout.jays.services  — permanently.
 #
-# Ingress lives in Cloudflare, not here.  The tunnel's `config_src` is
-# `cloudflare`, so the edge pushes the ingress rules down the control stream a
-# beat after the connections register:
+# The Senate relay is exposed by **Jay's Tunnel**
+# (6fa2a97c-b4f8-420d-94ae-bd9858aff4b6, account Usage.Jays.Services), which is
+# already installed as a macOS SYSTEM SERVICE under
+# /Library/Application Support/com.cloudflare.cloudflared/ and supervised by
+# launchd.  Its ingress is managed remotely (config_src=cloudflare) and already
+# carries five other hostnames on this machine:
 #
-#     INF Updated to new configuration config="{"ingress":[
-#           {"hostname":"scout.congress.trade","service":"http://127.0.0.1:8899"},
-#           {"service":"http_status:404"}]}" version=1
+#     agent-sync.jays.services · ssh · remote · acp · jays.services · scout
 #
-# Deliberately no local `config.yml`: a second copy of the ingress rules is a
-# second thing to drift.  The startup banner's "No ingress rules were defined"
-# warning is expected — it describes the local config that intentionally does
-# not exist, and is superseded by the pushed config above.
+# So there is nothing for pm2 to run.  A second cloudflared process for the same
+# origin would be a duplicate tunnel — the exact shape that produced the original
+# outage, where a TryCloudflare *quick* tunnel minted a new random hostname on
+# every start (4 hostnames across 3 restarts) while the server dialled a static
+# SENATE_RELAY_URL.  This entry therefore only WATCHES and ALERTS.
 #
-# Run mode: `--cred-file <path> <UUID>`.  Not `cloudflared tunnel run
-# ct-mac-scout` — resolving a tunnel *name* needs an origin cert, and there is
-# no `cert.pem` on this box, so the name form dies with "Cannot determine
-# default origin certificate path".  Verified 2026-08-12; the UUID +
-# credentials form both connects and receives the pushed ingress.
+# WHY A WATCHER STILL EARNS ITS KEEP:  launchd restarts a *crashed* cloudflared,
+# but a cloudflared whose DNS resolver has died stays "online" forever while
+# serving nothing — an observed failure on this box
+# ("Failed to refresh DNS local resolver ... i/o timeout").  Only an end-to-end
+# probe through the public hostname catches that.
 #
-# What this wrapper adds on top of bare cloudflared: it exits non-zero when the
-# relay stops answering *through the tunnel*, so pm2 restarts it.  That is not
-# theoretical — on 2026-08-11 a cloudflared whose DNS resolver had died
-# ("Failed to refresh DNS local resolver") sat there serving nothing while pm2
-# reported it "online" indefinitely.  A process that is running but useless is
-# the failure a supervisor cannot see on its own.  Restarts are now cheap:
-# with a named tunnel a restart reconnects to the *same* hostname.
+# WHAT IT DELIBERATELY DOES NOT DO:  it never restarts anything.  launchd owns
+# the tunnel and the `senate-relay` pm2 entry owns the relay.  A watcher that
+# also restarts is how one outage becomes an alert storm.
+# ---------------------------------------------------------------------------
 set -uo pipefail
 
-SCOUT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${SENATE_RELAY_PORT:-8899}"
-TUNNEL_ID="${SENATE_TUNNEL_ID:-60b9bdbd-df7d-42f9-99b2-91110548df70}"
-TUNNEL_HOSTNAME="${SENATE_TUNNEL_HOSTNAME:-scout.congress.trade}"
-CRED_FILE="${SENATE_TUNNEL_CRED_FILE:-${HOME}/.cloudflared/${TUNNEL_ID}.json}"
+TUNNEL_HOSTNAME="${SENATE_TUNNEL_HOSTNAME:-scout.jays.services}"
 PROBE_PATH="${SENATE_TUNNEL_PROBE_PATH:-/health}"
 PROBE_INTERVAL_SEC="${SENATE_TUNNEL_PROBE_SEC:-120}"
 PROBE_FAIL_LIMIT="${SENATE_TUNNEL_FAIL_LIMIT:-3}"
-CONNECT_TIMEOUT_SEC="${SENATE_TUNNEL_CONNECT_SEC:-120}"
 SECRETS_FILE="${HOME}/.secrets/global-api-keys"
 
 PUBLIC_URL="https://${TUNNEL_HOSTNAME}"
+LOCAL_URL="http://127.0.0.1:${PORT}"
 
 log() { echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] senate-tunnel: $*" >&2; }
 
@@ -57,167 +48,73 @@ log() { echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] senate-tunnel: $*" >&2; }
 # note about COOLIFY_SERVER_STATS killing the pm2 scout under `set -e`).
 secret_of() {
   [[ -f "$SECRETS_FILE" ]] || return 0
-  # \042 = double quote, \047 = single quote — strip either style of wrapping
-  # without needing to escape a quote inside a quoted tr argument.
-  grep -m1 "^${1}=" "$SECRETS_FILE" 2>/dev/null | cut -d= -f2- | tr -d '\042\047'
+  sed -n "s/^$1=//p" "$SECRETS_FILE" | head -n1 | sed -e 's/^\o042//' -e 's/\o042$//' -e "s/^\o047//" -e "s/\o047$//"
 }
 
-# Never echoes either value; only ever passed to curl via --data-urlencode.
+# Escalation is throttled so a long outage does not become a page storm on the
+# same Pushover app token the scout breaker and the liveness sweeps share.
+NOTIFY_MIN_INTERVAL_SEC="${SENATE_TUNNEL_NOTIFY_SEC:-3600}"
+LAST_NOTIFY_AT=0
+
 notify() {
-  local title="$1" message="$2" priority="${3:-1}"
-  local tok user
-  tok="$(secret_of PUSHOVER_APP_TOKEN)"; [[ -z "$tok" ]] && tok="$(secret_of PUSHOVER_CT_API_TOKEN)"
-  user="$(secret_of PUSHOVER_USER_KEY)"
-  if [[ -z "$tok" || -z "$user" ]]; then
-    log "escalation NOT delivered (pushover unconfigured): ${title} -- ${message}"
+  local title="$1" msg="$2" priority="${3:-1}" now
+  now=$(date +%s)
+  if (( now - LAST_NOTIFY_AT < NOTIFY_MIN_INTERVAL_SEC )); then
+    log "escalation suppressed (last page $((now - LAST_NOTIFY_AT))s ago): $title"
     return 0
   fi
-  curl -sS -o /dev/null --max-time 15 https://api.pushover.net/1/messages.json \
-    --data-urlencode "token=${tok}" --data-urlencode "user=${user}" \
-    --data-urlencode "title=${title}" --data-urlencode "message=${message}" \
-    --data-urlencode "priority=${priority}" 2>/dev/null \
-    || log "escalation delivery failed: ${title}"
-}
-
-# HTTP status only; 000 means "no response at all" (DNS, TCP, TLS, timeout).
-#
-# Do NOT write this as `curl ... || echo 000`. On a connection failure curl
-# prints 000 from -w *and* exits non-zero, so the fallback appends a second one
-# and yields "000000" — which silently defeats every `== "000"` test below. That
-# made a dead relay report as "tunnel-side" and, when both legs were down, made
-# two equal non-"000" values compare as healthy. Caught in the failure-path test.
-probe_code() {
-  local max_time="$1" url="$2" code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$max_time" "$url" 2>/dev/null)"
-  [[ "$code" =~ ^[0-9]{3}$ ]] || code=000
-  printf '%s' "$code"
-}
-
-CF_BIN="${CLOUDFLARED_BIN:-$(command -v cloudflared || true)}"
-if [[ -z "$CF_BIN" ]]; then
-  log "cloudflared not found on PATH"
-  exit 1
-fi
-
-# Fail loudly at the point of the actual problem. Without this, a missing or
-# unreadable credentials file surfaces as a generic connection error minutes
-# later, in a log nobody is reading.
-if [[ ! -r "$CRED_FILE" ]]; then
-  log "credentials file not readable: ${CRED_FILE}"
-  log "expected the named tunnel's credentials (tunnel ${TUNNEL_ID}); refusing to start"
-  notify "CT senate tunnel cannot start" \
-    "Credentials for named tunnel ${TUNNEL_ID} are missing or unreadable at ${CRED_FILE}. The Senate relay is unreachable until this is restored." 1
-  exit 1
-fi
-
-RUN_DIR="$(mktemp -d)"
-RUN_LOG="$RUN_DIR/cloudflared.log"
-: > "$RUN_LOG"
-
-cleanup() {
-  [[ -n "${MIRROR_PID:-}" ]] && kill "$MIRROR_PID" 2>/dev/null
-  [[ -n "${CF_PID:-}" ]] && kill "$CF_PID" 2>/dev/null
-  rm -rf "$RUN_DIR"
-}
-trap 'cleanup; exit' EXIT INT TERM
-
-log "starting named tunnel ${TUNNEL_ID} (${PUBLIC_URL}) -> http://127.0.0.1:${PORT}"
-"$CF_BIN" tunnel --no-autoupdate run --cred-file "$CRED_FILE" "$TUNNEL_ID" > "$RUN_LOG" 2>&1 &
-CF_PID=$!
-
-# Keep cloudflared's own output in pm2's log. Reading it from a file (rather
-# than piping) is what lets $! stay cloudflared's PID instead of a pipeline's.
-tail -n +1 -f "$RUN_LOG" >&2 &
-MIRROR_PID=$!
-
-# Startup gate: a registered connection proves credentials + edge reachability.
-# Deliberately does NOT wait on the relay — the relay has its own pm2 entry, and
-# gating tunnel startup on relay health would turn one dead process into two.
-CONNECTED=0
-for _ in $(seq 1 "$(( CONNECT_TIMEOUT_SEC / 2 ))"); do
-  if grep -q 'Registered tunnel connection' "$RUN_LOG" 2>/dev/null; then
-    CONNECTED=1
-    break
+  local token user
+  token="$(secret_of PUSHOVER_APP_TOKEN)"; [[ -n "$token" ]] || token="$(secret_of PUSHOVER_CT_API_TOKEN)"
+  user="$(secret_of PUSHOVER_USER_KEY)"
+  if [[ -z "$token" || -z "$user" ]]; then
+    log "WARNING cannot escalate — Pushover token/user not found in $SECRETS_FILE"
+    return 0
   fi
-  kill -0 "$CF_PID" 2>/dev/null || { log "cloudflared exited before registering a connection"; wait "$CF_PID"; exit 1; }
-  sleep 2
-done
-
-if (( CONNECTED == 0 )); then
-  log "no tunnel connection registered within ${CONNECT_TIMEOUT_SEC}s"
-  kill "$CF_PID" 2>/dev/null
-  exit 1
-fi
-
-log "connected — serving ${PUBLIC_URL}"
-
-# The ingress the edge actually pushed. The hostname can no longer rotate, but
-# the API-side ingress can be edited out from under this box, and that is now
-# the only way the public URL and SENATE_RELAY_URL can disagree. Cheap to check,
-# and it puts the live config in the log where an operator can read it.
-PUSHED_CONFIG="$(grep -m1 'Updated to new configuration' "$RUN_LOG" 2>/dev/null || true)"
-if [[ -n "$PUSHED_CONFIG" ]]; then
-  if [[ "$PUSHED_CONFIG" != *"$TUNNEL_HOSTNAME"* ]]; then
-    log "WARNING: pushed ingress does not mention ${TUNNEL_HOSTNAME} — check the tunnel's Cloudflare-side config"
-    log "pushed: ${PUSHED_CONFIG}"
+  # Only record the page as sent if delivery actually succeeded, so a failed
+  # send does not silently consume the throttle window.
+  if curl -sf -m 15 -o /dev/null \
+      --form-string "token=$token" --form-string "user=$user" \
+      --form-string "title=$title" --form-string "message=$msg" \
+      --form-string "priority=$priority" \
+      https://api.pushover.net/1/messages.json; then
+    LAST_NOTIFY_AT=$now
+    log "escalated: $title"
   else
-    log "ingress from Cloudflare confirmed for ${TUNNEL_HOSTNAME}"
+    log "WARNING escalation delivery FAILED: $title"
   fi
-fi
+}
 
-# Steady-state health: compare what the public hostname returns against what the
-# relay returns locally. Equal statuses mean the whole chain (edge -> cloudflared
-# -> relay) is intact, whatever that status happens to be — which keeps this
-# probe honest even when the relay has no /health route yet, and stops a route
-# change from being misread as a tunnel outage. Exiting non-zero hands recovery
-# to pm2 rather than adding a third supervisor.
+probe() { curl -s -o /dev/null -w '%{http_code}' -m 15 "$1$PROBE_PATH" 2>/dev/null || echo 000; }
+
+log "watching $PUBLIC_URL (tunnel is run by launchd, not by this process)"
+
 FAILS=0
-while kill -0 "$CF_PID" 2>/dev/null; do
-  sleep "$PROBE_INTERVAL_SEC"
-  PUBLIC_CODE="$(probe_code 20 "${PUBLIC_URL}${PROBE_PATH}")"
-  LOCAL_CODE="$(probe_code 10 "http://127.0.0.1:${PORT}${PROBE_PATH}")"
+while true; do
+  LOCAL_CODE="$(probe "$LOCAL_URL")"
+  PUBLIC_CODE="$(probe "$PUBLIC_URL")"
 
-  if [[ "$PUBLIC_CODE" != "000" && "$PUBLIC_CODE" == "$LOCAL_CODE" ]]; then
-    FAILS=0
-    continue
-  fi
-
-  FAILS=$((FAILS + 1))
   if [[ "$LOCAL_CODE" == "000" ]]; then
-    DIAG="relay is not answering on 127.0.0.1:${PORT} either — this is relay-side, not tunnel-side"
+    # RELAY-side outage, not tunnel-side.  The `senate-relay` pm2 entry owns
+    # this recovery.  Counting it toward the tunnel's failure budget would tear
+    # down a perfectly healthy tunnel every few minutes for the whole outage,
+    # and page on every cycle — so it is reported once and NOT counted.
+    log "relay not answering on 127.0.0.1:${PORT} — relay-side, senate-relay owns this; not counting against the tunnel"
+    notify "CT senate-relay down" "Relay not answering on 127.0.0.1:${PORT}. Tunnel not implicated; check the senate-relay pm2 entry." 1
+    FAILS=0
+  elif [[ "$PUBLIC_CODE" == "000" || "$PUBLIC_CODE" != "$LOCAL_CODE" ]]; then
+    FAILS=$((FAILS + 1))
+    log "tunnel path unhealthy ($PUBLIC_URL -> $PUBLIC_CODE, local -> $LOCAL_CODE) [$FAILS/$PROBE_FAIL_LIMIT]"
+    if (( FAILS >= PROBE_FAIL_LIMIT )); then
+      # This is the case launchd cannot see: the relay is fine and cloudflared
+      # is "running", but the public path is dead.
+      notify "CT Senate tunnel path down" \
+        "$PUBLIC_URL -> $PUBLIC_CODE while $LOCAL_URL -> $LOCAL_CODE, ${FAILS}x. Relay is healthy, so this is tunnel/edge side. Jay's Tunnel is a launchd system service: sudo launchctl kickstart -k system/com.cloudflare.cloudflared" 1
+      FAILS=0
+    fi
   else
-    DIAG="relay answers locally (${LOCAL_CODE}) but the tunnel path returns ${PUBLIC_CODE} — this is tunnel-side"
+    (( FAILS > 0 )) && log "tunnel path recovered ($PUBLIC_CODE)"
+    FAILS=0
   fi
-  log "probe ${PUBLIC_URL}${PROBE_PATH} -> ${PUBLIC_CODE}, local -> ${LOCAL_CODE} (${FAILS}/${PROBE_FAIL_LIMIT}); ${DIAG}"
 
-  if (( FAILS >= PROBE_FAIL_LIMIT )); then
-    log "unhealthy ${FAILS}x — exiting so pm2 restarts it"
-    notify "CT senate tunnel unhealthy" \
-      "${PUBLIC_URL}${PROBE_PATH} returned HTTP ${PUBLIC_CODE} (local ${LOCAL_CODE}) ${FAILS} times. ${DIAG}. Restarting the tunnel; the hostname ${TUNNEL_HOSTNAME} is permanent, so SENATE_RELAY_URL does not need changing." 1
-    kill "$CF_PID" 2>/dev/null
-    exit 1
-  fi
+  sleep "$PROBE_INTERVAL_SEC"
 done
-
-wait "$CF_PID"
-STATUS=$?
-log "cloudflared exited with status ${STATUS}"
-exit "${STATUS:-1}"
-
-# History — why the hostname used to move, and why it cannot now
-# ---------------------------------------------------------------
-# Until 2026-08-12 this ran `cloudflared tunnel --url http://127.0.0.1:8899`, a
-# TryCloudflare *quick* tunnel. Cloudflare mints a brand-new random
-# `*.trycloudflare.com` hostname on every start and kills the previous one, while
-# the server reaches the relay through `SENATE_RELAY_URL`, a static binding. So
-# every restart silently repointed the tunnel while the server kept dialling a
-# dead host. It rotated 4 hostnames across 3 restarts on 2026-08-11 before anyone
-# noticed; the old hostname resolved to nothing while the new one served fine.
-# ecosystem.config.js documented "update SENATE_RELAY_URL when it changes" as a
-# MANUAL step — that step is precisely what failed, and a manual step in a
-# machine's restart path is a defect, not a procedure.
-#
-# The interim wrapper recorded the assigned hostname and paged the owner the
-# moment it rotated. All of that machinery existed only because quick tunnels
-# rotate; the named tunnel removed the reason for it, so it was removed too
-# rather than left behind to imply a permanent hostname might still move.
