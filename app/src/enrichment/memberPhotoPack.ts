@@ -136,7 +136,8 @@ export function memberPhotoPack(): PackIndex {
   return cachedIndex;
 }
 
-/** Whether `attributionCaption` should be shown to end users right now. Default OFF. */
+/** Whether the recorded `attributionCaption` is surfaced at all right now — today that means the
+ *  `x-photo-attribution` response header, not a visible caption. Default OFF. */
 export function attributionDisplayEnabled(): boolean {
   return memberPhotoPack().attributionDisplayEnabled;
 }
