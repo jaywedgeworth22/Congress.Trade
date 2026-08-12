@@ -51,11 +51,18 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Public-facing origin for redirects + links (APP_BASE_URL, else request origin). */
 async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
-  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
-  if (configured) return configured.replace(/\/$/, '');
   const host = c.req.header('X-Forwarded-Host') || c.req.header('Host') || new URL(c.req.url).host;
   const proto = c.req.header('X-Forwarded-Proto') || new URL(c.req.url).protocol.replace(':', '');
-  return `${proto}://${host}`;
+  const requestOrigin = `${proto}://${host}`;
+
+  const cleanHost = host.split(':')[0].toLowerCase();
+  if (cleanHost === 'localhost' || cleanHost === '127.0.0.1' || cleanHost.endsWith('.local')) {
+    return requestOrigin;
+  }
+
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
+  if (configured) return configured.replace(/\/$/, '');
+  return requestOrigin;
 }
 
 /** Trim the User down to what the browser is allowed to see. */
