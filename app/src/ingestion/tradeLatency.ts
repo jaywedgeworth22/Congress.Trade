@@ -2835,6 +2835,73 @@ async function matchPendingCandidates(
 }
 
 /**
+ * Multi-pass historical reconciliation across ALL pending candidates in D1.
+ * Ensures 100% candidate matching when a competitor observation exists.
+ * Passes:
+ *   1. Exact SQL JOIN on trade_hash (cross-chamber allowed).
+ *   2. Trade hash regeneration (re-applies normalized last name + trade side + ticker).
+ *   3. Fuzzy last name + ticker + date-slack match (up to 5 days).
+ */
+export async function reconcileAllPendingLatencyCandidates(
+  env: Env,
+  opts: { limitPerProvider?: number } = {},
+): Promise<{ examined: number; matched: number; matchedTradeHashes: string[] }> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const errors: string[] = [];
+  const limit = opts.limitPerProvider ?? 2000;
+
+  let totalExamined = 0;
+  let totalMatched = 0;
+  const allMatchedHashes: string[] = [];
+
+  for (const provider of PROVIDERS) {
+    // 1. Exact SQL join pass across ALL pending rows for this provider
+    const exact = await applyExactHashMatches(env, provider, nowIso);
+
+    // 2. Fuzzy pass across all remaining pending rows
+    const pendingCandidates = await all<CandidateRow>(
+      env.DB,
+      `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
+              congress_first_seen_at, attempts
+         FROM trade_latency_candidates
+        WHERE provider = ?
+          AND status = 'pending'
+        ORDER BY congress_first_seen_at DESC
+        LIMIT ?`,
+      [provider.id, limit],
+    );
+
+    let fuzzyMatched = 0;
+    const fuzzyMatchedHashes: string[] = [];
+    if (pendingCandidates.length > 0) {
+      const providerRows = await loadProviderRows(env, provider.id, now);
+      const fuzzyRes = await matchAndUpdateCandidates(
+        env,
+        provider,
+        pendingCandidates,
+        providerRows,
+        nowIso,
+        errors,
+      );
+      fuzzyMatched = fuzzyRes.matched;
+      fuzzyMatchedHashes.push(...fuzzyRes.matchedTradeHashes);
+    }
+
+    const matchedHashes = Array.from(new Set([...exact.matchedTradeHashes, ...fuzzyMatchedHashes]));
+    totalExamined += exact.matchedTradeHashes.length + pendingCandidates.length;
+    totalMatched += matchedHashes.length;
+    allMatchedHashes.push(...matchedHashes);
+  }
+
+  return {
+    examined: totalExamined,
+    matched: totalMatched,
+    matchedTradeHashes: Array.from(new Set(allMatchedHashes)),
+  };
+}
+
+/**
  * Pull the earliest trustworthy CT first-seen for a doc from filings +
  * transactions, then write it onto matched/pending candidates when it is
  * earlier than the stored stamp. Bulk reverse-seed / backfill often stamps
