@@ -1,6 +1,17 @@
 import SwiftUI
 import AuthenticationServices
 
+/// Holds the in-flight Google OAuth session.
+///
+/// `ASWebAuthenticationSession` cancels as soon as the last strong reference
+/// drops.  A local in `SignInPanel.startGoogleSignIn` is not enough: the
+/// session must be held until the callback fires, or
+/// `SFAuthenticationViewController` deallocates while loading its first view.
+@MainActor
+enum GoogleAuthSession {
+    static var current: ASWebAuthenticationSession?
+}
+
 /// Presentation anchor for `ASWebAuthenticationSession` (the Google OAuth hop).
 /// The session itself lives in `SignInPanel` (Components.swift) — this stays
 /// here because it is the app's one window-anchor provider and has no other
@@ -9,11 +20,21 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
     static let shared = AuthPresentationContext()
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        guard let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-              let window = windowScene.windows.first(where: { $0.isKeyWindow }) else {
-            return ASPresentationAnchor()
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        if let window = scenes
+            .first(where: { $0.activationState == .foregroundActive })?
+            .windows
+            .first(where: { $0.isKeyWindow })
+        {
+            return window
         }
-        return window
+        if let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow }) {
+            return window
+        }
+        if let window = scenes.flatMap(\.windows).first {
+            return window
+        }
+        return ASPresentationAnchor()
     }
 }
 

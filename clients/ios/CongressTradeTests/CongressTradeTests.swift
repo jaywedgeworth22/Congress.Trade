@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import SwiftData
 import XCTest
@@ -654,6 +655,34 @@ final class CongressTradeTests: XCTestCase {
     }
 
     // MARK: - Sign in with Apple + StoreKit 2 redeem command
+
+    func testAppleSignInNoticeMapsUnavailableAndSilentDeviceCancel() {
+        let unavailable = NSError(domain: "AKAuthenticationError", code: -7003)
+        XCTAssertEqual(
+            AppleSignInNotice.message(for: unavailable),
+            AppleSignInNotice.unavailableMessage
+        )
+
+        let canceled = ASAuthorizationError(.canceled)
+        #if targetEnvironment(simulator)
+        XCTAssertEqual(
+            AppleSignInNotice.message(for: canceled),
+            AppleSignInNotice.simulatorCanceledMessage
+        )
+        #else
+        XCTAssertNil(AppleSignInNotice.message(for: canceled))
+        #endif
+
+        let wrapped = NSError(
+            domain: ASAuthorizationError.errorDomain,
+            code: ASAuthorizationError.Code.canceled.rawValue,
+            userInfo: [NSUnderlyingErrorKey: unavailable]
+        )
+        XCTAssertEqual(
+            AppleSignInNotice.message(for: wrapped),
+            AppleSignInNotice.unavailableMessage
+        )
+    }
 
     func testSignInWithAppleSendsIdentityTokenAndFullNameToAuthOrigin() async throws {
         let session = makeSession()

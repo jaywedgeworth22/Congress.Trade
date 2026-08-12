@@ -23,6 +23,12 @@ performance, accessibility, and verification roadmap.
 
 ## Open In Xcode
 
+The project container is `clients/ios/CongressTrade.xcodeproj` (no period in the
+basename — that tripped up tooling).  The dotted leftover
+`Congress.Trade.xcodeproj` is retired; do not recreate it.  Display name,
+bundle id, scheme, and targets are unchanged (`Congress.Trade` /
+`trade.congress.ios` / `CongressTrade`).
+
 ```bash
 open clients/ios/CongressTrade.xcodeproj
 ```
