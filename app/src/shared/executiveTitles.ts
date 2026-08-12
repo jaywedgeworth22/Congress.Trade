@@ -107,6 +107,66 @@ export const EXECUTIVE_TITLES: Readonly<Record<string, string>> = {
 export const DEFAULT_EXECUTIVE_TITLE = 'Executive Branch';
 
 /**
+ * Shortest *professionally formatted* form of each curated title, keyed by the
+ * LONG title rather than by filer id — one entry per distinct position instead
+ * of one per filer-id variant, so a new `-ERM` duplicate id inherits its short
+ * form for free and the two maps can never disagree about the same person.
+ *
+ * Abbreviation house style (owner 2026-08-11, "'Treasury Secretary' or
+ * 'Treasury Sec.' if not room for whole thing"):
+ *   - 'Secretary' -> 'Sec.', 'Director' -> 'Dir.', 'Administrator' -> 'Admin.',
+ *     'Deputy' -> 'Dep.'  — always with the period; these are abbreviations,
+ *     not initialisms.
+ *   - Where the agency has a household initialism that is SHORTER than the
+ *     abbreviated role ('SSA Commissioner', 'MCC CEO'), prefer the initialism —
+ *     it stays a real title rather than a clipped one.
+ *   - 'Secretary of State' keeps its preposition ('Sec. of State'): "State
+ *     Secretary" is not a title anyone holds.
+ *   - Never truncate mid-word, and never emit a bare surname-less fragment.
+ *
+ * Every value in {@link EXECUTIVE_TITLES} (plus {@link DEFAULT_EXECUTIVE_TITLE})
+ * must have an entry here; `executiveTitles.test.ts` asserts that exhaustively
+ * so adding a filer without a short form fails CI rather than silently
+ * overflowing a narrow cell.
+ */
+export const EXECUTIVE_TITLES_SHORT: Readonly<Record<string, string>> = {
+  President: 'President', // already the shortest correct form
+  'Treasury Secretary': 'Treasury Sec.',
+  'Energy Secretary': 'Energy Sec.',
+  'Education Secretary': 'Education Sec.',
+  'Secretary of the Air Force': 'Air Force Sec.',
+  'HHS Secretary': 'HHS Sec.',
+  'Secretary of State': 'Sec. of State',
+  'Defense Secretary': 'Defense Sec.',
+  'OSTP Director': 'OSTP Dir.',
+  'Deputy Treasury Secretary': 'Dep. Treasury Sec.',
+  'Deputy Interior Secretary': 'Dep. Interior Sec.',
+  'Social Security Commissioner': 'SSA Commissioner',
+  'Transportation Secretary': 'Transportation Sec.',
+  'U.S. Senator (PA)': 'Sen. (PA)',
+  'NCTC Director': 'NCTC Dir.',
+  'OPM Director': 'OPM Dir.',
+  'MCC Chief Executive Officer': 'MCC CEO',
+  'FEMA Administrator': 'FEMA Admin.',
+  'Interior Secretary': 'Interior Sec.',
+  'ONDCP Director': 'ONDCP Dir.',
+  // Last-resort label for an uncurated EXEC-* filer. Acceptable on its own;
+  // never acceptable as a PREFIX in front of a real title (owner 2026-08-11 —
+  // no "Exec - Treasury Secretary" anywhere).
+  [DEFAULT_EXECUTIVE_TITLE]: 'Executive',
+};
+
+/**
+ * Longest curated title in characters — 'Social Security Commissioner' (28).
+ * Exported so a layout can ask "does my column fit every title?" without
+ * re-deriving it, and so the test suite fails loudly if a longer one is added
+ * without the callers being re-checked.
+ */
+export const EXECUTIVE_TITLE_MAX_LENGTH: number = Object.values(EXECUTIVE_TITLES)
+  .concat(DEFAULT_EXECUTIVE_TITLE)
+  .reduce((longest, title) => Math.max(longest, title.length), 0);
+
+/**
  * Resolve a display title for an executive-branch filer id. Returns null for
  * non-`EXEC-*` ids (callers should not surface a title for congressional
  * filers), and {@link DEFAULT_EXECUTIVE_TITLE} for an `EXEC-*` id with no
@@ -116,4 +176,74 @@ export function executiveTitleFor(filerId: string | null | undefined): string | 
   if (!filerId) return null;
   if (!filerId.startsWith('EXEC-')) return null;
   return EXECUTIVE_TITLES[filerId] ?? DEFAULT_EXECUTIVE_TITLE;
+}
+
+/**
+ * Short form of a already-resolved title, or the title itself when it is
+ * already as short as it gets. Returns null for a null/blank input, and passes
+ * an unrecognised title through unchanged rather than inventing an
+ * abbreviation for it.
+ */
+export function shortExecutiveTitle(title: string | null | undefined): string | null {
+  const t = (title ?? '').trim();
+  if (!t) return null;
+  return EXECUTIVE_TITLES_SHORT[t] ?? t;
+}
+
+/**
+ * Pick the LONGEST form of `title` that fits `maxChars`.
+ *
+ *   fitExecutiveTitle('Treasury Secretary', 30) -> 'Treasury Secretary'
+ *   fitExecutiveTitle('Treasury Secretary', 14) -> 'Treasury Sec.'
+ *   fitExecutiveTitle('Treasury Secretary')     -> 'Treasury Secretary'
+ *
+ * With no budget (or a non-positive / non-finite one) the full title wins —
+ * "no budget" means "unconstrained", never "shrink by default". When even the
+ * short form overflows, the short form is still returned: a real, complete
+ * title that the layout may ellipsize beats a string this module chopped in
+ * half.
+ */
+export function fitExecutiveTitle(
+  title: string | null | undefined,
+  maxChars?: number | null,
+): string | null {
+  const t = (title ?? '').trim();
+  if (!t) return null;
+  const budget = typeof maxChars === 'number' && Number.isFinite(maxChars) ? Math.floor(maxChars) : 0;
+  if (budget <= 0 || t.length <= budget) return t;
+  const short = EXECUTIVE_TITLES_SHORT[t];
+  if (!short) return t; // uncurated: pass through rather than fabricate
+  return short;
+}
+
+/**
+ * `executiveTitleFor` + `fitExecutiveTitle` in one call: the longest curated
+ * form of this filer's position that fits `maxChars`. Null for non-`EXEC-*`
+ * ids, exactly like {@link executiveTitleFor}.
+ */
+export function executiveTitleForBudget(
+  filerId: string | null | undefined,
+  maxChars?: number | null,
+): string | null {
+  return fitExecutiveTitle(executiveTitleFor(filerId), maxChars);
+}
+
+/**
+ * Serializable snapshot of both maps for clients that cannot import this
+ * module — the browser dashboard inlines it into its bundle at build time (see
+ * ui/dashboardHtml.ts `EXEC_TITLES`), the same way the benchmark catalog is
+ * inlined, so the web title list can never drift from this file.
+ */
+export function executiveTitleForms(): {
+  titles: Record<string, string>;
+  short: Record<string, string>;
+  fallback: string;
+  fallbackShort: string;
+} {
+  return {
+    titles: { ...EXECUTIVE_TITLES },
+    short: { ...EXECUTIVE_TITLES_SHORT },
+    fallback: DEFAULT_EXECUTIVE_TITLE,
+    fallbackShort: EXECUTIVE_TITLES_SHORT[DEFAULT_EXECUTIVE_TITLE] ?? DEFAULT_EXECUTIVE_TITLE,
+  };
 }

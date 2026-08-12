@@ -20,13 +20,16 @@
  * every panel; the "illustrative sample data" banner is removed the moment real
  * feed data loads.
  *
- * The benchmark model catalog is the ONE exception to "no imports": it is
- * serialized from benchmarkSelectableCatalog() into the template at module load
- * so the re-read menus, quick-run select, and custom benchmark model checkboxes
- * can never drift from the server-side catalog again.
+ * The benchmark model catalog and the executive-branch title map are the ONLY
+ * exceptions to "no imports": both are serialized into the template at module
+ * load (from benchmarkSelectableCatalog() and executiveTitleForms()) so the
+ * re-read menus / quick-run select / custom benchmark checkboxes, and every
+ * place the dashboard names a Cabinet official, can never drift from their
+ * server-side sources of truth.
  */
 
 import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
+import { executiveTitleForms } from '../shared/executiveTitles.ts';
 import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
 /**
@@ -44,6 +47,10 @@ function speedProofSectionHtml(admin: boolean): string {
   const gridId = admin ? 'spGridAdmin' : 'spGrid';
   const tableBodyId = admin ? 'speedTableBodyAdmin' : 'speedTableBody';
   const updatedId = admin ? 'speedUpdatedAdmin' : 'speedUpdated';
+  // "N of M matched" + what M counts. Filled by paintSpeedSection(); stays
+  // hidden until the matcher lane ships the scope counts (see the
+  // SPEED_SCOPE_NOTE_DEFAULT contract block in the client script).
+  const scopeNoteId = admin ? 'spScopeNoteAdmin' : 'spScopeNote';
   const infoTip = admin
     ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
     : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
@@ -68,6 +75,7 @@ function speedProofSectionHtml(admin: boolean): string {
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
+    <p class="note sp-scope-note" id="${scopeNoteId}" hidden></p>
     <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest Congressional trades. <strong>Lead and win rates use live new imports only</strong> &mdash; seed datasets and historical house/senate backfills are excluded. We still count a match if they listed the trade minutes or up to about two weeks before or after we did. Provider-observed rows that remain unmatched after a 24-hour grace period stay in the denominator instead of counting as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
@@ -164,6 +172,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* "Rival" gray for the speed-vs-providers race lanes: providers are one
        de-emphasized neutral (never buy/sell green/red — those mean trades). */
     --rival:     #7b8dab;
+    /* Behind-on-time RED, for signed lead/lag figures only (owner 2026-08-11:
+       "stay in red when behind on time"). Deliberately NOT --rival: the neutral
+       gray is the PROVIDER's chrome, whereas this is our own losing number and
+       has to read as a loss. Aliases --sell so it follows the active theme. */
+    --lag:       var(--sell);
     --radius:    12px;
     /* Capsule chrome radius + shared control height for the filter-pill row
        (chip clusters, pill-selects, icon search fields, header icon buttons).
@@ -1559,10 +1572,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-bar-fill.tied { background: linear-gradient(90deg, var(--warn) 0%, color-mix(in srgb,var(--warn) 65%,var(--text-dim)) 100%); }
   /* Lead stat */
   .sp-lead { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
-  .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
-  .sp-lead-num.negative { color:var(--rival); }
-  .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
   .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; text-wrap:pretty; overflow-wrap:break-word; word-break:break-word; }
+  .sp-lead-sub { font-size:11px; color:var(--text-dim); margin-top:3px; }
+  /* ---- Signed lead/lag figure (every latency number on the page) ----
+     Owner 2026-08-11: "it has minus signs for time ahead and time behind, lets
+     make it have + sign and stay in red when behind on time". So: AHEAD always
+     carries an explicit "+", BEHIND is red, and the sign is the true minus
+     U+2212 rather than a hyphen that reads like a typo or a stray dash.
+     Colour is never the only channel — .lead-arrow (▲/▼/↔) and .lead-word
+     ("ahead"/"behind"/"even") carry the same fact for colour-blind, high
+     contrast, and printed readers, and the whole figure has an aria-label
+     spelling it out for screen readers. */
+  .lead-fig { display:inline-flex; align-items:baseline; gap:4px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .lead-fig .lead-arrow { font-size:0.78em; line-height:1; }
+  .lead-fig .lead-word { font-size:0.7em; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; opacity:0.85; }
+  .lead-fig.lead-ahead { color:var(--good); }
+  .lead-fig.lead-behind { color:var(--lag); }
+  .lead-fig.lead-even { color:var(--text-dim); }
+  .lead-fig.lead-big { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; }
+  .lead-fig.lead-big .lead-word { font-size:0.34em; letter-spacing:1px; }
+  .lead-fig.lead-big.lead-even { font-size:20px; }
+  /* "N of M matched" scope line + its plain-English denominator note. */
+  .sp-scope { font-size:11.5px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+  .sp-scope strong { color:var(--text); font-weight:700; }
+  .sp-scope-note { margin-top:10px; }
+  .sp-scope-note strong { color:var(--text); font-variant-numeric:tabular-nums; }
   /* W/L/T stat row */
   .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-size:12px; }
   .sp-wlt-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
@@ -1788,7 +1822,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .plan-grid { grid-template-columns: 1fr; }
     .toolbar .chamber-chips { grid-column: 1 / -1; }
     .sp-grid { grid-template-columns: 1fr; gap: 12px; }
-    .sp-lead-num { font-size:26px; }
+    .lead-fig.lead-big { font-size:26px; }
+    .lead-fig.lead-big.lead-even { font-size:19px; }
     .delivery-grid { grid-template-columns: 1fr; }
     .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
   }
@@ -3398,13 +3433,85 @@ var COMPANY_BRAND_CASING = [
   [/\\bNvidia\\b/gi, 'NVIDIA'],
   [/\\b3m\\b/gi, '3M'],
 ];
-/* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
+/* "House"/"Senate" are proper nouns here — always capitalize the chamber.
+   NOTE: the 'Exec' branch word is a LAST resort for a row with no filer id to
+   resolve. Never render it in front of a real position — use
+   memberBranchLabel()/memberBranchBits() below, which return the title alone. */
 function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
   if (s === 'house' || s === 'h') return 'House';
   if (s === 'senate' || s === 's') return 'Senate';
   if (s === 'executive' || s === 'oge' || s === 'exec') return 'Exec';
   return c ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+/* ---- Executive-branch positions ----------------------------------------
+   Server-injected from shared/executiveTitles.ts executiveTitleForms(), the
+   same way BENCHMARK_CATALOG is injected, so the web copy of the title list
+   cannot drift from the one delivery/rest.ts and client/utils.ts serve.
+
+   Owner 2026-08-11: "ensure executive branch individuals have their shortest
+   professionally formatted title shown like 'Treasury Secretary' or 'Treasury
+   Sec.' if not room for whole thing and don't say 'exec -' before that at
+   least when displaying them." So an executive filer renders its POSITION and
+   nothing else: no 'Exec' branch word in front of it, and no state/district
+   (they hold an office, not a seat). EXEC_TITLE_FALLBACK stands alone for an
+   uncurated filer — it is never a prefix. */
+var EXEC_TITLE_FORMS = ${JSON.stringify(executiveTitleForms())};
+var EXEC_TITLES = EXEC_TITLE_FORMS.titles;
+var EXEC_TITLES_SHORT = EXEC_TITLE_FORMS.short;
+var EXEC_TITLE_FALLBACK = EXEC_TITLE_FORMS.fallback;
+/* Character budgets by surface, so each caller states its room in one place.
+   FULL fits the longest curated title ('Social Security Commissioner', 28). */
+var EXEC_TITLE_FULL = 28;
+var EXEC_TITLE_TIGHT = 16;
+function isExecutiveFiler(chamber, filerId) {
+  var s = String(chamber == null ? '' : chamber).trim().toLowerCase();
+  if (s === 'executive' || s === 'oge' || s === 'exec' || s.indexOf('exec') !== -1) return true;
+  return String(filerId == null ? '' : filerId).indexOf('EXEC-') === 0;
+}
+/* Mirror of shared/executiveTitles.ts executiveTitleFor(). */
+function execTitleFor(filerId) {
+  var id = String(filerId == null ? '' : filerId).trim();
+  if (!id || id.indexOf('EXEC-') !== 0) return null;
+  return EXEC_TITLES[id] || EXEC_TITLE_FALLBACK;
+}
+/* Mirror of shared/executiveTitles.ts fitExecutiveTitle(): longest form that
+   fits. Falls back to the complete short form rather than a chopped string —
+   a real title the layout may ellipsize beats one this code cut in half. */
+function execTitleFit(title, maxChars) {
+  var t = String(title == null ? '' : title).trim();
+  if (!t) return '';
+  var budget = Number(maxChars);
+  if (!isFinite(budget) || budget <= 0 || t.length <= budget) return t;
+  return EXEC_TITLES_SHORT[t] || t;
+}
+/* Position label for an executive filer. "curated" is the server-supplied
+   title field when the payload carries one (roster / member drawer); the id
+   map covers the payloads that don't. */
+function execDisplayTitle(filerId, curated, maxChars) {
+  var t = String(curated == null ? '' : curated).trim() || execTitleFor(filerId) || EXEC_TITLE_FALLBACK;
+  return execTitleFit(t, maxChars == null ? EXEC_TITLE_FULL : maxChars);
+}
+/* The branch/seat descriptor bits for ANY filer row, in render order.
+   Executive filers get exactly one bit — their position. Congressional filers
+   keep "House"/"Senate" plus, when a state is supplied, the state (and
+   district when present). Callers escape the strings they use. */
+function memberBranchBits(o, maxTitleChars) {
+  var r = o || {};
+  if (isExecutiveFiler(r.chamber, r.filerId)) {
+    return [execDisplayTitle(r.filerId, r.title, maxTitleChars)];
+  }
+  var bits = [];
+  var chLabel = chamberLabel(r.chamber);
+  if (chLabel) bits.push(chLabel);
+  if (r.state) bits.push(String(r.state) + (r.district ? ' - ' + fmtDistrictOrdinal(r.district) : ''));
+  return bits;
+}
+/* Single-bit variant for rows that only have room for one word. */
+function memberBranchLabel(o, maxTitleChars) {
+  var r = o || {};
+  if (isExecutiveFiler(r.chamber, r.filerId)) return execDisplayTitle(r.filerId, r.title, maxTitleChars);
+  return chamberLabel(r.chamber);
 }
 /* Spell out a US state/territory from its 2-letter code for the politician drawer. */
 var US_STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming', DC: 'District of Columbia', PR: 'Puerto Rico', GU: 'Guam', VI: 'U.S. Virgin Islands', AS: 'American Samoa', MP: 'Northern Mariana Islands' };
@@ -4016,7 +4123,9 @@ function amountCellHtml(r) {
 function tradesCardHtml(r) {
   var traded = dateText(r.txdate);
   var lag = shortLagText(r);
-  var chamber = chamberLabel(r.chamber);
+  // Executive filers show their position ("Treasury Sec.") instead of the
+  // "Exec" branch word — row 2 is tight, so it asks for the tight budget.
+  var chamber = memberBranchLabel(r, EXEC_TITLE_TIGHT);
   var member = fmtName(r.member);
   // Whole card opens trade details — no nested data-member/data-asset chips.
   var memberHtml = esc(member) + (r.st ? ', ' + esc(r.st) : '');
@@ -9359,13 +9468,13 @@ function renderPeopleDirectory(all) {
       ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
     var parts = [];
-    var chRaw = String(m.chamber || '').toLowerCase();
-    var isExec = chRaw === 'executive' || chRaw === 'oge' || chRaw === 'exec' || chRaw.indexOf('exec') !== -1;
-    if (isExec) {
-      // Title (e.g. "Treasury Secretary") replaces the generic "Exec" branch
-      // word when curated (see shared/executiveTitles.ts); no state/district
-      // for executive filers — they don't represent one.
-      parts.push(esc(m.title ? String(m.title) : 'Executive'));
+    if (isExecutiveFiler(m.chamber, m.filerId)) {
+      // Title (e.g. "Treasury Secretary") REPLACES the generic "Exec" branch
+      // word (see shared/executiveTitles.ts); no state/district for executive
+      // filers — they don't represent one. An uncurated filer gets the bare
+      // 'Executive Branch' fallback, which stands alone and never prefixes a
+      // real title.
+      parts.push(esc(execDisplayTitle(m.filerId, m.title, EXEC_TITLE_FULL)));
       if (m.party) parts.push(esc(dirPartyLetter(m.party)));
     } else {
       var chLabel = chamberLabel(m.chamber);
@@ -9587,14 +9696,64 @@ function fetchLatencySummary() {
     .catch(function (e) { LATENCY.promise = null; throw e; });
   return LATENCY.promise;
 }
-/* 5560 -> "1.5 hr", 82 -> "82 sec"; one unit, one decimal max, sign kept. */
+/* 5560 -> "1.5 hr", 82 -> "82 sec"; one unit, one decimal max. MAGNITUDE ONLY —
+   direction belongs to fmtLeadSigned()/leadFigureHtml() so that every lead
+   figure on the site signs itself with the same convention instead of some
+   places emitting a bare "-" and others silently dropping the sign. */
 function fmtLead(secs) {
-  var s = Math.abs(Number(secs) || 0), sign = secs < 0 ? '-' : '';
+  var s = Math.abs(Number(secs) || 0);
   function one(x) { var t = x.toFixed(1); return t.slice(-2) === '.0' ? t.slice(0, -2) : t; }
-  if (s < 90) return sign + Math.round(s) + ' sec';
-  if (s < 5400) return sign + Math.round(s / 60) + ' min';
-  if (s < 172800) return sign + one(s / 3600) + ' hr';
-  return sign + one(s / 86400) + ' days';
+  if (s < 90) return Math.round(s) + ' sec';
+  if (s < 5400) return Math.round(s / 60) + ' min';
+  if (s < 172800) return one(s / 3600) + ' hr';
+  return one(s / 86400) + ' days';
+}
+/* ---- Signed lead/lag: ONE convention for every latency figure on the page ----
+   Sign convention: POSITIVE seconds = Congress.Trade published FIRST.
+     ahead  -> "+", green,  ▲
+     behind -> "\\u2212" (true minus, not a hyphen), RED, ▼
+     even   -> "\\u00b1", dim, ↔
+   Owner 2026-08-11: "it has minus signs for time ahead and time behind, lets
+   make it have + sign and stay in red when behind on time." Before this, the
+   big card number printed "+25 min" when ahead but an UNSIGNED "25 min" when
+   behind (colour was the only cue), while the median/P90 sublines and the raw
+   data table printed a bare hyphen for behind and no sign at all for ahead.
+   Accessibility: colour is never the only channel. Every figure also carries an
+   arrow glyph, and (outside the narrowest table cells) the literal word
+   "ahead"/"behind"; all of them carry a spelled-out title + aria-label. */
+function leadDirection(secs) {
+  var n = Number(secs);
+  if (!isFinite(n) || Math.round(n) === 0) return 'even';
+  return n > 0 ? 'ahead' : 'behind';
+}
+function leadSignChar(dir) { return dir === 'ahead' ? '+' : dir === 'behind' ? '\\u2212' : '\\u00b1'; }
+function leadArrowChar(dir) { return dir === 'ahead' ? '\\u25b2' : dir === 'behind' ? '\\u25bc' : '\\u2194'; }
+function leadWord(dir) { return dir === 'ahead' ? 'ahead' : dir === 'behind' ? 'behind' : 'even'; }
+/* Plain signed text with no markup: "+25 min" / "\\u221225 min" / "\\u00b10 sec". */
+function fmtLeadSigned(secs) {
+  return leadSignChar(leadDirection(secs)) + fmtLead(secs);
+}
+/* Spelled-out sentence used as the title/aria-label of every signed figure. */
+function leadDescription(secs) {
+  var dir = leadDirection(secs);
+  if (dir === 'even') return 'Even \\u2014 no measurable difference either way.';
+  return fmtLeadSigned(secs) + ' ' + leadWord(dir) + ' \\u2014 ' +
+    (dir === 'ahead' ? 'Congress.Trade published first.' : 'the provider published first.');
+}
+/* Accessible signed lead figure.
+   opts: { word: false } drops the direction word (narrow table cells keep the
+   arrow + sign and rely on the title/aria-label for the word); { cls: 'lead-big' }
+   promotes it to the card headline size. */
+function leadFigureHtml(secs, opts) {
+  var o = opts || {};
+  var dir = leadDirection(secs);
+  var desc = leadDescription(secs);
+  return '<span class="lead-fig lead-' + dir + (o.cls ? ' ' + o.cls : '') +
+    '" title="' + esc(desc) + '" aria-label="' + esc(desc) + '">' +
+    '<span class="lead-arrow" aria-hidden="true">' + leadArrowChar(dir) + '</span>' +
+    '<span class="lead-val">' + esc(fmtLeadSigned(secs)) + '</span>' +
+    (o.word === false ? '' : '<span class="lead-word">' + esc(leadWord(dir)) + '</span>') +
+    '</span>';
 }
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
@@ -9647,6 +9806,51 @@ function refreshSpeedUpdated() {
   ['speedUpdated', 'speedUpdatedAdmin'].forEach(function (id) {
     var n = el(id); if (n) n.textContent = txt;
   });
+}
+/* ---- "N of M matched" scope counts -------------------------------------
+   Owner asked for the DENOMINATOR next to the matched count: "N of M matched",
+   plus one plain-English line saying what M counts.
+
+   CONTRACT with the latency-matching lane (app/src/ingestion/tradeLatency.ts).
+   These fields do not exist on GET /api/analytics/latency-summary yet — the
+   matcher lane is landing them — so the UI here is written against the names
+   below and renders NOTHING until they arrive. It never substitutes a
+   different denominator (maturedProviderObserved, candidates, …) to make the
+   line appear: a wrong M is worse than no M.
+
+     summary.totals.scopeMatched : number  -> N, disclosures matched on both sides
+     summary.totals.scopeTotal   : number  -> M, disclosures from every filer in scope
+     summary.totals.scopeLabel   : string? -> optional override of the plain-English note
+     provider.scopeMatched / provider.scopeTotal : the same pair, per provider
+                                            (rendered on that provider's card only)
+
+   M's scope in words (the default note): every filer we track — all House and
+   Senate members, the President and Vice President, and Cabinet secretaries
+   and agency heads. */
+var SPEED_SCOPE_NOTE_DEFAULT = 'That total covers every filer we track&nbsp; \\u2014&nbsp; all House and Senate members, the President and Vice President, and Cabinet secretaries and agency heads.&nbsp; "Matched" means we and the provider both saw the same disclosure.';
+function spScopeCounts(src) {
+  var o = src || {};
+  if (o.scopeMatched == null || o.scopeTotal == null) return null;
+  var matched = Number(o.scopeMatched), total = Number(o.scopeTotal);
+  if (!isFinite(matched) || !isFinite(total) || total <= 0 || matched < 0) return null;
+  return { matched: matched, total: total };
+}
+function spScopeCountHtml(c) {
+  return '<strong>' + fmtCount(c.matched) + '</strong> of <strong>' + fmtCount(c.total) + '</strong> matched';
+}
+/* Per-card line — only when the PROVIDER carries its own scope pair. Falling
+   back to the site-wide totals here would print the same "N of M" on every
+   card as if each provider had earned it. */
+function spScopeHtml(p) {
+  var c = spScopeCounts(p);
+  return c ? '<div class="sp-scope">' + spScopeCountHtml(c) + '</div>' : '';
+}
+/* Section-level line: the one shared scope statement under the card grid. */
+function spScopeNoteHtml(totals) {
+  var c = spScopeCounts(totals);
+  if (!c) return '';
+  var note = (totals && totals.scopeLabel) ? esc(String(totals.scopeLabel)) : SPEED_SCOPE_NOTE_DEFAULT;
+  return spScopeCountHtml(c) + '.&nbsp; ' + note;
 }
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
@@ -9720,20 +9924,38 @@ function spCardHtml(p) {
       (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
       '</div>';
   } else {
-    var avg = p.avgLeadSec != null ? p.avgLeadSec : (p.medianLeadSec || 0);
-    var isPos = avg > 0;
-    var numCls = 'sp-lead-num' + (isPos ? '' : (avg < 0 ? ' negative' : ' neutral'));
-    var sign = isPos ? '+' : '';
-    var medTxt = p.medianLeadSec != null && p.medianLeadSec !== p.avgLeadSec
-      ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">Median: ' + fmtLead(p.medianLeadSec) + '</div>'
+    /* HEADLINE = MEDIAN, not the mean. At these sample sizes (n is single
+       digits per provider) one freak race flips the mean's SIGN while the
+       median doesn't move: Unusual Whales on 2026-08-11 read avg -34 sec
+       against a median of +1,466 sec, because a single -3.1 h row outweighed
+       seven +24 min ones. The mean then contradicted this same card's own
+       "Preliminary lead" badge, which is derived from wins vs. losses. The
+       median agrees with the badge, survives an outlier, and is the figure
+       speedBoastProvider()/setPricingProof() already quote — so it is the one
+       that gets to be the big number. The mean is still shown, just demoted. */
+    var headline = p.medianLeadSec != null ? p.medianLeadSec : (p.avgLeadSec || 0);
+    var headlineDir = leadDirection(headline);
+    var avgTxt = p.avgLeadSec != null && p.avgLeadSec !== p.medianLeadSec
+      ? '<div class="sp-lead-sub">Average: ' + leadFigureHtml(p.avgLeadSec, { word: false }) + '</div>'
       : '';
-    var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
-    var labelNote = preliminary
-      ? 'preliminary avg lead on live imports (coverage still building)'
-      : 'average lead on live imports vs. their feed';
+    var p90Txt = p.p90LeadSec != null ? '<div class="sp-lead-sub">P90: ' + leadFigureHtml(p.p90LeadSec, { word: false }) + '</div>' : '';
+    /* Say it out loud when the mean and the median disagree on WHO WON, rather
+       than leaving a reader to spot a stray sign two lines apart. */
+    var splitTxt = (p.avgLeadSec != null && p.medianLeadSec != null &&
+      leadDirection(p.avgLeadSec) !== headlineDir && leadDirection(p.avgLeadSec) !== 'even' && headlineDir !== 'even')
+      ? '<div class="sp-lead-sub">The average disagrees with the median here \\u2014 a few outlier races pull it the other way, so the median is the fair summary.</div>'
+      : '';
+    /* "lead" is only true when we're ahead; say "lag" when we're not, so the
+       sentence under the number can never contradict the sign above it. */
+    var basisNote = headlineDir === 'behind'
+      ? 'typical (median) lag behind their feed on live imports'
+      : headlineDir === 'even'
+        ? 'no measurable typical difference vs. their feed on live imports'
+        : 'typical (median) lead on live imports vs. their feed';
+    var labelNote = preliminary ? 'preliminary ' + basisNote + ' (coverage still building)' : basisNote;
     leadHtml = '<div class="sp-lead">' +
-      '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(avg)) + '</div>' +
-      '<div class="sp-lead-label">' + labelNote + medTxt + p90Txt + '</div>' +
+      leadFigureHtml(headline, { cls: 'lead-big' }) +
+      '<div class="sp-lead-label">' + labelNote + avgTxt + p90Txt + splitTxt + '</div>' +
       '</div>';
   }
 
@@ -9750,7 +9972,7 @@ function spCardHtml(p) {
       fmtCount(p.maturedProviderObserved || 0) + ' provider rows · ' + fmtCount(p.unmatchedProvider || 0) + ' unmatched</div>';
   }
 
-  return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
+  return '<div class="' + cardCls + '">' + header + spScopeHtml(p) + barHtml + leadHtml + wlt + '</div>';
 }
 /* Raw data table rows shared by both placements (inside their <details>). */
 function speedTableRowsHtml(provs) {
@@ -9762,16 +9984,24 @@ function speedTableRowsHtml(provs) {
       td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
       td(fmtCount(p.unmatchedProvider || 0)) + td(p.comparisonStatus || 'insufficient') +
       td(fmtCount(p.usFirstCount || 0)) + td(fmtCount(p.providerFirstCount || 0)) + td(fmtCount(p.tieCount || 0)) +
-      td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
-      td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
-      td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
+      /* Signed + arrowed like every other lead figure; the word is dropped here
+         only because the cells are narrow — the title/aria-label still says it. */
+      td(p.medianLeadSec != null ? leadFigureHtml(p.medianLeadSec, { word: false }) : '—') +
+      td(p.avgLeadSec != null ? leadFigureHtml(p.avgLeadSec, { word: false }) : '—') +
+      td(p.p90LeadSec != null ? leadFigureHtml(p.p90LeadSec, { word: false }) : '—') + '</tr>';
   }).join('');
 }
-function paintSpeedSection(gridId, tableBodyId, provs) {
+function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals) {
   var grid = el(gridId);
   if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
   var tb = el(tableBodyId);
   if (tb) tb.innerHTML = speedTableRowsHtml(provs);
+  var note = el(noteId);
+  if (note) {
+    var html = spScopeNoteHtml(totals);
+    note.innerHTML = html;
+    note.hidden = !html;
+  }
 }
 /* Filing Latency Comparison placement (owner UX work order item 1): paints
    BOTH copies from a single fetch —
@@ -9792,12 +10022,12 @@ function renderSpeedProof() {
 
     if (adminBox) {
       adminBox.hidden = !hasData;
-      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', provs);
+      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals);
     }
     if (trendsBox) {
       var ahead = hasData && isLatencyAhead(d);
       trendsBox.hidden = !ahead;
-      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', provs);
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals);
     }
 
     refreshSpeedUpdated();
@@ -9816,7 +10046,7 @@ function renderAlertsMini() {
   if (!best) { box.className = 'speed-mini'; box.innerHTML = ''; return; }
   box.className = 'speed-mini show';
   box.innerHTML = '<span>⚡ Ahead of ' + esc(best.label) + ' on <span class="lead">' + fmtCount(best.usFirstCount) + ' of ' + fmtCount(best.matched) +
-    '</span> matched filings · typical lead <span class="lead">' + fmtLead(best.medianLeadSec) + '</span></span>' +
+    '</span> matched filings · typical lead ' + leadFigureHtml(best.medianLeadSec, { word: false }) + '</span>' +
     '<button class="btn ghost sm" onclick="openSpeedProof()">See the scoreboard →</button>';
 }
 function openSpeedProof() {
@@ -9825,6 +10055,11 @@ function openSpeedProof() {
   var s = el('trLatencySection');
   if (s && !s.hidden) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+/* The one place a lead deliberately renders UNSIGNED: this is a prose sentence
+   whose own words carry the direction ("land here … BEFORE <provider>"), and a
+   "+" wedged mid-sentence would read as a typo rather than as a sign. It is
+   also only ever reached via speedBoastProvider(), which requires a positive
+   median, so an unsigned magnitude here can never hide a loss. */
 function setPricingProof() {
   var n = el('pricingProof'); if (!n) return;
   var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
@@ -10068,7 +10303,9 @@ function loadTrMembers() {
     if (!rows.length) { body.innerHTML = stateRow(2, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
-      var metaBits = [chamberLabel(r.chamber), r.state ? (String(r.state) + (r.district ? ' - ' + fmtDistrictOrdinal(r.district) : '')) : ''].filter(Boolean).join(' · ');
+      // Executive filers: position only — no "Exec" prefix, and no state or
+      // district, which they do not hold (EXEC-MCCORMICK does carry a state).
+      var metaBits = memberBranchBits(r, EXEC_TITLE_FULL).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
@@ -10156,11 +10393,12 @@ function loadTrLag() {
     else lbox.innerHTML = lf.slice(0, 50).map(function (m) {
       var name = fmtName(m.fullName || m.filerId || 'Unknown');
       var metaStr = '';
-      if (m.chamber || m.state) {
-        var p = [];
-        if (m.chamber) p.push(esc(chamberLabel(m.chamber)));
-        if (m.state) p.push(esc(m.state));
-        metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
+      if (m.chamber || m.state || m.filerId) {
+        // Executive filers collapse to their position alone (no "Exec ·", no
+        // state); congressional filers keep chamber + state as before.
+        var p = memberBranchBits({ chamber: m.chamber, filerId: m.filerId, title: m.title, state: m.state })
+          .map(esc);
+        if (p.length) metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
       }
       var tradeCount = Number(m.tradeCount || 0);
       var avg = Math.round(m.avgLagDays);
@@ -10631,10 +10869,16 @@ function openMember(filerId) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
-    var meta = [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
+    // Executive filers: the drawer headline is their POSITION alone — never
+    // "Exec · Pennsylvania", never a district. The endpoint already serves the
+    // curated title field (analytics/routes.ts), so prefer it over the id map.
+    var isExec = isExecutiveFiler(p.chamber, filerId);
+    var meta = isExec
+      ? execDisplayTitle(filerId, p.title, EXEC_TITLE_FULL)
+      : [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
     var subBits = [];
     if (meta) subBits.push(esc(meta));
-    if (p.district) subBits.push(fmtDistrictOrdinalHtml(p.district) + ' District');
+    if (!isExec && p.district) subBits.push(fmtDistrictOrdinalHtml(p.district) + ' District');
     var partyHtml = partyName ? pdot(p.partyBucket) + esc(partyName) : '';
     var subline = partyHtml + (subBits.length ? (partyHtml ? ' · ' : '') + subBits.join(' · ') : '');
     var committees = p.committees || [];
