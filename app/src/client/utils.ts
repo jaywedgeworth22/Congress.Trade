@@ -1,6 +1,6 @@
 import type { Chamber, TxType, DeliveryChannel, SubscriptionFilters, Subscription, ClientTrade, User } from '../shared/types.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
-import { mapFeedTransaction } from '../delivery/rows.ts';
+import { asAssetCategories, mapFeedTransaction } from '../delivery/rows.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
 import type { ClientTradeRow, TradeSummaryRow, SecurityRefRow, MemberProfileRow } from './types.ts';
 import { parseJson } from '../shared/db.ts';
@@ -180,6 +180,11 @@ export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     type: types?.length === 1 ? types[0] : asTxType(q.type),
     types: types && types.length > 1 ? types : undefined,
     partyBuckets: asPartyBuckets(q.party),
+    // Instrument-class dropdown ("All" / "Public Equities, Funds, & ETFs").
+    // Parsed and applied SERVER-side (see TxQueryParams.assetCategories) so
+    // the narrowed `total` is the real match count, not a recount of one
+    // already-fetched page. `assetCategory` is accepted as an alias.
+    assetCategories: asAssetCategories(q.assetClass ?? q.assetCategory),
     minAmount: asNonNegativeNumber(q.minAmount),
     maxAmount: asNonNegativeNumber(q.maxAmount),
     txDateMin: q.from || q.txDateMin || undefined,
@@ -225,9 +230,24 @@ export function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
     asset: {
       name: tx.refCompanyName || tx.assetName,
       ticker: tx.ticker,
+      // `type` stays the RAW disclosure value (House bracket code / Senate
+      // label) — provenance, unchanged. The canonical cross-chamber rollup
+      // rides alongside it: `typeCategory` is the machine slug a client
+      // filters on, `typeCategoryLabel` the display string. Both were already
+      // computed by mapTransaction and already declared on ClientAssetSchema
+      // (and documented in docs/client-mobile-api.md) but were dropped here,
+      // so no client could tell a stock from a municipal bond.
       type: tx.assetType,
+      typeName: tx.assetTypeName ?? null,
+      typeCategory: tx.assetTypeCategory ?? null,
+      typeCategoryLabel: tx.assetTypeCategoryLabel ?? null,
       sector: tx.refSector ?? null,
       marketCapBucket: tx.refMarketCapBucket ?? null,
+      // Same already-documented-but-dropped gap: the canonical company name
+      // and the same-origin logo proxy path the web client renders. Both are
+      // optional on the schema, so older decoders are unaffected.
+      companyName: tx.refCompanyName ?? null,
+      logoUrl: clientLogoUrl(tx.ticker),
     },
     transaction,
     filing: {
