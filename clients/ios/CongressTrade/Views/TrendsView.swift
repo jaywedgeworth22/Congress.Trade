@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
     /// dismissed/expanded state is one truth across both tabs (owner punch
     /// list item 2b), and identical top/side insets keep its position/size
@@ -374,86 +375,96 @@ struct TrendsView: View {
     }
 
     private var sectorAndCapSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            if !store.sectorFlow.isEmpty {
-                let rows = SectorFlowRow.rows(from: store.sectorFlow, topCount: 8)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Net Flow by Sector")
-                        .font(.headline)
-                    Text("Sectors come from ticker enrichment — trades without a resolved ticker aren't included.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    VStack(spacing: 0) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                            HStack {
-                                Text(row.label)
-                                    .font(.subheadline.weight(row.isAggregate ? .regular : .medium))
-                                    .foregroundStyle(row.isAggregate ? .secondary : .primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                Spacer(minLength: 12)
-                                Text(SignedFlowFormat.usd(row.estNetFlowUsd))
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(SignedFlowFormat.tint(row.estNetFlowUsd))
-                                    .lineLimit(1)
-                            }
-                            .padding(.vertical, 8)
-                            .accessibilityElement(children: .combine)
-                            if idx < rows.count - 1 {
-                                Divider()
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        Group {
+            if horizontalSizeClass == .regular {
+                HStack(alignment: .top, spacing: 18) {
+                    sectorFlowCard
+                        .frame(maxWidth: .infinity)
+                    marketCapCard
+                        .frame(maxWidth: .infinity)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    sectorFlowCard
+                    marketCapCard
                 }
             }
+        }
+    }
 
-            if !store.marketCapBuckets.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("By Market Cap")
-                        .font(.headline)
-                    // Column geometry is a verbatim owner ask: narrow the
-                    // cap-size name, widen the far-right money column, and keep
-                    // BOTH numeric columns right-aligned so the eye reads one
-                    // straight edge of digits. The old 80pt money column
-                    // truncated a signed 8-character value like "+$15.7m".
-                    // Ordered mega → nano with Unknown last. The endpoint emits
-                    // a bare `GROUP BY bucket`, which arrives alphabetically
-                    // (Large, Mega, Micro, Mid, Nano, Small) — a size ladder
-                    // shuffled into nonsense. Size is the only order that means
-                    // anything here.
-                    let caps = MarketCapOrder.sorted(store.marketCapBuckets)
-                    VStack(spacing: 0) {
-                        ForEach(Array(caps.enumerated()), id: \.element.id) { idx, cap in
-                            HStack(spacing: 8) {
-                                Text(cap.bucket.capitalized)
-                                    .font(.subheadline.weight(.medium))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                    .frame(maxWidth: 92, alignment: .leading)
-                                Spacer(minLength: 4)
-                                Text("\(cap.tradeCount) \(cap.tradeCount == 1 ? "trade" : "trades")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .frame(minWidth: 68, alignment: .trailing)
-                                Text(SignedFlowFormat.usd(cap.estNetFlowUsd))
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(SignedFlowFormat.tint(cap.estNetFlowUsd))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                    .frame(width: 104, alignment: .trailing)
-                            }
-                            .padding(.vertical, 8)
-                            if idx < caps.count - 1 {
-                                Divider()
-                            }
+    @ViewBuilder
+    private var sectorFlowCard: some View {
+        if !store.sectorFlow.isEmpty {
+            let rows = SectorFlowRow.rows(from: store.sectorFlow, topCount: 8)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Net Flow by Sector")
+                    .font(.headline)
+                Text("Sectors come from ticker enrichment — trades without a resolved ticker aren't included.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HStack {
+                            Text(row.label)
+                                .font(.subheadline.weight(row.isAggregate ? .regular : .medium))
+                                .foregroundStyle(row.isAggregate ? .secondary : .primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            Spacer(minLength: 12)
+                            Text(SignedFlowFormat.usd(row.estNetFlowUsd))
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(SignedFlowFormat.tint(row.estNetFlowUsd))
+                                .lineLimit(1)
+                        }
+                        .padding(.vertical, 8)
+                        .accessibilityElement(children: .combine)
+                        if idx < rows.count - 1 {
+                            Divider()
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                 }
+                .padding(.horizontal, 12)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var marketCapCard: some View {
+        if !store.marketCapBuckets.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("By Market Cap")
+                    .font(.headline)
+                let caps = MarketCapOrder.sorted(store.marketCapBuckets)
+                VStack(spacing: 0) {
+                    ForEach(Array(caps.enumerated()), id: \.element.id) { idx, cap in
+                        HStack(spacing: 8) {
+                            Text(cap.bucket.capitalized)
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .frame(maxWidth: 92, alignment: .leading)
+                            Spacer(minLength: 4)
+                            Text("\(cap.tradeCount) \(cap.tradeCount == 1 ? "trade" : "trades")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .frame(minWidth: 68, alignment: .trailing)
+                            Text(SignedFlowFormat.usd(cap.estNetFlowUsd))
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(SignedFlowFormat.tint(cap.estNetFlowUsd))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .frame(width: 104, alignment: .trailing)
+                        }
+                        .padding(.vertical, 8)
+                        if idx < caps.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
