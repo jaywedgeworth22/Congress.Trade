@@ -1,0 +1,73 @@
+# Litestream 0.5.x config for Congress.Trade (congress-app, Coolify/Hetzner).
+# Continuous SQLite replication to Backblaze B2 (S3-compatible), rebuilt after
+# the Oracle->Hetzner migration dropped the old host-level systemd unit
+# (`litestream-congress`, `/etc/litestream/congress.yml` on the Oracle box —
+# decommissioned 2026-08). This is the in-container pattern already proven by
+# the sibling apps: Socratic.Trade `litestream.coolify.yml` and Usage-Monitor
+# `litestream.yml`. Field names below are cross-checked against Usage-Monitor's
+# working 0.5.13 config (closest match: singular `replica:`, top-level
+# `snapshot:` block, same env-var style).
+#
+# Schema notes (Litestream 0.5.x, verified against the pinned v0.5.13 binary):
+#   - A single `replica:` object per db (the 0.4.x `replicas:` array is
+#     deprecated; retention/snapshot keys placed under a replica are silently
+#     ignored by 0.5's yaml parsing).
+#   - Snapshot cadence/retention is a top-level `snapshot:` block
+#     (Config.Snapshot) — the canonical, documented location for the
+#     point-in-time restore window.
+#   - Env vars are expanded with Go's os.Getenv (NOT bash), so `${VAR:-default}`
+#     does NOT work — use a bare `${VAR}`. All values below are injected at
+#     container start by scripts/start-with-litestream.sh, which fetches them
+#     from Infisical (project f61a79de-8d77-4f0b-9361-4b7208598290, env prod)
+#     using the same INFISICAL_APP_CLIENT_ID/SECRET bootstrap identity the
+#     Deno app already uses in-process for its own AWS_S3_* (R2 PDF storage)
+#     secrets. No secrets live in this file.
+#
+# IMPORTANT — do not confuse these with the app's own AWS_S3_* / AWS_REGION /
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY secrets: those already point at
+# Cloudflare R2 and back the `raw/` filing-PDF object store consumed in-process
+# by src/deno/main.ts (S3Client). Reusing those names here would silently
+# repoint PDF storage at the B2 bucket. This file uses distinct
+# LITESTREAM_S3_* names (matching Usage-Monitor's convention) precisely to
+# avoid that collision.
+#
+# Destination (2026-08-12, owner): Backblaze B2 EU Central, bucket
+# jays-congress-trade-eu, endpoint s3.eu-central-003.backblazeb2.com — verified
+# against ~/.secrets/backblaze-app-keys.env (B2_CT_* keys), NOT guessed.
+#
+# Sync interval (5m): the 2026-08-05 R2 Class A incident
+# (docs/rollouts/2026-08-05-r2-freetier-class-a-survival.md) showed Litestream
+# 0.5's L0-object-per-commit behavior keeps uploading at a high rate during
+# CT's bulk-load ingestion bursts *independent of the configured sync
+# interval* — the interval bounds polling frequency, not the number of
+# objects a heavy write burst produces between ticks. That incident was about
+# R2's free-tier Class A/storage caps specifically; B2 has no such free-tier
+# trap (2,500 Class A ops/day free, ~$0.004/10k after — trivial even at CT's
+# observed ~975 PUT/hr peak). 5m keeps a real RPO improvement over the current
+# up-to-6h gap while staying conservative against another write-burst spike,
+# within the fleet's stated 60s-1h sync-interval range for this rebuild.
+snapshot:
+  interval: 24h
+  # B2 is paid capacity, not R2 free-tier-capped storage — keep 7d of LTX
+  # history for restore headroom, matching Socratic.Trade's B2 target.
+  retention: 168h
+
+dbs:
+  - path: /data/congress-trade/db.sqlite
+    replica:
+      type: s3
+      # Expected production values (Infisical congress-trade prod project):
+      #   LITESTREAM_S3_BUCKET=jays-congress-trade-eu
+      #   LITESTREAM_S3_ENDPOINT=https://s3.eu-central-003.backblazeb2.com
+      #   LITESTREAM_S3_REGION=eu-central-003
+      #   keys: B2_CT_KEY_ID / B2_CT_APPLICATION_KEY (scoped CT bucket key)
+      bucket: ${LITESTREAM_S3_BUCKET}
+      path: congress-trade/db.sqlite
+      region: ${LITESTREAM_S3_REGION}
+      endpoint: ${LITESTREAM_S3_ENDPOINT}
+      access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
+      secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}
+      # One multipart part at a time — reliability over throughput for a
+      # backup replica, matching Usage-Monitor's B2 config.
+      concurrency: 1
+      sync-interval: 5m
