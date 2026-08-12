@@ -21,6 +21,8 @@ FILES=(
   "ship-testflight.sh"
   "ship-all.sh"
   "apps.json"
+  "asc-api.mjs"
+  "appstore-connect.env.example"
   "ExportOptions-appstore.plist"
   "ExportOptions-export-ipa.plist"
 )

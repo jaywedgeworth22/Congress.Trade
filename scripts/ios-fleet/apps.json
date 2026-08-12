@@ -15,11 +15,11 @@
       "displayName": "Congress.Trade",
       "bundleId": "trade.congress.ios",
       "scheme": "CongressTrade",
-      "projectRel": "clients/ios/Congress.Trade.xcodeproj",
+      "projectRel": "clients/ios/CongressTrade.xcodeproj",
       "xcodegenDir": null,
       "worktreeHint": "~/apps/congress-grok-ios-tf",
       "marketingVersionDefault": "1.0.0",
-      "projectRelAlt": "clients/ios/CongressTrade.xcodeproj"
+      "projectRelAlt": "clients/ios/Congress.Trade.xcodeproj"
     },
     "usage": {
       "displayName": "Usage Client Monitor",
