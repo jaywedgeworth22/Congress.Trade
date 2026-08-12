@@ -1024,6 +1024,29 @@ export const FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS = [
   'ALTER TABLE filers ADD COLUMN display_name TEXT',
 ] as const;
 
+/**
+ * 0084_latency_probe_leases.sql — mutual exclusion for provider polling, so the
+ * Deno server and the Mac scout can never both spend quota on the same source.
+ * The PRIMARY KEY on `provider` is what makes the conditional upsert in
+ * ingestion/probeLease.ts a contended write with exactly one winner.
+ * Keep in exact lockstep with migrations/0084_latency_probe_leases.sql.
+ */
+export const LATENCY_PROBE_LEASE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS latency_probe_leases (
+     provider          TEXT PRIMARY KEY,
+     holder            TEXT NOT NULL,
+     holder_id         TEXT NOT NULL,
+     acquired_at       TEXT NOT NULL,
+     expires_at        INTEGER NOT NULL,
+     tenure_started_at INTEGER NOT NULL,
+     reason            TEXT,
+     renewals          INTEGER NOT NULL DEFAULT 0,
+     updated_at        TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_latency_probe_leases_expires
+     ON latency_probe_leases (expires_at DESC)`,
+] as const;
+
 export const LOWER_SUBSCRIPTION_QUOTA_SCHEMA_STATEMENTS = [
   'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
@@ -1164,6 +1187,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS,
   // 0083_filers_display_name.sql
   ...FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS,
+  // 0084_latency_probe_leases.sql
+  ...LATENCY_PROBE_LEASE_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

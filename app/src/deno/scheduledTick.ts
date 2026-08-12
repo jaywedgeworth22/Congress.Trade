@@ -10,6 +10,7 @@ import { flushD1Budget } from '../shared/d1Budget.ts';
 import { maybeRunDailyJobs } from '../jobs.ts';
 import { runWatcher } from '../ingestion/watcher.ts';
 import { runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
+import { runLeasedLatencyProbe } from '../ingestion/scoutHandoff.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { flushParkedDeliveries } from '../delivery/targetCircuit.ts';
 import { flushIngestionOutbox } from '../ingestion/outbox.ts';
@@ -338,7 +339,17 @@ export async function runMaintenancePipeline(
       );
     }
     if (options.disclosureLatency) {
-      await runLane('disclosure_latency', () => runDisclosureLatencyProbe(env));
+      // Lease-gated: the server fetches only the providers it currently owns.
+      // Before this, the server probed every configured provider on every tick
+      // even for providers it had already handed to the Mac scout — both hosts
+      // hitting the same free-tier quota, which is pure waste.
+      await runLane('disclosure_latency', () =>
+        runLeasedLatencyProbe(
+          env,
+          (providers) => runDisclosureLatencyProbe(env, now, fetch, { providers }),
+          now,
+        ),
+      );
     }
     if (options.includeDailyJobs !== false) {
       await runLane('daily_jobs', () => maybeRunDailyJobs(env, now));
