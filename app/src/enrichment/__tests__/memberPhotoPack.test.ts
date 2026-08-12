@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  attributionDisplayEnabled,
   handleMemberPhotoRequest,
   isMemberPhotoPackUrl,
   memberPhotoPack,
@@ -23,6 +24,7 @@ import {
   packKeyFromUrl,
   tryLocalMemberPhoto,
   upstreamCongressPhotoUrl,
+  visibleAttributionCaption,
 } from '../memberPhotoPack.ts';
 
 const PACK_DIR = join(
@@ -94,6 +96,13 @@ describe('committed pack contents', () => {
     expect(pack.totalBytes).toBeLessThan(8_000_000);
   });
 
+  it('captures a licence and an attribution caption for every face, PD or not — capture is unconditional', () => {
+    for (const face of pack.byKey.values()) {
+      expect(face.attributionCaption, `${face.key} has no attributionCaption`).toBeTruthy();
+      expect(typeof face.licenceTier, `${face.key} has no licenceTier`).toBe('number');
+    }
+  });
+
   it('indexes executive faces by filer id', () => {
     const withFilers = packFacesWithFilerIds();
     expect(withFilers.length).toBeGreaterThan(0);
@@ -106,6 +115,23 @@ describe('committed pack contents', () => {
     expect(packFaceForKey('definitely-not-a-member')).toBeNull();
     expect(packFaceForFilerId('NOT-A-FILER')).toBeNull();
     expect(packFaceForFilerId('')).toBeNull();
+  });
+});
+
+describe('attribution display flag', () => {
+  it('defaults OFF — the committed manifest ships with display disabled', () => {
+    expect(attributionDisplayEnabled()).toBe(false);
+  });
+
+  it('never surfaces a caption while the flag is off, even for a real face with a caption', () => {
+    const withCaption = [...memberPhotoPack().byKey.values()].find((f) => !!f.attributionCaption);
+    expect(withCaption).toBeTruthy();
+    expect(visibleAttributionCaption(withCaption)).toBeNull();
+  });
+
+  it('returns null for a missing face without throwing', () => {
+    expect(visibleAttributionCaption(null)).toBeNull();
+    expect(visibleAttributionCaption(undefined)).toBeNull();
   });
 });
 

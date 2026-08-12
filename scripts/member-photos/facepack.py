@@ -33,6 +33,7 @@ import hashlib
 import json
 import re
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -63,11 +64,15 @@ ROOM_BELOW = 0.85
 FALLBACK_HEIGHT_FRACTION = 0.72
 FALLBACK_TOP_FRACTION = 0.03
 
-# Licences we accept into the pack.  Anything else is reported and skipped --
-# an unlicensed face on a public site is a liability, so an unclear provenance
-# must leave a gap rather than guess.
+# Licences we treat as public domain -- the best licence_tier, and (formerly)
+# the sole gate before the licence policy changed from a gate to a record.
+# `^public domain\b` (word boundary, not `$`) on purpose: this module's own
+# CONGRESS_LICENCE constant is "Public domain (CC0 1.0 Universal)" -- an
+# exact-match-only pattern silently failed to recognise it as PD for years
+# because nothing had ever run that specific string through this function
+# before licence_tier() started running it over every face in the pack.
 PUBLIC_DOMAIN_LICENCE_PATTERNS = (
-    re.compile(r"^public domain$", re.I),
+    re.compile(r"^public domain\b", re.I),
     re.compile(r"^pd([-\s]|$)", re.I),
     re.compile(r"^cc0", re.I),
     re.compile(r"us[-\s]?gov", re.I),
@@ -80,6 +85,88 @@ def is_public_domain_licence(short_name: str | None) -> bool:
     if not value:
         return False
     return any(p.search(value) for p in PUBLIC_DOMAIN_LICENCE_PATTERNS)
+
+
+# ---------------------------------------------------------------------------
+# Licence policy: RECORD every licence, RANK by it, gate on nothing but its
+# presence.
+# ---------------------------------------------------------------------------
+#
+# Owner decision (2026-08): a non-free portrait carries a DMCA-takedown risk
+# (Apple could pull the app on a complaint), not a lawsuit risk, and that
+# exposure is acceptable -- it is a config-flag flip away from being answered
+# (see ATTRIBUTION_DISPLAY_ENABLED below), not a rebuild. So the pack no
+# longer *requires* public domain to admit an image. What it still refuses is
+# an image with NO recorded licence at all: without a licence string there is
+# nothing to build a credit line from, and a gap stays cheaper than a face
+# nobody can attribute.
+#
+# Within the images that ARE admitted, licence still decides which one wins
+# when more than one candidate plausibly names the same person: public domain
+# first, then plain-attribution Creative Commons, then share-alike, then
+# everything else (NC/ND-restricted combinations, and licences this script
+# does not specifically recognise). This is a preference between otherwise-
+# equal candidates, never a rejection -- `licence_tier` always returns a rank,
+# `is_public_domain_licence` is what rejects.
+_CC_BY_SA_RE = re.compile(r"\bby[\s-]*sa\b", re.I)
+_CC_BY_RE = re.compile(r"\bby\b", re.I)
+_CC_RESTRICTIVE_RE = re.compile(r"\bnc\b|\bnd\b", re.I)
+
+
+def licence_tier(short_name: str | None) -> int:
+    """Rank an *already-admitted* licence: 0 (best) public domain .. 3 (worst)
+    everything else. Never used to reject -- only to break ties between
+    candidates for the same person so a clean one wins over an encumbered one."""
+    value = (short_name or "").strip()
+    if is_public_domain_licence(value):
+        return 0
+    if not value:
+        return 3
+    lowered = value.lower()
+    if _CC_BY_SA_RE.search(lowered) or "attribution-sharealike" in lowered or "attribution share alike" in lowered:
+        return 2
+    looks_cc_attribution = ("cc" in lowered or "attribution" in lowered) and _CC_BY_RE.search(lowered)
+    if looks_cc_attribution and not _CC_RESTRICTIVE_RE.search(lowered):
+        return 1
+    return 3
+
+
+_SITE_LABELS = {
+    "commons.wikimedia.org": "Wikimedia Commons",
+    "upload.wikimedia.org": "Wikimedia Commons",
+    "github.com": "unitedstates/images",
+    "unitedstates.github.io": "unitedstates/images",
+}
+
+
+def site_label(source_page: str | None) -> str:
+    """Human-readable name of the site a ``source_page`` URL points at."""
+    host = urllib.parse.urlsplit(source_page or "").netloc.lower()
+    return _SITE_LABELS.get(host, host or "original source")
+
+
+def format_attribution(licence: str | None, attribution: str | None, source_page: str | None = None) -> str:
+    """Canonical, Wikimedia-style credit line: ``"Author -- Licence, via Site"``.
+
+    Computed once and frozen into ``sources.json`` at discovery time for
+    curated entries -- Commons metadata can be re-edited after the fact, and
+    this string is free to capture now and expensive to reconstruct later.
+    Every face gets one regardless of licence: capture is unconditional, only
+    *display* is gated (``ATTRIBUTION_DISPLAY_ENABLED``).
+    """
+    who = (attribution or "").strip() or "Photographer not credited"
+    lic = (licence or "").strip() or "licence not recorded"
+    return f"{who} — {lic}, via {site_label(source_page)}"
+
+
+# Attribution *display* is a decision separate from attribution *capture*.
+# Every face always carries its credit line in the manifest (captured above,
+# unconditionally); whether a renderer actually shows it to end users is this
+# one boolean, defaulted OFF per owner instruction. A takedown request is
+# answered by flipping it -- `build_face_pack.py --set-attribution-display
+# off` patches the manifest in place with no network calls and no re-crop --
+# never by re-sourcing or re-cropping a single image.
+ATTRIBUTION_DISPLAY_ENABLED = False
 
 
 def slugify(value: str) -> str:
@@ -230,6 +317,13 @@ class FaceEntry:
     sha256: str
     bioguide: str | None = None
     filer_ids: list[str] = field(default_factory=list)
+    # Frozen at discovery time when curated (see format_attribution); computed
+    # on the fly here as a fallback so every entry always has one.
+    attribution_caption: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.attribution_caption:
+            self.attribution_caption = format_attribution(self.licence, self.attribution, self.source_page)
 
     def to_json(self) -> dict:
         return {
@@ -242,7 +336,9 @@ class FaceEntry:
             "sourceUrl": self.source_url,
             "sourcePage": self.source_page,
             "licence": self.licence,
+            "licenceTier": licence_tier(self.licence),
             "attribution": self.attribution,
+            "attributionCaption": self.attribution_caption,
             "cropMode": self.crop_mode,
             "bytes": self.bytes,
             "sha256": self.sha256,
@@ -253,18 +349,32 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def write_manifest(entries: Iterable[FaceEntry], path: Path = MANIFEST_PATH) -> dict:
+def write_manifest(
+    entries: Iterable[FaceEntry],
+    path: Path = MANIFEST_PATH,
+    attribution_display: bool = ATTRIBUTION_DISPLAY_ENABLED,
+) -> dict:
     ordered = sorted(entries, key=lambda e: e.key)
+    non_pd = [e.key for e in ordered if licence_tier(e.licence) != 0]
     payload = {
         "version": 1,
         "note": (
             "Head-focused member portraits. Every entry records its original source "
-            "URL and licence; only public-domain originals are shipped. Regenerate "
-            "with scripts/member-photos/build_face_pack.py."
+            "URL, licence and a ready-to-use attribution caption; the licence is a "
+            "RECORD, not a gate -- public domain is preferred but not required. "
+            "Regenerate with scripts/member-photos/build_face_pack.py."
+        ),
+        "attributionDisplayEnabled": attribution_display,
+        "attributionDisplayNote": (
+            "Whether `attributionCaption` should be SHOWN to end users; the caption "
+            "itself is always captured regardless. Flip with `build_face_pack.py "
+            "--set-attribution-display on|off` -- a manifest-only patch, no network "
+            "calls and no re-crop, so a takedown request never requires a rebuild."
         ),
         "outputSize": OUTPUT_SIZE,
         "count": len(ordered),
         "totalBytes": sum(e.bytes for e in ordered),
+        "nonPublicDomainCount": len(non_pd),
         "faces": [e.to_json() for e in ordered],
     }
     path.parent.mkdir(parents=True, exist_ok=True)

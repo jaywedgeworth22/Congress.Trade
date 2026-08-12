@@ -19,8 +19,14 @@
  * The pack fixes all three: `scripts/member-photos/build_face_pack.py` crops
  * every source portrait to a square, head-focused 256px WebP and commits it to
  * `app/public/assets/member-photos/` alongside a `manifest.json` recording, per
- * face, the original source URL and its licence. Only public-domain originals
- * are shipped — see that script and `sources.json`.
+ * face, the original source URL and its licence — see that script and
+ * `sources.json`. The licence is a RECORD, not a gate (owner decision,
+ * 2026-08): public domain is preferred but no longer required to ship, so a
+ * face's `attribution`/`licence` are not proof it is free to display. Whether
+ * `attributionCaption` should actually be shown to end users is a single
+ * manifest-level flag (`attributionDisplayEnabled`, default OFF) — read it via
+ * `attributionDisplayEnabled()` and `visibleAttributionCaption()` below rather
+ * than showing `attributionCaption` unconditionally.
  *
  * Serving mirrors `ui/tickerLogos.ts`: one cached proxy route so the client
  * only ever sees `/api/photos/member?key=…`, the pack answers first, and a
@@ -60,7 +66,13 @@ export interface MemberFace {
   sourceUrl: string;
   sourcePage: string | null;
   licence: string;
+  /** 0 (public domain, best) .. 3 (everything else). Ranking only — see facepack.licence_tier. */
+  licenceTier: number;
   attribution: string | null;
+  /** Ready-to-use "Author — Licence, via Site" credit line. ALWAYS captured, regardless of
+   *  licenceTier — never render this directly; go through `visibleAttributionCaption()` so the
+   *  display flag is honoured. */
+  attributionCaption: string | null;
   cropMode: string;
   bytes: number;
   sha256: string;
@@ -70,12 +82,16 @@ interface PackIndex {
   byKey: Map<string, MemberFace>;
   byFilerId: Map<string, MemberFace>;
   totalBytes: number;
+  /** Whether callers should actually SHOW `attributionCaption` to end users. Default OFF (owner
+   *  decision, 2026-08) — flip via `build_face_pack.py --set-attribution-display on`, a
+   *  manifest-only patch that needs no rebuild. */
+  attributionDisplayEnabled: boolean;
 }
 
 let cachedIndex: PackIndex | null = null;
 
 function emptyIndex(): PackIndex {
-  return { byKey: new Map(), byFilerId: new Map(), totalBytes: 0 };
+  return { byKey: new Map(), byFilerId: new Map(), totalBytes: 0, attributionDisplayEnabled: false };
 }
 
 /**
@@ -90,7 +106,11 @@ export function memberPhotoPack(): PackIndex {
   cachedIndex = emptyIndex();
   try {
     if (!existsSync(MANIFEST_PATH)) return cachedIndex;
-    const parsed = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { faces?: MemberFace[] };
+    const parsed = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as {
+      faces?: MemberFace[];
+      attributionDisplayEnabled?: boolean;
+    };
+    cachedIndex.attributionDisplayEnabled = parsed.attributionDisplayEnabled === true;
     for (const face of parsed.faces ?? []) {
       if (!face?.key || !face?.file) continue;
       cachedIndex.byKey.set(face.key, face);
@@ -103,6 +123,21 @@ export function memberPhotoPack(): PackIndex {
     cachedIndex = emptyIndex();
   }
   return cachedIndex;
+}
+
+/** Whether `attributionCaption` should be shown to end users right now. Default OFF. */
+export function attributionDisplayEnabled(): boolean {
+  return memberPhotoPack().attributionDisplayEnabled;
+}
+
+/**
+ * `face.attributionCaption` gated by the display flag — this is what a renderer
+ * should call, never `face.attributionCaption` directly, so a takedown request
+ * is answered by flipping the flag rather than auditing every call site.
+ */
+export function visibleAttributionCaption(face: MemberFace | null | undefined): string | null {
+  if (!face || !attributionDisplayEnabled()) return null;
+  return face.attributionCaption ?? null;
 }
 
 export function packFaceForKey(key: string | null | undefined): MemberFace | null {
