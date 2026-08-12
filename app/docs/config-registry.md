@@ -121,6 +121,32 @@ budget-status polling, see Tunables & flags below)
   rotation (`selectRotatedAvenue`) is the multi-key/host pattern. FMP is CT
   latency + Mac scout only — not Socratic product.
 
+- **Probe leases (server ⇄ Mac mutual exclusion):**
+  `LATENCY_LEASE_SERVER_TTL_SEC` (default `1200`, clamped 30–3600),
+  `LATENCY_LEASE_MAC_TTL_SEC` (default `150`, same clamp),
+  `LATENCY_MAC_TENURE_HOURS` (default `6`, clamped 0.25–48).
+  Exactly one host may poll a provider at a time. The lease lives in D1
+  (`latency_probe_leases`, migration 0084) because the claim must be atomic —
+  KV has no compare-and-set, so two acquirers could both win. Leases
+  self-expire, so a crashed holder cannot park a lane.
+
+  The server holds every lane while healthy. On the 3rd successive server
+  error (`LATENCY_SCOUT_CONSECUTIVE_ERRORS`) it **releases the lane and stops
+  fetching that provider**; the Mac scout may then acquire it. After
+  `LATENCY_MAC_TENURE_HOURS` the server preempts and runs a reclaim probe even
+  if the Mac is succeeding — the server is always preferred when it can do the
+  work. Mac grants are charged to the **same** daily counters the server
+  spends from (`latency-budget:*`, `fmp-latency:calls:key*`), so
+  `UW_LATENCY_DAILY_CAP` / `QUIVER_LATENCY_DAILY_CAP` / `FMP_LATENCY_DAILY_CAP`
+  now bound both hosts together rather than the server alone.
+
+  Scout side: `SCOUT_HOLDER_ID` (default `mac-<hostname>`) — keep it stable, or
+  a restart resets the tenure clock. The scout acquires via
+  `POST /api/ingest/probe-lease` each cycle and does **not** poll when the
+  server is unreachable (it cannot tell whether the server is already polling).
+  Operator view: `GET /api/ingest/probe-leases` shows current holder, expiry,
+  tenure, and remaining daily budget per provider.
+
 - Ingestion: `HOUSE_LIVE_SEARCH_ENABLED`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
   `OGE_POLL_INTERVAL_SEC`, `OGE_MAX_VISION_BYTES`

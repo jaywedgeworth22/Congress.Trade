@@ -6,9 +6,33 @@
  *
  * Also lists filings that still need raw bytes in R2 so the scout can upload
  * from a residential IP.
+ *
+ * `needScout` decides WHO IS ALLOWED to poll. It is not, by itself, exclusion:
+ * a flag both hosts merely consult still lets both poll. Actual mutual
+ * exclusion lives in probeLease.ts, and the two are wired together here —
+ * `needScout` gates eligibility, the lease grants the lane.
  */
 import type { Env } from '../shared/types.ts';
 import { all } from '../shared/db.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import {
+  acquireProbeLease,
+  macLeaseTtlMs,
+  macTenureExhausted,
+  macTenureMs,
+  readAllProbeLeases,
+  readProbeLease,
+  releaseProbeLease,
+  serverLeaseTtlMs,
+  type ProbeLease,
+  type ProbeLeaseDecision,
+} from './probeLease.ts';
+import {
+  checkLatencyCallBudget,
+  chargeLatencyCalls,
+  logLatencyCapHit,
+  type FmpFreeKeySlot,
+} from './latencyCallLedger.ts';
 
 /** Bumped when handoff semantics change so stale "quiet 6h" claims do not stick. */
 export const LATENCY_PROBE_HEALTH_KV_KEY = 'latency-probe-health:v2';
@@ -74,6 +98,13 @@ export interface ScoutPlan {
    * covering FMP so the server primary key is not double-spent.
    */
   fmpPreferSecondaryKey: boolean;
+  /**
+   * Who currently owns each provider lane and until when. The scout must still
+   * acquire a lease before polling — this is visibility, not permission.
+   */
+  leases: ProbeLease[];
+  /** Seconds the scout should request per lease (server-configured). */
+  leaseTtlSec: number;
 }
 
 type HealthMap = Partial<Record<LatencyProbeProviderId, LatencyProbeHealth>>;
@@ -487,6 +518,16 @@ export async function buildScoutPlan(env: Env, now: Date = new Date()): Promise<
   if (rawFetch.length) {
     notes.push(`Scout raw cover: ${rawFetch.length} filing(s) need residential download → R2`);
   }
+  const leases = await readAllProbeLeases(env, now);
+  notes.push(
+    'Acquire POST /api/ingest/probe-lease before polling any provider; a denial means the server owns that lane.',
+  );
+  const held = leases.filter((l) => !l.expired);
+  if (held.length) {
+    notes.push(
+      `Lanes held: ${held.map((l) => `${l.provider} → ${l.holder} until ${l.expiresAt}`).join('; ')}`,
+    );
+  }
   return {
     generatedAt: now.toISOString(),
     latency,
@@ -494,5 +535,316 @@ export async function buildScoutPlan(env: Env, now: Date = new Date()): Promise<
     rawFetch,
     notes,
     fmpPreferSecondaryKey,
+    leases,
+    leaseTtlSec: Math.floor(macLeaseTtlMs(env) / 1000),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Lease-backed mutual exclusion
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable holder id for the server. Deliberately NOT a per-isolate UUID: Deno
+ * Deploy may serve consecutive ticks from different isolates, and a per-isolate
+ * id would make the new isolate fail to renew and lock the server out of its
+ * own lane for a full TTL. Concurrency between server ticks is already handled
+ * by the scheduled-tick singleton lock.
+ */
+export const SERVER_LEASE_HOLDER_ID = 'server';
+
+export interface ServerLatencyLaneDecision {
+  provider: LatencyProbeProviderId;
+  /** True when the server may call the provider this tick. */
+  probe: boolean;
+  action: 'acquired' | 'reclaimed' | 'handed_off' | 'blocked' | 'not_configured';
+  detail: string;
+  lease: ProbeLease | null;
+}
+
+export interface ServerLatencyProbePlan {
+  /** Providers the server holds a lease on and may fetch this tick. */
+  probeProviders: LatencyProbeProviderId[];
+  lanes: ServerLatencyLaneDecision[];
+}
+
+/**
+ * The provider set the server would probe absent any lease, mirroring
+ * tradeLatency's private `requestedProviderIds`: DISCLOSURE_LATENCY_PROVIDERS
+ * when set and parseable, otherwise all four direct providers.
+ *
+ * This must stay in lockstep with that function. Getting it wrong in the
+ * permissive direction would re-enable a provider the owner disabled, so the
+ * parse deliberately keeps only ids we know.
+ */
+export async function configuredServerProviders(env: Env): Promise<LatencyProbeProviderId[]> {
+  let raw = '';
+  try {
+    raw =
+      (await resolveSecret(env, 'DISCLOSURE_LATENCY_PROVIDERS')).value ??
+      (env as unknown as Record<string, string | undefined>).DISCLOSURE_LATENCY_PROVIDERS ??
+      '';
+  } catch {
+    raw = '';
+  }
+  const allowed = new Set<string>(PROVIDER_IDS);
+  const parsed = raw
+    .split(/[,\s]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => allowed.has(part)) as LatencyProbeProviderId[];
+  return parsed.length ? Array.from(new Set(parsed)) : [...PROVIDER_IDS];
+}
+
+/**
+ * Decide, per provider, whether the server owns the lane this tick — and take
+ * or give back the lease accordingly.
+ *
+ * Server-preferred rules:
+ *   • healthy (needScout=false) → acquire/renew and probe.
+ *   • handed off (needScout=true) and the Mac's tenure still has time → RELEASE
+ *     and do not fetch. This is the fix for the leak: previously the server
+ *     kept fetching a provider it had already handed to the Mac.
+ *   • handed off but the Mac's tenure is spent → preempt and run one reclaim
+ *     probe. The owner wants the server back whenever it can do the work, so a
+ *     succeeding Mac never keeps a lane indefinitely.
+ */
+export async function planServerLatencyProbe(
+  env: Env,
+  now: Date = new Date(),
+): Promise<ServerLatencyProbePlan> {
+  const configured = await configuredServerProviders(env);
+  const eligible = await eligibleHandoffProviders(env);
+  const map = await readHealthMap(env);
+  const ttlMs = serverLeaseTtlMs(env);
+  const tenureMs = macTenureMs(env);
+  const lanes: ServerLatencyLaneDecision[] = [];
+
+  for (const provider of configured) {
+    const health = map[provider];
+    // A provider that is not handoff-eligible (disabled path) can never be
+    // "handed off" — treat it as server-owned so its status still registers.
+    const handedOff = eligible.has(provider) ? Boolean(health?.needScout) : false;
+    const current = await readProbeLease(env, provider, now);
+
+    if (!handedOff) {
+      const decision = await acquireProbeLease(env, {
+        provider,
+        holder: 'server',
+        holderId: SERVER_LEASE_HOLDER_ID,
+        ttlMs,
+        reason: 'server healthy',
+        now,
+      });
+      lanes.push({
+        provider,
+        probe: decision.granted,
+        action: decision.granted ? 'acquired' : 'blocked',
+        detail: decision.granted
+          ? 'server holds the lane'
+          : (decision.detail ?? 'lane unavailable'),
+        lease: decision.lease ?? decision.current,
+      });
+      continue;
+    }
+
+    // Handed off. Reclaim only once the Mac has had its full window.
+    if (macTenureExhausted(current, tenureMs, now)) {
+      const decision = await acquireProbeLease(env, {
+        provider,
+        holder: 'server',
+        holderId: SERVER_LEASE_HOLDER_ID,
+        ttlMs,
+        reason: 'reclaim probe after mac tenure',
+        now,
+        preemptMacAfterMs: tenureMs,
+      });
+      lanes.push({
+        provider,
+        probe: decision.granted,
+        action: decision.granted ? 'reclaimed' : 'blocked',
+        detail: decision.granted
+          ? `mac tenure of ${Math.round(tenureMs / 3600000)}h elapsed; server reclaiming the lane`
+          : (decision.detail ?? 'lane unavailable'),
+        lease: decision.lease ?? decision.current,
+      });
+      continue;
+    }
+
+    // Still the Mac's window: give the lane back so it is not double-polled.
+    await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
+    lanes.push({
+      provider,
+      probe: false,
+      action: 'handed_off',
+      detail: health?.needScoutReason ?? 'handed off to mac scout',
+      lease: current,
+    });
+  }
+
+  return {
+    probeProviders: lanes.filter((lane) => lane.probe).map((lane) => lane.provider),
+    lanes,
+  };
+}
+
+/**
+ * Release lanes the server no longer qualifies for. Run right after the probe:
+ * a failed reclaim probe pushes the provider back into handoff, and without
+ * this the server would sit on the lease until its TTL and lock the Mac out
+ * for a whole cron gap.
+ */
+export async function releaseHandedOffServerLanes(
+  env: Env,
+  probed: LatencyProbeProviderId[],
+  now: Date = new Date(),
+): Promise<LatencyProbeProviderId[]> {
+  if (!probed.length) return [];
+  const map = await readHealthMap(env);
+  const eligible = await eligibleHandoffProviders(env);
+  const released: LatencyProbeProviderId[] = [];
+  for (const provider of probed) {
+    if (!eligible.has(provider)) continue;
+    if (!map[provider]?.needScout) continue;
+    if (await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID)) {
+      released.push(provider);
+    }
+  }
+  if (released.length) {
+    console.log(
+      `latency handoff: server released ${released.join(', ')} to the mac scout at ${now.toISOString()}`,
+    );
+  }
+  return released;
+}
+
+export interface LeasedLatencyProbeOutcome<T> {
+  plan: ServerLatencyProbePlan;
+  /** Null when the server owns no lane this tick (nothing was fetched). */
+  result: T | null;
+  released: LatencyProbeProviderId[];
+  skipped: ServerLatencyLaneDecision[];
+}
+
+/**
+ * Run the server's latency probe under lease control.
+ *
+ * `runProbe` receives ONLY the providers the server holds. It is never called
+ * with an empty list: tradeLatency's `requestedProviderIds` treats an empty
+ * `providers` array as "unset" and falls back to probing every provider, which
+ * would silently defeat the whole mechanism.
+ */
+export async function runLeasedLatencyProbe<T>(
+  env: Env,
+  runProbe: (providers: LatencyProbeProviderId[]) => Promise<T>,
+  now: Date = new Date(),
+): Promise<LeasedLatencyProbeOutcome<T>> {
+  const plan = await planServerLatencyProbe(env, now);
+  const skipped = plan.lanes.filter((lane) => !lane.probe);
+  if (!plan.probeProviders.length) {
+    if (skipped.length) {
+      console.log(
+        'latency probe: server holds no lane this tick — ' +
+          skipped.map((lane) => `${lane.provider} (${lane.action})`).join(', '),
+      );
+    }
+    return { plan, result: null, released: [], skipped };
+  }
+  const result = await runProbe(plan.probeProviders);
+  const released = await releaseHandedOffServerLanes(env, plan.probeProviders, now);
+  return { plan, result, released, skipped };
+}
+
+export interface MacLeaseRequest {
+  provider: LatencyProbeProviderId;
+  holderId: string;
+  ttlSec?: number;
+  /** Which FMP free-tier key slot the scout will spend. Default secondary. */
+  fmpSlot?: FmpFreeKeySlot;
+  now?: Date;
+}
+
+export interface MacLeaseResult extends ProbeLeaseDecision {
+  /** Calls charged to the shared daily ledger for this grant. */
+  charged: number;
+  /** Ledger state after the decision, for scout-side logging. */
+  budget: Awaited<ReturnType<typeof checkLatencyCallBudget>> | null;
+}
+
+/**
+ * Mac scout asks for a provider lane.
+ *
+ * Order matters: eligibility, then budget, then the atomic claim, then the
+ * charge. The charge happens only on a granted lease, and every grant charges
+ * — so one acquire/renew authorizes exactly one poll and the shared cap counts
+ * Mac calls the same way it counts server calls.
+ */
+export async function requestMacProbeLease(
+  env: Env,
+  req: MacLeaseRequest,
+): Promise<MacLeaseResult> {
+  const now = req.now ?? new Date();
+  const deny = (
+    denial: MacLeaseResult['denial'],
+    detail: string,
+    current: ProbeLease | null,
+    budget: MacLeaseResult['budget'] = null,
+  ): MacLeaseResult => ({
+    granted: false,
+    lease: null,
+    denial,
+    detail,
+    current,
+    charged: 0,
+    budget,
+  });
+
+  const eligible = await eligibleHandoffProviders(env);
+  const map = await readHealthMap(env);
+  const current = await readProbeLease(env, req.provider, now);
+
+  if (!eligible.has(req.provider) || !map[req.provider]?.needScout) {
+    // The server owns this lane. Drop any stale Mac lease immediately rather
+    // than letting it run out the clock while the server waits.
+    await releaseProbeLease(env, req.provider, 'mac', req.holderId);
+    return deny(
+      'not_eligible',
+      `server has not handed off ${req.provider}; scout must not poll it`,
+      current,
+    );
+  }
+
+  const tenureMs = macTenureMs(env);
+  if (macTenureExhausted(current, tenureMs, now)) {
+    await releaseProbeLease(env, req.provider, 'mac', req.holderId);
+    return deny(
+      'tenure_exhausted',
+      `mac tenure of ${Math.round(tenureMs / 3600000)}h is spent; server reclaims ${req.provider}`,
+      current,
+    );
+  }
+
+  const budget = await checkLatencyCallBudget(env, req.provider, now);
+  if (!budget.affordable) {
+    logLatencyCapHit(req.provider, 'mac', budget);
+    return deny('daily_cap', budget.detail ?? 'daily cap reached', current, budget);
+  }
+
+  const ttlMs = req.ttlSec ? Math.max(1000, req.ttlSec * 1000) : macLeaseTtlMs(env);
+  const decision = await acquireProbeLease(env, {
+    provider: req.provider,
+    holder: 'mac',
+    holderId: req.holderId,
+    ttlMs,
+    reason: map[req.provider]?.needScoutReason ?? 'server handed off',
+    now,
+  });
+  if (!decision.granted) {
+    return { ...decision, charged: 0, budget };
+  }
+
+  const { charged } = await chargeLatencyCalls(env, req.provider, {
+    fmpSlot: req.fmpSlot ?? '2',
+    now,
+  });
+  return { ...decision, charged, budget };
 }
