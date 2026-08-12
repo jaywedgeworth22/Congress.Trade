@@ -84,11 +84,13 @@ budget-status polling, see Tunables & flags below)
   `UW_LATENCY_DAILY_CAP` (default 240 HTTP/day incl. deep-match),
   `QUIVER_LATENCY_DAILY_CAP` (default 360 HTTP/day; 3 calls per probe),
   `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date budget; default `8`).
-  **Yield-weighted spacing (all three):** 4 America/New_York bands
-  (peak 08–12 / high 12–16 / mid 06–08+16–20 / low nights; weekends downshifted)
-  so daily budgets run **~2–3× denser in peak filing hours** and sparse overnight.
-  These band boundaries were **guessed, and measurement showed them wrong** —
-  see `docs/probe-schedule.md` for the replacement curve and the adoption diff.
+  **Yield-weighted spacing (all three):** now read from the MEASURED windows in
+  `src/ingestion/probeSchedule.ts` (provider profile: peak 09–10 / high 16–18 /
+  mid 10–16+18–21 / low 21–09 ET), so daily budgets run densest in the hours
+  filings actually arrive and sparse overnight. The previous 08–12/12–16 bands
+  were **guessed, and measurement showed them wrong** — 10:00 ET was being
+  probed at burst rate an hour after the burst. Set `PROBE_SCHEDULE_ENABLED=0`
+  to restore the old band table. See `docs/probe-schedule.md`.
 - Adaptive probe cadence (`src/ingestion/probeSchedule.ts`, measured windows —
   full reference in **`docs/probe-schedule.md`**): `PROBE_SCHEDULE_ENABLED`
   (default on), `PROBE_SCHEDULE_MIN_INTERVAL_SEC` (default `60`, politeness

@@ -334,19 +334,21 @@ legible rule.
 
 ---
 
-## 8. Integration — the three call sites
+## 8. Integration — WIRED (2026-08-12)
 
-This module ships **standalone**.  No existing file was modified; the diffs
-below belong to the lanes that own those files.
+This module shipped standalone in #1760/#1761 and sat with **zero runtime call
+sites** — only its own docs and tests referenced it, so the measured cadence was
+dead code and the probes kept running on the old fixed interval.  It is now
+wired at three entry points.  What follows describes what landed, not a plan.
 
-### 1. `src/ingestion/tradeLatency.ts` — owned by the matcher-fix lane
+### 1. `src/ingestion/tradeLatency.ts` — metered latency providers
 
 ```ts
-// disclosurePublishYieldBand() body becomes:
-return probeTierAt('provider', now);
+// disclosurePublishYieldBand() body:
+return probeTierAt('provider', now, { config: schedule });
 
-// disclosurePublishYieldWeight() body becomes:
-return probeYieldWeightAt('provider', now);
+// disclosurePublishYieldWeight() body:
+return probeYieldWeightAt('provider', now, { config: schedule });
 ```
 
 `probeYieldWeightAt` is normalised so its **time-average over the day is 1.0**
@@ -358,57 +360,147 @@ construction, which is exactly the property that function needs.  The existing
 that guard will clamp overnight slightly toward more probing, which is fail-safe
 and still bounded by the hard remaining-budget check.
 
-`DISCLOSURE_PUBLISH_YIELD_WEIGHT` and the 08–12/12–16 band boundaries can then
-be deleted.
+`DISCLOSURE_PUBLISH_YIELD_WEIGHT` and the old 08–12/12–16 boundaries are
+**retained, not deleted** — `legacyDisclosurePublishYieldBand()` is what
+`PROBE_SCHEDULE_ENABLED=0` falls back to.  A kill switch has to land somewhere
+known-good, not somewhere untested.
 
-Deliberately referenced by **function name, not line number**: these files are
-under active concurrent edit, and line numbers in this doc were already stale
-within hours of being written.
+`selectLatencySourceProbe()`'s single `null` return was also split: a lane that
+is pacing correctly (`off_cadence`) and a lane that is out of money
+(`daily_cap`) used to be the same answer.  Use `evaluateLatencySourceProbe()`
+where the reason matters.
 
-### 2. `src/shared/config.ts` — `shouldPollNow()`
+### 2. `src/ingestion/watcher.ts` — House / Senate, via `decideSourcePoll()`
 
-Gains an optional 4th parameter; defaults to today's behaviour when omitted, so
-nothing else breaks:
-
-```ts
-export function shouldPollNow(
-  now: Date,
-  cfg: PollConfig,
-  lastPollAt: Date | null,
-  source?: 'house' | 'senate',
-): boolean {
-  if (source) return shouldProbeNow({ source, now, lastProbeAt: lastPollAt }).probe;
-  /* ...existing window/effectiveInterval path unchanged... */
-}
-```
-
-No migration needed — `poll_config.schedule` already stores JSON `PollWindow[]`
-and can carry a per-source discriminator additively if it is ever wanted.
-
-### 3. `src/ingestion/watcher.ts` — two one-line changes
+`shouldPollNow()` in `src/shared/config.ts` is **unchanged**.  The composition
+lives in `watcher.ts` instead, as an exported pure function:
 
 ```ts
-if (shouldPollNow(now, cfg, lastHouse, 'house'))   // the HOUSE branch
-if (shouldPollNow(now, cfg, lastSenate, 'senate')) // the SENATE branch
+export function decideSourcePoll(args: {
+  source: 'house' | 'senate';
+  now: Date;
+  cfg: PollConfig;
+  lastPollAt: Date | null;
+  schedule?: ProbeScheduleConfig;
+}): SourcePollDecision
 ```
 
-The failure-backoff branch immediately below each call is unaffected.
+It returns the tier, window, interval, elapsed time, reason, and **which
+authority decided** — not a bare boolean — because the caller has to log all of
+that (§ Observability below).  Two paths, never both:
 
-### Composition with the lease
+| condition | authority |
+| --- | --- |
+| default | `schedule` — the measured windows |
+| `PROBE_SCHEDULE_ENABLED=0` | `poll-window` — legacy fixed intervals |
+| `cfg.aggressiveMode` | `poll-window` — owner override honoured wholesale |
 
-`scoutHandoff.ts` / `scheduledTick.ts` decide **who** probes.  This module
-answers only "is it time?".  A lease holder calls `shouldProbeNow(...)` and
-probes if `true`; a non-holder never calls it at all.  No coordination between
-the two is required, and neither file needs to change for this module to be
-correct.
+**The kill switch must not halt polling.**  `shouldProbeNow()` reports
+`disabled` with `probe: false`, so the obvious `return shouldProbeNow(...).probe`
+would have silently stopped ingestion the moment anyone set the flag.  That is
+pinned by a test.
+
+`aggressiveMode` falls back rather than being ignored: under the measured
+schedule the 08:55–09:40 peak already runs at 60s (5× faster than aggressive
+mode's 180s), but 12:00–20:00 would go from 180s to ~10 min, so honouring the
+switch means honouring the legacy path wholesale.  The decision reports the
+authority, and the watcher logs it, so it is never a silent downgrade.
+
+### 3. `src/ingestion/scoutHandoff.ts` — the Mac scout, inside the lease
+
+**The lease decides WHO probes; the schedule decides HOW OFTEN.**  They are
+**nested, never side by side.**  If they sat side by side, a provider would be
+probed by whichever check passed first and the daily-budget guarantee would
+evaporate.
+
+Concretely, in both directions:
+
+- **Server** — `runLeasedLatencyProbe()` computes the lease plan first and hands
+  `runDisclosureLatencyProbe()` *only* the providers it holds; the cadence is
+  then consulted per provider inside that call.  A lane the lease declined is
+  never offered to the schedule.
+- **Mac scout** — `requestMacProbeLease()` orders its checks
+  eligibility → tenure → budget → **cadence** → atomic claim → charge, and
+  returns the new `off_cadence` denial.  The cadence gate sits just *before* the
+  claim rather than after it for one reason: the claim charges the shared
+  ledger, so granting and then discovering it was too soon would spend a call to
+  learn nothing.
+
+The Mac cadence clock is its own KV key (`latency-cadence:mac:<provider>`),
+deliberately **not** the server's `last_poll:` stamp for the lane — reusing that
+would make a scout grant look like a server poll to every liveness check that
+reads it, masking a server outage behind scout activity.  It fails **open** on a
+read error (unlike the lease, which fails closed), because exclusivity is
+already guaranteed by the lease we are nested inside: a lost cadence clock can
+cost one extra poll, never a double-poll.
+
+### Observability
+
+`src/ingestion/probeCadenceLog.ts`.  A cadence that silently stops probing looks
+exactly like one that is working — both produce nothing in the log — and the
+measured schedule makes long silences *normal*, so "quiet" stopped being
+evidence of health.  Every decision therefore carries its tier and window:
+
+```
+probe cadence: house skip tier=low window=weekday interval=1789s elapsed=240s reason=too-soon authority=schedule
+```
+
+That line says "correctly skipped, off-peak".  Nothing at all for hours says the
+tick is dead.  Throttled to ~100–200 lines/day: always log a probe and a tier
+change, otherwise at most one line per lane per 15 minutes.
+
+### What the wiring actually changed (simulated, weekday)
+
+| | measured | legacy |
+| --- | ---: | ---: |
+| probes in the 09:00–09:06 arrival window | **6** | 1 |
+| House probes/day | 149 | 171 |
+| House probes 00:00–08:55 ET (measured-zero) | **18** | 35 |
+| longest gap between House probes | 1 800s | — |
+
+Six times the coverage at the exact six minutes where 21 of 27 days' filings
+land, while spending **fewer** probes overall.  That is the reallocation.
+
+### The full-history sweeps still run
+
+These are what catch anything the tiers miss, and none of them regressed:
+
+- **House** — every poll re-fetches and diffs the **entire yearly bulk index**,
+  so any single probe heals a missed filing; the ~30-minute overnight floor is
+  enough on its own.  The January prior-year overlap sweep is hourly and
+  untouched.
+- **Senate** — the **daily deep sweep** widens to the full `SENATE_MAX_LOOKBACK_DAYS`
+  window once per UTC day, which needs ≥ 1 Senate poll per day; the floor
+  delivers ~48.  Gap catch-up on the last successful poll is untouched.
+- **Liveness** — `pipelineHealth`'s `pollSuccessMaxAgeHours` is 3h for both
+  chambers; the worst simulated gap is 1 800s (30 min), a 6× margin.
+
+Pinned by `probeWiring.test.ts` as a property (≥ 24 probes/day, no gap ≥ 3h) so
+a future retune cannot quietly starve a source below the sweeps.
 
 ---
 
 ## 9. Testing
 
-`src/ingestion/__tests__/probeSchedule.test.ts` — 41 tests.
+Two suites, testing two different things.
 
-The load-bearing tests do **not** inspect the allocation table.  They
+`src/ingestion/__tests__/probeWiring.test.ts` — 17 tests, proving the schedule
+is **consulted at runtime**.  It goes through the real entry points
+(`decideSourcePoll`, `requestMacProbeLease`, `runLeasedLatencyProbe`) rather
+than the pure allocator, against a real migrated SQLite for the lease cases.
+This suite exists because the module shipped correct and unread: the numbers
+were right and nothing called them.  Covered: a probe inside the peak window is
+allowed and reports its tier; the dead window is skipped but never starved past
+the 30-minute floor; **a lease-denied lane skips regardless of the schedule, and
+is never even offered to it**; `off_cadence` denies a scout renewal without
+charging; the kill switch restores the legacy path instead of halting; the daily
+full-history sweeps still get enough polls; and the log throttle keeps skips
+legible without drowning the log.
+
+`src/ingestion/__tests__/probeSchedule.test.ts` — 41 tests, proving the
+allocation is **correct**.
+
+The load-bearing tests there do **not** inspect the allocation table.  They
 **simulate the real cron** — one tick per minute across a real ET day, through
 `shouldProbeNow` — and count the probes that actually fire.  That is the number
 that reaches the provider's rate limiter.

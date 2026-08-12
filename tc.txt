@@ -1,0 +1,9 @@
+
+> congress-trade@1.0.0 typecheck
+> deno check src/deno/main.ts
+
+[0m[32mDownload[0m https://registry.npmjs.org/@libsql%2fclient
+[0m[32mDownload[0m https://registry.npmjs.org/@aws-sdk%2fclient-s3
+[0m[32mDownload[0m https://registry.npmjs.org/hono
+[0m[32mDownload[0m https://registry.npmjs.org/@cloudflare%2fworkers-types
+[0m[32mDownload[0m https://registry.npmjs.org/fflate
