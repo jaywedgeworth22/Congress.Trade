@@ -67,6 +67,16 @@ export interface TransactionRow {
   disclosure_lag_days?: number | null;
   stock_act_status?: string | null;
   cleaning_note?: string | null;
+  // Migration 0020 added these directly on `transactions` (backfilled from the
+  // owning filing, and populated at insert time by every persistTransactions()
+  // caller — see extraction/normalizer.ts). `t.*` always selects them; typed
+  // here so mapFeedTransaction can fall back to them when a row has no
+  // matching `filings` record (competitor_backfill rows: doc_id LIKE
+  // 'COMPETITOR-%' with no OGE/clerk filing behind them, so the `f.` LEFT JOIN
+  // below never matches, but persistTransactions() still wrote a real
+  // first_seen_at/filed_date onto the transaction row itself).
+  first_seen_at?: string | null;
+  filed_date?: string | null;
 }
 
 /**
@@ -211,8 +221,18 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     state: row.filer_state,
     photoUrl: row.filer_photo_url,
     bioguideId: row.filer_bioguide_id ?? null,
-    filedDate: row.filing_filed_date,
-    firstSeenAt: row.filing_first_seen_at,
+    // Prefer the joined filing's own filed_date/first_seen_at (the normal
+    // case — a real House/Senate/OGE filing exists and `f.` matched). Fall
+    // back to the transaction row's own columns when there is no matching
+    // `filings` row at all (competitor_backfill: `persistTransactions()`
+    // still wrote a real filedDate/firstSeenAt onto `t.*` even though there's
+    // no filing PDF to join against). Seed-dataset rows correctly stay null
+    // either way — the source watcher dump the seed backfill reads has no
+    // disclosure-date/first-seen equivalent, so `t.filed_date`/
+    // `t.first_seen_at` are null there too; this fallback recovers real,
+    // already-persisted data, never fabricates a value.
+    filedDate: row.filing_filed_date ?? row.filed_date ?? null,
+    firstSeenAt: row.filing_first_seen_at ?? row.first_seen_at ?? null,
     sourceUrl: row.filing_source_url ?? undefined,
     pdfUrl: row.filing_raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
     refCompanyName: row.ref_company_name,

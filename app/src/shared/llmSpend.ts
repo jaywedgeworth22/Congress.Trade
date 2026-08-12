@@ -93,6 +93,8 @@ export function isLlmBudgetHalt(error: unknown): boolean {
 export const DEFAULT_LLM_DAILY_USD_CEILING = 10;
 /** Soft default per-doc lifetime LLM spend (all purposes). Override via LLM_DOC_USD_CEILING. */
 export const DEFAULT_LLM_DOC_USD_CEILING = 0.25;
+/** Default daily LlamaParse credit ceiling: 7,000 credits / 40 days pace = 175 credits/day per key account. */
+export const DEFAULT_LLAMAPARSE_DAILY_CREDIT_CEILING = 175;
 export const LLM_DOC_BUDGET_ERROR_MARKER = 'llm per-doc usd budget exceeded';
 export const LLM_DOC_ALREADY_EXTRACTED_MARKER = 'llm skip: doc already has transactions';
 
@@ -443,12 +445,13 @@ export async function checkLlmSpendCeiling(
       ?? env.LLAMAPARSE_DAILY_CREDIT_CEILING
       ?? env.LLAMAPARSE_DAILY_CREDITS_CEILING;
 
-    if (rawCreditCap != null && rawCreditCap.trim() !== '') {
-      const parsedCredits = usdVar(rawCreditCap, null);
-      if (parsedCredits != null) {
-        ceilingCredits = parsedCredits;
-        providerCeiling = parsedCredits * LLAMAPARSE_USD_PER_CREDIT;
-      }
+    const parsedCredits = rawCreditCap != null && rawCreditCap.trim() !== ''
+      ? usdVar(rawCreditCap, DEFAULT_LLAMAPARSE_DAILY_CREDIT_CEILING)
+      : DEFAULT_LLAMAPARSE_DAILY_CREDIT_CEILING;
+
+    if (parsedCredits != null) {
+      ceilingCredits = parsedCredits;
+      providerCeiling = parsedCredits * LLAMAPARSE_USD_PER_CREDIT;
     }
   }
 
