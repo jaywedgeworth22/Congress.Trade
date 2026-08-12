@@ -485,15 +485,21 @@ if [[ -z "$PBXPROJ" ]]; then
   log "project version: .xcodeproj not resolvable yet; skipping agreement check"
 elif [[ "${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}" != "$MARKETING" ]]; then
   log "NOTICE: project.pbxproj says MARKETING_VERSION=${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}, shipping ${MARKETING}."
-  log "NOTICE: the shipped value wins (passed to xcodebuild). To record it in the repo, run:"
-  log "NOTICE:   bash $0 ${APP_KEY} --repo-root ${REPO_ROOT} --sync-project-version --dry-run"
-  log "NOTICE:   then commit clients/ios/*.xcodeproj/project.pbxproj"
+  log "NOTICE: the shipped value wins (passed to xcodebuild). To record it in the repo,"
+  log "NOTICE: add --sync-project-version to the next REAL ship, then commit"
+  log "NOTICE: clients/ios/*.xcodeproj/project.pbxproj. Syncing from a --dry-run would"
+  log "NOTICE: write a number the next real ship then exceeds, re-creating this gap."
 fi
 
 # Write the resolved version into project.pbxproj so the repo records what
 # shipped. Opt-in: it dirties the worktree, and the ship path itself requires a
 # clean one.
 if [[ "$SYNC_PROJECT_VERSION" -eq 1 ]]; then
+  # A dry-run only peeks; the sequence is not consumed, so the next real ship
+  # would exceed whatever we wrote here and the file would be stale again.
+  [[ "$DRY_RUN" -eq 0 ]] || die "--sync-project-version cannot be combined with --dry-run.
+  A dry-run does not consume a sequence number, so writing ${MARKETING} now would be
+  superseded by the next real ship. Pass --sync-project-version on the real ship instead."
   [[ -n "$PBXPROJ" && -f "$PBXPROJ" ]] || die "--sync-project-version: project.pbxproj not found under $REPO_ROOT"
   /usr/bin/sed -i '' \
     -e "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = ${MARKETING};/g" \
