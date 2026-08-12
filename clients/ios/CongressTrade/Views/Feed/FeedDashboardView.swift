@@ -16,6 +16,7 @@ struct FeedDashboardView: View {
     /// list item 2b) — never a per-view `@State` that resets on tab switch.
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var searchFocused: Bool
     /// True while a debounce window is open that the store has been told about
     /// via `beginFilterChange()`. Tracked here (not inferred from `filterTask`)
@@ -212,21 +213,41 @@ struct FeedDashboardView: View {
                         FeedPaginationBar()
                     }
 
-                    LazyVStack(spacing: 8) {
-                        ForEach(trades) { trade in
-                            TradeCard(
-                                trade: trade,
-                                onRowTap: { selectedTrade = trade },
-                                onPoliticianTap: trade.member.id.map { memberId in
-                                    {
-                                        selectedPoliticianName = trade.member.name
-                                        selectedPoliticianId = memberId
+                    if horizontalSizeClass == .regular {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 360, maximum: 600), spacing: 12)], spacing: 12) {
+                            ForEach(trades) { trade in
+                                TradeCard(
+                                    trade: trade,
+                                    onRowTap: { selectedTrade = trade },
+                                    onPoliticianTap: trade.member.id.map { memberId in
+                                        {
+                                            selectedPoliticianName = trade.member.name
+                                            selectedPoliticianId = memberId
+                                        }
+                                    },
+                                    onTickerTap: trade.asset.ticker.map { ticker in
+                                        { selectedTicker = ticker }
                                     }
-                                },
-                                onTickerTap: trade.asset.ticker.map { ticker in
-                                    { selectedTicker = ticker }
-                                }
-                            )
+                                )
+                            }
+                        }
+                    } else {
+                        LazyVStack(spacing: 8) {
+                            ForEach(trades) { trade in
+                                TradeCard(
+                                    trade: trade,
+                                    onRowTap: { selectedTrade = trade },
+                                    onPoliticianTap: trade.member.id.map { memberId in
+                                        {
+                                            selectedPoliticianName = trade.member.name
+                                            selectedPoliticianId = memberId
+                                        }
+                                    },
+                                    onTickerTap: trade.asset.ticker.map { ticker in
+                                        { selectedTicker = ticker }
+                                    }
+                                )
+                            }
                         }
                     }
 

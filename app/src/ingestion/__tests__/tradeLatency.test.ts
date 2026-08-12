@@ -39,6 +39,15 @@ import {
   mergeFmpFamilyCandidateRows,
   mergeFmpFamilyObservationRows,
   mergeFmpOperationalStatus,
+  parseFmpDisclosureRows,
+  parseUnusualWhalesDisclosureRows,
+  providerFilerName,
+  tradeHashHasFiler,
+  matchStrength,
+  computeLatencyScope,
+  isInLatencyScope,
+  buildPublicLatencyProviders,
+  repairProviderObservationHashes,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -778,6 +787,544 @@ describe('tradeLatency', () => {
       expect(mergeFmpOperationalStatus(['off', 'running'])).toBe('running');
       expect(mergeFmpOperationalStatus(['stopped', 'off'])).toBe('stopped');
       expect(mergeFmpOperationalStatus(['off', 'off'])).toBe('off');
+    });
+  });
+
+  describe('provider filer parsing (FMP zero-match regression)', () => {
+    // Verbatim shape of a real GET /stable/house-latest row. Confirmed against
+    // the payloads production actually stored: the keys are firstName /
+    // lastName / office — there is no `representative`, `senator`, `filerName`
+    // or `name`, which is what the parser used to read and why 309 of 309
+    // stored FMP observations had filer_name NULL and an unmatchable hash.
+    const FMP_HOUSE_ROW = {
+      symbol: 'PANW',
+      senateID: 'M001239',
+      disclosureDate: '2026-08-11',
+      transactionDate: '2026-07-31',
+      firstName: 'John',
+      lastName: 'McGuire',
+      office: 'John McGuire',
+      district: 'VA05',
+      owner: 'Self',
+      assetDescription: 'Palo Alto Networks Inc',
+      assetType: 'Stock',
+      type: 'Sale',
+      amount: '$1,001 - $15,000',
+      comment: '',
+      link: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035180.pdf',
+    };
+
+    it('SHOULD-MATCH pair: the live FMP payload now pairs with the CT candidate it never could', () => {
+      const [row] = parseFmpDisclosureRows('house', [FMP_HOUSE_ROW]);
+      expect(row.filerName).toBe('John McGuire');
+      expect(row.tradeHash).toBe('mcguire_PANW_2026-07-31_sell');
+      expect(tradeHashHasFiler(row.tradeHash)).toBe(true);
+
+      // The CT side of the same disclosure, hashed by the live ingestion path.
+      const ctHash = generateTradeHash('John McGuire', 'PANW', '2026-07-31', 'S');
+      expect(ctHash).toBe('mcguire_PANW_2026-07-31_sell');
+      expect(matchDisclosureCandidate({ trade_hash: ctHash }, row)).toEqual({
+        providerKey: '20035180',
+        matchMethod: 'trade-hash',
+      });
+    });
+
+    it('the pre-fix field list produced an unmatchable empty-filer hash', () => {
+      // Reproduces the old behaviour: read only the full-name keys FMP does
+      // not send, and the leading segment of the hash is empty.
+      const legacyHash = generateTradeHash(null, 'PANW', '2026-07-31', 'Sale');
+      expect(legacyHash).toBe('_PANW_2026-07-31_sell');
+      expect(tradeHashHasFiler(legacyHash)).toBe(false);
+      expect(
+        matchDisclosureCandidate(
+          { trade_hash: 'mcguire_PANW_2026-07-31_sell' },
+          { ...parseFmpDisclosureRows('house', [FMP_HOUSE_ROW])[0], tradeHash: legacyHash },
+        ),
+      ).toBeNull();
+    });
+
+    it('MUST-NOT-MATCH near miss: same ticker, date and side, different member', () => {
+      const [row] = parseFmpDisclosureRows('house', [FMP_HOUSE_ROW]);
+      // Another House member sold PANW the same day. Every axis but the person
+      // agrees, so no branch — exact or fuzzy — may pair them.
+      const otherMember = generateTradeHash('Marjorie McGuiness', 'PANW', '2026-07-31', 'S');
+      expect(otherMember).not.toBe(row.tradeHash);
+      expect(matchDisclosureCandidate({ trade_hash: otherMember }, row)).toBeNull();
+    });
+
+    it('MUST-NOT-MATCH near miss: same member and ticker, date outside the slack window', () => {
+      const [row] = parseFmpDisclosureRows('house', [FMP_HOUSE_ROW]);
+      // 2026-07-31 vs 2026-07-25 is 6 days — beyond LATENCY_FUZZY_DATE_SLACK_DAYS.
+      const staleDate = generateTradeHash('John McGuire', 'PANW', '2026-07-25', 'S');
+      expect(matchDisclosureCandidate({ trade_hash: staleDate }, row)).toBeNull();
+      // ...and the opposite side never pairs either.
+      const wrongSide = generateTradeHash('John McGuire', 'PANW', '2026-07-31', 'P');
+      expect(matchDisclosureCandidate({ trade_hash: wrongSide }, row)).toBeNull();
+    });
+
+    it('providerFilerName prefers a declared name, then first+last, then the display field', () => {
+      expect(providerFilerName({ name: 'Hern, Kevin' }, ['name'])).toBe('Kevin Hern');
+      expect(providerFilerName({ firstName: 'John', lastName: 'McGuire' }, ['name'], ['office'])).toBe(
+        'John McGuire',
+      );
+      expect(providerFilerName({ office: 'John McGuire' }, ['name'], ['office'])).toBe('John McGuire');
+      // Structured parts outrank the display field.
+      expect(
+        providerFilerName({ firstName: 'John', lastName: 'McGuire', office: 'VA05' }, ['name'], ['office']),
+      ).toBe('John McGuire');
+      expect(providerFilerName({ symbol: 'PANW' }, ['name'], ['office'])).toBeNull();
+    });
+
+    it('runs Unusual Whales names through the same normalizer as our own side', () => {
+      const [row] = parseUnusualWhalesDisclosureRows([
+        { name: 'KHANNA, ROHIT', ticker: 'NVDA', transaction_date: '2026-07-30', txn_type: 'Purchase' },
+      ]);
+      // cleanFilerName flips "Last, First", title-cases the shout, and applies
+      // the curated legal-name alias — identical to the House/Senate path.
+      expect(row.filerName).toBe('Ro Khanna');
+      expect(row.tradeHash).toBe('khanna_NVDA_2026-07-30_buy');
+    });
+  });
+
+  describe('repairProviderObservationHashes', () => {
+    function repairEnv(rows: Array<Record<string, unknown>>) {
+      const updates: Array<{ sql: string; params: unknown[] }> = [];
+      return {
+        env: {
+          DB: {
+            prepare(sql: string) {
+              return {
+                params: [] as unknown[],
+                bind(...params: unknown[]) {
+                  this.params = params;
+                  return this;
+                },
+                async all<T>() {
+                  return { results: rows as T[] };
+                },
+                async first<T>() {
+                  return null as T | null;
+                },
+                async run() {
+                  updates.push({ sql, params: this.params });
+                  return { success: true, meta: { changes: 1 } };
+                },
+              };
+            },
+          },
+        } as never,
+        updates,
+      };
+    }
+
+    it('re-hashes a stored FMP row in place, keeping the first_observed_at stamp', async () => {
+      const { env, updates } = repairEnv([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: '20035180',
+          trade_hash: '_PANW_2026-07-31_sell',
+          payload: JSON.stringify({
+            symbol: 'PANW',
+            transactionDate: '2026-07-31',
+            firstName: 'John',
+            lastName: 'McGuire',
+            office: 'John McGuire',
+            type: 'Sale',
+          }),
+        },
+      ]);
+      const result = await repairProviderObservationHashes(env, 10);
+      expect(result).toMatchObject({ scanned: 1, repaired: 1, dropped: 0, unresolved: 0 });
+      // An UPDATE, never a delete-and-reinsert: re-fetching would reset
+      // first_observed_at to now and destroy the race evidence.
+      expect(updates).toHaveLength(1);
+      expect(updates[0]!.sql).toMatch(/UPDATE trade_provider_observations/);
+      expect(updates[0]!.sql).not.toMatch(/first_observed_at/);
+      expect(updates[0]!.params[0]).toBe('mcguire_PANW_2026-07-31_sell');
+      expect(updates[0]!.params[1]).toBe('John McGuire');
+    });
+
+    it('leaves a row alone when the payload still yields no filer', async () => {
+      const { env, updates } = repairEnv([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: 'k',
+          trade_hash: '_PANW_2026-07-31_sell',
+          payload: JSON.stringify({ symbol: 'PANW', transactionDate: '2026-07-31', type: 'Sale' }),
+        },
+      ]);
+      const result = await repairProviderObservationHashes(env, 10);
+      expect(result).toMatchObject({ repaired: 0, unresolved: 1 });
+      expect(updates).toHaveLength(0);
+    });
+  });
+
+  describe('match strength', () => {
+    it('keeps the headline on fully specified pairings', () => {
+      expect(matchStrength('trade-hash')).toBe('strong');
+      expect(matchStrength('fuzzy-near-date')).toBe('strong');
+      // One identity axis never verified — reported, never in the headline.
+      expect(matchStrength('fuzzy-missing-date')).toBe('weak');
+      expect(matchStrength('fuzzy-no-ticker')).toBe('weak');
+      expect(matchStrength('something-new')).toBe('weak');
+      expect(matchStrength(null)).toBe('none');
+    });
+  });
+
+  describe('coverage is not coupled to the candidate window', () => {
+    const NOW = '2026-08-11T21:00:00.000Z';
+    const MATURITY = '2026-08-10T21:00:00.000Z';
+    // The pairing CT made three weeks ago, for an observation seen four days ago.
+    const agedCandidate = {
+      provider: 'quiver' as const,
+      trade_hash: 'delaney_HUBB_2026-07-23_buy',
+      status: 'matched',
+      chamber: 'house' as const,
+      provider_key: 'qq-1',
+      match_method: 'trade-hash',
+      congress_first_seen_at: '2026-07-21T15:32:44.034Z',
+      provider_first_seen_at: '2026-08-07T04:30:10.001Z',
+      provider_published_at: null,
+      filed_date: '2026-07-21',
+      created_at: '2026-07-21T15:32:44.034Z',
+      updated_at: '2026-08-07T04:30:10.001Z',
+    };
+    const observation = {
+      provider: 'quiver' as const,
+      chamber: 'house' as const,
+      provider_key: 'qq-1',
+      trade_hash: 'delaney_HUBB_2026-07-23_buy',
+      first_observed_at: '2026-08-07T04:30:10.001Z',
+      last_observed_at: '2026-08-07T04:30:10.001Z',
+      provider_published_at: null,
+      source_url: null,
+      filed_date: '2026-07-21',
+      filer_name: 'John Delaney',
+      payload: null,
+    };
+
+    it('counts a matched pair whose CT side aged past the 7d score window', () => {
+      // `mine` is the 7d timing cohort and legitimately excludes the aged
+      // candidate; the observation is still inside the 14d monitor window.
+      const [, quiver] = buildPublicLatencyProviders(
+        [],
+        [],
+        [observation],
+        [],
+        MATURITY,
+        [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ],
+      ).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+      expect(quiver.provider).toBe('quiver');
+      expect(quiver.maturedProviderObserved).toBe(1);
+      expect(quiver.maturedMatched).toBe(1);
+      expect(quiver.ctCoveragePct).toBe(100);
+      expect(quiver.unmatchedProvider).toBe(0);
+      expect(NOW).toBeTruthy();
+    });
+
+    it('without the match-clock index the same pair reads as 0% (the old bug)', () => {
+      const [, quiver] = buildPublicLatencyProviders([], [], [observation], [], MATURITY, []).filter(
+        (p) => p.provider === 'fmp' || p.provider === 'quiver',
+      );
+      expect(quiver.maturedMatched).toBe(0);
+      expect(quiver.ctCoveragePct).toBe(0);
+      expect(quiver.unmatchedProvider).toBe(1);
+      expect(agedCandidate.status).toBe('matched');
+    });
+
+    it('never spreads one pairing across every line of a filing that shares a provider_key', () => {
+      // FMP's provider_key is the PTR document token, so all five lines of one
+      // filing carry it. In production 309 FMP observations span 31 keys and a
+      // single key covers 73 trades — crediting by key alone would turn one
+      // pairing into 73.
+      const filing = ['AAPL', 'MSFT', 'NVDA', 'PANW', 'TSLA'].map((ticker) => ({
+        provider: 'fmp' as const,
+        chamber: 'house' as const,
+        provider_key: '20035180',
+        trade_hash: `hern_${ticker}_2026-08-05_sell`,
+        first_observed_at: '2026-08-07T04:30:10.001Z',
+        last_observed_at: '2026-08-07T04:30:10.001Z',
+        provider_published_at: null,
+        source_url: null,
+        filed_date: '2026-08-05',
+        filer_name: 'Kevin Hern',
+        payload: null,
+      }));
+      const [fmp] = buildPublicLatencyProviders([], [], filing, [], MATURITY, [
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: '20035180',
+          trade_hash: 'hern_PANW_2026-08-05_sell',
+          match_method: 'trade-hash',
+        },
+      ]);
+      expect(fmp.provider).toBe('fmp');
+      expect(fmp.maturedProviderObserved).toBe(5);
+      // Exactly the one line that actually paired.
+      expect(fmp.maturedMatched).toBe(1);
+      expect(fmp.unmatchedProvider).toBe(4);
+      expect(fmp.ctCoveragePct).toBe(20);
+    });
+
+    describe('contradiction guard: 0% coverage while holding pairings is not publishable', () => {
+      // The production shape this guard exists for: many matured provider rows,
+      // none of them matched, while trade_latency_candidates holds strong
+      // pairings for the same lane. Those two facts cannot both be true.
+      const observations = Array.from({ length: 12 }, (_, i) => ({
+        ...observation,
+        provider_key: `qq-${100 + i}`,
+        trade_hash: `member${i}_ACME_2026-07-2${i % 10}_buy`,
+      }));
+
+      it('suppresses ctCoveragePct instead of publishing a 0% it did not measure', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, [
+          // Real pairings on file — but for trades the observation cohort does
+          // not contain, which is the signature of a broken lookup.
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-other',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+
+        expect(quiver.maturedProviderObserved).toBe(12);
+        expect(quiver.maturedMatched).toBe(0);
+        expect(quiver.coverageStrongPairingsOnFile).toBe(1);
+        expect(quiver.coverageIntegrity).toBe('contradiction');
+        // The whole point: not 0.
+        expect(quiver.ctCoveragePct).toBeNull();
+        expect(quiver.overlapPct).toBeNull();
+        // A broken join must never reach a publishable claim.
+        expect(quiver.comparisonStatus).not.toBe('usable');
+      });
+
+      it('still reports an honest 0% when there are genuinely no pairings on file', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, []).filter(
+          (p) => p.provider === 'fmp' || p.provider === 'quiver',
+        );
+        expect(quiver.coverageStrongPairingsOnFile).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        // Nothing contradicts this zero, so it is a measurement and it stands.
+        expect(quiver.ctCoveragePct).toBe(0);
+        expect(quiver.unmatchedProvider).toBe(12);
+      });
+
+      it('does not fire on weak-only pairings, which are excluded from the headline by design', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], observations, [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-other',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'fuzzy-missing-date',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        // maturedMatched counts strong only, so a weak pairing on file is not
+        // in tension with a strong-zero. This 0% is honest.
+        expect(quiver.coverageStrongPairingsOnFile).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBe(0);
+      });
+
+      it('stays quiet on a healthy lane', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], [observation], [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBe(100);
+      });
+
+      it('does not fire when a lane observed nothing matured (no ratio to contradict)', () => {
+        const [, quiver] = buildPublicLatencyProviders([], [], [], [], MATURITY, [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'delaney_HUBB_2026-07-23_buy',
+            match_method: 'trade-hash',
+          },
+        ]).filter((p) => p.provider === 'fmp' || p.provider === 'quiver');
+        expect(quiver.maturedProviderObserved).toBe(0);
+        expect(quiver.coverageIntegrity).toBe('ok');
+        expect(quiver.ctCoveragePct).toBeNull();
+      });
+    });
+
+    it('flags stored observations that can never match instead of calling them a coverage miss', () => {
+      const [fmp] = buildPublicLatencyProviders(
+        [],
+        [],
+        [{ ...observation, provider: 'fmp', trade_hash: '_PANW_2026-07-31_sell', provider_key: 'k' }],
+        [],
+        MATURITY,
+        [],
+      );
+      expect(fmp.provider).toBe('fmp');
+      expect(fmp.observedRowsMissingFiler).toBe(1);
+    });
+  });
+
+  describe('scope denominator (N of M matched)', () => {
+    const inWindow = '2026-08-05T00:00:00.000Z';
+    const candidate = (over: Record<string, unknown>) => ({
+      provider: 'quiver' as const,
+      trade_hash: 'hern_CMCSA_2026-08-05_sell',
+      status: 'pending',
+      chamber: 'house' as const,
+      provider_key: null,
+      match_method: null,
+      congress_first_seen_at: inWindow,
+      provider_first_seen_at: null,
+      provider_published_at: null,
+      filed_date: '2026-08-05',
+      filer_name: 'Kevin Hern',
+      created_at: inWindow,
+      updated_at: inWindow,
+      ...over,
+    });
+    const observation = (over: Record<string, unknown>) => ({
+      provider: 'quiver' as const,
+      chamber: 'house' as const,
+      provider_key: 'qq-1',
+      trade_hash: 'hern_CMCSA_2026-08-05_sell',
+      first_observed_at: inWindow,
+      filer_name: 'Kevin Hern',
+      ...over,
+    });
+
+    it('counts a line both sides saw exactly once, and only pairs it when the match is strong', () => {
+      const scope = computeLatencyScope({
+        candidates: [candidate({ status: 'matched', match_method: 'trade-hash' })] as never,
+        observations: [observation({})] as never,
+        coverageRows: [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'hern_CMCSA_2026-08-05_sell',
+            match_method: 'trade-hash',
+          },
+        ],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(1);
+      expect(scope.matched).toBe(1);
+      expect(scope.ctOnly).toBe(0);
+      expect(scope.providerOnly).toBe(0);
+      expect(scope.matchedPct).toBe(100);
+    });
+
+    it('separates what only we saw from what only the provider saw', () => {
+      const scope = computeLatencyScope({
+        candidates: [candidate({ trade_hash: 'hern_DEO_2026-08-05_sell' })] as never,
+        observations: [observation({ trade_hash: 'delaney_BWXT_2026-07-24_buy', filer_name: 'John Delaney' })] as never,
+        coverageRows: [],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(2);
+      expect(scope.matched).toBe(0);
+      expect(scope.ctOnly).toBe(1);
+      expect(scope.providerOnly).toBe(1);
+    });
+
+    it('a weak pairing counts toward matchedIncludingWeak but never the headline', () => {
+      const scope = computeLatencyScope({
+        candidates: [candidate({ status: 'matched', match_method: 'fuzzy-missing-date' })] as never,
+        observations: [observation({})] as never,
+        coverageRows: [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'hern_CMCSA_2026-08-05_sell',
+            match_method: 'fuzzy-missing-date',
+          },
+        ],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(1);
+      expect(scope.matched).toBe(0);
+      expect(scope.matchedIncludingWeak).toBe(1);
+    });
+
+    it('folds a provider row onto the candidate hash it paired with, never as a second line', () => {
+      const scope = computeLatencyScope({
+        candidates: [candidate({ status: 'matched', match_method: 'fuzzy-near-date' })] as never,
+        // Provider hashed the same trade one day off; the pairing carries the
+        // canonical CT hash, so this must not read as a separate disclosure.
+        observations: [observation({ trade_hash: 'hern_CMCSA_2026-08-04_sell' })] as never,
+        coverageRows: [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'hern_CMCSA_2026-08-05_sell',
+            match_method: 'fuzzy-near-date',
+          },
+        ],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(1);
+      expect(scope.matched).toBe(1);
+    });
+
+    it('keeps POTUS/VP/cabinet in scope and drops executive rows we cannot identify', () => {
+      expect(isInLatencyScope({ chamber: 'house', filer_name: null })).toBe(true);
+      expect(isInLatencyScope({ chamber: 'senate', filer_name: null })).toBe(true);
+      expect(isInLatencyScope({ chamber: 'executive', filer_name: 'Donald J. Trump' })).toBe(true);
+      expect(isInLatencyScope({ chamber: 'executive', filer_name: 'Scott Bessent' })).toBe(true);
+      // Not a filer we track, and a bare surname is never enough.
+      expect(isInLatencyScope({ chamber: 'executive', filer_name: 'Pat Someone' })).toBe(false);
+      expect(isInLatencyScope({ chamber: 'executive', filer_name: 'Trump' })).toBe(false);
+      expect(isInLatencyScope({ chamber: 'executive', filer_name: null })).toBe(false);
+
+      const scope = computeLatencyScope({
+        candidates: [],
+        observations: [
+          observation({ chamber: 'executive', trade_hash: 'trump_AAPL_2026-08-05_buy', filer_name: 'Donald J. Trump' }),
+          observation({
+            chamber: 'executive',
+            provider_key: 'qq-2',
+            trade_hash: 'someone_AAPL_2026-08-05_buy',
+            filer_name: 'Pat Someone',
+          }),
+        ] as never,
+        coverageRows: [],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(1);
+      expect(scope.excludedOutOfScope).toBe(1);
+    });
+
+    it('excludes filer-less rows from M rather than letting them depress the ratio', () => {
+      const scope = computeLatencyScope({
+        candidates: [],
+        observations: [observation({ trade_hash: '_PANW_2026-07-31_sell' })] as never,
+        coverageRows: [],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(0);
+      expect(scope.excludedMissingFiler).toBe(1);
+      expect(scope.matchedPct).toBeNull();
     });
   });
 });
