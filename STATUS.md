@@ -1,5 +1,17 @@
 # Current Handoff
 
+## 2026-08-13 GROK — Senate scout session reuse
+
+Owner Pushover "CT scout DOWN: senate" (67 fails / 1878m, report/data 503
+upstream-maintenance) is a false outage.  Server `/api/health/polling` senate
+is ok via `SENATE_RELAY_URL`.  The Mac scout re-handshakes every poll and
+Akamai serves the static maintenance page; senate-relay reuses a session and
+keeps getting JSON.
+
+Branch `grok/senate-scout-session`: cache the agreement session, refresh once
+on 503, do not retry eFD 503s.  After merge: pull on the Mac scout host and
+reset the senate breaker so it stops remonitoring.
+
 ## 2026-08-12 — Effort Issues Sync: page too large, not a flake (CLAUDE)
 
 #1800 added transport retry to `scripts/sync-effort-issues.py` assuming the
