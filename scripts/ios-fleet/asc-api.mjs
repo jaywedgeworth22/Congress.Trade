@@ -90,17 +90,32 @@ async function main() {
     return { status: res.status, ok: res.ok, parsed, text };
   }
 
-  // Highest N among builds whose version is exactly "<prefix>.N" (e.g. 1.0.7).
-  // This is what makes App Store Connect -- not a single unbacked local file --
-  // the source of truth for "what has already shipped", so a lost/reset counter
-  // cannot silently reuse a build number that ASC rejects as duplicate.
+  // Highest N already used by the "<prefix>.N" MARKETING version train
+  // (e.g. 1.0.7). This is what makes App Store Connect -- not a single unbacked
+  // local file -- the source of truth for "what has already shipped", so a
+  // lost/reset counter cannot silently reuse a version that ASC rejects as a
+  // duplicate.
   //
-  // stdout: the integer N (0 when the train has no builds yet). stderr: notes.
+  // WHICH ASC FIELD IS WHICH (verified against live data 2026-08-12):
+  //   preReleaseVersions[].attributes.version = CFBundleShortVersionString
+  //                                             (the MARKETING version, "1.0.7")
+  //   builds[].attributes.version             = CFBundleVersion
+  //                                             (the BUILD number, "202608120521")
+  // ship-testflight.sh sequences the MARKETING version, so this must read
+  // preReleaseVersions. Reading builds[].version only ever worked by accident,
+  // during the window when the ship script wrote the same dotted string into
+  // both fields. It was already silently wrong for socratic, whose newest
+  // marketing version is 1.0.1 but whose build numbers are "2" / "1" /
+  // "202608120212" -- none of which match "1.0.N", so ASC contributed 0 and
+  // "verification" verified nothing.
+  //
+  // Build numbers are still scanned afterwards, purely so this can never report
+  // a LOWER floor than the old behaviour did for an app whose build numbers do
+  // happen to be dotted (congress 1.0.7/1.0.1, usage 1.0.1).
+  //
+  // stdout: the integer N (0 when the train has no versions yet). stderr: notes.
   // exit 0 = authoritative answer; exit 2 = could not determine (caller must
   // treat that as "unverified", NOT as zero).
-  //
-  // Legacy timestamp builds (e.g. 202608120521) do not match "<prefix>.N" and
-  // are ignored on purpose: they live in the old 1.0.0 marketing train.
   if (method === "latest-build-seq") {
     const bundleId = path;
     const prefix = body;
@@ -119,9 +134,36 @@ async function main() {
     const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`^${escaped}\\.(\\d+)$`);
 
-    let url = `/v1/builds?filter[app]=${appId}&sort=-uploadedDate&limit=200`;
     let best = 0;
-    let seen = 0;
+    const consider = (value) => {
+      const m = re.exec(value || "");
+      if (!m) return;
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > best) best = n;
+    };
+
+    // 1) Marketing version trains -- the authoritative record.
+    let url = `/v1/preReleaseVersions?filter[app]=${appId}&limit=200`;
+    let seenVersions = 0;
+    for (let page = 0; page < 10 && url; page++) {
+      const res = await api("GET", url);
+      if (!res.ok) {
+        console.error(`latest-build-seq: preReleaseVersions query failed (HTTP ${res.status})`);
+        process.exit(2);
+      }
+      for (const v of res.parsed.data || []) {
+        // A macOS/tvOS train must not bump the iOS sequence.
+        if ((v.attributes?.platform || "IOS") !== "IOS") continue;
+        seenVersions++;
+        consider(v.attributes?.version);
+      }
+      url = res.parsed.links?.next || "";
+    }
+
+    // 2) Build numbers, so the floor can never regress below what the previous
+    //    implementation reported.
+    url = `/v1/builds?filter[app]=${appId}&sort=-uploadedDate&limit=200`;
+    let seenBuilds = 0;
     for (let page = 0; page < 10 && url; page++) {
       const res = await api("GET", url);
       if (!res.ok) {
@@ -129,16 +171,15 @@ async function main() {
         process.exit(2);
       }
       for (const b of res.parsed.data || []) {
-        seen++;
-        const m = re.exec(b.attributes?.version || "");
-        if (m) {
-          const n = parseInt(m[1], 10);
-          if (Number.isFinite(n) && n > best) best = n;
-        }
+        seenBuilds++;
+        consider(b.attributes?.version);
       }
       url = res.parsed.links?.next || "";
     }
-    console.error(`latest-build-seq: ${seen} build(s) inspected; highest ${prefix}.N is N=${best}`);
+
+    console.error(
+      `latest-build-seq: ${seenVersions} marketing version(s) + ${seenBuilds} build(s) inspected; highest ${prefix}.N is N=${best}`
+    );
     console.log(String(best));
     process.exit(0);
   }

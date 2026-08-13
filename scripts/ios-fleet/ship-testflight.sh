@@ -6,7 +6,7 @@
 #
 # Options:
 #   --repo-root PATH   Repo root (default: cwd)
-#   --build N          Force CURRENT_PROJECT_VERSION (default: 1.0.<seq>, +1 every rebuild)
+#   --build N          Force CURRENT_PROJECT_VERSION (default: UTC YYYYMMDDHHMM)
 #   --version X.Y.Z    Force MARKETING_VERSION (optional)
 #   --export-only      Build IPA only; do not upload
 #   --upload-only IPA  Skip archive; upload an existing IPA via ASC API key
@@ -19,16 +19,31 @@
 #                           AND no local/project sequence exists (dangerous:
 #                           may reuse a build number ASC rejects as duplicate)
 #
-# Version numbering (owner directive 2026-08-12): 1.0.<seq>, +1 every rebuild,
-# the same dotted string in MARKETING_VERSION and CURRENT_PROJECT_VERSION. The
-# sequence is max(local cache, App Store Connect, project.pbxproj) + 1, so a
-# lost or reset local counter cannot silently reuse a shipped build number.
+# Version numbering (owner directive 2026-08-12, revised same day):
+#   MARKETING_VERSION       = 1.0.<seq>          +1 on EVERY rebuild
+#   CURRENT_PROJECT_VERSION = <UTC YYYYMMDDHHMM> when the build was cut
+# App Store Connect renders "<marketing> (<build>)", so a ship now shows
+# "1.0.8 (202608121315)" instead of the uninformative "1.0.8 (1.0.8)".
+# The sequence is max(local cache, App Store Connect, project.pbxproj) + 1, so a
+# lost or reset local counter cannot silently reuse a shipped version.
 #
-# Rate limit (uploads only; export-only is free):
-#   Default min interval between successful TestFlight ships per app: 2.5h
-#   (9000s). Override: IOS_TF_MIN_INTERVAL_SEC=7200 (2h) etc.
+# ---------------------------------------------------------------------------
+# WHAT IS HOLDING BACK AUTOMATIC SHIPPING: THE MIN-INTERVAL RATE LIMIT
+# ---------------------------------------------------------------------------
+# Applies to uploads only (--export-only and --dry-run are free):
+#   DEFAULT MINIMUM INTERVAL BETWEEN SUCCESSFUL TESTFLIGHT SHIPS, PER APP:
+#       DEFAULT_MIN_INTERVAL_SEC=9000  (9000 seconds = 2.5 hours)
+#   That constant is defined a few dozen lines below and is the main reason a
+#   merge to main does not become a TestFlight build. .github/workflows/
+#   ios-ship.yml fires on every push to main touching clients/ios/**, and this
+#   gate turns most of those runs into a no-op skip (exit 0).
+#   Override for one run:  IOS_TF_MIN_INTERVAL_SEC=7200 (2h)  or  --force-ship
+#   Change the default:    edit DEFAULT_MIN_INTERVAL_SEC below (owner's call).
+#
 #   Also skips when git HEAD matches the last successful ship (no new commits).
-#   Skip exits 0 ("nothing to do") so agent loops stay quiet.
+#   Skip exits 0 ("nothing to do") so agent loops stay quiet, and a skipped run
+#   does NOT consume a build sequence number (see the ship-gate ordering note
+#   at the call site).
 #   State: ~/.cache/ios-fleet/last-ship-<app>.txt  (unix_ts + space + git_sha)
 #
 # Secrets (never printed):
@@ -149,13 +164,31 @@ link_private_key() {
 }
 
 # Owner directive 2026-08-12: version naming is 1.0.# where EVERY rebuild —
-# including a tiny tweak — adds exactly 1 to the last number. No divergent
-# "(build)" counter: CFBundleVersion is set to the SAME dotted string as the
-# marketing version (Apple accepts up to three period-separated integers), so
-# TestFlight/ASC render "1.0.7 (1.0.7)" and the two can never drift apart.
-# Each version string is its own train with exactly one build, which also
-# sidesteps Apple's must-be-higher-than-previous rule against the old huge
-# timestamp builds (e.g. 202608101310) stuck in the 1.0.0 train.
+# including a tiny tweak — adds exactly 1 to the last number. That part is
+# unchanged and is what MARKETING_VERSION carries.
+#
+# CFBundleVersion is NOT a copy of it. An earlier revision set both fields to
+# the same dotted string, which App Store Connect renders as "1.0.7 (1.0.7)":
+# the parenthetical carried zero information, and it was a live rejection trap.
+# Apple requires CFBundleVersion to be strictly increasing WITHIN a marketing
+# train, and trade.congress.ios has 15 builds numbered 202608070253 through
+# 202608120521 sitting in the 1.0.0 train. "1.0.7" is numerically far lower
+# than any of them; the dotted scheme only worked because each new marketing
+# version opened a fresh, empty train. Ship into an older train once and Apple
+# rejects it after a full archive + upload.
+#
+# So CFBundleVersion is a UTC timestamp, YYYYMMDDHHMM (what this script did
+# originally):
+#   - the parenthetical now says WHEN the build was cut, which is the useful
+#     information the owner asked for: "1.0.8 (202608121315)"
+#   - it is monotonic by construction, so it can never regress
+#   - it is greater than every existing timestamp build, so it stays legal even
+#     if a ship ever lands back in the 1.0.0 train
+#   - it is demonstrably a legal CFBundleVersion for ASC: those 15 live builds
+#     were all accepted in exactly this format
+# Collisions are not a concern: two ships in the same UTC minute would need to
+# beat both the archive lock and the 2.5h min interval, and they would carry
+# different marketing versions anyway (Apple's uniqueness is per version+build).
 #
 # Sequence state: ${STATE_DIR}/build-seq-<app>.txt (atomic-mkdir-guarded).
 # NOTE: flock(1) does not exist on macOS — under `set -e` a flock call would
@@ -174,6 +207,13 @@ local_seq() {
   n=$(cat "${STATE_DIR}/build-seq-${APP_KEY}.txt" 2>/dev/null || echo 0)
   [[ "$n" =~ ^[0-9]+$ ]] || n=0
   printf '%s' "$n"
+}
+
+# CFBundleVersion: UTC minute stamp. UTC (not local) so the value cannot go
+# backwards across a daylight-saving fall-back, which would break Apple's
+# strictly-increasing rule for an hour twice a year.
+utc_build_stamp() {
+  date -u +%Y%m%d%H%M
 }
 
 # Highest N in MARKETING_VERSION = <prefix>.N across the project's build
@@ -263,9 +303,11 @@ resolve_seq_floor() {
     1) restore ASC access: check ${SECRETS_ENV} and that 'node' is on PATH, then
        run: node ${FLEET_DIR}/asc-api.mjs latest-build-seq ${BUNDLE_ID} ${prefix}
     2) or pass the number explicitly:  --version ${prefix}.<N>   (NOT --build <N>:
-       a bare --build leaves MARKETING at ${DEFAULT_MARKETING}, and Apple requires a
-       strictly greater build within that train, so it is rejected after the full
-       archive+upload. --version sets both fields to the same string.)
+       --version picks the marketing version and lets CFBundleVersion stay an
+       auto UTC timestamp, which is always higher than every build already
+       uploaded. A bare --build leaves MARKETING at ${DEFAULT_MARKETING}, which
+       re-enters an old train where Apple requires a strictly greater build than
+       everything in it -- rejected after the full archive+upload.)
     3) or, only if you are certain this train is empty, re-run with --allow-unverified-seq"
     fi
     if [[ "$ALLOW_UNVERIFIED_SEQ" -eq 1 ]]; then
@@ -332,9 +374,22 @@ repo_head_sha() {
   git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown"
 }
 
-# Exit 0 (skip) when rate-limited or no new commits since last successful ship.
-# Does not apply to --export-only (local IPA only) or --force-ship.
-maybe_skip_ship() {
+# Decide whether this run may upload: rate limit + "no new commits since the
+# last successful ship". Does not apply to --export-only (local IPA only) or
+# --force-ship.
+#
+# This function DECIDES and LOGS; it does not exit. That separation is the fix
+# for the ordering bug observed live on 2026-08-12: the gate used to be
+# evaluated after next_build_seq() had already committed floor+1 to the counter,
+# so a rate-limited attempt still burned a build number. The sequence advanced
+# 5 -> 6 while the run skipped, leaving 1.0.6 existing nowhere and the local
+# counter drifting further from App Store Connect. The caller now evaluates the
+# gate BEFORE any sequence is consumed.
+#
+# Sets SHIP_GATE_DECISION to "proceed" or "skip".
+SHIP_GATE_DECISION="proceed"
+evaluate_ship_gate() {
+  SHIP_GATE_DECISION="proceed"
   if [[ "$FORCE_SHIP" -eq 1 ]]; then
     log "force-ship: bypassing min-interval / same-HEAD gate"
     return 0
@@ -343,11 +398,19 @@ maybe_skip_ship() {
     return 0
   fi
 
-  local min_sec path last_ts last_sha now elapsed head_sha
-  min_sec="${IOS_TF_MIN_INTERVAL_SEC:-$DEFAULT_MIN_INTERVAL_SEC}"
-  # Non-numeric / empty → default
-  if ! [[ "$min_sec" =~ ^[0-9]+$ ]]; then
+  local min_sec min_src path last_ts last_sha now elapsed head_sha
+  # Report which source the number came from, so the log answers "why did this
+  # not ship" without anyone reading the script. Non-numeric / empty -> default,
+  # and say so rather than crediting the env var for a value it did not supply.
+  if [[ -n "${IOS_TF_MIN_INTERVAL_SEC:-}" && "${IOS_TF_MIN_INTERVAL_SEC}" =~ ^[0-9]+$ ]]; then
+    min_sec="$IOS_TF_MIN_INTERVAL_SEC"
+    min_src="IOS_TF_MIN_INTERVAL_SEC"
+  else
     min_sec="$DEFAULT_MIN_INTERVAL_SEC"
+    min_src="DEFAULT_MIN_INTERVAL_SEC in $(basename "$0")"
+    if [[ -n "${IOS_TF_MIN_INTERVAL_SEC:-}" ]]; then
+      log "ship-gate: IOS_TF_MIN_INTERVAL_SEC is not a number; using the default"
+    fi
   fi
   path="$(ship_state_path)"
   head_sha="$(repo_head_sha)"
@@ -368,19 +431,26 @@ maybe_skip_ship() {
   if [[ -n "${last_sha:-}" && "$last_sha" != "unknown" && "$head_sha" == "$last_sha" ]]; then
     log "ship-gate: skip — HEAD ${head_sha:0:10} already shipped for ${APP_KEY} (no new commits)"
     log "ship-gate: use --force-ship to upload the same HEAD again"
-    exit 0
+    SHIP_GATE_DECISION="skip"
+    return 0
   fi
 
   elapsed=$((now - last_ts))
   if [[ "$elapsed" -lt "$min_sec" ]]; then
     local remain=$((min_sec - elapsed))
     local remain_m=$(( (remain + 59) / 60 ))
+    local min_m=$(( min_sec / 60 ))
     log "ship-gate: skip — last ${APP_KEY} ship ${elapsed}s ago; min interval ${min_sec}s (~${remain_m}m left)"
-    log "ship-gate: set IOS_TF_MIN_INTERVAL_SEC or pass --force-ship to override"
-    exit 0
+    log "ship-gate: that ${min_sec}s (${min_m}m) limit comes from ${min_src}."
+    log "ship-gate: it is THE throttle on automatic shipping — .github/workflows/ios-ship.yml"
+    log "ship-gate: runs on every push to main touching clients/ios/**, and most runs skip here."
+    log "ship-gate: override this run with IOS_TF_MIN_INTERVAL_SEC=<seconds> or --force-ship;"
+    log "ship-gate: change the standing limit by editing DEFAULT_MIN_INTERVAL_SEC (owner's call)."
+    SHIP_GATE_DECISION="skip"
+    return 0
   fi
 
-  log "ship-gate: ok — ${elapsed}s since last ship (min ${min_sec}s); HEAD ${head_sha:0:10}"
+  log "ship-gate: ok — ${elapsed}s since last ship (min ${min_sec}s from ${min_src}); HEAD ${head_sha:0:10}"
 }
 
 record_successful_ship() {
@@ -475,6 +545,33 @@ if [[ -z "$UPLOAD_ONLY_IPA" && "$DRY_RUN" -eq 0 ]]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# SHIP GATE FIRST, THEN THE BUILD NUMBER.
+# ---------------------------------------------------------------------------
+# Ordering matters and used to be wrong. The gate was evaluated ~60 lines below
+# the point where next_build_seq() commits floor+1 to the counter, so every
+# rate-limited attempt burned a version that never shipped (observed live
+# 2026-08-12: skipped at 4392s of a 9000s interval, sequence still went 5 -> 6).
+#
+# Everything the gate needs is already resolved above: APP_KEY, REPO_ROOT (for
+# HEAD), EXPORT_ONLY, FORCE_SHIP, STATE_DIR. Nothing between here and the old
+# call site set up anything it reads, so moving it earlier drops no step. What
+# it now runs BEFORE is: PBXPROJ resolution, resolve_seq_floor (an App Store
+# Connect round trip), next_build_seq (the consuming step), the project-version
+# agreement check, --sync-project-version, load_secrets, and the output dirs.
+# The dirty-worktree check stays ahead of the gate so a dirty tree still fails
+# loudly rather than being masked by a quiet rate-limit skip.
+#
+# --force-ship and --export-only still bypass the gate exactly as before, and
+# --dry-run still reports the gate outcome alongside the version plan (it peeks
+# at the sequence without consuming it, so evaluating early changes nothing for
+# it beyond ordering the log lines).
+evaluate_ship_gate
+if [[ "$SHIP_GATE_DECISION" == "skip" && "$DRY_RUN" -eq 0 ]]; then
+  log "ship-gate: exiting 0 before any build number is consumed (sequence untouched)"
+  exit 0
+fi
+
 # Where the version the project itself declares lives. Best-effort: for
 # XcodeGen apps the .xcodeproj may not exist until it is generated below, in
 # which case the project contributes 0 to the floor and says so.
@@ -485,10 +582,22 @@ fi
 
 MARKETING_PREFIX="$(marketing_prefix)"
 
-if [[ -n "$FORCE_BUILD" || -n "$FORCE_VERSION" ]]; then
-  # Explicit operator override: honour exactly what was asked.
-  BUILD_NUM="${FORCE_BUILD:-$FORCE_VERSION}"
+if [[ -n "$UPLOAD_ONLY_IPA" ]]; then
+  # The IPA already carries the versions it was built with. Resolving — let
+  # alone consuming — a sequence here would burn a marketing version on a run
+  # that cannot possibly use it, which is the same defect as the gate-ordering
+  # bug above. It would also drag in resolve_seq_floor's hard failure when ASC
+  # is unreachable, blocking a legitimate retry of an already-built IPA.
+  MARKETING="(from IPA)"
+  BUILD_NUM="(from IPA)"
+  log "version: taken from the existing IPA (--upload-only); sequence neither consulted nor consumed"
+elif [[ -n "$FORCE_BUILD" || -n "$FORCE_VERSION" ]]; then
+  # Explicit operator override: honour exactly what was asked. A bare --version
+  # still gets an auto timestamp build number, which is always higher than
+  # anything already uploaded — that is the whole point of the scheme, so an
+  # operator picking the marketing version does not have to reason about it.
   MARKETING="${FORCE_VERSION:-$DEFAULT_MARKETING}"
+  BUILD_NUM="${FORCE_BUILD:-$(utc_build_stamp)}"
   log "version: operator override (--build/--version); sequence not consulted"
 else
   # resolve_seq_floor runs in a subshell, so its die() cannot exit this script
@@ -499,17 +608,23 @@ else
     # Dry-run must not consume a sequence number — peek only.
     SEQ=$((SEQ_FLOOR + 1))
   else
+    # The only remaining consumer. A gated run exited above; a dry-run peeks;
+    # an --upload-only run never gets here. So the counter advances only on a
+    # run that is really about to archive, and by exactly 1.
     SEQ="$(next_build_seq "$SEQ_FLOOR")"
   fi
   MARKETING="${MARKETING_PREFIX}.${SEQ}"
-  BUILD_NUM="$MARKETING"
+  # NOT "$MARKETING" — see the CFBundleVersion note above utc_build_stamp.
+  BUILD_NUM="$(utc_build_stamp)"
 fi
 
 # The project file and the shipped version must never disagree silently. The
 # version above is passed on the xcodebuild command line and overrides whatever
 # project.pbxproj says, so a stale value there is invisible without this check.
 PROJECT_SEQ_NOW="$(project_marketing_seq "$PBXPROJ" "$MARKETING_PREFIX" quiet)"
-if [[ -z "$PBXPROJ" ]]; then
+if [[ -n "$UPLOAD_ONLY_IPA" ]]; then
+  : # no version was resolved for --upload-only; nothing to compare against
+elif [[ -z "$PBXPROJ" ]]; then
   log "project version: .xcodeproj not resolvable yet; skipping agreement check"
 elif [[ "${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}" != "$MARKETING" ]]; then
   log "NOTICE: project.pbxproj says MARKETING_VERSION=${MARKETING_PREFIX}.${PROJECT_SEQ_NOW}, shipping ${MARKETING}."
@@ -528,6 +643,9 @@ if [[ "$SYNC_PROJECT_VERSION" -eq 1 ]]; then
   [[ "$DRY_RUN" -eq 0 ]] || die "--sync-project-version cannot be combined with --dry-run.
   A dry-run does not consume a sequence number, so writing ${MARKETING} now would be
   superseded by the next real ship. Pass --sync-project-version on the real ship instead."
+  [[ -z "$UPLOAD_ONLY_IPA" ]] || die "--sync-project-version cannot be combined with --upload-only.
+  An upload-only run resolves no version of its own — the IPA already carries one — so
+  there is nothing to write back. Pass it on the run that builds the archive."
   [[ -n "$PBXPROJ" && -f "$PBXPROJ" ]] || die "--sync-project-version: project.pbxproj not found under $REPO_ROOT"
   /usr/bin/sed -i '' \
     -e "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = ${MARKETING};/g" \
@@ -551,17 +669,21 @@ log "bundleId=${BUNDLE_ID}"
 log "scheme=${SCHEME}"
 log "repo=${REPO_ROOT}"
 log "marketing=${MARKETING} build=${BUILD_NUM}"
+log "App Store Connect will show this as: ${MARKETING} (${BUILD_NUM})"
 log "auth=${AUTH_MODE} export_only=${EXPORT_ONLY} force_ship=${FORCE_SHIP}"
 log "out=${OUT_ROOT}"
 
-# Gate before expensive archive / upload (dry-run still reports gate outcome).
+# The gate already ran, before any build number was consumed. A real run that
+# was told to skip exited there; only --dry-run reaches this point still
+# holding a "skip" decision, and it reports it as part of the plan.
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  maybe_skip_ship
-  log "dry-run: would archive + ship; exiting"
+  if [[ "$SHIP_GATE_DECISION" == "skip" ]]; then
+    log "dry-run: ship-gate would SKIP this run; no build number would be consumed"
+  else
+    log "dry-run: would archive + ship; exiting"
+  fi
   exit 0
 fi
-
-maybe_skip_ship
 
 if [[ -n "$UPLOAD_ONLY_IPA" ]]; then
   [[ -f "$UPLOAD_ONLY_IPA" ]] || die "IPA not found: $UPLOAD_ONLY_IPA"

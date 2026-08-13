@@ -131,3 +131,29 @@ jobs:
 
       - name: Test (includes Dockerfile COPY-vs-imports guard)
         run: python -m pytest tests -q
+
+  # The ship script decides release version numbers and whether a merge becomes
+  # a TestFlight upload, but it only ever runs on the owned Mac runner, so a
+  # defect in it is invisible until a real ship. That is how the 2026-08-12
+  # ordering bug landed: a rate-limited attempt still consumed a build number
+  # (sequence 5 -> 6 for a build that shipped nowhere). These tests are fully
+  # offline -- fake xcodebuild, scratch HOME/state, no credentials, no network.
+  ios-fleet-ship-logic:
+    name: ios-fleet ship numbering (bash)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Syntax-check the ship scripts
+        run: |
+          bash -n scripts/ios-fleet/ship-testflight.sh
+          bash -n scripts/ios-fleet/test-ship-seq.sh
+          bash -n scripts/ios-ship-testflight.sh
+          node --check scripts/ios-fleet/asc-api.mjs
+
+      - name: Build-number + ship-gate tests
+        run: bash scripts/ios-fleet/test-ship-seq.sh

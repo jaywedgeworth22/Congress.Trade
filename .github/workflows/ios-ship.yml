@@ -7,6 +7,16 @@ name: iOS TestFlight ship (Mac runner)
 # labels. Backend jobs stay off this host. Fork PRs never run here.
 #
 # Secrets stay on the Mac (~/.secrets/appstore-connect.env).
+#
+# NOT EVERY RUN SHIPS. The ship script rate-limits successful TestFlight
+# uploads to one per app per DEFAULT_MIN_INTERVAL_SEC=9000 seconds (2.5 hours),
+# a constant near the top of scripts/ios-fleet/ship-testflight.sh. Runs inside
+# that window print "ship-gate: skip" and exit 0 (green, nothing uploaded); so
+# do runs whose git HEAD already shipped. That gate is the main thing holding
+# back automatic shipping. Neither kind of skip consumes a build number.
+# To force one run, dispatch manually after exporting IOS_TF_MIN_INTERVAL_SEC,
+# or run the wrapper locally with --force-ship. Changing the standing limit
+# means editing DEFAULT_MIN_INTERVAL_SEC (owner's call, not the workflow's).
 
 on:
   push:
