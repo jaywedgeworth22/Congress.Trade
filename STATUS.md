@@ -1,5 +1,33 @@
 # Current Handoff
 
+## 2026-08-13 MONET — CI and iOS ship never ran on bot-merged PRs
+
+Branch `monet/ci-ship-trigger-bot-merge`.  A PR merged by `github-actions[bot]`
+lands on `main` and dispatches **zero** workflow runs — GitHub raises no workflow
+events for actions taken with `GITHUB_TOKEN`, and `auto-merge-prs.yml` arms
+auto-merge with exactly that token.  Measured here: `c38b6787` (#1835,
+bot-merged) -> 0 runs; `ceaca097` (#1836, human-merged) -> 10, five of them
+`event: push`.  So the post-merge sha on `main` was never verified, and the iOS
+work in #1835 reached `main` without reaching a phone.
+
+Fix in three layers: both auto-merge workflows now refuse to arm without an
+elevated identity (`GH_PAT` / `SHEPHERD_TOKEN` — neither exists in any fleet
+repo) and print the `gh pr merge <n> --squash --auto` command instead; `ci.yml`
+gains an hourly `schedule:` backstop behind a fail-closed gate job that skips
+when `main`'s HEAD already has a run; `ios-ship.yml` gains `cron: '7,37 * * * *'`
+plus `scripts/ios-fleet/scheduled-ship-gate.sh`, which ships on a scheduled tick
+only when `clients/ios/**` actually changed since that app's last successful
+ship.  Without that gate a cron would ship a TestFlight build for every backend
+commit — the owner does not want TestFlight spammed.
+
+The runtime-drift step is now advisory: `check-drift.sh` exits 1 today
+(`ship-all.sh` behind, `apps.json` ahead) and cannot be repaired from inside
+this repo, and this job builds from the in-repo copy anyway.
+
+**Owner actions:** add a `GH_PAT` secret to re-activate auto-merge, and
+reinstall `/Users/jay/apps/ios-fleet` from the repo to clear the drift.
+Rollout: `docs/rollouts/2026-08-13-ci-ship-trigger-bot-merge.md`.
+
 ## 2026-08-13 CLAUDE — iOS Premium: one screen, purchases that confirm
 
 Owner's TestFlight purchase was charged by Apple and then reported as **"Request

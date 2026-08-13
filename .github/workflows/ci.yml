@@ -1,28 +1,118 @@
 name: CI
 
+# The `schedule:` trigger is a BACKSTOP, not a second CI cadence. A PR merged
+# by github-actions[bot] (auto-merge armed with GITHUB_TOKEN) produces a push
+# to main that GitHub's recursion guard suppresses entirely -- measured here:
+# sha c38b6787 (PR #1835, bot-merged) dispatched ZERO runs, while sha ceaca097
+# (PR #1836, human-merged) dispatched five. The post-merge squash sha on main
+# therefore never got verified. `schedule:` events are NOT subject to that
+# guard, so this tick notices an unverified main sha and runs CI on it.
+#
+# The schedule-gate job below makes every other tick a ~10-second no-op, so the
+# normal case costs one short ubuntu-latest job per hour and nothing else.
+# The root-cause fix is in .github/workflows/auto-merge-prs.yml (stop merging
+# as github-actions[bot]); this stays as defence in depth for any bot merge
+# that still slips through, e.g. Dependabot.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Hourly, off the top of the hour (GitHub throttles :00 stampedes).
+    - cron: '23 * * * *'
 
-# Cancel superseded runs on the same ref to save minutes.
+# Cancel superseded runs on the same ref to save minutes. Keyed on the event as
+# well as the ref so the scheduled backstop and a real push to main cannot
+# cancel each other -- push-vs-push and PR-vs-PR still supersede as before.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # Cheap decision job. For every non-schedule event it immediately votes "run"
+  # and CI behaves exactly as it always has. For a scheduled tick it asks the
+  # Actions API whether THIS workflow already has a run (successful, queued, or
+  # in progress) for main's current HEAD, and skips when one exists.
+  #
+  # Fail-closed on purpose: any API error, empty response, or unparseable
+  # result votes RUN. A backstop that silently stops backstopping is worse than
+  # one that occasionally re-runs.
+  schedule-gate:
+    name: scheduled backstop gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Decide whether this run should proceed
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" != "schedule" ]; then
+            echo "should_run=1" >> "$GITHUB_OUTPUT"
+            echo "event=${EVENT}: normal CI, gate does not apply."
+            exit 0
+          fi
+
+          resp="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100")" || resp=""
+          if [ -z "$resp" ]; then
+            echo "::warning::Could not read prior CI runs for ${SHA}; failing closed and running CI."
+            echo "should_run=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Exclude this very run (it is itself in_progress for the same sha).
+          existing="$(printf '%s' "$resp" | jq -r --arg me "${GITHUB_RUN_ID}" '
+            [ .workflow_runs[]
+              | select((.id|tostring) != $me)
+              | select(.conclusion == "success" or .status == "in_progress" or .status == "queued")
+            ] | length')" || existing=""
+          case "$existing" in
+            ''|*[!0-9]*)
+              echo "::warning::Unparseable run list for ${SHA}; failing closed and running CI."
+              echo "should_run=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [ "$existing" -gt 0 ]; then
+            echo "should_run=0" >> "$GITHUB_OUTPUT"
+            echo "CI already ran (or is running) for ${SHA}; backstop skips."
+          else
+            echo "should_run=1" >> "$GITHUB_OUTPUT"
+            echo "::warning::No CI run exists for main sha ${SHA} -- a bot merge dispatched nothing. Running the backstop."
+            {
+              echo "### CI backstop engaged"
+              echo
+              echo "main sha \`${SHA}\` had no CI run. That is the bot-merge dispatch"
+              echo "dropout; see \`.github/workflows/auto-merge-prs.yml\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # `typecheck + test` is a REQUIRED check and now `needs:` this job, so
+          # this step must never be the reason a PR cannot merge.
+          exit 0
+
   build:
     name: typecheck + test
     # Self-hosted CI with automatic hosted fallback. Set CT_CI_RUNNER repo
     # variable to 'congress-ci' for owned runner, clear/delete for hosted.
     # Dependabot forced to hosted runners for security.
+    needs: [schedule-gate]
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.schedule-gate.outputs.should_run == '1' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ vars.CT_CI_RUNNER != '' && github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
@@ -106,9 +196,11 @@ jobs:
   # worker crash-looped in production until 2026-08-11 with no CI signal.
   scan-cpu-worker:
     name: scan-cpu-worker (python)
+    needs: [schedule-gate]
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.schedule-gate.outputs.should_run == '1' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -140,9 +232,11 @@ jobs:
   # offline -- fake xcodebuild, scratch HOME/state, no credentials, no network.
   ios-fleet-ship-logic:
     name: ios-fleet ship numbering (bash)
+    needs: [schedule-gate]
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.schedule-gate.outputs.should_run == '1' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -152,8 +246,16 @@ jobs:
         run: |
           bash -n scripts/ios-fleet/ship-testflight.sh
           bash -n scripts/ios-fleet/test-ship-seq.sh
+          bash -n scripts/ios-fleet/scheduled-ship-gate.sh
+          bash -n scripts/ios-fleet/test-scheduled-ship-gate.sh
           bash -n scripts/ios-ship-testflight.sh
           node --check scripts/ios-fleet/asc-api.mjs
 
       - name: Build-number + ship-gate tests
         run: bash scripts/ios-fleet/test-ship-seq.sh
+
+      # The scheduled ios-ship cron has no `paths:` filter of its own, so this
+      # gate is the only thing keeping a backend-only commit from becoming a
+      # TestFlight build. It runs solely on the Mac runner, so test it here.
+      - name: Scheduled ship gate tests
+        run: bash scripts/ios-fleet/test-scheduled-ship-gate.sh
