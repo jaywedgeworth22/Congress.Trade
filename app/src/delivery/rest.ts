@@ -85,6 +85,7 @@ import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { checkReadiness, type ReadinessResult } from '../shared/readiness.ts';
 import { costProfilePublicSummary, resolveDenoCostProfile } from '../deno/costProfile.ts';
+import { readLocalLitestreamAge } from '../shared/litestreamAge.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -486,6 +487,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // rather than assumed — ship.sh does not deploy, Coolify does, and that
     // webhook has silently not fired before. See src/shared/buildInfo.ts.
     const build = readBuildInfo(envx);
+    const storage = await readLocalLitestreamAge();
     return c.json(
       {
         ...readiness,
@@ -493,6 +495,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         pipeline,
         costProfile,
         build,
+        // Usage Monitor fleet backup reads checks.storage.litestreamAgeSeconds.
+        checks: { storage },
         time: new Date().toISOString(),
       },
       readiness.ok ? 200 : 503,
