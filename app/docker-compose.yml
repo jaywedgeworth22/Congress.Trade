@@ -79,7 +79,12 @@ services:
       - .env
     environment:
       - SQLITE_WEB_PASSWORD=${SQLITE_WEB_PASSWORD}
-    # CMD in Dockerfile.sqlite-web enforces password + starts server
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Linux/ARM64 CPU scanned-PTR worker (no Mac, no LLM).
   # Polls /api/admin/scanned-filings/pending and posts source=server_cpu.
@@ -105,6 +110,12 @@ services:
       # ADMIN_TOKEN comes from env_file (.env / Coolify secrets)
     depends_on:
       - congress-app
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 # Join Coolify proxy network so Traefik/Caddy can reach congress-app after
 # Hetzner cutover. oracle_internal is legacy (Oracle host); do not require it.
