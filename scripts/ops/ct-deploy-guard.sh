@@ -139,7 +139,22 @@ try:
     d=json.load(sys.stdin)
 except Exception:
     print("ERR - 0"); raise SystemExit
-rows = d if isinstance(d,list) else d.get("data", d.get("deployments", []))
+# Coolify 4.x /api/v1/deployments is a JSON object with numeric keys
+# ({"0": row, "1": row}), not an array.
+if isinstance(d, list):
+    rows = d
+elif isinstance(d, dict):
+    inner = d.get("data", d.get("deployments"))
+    if isinstance(inner, list):
+        rows = inner
+    elif isinstance(inner, dict):
+        rows = list(inner.values())
+    elif d and all(str(k).isdigit() for k in d.keys()):
+        rows = list(d.values())
+    else:
+        rows = []
+else:
+    rows = []
 if not isinstance(rows, list):
     print("ERR - 0"); raise SystemExit
 # Global endpoint: keep only THIS app. Match on either the uuid or the name so a
@@ -163,6 +178,7 @@ if [[ "$RUNNING" == "ERR" ]]; then
   log "could not parse deployments payload"
   exit 1
 fi
+log "saw running=${RUNNING} queued=${QUEUED_UUIDS}"
 
 # A build being in progress must NOT stop us coalescing the queue behind it.
 #
