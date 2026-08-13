@@ -57,6 +57,17 @@ jobs:
               ;;
           esac
 
+      # The repo is the source of truth for the fleet tooling, but the LaunchAgent
+      # path (ship-now-gui.sh -> /Users/jay/apps/ios-fleet/) runs the RUNTIME copy.
+      # check-drift.sh exists to catch that copy going stale and, until now, had
+      # ZERO callers -- so a fix could land in the repo while the owner's manual
+      # "ship now" button kept running the old code. It did exactly that: the
+      # runtime copy still carried both the seq-before-gate ordering bug and the
+      # CFBundleVersion==MARKETING rejection trap after both were fixed here.
+      # This job runs on the same Mac, so the runtime dir is present and drift fails.
+      - name: Fail if the runtime ios-fleet copy has drifted from the repo
+        run: bash "$GITHUB_WORKSPACE/scripts/ios-fleet/check-drift.sh"
+
       - name: Ship CongressTrade to TestFlight
         run: |
           # Wrapper resolves the in-repo fleet script (scripts/ios-fleet/) and

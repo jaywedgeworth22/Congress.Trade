@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ship all three fleet iOS apps to TestFlight (sequential).
+# Ship all FOUR fleet iOS apps to TestFlight (sequential).
 # Usage:
 #   bash /Users/jay/apps/ios-fleet/ship-all.sh [--export-only] [--dry-run] [--allow-dirty]
 #
@@ -40,6 +40,15 @@ resolve_root() {
         "$HOME/Code/Congress.Trade"
       do [[ -d "$p/clients/ios" ]] && echo "$p" && return 0; done
       ;;
+    usage-local)
+      # ship-now-gui.sh (the LaunchAgent path) ships this app from
+      # usage-grok-tf-runner; apps.json's worktreeHint points at the sibling
+      # usage-grok-ios-tf. Try the path known to work first.
+      for p in \
+        "$HOME/apps/usage-grok-tf-runner" \
+        "$HOME/apps/usage-grok-ios-tf"
+      do [[ -d "$p/ios" ]] && echo "$p" && return 0; done
+      ;;
     usage)
       for p in \
         "$HOME/apps/usage-grok-ios-tf" \
@@ -63,4 +72,7 @@ ship_one() {
 ship_one socratic IOS_SOCRATIC_ROOT "~/apps/trading-grok-ios-tf"
 ship_one congress IOS_CONGRESS_ROOT "~/apps/congress-grok-ios-tf"
 ship_one usage IOS_USAGE_ROOT "~/apps/usage-grok-ios-tf"
+# usage-local was registered in apps.json and shipped by ship-now-gui.sh, but this
+# entry point silently skipped it -- "ship all" shipped three of four.
+ship_one usage-local IOS_USAGE_LOCAL_ROOT "~/apps/usage-grok-tf-runner"
 echo "========== all done =========="
