@@ -18,7 +18,9 @@ replaces `SubscribeView.swift`, `PremiumInfoSheet` deleted) — benefits, price,
 real products, Restore, all on one screen.  Trial copy realigned to 2 weeks
 everywhere; the two old sheets had drifted to different trial lengths.
 
-Branch `claude/ios-paywall-iap-latency`.  Rollout:
+Merged as #1835 (`c38b6787`) and auto-deployed; prod health reports
+`c38b67877745`.  The iOS half needs a TestFlight ship to reach the phone.
+Rollout:
 `docs/rollouts/2026-08-13-ios-paywall-one-screen-and-inline-commands.md`.
 
 **Blocker for the owner:** confirm the App Store Connect introductory offer on
