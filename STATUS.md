@@ -1,6 +1,10 @@
 # Current Handoff
 
-## 2026-08-13 MONET — CI and iOS ship never ran on bot-merged PRs
+## 2026-08-13 GROK — pickup leftovers verified, no CT code
+
+iOS settings leftovers from today's capped chats are already on `main` (`b649778e`): Sign in with Apple, Google-branded button, full-height Account sheet, Trade Disclosure Alerts, CSV + Premium + legal.  Stay-funded and the fourth Cloudflare account are Usage Monitor (`grok/pickup-um-cf-accounts`).  No CT implementation.
+
+## Prior — 2026-08-13 MONET — CI and iOS ship never ran on bot-merged PRs
 
 Branch `monet/ci-ship-trigger-bot-merge`.  A PR merged by `github-actions[bot]`
 lands on `main` and dispatches **zero** workflow runs — GitHub raises no workflow
