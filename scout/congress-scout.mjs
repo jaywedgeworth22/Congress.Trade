@@ -208,10 +208,12 @@ const fetchWithRetry = async (url, options = {}, retries = 3) => {
     try {
       const res = await _originalFetch(url, options);
       if (res.status === 503 || res.status === 403 || res.status === 429) {
-        if (i < retries - 1) {
-          await sleep(2000 * (i + 1));
-          continue;
-        }
+        // eFD 503/403 is often the agreement wall or Akamai intercept. Retrying
+        // the same handshake hammers the IP and fights the source breaker.
+        const href = String(url);
+        if (/efdsearch\.senate\.gov/i.test(href) || i >= retries - 1) return res;
+        await sleep(2000 * (i + 1));
+        continue;
       }
       return res;
     } catch (err) {
@@ -416,9 +418,16 @@ async function detectSenate() {
   }
 }
 
-async function detectSenateOnce() {
+// Reuse one agreement-accepted session across polls, like senate-relay.ts.
+// Re-handshaking every poll is what made Akamai serve the static maintenance
+// page while the Mac relay (long-lived session) kept returning JSON.
+let senateSession = null;
+
+const SENATE_BROWSER_HEADERS = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' };
+
+async function establishSenateSession() {
   const jar = new Map();
-  const H = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' };
+  const H = SENATE_BROWSER_HEADERS;
   let res = await fetch(`${SENATE}/search/`, { headers: H, redirect: 'manual' });
   absorb(jar, res);
   for (let hop = 0; hop < 4 && [301, 302, 303, 307, 308].includes(res.status); hop++) {
@@ -432,9 +441,6 @@ async function detectSenateOnce() {
     throw new Error(`GET /search/ HTTP ${res.status} — ${classifyUpstream(res.status, snippet)}`);
   }
   const html = await res.text();
-  // The hidden input's name/value attribute order isn't guaranteed by eFD's
-  // template, so try both orders (mirrors app/src/ingestion/senateSource.ts
-  // parseCsrfMiddlewareToken).
   const token = (
     /name=["']csrfmiddlewaretoken["']\s+value=["']([^"']+)["']/i.exec(html) ||
     /value=["']([^"']+)["']\s+name=["']csrfmiddlewaretoken["']/i.exec(html) ||
@@ -447,30 +453,52 @@ async function detectSenateOnce() {
     body: `prohibition_agreement=1&csrfmiddlewaretoken=${encodeURIComponent(token)}`,
     redirect: 'manual',
   }).then((r) => absorb(jar, r));
+  return { jar, token, csrf: jar.get('csrftoken') || token };
+}
+
+async function getSenateSession(forceFresh = false) {
+  if (!senateSession || forceFresh) senateSession = await establishSenateSession();
+  return senateSession;
+}
+
+async function postSenateReportData(session) {
   const now = new Date();
   const since = new Date(now.getTime() - 45 * 864e5);
   const body = new URLSearchParams({
-    // eFD inserted an "office" display column ahead of the PTR link, shifting
-    // the submitted-date column from index 4 to 5 (see the 6-column fixture in
-    // app/src/ingestion/__tests__/senateSource.test.ts). Sorting by the old
-    // index-4 no longer orders by date, which can omit the newest filings once
-    // a 45-day window has more than `length` rows.
     draw: '1', start: '0', length: '100', 'search[value]': '', 'search[regex]': 'false',
     'order[0][column]': '5', 'order[0][dir]': 'desc', report_types: '[11]', filer_types: '[]',
     submitted_start_date: fmtSenate(since), submitted_end_date: fmtSenate(now), first_name: '', last_name: '',
   });
-  const data = await fetch(`${SENATE}/search/report/data/`, {
+  return fetch(`${SENATE}/search/report/data/`, {
     method: 'POST',
-    headers: { ...H, 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', cookie: cookieHeader(jar), referer: `${SENATE}/search/`, origin: SENATE, 'x-csrftoken': jar.get('csrftoken') || token, 'x-requested-with': 'XMLHttpRequest', accept: 'application/json,text/javascript,*/*; q=0.01' },
+    headers: {
+      ...SENATE_BROWSER_HEADERS,
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      cookie: cookieHeader(session.jar),
+      referer: `${SENATE}/search/`,
+      origin: SENATE,
+      'x-csrftoken': session.csrf,
+      'x-requested-with': 'XMLHttpRequest',
+      accept: 'application/json,text/javascript,*/*; q=0.01',
+    },
     body: body.toString(),
   });
+}
+
+async function detectSenateOnce() {
+  let session = await getSenateSession();
+  let data = await postSenateReportData(session);
   if (!data.ok) {
-    // Read a bounded slice of the body before throwing. The old code threw on
-    // the status alone, which is why 1,385 log lines said "HTTP 503" and none
-    // said "the Senate is in a maintenance window" — the answer was in the
-    // response body the whole time.
     const snippet = (await data.text().catch(() => '')).slice(0, 2000);
-    throw new Error(`report/data/ HTTP ${data.status} — ${classifyUpstream(data.status, snippet)}`);
+    // Akamai serves the maintenance HTML to a stale/missing session.  The Mac
+    // senate-relay keeps getting JSON with a reused session.  Refresh once.
+    senateSession = null;
+    session = await getSenateSession(true);
+    data = await postSenateReportData(session);
+    if (!data.ok) {
+      const again = (await data.text().catch(() => '')).slice(0, 2000);
+      throw new Error(`report/data/ HTTP ${data.status} — ${classifyUpstream(data.status, again || snippet)}`);
+    }
   }
   const json = await data.json();
   const rows = Array.isArray(json.data) ? json.data : [];
