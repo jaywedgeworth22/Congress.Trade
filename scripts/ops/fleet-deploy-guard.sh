@@ -145,8 +145,24 @@ try:
     d=json.load(sys.stdin)
 except Exception:
     print("ERR - 0"); raise SystemExit
-rows = d if isinstance(d,list) else d.get("data", d.get("deployments", []))
-if not isinstance(rows,list):
+# Coolify 4.x /api/v1/deployments is a JSON object with numeric keys
+# ({"0": row, "1": row}), not an array.  Treating that as .get("data")
+# produced [] and the guard went silently blind while duplicates queued.
+if isinstance(d, list):
+    rows = d
+elif isinstance(d, dict):
+    inner = d.get("data", d.get("deployments"))
+    if isinstance(inner, list):
+        rows = inner
+    elif isinstance(inner, dict):
+        rows = list(inner.values())
+    elif d and all(str(k).isdigit() for k in d.keys()):
+        rows = list(d.values())
+    else:
+        rows = []
+else:
+    rows = []
+if not isinstance(rows, list):
     print("ERR - 0"); raise SystemExit
 uuid=os.environ.get("APP_UUID",""); name=os.environ.get("APP_NAME","")
 def mine(x):
@@ -164,6 +180,7 @@ if [[ "$RUNNING" == "ERR" ]]; then
   log "could not parse deployments payload"
   exit 1
 fi
+log "saw running=${RUNNING} queued=${QUEUED_UUIDS}"
 
 RUNNING_NOW=0
 if [[ "${RUNNING:-0}" -gt 0 ]]; then
