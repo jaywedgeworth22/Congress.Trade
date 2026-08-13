@@ -50,6 +50,59 @@ TestFlight build.  `scripts/ios-fleet/scheduled-ship-gate.sh` closes that: on a
 scheduled tick it ships only when `clients/ios/**` actually changed between the
 app's last successful ship and HEAD.
 
+### Review round 2 — two defects found before landing
+
+**(a) A scheduled backstop that could subtract verification.** The first pass
+gave the required `typecheck + test` job `needs: [schedule-gate]` with
+`if: needs.schedule-gate.outputs.should_run == '1'`. The decide *step* always
+exits 0, but the *job* can still fail, time out (`timeout-minutes: 5`), or be
+cancelled by runner/API trouble — and when a `needs:` dependency fails, every
+dependent job resolves to **skipped**, which GitHub reports as a **satisfied**
+required check. A gate outage would therefore have let a PR merge with tsc and
+tests never having run: the exact inverse of the backstop's purpose.
+Fail-closed inside the step is not the same as fail-closed at the job level.
+
+All three gated jobs now use:
+
+```yaml
+if: >-
+  !cancelled() &&
+  (github.event_name != 'schedule' ||
+  needs.schedule-gate.outputs.should_run != '0') &&
+  (github.event_name != 'pull_request' || ...)
+```
+
+`!cancelled()` (not `always()`) so a superseded run still cancels cleanly, and
+`!= '0'` so an absent or unparseable output still **runs** — only an explicit
+"already verified" vote skips, and only on the scheduled path. This is the same
+pattern Socratic.Trade adopted in its PR #370 for the same reason.
+
+**(b) Automatic ships that would have been silently uninstallable.** This repo
+ships through `scripts/ios-ship-testflight.sh`, which resolves the **in-repo**
+`scripts/ios-fleet/` copy — and that copy still carried the wrong-build
+export-compliance defect verbatim: `ship-testflight.sh` called
+`asc-api.mjs ensure-tf-ready "$BUNDLE_ID"` with no build number, and `asc-api.mjs`
+resolved it as `filter[app]=<id>&sort=-uploadedDate&limit=1`. ASC ingestion is
+asynchronous, so for the first minutes after an upload "newest" is the
+**previous** ship. The parallel lane had fixed only the untracked runtime copy at
+`/Users/jay/apps/ios-fleet`. Turning on a cron without porting the fix would have
+meant every automatic CT ship declaring compliance on the wrong build and leaving
+the new one `MISSING_EXPORT_COMPLIANCE` — the ST 1.0.1/1.0.2
+"VALID but never installable" failure, now on a schedule.
+
+Both in-repo files were byte-identical to the pre-edit runtime backup
+(`diff` against `/Users/jay/apps/ios-fleet/.backup-monet-20260813/` → no output),
+so the port is a clean whole-file copy of the fixed runtime versions rather than
+a hand-merge. That also removes the two copies' divergence for these two files.
+`ensure-tf-ready` now takes `<bundleId> <buildVersion> [marketingVersion]`, polls
+`filter[version]=` until the build this run uploaded actually appears, and only
+then declares compliance on **that** id. It also renders the mandatory
+`AGENT-SYNC.md` "What to Test" note — **opt-in**, defaulting to a dry render into
+the ship log (`IOS_TF_RELEASE_NOTES=1` publishes; owner's call, not an agent's).
+
+`bash scripts/ios-fleet/test-ship-seq.sh` still passes **43/43** after the port,
+so no expectation refresh was needed.
+
 Files touched:
 
 - `.github/workflows/auto-merge-prs.yml`
@@ -58,6 +111,8 @@ Files touched:
 - `.github/workflows/ios-ship.yml`
 - `scripts/ios-fleet/scheduled-ship-gate.sh` (new)
 - `scripts/ios-fleet/test-scheduled-ship-gate.sh` (new)
+- `scripts/ios-fleet/asc-api.mjs` (export-compliance + release-notes port)
+- `scripts/ios-fleet/ship-testflight.sh` (export-compliance + release-notes port)
 - `STATUS.md`, `docs/EFFORT-LOG.md`, this note
 
 ## 3. Decisions & Trade-offs

@@ -109,8 +109,18 @@ jobs:
     # variable to 'congress-ci' for owned runner, clear/delete for hosted.
     # Dependabot forced to hosted runners for security.
     needs: [schedule-gate]
+    # `!cancelled()`, NOT the bare gate output. `needs:` alone would let a
+    # FAILED or timed-out schedule-gate job skip this one, and GitHub reports a
+    # skipped required check as SATISFIED -- so a gate outage would silently let
+    # a PR merge with tsc/tests never having run. That is the exact inverse of
+    # what the backstop is for. Failing closed inside the step is not enough;
+    # the job-level condition has to fail closed too. `!= '0'` means an absent
+    # or unparseable output still RUNS; only an explicit "already verified"
+    # vote skips, and only on the scheduled path.
     if: >-
-      needs.schedule-gate.outputs.should_run == '1' &&
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+      needs.schedule-gate.outputs.should_run != '0') &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ vars.CT_CI_RUNNER != '' && github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
@@ -197,8 +207,18 @@ jobs:
   scan-cpu-worker:
     name: scan-cpu-worker (python)
     needs: [schedule-gate]
+    # `!cancelled()`, NOT the bare gate output. `needs:` alone would let a
+    # FAILED or timed-out schedule-gate job skip this one, and GitHub reports a
+    # skipped required check as SATISFIED -- so a gate outage would silently let
+    # a PR merge with tsc/tests never having run. That is the exact inverse of
+    # what the backstop is for. Failing closed inside the step is not enough;
+    # the job-level condition has to fail closed too. `!= '0'` means an absent
+    # or unparseable output still RUNS; only an explicit "already verified"
+    # vote skips, and only on the scheduled path.
     if: >-
-      needs.schedule-gate.outputs.should_run == '1' &&
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+      needs.schedule-gate.outputs.should_run != '0') &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
@@ -233,8 +253,18 @@ jobs:
   ios-fleet-ship-logic:
     name: ios-fleet ship numbering (bash)
     needs: [schedule-gate]
+    # `!cancelled()`, NOT the bare gate output. `needs:` alone would let a
+    # FAILED or timed-out schedule-gate job skip this one, and GitHub reports a
+    # skipped required check as SATISFIED -- so a gate outage would silently let
+    # a PR merge with tsc/tests never having run. That is the exact inverse of
+    # what the backstop is for. Failing closed inside the step is not enough;
+    # the job-level condition has to fail closed too. `!= '0'` means an absent
+    # or unparseable output still RUNS; only an explicit "already verified"
+    # vote skips, and only on the scheduled path.
     if: >-
-      needs.schedule-gate.outputs.should_run == '1' &&
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+      needs.schedule-gate.outputs.should_run != '0') &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest

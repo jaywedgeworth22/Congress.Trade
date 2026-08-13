@@ -46,6 +46,31 @@
 #   at the call site).
 #   State: ~/.cache/ios-fleet/last-ship-<app>.txt  (unix_ts + space + git_sha)
 #
+# ---------------------------------------------------------------------------
+# POST-UPLOAD: ensure-tf-ready AND TESTFLIGHT RELEASE NOTES (2026-08-13)
+# ---------------------------------------------------------------------------
+# ensure_tf_ready now passes BUILD_NUM (CFBundleVersion) to asc-api.mjs, which
+# polls App Store Connect until THAT EXACT BUILD appears and only then declares
+# export compliance on it. Before this it took "the newest build", which for the
+# first minutes after an upload is the PREVIOUS ship -- so compliance was
+# declared on the wrong build and the "testers can install this" line described
+# a build it had never looked at.
+#   IOS_TF_READY_TIMEOUT_SEC   discovery + readiness budget (default 900s)
+#   exit 4 from asc-api.mjs    uploaded build never surfaced; warn, do NOT fail
+#                              (record_successful_ship must still run or the rate
+#                              gate never advances)
+#
+# It also renders the mandatory AGENT-SYNC "What to Test" release note from the
+# commit range since the last successful ship. THIS IS OPT-IN, because it writes
+# copy every TestFlight tester reads:
+#   IOS_TF_RELEASE_NOTES=1     publish to App Store Connect
+#   IOS_TF_RELEASE_NOTES=0     off entirely
+#   unset (DEFAULT)            dry render into the ship log; nothing is written
+#   IOS_TF_RELEASE_TITLE=...   override the "<App> Update" title
+# CI needs `fetch-depth: 0` on actions/checkout or the runner workspace holds a
+# single commit and the range is uncomputable (verified 2026-08-13 on all three
+# fleet runners).
+#
 # Secrets (never printed):
 #   ~/.secrets/appstore-connect.env  (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH)
 #   or Xcode-signed-in session for destination=upload export
@@ -567,6 +592,21 @@ fi
 # at the sequence without consuming it, so evaluating early changes nothing for
 # it beyond ordering the log lines).
 evaluate_ship_gate
+
+# Capture the previously-shipped sha for the TestFlight release notes BEFORE
+# anything can rewrite the state file. record_successful_ship() overwrites it
+# after ensure_tf_ready, so reading it later happens to work today -- capturing
+# it here makes the notes immune to a future reordering, which is exactly the
+# class of bug the ship-gate comment above documents.
+PREV_SHIP_SHA=""
+if [[ -f "$(ship_state_path)" ]]; then
+  read -r _prev_ts PREV_SHIP_SHA <"$(ship_state_path)" || true
+  [[ "${PREV_SHIP_SHA:-}" != "unknown" ]] || PREV_SHIP_SHA=""
+fi
+# Which subtree is "this app's iOS code" -- used only as the tie-break when the
+# commit range exceeds the release-notes bullet cap.
+IOS_PATH_PREFIX="$(dirname "$PROJECT_REL")"
+
 if [[ "$SHIP_GATE_DECISION" == "skip" && "$DRY_RUN" -eq 0 ]]; then
   log "ship-gate: exiting 0 before any build number is consumed (sequence untouched)"
   exit 0
@@ -761,9 +801,18 @@ release_archive_lock() {
 # MISSING_EXPORT_COMPLIANCE and the phone never sees the build (ST 1.0.1/2
 # on 2026-08-12).
 ensure_tf_ready() {
-  log "verifying TestFlight ready-to-install for ${BUNDLE_ID}"
+  log "verifying TestFlight ready-to-install for ${BUNDLE_ID} build ${BUILD_NUM}"
   set +e
-  node "${FLEET_DIR}/asc-api.mjs" ensure-tf-ready "$BUNDLE_ID" \
+  # BUILD_NUM (CFBundleVersion) is REQUIRED. Without it asc-api.mjs would have to
+  # guess "the newest build", which for the first minutes after an upload is the
+  # PREVIOUS ship -- so compliance got declared on the wrong build and readiness
+  # was reported for a build never inspected (2026-08-13). MARKETING is a second
+  # predicate, not a substitute: it identifies a train, not a build.
+  IOS_TF_NOTES_REPO="$REPO_ROOT" \
+  IOS_TF_NOTES_PREV_SHA="$PREV_SHIP_SHA" \
+  IOS_TF_NOTES_APP="$DISPLAY_NAME" \
+  IOS_TF_NOTES_IOS_PREFIX="$IOS_PATH_PREFIX" \
+  node "${FLEET_DIR}/asc-api.mjs" ensure-tf-ready "$BUNDLE_ID" "$BUILD_NUM" "$MARKETING" \
     >"${LOG_DIR}/ensure-tf-ready.json" 2>"${LOG_DIR}/ensure-tf-ready.err"
   local rc=$?
   set -e
@@ -778,7 +827,26 @@ ensure_tf_ready() {
     log "warning: upload succeeded but ASC has not reached IN_BETA_TESTING yet; watch TestFlight"
     return 0
   fi
+  if [[ $rc -eq 4 ]]; then
+    # The upload itself succeeded; ASC simply never surfaced the build in time.
+    # Warn loudly but do NOT fail: the caller must still record_successful_ship,
+    # or the rate gate never advances and the next scheduled run re-ships the
+    # same HEAD. A red job after a successful upload also mislabels the outcome.
+    log "warning: ASC never surfaced build ${BUILD_NUM}; export compliance NOT declared on it"
+    log "warning: if the phone never gets this build, declare compliance by hand in App Store Connect"
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      echo "::warning::ensure-tf-ready could not find uploaded build ${BUILD_NUM} for ${BUNDLE_ID}; export compliance not declared"
+    fi
+    return 0
+  fi
+  # rc=2 is a usage error or an ASC API error. Compliance was NOT declared, so
+  # this deserves the same CI annotation rc=4 gets -- otherwise the only trace
+  # is one log line inside a green job, which is how ST 1.0.1/2 stayed
+  # VALID-but-uninstallable without anyone noticing.
   log "warning: ensure-tf-ready failed (rc=$rc); build may be stuck on export compliance"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::warning::ensure-tf-ready failed (rc=${rc}) for ${BUNDLE_ID} build ${BUILD_NUM}; export compliance not declared"
+  fi
   return 0
 }
 
