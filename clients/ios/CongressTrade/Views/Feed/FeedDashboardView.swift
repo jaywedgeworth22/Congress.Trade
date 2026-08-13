@@ -135,12 +135,24 @@ struct FeedDashboardView: View {
                 VStack(spacing: 12) {
                     DisclaimerBanner(isExpanded: $disclaimerExpanded)
 
+                    // Shared notice banner at top under logo / above filters (failure/offline state)
+                    if let notice = store.feedNotice,
+                       store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
+                        FeedFreshnessView(
+                            isOffline: store.isOffline,
+                            lastRefresh: store.lastSuccessfulRefresh,
+                            notice: store.feedNotice,
+                            onRetry: { Task { await store.refresh() } }
+                        )
+                    }
+
                     // Shared filters (also on Trends) — chamber / party / sides / timeframe.
                     FeedControlBar()
 
-                    // Single unified search (name / ticker / state / party, any order).
+                    // Single unified search (name / ticker / state / party) + # trades matching.
                     TradesUnifiedSearchField(
                         text: $searchText,
+                        countLabel: tradeCountLabel(showing: trades.count),
                         focused: $searchFocused,
                         onSubmit: { applyUnifiedSearch() },
                         onClear: {
@@ -156,34 +168,17 @@ struct FeedDashboardView: View {
                         scheduleSearchDebounce()
                     }
 
-                    HStack(spacing: 8) {
+                    // Combined controls row: Sort options + Pagination on one row.
+                    HStack(spacing: 6) {
                         FeedSortControl()
-                        Spacer(minLength: 0)
-                        if let label = tradeCountLabel(showing: trades.count) {
-                            Text(label)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .contentTransition(.numericText())
-                                .accessibilityLabel(label)
+                        Spacer(minLength: 4)
+                        if !trades.isEmpty {
+                            FeedPaginationBar()
                         }
                     }
 
-                    // Sits directly above the list, where the user is already
-                    // looking while they wait, and reserves its own height in
-                    // both states so nothing below it shifts under a thumb
-                    // mid-tap.
+                    // Sits directly above the list, where the user is already looking.
                     TradesFilterActivityRow(isActive: store.isTradesUpdating && !cachedTrades.isEmpty)
-
-                    // Only real offline/error notices — never cancellation noise.
-                    if let notice = store.feedNotice,
-                       store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
-                        FeedFreshnessView(
-                            isOffline: store.isOffline,
-                            lastRefresh: store.lastSuccessfulRefresh,
-                            notice: store.feedNotice,
-                            onRetry: { Task { await store.refresh() } }
-                        )
-                    }
 
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
@@ -808,7 +803,7 @@ struct PaginationBar: View {
     var onPageSize: (Int) -> Void
 
     private var pageLabel: String {
-        "Page \(CompactFormat.count(currentPage + 1)) of \(CompactFormat.count(totalPages))"
+        "\(CompactFormat.count(currentPage + 1)) of \(CompactFormat.count(totalPages))"
     }
 
     var body: some View {
@@ -995,12 +990,13 @@ struct FilterMenuLabel: View {
 /// reaches the server via `CongressTradeStore.setSearch`.
 struct TradesUnifiedSearchField: View {
     @Binding var text: String
+    var countLabel: String? = nil
     var focused: FocusState<Bool>.Binding
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             TextField("Name, ticker, state, or party", text: $text)
@@ -1013,6 +1009,13 @@ struct TradesUnifiedSearchField: View {
                     onSubmit()
                     focused.wrappedValue = false
                 }
+            if let countLabel {
+                Text(countLabel)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+            }
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }

@@ -2592,7 +2592,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center">
-      <span class="gate-note" data-premium-cue="export">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 1-month free trial
+      <span class="gate-note" data-premium-cue="export">Premium unlocks full-history CSV export and instant delivery (webhook / SSE) · $5/mo or $50/yr · 2-week free trial
         <button class="btn sm" onclick="openPricing('export')">Start Free Trial</button></span>
     </div>
 
@@ -2949,7 +2949,7 @@ ${speedProofSectionHtml(false)}
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 1-month free trial
+        <span class="gate-note">Delivery + CSV export are included in Premium &middot; $5/mo or $50/yr &middot; 2-week free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
@@ -3180,6 +3180,12 @@ ${speedProofSectionHtml(true)}
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
       Continue with Google
     </button>
+    <button class="abtn" onclick="loginApple()" style="margin-top:8px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 14px;background:#000;color:#fff;border:1px solid #333;border-radius:var(--radius-pill);font-weight:600;font-size:14px;cursor:pointer;">
+      <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
+        <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
+      </svg>
+      Sign in with Apple
+    </button>
     <div class="divider">or</div>
     <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
     <div class="field">
@@ -3216,7 +3222,7 @@ ${speedProofSectionHtml(true)}
         <div class="price">$50<span class="per">/yr</span></div>
       </div>
     </div>
-    <p class="trial-note" id="pricingTrialNote">1-month free trial. No charge today.</p>
+    <p class="trial-note" id="pricingTrialNote">2-week free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -6402,7 +6408,7 @@ function updateDeliveryGate() {
   }
   if (!premium) {
     gate.style.display = '';
-    gate.innerHTML = 'You are signed in.&nbsp; Premium is required to create or edit Delivery targets (1-month free trial · $5/mo or $50/yr).&nbsp; Existing deliveries still appear below. '
+    gate.innerHTML = 'You are signed in.&nbsp; Premium is required to create or edit Delivery targets (2-week free trial · $5/mo or $50/yr).&nbsp; Existing deliveries still appear below. '
       + (checkoutConfigured()
         ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
         : '<span class="muted">Billing is not configured yet.</span>');
@@ -11262,6 +11268,9 @@ function renderAccount() {
         '<div class="menu-pop" id="acctMenu">' +
           '<div class="who">' + esc(ME.user.email || '') + '</div>' +
           themeRowHtml() +
+          '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
+          '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
+          '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Push Notifications</button>' +
           (hasBillingAccount() && portalConfigured()
             ? '<button onclick="manageBilling()">Manage Subscription</button>'
             : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
@@ -11271,6 +11280,9 @@ function renderAccount() {
     mobileHtml = badge +
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
       themeRowHtml(null, true) +
+      '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Push Notifications</button>' +
       upgrade +
       (hasBillingAccount() && portalConfigured()
         ? '<button onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
@@ -11327,6 +11339,11 @@ function loginGoogle() {
   var msg = el('loginMsg');
   if (msg) msg.textContent = 'Connecting to Google…';
   window.location.href = '/auth/google/start';
+}
+function loginApple() {
+  var msg = el('loginMsg');
+  if (msg) msg.textContent = 'Connecting to Apple…';
+  window.location.href = '/auth/apple/start';
 }
 function sendMagicLink() {
   var email = (el('magicEmail').value || '').trim();

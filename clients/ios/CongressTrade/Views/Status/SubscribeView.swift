@@ -83,9 +83,6 @@ struct SubscribeView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(product.displayName)
                                             .font(.body.weight(.semibold))
-                                        Text(product.description)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     if isPurchasing {
