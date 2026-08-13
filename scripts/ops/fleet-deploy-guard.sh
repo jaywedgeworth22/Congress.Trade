@@ -237,7 +237,11 @@ FORCE_FLAG=false
 [[ -f "$STATE_DIR/pending_force" ]] && { FORCE_FLAG=true; log "honouring a force-rebuild request from a coalesced deploy"; }
 
 log "deploying latest main (force=${FORCE_FLAG}): $REASON"
-RESP=$(api GET "/api/v1/deploy?uuid=${APP_UUID}&force=${FORCE_FLAG}")
+# Coolify 4.x changed /api/v1/deploy from GET to POST (405:
+# "This endpoint has changed to a POST request.").  A GET here
+# cancelled every webhook and then failed to fire the replacement,
+# which is why CT sat on 984af2c9 for hours after later merges.
+RESP=$(api POST "/api/v1/deploy?uuid=${APP_UUID}&force=${FORCE_FLAG}")
 if printf '%s' "$RESP" | grep -q 'deployment_uuid'; then
   now > "$LAST_DEPLOY_FILE"
   printf '%s' "$RESP" | python3 -c '
@@ -251,7 +255,15 @@ elif isinstance(d,dict): print(d.get("deployment_uuid",""), end="")
   rm -f "$PENDING_FILE" "$STATE_DIR/pending_force"
   log "deploy queued OK (uuid $(cut -c1-8 < "$LAST_DEPLOY_UUID_FILE" 2>/dev/null))"
 else
-  log "deploy trigger FAILED"
-  notify "Deploy guard could not trigger a deploy via the Coolify API."
+  fail_msg=$(printf '%s' "$RESP" | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    print(str(d.get("message") or d.get("error") or "no-message")[:120])
+except Exception:
+    print("unparseable")
+' 2>/dev/null || echo unparseable)
+  log "deploy trigger FAILED (${fail_msg})"
+  notify "Deploy guard could not trigger a deploy via the Coolify API (${fail_msg})."
   exit 1
 fi
