@@ -638,11 +638,23 @@ final class CongressTradeAPIClient {
 
     /// Poll `GET /commands/:id` until the command leaves queued/running.
     /// The first authenticated succeeded read claims and returns `result_secret`.
+    ///
+    /// The server finishes most commands inline and answers POST /commands with
+    /// a terminal status, so this loop is the fallback for the ones it hands
+    /// back to the durable queue. That queue is drained by the background tick
+    /// — a minute apart at best — so the budget here is ~77s, not the old ~18s.
+    /// The old budget expired while a redeemed App Store purchase was still
+    /// queued and reported it as an error to someone Apple had already charged.
     private func awaitCommandResult<T: Decodable>(id: String) async throws -> ClientCommandResponse<T> {
-        let maxAttempts = 40
+        let maxAttempts = 60
         for attempt in 0..<maxAttempts {
             if attempt > 0 {
-                let delayNs: UInt64 = attempt < 5 ? 250_000_000 : 500_000_000
+                let delayNs: UInt64
+                switch attempt {
+                case ..<5: delayNs = 250_000_000
+                case ..<13: delayNs = 500_000_000
+                default: delayNs = 1_500_000_000
+                }
                 try await Task.sleep(nanoseconds: delayNs)
             }
             let polled: ClientCommandResponse<T> = try await get(

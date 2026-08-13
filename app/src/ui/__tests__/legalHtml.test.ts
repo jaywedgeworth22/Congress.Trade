@@ -12,7 +12,11 @@ describe('legalHtml pricing copy', () => {
   it('states the canonical $5/mo · $50/yr Premium price in the Terms of Service', () => {
     expect(TOS_HTML).toContain('$5.00 / month');
     expect(TOS_HTML).toContain('$50.00 / year');
-    expect(TOS_HTML).toContain('30 days');
+    // 14 days, matching STRIPE_TRIAL_DAYS' default (billing/routes.ts) and the
+    // "2-week free trial" the dashboard and the iOS Premium sheet both quote.
+    // The Terms said "30 days / 1 month" long after the trial became 2 weeks.
+    expect(TOS_HTML).toContain('14 days');
+    expect(TOS_HTML).not.toContain('30 days');
   });
 
   it('never mentions stale price points', () => {

@@ -786,7 +786,7 @@ struct AccountQuickMenu: View {
             }
         }
         .sheet(isPresented: $showPremiumInfo) {
-            PremiumInfoSheet()
+            PremiumSheet()
                 .environmentObject(store)
         }
         .sheet(isPresented: $showExportSheet) {
@@ -833,7 +833,7 @@ struct AccountQuickMenu: View {
     /// Premium entry point. The Manage Subscription path is the pre-existing
     /// `resolveManageSubscriptionURL` routing, preserved exactly; only the
     /// not-yet-premium path changed, from a straight jump into the StoreKit
-    /// purchase sheet to `PremiumInfoSheet` (what you get, then a way out).
+    /// purchase sheet to `PremiumSheet` (what you get, the plans, a way out).
     @ViewBuilder
     private var billingRow: some View {
         if store.isPremium {
@@ -1259,157 +1259,6 @@ struct TradeDisclosureAlertsToggle: View {
     private func openSystemNotificationSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
-    }
-}
-
-// MARK: - Premium
-
-/// One low-pressure Premium screen: what Premium actually unlocks, the price,
-/// one way forward, and a prominent way out.
-///
-/// Every line is a gate that exists in the backend today — source PDFs
-/// (`serveDocumentPdf` redirects non-premium to `/pricing`), full-history CSV
-/// export (`/api/export/transactions.csv` → 401/402 with `feature: 'export'`),
-/// and webhook/SSE delivery (402 with `feature: 'alerts'`, capped at
-/// `MAX_SUBSCRIPTIONS_PER_USER = 2`). No scarcity, no countdown, nothing the
-/// server does not enforce.
-///
-/// It renders in full when signed out, too: hiding what Premium is until after
-/// sign-in is how the Settings tab used to behave, and it left the price and
-/// the benefits invisible to exactly the people deciding.
-struct PremiumInfoSheet: View {
-    @EnvironmentObject private var store: CongressTradeStore
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
-    @State private var showSubscribe = false
-    @State private var isOpeningManageSubscription = false
-    @State private var manageSubscriptionError: String?
-
-    private struct Benefit: Identifiable {
-        let id = UUID()
-        let systemImage: String
-        let text: String
-    }
-
-    private let benefits: [Benefit] = [
-        .init(systemImage: "doc.text", text: "Open the original filing PDF from Congress"),
-        .init(systemImage: "arrow.down.doc", text: "Full-history CSV export"),
-        .init(systemImage: "bolt.horizontal", text: "Instant delivery of new filings — signed webhook or SSE, up to two methods"),
-    ]
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("The public dashboard stays free.  Premium adds the filing itself and the ways to receive it.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(benefits) { benefit in
-                            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                Image(systemName: benefit.systemImage)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 22, alignment: .leading)
-                                Text(benefit.text)
-                                    .font(.subheadline)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-
-                    Text("$5/month  •  $50/year  •  1-month free trial")
-                        .font(.subheadline.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    actionSection
-
-                    // The frame lives on the *label*, not on the Button: a
-                    // bordered style sizes its background to the label, so an
-                    // outer frame widens the hit area and leaves a small pill
-                    // floating in the middle of it.
-                    Button {
-                        dismiss()
-                    } label: {
-                        Text("Not Now")
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 50)
-                    }
-                    .buttonStyle(.bordered)
-
-                    LegalFooterLinks()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(20)
-            }
-            .background(AppTheme.background)
-            .navigationTitle("Premium")
-            .inlineNavigationTitle()
-        }
-        .sheet(isPresented: $showSubscribe) {
-            SubscribeView()
-                .environmentObject(store)
-        }
-    }
-
-    @ViewBuilder
-    private var actionSection: some View {
-        if store.isPremium {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    Task { await openManageSubscription() }
-                } label: {
-                    HStack {
-                        Text(store.entitlementSource == "apple" ? "Manage on App Store" : "Manage Subscription")
-                        if isOpeningManageSubscription {
-                            Spacer()
-                            ProgressView()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isOpeningManageSubscription)
-                if let manageSubscriptionError {
-                    Text(manageSubscriptionError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        } else if store.signedIn {
-            Button {
-                showSubscribe = true
-            } label: {
-                Text("See Plans")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 50)
-            }
-            .buttonStyle(.borderedProminent)
-        } else {
-            // Honest, not a dead end: the purchase has to attach to an account,
-            // and the sign-in stack is one sheet behind this one.
-            Text("sign in first — Premium is tied to your account")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// Same `resolveManageSubscriptionURL` routing as `SubscribeView` and the
-    /// account sheet — see `Store/ManageSubscription.swift`.
-    private func openManageSubscription() async {
-        manageSubscriptionError = nil
-        isOpeningManageSubscription = true
-        defer { isOpeningManageSubscription = false }
-        switch await store.resolveManageSubscriptionURL() {
-        case .url(let url):
-            openURL(url)
-        case .failed(let message):
-            manageSubscriptionError = message
-        }
     }
 }
 

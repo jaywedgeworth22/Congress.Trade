@@ -1,5 +1,31 @@
 # Current Handoff
 
+## 2026-08-13 CLAUDE — iOS Premium: one screen, purchases that confirm
+
+Owner's TestFlight purchase was charged by Apple and then reported as **"Request
+failed"**.  `POST /api/client/v1/commands` only enqueued `redeem_apple_purchase`
+on the durable queue, and nothing runs that queue except the scheduled tick —
+60s apart on the live `paid` profile — while the iOS client gave up polling after
+~18.5s.  The POST now enqueues the backstop first, runs the command inline under
+a 9s budget, and answers 200 with a terminal row.  The app also had **no
+`Transaction.updates` observer at all** (StoreKit 2 requires one), so a redeem
+that failed once stayed failed until the user found Restore Purchases; that
+listener now runs for the app's lifetime and `finish()` happens only after the
+server has the transaction.
+
+Also per owner: the two Premium sheets are now one (`PremiumSheet.swift`
+replaces `SubscribeView.swift`, `PremiumInfoSheet` deleted) — benefits, price,
+real products, Restore, all on one screen.  Trial copy realigned to 2 weeks
+everywhere; the two old sheets had drifted to different trial lengths.
+
+Branch `claude/ios-paywall-iap-latency`.  Rollout:
+`docs/rollouts/2026-08-13-ios-paywall-one-screen-and-inline-commands.md`.
+
+**Blocker for the owner:** confirm the App Store Connect introductory offer on
+`trade.congress.premium.monthly` / `.annual` is 2 weeks.  The app now says
+2-week; ASC is the authority and the app must not quote a trial Apple will not
+honor.
+
 ## 2026-08-13 GROK — Senate scout session reuse
 
 Owner Pushover "CT scout DOWN: senate" (67 fails / 1878m, report/data 503

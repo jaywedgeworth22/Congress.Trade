@@ -51,7 +51,13 @@ import {
   resolveMember,
   tickerSummarySql,
 } from './queries.ts';
-import { commandType, mergeClaimedSecret, normalizePreferencePatch } from './commands.ts';
+import {
+  commandType,
+  executeQueuedCommand,
+  INLINE_COMMAND_BUDGET_MS,
+  mergeClaimedSecret,
+  normalizePreferencePatch,
+} from './commands.ts';
 import { tickerAnalytics, wantsAnalytics } from './tickerAnalytics.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
@@ -422,9 +428,10 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       }
     }
 
-    // Execute asynchronously on the durable queue (202 Accepted); clients poll
-    // GET /commands/:id for the terminal status. The queue dedupes on
-    // commandId, so reclaim re-enqueues and redeliveries stay idempotent.
+    // Enqueue FIRST as the durable backstop: if this request dies mid-flight
+    // (or inline execution below overruns its budget), the tick still runs the
+    // command. The queue dedupes on commandId, so reclaim re-enqueues and
+    // redeliveries stay idempotent.
     try {
       await c.env.INGEST_QUEUE.send({
         type: 'command.execute',
@@ -438,7 +445,37 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       });
       return c.json({ command: failed, error: 'command enqueue failed' }, 503);
     }
-    return c.json({ command }, 202);
+
+    // Then try to finish it INLINE, inside this request. Commands are typed by
+    // a human waiting on a screen (redeem an App Store purchase, create a
+    // delivery), but the durable queue is drained by the background tick — one
+    // minute apart on the paid profile, five on free, and behind whatever
+    // ingest work the tick claims first. The iOS client only polls
+    // GET /commands/:id for ~18s, so a purchase that Apple had already charged
+    // surfaced as "Request failed" while the redeem sat queued (owner report,
+    // 2026-08-13 TestFlight). Inline execution collapses that to one round
+    // trip; the enqueued message is what covers the cases it cannot.
+    //
+    // executeQueuedCommand is idempotent — it re-reads the row and no-ops
+    // unless it is still queued/running — so the later queue delivery of a
+    // command finished here is a cheap read, not a second execution.
+    try {
+      await Promise.race([
+        executeQueuedCommand(c.env, command.id, user.id),
+        new Promise<void>((resolve) => setTimeout(resolve, INLINE_COMMAND_BUDGET_MS)),
+      ]);
+    } catch {
+      // executeQueuedCommand already recorded the failure on the row; a
+      // non-ClientInputError rethrow here must not 500 the request, because
+      // the terminal status it just wrote is exactly what the client needs.
+    }
+
+    const settled = (await getCommand(c.env, user.id, command.id)) ?? command;
+    // 200 once terminal, 202 while it is still the queue's problem — the
+    // client polls on queued/running either way.
+    const terminal = settled.status === 'succeeded' || settled.status === 'failed' ||
+      settled.status === 'canceled';
+    return c.json({ command: settled }, terminal ? 200 : 202);
   });
 
   return r;

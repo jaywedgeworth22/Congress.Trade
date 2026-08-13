@@ -352,8 +352,19 @@ export async function executeCommand(
 }
 
 /**
- * Queue-worker entrypoint for `command.execute` messages (POST
- * /api/client/v1/commands enqueues and returns 202; this runs the command).
+ * How long POST /api/client/v1/commands will hold a request open trying to
+ * finish the command inline before handing it back to the durable queue and
+ * answering 202. Must stay comfortably under the iOS client's 20s per-request
+ * timeout (`APIClient.makeRequest`) — a budget that outlives the socket buys
+ * nothing and costs the caller a transport error instead of a status.
+ */
+export const INLINE_COMMAND_BUDGET_MS = 9_000;
+
+/**
+ * Queue-worker entrypoint for `command.execute` messages. Also the inline
+ * fast path: POST /api/client/v1/commands enqueues the durable backstop, then
+ * calls this directly so a human waiting on a screen gets a terminal status in
+ * one round trip instead of waiting out the background tick.
  * Idempotent on redelivery: terminal rows are left untouched. Deterministic
  * input/entitlement failures are recorded as `failed` and acknowledged;
  * unexpected errors are rethrown so the queue retry/backoff applies.
