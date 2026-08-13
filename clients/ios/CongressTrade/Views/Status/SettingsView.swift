@@ -40,7 +40,7 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
 
 /// Settings is deliberately short: an account, a switch, a theme, the legal
 /// row. Sign-in, alerts and Premium are all shared components (`SignInPanel`,
-/// `TradeDisclosureAlertsToggle`, `PremiumInfoSheet`) so this view and the
+/// `TradeDisclosureAlertsToggle`, `PremiumSheet`) so this view and the
 /// header account sheet cannot drift apart again.
 ///
 /// NOTE: no longer mounted as a tab — `AccountQuickMenu` (the header hamburger
@@ -98,7 +98,7 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .inlineNavigationTitle()
             .sheet(isPresented: $showPremiumInfo) {
-                PremiumInfoSheet()
+                PremiumSheet()
                     .environmentObject(store)
             }
         }

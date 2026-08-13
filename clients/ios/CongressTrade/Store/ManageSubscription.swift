@@ -2,7 +2,7 @@ import Foundation
 
 /// Routes "Manage Subscription" to the correct surface for the signed-in
 /// user's entitlement source, shared by every manage-subscription entry
-/// point (the header hamburger's `AccountQuickMenu` + `SubscribeView`'s
+/// point (the header hamburger's `AccountQuickMenu` + `PremiumSheet`'s
 /// "Your Subscription" section).
 ///
 /// `entitlement.source` (`"stripe" | "apple" | nil`) exists precisely to

@@ -1135,7 +1135,7 @@ struct ExportCSVSheet: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else if !store.isPremium {
-                        Text("CSV export is a Premium feature ($5/mo or $50/yr, 1-month free trial).")
+                        Text("CSV export is a Premium feature ($5/mo or $50/yr, 2-week free trial).")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Button {
@@ -1168,7 +1168,7 @@ struct ExportCSVSheet: View {
                 }
             }
             .sheet(isPresented: $showSubscribe) {
-                SubscribeView()
+                PremiumSheet()
                     .environmentObject(store)
             }
             .sheet(isPresented: Binding(

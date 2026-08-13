@@ -260,8 +260,14 @@ struct MainTabView: View {
         }
         .tint(.blue)
         .sheet(isPresented: $showSubscribeSheet) {
-            SubscribeView()
+            PremiumSheet()
                 .environmentObject(store)
+        }
+        // StoreKit 2 requires a listener for the whole app lifetime: Ask to Buy
+        // approvals, renewals, and retries of a redeem that failed mid-purchase
+        // all arrive here and nowhere else. See Store/AppleIAP.swift.
+        .task {
+            await store.observeAppleTransactions()
         }
         .onAppear {
             if CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe") {
@@ -273,6 +279,9 @@ struct MainTabView: View {
             if store.feed == nil {
                 await store.refresh()
             }
+            // Catch-up for a purchase that was charged and finished locally but
+            // never recorded server-side. No-op for everyone already Premium.
+            await store.reconcileAppleEntitlementsQuietly()
         }
         // Pause the nextPollAfterSec poll loop while backgrounded.
         .onChange(of: scenePhase) { _, phase in

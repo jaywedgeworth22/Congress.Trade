@@ -1125,6 +1125,45 @@ describe('client API routes', () => {
     expect(body.total).toBe(2);
   });
 
+  // Regression: TestFlight purchase, 2026-08-13. `redeem_apple_purchase` was
+  // enqueued on the durable queue and only executed by the background tick —
+  // a minute apart at best, five on the free profile — while the iOS client
+  // gave up polling after ~18s. Apple had already charged; the app said
+  // "Request failed". A command a human is waiting on must come back terminal
+  // from the POST itself, with the queue message kept only as the backstop.
+  it('finishes a command inline so the caller never waits for the background tick', async () => {
+    const { env, preferences, commands, queuedMessages } = makeEnv();
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'update_preferences',
+          payload: { defaultWindow: '30d' },
+          idempotencyKey: 'inline-1',
+        }),
+      },
+      env,
+    );
+
+    // Terminal in the response body, before anything drains the queue.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { command: { id: string; status: string } };
+    expect(body.command.status).toBe('succeeded');
+    expect(commands.get(body.command.id)?.status).toBe('succeeded');
+    expect(preferences.get('user_1')?.default_window).toBe('30d');
+
+    // The backstop message was still enqueued (this request could have died
+    // between the enqueue and the inline run), and replaying it changes
+    // nothing — executeQueuedCommand no-ops on a terminal row.
+    expect(queuedMessages).toHaveLength(1);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(commands.get(body.command.id)?.status).toBe('succeeded');
+    expect(commands.size).toBe(1);
+  });
+
   it('updates preferences through an authenticated command', async () => {
     const { env, preferences, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
@@ -1141,12 +1180,14 @@ describe('client API routes', () => {
       },
       env,
     );
-    // Commands are accepted for async execution on the durable queue; the
-    // worker (simulated by drainQueuedCommands) performs the write.
-    expect(res.status).toBe(202);
+    // The POST finishes the command inline and answers with a terminal row.
+    // The durable-queue message is still enqueued as the backstop, and
+    // draining it is a no-op because the row is already terminal.
+    expect(res.status).toBe(200);
     expect((await res.json()) as { command: { status: string } }).toMatchObject({
-      command: { status: 'queued' },
+      command: { status: 'succeeded' },
     });
+    expect(JSON.parse(preferences.get('user_1')?.watchlist ?? '[]')).toEqual(['AAPL', 'MSFT']);
     expect(queuedMessages).toHaveLength(1);
     expect(queuedMessages[0]).toMatchObject({ type: 'command.execute', userId: 'user_1' });
 
@@ -1169,11 +1210,12 @@ describe('client API routes', () => {
     };
 
     const first = await app.request('http://localhost/commands', req, env);
-    expect(first.status).toBe(202);
+    expect(first.status).toBe(200);
     const accepted = (await first.json()) as { command: { id: string; status: string } };
-    expect(accepted.command.status).toBe('queued');
-    expect(subscriptions.size).toBe(0);
+    expect(accepted.command.status).toBe('succeeded');
+    expect(subscriptions.size).toBe(1);
 
+    // Redelivery of the backstop message must not create a second subscription.
     await drainQueuedCommands(env, queuedMessages);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
@@ -1228,7 +1270,7 @@ describe('client API routes', () => {
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: {} } }),
     }, env);
     // Validation/entitlement failures surface on the command row, not the POST.
-    expect(limited.status).toBe(202);
+    expect(limited.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toContain('subscription');
@@ -1238,7 +1280,7 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: { tickers: Array(51).fill('A') } } }),
     }, env);
-    expect(invalid.status).toBe(202);
+    expect(invalid.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
@@ -1262,7 +1304,7 @@ describe('client API routes', () => {
         payload: { platform: 'apns', token, appBundle: 'trade.congress.ios', env: 'production' },
       }),
     }, env);
-    expect(create.status).toBe(202);
+    expect(create.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
     expect(pushDevices.size).toBe(1);
@@ -1284,7 +1326,7 @@ describe('client API routes', () => {
         payload: { platform: 'apns', token, appBundle: 'trade.congress.ios' },
       }),
     }, env);
-    expect(again.status).toBe(202);
+    expect(again.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(pushDevices.size).toBe(1);
 
@@ -1301,7 +1343,7 @@ describe('client API routes', () => {
         payload: { delivery: 'apns', targetUrl: 'b'.repeat(64), filters: {} },
       }),
     }, env);
-    expect(legacy.status).toBe(202);
+    expect(legacy.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
     expect(pushDevices.size).toBe(2);
@@ -1319,7 +1361,7 @@ describe('client API routes', () => {
         payload: { platform: 'apns', token: 'not-a-token' },
       }),
     }, env);
-    expect(bad.status).toBe(202);
+    expect(bad.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toMatch(/hex/i);
@@ -1334,7 +1376,7 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'webhook', targetUrl: oversized, filters: {} } }),
     }, env);
-    expect(create.status).toBe(202);
+    expect(create.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
@@ -1347,7 +1389,7 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_webhook', targetUrl: oversized } }),
     }, env);
-    expect(update.status).toBe(202);
+    expect(update.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
     expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
@@ -1369,7 +1411,7 @@ describe('client API routes', () => {
         payload: { id: 'sub_inactive', active: true },
       }),
     }, env);
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     const command = Array.from(commands.values()).at(-1);
     expect(command?.status).toBe('failed');
@@ -1396,7 +1438,7 @@ describe('client API routes', () => {
       headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'delete_subscription', payload: { id: 'sub_mine' } }),
     }, env);
-    expect(ok.status).toBe(202);
+    expect(ok.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     const okCmd = Array.from(commands.values()).at(-1);
     expect(okCmd?.status).toBe('succeeded');
@@ -1409,7 +1451,7 @@ describe('client API routes', () => {
       headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'delete_subscription', payload: { id: 'sub_theirs' } }),
     }, env);
-    expect(denied.status).toBe(202);
+    expect(denied.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     const deniedCmd = Array.from(commands.values()).at(-1);
     expect(deniedCmd?.status).toBe('failed');
@@ -1432,7 +1474,7 @@ describe('client API routes', () => {
       headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_toggle', active: false } }),
     }, env);
-    expect(pause.status).toBe(202);
+    expect(pause.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
     expect(subscriptions.get('sub_toggle')?.active).toBe(0);
@@ -1442,7 +1484,7 @@ describe('client API routes', () => {
       headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_toggle', active: true } }),
     }, env);
-    expect(resume.status).toBe(202);
+    expect(resume.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
     expect(subscriptions.get('sub_toggle')?.active).toBe(1);
@@ -1464,7 +1506,7 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     await drainQueuedCommands(env, queuedMessages);
     const command = Array.from(commands.values()).at(-1);
     expect(command?.status).toBe('failed');
@@ -1518,9 +1560,10 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { replayed?: boolean; command: { id: string; status: string } };
     expect(body.command.id).toBe('cmd_stale');
+    expect(body.command.status).toBe('succeeded');
     expect(body.replayed).toBeUndefined();
     // The same row was reused (reclaimed), not duplicated.
     expect(commands.size).toBe(1);
@@ -1599,7 +1642,7 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { command: { id: string; status: string } };
     expect(body.command.id).toBe('cmd_recover_sub');
     // The reclaim re-enqueues the same row; the worker re-runs it and the

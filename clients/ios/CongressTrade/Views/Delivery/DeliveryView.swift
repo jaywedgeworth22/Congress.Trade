@@ -54,7 +54,7 @@ struct DeliveryView: View {
                 } header: {
                     Text("Premium")
                 } footer: {
-                    Text("CSV export uses the filters set on the Trades tab, plus the dates you pick.  Premium is $5/month or $50/year, with a 1-month free trial.")
+                    Text("CSV export uses the filters set on the Trades tab, plus the dates you pick.  Premium is $5/month or $50/year, with a 2-week free trial.")
                 }
 
                 Section {
@@ -73,7 +73,7 @@ struct DeliveryView: View {
                             Label("Premium Feature", systemImage: "star.fill")
                                 .font(.headline)
                                 .foregroundStyle(.orange)
-                            Text("1-month free trial, then $5/month or $50/year. Upgrade with In‑App Purchase or on the website to create SSE/webhook deliveries. Existing deliveries still appear below.")
+                            Text("2-week free trial, then $5/month or $50/year.  Upgrade with In‑App Purchase or on the website to create SSE/webhook deliveries.  Existing deliveries still appear below.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Button {
@@ -271,7 +271,7 @@ struct DeliveryView: View {
                 DeliveryCredentialView(credential: credential)
             }
             .sheet(isPresented: $showSubscribe) {
-                SubscribeView()
+                PremiumSheet()
                     .environmentObject(store)
             }
             .sheet(isPresented: $showExportSheet) {
