@@ -20,6 +20,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var marketCapBuckets: [MarketCapItem] = []
     @Published private(set) var partySplit: PartySplitResponse?
     @Published private(set) var filingLag: FilingLagResponse?
+    @Published private(set) var conflicts: [ConflictCandidateItem] = []
     /// Multi-select party filter (owner directive 2026-08-09: Chamber/Party/
     /// Trade Type pills must support one-or-many, matching the web's CSV
     /// multi-select semantics). Empty = all parties (default), matching the
@@ -766,6 +767,7 @@ final class CongressTradeStore: ObservableObject {
             async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam)
             async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam)
             async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam)
             // Latency is independent of trends filters; load it fail-soft so a
             // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
@@ -781,6 +783,7 @@ final class CongressTradeStore: ObservableObject {
             marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
             partySplit = try? await partySplitTask
             filingLag = try? await filingLagTask
+            conflicts = (try? await conflictsTask)?.conflicts ?? []
             do {
                 latencySummary = try await latencyTask
             } catch {

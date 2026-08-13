@@ -1340,6 +1340,29 @@ struct SlowFilerItem: Decodable, Identifiable {
     let tradeCount: Int?
 }
 
+struct ConflictCandidateResponse: Decodable {
+    let conflicts: [ConflictCandidateItem]?
+    let count: Int?
+}
+
+struct ConflictCandidateItem: Decodable, Identifiable {
+    var id: String { "\(bioguideId)_\(committeeCode)_\(ticker)_\(date)" }
+    let bioguideId: String
+    let memberName: String?
+    let partyBucket: String?
+    let photoUrl: String?
+    let committeeCode: String
+    let committeeName: String?
+    let sector: String
+    let ticker: String
+    let companyName: String?
+    let date: String
+    let txType: String
+    let amountMin: Double?
+    let amountMax: Double?
+    let estVolumeUsd: Double?
+}
+
 // MARK: - Company Name Normalization Helper
 
 extension String {

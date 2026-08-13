@@ -63,6 +63,10 @@ struct TrendsView: View {
                             memberSection
                         }
 
+                        if !store.conflicts.isEmpty {
+                            conflictsSection
+                        }
+
                         if let lag = store.filingLag {
                             timelinessSection(lag: lag)
                         }
@@ -574,6 +578,56 @@ struct TrendsView: View {
                     .accessibilityLabel("\(m.fullName ?? m.filerId), \(m.tradeCount ?? 0) trades")
                     .accessibilityHint("Opens politician details")
                     if idx < min(9, store.memberLeaderboard.count - 1) {
+                        Divider()
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private var conflictsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Committee Sector Conflicts")
+                .font(.headline)
+            Text("Disclosed trades in sectors that a politician's committees oversee (curated committee→sector map). Observational — not evidence of impropriety.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                ForEach(Array(store.conflicts.prefix(8).enumerated()), id: \.element.id) { idx, c in
+                    Button {
+                        selectedPoliticianId = c.bioguideId
+                        selectedPoliticianName = c.memberName ?? c.bioguideId
+                    } label: {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.memberName ?? c.bioguideId)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text("\(c.committeeName ?? c.committeeCode) · \(c.sector)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(c.ticker)
+                                    .font(.caption.weight(.bold))
+                                StatusPill(
+                                    text: c.txType == "B" ? "Buy" : (c.txType == "S" ? "Sell" : "Exchange"),
+                                    color: c.txType == "B" ? .green : (c.txType == "S" ? .red : .blue),
+                                    compact: true
+                                )
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if idx < min(7, store.conflicts.count - 1) {
                         Divider()
                     }
                 }
