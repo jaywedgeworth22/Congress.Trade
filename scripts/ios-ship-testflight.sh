@@ -4,6 +4,21 @@
 # The host copy at /Users/jay/apps/ios-fleet/ is a runtime install of the same
 # file and is used ONLY as a fallback when the in-repo copy is missing.
 #
+# WHY A MERGE OFTEN DOES NOT PRODUCE A TESTFLIGHT BUILD
+# .github/workflows/ios-ship.yml calls this on every push to main touching
+# clients/ios/**, but the fleet script enforces a minimum interval between
+# successful ships per app: DEFAULT_MIN_INTERVAL_SEC=9000 (9000s = 2.5 hours),
+# defined near the top of scripts/ios-fleet/ship-testflight.sh. Runs inside that
+# window log "ship-gate: skip" and exit 0. It also skips when git HEAD already
+# shipped. Neither kind of skip consumes a build number (fixed 2026-08-12).
+# Override one run with IOS_TF_MIN_INTERVAL_SEC=<seconds> or --force-ship;
+# changing the standing limit means editing DEFAULT_MIN_INTERVAL_SEC.
+#
+# VERSION NUMBERS: MARKETING_VERSION is 1.0.<seq> (+1 every rebuild) and
+# CURRENT_PROJECT_VERSION is a UTC YYYYMMDDHHMM stamp, so App Store Connect
+# shows "1.0.8 (202608121315)" — the parenthetical says when the build was cut
+# instead of repeating the version.
+#
 # STABLE XCODE IS MANDATORY (owner, reaffirmed 2026-08-11).
 # Xcode-beta's SDK breaks TestFlight / App Store Connect compatibility: a binary
 # built against a beta SDK is accepted into TestFlight but rejected at
