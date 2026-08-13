@@ -48,8 +48,8 @@ import {
 import { verifyAppleSignedJws } from './appleJws.ts';
 import { run } from '../shared/db.ts';
 
-/** Default free trial when STRIPE_TRIAL_DAYS is unset: one calendar month. */
-const DEFAULT_TRIAL_DAYS = 30;
+/** Default free trial when STRIPE_TRIAL_DAYS is unset: 14 days (2 weeks). */
+const DEFAULT_TRIAL_DAYS = 14;
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function requestIdForStripe(c: Context): { id: string } | { error: string } {

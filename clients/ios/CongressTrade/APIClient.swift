@@ -296,6 +296,10 @@ final class CongressTradeAPIClient {
         try await analyticsGet("filing-lag", query: makeQueryItems(window: window, party: party, chamber: chamber))
     }
 
+    func conflicts(window: String, party: String? = nil, chamber: String? = nil) async throws -> ConflictCandidateResponse {
+        try await analyticsGet("conflicts", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    }
+
     private func analyticsGet<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         guard var components = URLComponents(
             url: originURL.appendingPathComponent("api/analytics/\(path)"),
