@@ -228,6 +228,8 @@ struct MainTabView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
+    @State private var showSubscribeSheet = CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe")
+
     var body: some View {
         TabView(selection: $tabRouter.selection) {
             // Trends is first/leftmost and the default tab on launch
@@ -257,6 +259,15 @@ struct MainTabView: View {
                 .tag(AppTab.delivery)
         }
         .tint(.blue)
+        .sheet(isPresented: $showSubscribeSheet) {
+            SubscribeView()
+                .environmentObject(store)
+        }
+        .onAppear {
+            if CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe") {
+                showSubscribeSheet = true
+            }
+        }
         .task {
             store.modelContext = modelContext
             if store.feed == nil {
