@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-08-14 GROK — trial runbook leftover after #1867 ASC verify
+
+#1867 already confirmed ASC intro `TWO_WEEKS` + Infisical `STRIPE_TRIAL_DAYS=14`.
+This branch only fixes the last operator-facing 1-month leftover:
+`app/docs/wave4-auth-billing.md` still taught 1-month / `STRIPE_TRIAL_DAYS=30`
+and a "defaults to 7" comment.  `legalHtml.test.ts` header now says 2-week.
+No ASC writes.
+
+Branch `grok/ct-trial-copy`, worktree `~/apps/congress-grok-trial-copy`.
+Rollout: `docs/rollouts/2026-08-14-trial-copy-matches-offer.md`.
+
 ## 2026-08-14 GROK — Premium trial is actually 2 weeks (ASC + Stripe)
 
 Monet's leftover from #1835 is closed.  Live App Store Connect: both
