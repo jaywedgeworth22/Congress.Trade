@@ -17,16 +17,17 @@ struct TrendsView: View {
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 0) {
+                DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                FeedControlBar(showMetrics: false)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Same first two rows as Trades (disclaimer, then the
-                    // shared filter strip) so the chips land at the same
-                    // position and the top of the tab is the same background.
-                    VStack(alignment: .leading, spacing: 12) {
-                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
-                        FeedControlBar(showMetrics: false)
-                    }
-
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
                             .frame(maxWidth: .infinity)
@@ -90,6 +91,7 @@ struct TrendsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
+            }
             }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
@@ -165,23 +167,14 @@ struct TrendsView: View {
             || lower.contains("cancelled") || lower.contains("canceled")
     }
 
-    /// Italic dim window after the heading, matching the site `.tr-window-label`.
     /// Extra top pad on later sections so the title sits closer to its own card
-    /// than to the card above.
+    /// than to the card above. Timeframe stays in the sticky filter row only.
     private func trendsHeading(_ title: String, extraTop: CGFloat = 10) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title)
-                .font(.headline)
-            Text(store.selectedTimeRange.label)
-                .font(.caption.italic())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-            Spacer(minLength: 0)
-        }
-        .padding(.top, extraTop)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(store.selectedTimeRange.label)")
+        Text(title)
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, extraTop)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var summaryStrip: some View {
@@ -210,17 +203,8 @@ struct TrendsView: View {
     private var volumeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Buys vs Sells")
-                        .font(.headline)
-                    Text(store.selectedTimeRange.label)
-                        .font(.caption.italic())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Buys vs Sells, \(store.selectedTimeRange.label)")
+                Text("Buys vs Sells")
+                    .font(.headline)
                 Spacer(minLength: 8)
                 Picker("Metric", selection: $volumeMetric) {
                     ForEach(VolumeChartMetric.allCases) { metric in
@@ -228,7 +212,7 @@ struct TrendsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 168)
+                .frame(maxWidth: 88)
                 .accessibilityLabel("Buys vs Sells metric")
             }
             .padding(.top, 10)
@@ -1008,7 +992,7 @@ private enum VolumeChartMetric: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .count: return "# Trades"
+        case .count: return "#"
         case .dollars: return "$"
         }
     }

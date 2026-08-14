@@ -19,6 +19,12 @@ struct PeopleDirectoryView: View {
     /// rendering 379 cards at once — it must never become a request.
     @State private var currentPage = 0
     @State private var pageSize = 50
+    @State private var directoryMode: DirectoryMode = .people
+
+    private enum DirectoryMode: String, CaseIterable {
+        case people = "People"
+        case assets = "Assets"
+    }
 
     private var filteredMembers: [MemberDirectoryEntry] {
         let matched = store.members.filter { MemberDirectorySearch.matches($0, query: searchText) }
@@ -48,6 +54,53 @@ struct PeopleDirectoryView: View {
         let page = min(currentPage, pages - 1)
         return NavigationStack {
             VStack(spacing: 0) {
+                Picker("Directory", selection: $directoryMode) {
+                    ForEach(DirectoryMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+
+                if directoryMode == .assets {
+                    AssetDirectoryView(wrapsNavigation: false)
+                } else {
+                peopleDirectoryList(members: members, page: page, pages: pages)
+                }
+            }
+            .background(AppTheme.background)
+            .navigationTitle("Directory")
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await store.loadMembersDirectory(force: true) }
+            .task {
+                await store.loadMembersDirectory()
+            }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedMemberId != nil },
+                set: { if !$0 { selectedMemberId = nil; selectedMemberPhotoUrl = nil } }
+            )) {
+                if let memberId = selectedMemberId {
+                    PoliticianDetailView(
+                        memberId: memberId,
+                        memberName: selectedMemberName ?? "Politician",
+                        seedPhotoUrl: selectedMemberPhotoUrl
+                    )
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
+                }
+            }
+            .onChange(of: searchText) { _, _ in currentPage = 0 }
+            .onChange(of: sortKey) { _, _ in currentPage = 0 }
+            .onChange(of: sortAscending) { _, _ in currentPage = 0 }
+        }
+    }
+
+    @ViewBuilder
+    private func peopleDirectoryList(members: [MemberDirectoryEntry], page: Int, pages: Int) -> some View {
+                VStack(spacing: 0) {
                 VStack(spacing: 10) {
                     PeopleSearchField(text: $searchText, focused: $searchFocused)
                         .accessibilityLabel("Search directory by name, state, or party")
@@ -148,36 +201,7 @@ struct PeopleDirectoryView: View {
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
-            }
-            .background(AppTheme.background)
-            .navigationTitle("Directory")
-            .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await store.loadMembersDirectory(force: true) }
-            .task {
-                await store.loadMembersDirectory()
-            }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedMemberId != nil },
-                set: { if !$0 { selectedMemberId = nil; selectedMemberPhotoUrl = nil } }
-            )) {
-                if let memberId = selectedMemberId {
-                    PoliticianDetailView(
-                        memberId: memberId,
-                        memberName: selectedMemberName ?? "Politician",
-                        seedPhotoUrl: selectedMemberPhotoUrl
-                    )
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
                 }
-            }
-            // Any narrowing or reordering invalidates the current page — land
-            // back on the first one instead of on an index that may no longer
-            // exist.
-            .onChange(of: searchText) { _, _ in currentPage = 0 }
-            .onChange(of: sortKey) { _, _ in currentPage = 0 }
-            .onChange(of: sortAscending) { _, _ in currentPage = 0 }
-        }
     }
 
     private func directoryPager(page: Int, pages: Int) -> some View {
