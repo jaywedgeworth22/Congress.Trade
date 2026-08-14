@@ -291,9 +291,16 @@ struct AssetDirectoryView: View {
                         Spacer(minLength: 0)
                     }
 
-                    AssetDirectorySortHeader(sortKey: $sortKey, sortAscending: $sortAscending)
-
-                    assetPager(page: page, pages: pages)
+                    HStack(alignment: .center, spacing: 8) {
+                        SortMenuControl(
+                            keys: Array(AssetDirectorySearch.SortKey.allCases),
+                            sortKey: $sortKey,
+                            sortAscending: $sortAscending,
+                            label: { $0.label },
+                            defaultAscending: { $0 == .name }
+                        )
+                        assetPager(page: page, pages: pages)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -408,55 +415,6 @@ struct AssetDirectoryView: View {
             errorMessage = (error as? APIError)?.errorDescription ?? "Could not load the assets directory."
         }
         isLoading = false
-    }
-}
-
-/// Sticky-style sort controls (mirrors `AssetDirectorySearch.SortKey` /
-/// web's Asset · Trades · Politicians column headings).
-private struct AssetDirectorySortHeader: View {
-    @Binding var sortKey: AssetDirectorySearch.SortKey
-    @Binding var sortAscending: Bool
-
-    var body: some View {
-        SortRow {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(AssetDirectorySearch.SortKey.allCases) { key in
-                        Button {
-                            if sortKey == key {
-                                sortAscending.toggle()
-                            } else {
-                                sortKey = key
-                                // Matches web's sortAssetsDirectory: trades/members
-                                // default descending (most-active first), name
-                                // defaults ascending (A→Z).
-                                sortAscending = key == .name
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Text(key.label)
-                                    .font(.caption.weight(.semibold))
-                                if sortKey == key {
-                                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                                        .font(.system(size: 9, weight: .bold))
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                sortKey == key
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color(uiColor: .secondarySystemBackground),
-                                in: Capsule()
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Sort by \(key.label)")
-                        .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
-                    }
-                }
-            }
-        }
     }
 }
 
