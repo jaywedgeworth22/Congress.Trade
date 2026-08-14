@@ -45,6 +45,7 @@ export interface ScheduledTickResult {
   autopilot: Awaited<ReturnType<typeof maybeStartBacklogAutopilot>> | null;
   ingestionOutbox: { claimed: number; enqueued: number; failed: number } | null;
   deliveryOutbox: { claimed: number; enqueued: number; failed: number } | null;
+  apnsFanout: Awaited<ReturnType<typeof import('../delivery/apnsFanout.ts').fanOutApnsProductEvents>> | null;
   drained: {
     ingest: { claimed: number; completed: number; retried: number; failed: number };
     delivery: { claimed: number; completed: number; retried: number; failed: number };
@@ -193,6 +194,7 @@ export type MaintenanceLane =
   | 'backlog_autopilot'
   | 'ingestion_outbox'
   | 'delivery_outbox'
+  | 'apns_fanout'
   | 'durable_queue'
   | 'parked_deliveries'
   | 'usage_telemetry'
@@ -236,6 +238,7 @@ export interface MaintenancePipelineResult {
   autopilot: Awaited<ReturnType<typeof maybeStartBacklogAutopilot>> | null;
   ingestionOutbox: { claimed: number; enqueued: number; failed: number } | null;
   deliveryOutbox: { claimed: number; enqueued: number; failed: number } | null;
+  apnsFanout: Awaited<ReturnType<typeof import('../delivery/apnsFanout.ts').fanOutApnsProductEvents>> | null;
   errors: string[];
 }
 
@@ -262,6 +265,7 @@ export async function runMaintenancePipeline(
     autopilot: null,
     ingestionOutbox: null,
     deliveryOutbox: null,
+    apnsFanout: null,
     errors,
   };
   const throwIfAborted = () => {
@@ -323,6 +327,9 @@ export async function runMaintenancePipeline(
         'delivery_outbox',
         () => flushDeliveryOutbox(env, { limit: options.outboxLimit, now }),
       );
+      result.apnsFanout = await runLane('apns_fanout', () =>
+        import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
+      );
       if (options.afterOutboxFlush) {
         await runLane('durable_queue', options.afterOutboxFlush);
       }
@@ -381,6 +388,7 @@ export async function runScheduledTick(
     autopilot: null,
     ingestionOutbox: null,
     deliveryOutbox: null,
+    apnsFanout: null,
     drained: null,
     errors,
   };
@@ -450,6 +458,7 @@ export async function runScheduledTick(
     result.autopilot = pipeline.autopilot;
     result.ingestionOutbox = pipeline.ingestionOutbox;
     result.deliveryOutbox = pipeline.deliveryOutbox;
+    result.apnsFanout = pipeline.apnsFanout;
     result.skippedDrain = pipeline.skippedOutboxFlush;
     result.aborted = pipeline.aborted;
     return result;

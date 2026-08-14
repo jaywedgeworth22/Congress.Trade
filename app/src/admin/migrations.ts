@@ -1079,6 +1079,17 @@ END`,
 ] as const;
 
 
+export const APNS_FANOUT_STATE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS apns_fanout_state (
+     id TEXT PRIMARY KEY,
+     last_trade_at TEXT NOT NULL,
+     last_review_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `INSERT OR IGNORE INTO apns_fanout_state (id, last_trade_at, last_review_at, updated_at)
+     VALUES ('default', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')`,
+] as const;
+
 export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker_live ON transactions (ticker) WHERE deprecated_at IS NULL',
   "UPDATE transactions SET ticker = 'ETH' WHERE ticker IN ('ETHUSD', 'ETH-USD', 'ETH/USD', '$ETHUSD', '$ETH')",
@@ -1211,6 +1222,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LATENCY_PROBE_LEASE_SCHEMA_STATEMENTS,
   // 0085_asset_name_ticker_normalization.sql
   ...ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS,
+  // 0086_apns_fanout_state.sql
+  ...APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

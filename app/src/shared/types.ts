@@ -882,6 +882,17 @@ export interface Env {
   STRIPE_TRIAL_DAYS?: string;
   /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
   APPLE_BUNDLE_ID?: string;
+  /** APNs provider key id (10-char). Required with APNS_TEAM_ID + APNS_P8 to send. */
+  APNS_KEY_ID?: string;
+  /** Apple Developer Team ID (CC8UTF7ATG). */
+  APNS_TEAM_ID?: string;
+  /** APNs topic; defaults to trade.congress.ios. */
+  APNS_BUNDLE_ID?: string;
+  /** Raw PEM or base64 of the APNs .p8. Never log. */
+  APNS_P8?: string;
+  /** Alias for a base64-encoded .p8. */
+  APNS_PRIVATE_KEY_B64?: string;
+  APNS_PRIVATE_KEY?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */
