@@ -886,6 +886,12 @@ export interface Env {
   STRIPE_PORTAL_CONFIGURATION?: string;
   /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
   APPLE_BUNDLE_ID?: string;
+  /** Sign in with Apple Services ID for the website OAuth flow. */
+  APPLE_SERVICES_ID?: string;
+  APPLE_TEAM_ID?: string;
+  APPLE_KEY_ID?: string;
+  APPLE_P8?: string;
+  APPLE_PRIVATE_KEY?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */
