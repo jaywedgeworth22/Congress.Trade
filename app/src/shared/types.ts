@@ -537,7 +537,7 @@ export interface Env {
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
   GEMINI_RPM_LIMIT?: string;
-  /** Primary vision model override (defaults to 'gemini-3.5-flash'). */
+  /** Primary vision model override (defaults to 'gemini-3.7-flash'). */
   VISION_PRIMARY_MODEL?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
@@ -555,7 +555,7 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   /** Secondary OpenRouter API key for budget cap failover. */
   OPENROUTER_BACKUP_API_KEY?: string;
-  /** OpenRouter model override (defaults to 'google/gemini-3.5-flash'). */
+  /** OpenRouter model override (defaults to 'google/gemini-3.7-flash'). */
   OPENROUTER_MODEL?: string;
   /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */
   OPENROUTER_PDF_ENGINE_TEXT?: string;
