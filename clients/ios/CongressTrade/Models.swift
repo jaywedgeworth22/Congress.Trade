@@ -665,6 +665,7 @@ enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
 enum FeedSortKey: String, CaseIterable, Identifiable {
     case date
     case amount
+    case ticker
 
     var id: String { rawValue }
 
@@ -672,6 +673,7 @@ enum FeedSortKey: String, CaseIterable, Identifiable {
         switch self {
         case .date: return "Date"
         case .amount: return "Amount"
+        case .ticker: return "Ticker"
         }
     }
 
