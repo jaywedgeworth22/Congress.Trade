@@ -131,7 +131,7 @@ export function resolveOgMeta(
     return {
       context: 'politician',
       title: heading,
-      description: `Congressional STOCK Act trading activity for ${heading} on Congress.Trade.`,
+      description: `Trading activity for ${heading} on Congress.Trade.`,
       url: pageUrl,
       imageUrl: absImage('politician'),
       imageAlt:
@@ -144,7 +144,7 @@ export function resolveOgMeta(
     return {
       context: 'company',
       title: ticker,
-      description: `Congressional STOCK Act trades in ${ticker} on Congress.Trade.`,
+      description: `Disclosed trades in ${ticker} on Congress.Trade.`,
       url: pageUrl,
       imageUrl: absImage('company'),
       imageAlt:
@@ -158,7 +158,7 @@ export function resolveOgMeta(
       context: 'trends',
       title: 'Trends',
       description:
-        'Congressional trading trends — volume, consensus moves, sectors, and disclosure lag on Congress.Trade.',
+        'Trading trends — volume, consensus moves, sectors, and disclosure lag on Congress.Trade.',
       url: pageUrl,
       imageUrl: absImage('trends'),
       imageAlt:

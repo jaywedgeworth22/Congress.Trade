@@ -171,7 +171,7 @@ describe('DASHBOARD_HTML', () => {
     expect(cleanAsset('Apple Inc (NASDAQ: AAPL)')).toBe('Apple Inc.'); // exchange suffix stripped
   });
 
-  it('keeps the What-Congress-Is-Trading header aligned to loadTrTickers row cells', () => {
+  it('keeps the What-Is-Being-Traded header aligned to loadTrTickers row cells', () => {
     const thead = DASHBOARD_HTML.match(/<table id="tableTrTickers">\s*<thead>\s*<tr>([\s\S]*?)<\/tr>/);
     expect(thead).not.toBeNull();
     const headerCells = (thead![1].match(/<th/g) || []).length;
@@ -2316,7 +2316,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   });
 
   // ---- 8b. Keyboard-operable sort headers ----------------------------------
-  it('makes the "What Congress Is Trading" ticker leaderboard sort headers keyboard-operable', () => {
+  it('makes the "What Is Being Traded" ticker leaderboard sort headers keyboard-operable', () => {
     for (const sortKey of ['trades', 'members', 'volume', 'netflow']) {
       expect(DASHBOARD_HTML).toContain(
         `event.preventDefault();setTickerSort('${sortKey}');}`,
@@ -3340,7 +3340,7 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
     });
 
     it('makes every Trends leaderboard/list row entity-clickable', () => {
-      // What Congress Is Trading (loadTrTickers -> #trTickers) and Rising
+      // What Is Being Traded (loadTrTickers -> #trTickers) and Rising
       // Activity (loadTrTrending -> #trTrending) share this row template.
       expect(DASHBOARD_HTML).toContain(
         'return \'<tr class="row clickable" data-asset="\' + esc(r.ticker) + \'" title="Open company">\' +',
@@ -4306,6 +4306,12 @@ describe('web blocking defects (audited)', () => {
     expect(DASHBOARD_HTML).toContain('<h3>Trade Stats (All Time)</h3>');
     // Asset drawer subtitle carries the same window as its KPI section.
     expect(DASHBOARD_HTML).toContain("' approx. volume  |  ' + esc(tickerWindowLabel)");
+    // Company drawer + Trends card: executive is in the default corpus, so
+    // "Congressional" / "Congress Is Trading" would mislabel the numbers.
+    expect(DASHBOARD_HTML).toContain('<h3>Activity (\' + esc(tickerWindowLabel) + \')</h3>');
+    expect(DASHBOARD_HTML).not.toContain('Congressional Activity');
+    expect(DASHBOARD_HTML).toContain('What Is Being Traded');
+    expect(DASHBOARD_HTML).not.toContain('What Congress Is Trading');
   });
 
   it('names the benchmark once per surface and never prints SPX/SPY', () => {

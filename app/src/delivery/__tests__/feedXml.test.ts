@@ -76,6 +76,9 @@ describe('GET /feed.xml', () => {
 
     const body = await res.text();
     expect(body).toContain('<rss version="2.0">');
+    expect(body).toContain('<title>Congress.Trade — Recent Trades</title>');
+    expect(body).toContain('House, Senate, and Executive Branch stock trades');
+    expect(body).not.toContain('Recent Congressional Trades');
     expect(body).toContain('<title>Nancy Pelosi bought ACME</title>');
     expect(body).toContain('<guid isPermaLink="false">tx_1</guid>');
     expect(body).toContain('<pubDate>');

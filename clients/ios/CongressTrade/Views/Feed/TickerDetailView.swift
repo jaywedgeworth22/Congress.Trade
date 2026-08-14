@@ -83,7 +83,7 @@ struct TickerDetailView: View {
 
                         // Summary
                         if let summary {
-                            DetailSection("Congressional Trading Summary") {
+                            DetailSection("Trading Summary") {
                                 HStack(spacing: 12) {
                                     MetricTile(title: "Trades", value: CompactFormat.count(summary.totalTrades))
                                     MetricTile(title: "Buys", value: CompactFormat.count(summary.buyCount))

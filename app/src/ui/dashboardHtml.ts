@@ -236,7 +236,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      big fraction of the viewport. */
   #view-trends .table-wrap { max-height: none; padding-right: 0; }
   /* Owner follow-up batch #15: at wide desktop widths (verified ~1600px and
-     ~1920px) the small Trends table cards (What Congress Is Trading, Rising
+     ~1920px) the small Trends table cards (What Is Being Traded, Rising
      Activity, Top Performers, Most Active Politicians, …) used to stretch to
      fill their full grid column, showing a right-side drop shadow and a wall
      of empty space after the table's last column. The main feed table
@@ -1801,7 +1801,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
-    /* "What Congress Is Trading" is the densest row; on phones drop the gross
+    /* "What Is Being Traded" is the densest row; on phones drop the gross
        Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
        signed net-flow column isn't clipped. Other tables keep their volume. */
     #trTickers td.est, #tableTrTickers th.est { display: none; }
@@ -2658,10 +2658,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
 
-    <!-- What Congress is trading + Heating up -->
+    <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
-        <summary class="tf-h">What Congress Is Trading <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">What Is Being Traded <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="row-flex rankby-row" style="margin:-6px 0 12px">
           <label class="lbl">Rank By:</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
@@ -10815,7 +10815,7 @@ function openAsset(ticker) {
 	      // name the window here too so the subtitle is not read as an all-time total.
 	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  ' + esc(tickerWindowLabel) + '</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
-      '<div class="drawer-section"><h3>Congressional Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
+      '<div class="drawer-section"><h3>Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + chartCaption + '</div>' +
@@ -11384,7 +11384,7 @@ function pricingCopy(intent) {
   };
   if (intent === 'export') return {
     title: 'Export Full History',
-    sub: 'Premium unlocks full-history CSV downloads of every Congressional trade, plus instant delivery via webhook or SSE.',
+    sub: 'Premium unlocks full-history CSV downloads of every disclosed trade, plus instant delivery via webhook or SSE.',
     features: [
       'Full-history CSV export with ticker, member, type, chamber, and date filters',
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
