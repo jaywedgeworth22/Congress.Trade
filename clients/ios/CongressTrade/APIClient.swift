@@ -46,6 +46,7 @@ struct FeedQuery: Equatable {
     var memberName: String?
     var chamber: String?
     var type: String?
+    var party: String?
     var from: String?
     var to: String?
     /// Backend sort key: `tx_date` | `published` | cursor (default). Prefer
@@ -66,6 +67,7 @@ struct FeedQuery: Equatable {
         if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
         if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
         if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
         if let sort, !sort.isEmpty { items.append(URLQueryItem(name: "sort", value: sort)) }

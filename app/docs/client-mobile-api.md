@@ -242,27 +242,10 @@ and must not be treated as "not premium" — always gate on `entitlement.premium
     directive, 2026-08-09), matching the web's own multi-select chip
     semantics: `chamber` is genuinely CSV-capable server-side (`asChambers`),
     so iOS forwards the full multi-selection as `chamber=house,senate`
-    exactly like the web. `type` (`asTxType`) is single-valued server-side —
-    iOS forwards it only when exactly one side is selected (mirroring the
-    web's own `qSideGroup`/`selectedSideParam` single-value fallback) and
-    otherwise narrows the fetched page to the selected sides client-side, so
-    a 2+ selection still filters correctly on-device even though the
-    request itself is unfiltered.
-
-    **Party (corrected 2026-08-11 — the previous text here was wrong).** This
-    paragraph used to say party had "no feed-level server param at all". That
-    has not been true since PR #1594: `filtersFromQuery`
-    (`app/src/client/utils.ts`) parses `party` via `asPartyBuckets`, which is
-    CSV multi-select capable (`?party=D,R`, buckets `D`/`R`/`O`, with `I`
-    folded into `O`), and `buildTxFilters` applies it to the page **and** the
-    count. iOS still filters its Party pill entirely client-side, which means
-    the Trades `total` (and therefore "Page X of Y") is computed over the
-    unfiltered corpus whenever a party is selected — the same class of bug the
-    asset-class and amount filters were moved server-side to avoid. iOS should
-    forward `party=` as CSV and drop the on-device pass. Note the two layers
-    take different shapes: the feed takes a CSV **list**, while Trends
-    analytics' `party=` (`asPartyBucket`, `app/src/analytics/sql.ts`) is
-    single-valued and should still only be sent when exactly one is selected.
+    exactly like the web. `type` accepts CSV via `asTxTypes` (`?type=B,S`).
+    `party` is CSV via `asPartyBuckets` (`?party=D,R`). Trends analytics
+    `party=` now accepts the same CSV list (`asPartyBuckets` in
+    `app/src/analytics/sql.ts`).
   - `sort` accepts `published`, `cursor` (default), or `tx_date` (fixed
     2026-08-09 — `tx_date` was already a valid `TxQueryParams`/SQL sort key
     for `/api/transactions` but this endpoint's query parser silently dropped
