@@ -476,6 +476,16 @@ Client apps (peer clients of the backend, not separate products):
 - **NO HOLDING OFF PRODUCTION**: Do not hold completed or near-completed work on preview servers or locally unless actively testing something known to be unsafe or broken in production. If the code is ready, merge and deploy it to production immediately.
 - **DEPLOYMENT DISCIPLINE**: Automatic production deployment is triggered via Coolify auto-deploy on push to main. Maintain test coverage and build checks before merging to main.
 
+## iOS agent build loop (owner 2026-08-13)
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. Onboarding: `clients/ios/CLAUDE.md`.
+
+- Do **not** stand up, debug, or narrate Xcode MCP (`build_sim`, `mcpbridge`).
+- `xcodebuild` / `xcrun simctl` via bash are pre-approved. Run them. Do not ask.
+- User-visible changes need `xcrun simctl io booted screenshot …` before you claim done.
+- Do not hand-edit `.pbxproj` / entitlements / xibs. New Swift files: create them and report target membership (no XcodeGen here).
+- `@Observable` + `@MainActor`; `NavigationStack`; light theme default.
+
 ## iOS native ship (TestFlight, no Xcode UI)
 
 ```bash
