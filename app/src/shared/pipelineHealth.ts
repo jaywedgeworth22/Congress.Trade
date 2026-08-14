@@ -9,6 +9,7 @@ import type { Env } from './types.ts';
 import { all, get } from './db.ts';
 import { getLastPollAt } from './config.ts';
 import { countEligibleBacklog } from '../extraction/autopilot.ts';
+import { describeAutopilotHaltReason } from '../extraction/providerHealth.ts';
 import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
 
 export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
@@ -208,7 +209,20 @@ export function evaluatePipelineSignals(
       });
     }
   } else {
-    checks.push({ id: 'extraction_provider', status: 'ok', detail: 'No extraction attempts in 24h', value: 0 });
+    const halted = Boolean(s.autopilotHaltReason);
+    const backlog = s.reviewBacklog ?? 0;
+    if (halted || backlog > 0) {
+      checks.push({
+        id: 'extraction_provider',
+        status: 'stalled',
+        detail: halted
+          ? `No extraction attempts in 24h while autopilot is halted (${s.autopilotHaltReason})`
+          : `No extraction attempts in 24h while review backlog is ${backlog}`,
+        value: 0,
+      });
+    } else {
+      checks.push({ id: 'extraction_provider', status: 'ok', detail: 'No extraction attempts in 24h', value: 0 });
+    }
   }
 
   // 4. Review queue backlog
@@ -497,11 +511,14 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   } catch {}
 
   try {
-    const res = await get<{ halt_reason: string }>(
+    const res = await get<{ halt_reason: string; sample_errors: string | null }>(
       env.DB,
-      "SELECT halt_reason FROM autopilot_runs WHERE status = 'halted' ORDER BY started_at DESC LIMIT 1",
+      "SELECT halt_reason, sample_errors FROM autopilot_runs WHERE status = 'halted' ORDER BY started_at DESC LIMIT 1",
     );
-    autopilotHaltReason = res?.halt_reason ?? null;
+    autopilotHaltReason = describeAutopilotHaltReason(
+      res?.halt_reason ?? null,
+      res?.sample_errors ?? null,
+    );
   } catch {}
 
   try {

@@ -95,6 +95,35 @@ describe('evaluatePipelineSignals', () => {
     expect(res.status).toBe('stalled');
     const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
     expect(backlogCheck?.status).toBe('stalled');
+    const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
+    expect(providerCheck?.status).toBe('stalled');
+  });
+
+  it('does not mark extraction_provider ok when attempts=0 and autopilot is halted', () => {
+    const haltedIdle: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 0,
+      extractionAttempts24h: 0,
+      extractionOk24h: 0,
+      autopilotHaltReason: 'error_class:billing (OpenRouter files-endpoint prepaid minimum, not account quota)',
+    };
+    const res = evaluatePipelineSignals(haltedIdle, nowMs);
+    const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
+    expect(providerCheck?.status).toBe('stalled');
+    expect(providerCheck?.detail).toContain('halted');
+  });
+
+  it('does not mark extraction_provider ok when attempts=0 and review backlog is nonzero', () => {
+    const idleBacklog: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 5,
+      extractionAttempts24h: 0,
+      extractionOk24h: 0,
+    };
+    const res = evaluatePipelineSignals(idleBacklog, nowMs);
+    const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
+    expect(providerCheck?.status).not.toBe('ok');
+    expect(providerCheck?.status).toBe('stalled');
   });
 
   it('flags stalled when outbox pending items exceed max age threshold', () => {
