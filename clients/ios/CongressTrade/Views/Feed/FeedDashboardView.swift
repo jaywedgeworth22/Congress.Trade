@@ -120,6 +120,19 @@ struct FeedDashboardView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Status that occupies the search-field slot. Reload wins over Updating
+    /// because it is actionable. `nil` shows the typed search field.
+    private var tradesSearchSlotStatus: TradesSearchSlotStatus? {
+        if let notice = store.feedNotice,
+           store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
+            return .reload(message: store.isOffline ? "You are offline." : notice)
+        }
+        if store.isTradesUpdating {
+            return .updating
+        }
+        return nil
+    }
+
     /// Never the page limit. `CongressTradeStore.tradeCountSummary` owns the
     /// decision of which number (if any) is honest for the active combination
     /// of server-side and client-only filters; the view only supplies the two
@@ -136,44 +149,39 @@ struct FeedDashboardView: View {
         let trades = filteredTrades
         return NavigationStack {
             ScrollView {
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     DisclaimerBanner(isExpanded: $disclaimerExpanded)
 
-                    // Shared notice banner at top under logo / above filters (failure/offline state)
-                    if let notice = store.feedNotice,
-                       store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
-                        FeedFreshnessView(
-                            isOffline: store.isOffline,
-                            lastRefresh: store.lastSuccessfulRefresh,
-                            notice: store.feedNotice,
-                            onRetry: { Task { await store.refresh() } }
+                    // Tight pair: top filters sit close to the search slot.
+                    VStack(spacing: 6) {
+                        FeedControlBar()
+
+                        // Reload / Updating replace the field in-place. Typed
+                        // search text is kept on `searchText` and comes back
+                        // with the field once the slot is free again.
+                        TradesUnifiedSearchField(
+                            text: $searchText,
+                            countLabel: tradeCountLabel(showing: trades.count),
+                            focused: $searchFocused,
+                            status: tradesSearchSlotStatus,
+                            onSubmit: { applyUnifiedSearch() },
+                            onClear: {
+                                searchText = ""
+                                Task {
+                                    await store.setSearch(nil)
+                                    await store.setPoliticianFilter("")
+                                    await store.setAssetFilter("")
+                                }
+                            },
+                            onReload: { Task { await store.refresh() } }
                         )
-                    }
-
-                    // Shared filters (also on Trends) — chamber / party / sides / timeframe.
-                    FeedControlBar()
-
-                    // Single unified search (name / ticker / state / party) + # trades matching.
-                    TradesUnifiedSearchField(
-                        text: $searchText,
-                        countLabel: tradeCountLabel(showing: trades.count),
-                        focused: $searchFocused,
-                        onSubmit: { applyUnifiedSearch() },
-                        onClear: {
-                            searchText = ""
-                            Task {
-                                await store.setSearch(nil)
-                                await store.setPoliticianFilter("")
-                                await store.setAssetFilter("")
-                            }
+                        .onChange(of: searchText) { _, _ in
+                            scheduleSearchDebounce()
                         }
-                    )
-                    .onChange(of: searchText) { _, _ in
-                        scheduleSearchDebounce()
+                        .onChange(of: tradesSearchSlotStatus) { _, status in
+                            if status != nil { searchFocused = false }
+                        }
                     }
-
-                    // Sits directly above the list, where the user is already looking.
-                    TradesFilterActivityRow(isActive: store.isTradesUpdating && !cachedTrades.isEmpty)
 
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
@@ -665,31 +673,11 @@ struct AppLegalFooter: View {
     }
 }
 
-/// "It is working, wait" — for the 3-5 seconds a filter change takes.
-///
-/// Reserves its height whether or not it is active, so appearing and
-/// disappearing never shoves the list under the user's thumb mid-tap. That is
-/// the whole reason this is a view and not an inline `if isActive`.
-struct TradesFilterActivityRow: View {
-    let isActive: Bool
-
-    @ScaledMetric(relativeTo: .caption2) private var rowHeight: CGFloat = 18
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if isActive {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Updating results…")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: rowHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeInOut(duration: 0.15), value: isActive)
-        .accessibilityHidden(!isActive)
-    }
+/// Occupies the Trades search-field geometry so a reload / updating message
+/// does not add a second row. The typed query stays on the binding.
+enum TradesSearchSlotStatus: Equatable {
+    case updating
+    case reload(message: String)
 }
 
 /// The one chrome every interactive control on these screens wears — filter
@@ -751,12 +739,12 @@ struct SortMenuControl<Key: Hashable>: View {
 
     var body: some View {
         SortRow {
-            HStack(spacing: 6) {
+            HStack(spacing: 2) {
                 Button {
                     sortAscending.toggle()
                 } label: {
                     ControlChip(compact: true) {
-                        Image(systemName: "arrow.up.arrow.down")
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
                             .font(.caption.weight(.bold))
                     }
                 }
@@ -783,13 +771,8 @@ struct SortMenuControl<Key: Hashable>: View {
                     }
                 } label: {
                     ControlChip {
-                        HStack(spacing: 4) {
-                            Text(label(sortKey))
-                                .font(.caption.weight(.semibold))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .bold))
-                                .opacity(0.5)
-                        }
+                        Text(label(sortKey))
+                            .font(.caption.weight(.semibold))
                     }
                 }
                 .accessibilityLabel("Sort by \(label(sortKey))")
@@ -798,22 +781,19 @@ struct SortMenuControl<Key: Hashable>: View {
     }
 }
 
-/// Trades-only sort control (owner punch list #2, item 7) — mirrors the
-/// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
-/// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
-/// Amount) plus a separate direction button that flips asc/desc for
-/// whichever key is active. Both halves are `ControlChip`s now, so they match
-/// each other, the filter pills above them, and the pagers below.
+/// Trades-only sort control: direction chip flush against the Date / Amount /
+/// Ticker menu so they read as one group. The flip icon is the live direction
+/// (`arrow.up` / `arrow.down`); the menu chevron is only "this opens a list".
 struct FeedSortControl: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             Button {
                 Task { await store.toggleFeedSortDirection() }
             } label: {
                 ControlChip(compact: true) {
-                    Image(systemName: "arrow.up.arrow.down")
+                    Image(systemName: store.feedSortDirection.systemImage)
                         .font(.caption.weight(.bold))
                 }
             }
@@ -835,13 +815,8 @@ struct FeedSortControl: View {
                 }
             } label: {
                 ControlChip {
-                    HStack(spacing: 4) {
-                        Text(store.feedSortKey.label)
-                            .font(.caption.weight(.semibold))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
-                            .opacity(0.5)
-                    }
+                    Text(store.feedSortKey.label)
+                        .font(.caption.weight(.semibold))
                 }
             }
             .accessibilityLabel("Sort by \(store.feedSortKey.label)")
@@ -876,42 +851,48 @@ struct PaginationBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             if totalPages > 1 {
-                Button(action: onPrevious) {
-                    ControlChip(isEnabled: canGoPrevious, compact: true) {
-                        Image(systemName: "chevron.left")
-                            .font(.caption.weight(.bold))
+                HStack(spacing: 8) {
+                    Button(action: onPrevious) {
+                        ControlChip(isEnabled: canGoPrevious, compact: true) {
+                            Image(systemName: "chevron.left")
+                                .font(.caption.weight(.bold))
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canGoPrevious)
-                .accessibilityLabel("Previous page")
+                    .buttonStyle(.plain)
+                    .disabled(!canGoPrevious)
+                    .accessibilityLabel("Previous page")
 
-                // Plain text, never a chip: it is a readout, and giving it the
-                // tappable shape would promise an action it does not have.
-                Text(pageLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .accessibilityLabel(pageLabel)
+                    // Plain text, never a chip: it is a readout, and giving it the
+                    // tappable shape would promise an action it does not have.
+                    Text(pageLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .accessibilityLabel(pageLabel)
 
-                Button(action: onNext) {
-                    ControlChip(isEnabled: canGoNext, compact: true) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
+                    Button(action: onNext) {
+                        ControlChip(isEnabled: canGoNext, compact: true) {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoNext)
+                    .accessibilityLabel("Next page")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canGoNext)
-                .accessibilityLabel("Next page")
+            }
+
+            if sortControls != nil || totalPages > 1 {
+                Spacer(minLength: 4)
             }
 
             if let sortControls {
                 sortControls
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
 
             Menu {
                 ForEach(pageSizeOptions, id: \.self) { size in
@@ -1067,38 +1048,23 @@ struct TradesUnifiedSearchField: View {
     @Binding var text: String
     var countLabel: String? = nil
     var focused: FocusState<Bool>.Binding
+    var status: TradesSearchSlotStatus? = nil
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
+    var onReload: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Name, ticker, state, or party", text: $text)
-                    .neverAutocapitalized()
-                    .autocorrectionDisabled()
-                    .font(.subheadline)
-                    .focused(focused)
-                    .submitLabel(.search)
-                    .onSubmit {
-                        onSubmit()
-                        focused.wrappedValue = false
-                    }
-                if !text.isEmpty {
-                    Button {
-                        withAnimation { text = "" }
-                        onClear()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear Search")
+            Group {
+                if let status {
+                    statusSlot(status)
+                } else {
+                    searchSlot
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
             .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 10))
             .overlay(AppTheme.border(cornerRadius: 10))
@@ -1112,7 +1078,76 @@ struct TradesUnifiedSearchField: View {
                     .fixedSize()
             }
         }
-        .accessibilityLabel("Search trades by politician name, ticker, state, or party")
+        .animation(.easeInOut(duration: 0.15), value: status)
+        .accessibilityLabel(status == nil
+            ? "Search trades by politician name, ticker, state, or party"
+            : statusAccessibility)
+    }
+
+    private var searchSlot: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Name, ticker, state, or party", text: $text)
+                .neverAutocapitalized()
+                .autocorrectionDisabled()
+                .font(.subheadline)
+                .focused(focused)
+                .submitLabel(.search)
+                .onSubmit {
+                    onSubmit()
+                    focused.wrappedValue = false
+                }
+            if !text.isEmpty {
+                Button {
+                    withAnimation { text = "" }
+                    onClear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear Search")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusSlot(_ status: TradesSearchSlotStatus) -> some View {
+        switch status {
+        case .updating:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Updating results…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        case .reload(let message):
+            HStack(spacing: 8) {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button("Reload", action: onReload)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    private var statusAccessibility: String {
+        switch status {
+        case .updating:
+            return "Updating results"
+        case .reload(let message):
+            return message
+        case .none:
+            return "Search trades"
+        }
     }
 }
 

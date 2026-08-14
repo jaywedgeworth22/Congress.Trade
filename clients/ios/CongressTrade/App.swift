@@ -17,7 +17,8 @@ enum AppTab: Hashable {
 /// tab.  Trends is the default/leftmost tab (owner punch list item 1).
 @MainActor
 final class TabRouter: ObservableObject {
-    @Published var selection: AppTab = .trends
+    @Published var selection: AppTab =
+        ProcessInfo.processInfo.arguments.contains("-startOnTrades") ? .trades : .trends
 }
 
 @main
