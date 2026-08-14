@@ -27,7 +27,7 @@ name: iOS TestFlight ship (Mac runner)
 #      backend-only commit would ship a TestFlight build. The owner does not
 #      want TestFlight spammed; this is the guard that prevents it.
 #   2. The ship script itself then rate-limits successful uploads to one per app
-#      per DEFAULT_MIN_INTERVAL_SEC=9000 seconds (2.5 hours), a constant near
+#      per DEFAULT_MIN_INTERVAL_SEC=3600 seconds (1 hour), a constant near
 #      the top of scripts/ios-fleet/ship-testflight.sh, and independently skips
 #      when git HEAD already shipped. Runs inside that window print
 #      "ship-gate: skip" and exit 0 (green, nothing uploaded).

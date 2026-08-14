@@ -65,7 +65,7 @@ final class CongressTradeStore: ObservableObject {
     /// `didSet` fired a detached `Task { await refresh() }`, so nobody could
     /// await a page-size change and the "updating" indicator had no way to
     /// cover it.
-    @Published private(set) var viewLimit: Int = 100
+    @Published private(set) var viewLimit: Int = 50
     /// 0-indexed page of the current filtered/sorted snapshot (owner punch
     /// list #2, item 8). `refresh()` sends it as `offset = currentPage *
     /// pageLimit`; every filter/sort/page-size change below resets it to 0
@@ -1225,7 +1225,7 @@ enum TradeCountSummary: Equatable {
         case .unknown:
             return nil
         case .total(let count):
-            return count == 1 ? "1 trade" : "\(count.formatted(.number.grouping(.automatic))) trades"
+            return count.formatted(.number.grouping(.automatic))
         case .narrowed(let visible):
             return visible == 1 ? "1 shown on this page" : "\(visible.formatted(.number.grouping(.automatic))) shown on this page"
         }

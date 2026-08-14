@@ -1,6 +1,36 @@
 import AuthenticationServices
 import SwiftUI
+import UIKit
 import UserNotifications
+
+/// Writes Light / Dark / System onto every window so a theme change restyles
+/// an already-presented Account sheet. `.preferredColorScheme` on the
+/// WindowGroup does not reach a sheet that was presented while Dark was
+/// active — Light/System look like no-ops until the sheet is dismissed.
+enum AppAppearance {
+    static func apply(_ pref: String) {
+        let style: UIUserInterfaceStyle
+        switch pref {
+        case "light": style = .light
+        case "dark": style = .dark
+        default: style = .unspecified
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                window.overrideUserInterfaceStyle = style
+            }
+        }
+    }
+
+    static func colorScheme(for pref: String) -> ColorScheme? {
+        switch pref {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+}
 
 enum AppTheme {
     static let background = Color(uiColor: .systemBackground)
@@ -832,6 +862,7 @@ struct AccountQuickMenu: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            .preferredColorScheme(AppAppearance.colorScheme(for: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
             .toolbar {
@@ -1400,6 +1431,7 @@ struct ThemeSegmentControl: View {
             ForEach(options) { option in
                 Button {
                     selection = option.id
+                    AppAppearance.apply(option.id)
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: option.systemImage)

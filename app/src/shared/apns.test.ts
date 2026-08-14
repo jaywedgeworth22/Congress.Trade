@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 describe('loadApnsConfig', () => {
-  it('accepts APNS_P8 PEM and defaults the Congress.Trade bundle', () => {
+  it('accepts the APNS p8 env slot and defaults the Congress.Trade bundle', () => {
     const config = loadApnsConfig({
       APNS_KEY_ID: 'P4US7YTWH4',
       APNS_TEAM_ID: 'CC8UTF7ATG',

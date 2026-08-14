@@ -154,6 +154,10 @@ import {
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
+import {
+  requeueTransientFailedDurableJobs,
+  requeueTransientFailedIngestionOutbox,
+} from '../ingestion/transientDlq.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { isValidBracket } from '../shared/brackets.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
@@ -5002,7 +5006,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // non-filing.new ingest messages. Idempotent; rows whose dedupe key is held
   // by an active sibling are skipped. Body (all optional):
   //   { queue?: 'ingest'|'delivery' (default 'ingest'), type?: string,
-  //     limit?: number (default 500, max 5000), dryRun?: boolean }
+  //     limit?: number (default 500, max 5000), dryRun?: boolean,
+  //     transientOnly?: boolean }
   r.post('/queue-requeue-failed', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -5017,6 +5022,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const queue = queueRaw as 'ingest' | 'delivery' | undefined;
     try {
+      if (body.transientOnly === true) {
+        return c.json(
+          await requeueTransientFailedDurableJobs(c.env, {
+            queue,
+            limit: typeof body.limit === 'number' ? body.limit : undefined,
+            dryRun: body.dryRun === true,
+          }),
+        );
+      }
       return c.json(
         await requeueFailedDurableJobs(c.env, {
           queue,
@@ -5036,7 +5050,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // per-minute scheduled flush drains the rest. Idempotent: only rows still in
   // 'failed' are touched, and re-fetching an errored filing is safe (same R2
   // key, ingest_status transitions back through 'fetched').
-  // Body (all optional): { docIdPrefix?: string, dryRun?: boolean }
+  // Body (all optional): { docIdPrefix?: string, dryRun?: boolean, transientOnly?: boolean }
   r.post('/ingest-requeue-failed', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -5047,6 +5061,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const docIdPrefix = typeof body.docIdPrefix === 'string' ? body.docIdPrefix : undefined;
     try {
+      if (body.transientOnly === true) {
+        const result = await requeueTransientFailedIngestionOutbox(c.env, {
+          dryRun: body.dryRun === true,
+          limit: typeof body.limit === 'number' ? body.limit : undefined,
+        });
+        const flushed = result.dryRun
+          ? 0
+          : (await flushIngestionOutbox(c.env, { limit: 100 }));
+        return c.json({ ...result, flushed });
+      }
       if (body.dryRun === true) {
         const prefix = docIdPrefix?.replace(/[%_]/g, '') ?? '';
         const rows = await all<{ n: number }>(

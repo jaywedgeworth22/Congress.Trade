@@ -1,5 +1,5 @@
 [Unit]
-Description=Congress.Trade health recover (auto-restart on public /api/health failure)
+Description=Congress.Trade health recover (auto-restart on local /api/health failure)
 After=docker.service network-online.target
 Wants=network-online.target
 

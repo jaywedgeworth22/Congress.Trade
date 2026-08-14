@@ -6,8 +6,8 @@
  * return null so callers fail soft.
  *
  * Secrets (Infisical/env, never logged):
- *   APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID,
- *   plus one of APNS_P8 (raw PEM or base64), APNS_PRIVATE_KEY, APNS_PRIVATE_KEY_B64.
+ *   key id, team id, bundle id (the APNs topic),
+ *   plus the .p8 material via the APNS p8 env var, or the private-key / private-key-b64 env vars.
  */
 
 import { createPrivateKey, sign } from 'node:crypto';

@@ -64,7 +64,7 @@ A build number is committed to the counter only by a run that is actually about 
 
 ## Rate limit — what holds back automatic shipping
 
-Uploads are throttled to **one successful ship per app per `DEFAULT_MIN_INTERVAL_SEC` = 9000 seconds (2.5 hours)**.  The constant lives near the top of `ship-testflight.sh`.  This is the main reason a merge to `main` does not become a TestFlight build: `.github/workflows/ios-ship.yml` fires on every push touching `clients/ios/**`, and most of those runs land inside the window, print `ship-gate: skip`, and exit 0.  A run whose git HEAD already shipped skips for the same reason.
+Uploads are throttled to **one successful ship per app per `DEFAULT_MIN_INTERVAL_SEC` = 3600 seconds (1 hour)**.  The constant lives near the top of `ship-testflight.sh`.  This is the main reason a merge to `main` does not become a TestFlight build: `.github/workflows/ios-ship.yml` fires on every push touching `clients/ios/**`, and most of those runs land inside the window, print `ship-gate: skip`, and exit 0.  A run whose git HEAD already shipped skips for the same reason.  Cron ticks twice an hour, so an unbuilt merge is picked up on the next eligible hour.
 
 - **Override one run:** `IOS_TF_MIN_INTERVAL_SEC=<seconds>` in the environment, or `--force-ship`.
 - **Change the standing limit:** edit `DEFAULT_MIN_INTERVAL_SEC`.  That is the owner's call — the number is a local/process-hygiene choice, not an Apple constraint.
@@ -78,14 +78,15 @@ The skip message names the value, its source, and both overrides, so the limit i
 bash scripts/ios-fleet/test-ship-seq.sh
 ```
 
-43 assertions, fully offline — no network, no Xcode, no credentials.  It runs `ship-testflight.sh` with `HOME`, `PATH` and `IOS_FLEET_STATE_DIR` pointed at a scratch sandbox (a fake `xcodebuild` refuses to archive), so it cannot touch real ship state or App Store Connect.  It pins:
+47 assertions, fully offline — no network, no Xcode, no credentials.  It runs `ship-testflight.sh` with `HOME`, `PATH` and `IOS_FLEET_STATE_DIR` pointed at a scratch sandbox (a fake `xcodebuild` refuses to archive), so it cannot touch real ship state or App Store Connect.  It pins:
 
 - a rate-limited run, and a same-HEAD run, exit 0 **without advancing the counter** (this is the 2026-08-12 regression, and the suite fails against the pre-fix script exactly there);
 - a gated run does not even make the ASC round trip;
 - an allowed run advances the counter by **exactly one**, three in a row give 6 → 7 → 8;
 - `--dry-run` and `--upload-only` consume nothing; `--force-ship` still bypasses the gate;
 - for **all four apps**: marketing is `1.0.N`, the build number is a 12-digit UTC stamp, the two differ, and the stamp exceeds `202608120521` (the highest build already live on `trade.congress.ios`, so a ship landing back in the old `1.0.0` train would still be accepted);
-- the skip message names the 9000s default and both overrides.
+- the skip message names the 3600s default and both overrides;
+- a last-ship 3000s ago is still gated (sequence untouched); at 3700s the gate proceeds.
 
 ## Drift check
 

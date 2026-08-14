@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # congress-health-recover.sh — autonomous recovery for congress.trade
 #
-# Polls public /api/health. After consecutive failures:
+# Polls LOCAL /api/health on 127.0.0.1:5000. After consecutive failures:
 #   1) restart the Coolify-managed congress-app container (docker)
 #   2) re-attach stable Traefik alias via ct-reattach-proxy.sh (if present)
 #   3) optionally POST Coolify application restart when COOLIFY_TOKEN is set
@@ -19,6 +19,12 @@
 #
 # Env overrides (optional):
 #   HEALTH_URL          default https://congress.trade/api/health
+#   LOCAL_HEALTH_URL    default http://127.0.0.1:5000/api/health
+#                       Watchdog decisions use LOCAL first. Public flaps
+#                       (Traefik rewrite, CF challenge, hairpin) must not
+#                       restart a healthy container — that is how the hourly
+#                       budget gets spent and the "needs a human" alert fires
+#                       while the app is still serving on :5000.
 #   CHECK_INTERVAL_SEC  default 30
 #   FAIL_THRESHOLD      default 2
 #   RESTART_COOLDOWN_SEC default 300
@@ -32,6 +38,7 @@
 set -euo pipefail
 
 HEALTH_URL="${HEALTH_URL:-https://congress.trade/api/health}"
+LOCAL_HEALTH_URL="${LOCAL_HEALTH_URL:-http://127.0.0.1:5000/api/health}"
 CHECK_INTERVAL_SEC="${CHECK_INTERVAL_SEC:-30}"
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
 RESTART_COOLDOWN_SEC="${RESTART_COOLDOWN_SEC:-300}"
@@ -82,19 +89,75 @@ notify() {
     || log "warn: pushover notify failed"
 }
 
+# Coolify /api/v1/deployments is the running+queued set (not history).
+# Same parse as ct-deploy-guard.sh: object with numeric keys, this app only.
+is_coolify_deploy_active() {
+  [[ -z "${COOLIFY_TOKEN:-}" ]] && return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  local json
+  json=$(curl -fsS -m 8 \
+    -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+    -H "Accept: application/json" \
+    "${COOLIFY_BASE_URL%/}/api/v1/deployments" 2>/dev/null) || return 1
+  printf '%s' "$json" | APP_UUID="$APP_UUID" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if isinstance(d, list):
+    rows = d
+elif isinstance(d, dict):
+    inner = d.get("data", d.get("deployments"))
+    if isinstance(inner, list):
+        rows = inner
+    elif isinstance(inner, dict):
+        rows = list(inner.values())
+    elif d and all(str(k).isdigit() for k in d.keys()):
+        rows = list(d.values())
+    else:
+        rows = []
+else:
+    rows = []
+app_uuid = os.environ.get("APP_UUID", "")
+def mine(x):
+    return (x.get("application_id") == app_uuid
+            or x.get("application_uuid") == app_uuid
+            or x.get("application_name") == "congress-trade")
+active = [x for x in rows if mine(x) and x.get("status") in
+          ("in_progress", "building", "running", "queued")]
+raise SystemExit(0 if active else 1)
+'
+}
+
 is_deploy_active() {
   # Coolify builder / nixpacks containers indicate a live deploy.
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eqi 'nixpacks|coolify-builder|buildkit'; then
     return 0
   fi
+  # Compose replace: old container is gone, new one is Created / starting.
+  # A Coolify API restart here stacks a second deploy on the first and
+  # burns the hourly budget.
+  if docker ps -a --filter 'name=congress-app-' --format '{{.Status}}' 2>/dev/null \
+    | grep -Eqi 'Created|Restarting|health: starting'; then
+    return 0
+  fi
+  # Stop-before-start gap: the old container is already removed and the new
+  # one is not Created yet.  2026-08-14 02:51Z #1852 hit this — local health
+  # failed, find_app_container missed, and we stacked a Coolify restart on
+  # the in-flight deploy.  Ask Coolify before treating that as a crash.
+  if is_coolify_deploy_active; then
+    return 0
+  fi
   return 1
 }
 
-check_health() {
-  # Alive if HTTP 2xx/3xx/4xx and (when JSON) ok+db are not explicitly false.
-  # Network errors / 5xx count as down. A 200 HTML challenge page is down.
+# Probe one health URL. Alive if HTTP 2xx/3xx and (when JSON) ok+db are not
+# explicitly false. Network errors / 5xx / HTML challenge pages are down.
+check_one() {
+  local url="$1"
   local body code
-  body=$(curl -fsS -m 12 -w '\n%{http_code}' "$HEALTH_URL" 2>/dev/null) || return 1
+  body=$(curl -fsS -m 12 -w '\n%{http_code}' "$url" 2>/dev/null) || return 1
   code=$(printf '%s\n' "$body" | tail -n1)
   body=$(printf '%s\n' "$body" | sed '$d')
   case "$code" in
@@ -112,6 +175,14 @@ check_health() {
     return 1
   fi
   return 0
+}
+
+check_health() {
+  # Local published port is the app process. Public congress.trade is Traefik
+  # + Cloudflare. A 60s edge blip used to count as an outage, docker-restart
+  # the healthy app, and spend the hourly budget. Override LOCAL_HEALTH_URL
+  # if the host bind ever moves.
+  check_one "$LOCAL_HEALTH_URL"
 }
 
 restart_timestamps_file() { printf '%s/restarts.log' "$STATE_DIR"; }
@@ -264,7 +335,7 @@ remediate() {
   fi
 }
 
-log "start health_url=$HEALTH_URL interval=${CHECK_INTERVAL_SEC}s fail_threshold=$FAIL_THRESHOLD"
+log "start health_url=$LOCAL_HEALTH_URL (public=$HEALTH_URL) interval=${CHECK_INTERVAL_SEC}s fail_threshold=$FAIL_THRESHOLD"
 
 while true; do
   if [[ $(( $(now) - STARTED_AT )) -lt $STARTUP_GRACE_SEC ]]; then

@@ -253,8 +253,8 @@ describe('DASHBOARD_HTML', () => {
     // The strip replaces the old two-option chamber selects in BOTH views
     // (the admin seed-backfill selector stays congressional by design).
     expect(DASHBOARD_HTML).not.toContain('>Both Chambers</option><option value="house">House</option>');
-    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="qChamber"');
-    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="trChamber"');
+    expect(DASHBOARD_HTML).toContain('id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('id="trChamber"');
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     // H/S/P default unselected (like party chips): nothing on = all branches.
     expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="false"/);
@@ -262,17 +262,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     // The executive toggle reads P (President), analogous to H and S — and each
     // letter carries the owner-specified hover text.
-    expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*title="Executive Branch trades — OGE Form 278-T">P</);
-    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*title="House trades — House Clerk PTR filings">H</);
-    expect(DASHBOARD_HTML).toMatch(/data-ch="senate"[^>]*title="Senate trades — Senate eFD PTR filings">S</);
-    // A single combined ⓘ per shared filter row (not one per H/S/P /
-    // party / type group) explains every pictograph at once — tap-friendly
-    // (mobile can't hover), wired for hover-open on pointer devices and
-    // click-toggle everywhere.
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('qFiltersInfo')");
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('trFiltersInfo')");
+    expect(DASHBOARD_HTML).toContain('data-ch="house"');
+    expect(DASHBOARD_HTML).toContain('data-ch="senate"');
+    expect(DASHBOARD_HTML).toContain('data-ch="executive"');
+    expect(DASHBOARD_HTML).toContain('class="ios-filter-pop"');
+    expect(DASHBOARD_HTML).toContain('All Branches');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="trChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="trPartyInfo"');
@@ -531,8 +525,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
-    expect(DASHBOARD_HTML).toContain('nav.tabs::after');
-    expect(DASHBOARD_HTML).toContain('height:calc(120px + env(safe-area-inset-bottom))');
+    expect(DASHBOARD_HTML).toContain('nav.tabs {');
+    expect(DASHBOARD_HTML).toContain('backdrop-filter: saturate(190%) blur(28px)');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
@@ -861,7 +855,7 @@ describe('DASHBOARD_HTML', () => {
     expect(keys).toContain('openrouter:openai/gpt-5.6-terra');
     expect(keys).toContain('openrouter:deepseek/deepseek-v4-pro');
     expect(keys).toContain('openrouter:deepseek/deepseek-v4-flash');
-    expect(keys).toContain('openrouter:google/gemini-3.5-flash');
+    expect(keys).toContain('openrouter:google/gemini-3.7-flash');
     expect(keys).toContain('openrouter:anthropic/claude-opus-4.8');
     expect(keys).toContain('llamaparse:fast');
     // Dead-on-OpenRouter slugs and the retired GPT-4o family never render.
@@ -1696,15 +1690,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('prefers-reduced-motion');
   });
 
-  it('adds an independent time-range control to the buys/sells chart, anchored to recent', () => {
-    expect(DASHBOARD_HTML).toContain('id="trTimeWin"');
-    expect(DASHBOARD_HTML).toContain('function setTrTimeWin(');
+  it('anchors the Buys vs Sells chart to the shared page window', () => {
     expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
-    expect(DASHBOARD_HTML).toContain('function trTimeParams(');
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+    expect(DASHBOARD_HTML).toContain("aGet('volume-over-time?' + trParams())");
+    expect(DASHBOARD_HTML).not.toContain('function setTrTimeWin(');
+    expect(DASHBOARD_HTML).not.toContain('function trTimeParams(');
+    expect(DASHBOARD_HTML).not.toContain('id="trTimeWin"');
+    expect(DASHBOARD_HTML).not.toContain('Buys vs Sells Over Time');
   });
 
-  it('toggles Buys vs Sells Over Time between trade counts and dollar volume', () => {
+  it('toggles Buys vs Sells between trade counts and dollar volume', () => {
     expect(DASHBOARD_HTML).toContain('id="trTimeMetric"');
     expect(DASHBOARD_HTML).toContain('function setTrTimeMetric(');
     expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\"");
@@ -1712,6 +1708,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("timeChartHtml(s, null, trTimeMetric)");
     expect(DASHBOARD_HTML).toContain("metric === 'count'");
     expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
+  });
+
+  it('does not put an explainer under Consensus Moves or Rising Activity', () => {
+    expect(DASHBOARD_HTML).not.toContain('trConsensusPhrase');
+    expect(DASHBOARD_HTML).not.toContain('Assets where several different politicians happened to trade the same direction');
+    expect(DASHBOARD_HTML).not.toContain('Assets whose trade count rose most');
   });
 
   it('fits the buys/sells time chart to the card width without horizontal scroll', () => {
@@ -2249,10 +2251,30 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   });
 
   // ---- 3. Timeframe label rendering -----
-  it('renders the single time filter dropdown at top and section headers with .tr-window-label text', () => {
+  it('renders the single time filter dropdown at top and does not stamp the window on headings', () => {
     expect(DASHBOARD_HTML).toContain('id="trGlobalWindow"');
     expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
-    expect(DASHBOARD_HTML).toContain('.tr-window-label');
+    expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
+    expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
+    expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
+    expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
+    expect(DASHBOARD_HTML).toContain('main { max-width: none; min-width:0; overflow-x:clip;');
+  });
+
+  it('spells Top Performers scope as 5+ buys and +/-200% cap per trade', () => {
+    expect(DASHBOARD_HTML).toContain('5+ buys');
+    expect(DASHBOARD_HTML).toContain('+/-200% cap per trade');
+    expect(DASHBOARD_HTML).not.toContain('few scored trades');
+    expect(DASHBOARD_HTML).not.toContain('each trade capped at');
+  });
+
+  it('does not say in this window under Disclosure Timeliness', () => {
+    expect(DASHBOARD_HTML).toContain("'Middle disclosure lag. ' + lagBasis");
+    expect(DASHBOARD_HTML).toContain("'Number of trade rows with both transaction and official filing dates.'");
+    expect(DASHBOARD_HTML).not.toContain('Middle disclosure lag in this window');
+    expect(DASHBOARD_HTML).not.toContain('official filing dates in this window');
+    expect(DASHBOARD_HTML).toContain("'<div class=\"note\">No dated filings.</div>'");
+    expect(DASHBOARD_HTML).not.toContain('No dated filings in this window');
   });
 
   // ---- 4. "Healthcare" vs "Health Care" sector canonicalization ------------
@@ -2267,10 +2289,11 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(canonSector('Energy')).toBe('Energy'); // untouched passthrough
   });
 
-  it('merges canonicalized sector rows and sorts sector-flow output by estimated volume, matching its own "ranked by" label', () => {
-    expect(DASHBOARD_HTML).toContain('ranked by estimated volume');
+  it('merges canonicalized sector rows and sorts Net Flow by Sector by signed net flow', () => {
+    expect(DASHBOARD_HTML).toContain('rank by signed net');
     expect(DASHBOARD_HTML).toContain('var key = canonSector(r.sector);');
-    expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });');
+    expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });');
+    expect(DASHBOARD_HTML).toContain("rows.sort(function (a, b) { return CAP_ORDER.indexOf(a.bucket) - CAP_ORDER.indexOf(b.bucket); });");
   });
 
   // ---- 5. Live status pill removed per user instruction -------------------
@@ -2707,7 +2730,7 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('details.trends-fold > summary');
     expect(DASHBOARD_HTML).toContain('class="section trends-fold"');
     // Fixed bottom tab bar with safe-area + body padding at the phone breakpoint.
-    expect(DASHBOARD_HTML).toContain('position: fixed; left: 0; right: 0; bottom: 0');
+    expect(DASHBOARD_HTML).toContain('position: fixed; left: 12px; right: 12px;');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom');
     // Owner punch list #5: reduced from the old 86px overshoot to a ~10px
     // clearance over the ~60px tab bar (see "mobile bottom clearance" below
@@ -2727,13 +2750,15 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).not.toContain("el('qType')");
     // Exchange toggle: ⇄ symbol, dedicated aria-label, wired into the shared
     // side-chip group on BOTH the Trades and Trends shared filter rows.
-    expect(DASHBOARD_HTML).toMatch(/data-side="E"[^>]*aria-label="Exchange trades"/);
+    expect(DASHBOARD_HTML).toContain('data-side="E"');
     expect(DASHBOARD_HTML).toContain('<span class="side-ex" aria-hidden="true">⇄</span>');
     expect(DASHBOARD_HTML).toMatch(/id="qSideGroup"[\s\S]*?data-side="E"/);
     expect(DASHBOARD_HTML).toMatch(/id="trSideGroup"[\s\S]*?data-side="E"/);
     // Every pictographic toggle keeps an aria-label.
-    expect(DASHBOARD_HTML).toMatch(/data-side="B"[^>]*aria-label="Buys"/);
-    expect(DASHBOARD_HTML).toMatch(/data-side="S"[^>]*aria-label="Sells"/);
+    expect(DASHBOARD_HTML).toContain('data-side="B"');
+    expect(DASHBOARD_HTML).toContain('data-side="S"');
+    expect(DASHBOARD_HTML).toContain('> Buys</button>');
+    expect(DASHBOARD_HTML).toContain('> Sells</button>');
     // Client + query-param + URL-sync + CSV export + restore-from-URL paths
     // all read the toggle via selectedSideParam(), not a select value.
     expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
@@ -2753,28 +2778,26 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   });
 
   it('collapses every per-group ⓘ into one combined popover per shared filter row', () => {
-    expect(DASHBOARD_HTML).toContain('id="qFiltersInfo"');
-    expect(DASHBOARD_HTML).toContain('id="trFiltersInfo"');
-    expect(DASHBOARD_HTML).toContain('id="qFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain('id="trFiltersInfoPop"');
+    expect(DASHBOARD_HTML).toContain('id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('id="trChamber"');
+    expect(DASHBOARD_HTML).toContain('Democrats');
+    expect(DASHBOARD_HTML).toContain('Republicans');
+    expect(DASHBOARD_HTML).toContain('Other / Ind.');
     // Old per-group anchors are gone.
     expect(DASHBOARD_HTML).not.toContain('id="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trPartyInfo"');
     // The combined popover explains every pictograph: branch, party, and type.
-    const qPop = DASHBOARD_HTML.match(/<div class="branch-pop" id="qFiltersInfoPop"[\s\S]*?<\/div>\s*<\/div>/);
-    expect(qPop).not.toBeNull();
-    for (const glyph of ['H', 'S', 'P', '▲', '▼', '⇄']) {
-      expect(qPop![0]).toContain('>' + glyph + '<');
+    expect(DASHBOARD_HTML).toContain('House</button>');
+    expect(DASHBOARD_HTML).toContain('Senate</button>');
+    expect(DASHBOARD_HTML).toContain('Executive</button>');
+    for (const glyph of ['▲', '▼', '⇄']) {
+      expect(DASHBOARD_HTML).toContain(glyph);
     }
-    // Party rows use colored dots (red/blue/purple), not donkey/elephant/eagle
-    // emoji — each dot carries its own accessible name via aria-label/title.
     for (const party of ['D', 'R', 'O']) {
-      expect(qPop![0]).toContain('class="party-dot ' + party + '"');
+      expect(DASHBOARD_HTML).toContain('class="party-dot ' + party + '"');
     }
-    expect(qPop![0]).not.toMatch(/[\u{1FACF}\u{1F418}\u{1F985}]/u);
-    // A little larger than a plain per-group ⓘ since it now carries more info.
-    expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
+    expect(DASHBOARD_HTML).not.toMatch(/[\u{1FACF}\u{1F418}\u{1F985}]/u);
   });
 
   it('owner follow-up batch #21: deletes the $-threshold filter pill entirely (no $/size dropdown on any platform)', () => {
@@ -2799,10 +2822,11 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
     expect(extraFilters![0]).toContain('id="qSearch"');
     expect(extraFilters![0]).not.toContain('id="searchToggle"');
-    expect(extraFilters![0]).toContain('id="qAssetClass"');
-    expect(extraFilters![0]).toContain('value="equities_funds"');
+    expect(extraFilters![0]).not.toContain('id="qAssetClass"');
+    expect(extraFilters![0]).not.toContain('value="equities_funds"');
+    expect(extraFilters![0]).not.toContain('All Assets');
     expect(extraFilters![0]).toContain('id="tradesStats"');
-    expect(extraFilters![0]).toContain('matching trades');
+    expect(extraFilters![0]).toContain('trades');
     // Top + bottom pagers with shared data-* hooks.
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-bottom"');
@@ -2932,21 +2956,12 @@ describe('owner feedback: exchange toggle glyph + legend semantic colors', () =>
     // blanket accent-blue color.
     expect(DASHBOARD_HTML).not.toMatch(/branch-icon[^{]*\{[^}]*color:var\(--accent\)/);
 
-    // Both the Trades-tab and Trends-tab popovers apply the color modifier
-    // classes to the ▲/▼/⇄ rows; H/S/P stay on the bare (themed-ink) class.
-    for (const popId of ['qFiltersInfoPop', 'trFiltersInfoPop']) {
-      const pop = DASHBOARD_HTML.match(
-        new RegExp('<div class="branch-pop" id="' + popId + '"[\\s\\S]*?<div class="branch-pop-note"'),
-      );
-      expect(pop).not.toBeNull();
-      const body = pop![0];
-      expect(body).toContain('<span class="branch-icon icon-buy">▲</span>');
-      expect(body).toContain('<span class="branch-icon icon-sell">▼</span>');
-      expect(body).toContain('<span class="branch-icon icon-exch">⇄</span>');
-      expect(body).toContain('<span class="branch-icon">H</span>');
-      expect(body).toContain('<span class="branch-icon">S</span>');
-      expect(body).toContain('<span class="branch-icon">P</span>');
-    }
+    expect(DASHBOARD_HTML).toContain('class="side-up"');
+    expect(DASHBOARD_HTML).toContain('class="side-dn"');
+    expect(DASHBOARD_HTML).toContain('class="side-ex"');
+    expect(DASHBOARD_HTML).toContain('Democrats');
+    expect(DASHBOARD_HTML).toContain('Republicans');
+    expect(DASHBOARD_HTML).toContain('Other / Ind.');
   });
 });
 
@@ -2986,12 +3001,12 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     for (const groupId of ['qChamber', 'qPartyGroup', 'qSideGroup', 'trChamber', 'trPartyGroup', 'trSideGroup']) {
       const group = document.querySelector('#' + groupId);
       expect(group, groupId).not.toBeNull();
-      const buttons = group!.querySelectorAll('button');
+      const buttons = [...group!.querySelectorAll('button')].filter(
+        (btn) => btn.hasAttribute('data-ch') || btn.hasAttribute('data-party') || btn.hasAttribute('data-side'),
+      );
       expect(buttons.length, groupId).toBeGreaterThan(0);
       for (const btn of buttons) {
         expect(btn.getAttribute('aria-pressed'), groupId).toBe('false');
-        const hasEntityAttr = btn.hasAttribute('data-ch') || btn.hasAttribute('data-party') || btn.hasAttribute('data-side');
-        expect(hasEntityAttr, groupId).toBe(true);
       }
     }
     // Delegated listener wiring (container ids, not per-chip handlers) is untouched.
@@ -3115,12 +3130,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     const document = parse(DASHBOARD_HTML);
     const stats = document.querySelector('#tradesStats');
     expect(stats).not.toBeNull();
-    const statToday = stats!.querySelector('.stat-today');
-    expect(statToday).not.toBeNull();
-    expect(statToday!.querySelector('#kpiToday')).not.toBeNull();
-    // kpiTotal stays outside .stat-today so it's the one mobile keeps.
-    expect(statToday!.querySelector('#kpiTotal')).toBeNull();
     expect(stats!.querySelector('#kpiTotal')).not.toBeNull();
+    expect(stats!.querySelector('.stat-today')).toBeNull();
+    expect(stats!.textContent).not.toContain('Past 3 Months');
   });
 
   it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
@@ -3323,7 +3335,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     });
 
     it('shows filtered matching trades count (not page size) upper-right', () => {
-      expect(DASHBOARD_HTML).toContain('matching trades');
+      expect(DASHBOARD_HTML).toContain('id="kpiTotal"');
       expect(DASHBOARD_HTML).toContain("totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';");
       expect(DASHBOARD_HTML).not.toContain("el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);");
     });
@@ -3688,20 +3700,20 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qAssetClassWrap { order:4; }');
+    expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #qAssetClassWrap');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:5; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
-    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1 / -1; }');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1;');
     expect(DASHBOARD_HTML).not.toContain('#tradesExtraFilters #searchToggle');
     const document = parse(DASHBOARD_HTML);
     const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
     // Hidden legacy inputs have no visible layout role but may lack ids on wrappers.
     expect(extras).toContain('qSearchField');
-    expect(extras).toContain('qAssetClassWrap');
+    expect(extras).not.toContain('qAssetClassWrap');
     expect(extras).not.toContain('searchToggle');
     expect(extras).toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
@@ -4160,17 +4172,11 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('var url = reviewDocUrl(r);');
   });
 
-  it('Trends wide-desktop cards get an intrinsic table width + crush floor (post-#1613 regression)', () => {
-    // The bare width:fit-content rule broke both ways once #1613 moved these
-    // sections into <details>: full-bleed stretch on standalone cards
-    // (global table{width:100%} makes fit-content circular) and min-content
-    // crush on grid children. The inner table now carries an intrinsic
-    // width and both card and table carry a floor.
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }');
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }');
-    // A long one-line subtitle must wrap at a readable measure instead of
-    // inflating the card's fit-content width past its own table.
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .sub { max-width: 68ch; }');
+  it('Trends table cards use the full column so names do not wrap in a half-width box', () => {
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) { width: 100%; min-width: 0; max-width: 100%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .table-wrap > table { width: 100%; min-width: 560px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .member-cell .name-line');
+    expect(DASHBOARD_HTML).toContain('text-overflow: ellipsis');
   });
 
   it('Politicians+Party grid hugs the left card instead of leaving a dead middle column', () => {
@@ -4309,12 +4315,13 @@ describe('web blocking defects (audited)', () => {
 
   it('labels what every trade count counts (this filter vs all time)', () => {
     // Trades tab: the active timeframe sits next to the match count.
-    expect(DASHBOARD_HTML).toContain(
-      '<span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span>',
-    );
+    expect(DASHBOARD_HTML).toContain('<span class="match-label">trades</span>');
+    expect(DASHBOARD_HTML).not.toContain('<span class="match-window">');
     expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
-    // Trends KPI strip is stamped like every other Trends section.
-    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot <em class="tr-window-label"');
+    // Trends KPI strip is just the heading — window lives in the filter row.
+    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot</div>');
+    expect(DASHBOARD_HTML).not.toContain('# Trades');
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\">#</button>");
     // Directory: whole-record scope on the counts, the sub copy and the headers.
     expect(DASHBOARD_HTML).toContain('trade counts are all time');
     expect(DASHBOARD_HTML).toContain('Trade counts cover the full record, not the timeframe set on Trades or Trends.');

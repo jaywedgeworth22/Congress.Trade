@@ -155,7 +155,7 @@ budget-status polling, see Tunables & flags below)
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
 - OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default
-  `google/gemini-3.5-flash`), `OPENROUTER_PDF_ENGINE_TEXT` (file-parser engine
+  `google/gemini-3.7-flash`), `OPENROUTER_PDF_ENGINE_TEXT` (file-parser engine
   for typed/text PDFs; default `cloudflare-ai` — free markdown conversion),
   `OPENROUTER_PDF_ENGINE_SCANNED` (engine for scans read by
   non-native-vision models; default `mistral-ocr`, $2/1k pages),
@@ -245,7 +245,7 @@ budget-status polling, see Tunables & flags below)
   - `DOC_CLASSIFIER_ENABLED` — model tier for ambiguous docs (default on;
     `false` = deterministic signals only, ambiguity defaults to hard_scan)
   - `DOC_CLASSIFIER_MODEL` — bottom-tier OpenRouter model for the one
-    classification call (default `google/gemini-2.5-flash-lite`)
+    classification call (default `google/gemini-3.5-flash-lite`)
   - `DOC_CLASSIFIER_PARSE_ENGINE` — OpenRouter file-parser engine for the
     classification call (default `cloudflare-ai`, the free parse)
   - `DOC_CLASS_EMPTY_SPOTCHECK_RATE` — fraction of doc_class=empty docs left

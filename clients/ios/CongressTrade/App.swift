@@ -17,7 +17,8 @@ enum AppTab: Hashable {
 /// tab.  Trends is the default/leftmost tab (owner punch list item 1).
 @MainActor
 final class TabRouter: ObservableObject {
-    @Published var selection: AppTab = .trends
+    @Published var selection: AppTab =
+        ProcessInfo.processInfo.arguments.contains("-startOnTrades") ? .trades : .trends
 }
 
 @main
@@ -42,6 +43,10 @@ struct CongressTradeApp: App {
                 .environmentObject(tabRouter)
                 .preferredColorScheme(colorScheme)
                 .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
+                .onAppear { AppAppearance.apply(appColorScheme) }
+                .onChange(of: appColorScheme) { _, pref in
+                    AppAppearance.apply(pref)
+                }
         }
         .modelContainer(tradeCacheContainer)
     }
@@ -259,6 +264,8 @@ struct MainTabView: View {
                 .tag(AppTab.delivery)
         }
         .tint(.blue)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .sheet(isPresented: $showSubscribeSheet) {
             PremiumSheet()
                 .environmentObject(store)

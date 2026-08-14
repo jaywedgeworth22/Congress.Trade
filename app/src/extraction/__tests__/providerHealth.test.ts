@@ -3,6 +3,8 @@ import type { Env } from '../../shared/types.ts';
 import type { BakeoffCandidate } from '../bakeoff.ts';
 import {
   classifyProviderErrorClass,
+  describeAutopilotHaltReason,
+  summarizeProviderHaltCause,
   healthWindowKey,
   modelBanKey,
   pruneHealthWindow,
@@ -33,9 +35,34 @@ describe('classifyProviderErrorClass', () => {
     expect(classifyProviderErrorClass('openrouter API key not configured')).toBe('auth');
   });
 
-  it('classifies quota failures (429 / rate limit)', () => {
-    expect(classifyProviderErrorClass('gemini 429 too many requests')).toBe('quota');
-    expect(classifyProviderErrorClass('provider rate-limit hit, slow down')).toBe('quota');
+  it('classifies rate-limit as rate_limit, not quota', () => {
+    expect(classifyProviderErrorClass('gemini 429 too many requests')).toBe('rate_limit');
+    expect(classifyProviderErrorClass('provider rate-limit hit, slow down')).toBe('rate_limit');
+  });
+
+  it('does not treat stale circuit wrappers or transient 403 as quota', () => {
+    expect(classifyProviderErrorClass(
+      'openrouter key budget circuit open: cool-down 3067s (last: HTTP 402 {"error":{"message":"This request requires at least $0.50 in balance for files","code":402}})',
+    )).toBe('billing');
+    expect(classifyProviderErrorClass('openrouter key budget circuit open: cool-down 3600s')).toBe('other');
+    expect(classifyProviderErrorClass('senate GET /search/ -> HTTP 403')).toBe('other');
+    expect(classifyProviderErrorClass('openrouter 403 forbidden')).toBe('other');
+    expect(classifyProviderErrorClass('llm skip: doc already has transactions (H-2024-1)')).toBe('other');
+  });
+
+  it('keeps real app-budget and usage-limit failures as quota', () => {
+    expect(classifyProviderErrorClass('llm daily usd budget exceeded')).toBe('quota');
+    expect(classifyProviderErrorClass('account usage limit reached')).toBe('quota');
+  });
+
+  it('describes a stored quota halt from the 402 files-balance sample', () => {
+    const sample = {
+      quota: 'openrouter key budget circuit open: cool-down 3067s (last: HTTP 402 {"error":{"message":"This request requires at least $0.50 in balance for files","code":402}})',
+    };
+    expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('error_class:billing');
+    expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('stored as quota');
+    expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('files-endpoint prepaid');
+    expect(summarizeProviderHaltCause(sample.quota)).toContain('files-endpoint prepaid');
   });
 
   it('classifies timeouts and parse failures', () => {

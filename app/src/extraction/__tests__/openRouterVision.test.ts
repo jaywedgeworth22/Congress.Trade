@@ -247,7 +247,7 @@ describe('OpenRouterVisionExtractor', () => {
     expect(body.trace.metadata).toBeUndefined();
     expect('metadata' in body).toBe(false);
     // Enrichment must never displace the core request fields.
-    expect(body.model).toBe('google/gemini-3.5-flash');
+    expect(body.model).toBe('google/gemini-3.7-flash');
     expect(body.messages).toHaveLength(1);
   });
 

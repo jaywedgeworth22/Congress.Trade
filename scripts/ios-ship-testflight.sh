@@ -7,7 +7,7 @@
 # WHY A MERGE OFTEN DOES NOT PRODUCE A TESTFLIGHT BUILD
 # .github/workflows/ios-ship.yml calls this on every push to main touching
 # clients/ios/**, but the fleet script enforces a minimum interval between
-# successful ships per app: DEFAULT_MIN_INTERVAL_SEC=9000 (9000s = 2.5 hours),
+# successful ships per app: DEFAULT_MIN_INTERVAL_SEC=3600 (3600s = 1 hour),
 # defined near the top of scripts/ios-fleet/ship-testflight.sh. Runs inside that
 # window log "ship-gate: skip" and exit 0. It also skips when git HEAD already
 # shipped. Neither kind of skip consumes a build number (fixed 2026-08-12).

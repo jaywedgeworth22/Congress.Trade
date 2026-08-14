@@ -95,6 +95,7 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.background)
+            .preferredColorScheme(AppAppearance.colorScheme(for: appColorScheme))
             .navigationTitle("Settings")
             .inlineNavigationTitle()
             .sheet(isPresented: $showPremiumInfo) {

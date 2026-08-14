@@ -100,7 +100,10 @@ check() { # check <desc> <condition-result 0/1>
 }
 
 seq_now() { cat "$SEQ_FILE" 2>/dev/null || echo MISSING; }
-contains() { printf '%s' "$OUT" | grep -q -- "$1"; }
+# Literal substring. grep is a bad fit here: skip lines carry a UTF-8 em-dash
+# (C-locale grep then treats the stream as binary) and marketing/build
+# needles contain '.' / '()'.
+contains() { [[ "$OUT" == *"$1"* ]]; }
 
 reset_state() {
   rm -f "$SEQ_FILE" "$SHIP_FILE"
@@ -121,8 +124,8 @@ check "reports the rate-limit skip" "$(contains 'ship-gate: skip' && echo 0 || e
 check "sequence still 5 (was 5 -> 6 before the fix)" "$([[ "$(seq_now)" == "5" ]] && echo 0 || echo 1)"
 check "names the override (IOS_TF_MIN_INTERVAL_SEC / --force-ship)" \
   "$(contains 'IOS_TF_MIN_INTERVAL_SEC' && contains 'force-ship' && echo 0 || echo 1)"
-check "names the 9000s default and where it lives" \
-  "$(contains '9000s' && contains 'DEFAULT_MIN_INTERVAL_SEC' && echo 0 || echo 1)"
+check "names the 3600s default and where it lives" \
+  "$(contains '3600s' && contains 'DEFAULT_MIN_INTERVAL_SEC' && echo 0 || echo 1)"
 check "skips the App Store Connect round trip entirely" \
   "$(contains 'seq sources:' && echo 1 || echo 0)"
 echo
@@ -224,6 +227,26 @@ for i in 1 2 3; do
 done
 check "three allowed runs give 6 7 8 (got:${seen})" \
   "$([[ "$seen" == " 6 7 8" ]] && echo 0 || echo 1)"
+echo
+
+# --- 10. Standing 1-hour gate: just-under skips, at-or-over proceeds -------
+# Owner 2026-08-14: unbuilt iOS updates may ship as often as once per hour.
+# Pin both sides of the boundary so a future edit of DEFAULT_MIN_INTERVAL_SEC
+# cannot silently restore 2.5h (or drop the gate) without this suite going red.
+# A different HEAD is required so this is not the same-HEAD skip.
+# Margins (3000 / 3700) absorb the second that passes between writing the
+# state file and the script reading `date +%s`.
+echo "10. 1-hour standing gate: 3000s still skips; 3700s proceeds"
+reset_state
+printf '%s %s\n' "$(( $(date +%s) - 3000 ))" "0000000000000000000000000000000000000000" >"$SHIP_FILE"
+run_ship congress --repo-root "$REPO" --allow-unverified-seq
+check "3000s ago is still gated" "$(contains 'ship-gate: skip' && echo 0 || echo 1)"
+check "3000s ago does not consume a number" "$([[ "$(seq_now)" == "5" ]] && echo 0 || echo 1)"
+reset_state
+printf '%s %s\n' "$(( $(date +%s) - 3700 ))" "0000000000000000000000000000000000000000" >"$SHIP_FILE"
+run_ship congress --repo-root "$REPO" --allow-unverified-seq
+check "3700s ago proceeds past the gate" "$(contains 'ship-gate: skip' && echo 1 || echo 0)"
+check "3700s ago consumes exactly one number" "$([[ "$(seq_now)" == "6" ]] && echo 0 || echo 1)"
 echo
 
 echo "----------------------------------------"

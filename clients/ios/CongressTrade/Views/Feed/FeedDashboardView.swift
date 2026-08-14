@@ -54,6 +54,13 @@ struct FeedDashboardView: View {
                 // Stable tie-break: newest trade date first, regardless of direction.
                 return (lhs.transaction.date ?? "") > (rhs.transaction.date ?? "")
             }
+        case .ticker:
+            return cachedTrades.sorted { lhs, rhs in
+                let lt = (lhs.asset.ticker ?? "").uppercased()
+                let rt = (rhs.asset.ticker ?? "").uppercased()
+                if lt != rt { return ascending ? lt < rt : lt > rt }
+                return (lhs.transaction.date ?? "") > (rhs.transaction.date ?? "")
+            }
         }
     }
 
@@ -113,6 +120,19 @@ struct FeedDashboardView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Status that occupies the search-field slot. Reload wins over Updating
+    /// because it is actionable. `nil` shows the typed search field.
+    private var tradesSearchSlotStatus: TradesSearchSlotStatus? {
+        if let notice = store.feedNotice,
+           store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
+            return .reload(message: store.isOffline ? "You are offline." : notice)
+        }
+        if store.isTradesUpdating {
+            return .updating
+        }
+        return nil
+    }
+
     /// Never the page limit. `CongressTradeStore.tradeCountSummary` owns the
     /// decision of which number (if any) is honest for the active combination
     /// of server-side and client-only filters; the view only supplies the two
@@ -128,29 +148,18 @@ struct FeedDashboardView: View {
         // empty state and the list — three full sorts per frame before this.
         let trades = filteredTrades
         return NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
-                    DisclaimerBanner(isExpanded: $disclaimerExpanded)
+            VStack(spacing: 0) {
+                DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
-                    // Shared notice banner at top under logo / above filters (failure/offline state)
-                    if let notice = store.feedNotice,
-                       store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
-                        FeedFreshnessView(
-                            isOffline: store.isOffline,
-                            lastRefresh: store.lastSuccessfulRefresh,
-                            notice: store.feedNotice,
-                            onRetry: { Task { await store.refresh() } }
-                        )
-                    }
-
-                    // Shared filters (also on Trends) — chamber / party / sides / timeframe.
-                    FeedControlBar(showAssetClass: true)
-
-                    // Single unified search (name / ticker / state / party) + # trades matching.
+                VStack(spacing: 6) {
+                    FeedControlBar()
                     TradesUnifiedSearchField(
                         text: $searchText,
                         countLabel: tradeCountLabel(showing: trades.count),
                         focused: $searchFocused,
+                        status: tradesSearchSlotStatus,
                         onSubmit: { applyUnifiedSearch() },
                         onClear: {
                             searchText = ""
@@ -159,24 +168,22 @@ struct FeedDashboardView: View {
                                 await store.setPoliticianFilter("")
                                 await store.setAssetFilter("")
                             }
-                        }
+                        },
+                        onReload: { Task { await store.refresh() } }
                     )
                     .onChange(of: searchText) { _, _ in
                         scheduleSearchDebounce()
                     }
-
-                    // Combined controls row: Sort options + Pagination on one row.
-                    HStack(spacing: 6) {
-                        FeedSortControl()
-                        Spacer(minLength: 4)
-                        if !trades.isEmpty {
-                            FeedPaginationBar()
-                        }
+                    .onChange(of: tradesSearchSlotStatus) { _, status in
+                        if status != nil { searchFocused = false }
                     }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
 
-                    // Sits directly above the list, where the user is already looking.
-                    TradesFilterActivityRow(isActive: store.isTradesUpdating && !cachedTrades.isEmpty)
-
+            ScrollView {
+                VStack(spacing: 8) {
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
@@ -202,7 +209,7 @@ struct FeedDashboardView: View {
                     // (owner: the pagination controls were "way at bottom and
                     // missing from top of the list of trades").
                     if !trades.isEmpty {
-                        FeedPaginationBar()
+                        FeedPaginationBar(showSort: true)
                     }
 
                     if horizontalSizeClass == .regular {
@@ -257,6 +264,7 @@ struct FeedDashboardView: View {
                 .padding(.bottom, 24)
             }
             .scrollDismissesKeyboard(.interactively)
+            }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -436,7 +444,6 @@ struct BrandTitle: View {
 struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
     var showMetrics: Bool = true
-    var showAssetClass: Bool = false
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -569,30 +576,6 @@ struct FeedControlBar: View {
                     )
                 }
 
-                if showAssetClass {
-                    Menu {
-                        ForEach(AssetClassFilter.allCases) { filter in
-                            Button {
-                                Task { await store.setAssetClass(filter) }
-                            } label: {
-                                HStack {
-                                    Text(filter.label)
-                                    if store.selectedAssetClass == filter {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        FilterMenuLabel(
-                            title: store.selectedAssetClass.label,
-                            icon: "square.stack.3d.up",
-                            isActive: store.selectedAssetClass != .all,
-                            alwaysShowLabel: true,
-                            accessibilityLabel: "Asset class, \(store.selectedAssetClass.label)"
-                        )
-                    }
-                }
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
@@ -692,31 +675,11 @@ struct AppLegalFooter: View {
     }
 }
 
-/// "It is working, wait" — for the 3-5 seconds a filter change takes.
-///
-/// Reserves its height whether or not it is active, so appearing and
-/// disappearing never shoves the list under the user's thumb mid-tap. That is
-/// the whole reason this is a view and not an inline `if isActive`.
-struct TradesFilterActivityRow: View {
-    let isActive: Bool
-
-    @ScaledMetric(relativeTo: .caption2) private var rowHeight: CGFloat = 18
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if isActive {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Updating results…")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: rowHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeInOut(duration: 0.15), value: isActive)
-        .accessibilityHidden(!isActive)
-    }
+/// Occupies the Trades search-field geometry so a reload / updating message
+/// does not add a second row. The typed query stays on the binding.
+enum TradesSearchSlotStatus: Equatable {
+    case updating
+    case reload(message: String)
 }
 
 /// The one chrome every interactive control on these screens wears — filter
@@ -752,16 +715,13 @@ struct ControlChip<Content: View>: View {
     }
 }
 
-/// Leading "Sort:" label shared by every sort row (Trades, Directory People,
-/// Directory Assets) so the chips are not a floating unlabeled cluster.
+/// Shared sort-row wrapper (Trades, Directory People, Directory Assets).
+/// No "Sort:" caption — the dropdown labels the key.
 struct SortRow<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text("Sort:")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
             content()
         }
         .accessibilityElement(children: .contain)
@@ -781,7 +741,18 @@ struct SortMenuControl<Key: Hashable>: View {
 
     var body: some View {
         SortRow {
-            HStack(spacing: 6) {
+            HStack(spacing: 2) {
+                Button {
+                    sortAscending.toggle()
+                } label: {
+                    ControlChip(compact: true) {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(sortAscending ? "Ascending, tap to reverse" : "Descending, tap to reverse")
+
                 Menu {
                     ForEach(keys, id: \.self) { key in
                         Button {
@@ -802,81 +773,55 @@ struct SortMenuControl<Key: Hashable>: View {
                     }
                 } label: {
                     ControlChip {
-                        HStack(spacing: 4) {
-                            Text(label(sortKey))
-                                .font(.caption.weight(.semibold))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .bold))
-                                .opacity(0.5)
-                        }
+                        Text(label(sortKey))
+                            .font(.caption.weight(.semibold))
                     }
                 }
                 .accessibilityLabel("Sort by \(label(sortKey))")
-
-                Button {
-                    sortAscending.toggle()
-                } label: {
-                    ControlChip(compact: true) {
-                        Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.bold))
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(sortAscending ? "Ascending, tap to reverse" : "Descending, tap to reverse")
             }
         }
     }
 }
 
-/// Trades-only sort control (owner punch list #2, item 7) — mirrors the
-/// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
-/// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
-/// Amount) plus a separate direction button that flips asc/desc for
-/// whichever key is active. Both halves are `ControlChip`s now, so they match
-/// each other, the filter pills above them, and the pagers below.
+/// Trades-only sort control: direction chip flush against the Date / Amount /
+/// Ticker menu so they read as one group. The flip icon is the live direction
+/// (`arrow.up` / `arrow.down`); the menu chevron is only "this opens a list".
 struct FeedSortControl: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        SortRow {
-            HStack(spacing: 6) {
-                Menu {
-                    ForEach(FeedSortKey.allCases) { key in
-                        Button {
-                            Task { await store.setFeedSortKey(key) }
-                        } label: {
-                            HStack {
-                                Text(key.label)
-                                if store.feedSortKey == key {
-                                    Image(systemName: "checkmark")
-                                }
+        HStack(spacing: 2) {
+            Button {
+                Task { await store.toggleFeedSortDirection() }
+            } label: {
+                ControlChip(compact: true) {
+                    Image(systemName: store.feedSortDirection.systemImage)
+                        .font(.caption.weight(.bold))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to reverse")
+
+            Menu {
+                ForEach(FeedSortKey.allCases) { key in
+                    Button {
+                        Task { await store.setFeedSortKey(key) }
+                    } label: {
+                        HStack {
+                            Text(key.label)
+                            if store.feedSortKey == key {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                } label: {
-                    FilterMenuLabel(
-                        title: store.feedSortKey.label,
-                        icon: "arrow.up.arrow.down",
-                        isActive: false,
-                        alwaysShowLabel: true,
-                        accessibilityLabel: "Sort by \(store.feedSortKey.label)"
-                    )
                 }
-
-                Button {
-                    Task { await store.toggleFeedSortDirection() }
-                } label: {
-                    ControlChip(compact: true) {
-                        Image(systemName: store.feedSortDirection.systemImage)
-                            .font(.caption.weight(.bold))
-                    }
+            } label: {
+                ControlChip {
+                    Text(store.feedSortKey.label)
+                        .font(.caption.weight(.semibold))
                 }
-                // `.plain` so the chip's own foregroundStyle wins: the TabView's
-                // `.tint(.blue)` otherwise repaints a default-styled Button's label
-                // accent-blue and the chip stops matching its neighbours.
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
             }
+            .accessibilityLabel("Sort by \(store.feedSortKey.label)")
         }
     }
 }
@@ -901,44 +846,55 @@ struct PaginationBar: View {
     var onPrevious: () -> Void
     var onNext: () -> Void
     var onPageSize: (Int) -> Void
+    var sortControls: AnyView? = nil
 
     private var pageLabel: String {
         "\(CompactFormat.count(currentPage + 1)) of \(CompactFormat.count(totalPages))"
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             if totalPages > 1 {
-                Button(action: onPrevious) {
-                    ControlChip(isEnabled: canGoPrevious, compact: true) {
-                        Image(systemName: "chevron.left")
-                            .font(.caption.weight(.bold))
+                HStack(spacing: 8) {
+                    Button(action: onPrevious) {
+                        ControlChip(isEnabled: canGoPrevious, compact: true) {
+                            Image(systemName: "chevron.left")
+                                .font(.caption.weight(.bold))
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canGoPrevious)
-                .accessibilityLabel("Previous page")
+                    .buttonStyle(.plain)
+                    .disabled(!canGoPrevious)
+                    .accessibilityLabel("Previous page")
 
-                // Plain text, never a chip: it is a readout, and giving it the
-                // tappable shape would promise an action it does not have.
-                Text(pageLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .accessibilityLabel(pageLabel)
+                    // Plain text, never a chip: it is a readout, and giving it the
+                    // tappable shape would promise an action it does not have.
+                    Text(pageLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .accessibilityLabel(pageLabel)
 
-                Button(action: onNext) {
-                    ControlChip(isEnabled: canGoNext, compact: true) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
+                    Button(action: onNext) {
+                        ControlChip(isEnabled: canGoNext, compact: true) {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoNext)
+                    .accessibilityLabel("Next page")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canGoNext)
-                .accessibilityLabel("Next page")
             }
 
-            Spacer(minLength: 8)
+            if sortControls != nil || totalPages > 1 {
+                Spacer(minLength: 4)
+            }
+
+            if let sortControls {
+                sortControls
+            }
+
+            Spacer(minLength: 4)
 
             Menu {
                 ForEach(pageSizeOptions, id: \.self) { size in
@@ -980,6 +936,7 @@ struct PaginationBar: View {
 /// disagree.
 struct FeedPaginationBar: View {
     @EnvironmentObject private var store: CongressTradeStore
+    var showSort: Bool = false
 
     var body: some View {
         PaginationBar(
@@ -990,7 +947,8 @@ struct FeedPaginationBar: View {
             canGoNext: store.canGoToNextPage,
             onPrevious: { Task { await store.goToPreviousPage() } },
             onNext: { Task { await store.goToNextPage() } },
-            onPageSize: { size in Task { await store.setPageSize(size) } }
+            onPageSize: { size in Task { await store.setPageSize(size) } },
+            sortControls: showSort ? AnyView(FeedSortControl()) : nil
         )
     }
 }
@@ -1092,10 +1050,43 @@ struct TradesUnifiedSearchField: View {
     @Binding var text: String
     var countLabel: String? = nil
     var focused: FocusState<Bool>.Binding
+    var status: TradesSearchSlotStatus? = nil
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
+    var onReload: () -> Void = {}
 
     var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Group {
+                if let status {
+                    statusSlot(status)
+                } else {
+                    searchSlot
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(AppTheme.border(cornerRadius: 10))
+
+            if let countLabel {
+                Text(countLabel)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: status)
+        .accessibilityLabel(status == nil
+            ? "Search trades by politician name, ticker, state, or party"
+            : statusAccessibility)
+    }
+
+    private var searchSlot: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
@@ -1109,13 +1100,6 @@ struct TradesUnifiedSearchField: View {
                     onSubmit()
                     focused.wrappedValue = false
                 }
-            if let countLabel {
-                Text(countLabel)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.primary)
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-            }
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
@@ -1128,11 +1112,44 @@ struct TradesUnifiedSearchField: View {
                 .accessibilityLabel("Clear Search")
             }
         }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border(cornerRadius: 12))
-        .accessibilityLabel("Search trades by politician name, ticker, state, or party")
+    }
+
+    @ViewBuilder
+    private func statusSlot(_ status: TradesSearchSlotStatus) -> some View {
+        switch status {
+        case .updating:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Updating results…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        case .reload(let message):
+            HStack(spacing: 8) {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button("Reload", action: onReload)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    private var statusAccessibility: String {
+        switch status {
+        case .updating:
+            return "Updating results"
+        case .reload(let message):
+            return message
+        case .none:
+            return "Search trades"
+        }
     }
 }
 

@@ -257,8 +257,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        card's fit-content has a real answer, plus a floor so no card can
        crush. .table-wrap keeps overflow-x for the (wide-desktop-unlikely)
        case where max-content exceeds the column. */
-    #view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }
-    #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }
+    #view-trends .section:has(> .table-wrap) { width: 100%; min-width: 0; max-width: 100%; }
+    #view-trends .section:has(> .table-wrap) > .table-wrap { width: 100%; }
+    #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: 100%; min-width: 560px; }
     /* A long one-line subtitle (Top Performers) must wrap at a readable
        measure instead of inflating the card's fit-content width past its
        own table. 68ch ≈ ideal reading measure. */
@@ -309,6 +310,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
+  :root { --ct-header-h: 68px; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
     border-bottom: 1px solid var(--border); background: rgba(10,16,30,.6);
@@ -670,8 +672,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* People/Assets mode toggle: nearly full search-field width */
   #view-people #dirMode.dir-mode-seg {
     display: flex;
-    width: 100%;
-    max-width: 100%;
+    width: auto;
+    max-width: 28rem;
     margin-bottom: 12px;
     border-radius: var(--radius-pill);
   }
@@ -1001,7 +1003,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      The name/politician cell is forced narrow (max-width:0 + width:99%) so its
      inner ellipsis engages; every other cell sizes to its content. ---- */
   #view-trends td { white-space: nowrap; }
-  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
+  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) {
+    white-space: nowrap;
+    width: 99%;
+    max-width: 0;
+  }
+  #view-trends .member-cell,
+  #view-trends .member-cell .name-line,
+  #view-trends .member-cell > div {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
   /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
      a full-width bar, then the stats chip flush-left beneath — no hard-coded
      indent, so it stays aligned at every width.
@@ -1393,6 +1407,41 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .party-chip.on[data-party="D"] { background: var(--buy); box-shadow: none; }
   .party-chip.on[data-party="R"] { background: var(--sell); box-shadow: none; }
   .party-chip.on[data-party="O"] { background: var(--accent); color:#fff; box-shadow: none; }
+
+  /* iOS-style filter dropdowns (Trades + Trends). The old H/S/P chip strip
+     is now a Menu + check-style list, same as FeedControlBar. */
+  .ios-filter { position: relative; flex: 0 0 auto; }
+  .ios-filter-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: var(--control-h, 34px); padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--panel-2); color: var(--text);
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .ios-filter-ico { font-size: 13px; line-height: 1; }
+  .ios-filter-ico.sides { display: inline-flex; gap: 1px; font-size: 9px; font-weight: 800; }
+  .ios-filter-lbl:empty { display: none; }
+  .ios-filter-pop {
+    position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
+    padding: 6px; border-radius: 16px;
+    background: color-mix(in srgb, var(--panel) 78%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(22px);
+    backdrop-filter: saturate(180%) blur(22px);
+    border: 1px solid color-mix(in srgb, #fff 40%, var(--border));
+    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ios-filter-pop[hidden] { display: none; }
+  .ios-filter-item, .ios-filter-clear {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; text-align: left; border: 0; background: transparent;
+    color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
+    border-radius: 10px; cursor: pointer;
+  }
+  .ios-filter-item:hover, .ios-filter-clear:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
+  .ios-filter-clear { color: var(--text-dim); font-size: 13px; }
   .side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }
   .side-chip.on[data-side="B"] .side-up { color:#fff; }
   .side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }
@@ -1471,8 +1520,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #qAssetClassWrap { order:4; }
-    .trades-toolbars #tradesStats { order:5; }
+    .trades-toolbars #tradesStats { order:4; }
+    .trades-toolbars, #trendsSharedFilters {
+      position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+    }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1632,8 +1686,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
   .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
-    html, body { width:100%; max-width:100%; overflow-x:hidden; }
+    /* clip (not hidden): hidden on one axis makes the other compute to auto
+       and turns html/body/main into a scrollport, which kills position:sticky
+       on the Trades/Trends filter bars. */
+    html, body { width:100%; max-width:100%; overflow-x:clip; }
     body { background: var(--bg); font-size: 13px; }
+    :root { --ct-header-h: 52px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 6px 10px; align-items: center; backdrop-filter: none;
@@ -1641,25 +1699,39 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .brand { font-size: 15px; }
     .pill { padding: 3px 7px; }
     nav.tabs {
-      position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
-      width: 100%; max-width: 100%;
-      /* Auto columns (not a fixed repeat(5)) so hidden admin tabs don't leave
-         empty cells — visible buttons always share the bar equally. */
+      position: fixed; left: 12px; right: 12px;
+      bottom: calc(10px + env(safe-area-inset-bottom, 0px)); margin: 0;
+      width: auto; max-width: none;
       display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
-      gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
-      background: var(--panel);
-      border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
-      box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
+      gap: 2px; padding: 6px;
+      background: color-mix(in srgb, var(--panel) 58%, transparent);
+      -webkit-backdrop-filter: saturate(190%) blur(28px);
+      backdrop-filter: saturate(190%) blur(28px);
+      border: 1px solid color-mix(in srgb, #fff 48%, var(--border));
+      border-radius: 28px; z-index: 45;
+      box-shadow: 0 10px 36px rgba(0,0,0,.16), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent);
+      transform: translateZ(0);
       overflow: visible;
     }
-    nav.tabs::after {
-      content:""; position:absolute; left:0; right:0; top:100%;
-      height:calc(120px + env(safe-area-inset-bottom));
-      background:var(--panel); pointer-events:none;
+    nav.tabs::after { content: none; }
+    html[data-theme="light"] nav.tabs {
+      background: color-mix(in srgb, #fff 62%, transparent);
+      border-color: color-mix(in srgb, #fff 70%, var(--border));
     }
-    html[data-theme="light"] nav.tabs { background:#fff; }
-    html[data-theme="light"] nav.tabs::after { background:#fff; }
-    nav.tabs button { padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0; border-radius: 9px; }
+    html[data-theme="dark"] nav.tabs {
+      background: color-mix(in srgb, #1c1c1e 55%, transparent);
+    }
+    nav.tabs button {
+      padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
+      border-radius: 22px; border: 0; background: transparent;
+    }
+    nav.tabs button.active {
+      background: color-mix(in srgb, #fff 42%, transparent);
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    html[data-theme="dark"] nav.tabs button.active {
+      background: color-mix(in srgb, #fff 14%, transparent);
+    }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
@@ -1667,7 +1739,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Owner punch list #5: nav.tabs is ~60px tall (8px + 44px button + 8px
        padding, before safe-area) — 70px leaves a sane ~10px clearance without
        the previous 86px's dead-space overshoot. */
-    main { max-width: none; min-width:0; overflow-x:hidden; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+    main { max-width: none; min-width:0; overflow-x:clip; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
     .section { overflow:hidden; }
     .section p.sub { font-size:12px; line-height:1.45; }
@@ -1719,8 +1791,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #tradesExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-    #tradesExtraFilters #qSearchField { grid-column: 1 / -1; }
+    #tradesExtraFilters { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+    #tradesExtraFilters #qSearchField { grid-column: 1; min-width: 0; flex: 1 1 auto; }
     .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
     /* Pagers stay usable on phones: don't force every child full-width. */
@@ -1728,6 +1800,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .pager.row-flex > * { width: auto; min-height: 0; }
     .pager .pager-controls { flex: 1 1 auto; }
     .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
+    .pager-top .pager-tools { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
     /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
        party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
@@ -1740,12 +1813,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        always wraps to its own line 2, and its own children stay nowrap so
        the 3 segmented groups + ⓘ never wrap further. */
     #tradesSharedFilters, #trendsSharedFilters {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 1 auto; }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
-      flex: 1 1 100%; width: 100%; display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 4px;
+      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
     }
+    #tradesToolbars, #trendsSharedFilters {
+      position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      padding-top: 4px; padding-bottom: 6px;
+    }
+    #tradesExtraFilters {
+      display: flex; align-items: center; gap: 8px; margin-top: 6px;
+    }
+    #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
+    #tradesStats { flex: 0 0 auto; white-space: nowrap; }
     #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
@@ -1791,8 +1877,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .tlbl { display: block; height: 11px; line-height: 11px; font-size: 8px; max-width: 100%; overflow: hidden; }
     /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
        (like desktop) — only the button sizing shrinks to fit. */
-    #view-trends #trTimeMetric.seg button,
-    #view-trends #trTimeWin.seg button { padding: 4px 5px; font-size: 10px; }
+    #view-trends #trTimeMetric.seg button { padding: 4px 5px; font-size: 10px; }
     /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
     #view-trends summary.tchart-summary { gap: 5px; }
     #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
@@ -1807,9 +1892,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Owner follow-up batch #14: 2-up (not 1fr) so two Consensus Moves cards
        fit side-by-side on mobile — paired with the party-name abbreviation
        swap below (Democrats->Dems, Republicans->Reps) that frees the width. */
-    .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cluster-grid { grid-template-columns: 1fr; }
+    @media (min-width: 421px) {
+      .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     .party-full { display: none; }
     .party-abbr { display: inline; }
+    .filters-info-wrap .branch-pop { left: auto; right: 0; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
     /* Keep the label/value pair on one line at phone widths too — this used to
@@ -2152,7 +2241,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: color-mix(in srgb, var(--text-dim) 88%, var(--text));
 }
 
-/* ---- 9. Time chart "Buys vs Sells Over Time" -------------------------- */
+/* ---- 9. Time chart "Buys vs Sells" -------------------------- */
 #view-trends .tchart {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
@@ -2176,19 +2265,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 }
 
 /* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe) */
-#trTimeWin.seg,
 #trTimeMetric.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
-#trTimeWin.seg button,
 #trTimeMetric.seg button {
   letter-spacing: .02em;
   transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
 }
-#trTimeWin.seg button.on,
 #trTimeMetric.seg button.on {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-#trTimeWin.seg button:focus-visible,
 #trTimeMetric.seg button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
@@ -2332,7 +2417,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .split .seg,
   #view-trends .tcol,
   #view-trends .tbars i,
-  #view-trends #trTimeWin.seg button,
   #view-trends #trTimeMetric.seg button {
     transition: none;
   }
@@ -2453,59 +2537,57 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
       </span>
       <div class="filter-groups">
-        <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="ios-filter branch-filters" id="qChamber">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by branch">
+            <span class="ios-filter-ico" aria-hidden="true">🏛</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="chamber">All Branches</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="house" aria-pressed="false">House</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="senate" aria-pressed="false">Senate</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="executive" aria-pressed="false">Executive</button>
           </div>
         </div>
-        <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
+        <div class="ios-filter party-chips" id="qPartyGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by party">
+            <span class="ios-filter-ico" aria-hidden="true">👥</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+          </div>
         </div>
-        <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by trade type">
-          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
-        </div>
-        <div class="filters-info-wrap" id="qFiltersInfo">
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
-          <div class="branch-pop" id="qFiltersInfoPop" role="note" hidden>
-            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
-            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+        <div class="ios-filter side-chips" id="qSideGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by trade type">
+            <span class="ios-filter-ico sides" aria-hidden="true"><span class="side-up">▲</span><span class="side-dn">▼</span><span class="side-ex">⇄</span></span>
+            <span class="ios-filter-lbl" data-ios-summary></span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="side">All Sides</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="B" aria-pressed="false"><span class="side-up" aria-hidden="true">▲</span> Buys</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="S" aria-pressed="false"><span class="side-dn" aria-hidden="true">▼</span> Sells</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="E" aria-pressed="false"><span class="side-ex" aria-hidden="true">⇄</span> Exchanges</button>
           </div>
         </div>
       </div>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="tradesExtraFilters">
-      <span class="icon-field" id="qSearchField" style="min-width:220px;flex:1">
+      <span class="icon-field" id="qSearchField" style="min-width:0;flex:1">
         <input id="qSearch" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
       </span>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <span class="pill-select" id="qAssetClassWrap">
-        <select id="qAssetClass" class="pill-select-el" title="Asset class" aria-label="Asset class" onchange="onAssetClassChange()">
-          <option value="all" selected>All Assets</option>
-          <option value="equities_funds">Public Equities, Funds, &amp; ETFs</option>
-        </select>
-      </span>
       <!-- The timeframe is named here, not just in the pill to the left: the same
            politician reads 988 trades in this window and 22,832 all time in the
            Directory, and an unlabelled count makes those look like a data bug. -->
       <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span><span class="stat-today"> &middot; <strong id="kpiToday">—</strong> today</span>
+        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">trades</span>
       </div>
     </div>
     </div>
@@ -2610,44 +2692,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
       </span>
       <div class="filter-groups">
-        <div class="branch-filters" id="trChamber" role="group" aria-label="Filter by branch">
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="ios-filter branch-filters" id="trChamber">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by branch">
+            <span class="ios-filter-ico" aria-hidden="true">🏛</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="chamber">All Branches</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="house" aria-pressed="false">House</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="senate" aria-pressed="false">Senate</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="executive" aria-pressed="false">Executive</button>
           </div>
         </div>
-        <div class="party-chips" id="trPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
+        <div class="ios-filter party-chips" id="trPartyGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by party">
+            <span class="ios-filter-ico" aria-hidden="true">👥</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+          </div>
         </div>
-        <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by trade type">
-          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
-        </div>
-        <div class="filters-info-wrap" id="trFiltersInfo">
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
-          <div class="branch-pop" id="trFiltersInfoPop" role="note" hidden>
-            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
-            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+        <div class="ios-filter side-chips" id="trSideGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by trade type">
+            <span class="ios-filter-ico sides" aria-hidden="true"><span class="side-up">▲</span><span class="side-dn">▼</span><span class="side-ex">⇄</span></span>
+            <span class="ios-filter-lbl" data-ios-summary></span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="side">All Sides</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="B" aria-pressed="false"><span class="side-up" aria-hidden="true">▲</span> Buys</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="S" aria-pressed="false"><span class="side-dn" aria-hidden="true">▼</span> Sells</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="E" aria-pressed="false"><span class="side-ex" aria-hidden="true">⇄</span> Exchanges</button>
           </div>
         </div>
       </div>
     </div>
-    <!-- KPI strip. Every other Trends section stamps the active timeframe on its
-         own heading; this one did not, so "Trades 2,511" read as a corpus total
-         next to an all-time count of the same thing elsewhere. -->
-    <div class="tf-cap">Snapshot <em class="tr-window-label" style="font-style:italic; font-weight:400; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></div>
+    <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
+    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -2656,7 +2740,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
-        <summary class="tf-h">What Is Being Traded <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">What Is Being Traded<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="row-flex rankby-row" style="margin:-6px 0 12px">
           <label class="lbl">Rank By:</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
@@ -2683,7 +2767,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </details>
       <details class="section trends-fold" open>
-        <summary class="tf-h">Rising Activity <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap">
           <table id="tableTrTrending">
             <thead>
@@ -2702,24 +2786,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
-      <p class="sub">Assets where several different politicians happened to trade the same direction within <span id="trConsensusPhrase">the past 3 months</span>.</p>
+      <summary class="tf-h">Consensus Moves<span class="fold-cue" aria-hidden="true"></span></summary>
       <div class="cluster-grid" id="trClusters"></div>
     </details>
 
-    <!-- Buys vs sells over time -->
+    <!-- Buys vs sells: same page window as every other Trends card -->
     <details class="section trends-fold" open>
       <summary class="tf-h tchart-summary">
         <span class="tchart-summary-title">Buys vs Sells</span>
         <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
-            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
+            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
             <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
-          </div>
-          <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
-            <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
-            <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
-            <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
           </div>
         </div>
         <span class="fold-cue" aria-hidden="true"></span>
@@ -2731,37 +2809,38 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <details class="section trends-fold" open>
-        <summary class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Net Flow by Sector<span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trSectorFlow"></div>
       </details>
       <details class="section trends-fold" open>
-        <summary class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">By Market Cap<span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trCapFlow"></div>
       </details>
     </div>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out." title="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
       <!-- The one place the benchmark is spelled out for this surface: the rows,
            the header tooltip and the row tooltips all say "excess" instead. -->
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
+      <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </details>
 
     <!-- Politicians + Party -->
     <div class="trend-members-grid">
       <details class="section trends-fold" open>
-        <summary class="tf-h">Most Active Politicians <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Most Active Politicians<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </details>
       <div class="trend-side-stack">
         <details class="section trends-fold" open>
-          <summary class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+          <summary class="tf-h">By Party<span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trParties"></div>
         </details>
         <details class="section trends-fold" open>
-          <summary class="tf-h">By Asset Type <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+          <summary class="tf-h">By Asset Type<span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trSectors"></div>
         </details>
       </div>
@@ -2769,7 +2848,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Disclosure Timeliness<span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Days from trade to filing.&nbsp; The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -2790,7 +2869,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Committee conflicts (journalistic accountability lens) -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Committee Sector Conflicts<span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
@@ -2811,7 +2890,7 @@ ${speedProofSectionHtml(false)}
         <button type="button" data-mode="assets" onclick="setDirectoryMode('assets')">Assets</button>
       </div>
       <div class="toolbar" style="margin-bottom:12px">
-        <input id="peopleQ" placeholder="Search name, state, party… any order" aria-label="Search directory" style="min-width:220px;flex:1" oninput="filterDirectory()" />
+        <input id="peopleQ" placeholder="Search name, state, party… any order" aria-label="Search directory" style="min-width:0;flex:1" oninput="filterDirectory()" />
         <select id="peopleChamber" onchange="filterPeopleDirectory()" aria-label="Chamber filter">
           <option value="">All Branches</option>
           <option value="house">House</option>
@@ -8952,22 +9031,16 @@ function trParams() {
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
-/* Tail phrase for the Consensus Moves explainer ("...within the past 3 months.") —
-   keyed the same as TR_WINDOW_LABELS but phrased as a lowercase prepositional clause. */
-var TR_CONSENSUS_PHRASE = { '1d': 'the past day', '7d': 'the past week', '30d': 'the past month', '90d': 'the past 3 months', '180d': 'the past 6 months', '365d': 'the past year', '1825d': 'the past 5 years', 'this_cy': 'this calendar year', 'last_cy': 'last calendar year', 'all': 'the full record' };
-function consensusPhrase(v) { return TR_CONSENSUS_PHRASE[v] || 'the selected window'; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
-   the single control for timeframe filtering. Section headers display the
-   active timeframe setting as italic text (.tr-window-label). This function
-   updates all .tr-window-label elements to match the selected timeframe. */
+   the single control for timeframe filtering. Headings no longer stamp the
+   window; this still updates any leftover .tr-window-label nodes and the
+   Consensus Moves phrase. */
 function stampWindowChips() {
   var val = getTrWindow();
   var lblText = windowLabel(val);
   document.querySelectorAll('.tr-window-label').forEach(function(el) {
     el.textContent = lblText;
   });
-  var phraseEl = el('trConsensusPhrase');
-  if (phraseEl) phraseEl.textContent = consensusPhrase(val);
 }
 /* Small TTL memo cache over the analytics endpoints (same TTL+dedupe idiom as
    fetchLatencySummary below): a Trends window change fires ~12 parallel aGet
@@ -9207,7 +9280,7 @@ function loadTrConflicts() {
       var side = typeName[r.txType] || r.txType || '—';
       var asset = r.ticker || '—';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
+        '<td><div' + memberAttr + '><span class="name-line">' + esc(name) + '</span></div></td>' +
         '<td class="muted">' + esc(committees) + '</td>' +
         '<td class="muted">' + esc(r.sector || '—') + '</td>' +
         '<td>' + (r.ticker
@@ -10074,10 +10147,9 @@ function loadTrSectorFlow() {
       m.uniqueTickers = Math.max(m.uniqueTickers, Number(r.uniqueTickers || 0));
     });
     rows = order.map(function (k) { return merged[k]; });
-    // The section sub-header claims "ranked by estimated volume" — sort here
-    // so the rendered order always matches that claim regardless of how the
-    // backend ordered its rows (it currently ranks by trade_count).
-    rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });
+    // Card title is Net Flow by Sector — rank by signed net (biggest buy
+    // first, biggest sell last). Market-cap next door keeps CAP_ORDER.
+    rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
     box.innerHTML = rows.map(function (r) { return flowRowHtml(r.sector, r, max); }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
@@ -10219,18 +10291,7 @@ function loadTrClusters() {
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
-/* This chart has its OWN time range (1Y/3Y/5Y), independent of the page
-   window — a multi-year shape is the point, while the page may be on "Past Month".
-   chamber/party/source stay shared via trParams(); only the window is overridden. */
-var trTimeWindow = '1825d';
 var trTimeMetric = 'count';
-function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
-function setTrTimeWin(w) {
-  trTimeWindow = w;
-  var btns = el('trTimeWin').querySelectorAll('button');
-  for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-w') === w) ? 'on' : '';
-  loadTrTime();
-}
 function setTrTimeMetric(m) {
   trTimeMetric = (m === 'dollars') ? 'dollars' : 'count';
   var group = el('trTimeMetric');
@@ -10249,7 +10310,7 @@ function anchorChartRight(box) {
 function loadTrTime() {
   var box = el('trTime');
   box.innerHTML = skChart();
-  aGet('volume-over-time?' + trTimeParams()).then(function (d) {
+  aGet('volume-over-time?' + trParams()).then(function (d) {
     var s = d.series || [];
     if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this range.</div>'; return; }
     box.innerHTML = timeChartHtml(s, null, trTimeMetric);
@@ -10336,12 +10397,12 @@ function loadTrLag() {
     var s = d.summary || {};
     var lagBasis = 'Disclosure lag is days between the transaction date and the official filing date.';
     kbox.innerHTML =
-      kpi('Median Lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>'), 'Middle disclosure lag in this window. ' + lagBasis) +
+      kpi('Median Lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>'), 'Middle disclosure lag. ' + lagBasis) +
       kpiRaw(kpiLabel('90<sup>th</sup> Percentile', '90th Pctl', 'P90'), (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>'), '90% of dated trade rows were filed within this many days. ' + lagBasis) +
       kpiRaw(kpiLabel('&gt;45 Day Lag', '>45d Lag', '>45d'), (s.overFortyFivePct == null ? '—' : Math.round(s.overFortyFivePct * 100) + '<small>%</small>'), 'Share of dated trade rows filed after the 45-day STOCK Act window. ' + lagBasis) +
-      kpi('Disclosures', s.count || 0, 'Number of trade rows with both transaction and official filing dates in this window.');
+      kpi('Disclosures', s.count || 0, 'Number of trade rows with both transaction and official filing dates.');
     var dist = s.distribution || [], max = 1; dist.forEach(function (b) { max = Math.max(max, b.count); });
-    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings in this window.</div>'; }
+    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings.</div>'; }
     else dbox.innerHTML = dist.map(function (b) {
       var w = Math.round(100 * b.count / max);
       var cls = (b.bucket === '46–60d' || b.bucket === '60d+') ? ' warn' : ' buy';
@@ -10366,7 +10427,7 @@ function loadTrLag() {
       var avg = Math.round(m.avgLagDays);
       var maxLag = Math.round(m.maxLagDays || 0);
       var late = Number(m.lateCount || 0);
-      var basis = name + ' has ' + fmtCount(tradeCount) + ' dated trade row' + (tradeCount === 1 ? '' : 's') + ' in this window.';
+      var basis = name + ' has ' + fmtCount(tradeCount) + ' dated trade row' + (tradeCount === 1 ? '' : 's') + '.';
       var memberTitle = m.filerId ? 'Open ' + name + ' details.' : name;
       var memberAttr = m.filerId ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="' + esc(memberTitle) + '"' : ' class="member-cell" title="' + esc(memberTitle) + '"';
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
@@ -11709,8 +11770,8 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
     onChange();
   });
 }
-initChamberChips('qChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'trChamber');
-initChamberChips('trChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'qChamber');
+initChamberChips('qChamber', 'shared-chambers-v1', function () { refreshIosFilterSummaries(); resetTradesPage(); loadTrends(); }, 'trChamber');
+initChamberChips('trChamber', 'shared-chambers-v1', function () { refreshIosFilterSummaries(); resetTradesPage(); loadTrends(); }, 'qChamber');
 restoreFiltersFromUrl(); // URL-mirrored filters (ft/fm/fty/fch/fw) win over localStorage
 
 /* One grouped explainer per branch strip: hover opens it on pointer devices,
@@ -11739,26 +11800,10 @@ initBranchInfo('qFiltersInfo');
 initBranchInfo('trFiltersInfo');
 
 function selectedAssetClass() {
-  var s = el('qAssetClass');
-  var v = s && s.value ? String(s.value) : 'all';
-  return v && v !== 'all' ? v : '';
+  // Owner 2026-08-14: the All Assets / equities-funds dropdown is gone.
+  // Never send assetClass= from the public UI.
+  return '';
 }
-function onAssetClassChange() {
-  try { localStorage.setItem('shared-asset-class-v1', selectedAssetClass() || 'all'); } catch (_e) {}
-  if (typeof resetTradesPage === 'function') resetTradesPage();
-}
-function restoreAssetClass() {
-  try {
-    var saved = localStorage.getItem('shared-asset-class-v1');
-    var s = el('qAssetClass');
-    if (s && saved) {
-      for (var i = 0; i < s.options.length; i++) {
-        if (s.options[i].value === saved) { s.value = saved; break; }
-      }
-    }
-  } catch (_e) {}
-}
-restoreAssetClass();
 function selectedSideParam(groupId) {
   var g = el(groupId); if (!g) return '';
   var on = [];
@@ -11825,6 +11870,7 @@ function initPartyChips() {
     }
     applyPartySelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     if (typeof loadTrends === 'function') loadTrends();
     if (typeof resetTradesPage === 'function') resetTradesPage();
   }
@@ -11848,6 +11894,7 @@ function initSideChips() {
     if (g) g.querySelectorAll('.side-chip.on').forEach(function (c) { on.push(c.getAttribute('data-side')); });
     applySideSelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     if (typeof loadTrends === 'function') loadTrends();
     if (typeof resetTradesPage === 'function') resetTradesPage();
   }
@@ -11857,6 +11904,87 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+function closeIosFilterMenus(except) {
+  document.querySelectorAll('.ios-filter').forEach(function (f) {
+    if (except && f === except) return;
+    var pop = f.querySelector('.ios-filter-pop');
+    var btn = f.querySelector('.ios-filter-btn');
+    if (pop) pop.hidden = true;
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+function refreshIosFilterSummaries() {
+  function setSummary(id, text, has) {
+    var f = el(id); if (!f) return;
+    var lbl = f.querySelector('[data-ios-summary]');
+    if (lbl) lbl.textContent = text || '';
+    f.classList.toggle('has-sel', !!has);
+  }
+  function chamberSummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.branch-toggle.on').forEach(function (b) { on.push(b.textContent.trim()); });
+    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+  }
+  function partySummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.party-chip.on').forEach(function (b) { on.push(b.getAttribute('data-party')); });
+    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+  }
+  function sideSummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.side-chip.on').forEach(function (b) {
+      var s = b.getAttribute('data-side');
+      on.push(s === 'B' ? 'Buys' : s === 'S' ? 'Sells' : 'Exch');
+    });
+    setSummary(id, on.length ? on.join('+') : '', on.length > 0);
+  }
+  chamberSummary('qChamber'); chamberSummary('trChamber');
+  partySummary('qPartyGroup'); partySummary('trPartyGroup');
+  sideSummary('qSideGroup'); sideSummary('trSideGroup');
+}
+function initIosFilterMenus() {
+  document.addEventListener('click', function (e) {
+    var clear = e.target.closest ? e.target.closest('[data-ios-clear]') : null;
+    if (clear) {
+      var kind = clear.getAttribute('data-ios-clear');
+      if (kind === 'chamber') {
+        document.querySelectorAll('.branch-toggle').forEach(function (b) {
+          b.classList.remove('on'); b.setAttribute('aria-pressed', 'false');
+        });
+        try { localStorage.setItem('shared-chambers-v2', JSON.stringify([])); } catch (_e) {}
+      } else if (kind === 'party') {
+        applyPartySelection([]);
+        try { localStorage.setItem('shared-parties-v1', JSON.stringify([])); } catch (_e) {}
+      } else if (kind === 'side') {
+        applySideSelection([]);
+        try { localStorage.setItem('shared-sides-v1', JSON.stringify([])); } catch (_e) {}
+      }
+      refreshIosFilterSummaries();
+      if (typeof loadTrends === 'function') loadTrends();
+      if (typeof resetTradesPage === 'function') resetTradesPage();
+      return;
+    }
+    var btn = e.target.closest ? e.target.closest('.ios-filter-btn') : null;
+    if (btn) {
+      var wrap = btn.closest('.ios-filter');
+      var pop = wrap && wrap.querySelector('.ios-filter-pop');
+      var open = pop && pop.hidden;
+      closeIosFilterMenus(open ? wrap : null);
+      if (pop) {
+        pop.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      e.preventDefault();
+      return;
+    }
+    if (!e.target.closest || !e.target.closest('.ios-filter-pop')) closeIosFilterMenus(null);
+  });
+  refreshIosFilterSummaries();
+}
+initIosFilterMenus();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 /* Trends fold cards (mobile-only show/hide): CSS alone can't force a
    <details> open, so on desktop widths (above this file's 768px mobile
@@ -11962,6 +12090,12 @@ function openDeepLink() {
       openLogin();
       var msg = el('loginMsg');
       if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
+      return;
+    }
+    if (authError === 'apple_not_configured' || authError === 'apple_web_not_configured') {
+      openLogin();
+      var amsg = el('loginMsg');
+      if (amsg) amsg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
       return;
     }
     if (pricing === '1' || pricing === 'true' || pricing === 'alerts' || pricing === 'export') {

@@ -537,7 +537,7 @@ export interface Env {
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
   GEMINI_RPM_LIMIT?: string;
-  /** Primary vision model override (defaults to 'gemini-3.5-flash'). */
+  /** Primary vision model override (defaults to 'gemini-3.7-flash'). */
   VISION_PRIMARY_MODEL?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
@@ -555,7 +555,7 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   /** Secondary OpenRouter API key for budget cap failover. */
   OPENROUTER_BACKUP_API_KEY?: string;
-  /** OpenRouter model override (defaults to 'google/gemini-3.5-flash'). */
+  /** OpenRouter model override (defaults to 'google/gemini-3.7-flash'). */
   OPENROUTER_MODEL?: string;
   /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */
   OPENROUTER_PDF_ENGINE_TEXT?: string;
@@ -880,17 +880,27 @@ export interface Env {
   STRIPE_PRICE_ANNUAL?: string;
   /** Free-trial length in days for new subscriptions (default 7). */
   STRIPE_TRIAL_DAYS?: string;
+  /** Live Billing Portal configuration id (`bpc_…`).  Without this, Stripe's
+   *  implicit default can hide the Premium product and show an empty
+   *  subscription list. */
+  STRIPE_PORTAL_CONFIGURATION?: string;
   /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
   APPLE_BUNDLE_ID?: string;
-  /** APNs provider key id (10-char). Required with APNS_TEAM_ID + APNS_P8 to send. */
+  /** Sign in with Apple Services ID for the website OAuth flow. */
+  APPLE_SERVICES_ID?: string;
+  APPLE_TEAM_ID?: string;
+  APPLE_KEY_ID?: string;
+  APPLE_P8?: string;
+  APPLE_PRIVATE_KEY?: string;
+  /** APNs provider key id (10-char). Required with team id + signing material to send. */
   APNS_KEY_ID?: string;
-  /** Apple Developer Team ID (CC8UTF7ATG). */
+  /** Apple Developer Team ID. */
   APNS_TEAM_ID?: string;
   /** APNs topic; defaults to trade.congress.ios. */
   APNS_BUNDLE_ID?: string;
-  /** Raw PEM or base64 of the APNs .p8. Never log. */
+  /** Signing material for the APNs provider token. Never log. */
   APNS_P8?: string;
-  /** Alias for a base64-encoded .p8. */
+  /** Alternate env slot for the same signing material. */
   APNS_PRIVATE_KEY_B64?: string;
   APNS_PRIVATE_KEY?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.

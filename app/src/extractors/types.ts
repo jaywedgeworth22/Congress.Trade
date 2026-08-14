@@ -426,7 +426,7 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const secondary = new VisionLlmExtractor(env, {
     apiKeyName: 'ARBITRATION_API_KEY',
     modelEnvName: 'ARBITRATION_MODEL',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.7-flash',
     name: 'visionLlm-secondary',
   });
 
