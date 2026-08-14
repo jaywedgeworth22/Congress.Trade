@@ -86,6 +86,7 @@ import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../securit
 import { checkReadiness, type ReadinessResult } from '../shared/readiness.ts';
 import { costProfilePublicSummary, resolveDenoCostProfile } from '../deno/costProfile.ts';
 import { readLocalLitestreamAge } from '../shared/litestreamAge.ts';
+import { readR2WeeklyArchiveStatus } from '../shared/r2WeeklyArchive.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -488,6 +489,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // webhook has silently not fired before. See src/shared/buildInfo.ts.
     const build = readBuildInfo(envx);
     const storage = await readLocalLitestreamAge();
+    const r2Weekly = await readR2WeeklyArchiveStatus();
     return c.json(
       {
         ...readiness,
@@ -495,8 +497,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         pipeline,
         costProfile,
         build,
-        // Usage Monitor fleet backup reads checks.storage.litestreamAgeSeconds.
-        checks: { storage },
+        // Usage Monitor fleet backup reads checks.storage.litestreamAgeSeconds
+        // and checks.storage.r2Weekly.
+        checks: { storage: { ...storage, r2Weekly } },
         time: new Date().toISOString(),
       },
       readiness.ok ? 200 : 503,
