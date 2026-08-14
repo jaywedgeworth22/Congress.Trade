@@ -359,6 +359,12 @@ struct PremiumSheet: View {
 /// (`STRIPE_TRIAL_DAYS`, 14 days — `app/src/billing/routes.ts`) and the
 /// introductory offer configured on each product in App Store Connect. Change
 /// it in all three or the app is quoting a trial Apple will not honor.
+///
+/// Verified 2026-08-14 against live ASC + Infisical: both
+/// `trade.congress.premium.monthly` and `.annual` carry `FREE_TRIAL` /
+/// `TWO_WEEKS` (start 2026-08-12, no end); US prices $5 / $50; prod
+/// `STRIPE_TRIAL_DAYS=14`. Receipt:
+/// `docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 enum PremiumPricing {
     static let headline = "$5/month  •  $50/year  •  2-week free trial"
 

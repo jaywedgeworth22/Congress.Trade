@@ -32,7 +32,7 @@
 # ---------------------------------------------------------------------------
 # Applies to uploads only (--export-only and --dry-run are free):
 #   DEFAULT MINIMUM INTERVAL BETWEEN SUCCESSFUL TESTFLIGHT SHIPS, PER APP:
-#       DEFAULT_MIN_INTERVAL_SEC=9000  (9000 seconds = 2.5 hours)
+#       DEFAULT_MIN_INTERVAL_SEC=3600  (3600 seconds = 1 hour)
 #   That constant is defined a few dozen lines below and is the main reason a
 #   merge to main does not become a TestFlight build. .github/workflows/
 #   ios-ship.yml fires on every push to main touching clients/ios/**, and this
@@ -87,8 +87,10 @@ FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
 APPS_JSON="${FLEET_DIR}/apps.json"
 TEAM_ID="CC8UTF7ATG"
 SECRETS_ENV="${HOME}/.secrets/appstore-connect.env"
-# 2.5 hours — middle of the owner 2–3h band; not Apple compute, local/process hygiene.
-DEFAULT_MIN_INTERVAL_SEC=9000
+# 1 hour — owner 2026-08-14: ship unbuilt iOS updates as often as once per hour.
+# Not Apple compute; local/process hygiene. Cron ticks twice an hour so a
+# trailing merge inside the window is picked up on the next eligible tick.
+DEFAULT_MIN_INTERVAL_SEC=3600
 # Overridable so the sequence/rate-limit state can be pointed at a scratch dir
 # for testing without touching real ship history.
 STATE_DIR="${IOS_FLEET_STATE_DIR:-${HOME}/.cache/ios-fleet}"
@@ -212,7 +214,7 @@ link_private_key() {
 #   - it is demonstrably a legal CFBundleVersion for ASC: those 15 live builds
 #     were all accepted in exactly this format
 # Collisions are not a concern: two ships in the same UTC minute would need to
-# beat both the archive lock and the 2.5h min interval, and they would carry
+# beat both the archive lock and the 1h min interval, and they would carry
 # different marketing versions anyway (Apple's uniqueness is per version+build).
 #
 # Sequence state: ${STATE_DIR}/build-seq-<app>.txt (atomic-mkdir-guarded).
