@@ -22,6 +22,9 @@ Key reminders:
   clients must share one `/api/client/v1/*` contract and one server-side
   command/status model; do not create client-only scraping, provider-secret, or
   MCP orchestration paths.
+- iOS build loop: `xcodebuild` via bash is pre-approved. Do not stand up or
+  narrate Xcode MCP. See `clients/ios/CLAUDE.md` and AGENT-SYNC § iOS agent
+  build loop.
 - Use a separate branch, normally `claude/<short-topic>`, before non-trivial
   edits.
 - Do not continue work directly on a Codex, Cursor, Copilot, Antigravity, or
