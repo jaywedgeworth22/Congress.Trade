@@ -236,4 +236,20 @@ describe('Stripe write idempotency', () => {
       { path: '/v1/billing_portal/sessions', key: 'portal-key' },
     ]);
   });
+
+  it('sends the Billing Portal configuration so the hosted page lists Premium', async () => {
+    let body = '';
+    vi.stubGlobal('fetch', async (_input: string | URL | Request, init?: RequestInit) => {
+      body = String(init?.body ?? '');
+      return Response.json({ id: 'bps_1', url: 'https://stripe/portal' });
+    });
+    await createBillingPortalSession({ STRIPE_SECRET_KEY: 'sk' } as Env, {
+      customerId: 'cus_1',
+      returnUrl: 'https://app/',
+      idempotencyKey: 'portal-key',
+      configuration: 'bpc_live_premium',
+    });
+    expect(body).toContain('configuration=bpc_live_premium');
+    expect(body).toContain('customer=cus_1');
+  });
 });

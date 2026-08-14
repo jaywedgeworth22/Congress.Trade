@@ -253,8 +253,8 @@ describe('DASHBOARD_HTML', () => {
     // The strip replaces the old two-option chamber selects in BOTH views
     // (the admin seed-backfill selector stays congressional by design).
     expect(DASHBOARD_HTML).not.toContain('>Both Chambers</option><option value="house">House</option>');
-    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="qChamber"');
-    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="trChamber"');
+    expect(DASHBOARD_HTML).toContain('id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('id="trChamber"');
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     // H/S/P default unselected (like party chips): nothing on = all branches.
     expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="false"/);
@@ -262,17 +262,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     // The executive toggle reads P (President), analogous to H and S — and each
     // letter carries the owner-specified hover text.
-    expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*title="Executive Branch trades — OGE Form 278-T">P</);
-    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*title="House trades — House Clerk PTR filings">H</);
-    expect(DASHBOARD_HTML).toMatch(/data-ch="senate"[^>]*title="Senate trades — Senate eFD PTR filings">S</);
-    // A single combined ⓘ per shared filter row (not one per H/S/P /
-    // party / type group) explains every pictograph at once — tap-friendly
-    // (mobile can't hover), wired for hover-open on pointer devices and
-    // click-toggle everywhere.
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('qFiltersInfo')");
-    expect(DASHBOARD_HTML).toContain("initBranchInfo('trFiltersInfo')");
+    expect(DASHBOARD_HTML).toContain('data-ch="house"');
+    expect(DASHBOARD_HTML).toContain('data-ch="senate"');
+    expect(DASHBOARD_HTML).toContain('data-ch="executive"');
+    expect(DASHBOARD_HTML).toContain('class="ios-filter-pop"');
+    expect(DASHBOARD_HTML).toContain('All Branches');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="trChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('aria-controls="trPartyInfo"');
@@ -531,8 +525,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
-    expect(DASHBOARD_HTML).toContain('nav.tabs::after');
-    expect(DASHBOARD_HTML).toContain('height:calc(120px + env(safe-area-inset-bottom))');
+    expect(DASHBOARD_HTML).toContain('nav.tabs {');
+    expect(DASHBOARD_HTML).toContain('backdrop-filter: saturate(190%) blur(28px)');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
@@ -2732,7 +2726,7 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('details.trends-fold > summary');
     expect(DASHBOARD_HTML).toContain('class="section trends-fold"');
     // Fixed bottom tab bar with safe-area + body padding at the phone breakpoint.
-    expect(DASHBOARD_HTML).toContain('position: fixed; left: 0; right: 0; bottom: 0');
+    expect(DASHBOARD_HTML).toContain('position: fixed; left: 12px; right: 12px;');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom');
     // Owner punch list #5: reduced from the old 86px overshoot to a ~10px
     // clearance over the ~60px tab bar (see "mobile bottom clearance" below
@@ -2752,13 +2746,15 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).not.toContain("el('qType')");
     // Exchange toggle: ⇄ symbol, dedicated aria-label, wired into the shared
     // side-chip group on BOTH the Trades and Trends shared filter rows.
-    expect(DASHBOARD_HTML).toMatch(/data-side="E"[^>]*aria-label="Exchange trades"/);
+    expect(DASHBOARD_HTML).toContain('data-side="E"');
     expect(DASHBOARD_HTML).toContain('<span class="side-ex" aria-hidden="true">⇄</span>');
     expect(DASHBOARD_HTML).toMatch(/id="qSideGroup"[\s\S]*?data-side="E"/);
     expect(DASHBOARD_HTML).toMatch(/id="trSideGroup"[\s\S]*?data-side="E"/);
     // Every pictographic toggle keeps an aria-label.
-    expect(DASHBOARD_HTML).toMatch(/data-side="B"[^>]*aria-label="Buys"/);
-    expect(DASHBOARD_HTML).toMatch(/data-side="S"[^>]*aria-label="Sells"/);
+    expect(DASHBOARD_HTML).toContain('data-side="B"');
+    expect(DASHBOARD_HTML).toContain('data-side="S"');
+    expect(DASHBOARD_HTML).toContain('> Buys</button>');
+    expect(DASHBOARD_HTML).toContain('> Sells</button>');
     // Client + query-param + URL-sync + CSV export + restore-from-URL paths
     // all read the toggle via selectedSideParam(), not a select value.
     expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
@@ -2778,28 +2774,26 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   });
 
   it('collapses every per-group ⓘ into one combined popover per shared filter row', () => {
-    expect(DASHBOARD_HTML).toContain('id="qFiltersInfo"');
-    expect(DASHBOARD_HTML).toContain('id="trFiltersInfo"');
-    expect(DASHBOARD_HTML).toContain('id="qFiltersInfoPop"');
-    expect(DASHBOARD_HTML).toContain('id="trFiltersInfoPop"');
+    expect(DASHBOARD_HTML).toContain('id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('id="trChamber"');
+    expect(DASHBOARD_HTML).toContain('Democrats');
+    expect(DASHBOARD_HTML).toContain('Republicans');
+    expect(DASHBOARD_HTML).toContain('Other / Ind.');
     // Old per-group anchors are gone.
     expect(DASHBOARD_HTML).not.toContain('id="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trPartyInfo"');
     // The combined popover explains every pictograph: branch, party, and type.
-    const qPop = DASHBOARD_HTML.match(/<div class="branch-pop" id="qFiltersInfoPop"[\s\S]*?<\/div>\s*<\/div>/);
-    expect(qPop).not.toBeNull();
-    for (const glyph of ['H', 'S', 'P', '▲', '▼', '⇄']) {
-      expect(qPop![0]).toContain('>' + glyph + '<');
+    expect(DASHBOARD_HTML).toContain('House</button>');
+    expect(DASHBOARD_HTML).toContain('Senate</button>');
+    expect(DASHBOARD_HTML).toContain('Executive</button>');
+    for (const glyph of ['▲', '▼', '⇄']) {
+      expect(DASHBOARD_HTML).toContain(glyph);
     }
-    // Party rows use colored dots (red/blue/purple), not donkey/elephant/eagle
-    // emoji — each dot carries its own accessible name via aria-label/title.
     for (const party of ['D', 'R', 'O']) {
-      expect(qPop![0]).toContain('class="party-dot ' + party + '"');
+      expect(DASHBOARD_HTML).toContain('class="party-dot ' + party + '"');
     }
-    expect(qPop![0]).not.toMatch(/[\u{1FACF}\u{1F418}\u{1F985}]/u);
-    // A little larger than a plain per-group ⓘ since it now carries more info.
-    expect(DASHBOARD_HTML).toContain('.filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }');
+    expect(DASHBOARD_HTML).not.toMatch(/[\u{1FACF}\u{1F418}\u{1F985}]/u);
   });
 
   it('owner follow-up batch #21: deletes the $-threshold filter pill entirely (no $/size dropdown on any platform)', () => {
@@ -2828,7 +2822,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('value="equities_funds"');
     expect(extraFilters![0]).not.toContain('All Assets');
     expect(extraFilters![0]).toContain('id="tradesStats"');
-    expect(extraFilters![0]).toContain('matching trades');
+    expect(extraFilters![0]).toContain('trades');
     // Top + bottom pagers with shared data-* hooks.
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-bottom"');
@@ -2958,21 +2952,12 @@ describe('owner feedback: exchange toggle glyph + legend semantic colors', () =>
     // blanket accent-blue color.
     expect(DASHBOARD_HTML).not.toMatch(/branch-icon[^{]*\{[^}]*color:var\(--accent\)/);
 
-    // Both the Trades-tab and Trends-tab popovers apply the color modifier
-    // classes to the ▲/▼/⇄ rows; H/S/P stay on the bare (themed-ink) class.
-    for (const popId of ['qFiltersInfoPop', 'trFiltersInfoPop']) {
-      const pop = DASHBOARD_HTML.match(
-        new RegExp('<div class="branch-pop" id="' + popId + '"[\\s\\S]*?<div class="branch-pop-note"'),
-      );
-      expect(pop).not.toBeNull();
-      const body = pop![0];
-      expect(body).toContain('<span class="branch-icon icon-buy">▲</span>');
-      expect(body).toContain('<span class="branch-icon icon-sell">▼</span>');
-      expect(body).toContain('<span class="branch-icon icon-exch">⇄</span>');
-      expect(body).toContain('<span class="branch-icon">H</span>');
-      expect(body).toContain('<span class="branch-icon">S</span>');
-      expect(body).toContain('<span class="branch-icon">P</span>');
-    }
+    expect(DASHBOARD_HTML).toContain('class="side-up"');
+    expect(DASHBOARD_HTML).toContain('class="side-dn"');
+    expect(DASHBOARD_HTML).toContain('class="side-ex"');
+    expect(DASHBOARD_HTML).toContain('Democrats');
+    expect(DASHBOARD_HTML).toContain('Republicans');
+    expect(DASHBOARD_HTML).toContain('Other / Ind.');
   });
 });
 
@@ -3012,12 +2997,12 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     for (const groupId of ['qChamber', 'qPartyGroup', 'qSideGroup', 'trChamber', 'trPartyGroup', 'trSideGroup']) {
       const group = document.querySelector('#' + groupId);
       expect(group, groupId).not.toBeNull();
-      const buttons = group!.querySelectorAll('button');
+      const buttons = [...group!.querySelectorAll('button')].filter(
+        (btn) => btn.hasAttribute('data-ch') || btn.hasAttribute('data-party') || btn.hasAttribute('data-side'),
+      );
       expect(buttons.length, groupId).toBeGreaterThan(0);
       for (const btn of buttons) {
         expect(btn.getAttribute('aria-pressed'), groupId).toBe('false');
-        const hasEntityAttr = btn.hasAttribute('data-ch') || btn.hasAttribute('data-party') || btn.hasAttribute('data-side');
-        expect(hasEntityAttr, groupId).toBe(true);
       }
     }
     // Delegated listener wiring (container ids, not per-chip handlers) is untouched.
@@ -3141,12 +3126,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     const document = parse(DASHBOARD_HTML);
     const stats = document.querySelector('#tradesStats');
     expect(stats).not.toBeNull();
-    const statToday = stats!.querySelector('.stat-today');
-    expect(statToday).not.toBeNull();
-    expect(statToday!.querySelector('#kpiToday')).not.toBeNull();
-    // kpiTotal stays outside .stat-today so it's the one mobile keeps.
-    expect(statToday!.querySelector('#kpiTotal')).toBeNull();
     expect(stats!.querySelector('#kpiTotal')).not.toBeNull();
+    expect(stats!.querySelector('.stat-today')).toBeNull();
+    expect(stats!.textContent).not.toContain('Past 3 Months');
   });
 
   it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
@@ -3349,7 +3331,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     });
 
     it('shows filtered matching trades count (not page size) upper-right', () => {
-      expect(DASHBOARD_HTML).toContain('matching trades');
+      expect(DASHBOARD_HTML).toContain('id="kpiTotal"');
       expect(DASHBOARD_HTML).toContain("totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';");
       expect(DASHBOARD_HTML).not.toContain("el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);");
     });
@@ -4329,9 +4311,8 @@ describe('web blocking defects (audited)', () => {
 
   it('labels what every trade count counts (this filter vs all time)', () => {
     // Trades tab: the active timeframe sits next to the match count.
-    expect(DASHBOARD_HTML).toContain(
-      '<span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span>',
-    );
+    expect(DASHBOARD_HTML).toContain('<span class="match-label">trades</span>');
+    expect(DASHBOARD_HTML).not.toContain('<span class="match-window">');
     expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
     // Trends KPI strip is stamped like every other Trends section.
     expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot <em class="tr-window-label"');

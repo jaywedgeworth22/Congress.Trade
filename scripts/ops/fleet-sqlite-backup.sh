@@ -113,8 +113,23 @@ for app in congress socratic usage-monitor; do
     if [ -z "$r2bucket" ]; then
       echo "[fleet-backup] R2 weekly skipped: no R2 bucket mapped for $app"
     elif rclone listremotes 2>/dev/null | grep -q "^r2:"; then
-      rclone copy "$dir" "r2:${r2bucket}/weekly/" --include "*${STAMP}*" --transfers 2 -q \
-        && echo "[fleet-backup] R2 weekly OK: $app" || echo "[fleet-backup] R2 weekly FAIL: $app"
+      if rclone copy "$dir" "r2:${r2bucket}/weekly/" --include "*${STAMP}*" --transfers 2 -q; then
+        echo "[fleet-backup] R2 weekly OK: $app"
+        # Receipt so congress.trade /api/health can say R2 weekly is fine
+        # without listing the bucket (no secrets on the health path).
+        if [ "$app" = "congress" ]; then
+          status_path="/data/congress-trade/.r2-archive-status.json"
+          newest="$(ls -1t "$dir"/*"${STAMP}"*.db 2>/dev/null | head -1 || true)"
+          key="weekly/$(basename "${newest:-congress-trade-${STAMP}.db}")"
+          printf '{"ok":true,"key":"%s","completedAt":"%s"}\n' "$key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$status_path"
+        fi
+      else
+        echo "[fleet-backup] R2 weekly FAIL: $app"
+        if [ "$app" = "congress" ]; then
+          printf '{"ok":false,"reason":"rclone_failed","checkedAt":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /data/congress-trade/.r2-archive-status.json || true
+        fi
+      fi
     else
       echo "[fleet-backup] R2 weekly skipped: no r2 remote configured yet"
     fi

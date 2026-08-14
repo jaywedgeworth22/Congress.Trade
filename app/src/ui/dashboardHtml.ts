@@ -1406,6 +1406,41 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .party-chip.on[data-party="D"] { background: var(--buy); box-shadow: none; }
   .party-chip.on[data-party="R"] { background: var(--sell); box-shadow: none; }
   .party-chip.on[data-party="O"] { background: var(--accent); color:#fff; box-shadow: none; }
+
+  /* iOS-style filter dropdowns (Trades + Trends). The old H/S/P chip strip
+     is now a Menu + check-style list, same as FeedControlBar. */
+  .ios-filter { position: relative; flex: 0 0 auto; }
+  .ios-filter-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: var(--control-h, 34px); padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--panel-2); color: var(--text);
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .ios-filter-ico { font-size: 13px; line-height: 1; }
+  .ios-filter-ico.sides { display: inline-flex; gap: 1px; font-size: 9px; font-weight: 800; }
+  .ios-filter-lbl:empty { display: none; }
+  .ios-filter-pop {
+    position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
+    padding: 6px; border-radius: 16px;
+    background: color-mix(in srgb, var(--panel) 78%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(22px);
+    backdrop-filter: saturate(180%) blur(22px);
+    border: 1px solid color-mix(in srgb, #fff 40%, var(--border));
+    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ios-filter-pop[hidden] { display: none; }
+  .ios-filter-item, .ios-filter-clear {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; text-align: left; border: 0; background: transparent;
+    color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
+    border-radius: 10px; cursor: pointer;
+  }
+  .ios-filter-item:hover, .ios-filter-clear:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
+  .ios-filter-clear { color: var(--text-dim); font-size: 13px; }
   .side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }
   .side-chip.on[data-side="B"] .side-up { color:#fff; }
   .side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }
@@ -1653,25 +1688,39 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .brand { font-size: 15px; }
     .pill { padding: 3px 7px; }
     nav.tabs {
-      position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
-      width: 100%; max-width: 100%;
-      /* Auto columns (not a fixed repeat(5)) so hidden admin tabs don't leave
-         empty cells — visible buttons always share the bar equally. */
+      position: fixed; left: 12px; right: 12px;
+      bottom: calc(10px + env(safe-area-inset-bottom, 0px)); margin: 0;
+      width: auto; max-width: none;
       display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
-      gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
-      background: var(--panel);
-      border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
-      box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
+      gap: 2px; padding: 6px;
+      background: color-mix(in srgb, var(--panel) 58%, transparent);
+      -webkit-backdrop-filter: saturate(190%) blur(28px);
+      backdrop-filter: saturate(190%) blur(28px);
+      border: 1px solid color-mix(in srgb, #fff 48%, var(--border));
+      border-radius: 28px; z-index: 45;
+      box-shadow: 0 10px 36px rgba(0,0,0,.16), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent);
+      transform: translateZ(0);
       overflow: visible;
     }
-    nav.tabs::after {
-      content:""; position:absolute; left:0; right:0; top:100%;
-      height:calc(120px + env(safe-area-inset-bottom));
-      background:var(--panel); pointer-events:none;
+    nav.tabs::after { content: none; }
+    html[data-theme="light"] nav.tabs {
+      background: color-mix(in srgb, #fff 62%, transparent);
+      border-color: color-mix(in srgb, #fff 70%, var(--border));
     }
-    html[data-theme="light"] nav.tabs { background:#fff; }
-    html[data-theme="light"] nav.tabs::after { background:#fff; }
-    nav.tabs button { padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0; border-radius: 9px; }
+    html[data-theme="dark"] nav.tabs {
+      background: color-mix(in srgb, #1c1c1e 55%, transparent);
+    }
+    nav.tabs button {
+      padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
+      border-radius: 22px; border: 0; background: transparent;
+    }
+    nav.tabs button.active {
+      background: color-mix(in srgb, #fff 42%, transparent);
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    html[data-theme="dark"] nav.tabs button.active {
+      background: color-mix(in srgb, #fff 14%, transparent);
+    }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
@@ -1753,12 +1802,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        always wraps to its own line 2, and its own children stay nowrap so
        the 3 segmented groups + ⓘ never wrap further. */
     #tradesSharedFilters, #trendsSharedFilters {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 1 auto; }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
-      flex: 1 1 100%; width: 100%; display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 4px;
+      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
     }
+    #tradesExtraFilters {
+      display: flex; align-items: center; gap: 8px; margin-top: 6px;
+    }
+    #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
+    #tradesStats { flex: 0 0 auto; white-space: nowrap; }
     #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
@@ -2464,36 +2519,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
       </span>
       <div class="filter-groups">
-        <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="ios-filter branch-filters" id="qChamber">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by branch">
+            <span class="ios-filter-ico" aria-hidden="true">🏛</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="chamber">All Branches</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="house" aria-pressed="false">House</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="senate" aria-pressed="false">Senate</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="executive" aria-pressed="false">Executive</button>
           </div>
         </div>
-        <div class="party-chips" id="qPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
+        <div class="ios-filter party-chips" id="qPartyGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by party">
+            <span class="ios-filter-ico" aria-hidden="true">👥</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+          </div>
         </div>
-        <div class="side-chips" id="qSideGroup" role="group" aria-label="Filter by trade type">
-          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
-        </div>
-        <div class="filters-info-wrap" id="qFiltersInfo">
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="qFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
-          <div class="branch-pop" id="qFiltersInfoPop" role="note" hidden>
-            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
-            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+        <div class="ios-filter side-chips" id="qSideGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by trade type">
+            <span class="ios-filter-ico sides" aria-hidden="true"><span class="side-up">▲</span><span class="side-dn">▼</span><span class="side-ex">⇄</span></span>
+            <span class="ios-filter-lbl" data-ios-summary></span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="side">All Sides</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="B" aria-pressed="false"><span class="side-up" aria-hidden="true">▲</span> Buys</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="S" aria-pressed="false"><span class="side-dn" aria-hidden="true">▼</span> Sells</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="E" aria-pressed="false"><span class="side-ex" aria-hidden="true">⇄</span> Exchanges</button>
           </div>
         </div>
       </div>
@@ -2510,7 +2569,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
            politician reads 988 trades in this window and 22,832 all time in the
            Directory, and an unlabelled count makes those look like a data bug. -->
       <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">matching trades</span><span class="match-window"> &middot; <span class="tr-window-label">Past 3 Months</span></span><span class="stat-today"> &middot; <strong id="kpiToday">—</strong> today</span>
+        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">trades</span>
       </div>
     </div>
     </div>
@@ -2615,36 +2674,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
       </span>
       <div class="filter-groups">
-        <div class="branch-filters" id="trChamber" role="group" aria-label="Filter by branch">
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="house" aria-pressed="false" aria-label="House" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle" data-ch="senate" aria-pressed="false" aria-label="Senate" title="Senate trades — Senate eFD PTR filings">S</button>
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" aria-label="Executive branch" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="ios-filter branch-filters" id="trChamber">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by branch">
+            <span class="ios-filter-ico" aria-hidden="true">🏛</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="chamber">All Branches</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="house" aria-pressed="false">House</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="senate" aria-pressed="false">Senate</button>
+            <button type="button" class="branch-toggle ios-filter-item" data-ch="executive" aria-pressed="false">Executive</button>
           </div>
         </div>
-        <div class="party-chips" id="trPartyGroup" role="group" aria-label="Filter by party">
-          <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat"><span class="party-dot D" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican"><span class="party-dot R" aria-hidden="true"></span></button>
-          <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other"><span class="party-dot O" aria-hidden="true"></span></button>
+        <div class="ios-filter party-chips" id="trPartyGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by party">
+            <span class="ios-filter-ico" aria-hidden="true">👥</span>
+            <span class="ios-filter-lbl" data-ios-summary>All</span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+          </div>
         </div>
-        <div class="side-chips" id="trSideGroup" role="group" aria-label="Filter by trade type">
-          <button type="button" class="side-chip" data-side="B" aria-pressed="false" title="Buys" aria-label="Buys"><span class="side-up" aria-hidden="true">▲</span></button>
-          <button type="button" class="side-chip" data-side="S" aria-pressed="false" title="Sells" aria-label="Sells"><span class="side-dn" aria-hidden="true">▼</span></button>
-          <button type="button" class="side-chip" data-side="E" aria-pressed="false" title="Exchanges" aria-label="Exchange trades"><span class="side-ex" aria-hidden="true">⇄</span></button>
-        </div>
-        <div class="filters-info-wrap" id="trFiltersInfo">
-          <button type="button" class="branch-info" aria-expanded="false" aria-controls="trFiltersInfoPop" aria-label="About the branch, party and trade-type filters">&#9432;</button>
-          <div class="branch-pop" id="trFiltersInfoPop" role="note" hidden>
-            <div class="branch-pop-row"><span class="branch-icon">H</span><span>House — House Clerk PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate — Senate eFD PTR filings</span></div>
-            <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive branch — OGE Form 278-T (the President's filings)</span></div>
-            <div class="branch-pop-row"><span class="party-dot D" role="img" aria-label="Democrat" title="Democrat"></span><span>Democrat</span></div>
-            <div class="branch-pop-row"><span class="party-dot R" role="img" aria-label="Republican" title="Republican"></span><span>Republican</span></div>
-            <div class="branch-pop-row"><span class="party-dot O" role="img" aria-label="Independent / Other" title="Independent / Other"></span><span>Other (independent, etc.)</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-buy">▲</span><span>Buys</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-sell">▼</span><span>Sells</span></div>
-            <div class="branch-pop-row"><span class="branch-icon icon-exch">⇄</span><span>Exchanges</span></div>
-            <div class="branch-pop-note">No selection in a group = all. Tap to include or exclude.</div>
+        <div class="ios-filter side-chips" id="trSideGroup">
+          <button type="button" class="ios-filter-btn" aria-haspopup="true" aria-expanded="false" aria-label="Filter by trade type">
+            <span class="ios-filter-ico sides" aria-hidden="true"><span class="side-up">▲</span><span class="side-dn">▼</span><span class="side-ex">⇄</span></span>
+            <span class="ios-filter-lbl" data-ios-summary></span>
+          </button>
+          <div class="ios-filter-pop" hidden>
+            <button type="button" class="ios-filter-clear" data-ios-clear="side">All Sides</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="B" aria-pressed="false"><span class="side-up" aria-hidden="true">▲</span> Buys</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="S" aria-pressed="false"><span class="side-dn" aria-hidden="true">▼</span> Sells</button>
+            <button type="button" class="side-chip ios-filter-item" data-side="E" aria-pressed="false"><span class="side-ex" aria-hidden="true">⇄</span> Exchanges</button>
           </div>
         </div>
       </div>
@@ -11691,8 +11754,8 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
     onChange();
   });
 }
-initChamberChips('qChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'trChamber');
-initChamberChips('trChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'qChamber');
+initChamberChips('qChamber', 'shared-chambers-v1', function () { refreshIosFilterSummaries(); resetTradesPage(); loadTrends(); }, 'trChamber');
+initChamberChips('trChamber', 'shared-chambers-v1', function () { refreshIosFilterSummaries(); resetTradesPage(); loadTrends(); }, 'qChamber');
 restoreFiltersFromUrl(); // URL-mirrored filters (ft/fm/fty/fch/fw) win over localStorage
 
 /* One grouped explainer per branch strip: hover opens it on pointer devices,
@@ -11791,6 +11854,7 @@ function initPartyChips() {
     }
     applyPartySelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     if (typeof loadTrends === 'function') loadTrends();
     if (typeof resetTradesPage === 'function') resetTradesPage();
   }
@@ -11814,6 +11878,7 @@ function initSideChips() {
     if (g) g.querySelectorAll('.side-chip.on').forEach(function (c) { on.push(c.getAttribute('data-side')); });
     applySideSelection(on);
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch (_e2) { /* */ }
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     if (typeof loadTrends === 'function') loadTrends();
     if (typeof resetTradesPage === 'function') resetTradesPage();
   }
@@ -11823,6 +11888,87 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+function closeIosFilterMenus(except) {
+  document.querySelectorAll('.ios-filter').forEach(function (f) {
+    if (except && f === except) return;
+    var pop = f.querySelector('.ios-filter-pop');
+    var btn = f.querySelector('.ios-filter-btn');
+    if (pop) pop.hidden = true;
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+function refreshIosFilterSummaries() {
+  function setSummary(id, text, has) {
+    var f = el(id); if (!f) return;
+    var lbl = f.querySelector('[data-ios-summary]');
+    if (lbl) lbl.textContent = text || '';
+    f.classList.toggle('has-sel', !!has);
+  }
+  function chamberSummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.branch-toggle.on').forEach(function (b) { on.push(b.textContent.trim()); });
+    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+  }
+  function partySummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.party-chip.on').forEach(function (b) { on.push(b.getAttribute('data-party')); });
+    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+  }
+  function sideSummary(id) {
+    var g = el(id); if (!g) return;
+    var on = [];
+    g.querySelectorAll('.side-chip.on').forEach(function (b) {
+      var s = b.getAttribute('data-side');
+      on.push(s === 'B' ? 'Buys' : s === 'S' ? 'Sells' : 'Exch');
+    });
+    setSummary(id, on.length ? on.join('+') : '', on.length > 0);
+  }
+  chamberSummary('qChamber'); chamberSummary('trChamber');
+  partySummary('qPartyGroup'); partySummary('trPartyGroup');
+  sideSummary('qSideGroup'); sideSummary('trSideGroup');
+}
+function initIosFilterMenus() {
+  document.addEventListener('click', function (e) {
+    var clear = e.target.closest ? e.target.closest('[data-ios-clear]') : null;
+    if (clear) {
+      var kind = clear.getAttribute('data-ios-clear');
+      if (kind === 'chamber') {
+        document.querySelectorAll('.branch-toggle').forEach(function (b) {
+          b.classList.remove('on'); b.setAttribute('aria-pressed', 'false');
+        });
+        try { localStorage.setItem('shared-chambers-v2', JSON.stringify([])); } catch (_e) {}
+      } else if (kind === 'party') {
+        applyPartySelection([]);
+        try { localStorage.setItem('shared-parties-v1', JSON.stringify([])); } catch (_e) {}
+      } else if (kind === 'side') {
+        applySideSelection([]);
+        try { localStorage.setItem('shared-sides-v1', JSON.stringify([])); } catch (_e) {}
+      }
+      refreshIosFilterSummaries();
+      if (typeof loadTrends === 'function') loadTrends();
+      if (typeof resetTradesPage === 'function') resetTradesPage();
+      return;
+    }
+    var btn = e.target.closest ? e.target.closest('.ios-filter-btn') : null;
+    if (btn) {
+      var wrap = btn.closest('.ios-filter');
+      var pop = wrap && wrap.querySelector('.ios-filter-pop');
+      var open = pop && pop.hidden;
+      closeIosFilterMenus(open ? wrap : null);
+      if (pop) {
+        pop.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      e.preventDefault();
+      return;
+    }
+    if (!e.target.closest || !e.target.closest('.ios-filter-pop')) closeIosFilterMenus(null);
+  });
+  refreshIosFilterSummaries();
+}
+initIosFilterMenus();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 /* Trends fold cards (mobile-only show/hide): CSS alone can't force a
    <details> open, so on desktop widths (above this file's 768px mobile
@@ -11928,6 +12074,12 @@ function openDeepLink() {
       openLogin();
       var msg = el('loginMsg');
       if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
+      return;
+    }
+    if (authError === 'apple_not_configured' || authError === 'apple_web_not_configured') {
+      openLogin();
+      var amsg = el('loginMsg');
+      if (amsg) amsg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
       return;
     }
     if (pricing === '1' || pricing === 'true' || pricing === 'alerts' || pricing === 'export') {

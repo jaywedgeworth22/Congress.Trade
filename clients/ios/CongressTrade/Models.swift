@@ -532,9 +532,9 @@ enum PartyFilter: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .democrat: return "Democrat"
-        case .republican: return "Republican"
-        case .other: return "Other"
+        case .democrat: return "Democrats"
+        case .republican: return "Republicans"
+        case .other: return "Other / Ind."
         }
     }
 

@@ -8,6 +8,8 @@
  *   GET  /auth/google/callback  -> verify state, exchange code, create session
  *   POST /auth/magic/request    -> { email } : email a single-use sign-in link
  *   GET  /auth/magic/verify     -> consume token, create session, redirect home
+ *   GET  /auth/apple/start      -> redirect to Apple (website SIWA)
+ *   POST /auth/apple/callback   -> exchange code, create session, redirect home
  *   POST /auth/apple            -> { identityToken, nonce?, fullName? } : verify
  *                                   the native Sign in with Apple JWS, create session
  *
@@ -45,6 +47,7 @@ import {
   appleEmailIsVerified,
   AppleIdentityVerificationError,
 } from './appleIdentity.ts';
+import { loadAppleWebConfig, buildAppleAuthUrl, exchangeAppleCode } from './appleWeb.ts';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -283,6 +286,108 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       return c.redirect(`${targetOrigin}?token=${encodeURIComponent(sessionToken)}`);
     }
     return c.redirect(`${targetOrigin}/?login=ok`);
+  });
+
+  // --- GET /auth/apple/start ----------------------------------------------
+  // Website Sign in with Apple. The login modal used to 404 here.
+  r.get('/apple/start', async (c) => {
+    const enabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
+    if (!enabled) {
+      const accept = c.req.header('Accept') || '';
+      if (accept.includes('text/html')) return c.redirect('/?auth_error=apple_not_configured');
+      return c.json({ error: 'Sign in with Apple is not enabled' }, 503);
+    }
+    const cfg = await loadAppleWebConfig(c.env);
+    if (!cfg) {
+      const accept = c.req.header('Accept') || '';
+      if (accept.includes('text/html')) return c.redirect('/?auth_error=apple_web_not_configured');
+      return c.json({ error: 'Sign in with Apple web is not configured' }, 503);
+    }
+
+    const base = await baseUrl(c);
+    const reqHost = c.req.header('X-Forwarded-Host') || c.req.header('Host') || new URL(c.req.url).host;
+    const reqProto = c.req.header('X-Forwarded-Proto') || new URL(c.req.url).protocol.replace(':', '');
+    const publicReqOrigin = `${reqProto}://${reqHost}`;
+    const callbackBase = new URL(base);
+    if (publicReqOrigin !== callbackBase.origin) {
+      const redirectTarget = new URL(c.req.url);
+      redirectTarget.protocol = callbackBase.protocol;
+      redirectTarget.host = callbackBase.host;
+      return c.redirect(redirectTarget.toString());
+    }
+
+    const state = randomToken(16);
+    const referer = c.req.header('Referer');
+    let requestOrigin = publicReqOrigin;
+    if (referer) {
+      try {
+        requestOrigin = new URL(referer).origin;
+      } catch {
+        /* keep request origin */
+      }
+    }
+    const isSecure = isSecureRequest(c);
+    setCookie(c, 'ct_auth_origin', requestOrigin, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
+    });
+    setCookie(c, OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
+    });
+    return c.redirect(buildAppleAuthUrl(cfg, `${base}/auth/apple/callback`, state));
+  });
+
+  async function finishAppleWebCallback(c: Context<{ Bindings: Env }>, code: string | null, state: string | null) {
+    const cookieState = getCookie(c, OAUTH_STATE_COOKIE, 'host') ?? getCookie(c, OAUTH_STATE_COOKIE);
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', prefix: 'host' });
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
+    const authOrigin = getCookie(c, 'ct_auth_origin', 'host') ?? getCookie(c, 'ct_auth_origin');
+    deleteCookie(c, 'ct_auth_origin', { path: '/', prefix: 'host' });
+    deleteCookie(c, 'ct_auth_origin', { path: '/' });
+    const base = await baseUrl(c);
+    const targetOrigin = getSafeRedirectUrl(authOrigin, base);
+    if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
+      return c.redirect(`${targetOrigin}/?login=error`);
+    }
+    const cfg = await loadAppleWebConfig(c.env);
+    if (!cfg) return c.redirect(`${targetOrigin}/?auth_error=apple_web_not_configured`);
+    try {
+      const idToken = await exchangeAppleCode(cfg, code, `${base}/auth/apple/callback`);
+      const claims = await verifyAppleIdentityToken(idToken, { bundleId: cfg.servicesId });
+      const user = await upsertUserFromApple(c.env, {
+        sub: claims.sub as string,
+        email: claims.email ?? null,
+        emailVerified: appleEmailIsVerified(claims),
+        name: null,
+      });
+      const sessionToken = await createSession(c.env, user.id);
+      await setSessionCookie(c, sessionToken);
+      return c.redirect(`${targetOrigin}/?login=ok`);
+    } catch (err) {
+      console.error('apple web callback failed:', (err as Error).message);
+      return c.redirect(`${targetOrigin}/?login=error`);
+    }
+  }
+
+  r.get('/apple/callback', async (c) => {
+    const url = new URL(c.req.url);
+    return finishAppleWebCallback(c, url.searchParams.get('code'), url.searchParams.get('state'));
+  });
+
+  r.post('/apple/callback', async (c) => {
+    const body = await c.req.parseBody();
+    const code = typeof body.code === 'string' ? body.code : null;
+    const state = typeof body.state === 'string' ? body.state : null;
+    return finishAppleWebCallback(c, code, state);
   });
 
   // --- POST /auth/apple -----------------------------------------------------

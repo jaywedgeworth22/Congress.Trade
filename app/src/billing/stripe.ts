@@ -185,11 +185,19 @@ export interface PortalSession {
 /** Create a Billing Portal session so a customer can manage their subscription. */
 export function createBillingPortalSession(
   env: Env,
-  args: { customerId: string; returnUrl: string; idempotencyKey: string },
+  args: {
+    customerId: string;
+    returnUrl: string;
+    idempotencyKey: string;
+    configuration?: string;
+  },
 ): Promise<PortalSession> {
   return stripePost<PortalSession>(env, '/billing_portal/sessions', {
     customer: args.customerId,
     return_url: args.returnUrl,
+    // Without an explicit configuration Stripe's implicit default can hide
+    // the Premium product and render an empty subscription list.
+    ...(args.configuration ? { configuration: args.configuration } : {}),
   }, args.idempotencyKey);
 }
 
