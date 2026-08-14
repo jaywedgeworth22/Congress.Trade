@@ -1225,7 +1225,7 @@ enum TradeCountSummary: Equatable {
         case .unknown:
             return nil
         case .total(let count):
-            return count == 1 ? "1 trade" : "\(count.formatted(.number.grouping(.automatic))) trades"
+            return count.formatted(.number.grouping(.automatic))
         case .narrowed(let visible):
             return visible == 1 ? "1 shown on this page" : "\(visible.formatted(.number.grouping(.automatic))) shown on this page"
         }

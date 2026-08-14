@@ -2251,10 +2251,12 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   });
 
   // ---- 3. Timeframe label rendering -----
-  it('renders the single time filter dropdown at top and section headers with .tr-window-label text', () => {
+  it('renders the single time filter dropdown at top and does not stamp the window on headings', () => {
     expect(DASHBOARD_HTML).toContain('id="trGlobalWindow"');
     expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
-    expect(DASHBOARD_HTML).toContain('.tr-window-label');
+    expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
+    expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
+    expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
   });
 
   it('spells Top Performers scope as 5+ buys and +/-200% cap per trade', () => {
@@ -4314,8 +4316,10 @@ describe('web blocking defects (audited)', () => {
     expect(DASHBOARD_HTML).toContain('<span class="match-label">trades</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="match-window">');
     expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
-    // Trends KPI strip is stamped like every other Trends section.
-    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot <em class="tr-window-label"');
+    // Trends KPI strip is just the heading — window lives in the filter row.
+    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot</div>');
+    expect(DASHBOARD_HTML).not.toContain('# Trades');
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\">#</button>");
     // Directory: whole-record scope on the counts, the sub copy and the headers.
     expect(DASHBOARD_HTML).toContain('trade counts are all time');
     expect(DASHBOARD_HTML).toContain('Trade counts cover the full record, not the timeframe set on Trades or Trends.');

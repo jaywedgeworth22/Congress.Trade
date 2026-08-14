@@ -148,41 +148,42 @@ struct FeedDashboardView: View {
         // empty state and the list — three full sorts per frame before this.
         let trades = filteredTrades
         return NavigationStack {
+            VStack(spacing: 0) {
+                DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                VStack(spacing: 6) {
+                    FeedControlBar()
+                    TradesUnifiedSearchField(
+                        text: $searchText,
+                        countLabel: tradeCountLabel(showing: trades.count),
+                        focused: $searchFocused,
+                        status: tradesSearchSlotStatus,
+                        onSubmit: { applyUnifiedSearch() },
+                        onClear: {
+                            searchText = ""
+                            Task {
+                                await store.setSearch(nil)
+                                await store.setPoliticianFilter("")
+                                await store.setAssetFilter("")
+                            }
+                        },
+                        onReload: { Task { await store.refresh() } }
+                    )
+                    .onChange(of: searchText) { _, _ in
+                        scheduleSearchDebounce()
+                    }
+                    .onChange(of: tradesSearchSlotStatus) { _, status in
+                        if status != nil { searchFocused = false }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
+
             ScrollView {
                 VStack(spacing: 8) {
-                    DisclaimerBanner(isExpanded: $disclaimerExpanded)
-
-                    // Tight pair: top filters sit close to the search slot.
-                    VStack(spacing: 6) {
-                        FeedControlBar()
-
-                        // Reload / Updating replace the field in-place. Typed
-                        // search text is kept on `searchText` and comes back
-                        // with the field once the slot is free again.
-                        TradesUnifiedSearchField(
-                            text: $searchText,
-                            countLabel: tradeCountLabel(showing: trades.count),
-                            focused: $searchFocused,
-                            status: tradesSearchSlotStatus,
-                            onSubmit: { applyUnifiedSearch() },
-                            onClear: {
-                                searchText = ""
-                                Task {
-                                    await store.setSearch(nil)
-                                    await store.setPoliticianFilter("")
-                                    await store.setAssetFilter("")
-                                }
-                            },
-                            onReload: { Task { await store.refresh() } }
-                        )
-                        .onChange(of: searchText) { _, _ in
-                            scheduleSearchDebounce()
-                        }
-                        .onChange(of: tradesSearchSlotStatus) { _, status in
-                            if status != nil { searchFocused = false }
-                        }
-                    }
-
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
@@ -263,6 +264,7 @@ struct FeedDashboardView: View {
                 .padding(.bottom, 24)
             }
             .scrollDismissesKeyboard(.interactively)
+            }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

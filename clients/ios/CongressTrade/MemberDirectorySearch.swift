@@ -240,6 +240,7 @@ enum AssetDirectorySearch {
 /// host) with a single mode toggle and no store changes. See the iOS
 /// asset-directory lane's PR body for that one-line integration snippet.
 struct AssetDirectoryView: View {
+    var wrapsNavigation: Bool = true
     @EnvironmentObject private var store: CongressTradeStore
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -276,7 +277,17 @@ struct AssetDirectoryView: View {
         let rows = filteredAssets
         let pages = totalPages(for: rows.count)
         let page = min(currentPage, pages - 1)
-        return NavigationStack {
+        let chrome = directoryChrome(rows: rows, pages: pages, page: page)
+        return Group {
+            if wrapsNavigation {
+                NavigationStack { chrome }
+            } else {
+                chrome
+            }
+        }
+    }
+
+    private func directoryChrome(rows: [AssetDirectoryEntry], pages: Int, page: Int) -> some View {
             VStack(spacing: 0) {
                 VStack(spacing: 10) {
                     AssetSearchField(text: $searchText, focused: $searchFocused)
@@ -378,7 +389,6 @@ struct AssetDirectoryView: View {
             .onChange(of: searchText) { _, _ in currentPage = 0 }
             .onChange(of: sortKey) { _, _ in currentPage = 0 }
             .onChange(of: sortAscending) { _, _ in currentPage = 0 }
-        }
     }
 
     private func assetPager(page: Int, pages: Int) -> some View {

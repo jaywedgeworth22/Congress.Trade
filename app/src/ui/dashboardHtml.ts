@@ -310,6 +310,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
+  :root { --ct-header-h: 68px; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
     border-bottom: 1px solid var(--border); background: rgba(10,16,30,.6);
@@ -1520,6 +1521,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
     .trades-toolbars #tradesStats { order:4; }
+    .trades-toolbars, #trendsSharedFilters {
+      position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+    }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1681,6 +1688,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
+    :root { --ct-header-h: 52px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 6px 10px; align-items: center; backdrop-filter: none;
@@ -1808,6 +1816,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
       flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
+    }
+    #tradesToolbars, #trendsSharedFilters {
+      position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      padding-top: 4px; padding-bottom: 6px;
     }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
@@ -2712,10 +2727,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
-    <!-- KPI strip. Every other Trends section stamps the active timeframe on its
-         own heading; this one did not, so "Trades 2,511" read as a corpus total
-         next to an all-time count of the same thing elsewhere. -->
-    <div class="tf-cap">Snapshot <em class="tr-window-label" style="font-style:italic; font-weight:400; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></div>
+    <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
+    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -2724,7 +2737,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
-        <summary class="tf-h">What Is Being Traded <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">What Is Being Traded<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="row-flex rankby-row" style="margin:-6px 0 12px">
           <label class="lbl">Rank By:</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
@@ -2751,7 +2764,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </details>
       <details class="section trends-fold" open>
-        <summary class="tf-h">Rising Activity <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap">
           <table id="tableTrTrending">
             <thead>
@@ -2770,17 +2783,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Consensus Moves<span class="fold-cue" aria-hidden="true"></span></summary>
       <div class="cluster-grid" id="trClusters"></div>
     </details>
 
     <!-- Buys vs sells: same page window as every other Trends card -->
     <details class="section trends-fold" open>
       <summary class="tf-h tchart-summary">
-        <span class="tchart-summary-title">Buys vs Sells <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></span>
+        <span class="tchart-summary-title">Buys vs Sells</span>
         <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
-            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
+            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
             <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
           </div>
         </div>
@@ -2793,18 +2806,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <details class="section trends-fold" open>
-        <summary class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Net Flow by Sector<span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trSectorFlow"></div>
       </details>
       <details class="section trends-fold" open>
-        <summary class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">By Market Cap<span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trCapFlow"></div>
       </details>
     </div>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
       <!-- The one place the benchmark is spelled out for this surface: the rows,
            the header tooltip and the row tooltips all say "excess" instead. -->
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
@@ -2815,16 +2828,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Politicians + Party -->
     <div class="trend-members-grid">
       <details class="section trends-fold" open>
-        <summary class="tf-h">Most Active Politicians <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">Most Active Politicians<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </details>
       <div class="trend-side-stack">
         <details class="section trends-fold" open>
-          <summary class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+          <summary class="tf-h">By Party<span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trParties"></div>
         </details>
         <details class="section trends-fold" open>
-          <summary class="tf-h">By Asset Type <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+          <summary class="tf-h">By Asset Type<span class="fold-cue" aria-hidden="true"></span></summary>
           <div id="trSectors"></div>
         </details>
       </div>
@@ -2832,7 +2845,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Disclosure Timeliness<span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Days from trade to filing.&nbsp; The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -2853,7 +2866,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Committee conflicts (journalistic accountability lens) -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Committee Sector Conflicts <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Committee Sector Conflicts<span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
@@ -9016,9 +9029,9 @@ function trParams() {
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
-   the single control for timeframe filtering. Section headers display the
-   active timeframe setting as italic text (.tr-window-label). This function
-   updates all .tr-window-label elements to match the selected timeframe. */
+   the single control for timeframe filtering. Headings no longer stamp the
+   window; this still updates any leftover .tr-window-label nodes and the
+   Consensus Moves phrase. */
 function stampWindowChips() {
   var val = getTrWindow();
   var lblText = windowLabel(val);
