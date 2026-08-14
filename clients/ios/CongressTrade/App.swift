@@ -42,6 +42,10 @@ struct CongressTradeApp: App {
                 .environmentObject(tabRouter)
                 .preferredColorScheme(colorScheme)
                 .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
+                .onAppear { AppAppearance.apply(appColorScheme) }
+                .onChange(of: appColorScheme) { _, pref in
+                    AppAppearance.apply(pref)
+                }
         }
         .modelContainer(tradeCacheContainer)
     }

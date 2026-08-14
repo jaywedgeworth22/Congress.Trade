@@ -2267,10 +2267,11 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(canonSector('Energy')).toBe('Energy'); // untouched passthrough
   });
 
-  it('merges canonicalized sector rows and sorts sector-flow output by estimated volume, matching its own "ranked by" label', () => {
-    expect(DASHBOARD_HTML).toContain('ranked by estimated volume');
+  it('merges canonicalized sector rows and sorts Net Flow by Sector by signed net flow', () => {
+    expect(DASHBOARD_HTML).toContain('rank by signed net');
     expect(DASHBOARD_HTML).toContain('var key = canonSector(r.sector);');
-    expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });');
+    expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });');
+    expect(DASHBOARD_HTML).toContain("rows.sort(function (a, b) { return CAP_ORDER.indexOf(a.bucket) - CAP_ORDER.indexOf(b.bucket); });");
   });
 
   // ---- 5. Live status pill removed per user instruction -------------------
@@ -2799,8 +2800,9 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
     expect(extraFilters![0]).toContain('id="qSearch"');
     expect(extraFilters![0]).not.toContain('id="searchToggle"');
-    expect(extraFilters![0]).toContain('id="qAssetClass"');
-    expect(extraFilters![0]).toContain('value="equities_funds"');
+    expect(extraFilters![0]).not.toContain('id="qAssetClass"');
+    expect(extraFilters![0]).not.toContain('value="equities_funds"');
+    expect(extraFilters![0]).not.toContain('All Assets');
     expect(extraFilters![0]).toContain('id="tradesStats"');
     expect(extraFilters![0]).toContain('matching trades');
     // Top + bottom pagers with shared data-* hooks.
@@ -3688,20 +3690,20 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qAssetClassWrap { order:4; }');
+    expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #qAssetClassWrap');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:5; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
-    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1 / -1; }');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1;');
     expect(DASHBOARD_HTML).not.toContain('#tradesExtraFilters #searchToggle');
     const document = parse(DASHBOARD_HTML);
     const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
     // Hidden legacy inputs have no visible layout role but may lack ids on wrappers.
     expect(extras).toContain('qSearchField');
-    expect(extras).toContain('qAssetClassWrap');
+    expect(extras).not.toContain('qAssetClassWrap');
     expect(extras).not.toContain('searchToggle');
     expect(extras).toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
@@ -4160,17 +4162,11 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('var url = reviewDocUrl(r);');
   });
 
-  it('Trends wide-desktop cards get an intrinsic table width + crush floor (post-#1613 regression)', () => {
-    // The bare width:fit-content rule broke both ways once #1613 moved these
-    // sections into <details>: full-bleed stretch on standalone cards
-    // (global table{width:100%} makes fit-content circular) and min-content
-    // crush on grid children. The inner table now carries an intrinsic
-    // width and both card and table carry a floor.
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }');
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }');
-    // A long one-line subtitle must wrap at a readable measure instead of
-    // inflating the card's fit-content width past its own table.
-    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .sub { max-width: 68ch; }');
+  it('Trends table cards use the full column so names do not wrap in a half-width box', () => {
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) { width: 100%; min-width: 0; max-width: 100%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .section:has(> .table-wrap) > .table-wrap > table { width: 100%; min-width: 560px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .member-cell .name-line');
+    expect(DASHBOARD_HTML).toContain('text-overflow: ellipsis');
   });
 
   it('Politicians+Party grid hugs the left card instead of leaving a dead middle column', () => {

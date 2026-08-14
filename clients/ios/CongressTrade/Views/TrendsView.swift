@@ -906,7 +906,9 @@ private struct SectorFlowRow: Identifiable {
         }
         // Re-rank after merging: two halves of one sector each looked smaller
         // than they are, so the pre-merge order can no longer be trusted.
-        let ranked = order.compactMap { merged[$0] }.sorted { $0.tradeCount > $1.tradeCount }
+        let ranked = order.compactMap { merged[$0] }.sorted {
+            ($0.netFlow ?? 0) > ($1.netFlow ?? 0)
+        }
 
         // "Unknown" is pulled out BEFORE ranking is applied to the top slots.
         // Leaving it in would let a data-quality bucket take a top-8 slot from a

@@ -499,6 +499,9 @@ Secrets only via `~/.secrets/appstore-connect.env` (never print).
 
 Owner copy rules (Title Case headings/buttons; sentence-case values; lowercase compact money; always-inline iOS nav titles; ticker logos): `docs/FLEET-UI-COPY.md` (canonical live board: `/Users/jay/apps/FLEET-UI-COPY.md`).
 
+**Do not add an All Assets / Public Equities / Stocks and ETF dropdown** on web or iOS
+(owner 2026-08-14). It is gone on purpose. Never put it back.
+
 ## Apple Notes close-out (all agents, all apps — 2026-08-09)
 
 **Title:** `[APP, Agent] short topic` — app acronym(s) + agent **first**.

@@ -257,8 +257,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        card's fit-content has a real answer, plus a floor so no card can
        crush. .table-wrap keeps overflow-x for the (wide-desktop-unlikely)
        case where max-content exceeds the column. */
-    #view-trends .section:has(> .table-wrap) { width: fit-content; min-width: 560px; max-width: 100%; }
-    #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: max-content; min-width: 560px; }
+    #view-trends .section:has(> .table-wrap) { width: 100%; min-width: 0; max-width: 100%; }
+    #view-trends .section:has(> .table-wrap) > .table-wrap { width: 100%; }
+    #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: 100%; min-width: 560px; }
     /* A long one-line subtitle (Top Performers) must wrap at a readable
        measure instead of inflating the card's fit-content width past its
        own table. 68ch ≈ ideal reading measure. */
@@ -670,8 +671,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* People/Assets mode toggle: nearly full search-field width */
   #view-people #dirMode.dir-mode-seg {
     display: flex;
-    width: 100%;
-    max-width: 100%;
+    width: auto;
+    max-width: 28rem;
     margin-bottom: 12px;
     border-radius: var(--radius-pill);
   }
@@ -1001,7 +1002,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      The name/politician cell is forced narrow (max-width:0 + width:99%) so its
      inner ellipsis engages; every other cell sizes to its content. ---- */
   #view-trends td { white-space: nowrap; }
-  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
+  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) {
+    white-space: nowrap;
+    width: 99%;
+    max-width: 0;
+  }
+  #view-trends .member-cell,
+  #view-trends .member-cell .name-line,
+  #view-trends .member-cell > div {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
   /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
      a full-width bar, then the stats chip flush-left beneath — no hard-coded
      indent, so it stays aligned at every width.
@@ -1471,8 +1484,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #qAssetClassWrap { order:4; }
-    .trades-toolbars #tradesStats { order:5; }
+    .trades-toolbars #tradesStats { order:4; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1719,8 +1731,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #tradesExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-    #tradesExtraFilters #qSearchField { grid-column: 1 / -1; }
+    #tradesExtraFilters { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+    #tradesExtraFilters #qSearchField { grid-column: 1; min-width: 0; flex: 1 1 auto; }
     .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
     /* Pagers stay usable on phones: don't force every child full-width. */
@@ -1728,6 +1740,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .pager.row-flex > * { width: auto; min-height: 0; }
     .pager .pager-controls { flex: 1 1 auto; }
     .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
+    .pager-top .pager-tools { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
     /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
        party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
@@ -1807,9 +1820,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Owner follow-up batch #14: 2-up (not 1fr) so two Consensus Moves cards
        fit side-by-side on mobile — paired with the party-name abbreviation
        swap below (Democrats->Dems, Republicans->Reps) that frees the width. */
-    .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cluster-grid { grid-template-columns: 1fr; }
+    @media (min-width: 421px) {
+      .cluster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     .party-full { display: none; }
     .party-abbr { display: inline; }
+    .filters-info-wrap .branch-pop { left: auto; right: 0; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer.open .drawer-panel { animation: slideUpIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
     /* Keep the label/value pair on one line at phone widths too — this used to
@@ -2489,18 +2506,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="tradesExtraFilters">
-      <span class="icon-field" id="qSearchField" style="min-width:220px;flex:1">
+      <span class="icon-field" id="qSearchField" style="min-width:0;flex:1">
         <input id="qSearch" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
       </span>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <span class="pill-select" id="qAssetClassWrap">
-        <select id="qAssetClass" class="pill-select-el" title="Asset class" aria-label="Asset class" onchange="onAssetClassChange()">
-          <option value="all" selected>All Assets</option>
-          <option value="equities_funds">Public Equities, Funds, &amp; ETFs</option>
-        </select>
-      </span>
       <!-- The timeframe is named here, not just in the pill to the left: the same
            politician reads 988 trades in this window and 22,832 all time in the
            Directory, and an unlabelled count makes those look like a data bug. -->
@@ -2811,7 +2822,7 @@ ${speedProofSectionHtml(false)}
         <button type="button" data-mode="assets" onclick="setDirectoryMode('assets')">Assets</button>
       </div>
       <div class="toolbar" style="margin-bottom:12px">
-        <input id="peopleQ" placeholder="Search name, state, party… any order" aria-label="Search directory" style="min-width:220px;flex:1" oninput="filterDirectory()" />
+        <input id="peopleQ" placeholder="Search name, state, party… any order" aria-label="Search directory" style="min-width:0;flex:1" oninput="filterDirectory()" />
         <select id="peopleChamber" onchange="filterPeopleDirectory()" aria-label="Chamber filter">
           <option value="">All Branches</option>
           <option value="house">House</option>
@@ -9207,7 +9218,7 @@ function loadTrConflicts() {
       var side = typeName[r.txType] || r.txType || '—';
       var asset = r.ticker || '—';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + esc(name) + '</div></td>' +
+        '<td><div' + memberAttr + '><span class="name-line">' + esc(name) + '</span></div></td>' +
         '<td class="muted">' + esc(committees) + '</td>' +
         '<td class="muted">' + esc(r.sector || '—') + '</td>' +
         '<td>' + (r.ticker
@@ -10074,10 +10085,9 @@ function loadTrSectorFlow() {
       m.uniqueTickers = Math.max(m.uniqueTickers, Number(r.uniqueTickers || 0));
     });
     rows = order.map(function (k) { return merged[k]; });
-    // The section sub-header claims "ranked by estimated volume" — sort here
-    // so the rendered order always matches that claim regardless of how the
-    // backend ordered its rows (it currently ranks by trade_count).
-    rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });
+    // Card title is Net Flow by Sector — rank by signed net (biggest buy
+    // first, biggest sell last). Market-cap next door keeps CAP_ORDER.
+    rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
     box.innerHTML = rows.map(function (r) { return flowRowHtml(r.sector, r, max); }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
@@ -11739,26 +11749,10 @@ initBranchInfo('qFiltersInfo');
 initBranchInfo('trFiltersInfo');
 
 function selectedAssetClass() {
-  var s = el('qAssetClass');
-  var v = s && s.value ? String(s.value) : 'all';
-  return v && v !== 'all' ? v : '';
+  // Owner 2026-08-14: the All Assets / equities-funds dropdown is gone.
+  // Never send assetClass= from the public UI.
+  return '';
 }
-function onAssetClassChange() {
-  try { localStorage.setItem('shared-asset-class-v1', selectedAssetClass() || 'all'); } catch (_e) {}
-  if (typeof resetTradesPage === 'function') resetTradesPage();
-}
-function restoreAssetClass() {
-  try {
-    var saved = localStorage.getItem('shared-asset-class-v1');
-    var s = el('qAssetClass');
-    if (s && saved) {
-      for (var i = 0; i < s.options.length; i++) {
-        if (s.options[i].value === saved) { s.value = saved; break; }
-      }
-    }
-  } catch (_e) {}
-}
-restoreAssetClass();
 function selectedSideParam(groupId) {
   var g = el(groupId); if (!g) return '';
   var on = [];

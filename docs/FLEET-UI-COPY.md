@@ -54,6 +54,13 @@ Use **sentence case or lowercase** — not Title Case:
 Always `.navigationBarTitleDisplayMode(.inline)` (small, centered) on root tab screens —
 **not** large left-aligned titles that collapse only after scroll.
 
+## Congress.Trade — no asset-class dropdown (owner 2026-08-14)
+
+Do **not** add an All Assets / Public Equities, Funds, & ETFs / Stocks and ETF
+dropdown on web or iOS.  It is worthless, unused, and a waste of space.
+Never reintroduce it.  The server `assetClass=` param may stay for API clients;
+the public UI must not grow a control for it.
+
 ## Ticker logos
 Show company logos next to ticker symbols wherever symbols appear (positions, orders,
 watchlist, fills, proposals, scan tables). Fall back to monogram; never leave a blank hole.

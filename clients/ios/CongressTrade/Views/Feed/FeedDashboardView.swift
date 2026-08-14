@@ -54,6 +54,13 @@ struct FeedDashboardView: View {
                 // Stable tie-break: newest trade date first, regardless of direction.
                 return (lhs.transaction.date ?? "") > (rhs.transaction.date ?? "")
             }
+        case .ticker:
+            return cachedTrades.sorted { lhs, rhs in
+                let lt = (lhs.asset.ticker ?? "").uppercased()
+                let rt = (rhs.asset.ticker ?? "").uppercased()
+                if lt != rt { return ascending ? lt < rt : lt > rt }
+                return (lhs.transaction.date ?? "") > (rhs.transaction.date ?? "")
+            }
         }
     }
 
@@ -144,7 +151,7 @@ struct FeedDashboardView: View {
                     }
 
                     // Shared filters (also on Trends) — chamber / party / sides / timeframe.
-                    FeedControlBar(showAssetClass: true)
+                    FeedControlBar()
 
                     // Single unified search (name / ticker / state / party) + # trades matching.
                     TradesUnifiedSearchField(
@@ -163,15 +170,6 @@ struct FeedDashboardView: View {
                     )
                     .onChange(of: searchText) { _, _ in
                         scheduleSearchDebounce()
-                    }
-
-                    // Combined controls row: Sort options + Pagination on one row.
-                    HStack(spacing: 6) {
-                        FeedSortControl()
-                        Spacer(minLength: 4)
-                        if !trades.isEmpty {
-                            FeedPaginationBar()
-                        }
                     }
 
                     // Sits directly above the list, where the user is already looking.
@@ -202,7 +200,7 @@ struct FeedDashboardView: View {
                     // (owner: the pagination controls were "way at bottom and
                     // missing from top of the list of trades").
                     if !trades.isEmpty {
-                        FeedPaginationBar()
+                        FeedPaginationBar(showSort: true)
                     }
 
                     if horizontalSizeClass == .regular {
@@ -436,7 +434,6 @@ struct BrandTitle: View {
 struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
     var showMetrics: Bool = true
-    var showAssetClass: Bool = false
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -569,30 +566,6 @@ struct FeedControlBar: View {
                     )
                 }
 
-                if showAssetClass {
-                    Menu {
-                        ForEach(AssetClassFilter.allCases) { filter in
-                            Button {
-                                Task { await store.setAssetClass(filter) }
-                            } label: {
-                                HStack {
-                                    Text(filter.label)
-                                    if store.selectedAssetClass == filter {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        FilterMenuLabel(
-                            title: store.selectedAssetClass.label,
-                            icon: "square.stack.3d.up",
-                            isActive: store.selectedAssetClass != .all,
-                            alwaysShowLabel: true,
-                            accessibilityLabel: "Asset class, \(store.selectedAssetClass.label)"
-                        )
-                    }
-                }
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
@@ -752,16 +725,13 @@ struct ControlChip<Content: View>: View {
     }
 }
 
-/// Leading "Sort:" label shared by every sort row (Trades, Directory People,
-/// Directory Assets) so the chips are not a floating unlabeled cluster.
+/// Shared sort-row wrapper (Trades, Directory People, Directory Assets).
+/// No "Sort:" caption — the dropdown labels the key.
 struct SortRow<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text("Sort:")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
             content()
         }
         .accessibilityElement(children: .contain)
@@ -782,6 +752,17 @@ struct SortMenuControl<Key: Hashable>: View {
     var body: some View {
         SortRow {
             HStack(spacing: 6) {
+                Button {
+                    sortAscending.toggle()
+                } label: {
+                    ControlChip(compact: true) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(sortAscending ? "Ascending, tap to reverse" : "Descending, tap to reverse")
+
                 Menu {
                     ForEach(keys, id: \.self) { key in
                         Button {
@@ -812,17 +793,6 @@ struct SortMenuControl<Key: Hashable>: View {
                     }
                 }
                 .accessibilityLabel("Sort by \(label(sortKey))")
-
-                Button {
-                    sortAscending.toggle()
-                } label: {
-                    ControlChip(compact: true) {
-                        Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.bold))
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(sortAscending ? "Ascending, tap to reverse" : "Descending, tap to reverse")
             }
         }
     }
@@ -838,45 +808,43 @@ struct FeedSortControl: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
-        SortRow {
-            HStack(spacing: 6) {
-                Menu {
-                    ForEach(FeedSortKey.allCases) { key in
-                        Button {
-                            Task { await store.setFeedSortKey(key) }
-                        } label: {
-                            HStack {
-                                Text(key.label)
-                                if store.feedSortKey == key {
-                                    Image(systemName: "checkmark")
-                                }
+        HStack(spacing: 6) {
+            Button {
+                Task { await store.toggleFeedSortDirection() }
+            } label: {
+                ControlChip(compact: true) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.caption.weight(.bold))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to reverse")
+
+            Menu {
+                ForEach(FeedSortKey.allCases) { key in
+                    Button {
+                        Task { await store.setFeedSortKey(key) }
+                    } label: {
+                        HStack {
+                            Text(key.label)
+                            if store.feedSortKey == key {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                } label: {
-                    FilterMenuLabel(
-                        title: store.feedSortKey.label,
-                        icon: "arrow.up.arrow.down",
-                        isActive: false,
-                        alwaysShowLabel: true,
-                        accessibilityLabel: "Sort by \(store.feedSortKey.label)"
-                    )
                 }
-
-                Button {
-                    Task { await store.toggleFeedSortDirection() }
-                } label: {
-                    ControlChip(compact: true) {
-                        Image(systemName: store.feedSortDirection.systemImage)
-                            .font(.caption.weight(.bold))
+            } label: {
+                ControlChip {
+                    HStack(spacing: 4) {
+                        Text(store.feedSortKey.label)
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .opacity(0.5)
                     }
                 }
-                // `.plain` so the chip's own foregroundStyle wins: the TabView's
-                // `.tint(.blue)` otherwise repaints a default-styled Button's label
-                // accent-blue and the chip stops matching its neighbours.
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(store.feedSortDirection.accessibilityLabel), tap to flip")
             }
+            .accessibilityLabel("Sort by \(store.feedSortKey.label)")
         }
     }
 }
@@ -901,6 +869,7 @@ struct PaginationBar: View {
     var onPrevious: () -> Void
     var onNext: () -> Void
     var onPageSize: (Int) -> Void
+    var sortControls: AnyView? = nil
 
     private var pageLabel: String {
         "\(CompactFormat.count(currentPage + 1)) of \(CompactFormat.count(totalPages))"
@@ -936,6 +905,10 @@ struct PaginationBar: View {
                 .buttonStyle(.plain)
                 .disabled(!canGoNext)
                 .accessibilityLabel("Next page")
+            }
+
+            if let sortControls {
+                sortControls
             }
 
             Spacer(minLength: 8)
@@ -980,6 +953,7 @@ struct PaginationBar: View {
 /// disagree.
 struct FeedPaginationBar: View {
     @EnvironmentObject private var store: CongressTradeStore
+    var showSort: Bool = false
 
     var body: some View {
         PaginationBar(
@@ -990,7 +964,8 @@ struct FeedPaginationBar: View {
             canGoNext: store.canGoToNextPage,
             onPrevious: { Task { await store.goToPreviousPage() } },
             onNext: { Task { await store.goToNextPage() } },
-            onPageSize: { size in Task { await store.setPageSize(size) } }
+            onPageSize: { size in Task { await store.setPageSize(size) } },
+            sortControls: showSort ? AnyView(FeedSortControl()) : nil
         )
     }
 }
@@ -1096,42 +1071,47 @@ struct TradesUnifiedSearchField: View {
     var onClear: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Name, ticker, state, or party", text: $text)
-                .neverAutocapitalized()
-                .autocorrectionDisabled()
-                .font(.subheadline)
-                .focused(focused)
-                .submitLabel(.search)
-                .onSubmit {
-                    onSubmit()
-                    focused.wrappedValue = false
+        HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Name, ticker, state, or party", text: $text)
+                    .neverAutocapitalized()
+                    .autocorrectionDisabled()
+                    .font(.subheadline)
+                    .focused(focused)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        onSubmit()
+                        focused.wrappedValue = false
+                    }
+                if !text.isEmpty {
+                    Button {
+                        withAnimation { text = "" }
+                        onClear()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear Search")
                 }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(AppTheme.border(cornerRadius: 10))
+
             if let countLabel {
                 Text(countLabel)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.primary)
                     .contentTransition(.numericText())
                     .lineLimit(1)
-            }
-            if !text.isEmpty {
-                Button {
-                    withAnimation { text = "" }
-                    onClear()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear Search")
+                    .fixedSize()
             }
         }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border(cornerRadius: 12))
         .accessibilityLabel("Search trades by politician name, ticker, state, or party")
     }
 }
