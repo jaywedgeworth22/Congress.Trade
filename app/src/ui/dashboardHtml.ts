@@ -1859,8 +1859,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .tlbl { display: block; height: 11px; line-height: 11px; font-size: 8px; max-width: 100%; overflow: hidden; }
     /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
        (like desktop) — only the button sizing shrinks to fit. */
-    #view-trends #trTimeMetric.seg button,
-    #view-trends #trTimeWin.seg button { padding: 4px 5px; font-size: 10px; }
+    #view-trends #trTimeMetric.seg button { padding: 4px 5px; font-size: 10px; }
     /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
     #view-trends summary.tchart-summary { gap: 5px; }
     #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
@@ -2224,7 +2223,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: color-mix(in srgb, var(--text-dim) 88%, var(--text));
 }
 
-/* ---- 9. Time chart "Buys vs Sells Over Time" -------------------------- */
+/* ---- 9. Time chart "Buys vs Sells" -------------------------- */
 #view-trends .tchart {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
@@ -2248,19 +2247,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 }
 
 /* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe) */
-#trTimeWin.seg,
 #trTimeMetric.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
-#trTimeWin.seg button,
 #trTimeMetric.seg button {
   letter-spacing: .02em;
   transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
 }
-#trTimeWin.seg button.on,
 #trTimeMetric.seg button.on {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-#trTimeWin.seg button:focus-visible,
 #trTimeMetric.seg button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
@@ -2404,7 +2399,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .split .seg,
   #view-trends .tcol,
   #view-trends .tbars i,
-  #view-trends #trTimeWin.seg button,
   #view-trends #trTimeMetric.seg button {
     transition: none;
   }
@@ -2777,23 +2771,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <details class="section trends-fold" open>
       <summary class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em><span class="fold-cue" aria-hidden="true"></span></summary>
-      <p class="sub">Assets where several different politicians happened to trade the same direction within <span id="trConsensusPhrase">the past 3 months</span>.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </details>
 
-    <!-- Buys vs sells over time -->
+    <!-- Buys vs sells: same page window as every other Trends card -->
     <details class="section trends-fold" open>
       <summary class="tf-h tchart-summary">
-        <span class="tchart-summary-title">Buys vs Sells</span>
+        <span class="tchart-summary-title">Buys vs Sells <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></span>
         <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
           <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
             <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
             <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
-          </div>
-          <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
-            <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
-            <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
-            <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
           </div>
         </div>
         <span class="fold-cue" aria-hidden="true"></span>
@@ -2816,10 +2804,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out." title="Measured from each trade's public filing date to now. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
       <!-- The one place the benchmark is spelled out for this surface: the rows,
            the header tooltip and the row tooltips all say "excess" instead. -->
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
+      <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </details>
 
@@ -9026,10 +9015,6 @@ function trParams() {
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
-/* Tail phrase for the Consensus Moves explainer ("...within the past 3 months.") —
-   keyed the same as TR_WINDOW_LABELS but phrased as a lowercase prepositional clause. */
-var TR_CONSENSUS_PHRASE = { '1d': 'the past day', '7d': 'the past week', '30d': 'the past month', '90d': 'the past 3 months', '180d': 'the past 6 months', '365d': 'the past year', '1825d': 'the past 5 years', 'this_cy': 'this calendar year', 'last_cy': 'last calendar year', 'all': 'the full record' };
-function consensusPhrase(v) { return TR_CONSENSUS_PHRASE[v] || 'the selected window'; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Section headers display the
    active timeframe setting as italic text (.tr-window-label). This function
@@ -9040,8 +9025,6 @@ function stampWindowChips() {
   document.querySelectorAll('.tr-window-label').forEach(function(el) {
     el.textContent = lblText;
   });
-  var phraseEl = el('trConsensusPhrase');
-  if (phraseEl) phraseEl.textContent = consensusPhrase(val);
 }
 /* Small TTL memo cache over the analytics endpoints (same TTL+dedupe idiom as
    fetchLatencySummary below): a Trends window change fires ~12 parallel aGet
@@ -10292,18 +10275,7 @@ function loadTrClusters() {
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
-/* This chart has its OWN time range (1Y/3Y/5Y), independent of the page
-   window — a multi-year shape is the point, while the page may be on "Past Month".
-   chamber/party/source stay shared via trParams(); only the window is overridden. */
-var trTimeWindow = '1825d';
 var trTimeMetric = 'count';
-function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
-function setTrTimeWin(w) {
-  trTimeWindow = w;
-  var btns = el('trTimeWin').querySelectorAll('button');
-  for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-w') === w) ? 'on' : '';
-  loadTrTime();
-}
 function setTrTimeMetric(m) {
   trTimeMetric = (m === 'dollars') ? 'dollars' : 'count';
   var group = el('trTimeMetric');
@@ -10322,7 +10294,7 @@ function anchorChartRight(box) {
 function loadTrTime() {
   var box = el('trTime');
   box.innerHTML = skChart();
-  aGet('volume-over-time?' + trTimeParams()).then(function (d) {
+  aGet('volume-over-time?' + trParams()).then(function (d) {
     var s = d.series || [];
     if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this range.</div>'; return; }
     box.innerHTML = timeChartHtml(s, null, trTimeMetric);
@@ -10409,12 +10381,12 @@ function loadTrLag() {
     var s = d.summary || {};
     var lagBasis = 'Disclosure lag is days between the transaction date and the official filing date.';
     kbox.innerHTML =
-      kpi('Median Lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>'), 'Middle disclosure lag in this window. ' + lagBasis) +
+      kpi('Median Lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>'), 'Middle disclosure lag. ' + lagBasis) +
       kpiRaw(kpiLabel('90<sup>th</sup> Percentile', '90th Pctl', 'P90'), (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>'), '90% of dated trade rows were filed within this many days. ' + lagBasis) +
       kpiRaw(kpiLabel('&gt;45 Day Lag', '>45d Lag', '>45d'), (s.overFortyFivePct == null ? '—' : Math.round(s.overFortyFivePct * 100) + '<small>%</small>'), 'Share of dated trade rows filed after the 45-day STOCK Act window. ' + lagBasis) +
-      kpi('Disclosures', s.count || 0, 'Number of trade rows with both transaction and official filing dates in this window.');
+      kpi('Disclosures', s.count || 0, 'Number of trade rows with both transaction and official filing dates.');
     var dist = s.distribution || [], max = 1; dist.forEach(function (b) { max = Math.max(max, b.count); });
-    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings in this window.</div>'; }
+    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings.</div>'; }
     else dbox.innerHTML = dist.map(function (b) {
       var w = Math.round(100 * b.count / max);
       var cls = (b.bucket === '46–60d' || b.bucket === '60d+') ? ' warn' : ' buy';
@@ -10439,7 +10411,7 @@ function loadTrLag() {
       var avg = Math.round(m.avgLagDays);
       var maxLag = Math.round(m.maxLagDays || 0);
       var late = Number(m.lateCount || 0);
-      var basis = name + ' has ' + fmtCount(tradeCount) + ' dated trade row' + (tradeCount === 1 ? '' : 's') + ' in this window.';
+      var basis = name + ' has ' + fmtCount(tradeCount) + ' dated trade row' + (tradeCount === 1 ? '' : 's') + '.';
       var memberTitle = m.filerId ? 'Open ' + name + ' details.' : name;
       var memberAttr = m.filerId ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="' + esc(memberTitle) + '"' : ' class="member-cell" title="' + esc(memberTitle) + '"';
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;

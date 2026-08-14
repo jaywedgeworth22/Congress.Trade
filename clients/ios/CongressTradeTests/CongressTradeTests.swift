@@ -39,6 +39,21 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual("".nameInitials, "?")
     }
 
+    func testTopPerformersScopeLineUsesFivePlusAndCapPerTrade() {
+        let line = TrendsView.performersScopeLine()
+        XCTAssertEqual(line, "5+ buys  •  stocks only  •  +/-200% cap per trade")
+        XCTAssertFalse(line.contains("minimum"))
+        XCTAssertFalse(line.contains("capped at"))
+        XCTAssertFalse(line.contains("Past"))
+    }
+
+    func testDisclosureTimelinessOmitsInThisWindow() {
+        let line = TrendsView.timelinessBasis(count: 1868)
+        XCTAssertTrue(line.hasPrefix("9 in 10 filings land inside the P90 figure.  Based on "))
+        XCTAssertTrue(line.hasSuffix(" disclosed trades."))
+        XCTAssertFalse(line.contains("in this window"))
+    }
+
     func testMemberPhotoURLPrefersAPIThenSeedAndIgnoresRelativePaths() {
         let api = "https://congress.trade/api/photos/member?key=K000389"
         let seed = "https://example.test/seed.jpg"
