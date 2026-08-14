@@ -89,6 +89,47 @@ notify() {
     || log "warn: pushover notify failed"
 }
 
+# Coolify /api/v1/deployments is the running+queued set (not history).
+# Same parse as ct-deploy-guard.sh: object with numeric keys, this app only.
+is_coolify_deploy_active() {
+  [[ -z "${COOLIFY_TOKEN:-}" ]] && return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  local json
+  json=$(curl -fsS -m 8 \
+    -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+    -H "Accept: application/json" \
+    "${COOLIFY_BASE_URL%/}/api/v1/deployments" 2>/dev/null) || return 1
+  printf '%s' "$json" | APP_UUID="$APP_UUID" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if isinstance(d, list):
+    rows = d
+elif isinstance(d, dict):
+    inner = d.get("data", d.get("deployments"))
+    if isinstance(inner, list):
+        rows = inner
+    elif isinstance(inner, dict):
+        rows = list(inner.values())
+    elif d and all(str(k).isdigit() for k in d.keys()):
+        rows = list(d.values())
+    else:
+        rows = []
+else:
+    rows = []
+app_uuid = os.environ.get("APP_UUID", "")
+def mine(x):
+    return (x.get("application_id") == app_uuid
+            or x.get("application_uuid") == app_uuid
+            or x.get("application_name") == "congress-trade")
+active = [x for x in rows if mine(x) and x.get("status") in
+          ("in_progress", "building", "running", "queued")]
+raise SystemExit(0 if active else 1)
+'
+}
+
 is_deploy_active() {
   # Coolify builder / nixpacks containers indicate a live deploy.
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eqi 'nixpacks|coolify-builder|buildkit'; then
@@ -99,6 +140,13 @@ is_deploy_active() {
   # burns the hourly budget.
   if docker ps -a --filter 'name=congress-app-' --format '{{.Status}}' 2>/dev/null \
     | grep -Eqi 'Created|Restarting|health: starting'; then
+    return 0
+  fi
+  # Stop-before-start gap: the old container is already removed and the new
+  # one is not Created yet.  2026-08-14 02:51Z #1852 hit this — local health
+  # failed, find_app_container missed, and we stacked a Coolify restart on
+  # the in-flight deploy.  Ask Coolify before treating that as a crash.
+  if is_coolify_deploy_active; then
     return 0
   fi
   return 1

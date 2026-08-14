@@ -31,6 +31,11 @@ and burned `MAX_RESTARTS_PER_HOUR=4`. After that it could not self-heal.
 
 ## Follow-ups
 
-- Confirm 15 minutes of journal with no `health FAIL` / no new restart
-  timestamps after this install.
+- **2026-08-14 02:51Z:** merging #1852 auto-deployed the app.  Coolify
+  stop-before-start removed `congress-app` before the replacement was
+  `Created`.  `is_deploy_active` missed that gap, local health failed, and
+  the watchdog stacked a Coolify API restart on the in-flight deploy.
+  Host now asks `GET /api/v1/deployments` (same parse as
+  `ct-deploy-guard.sh`) and skips remediates while this app is
+  `in_progress` / `queued`.
 - `status=stalled` on `/api/health` is autopilot quota, not this outage.
