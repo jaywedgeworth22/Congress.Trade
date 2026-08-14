@@ -78,6 +78,11 @@ struct TrendsView: View {
                             LatencyComparisonView(summary: summary)
                         }
                     }
+
+                    // Same page-chrome row as Trades / Directory / Delivery.
+                    // Owner punchlist: legal links at the bottom of every tab.
+                    AppLegalFooter()
+                        .padding(.top, 8)
                 }
                 // Same horizontal/top/bottom insets as Trades so the
                 // disclaimer banner lands at an identical position/size on
