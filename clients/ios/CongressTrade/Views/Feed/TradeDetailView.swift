@@ -53,7 +53,8 @@ struct TradeDetailView: View {
                                 linkedDetailRow("Politician", politicianValue) {
                                     PoliticianDetailView(
                                         memberId: memberId,
-                                        memberName: trade.member.name ?? "Unknown"
+                                        memberName: trade.member.name ?? "Unknown",
+                                        seedPhotoUrl: trade.member.photoUrl
                                     )
                                 }
                             } else {

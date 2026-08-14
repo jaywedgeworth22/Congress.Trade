@@ -20,7 +20,10 @@ enum AppTheme {
     }
 }
 
-// Helper for Party Emojis
+// Party animals stay available for compact text annotations (a trade row
+// prefix). They are NOT a face fallback — a missing portrait uses initials,
+// matching the web avatar, so a Democrat never becomes a donkey on the
+// politician sheet.
 extension String {
     var partyEmoji: String {
         switch self.lowercased() {
@@ -29,7 +32,16 @@ extension String {
         default: return "🦅" // Independent/Other
         }
     }
-    
+
+    /// Two-letter initials from a politician name (`Ro Khanna` → `RK`).
+    var nameInitials: String {
+        let parts = split(whereSeparator: { $0.isWhitespace }).filter { !$0.isEmpty }
+        guard let first = parts.first else { return "?" }
+        if parts.count == 1 { return String(first.prefix(2)).uppercased() }
+        let last = parts.last!
+        return String(first.prefix(1) + last.prefix(1)).uppercased()
+    }
+
     var chamberLabel: String {
         switch self.lowercased() {
         case "house": return "House"
@@ -37,6 +49,49 @@ extension String {
         case "executive": return "Executive"
         default: return self.capitalized
         }
+    }
+}
+
+enum MemberPhotoURL {
+    /// First usable absolute URL among the API profile, a Directory-row seed,
+    /// and any already-loaded roster entry. Relative `/api/photos/...` paths
+    /// are ignored: SwiftUI `AsyncImage` cannot resolve them.
+    static func resolve(_ candidates: String?...) -> URL? {
+        for raw in candidates {
+            guard let raw, !raw.isEmpty, let url = URL(string: raw), url.scheme != nil else { continue }
+            return url
+        }
+        return nil
+    }
+}
+
+/// Headshot with initials underneath (web `memberAvatarHtml`). A broken or
+/// missing image leaves the initials — never a party mascot.
+struct MemberAvatar: View {
+    let photoURL: URL?
+    let name: String
+    var size: CGFloat = 44
+
+    var body: some View {
+        ZStack {
+            Text(name.nameInitials)
+                .font(.system(size: max(11, size * 0.34), weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+            if let photoURL {
+                AsyncImage(url: photoURL) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    }
+                }
+                .frame(width: size, height: size)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+        .accessibilityHidden(true)
     }
 }
 

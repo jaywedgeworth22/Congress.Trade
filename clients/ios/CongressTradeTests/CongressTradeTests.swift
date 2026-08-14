@@ -33,6 +33,21 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(AssetDirectorySearch.SortKey.name.label, "Asset")
     }
 
+    func testNameInitialsMatchWebAvatarFallback() {
+        XCTAssertEqual("Ro Khanna".nameInitials, "RK")
+        XCTAssertEqual("Pelosi".nameInitials, "PE")
+        XCTAssertEqual("".nameInitials, "?")
+    }
+
+    func testMemberPhotoURLPrefersAPIThenSeedAndIgnoresRelativePaths() {
+        let api = "https://congress.trade/api/photos/member?key=K000389"
+        let seed = "https://example.test/seed.jpg"
+        XCTAssertEqual(MemberPhotoURL.resolve(api, seed)?.absoluteString, api)
+        XCTAssertEqual(MemberPhotoURL.resolve(nil, seed)?.absoluteString, seed)
+        XCTAssertNil(MemberPhotoURL.resolve("/api/photos/member?key=K000389", ""))
+        XCTAssertNil(MemberPhotoURL.resolve(nil, nil))
+    }
+
     func testActiveOnlySubscriptionCommandPreservesFilters() async throws {
         let session = makeSession()
         let client = CongressTradeAPIClient(
