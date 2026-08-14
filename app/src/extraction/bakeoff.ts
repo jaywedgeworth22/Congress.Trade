@@ -101,7 +101,7 @@ export interface CandidateInvocation {
  * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
  * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
  * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
- * cell for a dead slug can only fail. `google/gemini-3.5-flash` is the OR-transport
+ * cell for a dead slug can only fail. `google/gemini-3.7-flash` is the OR-transport
  * route around the blocked direct Gemini key.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
@@ -119,10 +119,10 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
   { provider: 'openrouter', model: 'qwen/qwen3-vl-30b-a3b-instruct' },
   { provider: 'openrouter', model: 'qwen/qwen3-vl-8b-instruct' },
-  { provider: 'openrouter', model: 'google/gemini-2.5-flash-lite' },
+  { provider: 'openrouter', model: 'google/gemini-3.5-flash-lite' },
   { provider: 'openrouter', model: 'amazon/nova-lite-v1' },
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
-  { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
+  { provider: 'openrouter', model: 'google/gemini-3.7-flash' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
 ];
 

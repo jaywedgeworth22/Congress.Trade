@@ -592,10 +592,10 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'deepseek/deepseek-v4-flash',
       'qwen/qwen3-vl-30b-a3b-instruct',
       'qwen/qwen3-vl-8b-instruct',
-      'google/gemini-2.5-flash-lite',
+      'google/gemini-3.5-flash-lite',
       'amazon/nova-lite-v1',
       'z-ai/glm-4.6v',
-      'google/gemini-3.5-flash',
+      'google/gemini-3.7-flash',
       'qwen/qwen-2.5-72b-instruct',
     ]);
 

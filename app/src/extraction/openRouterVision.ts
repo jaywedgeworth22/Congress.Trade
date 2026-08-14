@@ -56,9 +56,11 @@ import {
 } from '../shared/openRouterBudgetCircuit.ts';
 import { IngestRetryError } from '../ingestion/fetcher.ts';
 
-/** Live default (verified against the OpenRouter catalog 2026-07-18); the
- *  former default `qwen/qwen-2.5-vl-72b-instruct:free` is no longer listed. */
-const DEFAULT_MODEL = 'google/gemini-3.5-flash';
+/** Live default (verified against the OpenRouter catalog 2026-08-14). */
+export const OPENROUTER_GEMINI_FLASH = 'google/gemini-3.7-flash';
+/** OpenRouter Flash batch/offline/backlog variant (~50% cheaper). */
+export const OPENROUTER_GEMINI_FLASH_BATCH = 'google/gemini-3.7-flash:batch';
+const DEFAULT_MODEL = OPENROUTER_GEMINI_FLASH;
 const DEFAULT_CONFIDENCE = 0.6;
 const MAX_TOKENS = 65000;
 
