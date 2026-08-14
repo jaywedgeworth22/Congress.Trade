@@ -1686,7 +1686,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
   .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
-    html, body { width:100%; max-width:100%; overflow-x:hidden; }
+    /* clip (not hidden): hidden on one axis makes the other compute to auto
+       and turns html/body/main into a scrollport, which kills position:sticky
+       on the Trades/Trends filter bars. */
+    html, body { width:100%; max-width:100%; overflow-x:clip; }
     body { background: var(--bg); font-size: 13px; }
     :root { --ct-header-h: 52px; }
     header.top {
@@ -1736,7 +1739,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Owner punch list #5: nav.tabs is ~60px tall (8px + 44px button + 8px
        padding, before safe-area) — 70px leaves a sane ~10px clearance without
        the previous 86px's dead-space overshoot. */
-    main { max-width: none; min-width:0; overflow-x:hidden; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+    main { max-width: none; min-width:0; overflow-x:clip; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
     .section { overflow:hidden; }
     .section p.sub { font-size:12px; line-height:1.45; }

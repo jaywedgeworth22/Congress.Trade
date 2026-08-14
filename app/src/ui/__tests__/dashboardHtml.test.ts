@@ -2257,6 +2257,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
     expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
+    expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
+    expect(DASHBOARD_HTML).toContain('main { max-width: none; min-width:0; overflow-x:clip;');
   });
 
   it('spells Top Performers scope as 5+ buys and +/-200% cap per trade', () => {
