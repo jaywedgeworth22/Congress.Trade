@@ -1471,7 +1471,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #tradesStats { order:4; }
+    .trades-toolbars #qAssetClassWrap { order:4; }
+    .trades-toolbars #tradesStats { order:5; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -2494,6 +2495,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
+      <span class="pill-select" id="qAssetClassWrap">
+        <select id="qAssetClass" class="pill-select-el" title="Asset class" aria-label="Asset class" onchange="onAssetClassChange()">
+          <option value="all" selected>All Assets</option>
+          <option value="equities_funds">Public Equities, Funds, &amp; ETFs</option>
+        </select>
+      </span>
       <!-- The timeframe is named here, not just in the pill to the left: the same
            politician reads 988 trades in this window and 22,832 all time in the
            Directory, and an unlabelled count makes those look like a data bug. -->
@@ -4948,6 +4955,7 @@ function tradesFilterParams() {
   if (ty) p.set('type', ty);
   var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var pa = partyParam('qPartyGroup'); if (pa) p.set('party', pa);
+  var ac = selectedAssetClass(); if (ac) p.set('assetClass', ac);
   // Owner follow-up batch #21: the $ threshold UI pill is gone (no $/size
   // dropdown on any platform) — minAmount is no longer sent from here. The
   // server still accepts ?minAmount= for direct API consumers.
@@ -11460,21 +11468,7 @@ function exportCsv() {
     openPricing('export');
     return;
   }
-  var p = new URLSearchParams();
-  applySearchToServerParams(p, tradesSearchQuery());
-  var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);
-  var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
-  var fromEl = el('qFrom'); var from = fromEl && fromEl.value; if (from) p.set('from', from);
-  var toEl = el('qTo'); var to = toEl && toEl.value; if (to) p.set('to', to);
-  // Map shared timeframe into from when calendar year selected and no explicit from
-  var win = (el('tradesGlobalWindow') || el('trGlobalWindow') || {}).value;
-  if (!from && win === 'this_cy') {
-    p.set('from', new Date().getUTCFullYear() + '-01-01');
-  } else if (!from && win === 'last_cy') {
-    var y = new Date().getUTCFullYear() - 1;
-    p.set('from', y + '-01-01');
-    if (!to) p.set('to', y + '-12-31');
-  }
+  var p = tradesFilterParams();
   var qs = p.toString();
   var dlg = el('exportCsvDialog');
   if (dlg && dlg.open) dlg.close();
@@ -11744,6 +11738,27 @@ function initBranchInfo(groupId) {
 initBranchInfo('qFiltersInfo');
 initBranchInfo('trFiltersInfo');
 
+function selectedAssetClass() {
+  var s = el('qAssetClass');
+  var v = s && s.value ? String(s.value) : 'all';
+  return v && v !== 'all' ? v : '';
+}
+function onAssetClassChange() {
+  try { localStorage.setItem('shared-asset-class-v1', selectedAssetClass() || 'all'); } catch (_e) {}
+  if (typeof resetTradesPage === 'function') resetTradesPage();
+}
+function restoreAssetClass() {
+  try {
+    var saved = localStorage.getItem('shared-asset-class-v1');
+    var s = el('qAssetClass');
+    if (s && saved) {
+      for (var i = 0; i < s.options.length; i++) {
+        if (s.options[i].value === saved) { s.value = saved; break; }
+      }
+    }
+  } catch (_e) {}
+}
+restoreAssetClass();
 function selectedSideParam(groupId) {
   var g = el(groupId); if (!g) return '';
   var on = [];

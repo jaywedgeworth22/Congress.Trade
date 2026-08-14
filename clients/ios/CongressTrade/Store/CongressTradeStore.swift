@@ -93,6 +93,8 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var politicianFilter: String = ""
     /// Trades-only asset/ticker filter (`ticker=`).
     @Published private(set) var assetFilter: String = ""
+    /// Trades-only instrument class (`assetClass=`). Default All.
+    @Published private(set) var selectedAssetClass: AssetClassFilter = .all
 
     @Published var isLoadingMore = false
 
@@ -615,6 +617,7 @@ final class CongressTradeStore: ObservableObject {
                     chamber: chamberParam,
                     type: typeParam,
                     party: Self.partyQueryValue(for: selectedParties),
+                    assetClass: selectedAssetClass.queryValue,
                     from: from,
                     to: to,
                     sort: "tx_date",
@@ -669,6 +672,18 @@ final class CongressTradeStore: ObservableObject {
     /// Sets the full party multi-selection and immediately resyncs both the
     /// (client-side-filtered) Trades feed and Trends analytics. Empty = all
     /// parties.
+    func setAssetClass(_ filter: AssetClassFilter) async {
+        guard filter != selectedAssetClass else {
+            clearFilterIntents()
+            return
+        }
+        await applyingFilterChange {
+            selectedAssetClass = filter
+            currentPage = 0
+            await refresh()
+        }
+    }
+
     func setPartySelection(_ parties: Set<PartyFilter>) async {
         guard parties != selectedParties else {
             clearFilterIntents()
@@ -1074,7 +1089,9 @@ final class CongressTradeStore: ObservableObject {
             ticker: assetFilter.isEmpty ? nil : assetFilter,
             memberName: politicianFilter.isEmpty ? nil : politicianFilter,
             chamber: chamberParam,
-            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes),
+            party: Self.partyQueryValue(for: selectedParties),
+            assetClass: selectedAssetClass.queryValue
         )
     }
 

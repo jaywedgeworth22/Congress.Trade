@@ -47,6 +47,7 @@ struct FeedQuery: Equatable {
     var chamber: String?
     var type: String?
     var party: String?
+    var assetClass: String?
     var from: String?
     var to: String?
     /// Backend sort key: `tx_date` | `published` | cursor (default). Prefer
@@ -68,6 +69,7 @@ struct FeedQuery: Equatable {
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
         if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let assetClass, !assetClass.isEmpty { items.append(URLQueryItem(name: "assetClass", value: assetClass)) }
         if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
         if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
         if let sort, !sort.isEmpty { items.append(URLQueryItem(name: "sort", value: sort)) }
@@ -467,7 +469,9 @@ final class CongressTradeAPIClient {
         ticker: String? = nil,
         memberName: String? = nil,
         chamber: String? = nil,
-        type: String? = nil
+        type: String? = nil,
+        party: String? = nil,
+        assetClass: String? = nil
     ) async throws -> Data {
         guard var components = URLComponents(
             url: originURL.appendingPathComponent("api/export/transactions.csv"),
@@ -480,6 +484,8 @@ final class CongressTradeAPIClient {
         if let memberName, !memberName.isEmpty { items.append(URLQueryItem(name: "memberName", value: memberName)) }
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let assetClass, !assetClass.isEmpty { items.append(URLQueryItem(name: "assetClass", value: assetClass)) }
         if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
         var request = try makeRequest(url)

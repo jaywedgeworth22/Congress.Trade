@@ -1035,6 +1035,28 @@ final class CongressTradeTests: XCTestCase {
     }
 
     @MainActor
+    func testSetAssetClassSendsAssetClassQueryParam() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setAssetClass(.equitiesFunds)
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "assetClass" })?.value, "equities_funds")
+    }
+
+    @MainActor
     func testCancelledFeedRefreshDoesNotSetFeedNotice() async throws {
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
