@@ -880,6 +880,10 @@ export interface Env {
   STRIPE_PRICE_ANNUAL?: string;
   /** Free-trial length in days for new subscriptions (default 7). */
   STRIPE_TRIAL_DAYS?: string;
+  /** Live Billing Portal configuration id (`bpc_…`).  Without this, Stripe's
+   *  implicit default can hide the Premium product and show an empty
+   *  subscription list. */
+  STRIPE_PORTAL_CONFIGURATION?: string;
   /** iOS bundle id for StoreKit receipt verification (default trade.congress.ios). */
   APPLE_BUNDLE_ID?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.

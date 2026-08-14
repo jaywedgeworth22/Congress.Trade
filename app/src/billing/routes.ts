@@ -241,10 +241,12 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     const requestId = requestIdForStripe(c);
     if ('error' in requestId) return c.json({ error: requestId.error }, 400);
     try {
+      const portalConfig = (await resolveSecret(c.env, 'STRIPE_PORTAL_CONFIGURATION')).value?.trim();
       const session = await createBillingPortalSession(c.env, {
         customerId: user.stripeCustomerId,
         returnUrl: `${await baseUrl(c)}/?billing=portal`,
         idempotencyKey: stripeOperationKey('portal', user.id, requestId.id),
+        configuration: portalConfig || undefined,
       });
       return c.json({ url: session.url });
     } catch (err) {

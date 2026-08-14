@@ -467,6 +467,36 @@ describe('billing router', () => {
     expect(key).toBe('congress-trade:portal:u1:portal-request-1');
   });
 
+  it('forwards STRIPE_PORTAL_CONFIGURATION so the hosted portal lists Premium', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'active', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    let body = '';
+    vi.stubGlobal('fetch', async (_input: string | URL | Request, init?: RequestInit) => {
+      body = String(init?.body ?? '');
+      return Response.json({ id: 'bps_1', url: 'https://stripe.test/portal' });
+    });
+    const sessionKv = {
+      get: async (name: string) => name === 'sess:session-token' ? JSON.stringify({ userId: 'u1' }) : null,
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({
+      STRIPE_SECRET_KEY: 'sk_test',
+      STRIPE_PORTAL_CONFIGURATION: 'bpc_live_premium',
+      CONFIG_KV: sessionKv,
+    }, [seed]);
+    const res = await buildBillingRouter().request('http://localhost/portal', {
+      method: 'POST',
+      headers: { cookie: 'ct_session=session-token', 'Idempotency-Key': 'portal-cfg-1' },
+    }, env);
+    expect(res.status).toBe(200);
+    expect(new URLSearchParams(body).get('configuration')).toBe('bpc_live_premium');
+  });
+
   it('rejects malformed client idempotency keys before calling Stripe', async () => {
     const seed: URow = {
       id: 'u1', stripe_customer_id: 'cus_1', subscription_status: null, plan: null,
