@@ -598,6 +598,26 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
 /// which likewise only forward `type=` when exactly one side is toggled and
 /// otherwise fall back to an unfiltered fetch narrowed client-side. See
 /// `CongressTradeStore.tradeTypeQueryValue`.
+/// Trades-only instrument-class filter (owner: All vs Public Equities, Funds, & ETFs).
+enum AssetClassFilter: String, CaseIterable, Identifiable, Hashable {
+    case all = "all"
+    case equitiesFunds = "equities_funds"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All Assets"
+        case .equitiesFunds: return "Public Equities, Funds, & ETFs"
+        }
+    }
+
+    /// `nil` omits `assetClass=` so the server default (all) applies.
+    var queryValue: String? {
+        self == .all ? nil : rawValue
+    }
+}
+
 enum TradeTypeFilter: String, CaseIterable, Identifiable, Hashable {
     case buy = "B"
     case sell = "S"

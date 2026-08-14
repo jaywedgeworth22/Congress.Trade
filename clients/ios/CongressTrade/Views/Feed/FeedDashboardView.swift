@@ -143,7 +143,7 @@ struct FeedDashboardView: View {
                     }
 
                     // Shared filters (also on Trends) — chamber / party / sides / timeframe.
-                    FeedControlBar()
+                    FeedControlBar(showAssetClass: true)
 
                     // Single unified search (name / ticker / state / party) + # trades matching.
                     TradesUnifiedSearchField(
@@ -429,6 +429,7 @@ struct BrandTitle: View {
 struct FeedControlBar: View {
     @EnvironmentObject private var store: CongressTradeStore
     var showMetrics: Bool = true
+    var showAssetClass: Bool = false
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -559,6 +560,31 @@ struct FeedControlBar: View {
                         isActive: !store.selectedTradeTypes.isEmpty,
                         selected: store.selectedTradeTypes
                     )
+                }
+
+                if showAssetClass {
+                    Menu {
+                        ForEach(AssetClassFilter.allCases) { filter in
+                            Button {
+                                Task { await store.setAssetClass(filter) }
+                            } label: {
+                                HStack {
+                                    Text(filter.label)
+                                    if store.selectedAssetClass == filter {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        FilterMenuLabel(
+                            title: store.selectedAssetClass.label,
+                            icon: "square.stack.3d.up",
+                            isActive: store.selectedAssetClass != .all,
+                            alwaysShowLabel: true,
+                            accessibilityLabel: "Asset class, \(store.selectedAssetClass.label)"
+                        )
+                    }
                 }
             }
             .padding(.horizontal, 2)

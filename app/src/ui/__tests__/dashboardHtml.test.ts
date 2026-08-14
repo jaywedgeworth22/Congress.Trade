@@ -286,6 +286,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('id="searchPanel"');
     expect(DASHBOARD_HTML).not.toContain('id="qPageMinAmt"');
     expect(DASHBOARD_HTML).toContain("return on.length ? on.slice().sort().join(',') : '';");
+    expect(DASHBOARD_HTML).toContain("if (ac) p.set('assetClass', ac)");
+    expect(DASHBOARD_HTML).toContain('function exportCsv() {');
+    expect(DASHBOARD_HTML).toContain('var p = tradesFilterParams();');
     // HSP sits on the same row as party chips; no redundant Timeframe label / Refresh.
     expect(DASHBOARD_HTML).toMatch(/class="[^"]*trends-filter-row[^"]*"/);
 
@@ -2736,7 +2739,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
     expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
     expect(DASHBOARD_HTML).toContain("['fty', selectedSideParam('qSideGroup')]");
-    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup'); if (ty) p.set('type', ty);");
+    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
+    expect(DASHBOARD_HTML).toContain("if (ty) p.set('type', ty);");
   });
 
   it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
@@ -2795,6 +2799,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
     expect(extraFilters![0]).toContain('id="qSearch"');
     expect(extraFilters![0]).not.toContain('id="searchToggle"');
+    expect(extraFilters![0]).toContain('id="qAssetClass"');
+    expect(extraFilters![0]).toContain('value="equities_funds"');
     expect(extraFilters![0]).toContain('id="tradesStats"');
     expect(extraFilters![0]).toContain('matching trades');
     // Top + bottom pagers with shared data-* hooks.
@@ -3682,8 +3688,9 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #qAssetClassWrap { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:5; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
@@ -3694,6 +3701,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
     // Hidden legacy inputs have no visible layout role but may lack ids on wrappers.
     expect(extras).toContain('qSearchField');
+    expect(extras).toContain('qAssetClassWrap');
     expect(extras).not.toContain('searchToggle');
     expect(extras).toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
@@ -3934,6 +3942,7 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
       'chipSel',
       'chamberParam',
       'selectedSideParam',
+      'selectedAssetClass',
       'partySel',
       'partyParam',
       'tradesSearchQuery',
@@ -3990,6 +3999,7 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
       qPartyGroup: fakeChipGroup('data-party', opts.partyOn ?? []),
       qFrom: fakeInput(''),
       qTo: fakeInput(''),
+      qAssetClass: fakeInput('all'),
       // No shared-window select stubbed => tradesFilterParams' window
       // fallback branches are skipped entirely (no unrequested `from`).
     };
@@ -4091,6 +4101,7 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
       'chipSel',
       'chamberParam',
       'selectedSideParam',
+      'selectedAssetClass',
       'partySel',
       'partyParam',
       'tradesSearchQuery',
