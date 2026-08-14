@@ -84,17 +84,13 @@ struct FeedDashboardView: View {
                 }
             }
 
-            // Multi-select side filter. Server `type=` is single-valued (only
-            // forwarded when exactly one side is selected — see
-            // `CongressTradeStore.tradeTypeQueryValue`), so this local check
-            // is what actually narrows the result for a 2+ selection.
+            // Multi-select side filter. Server `type=` is CSV; keep a local
+            // pass so a stale cached page cannot show the wrong sides.
             if !types.isEmpty, !types.contains(where: { $0.matches(txType: trade.transaction.type) }) {
                 return false
             }
 
-            // Party filter is entirely client-side: `/api/client/v1/feed`
-            // does not accept a `party=` param at all (see
-            // `CongressTradeStore.selectedParties` doc comment).
+            // Party is also sent as `party=` CSV; keep a local pass for cache.
             if !parties.isEmpty {
                 guard let bucket = PartyFilter.bucket(for: trade.member.party), parties.contains(bucket) else {
                     return false
@@ -511,7 +507,13 @@ struct FeedControlBar: View {
                     Divider()
                     ForEach(PartyFilter.allCases) { party in
                         Toggle(isOn: partyBinding(for: party)) {
-                            Text("\(party.emoji) \(party.label)")
+                            Label {
+                                Text(party.label)
+                            } icon: {
+                                Circle()
+                                    .fill(Self.partyDotColor(party))
+                                    .frame(width: 8, height: 8)
+                            }
                         }
                         .accessibilityLabel(party.label)
                         .accessibilityValue(store.selectedParties.contains(party) ? "Selected" : "Not selected")
@@ -531,10 +533,7 @@ struct FeedControlBar: View {
                 }
 
                 // Side/Trade Type Filter (Buy/Sell/Exchange) — multi-select.
-                // Server `type=` is single-valued, so it's only forwarded
-                // when exactly one side is chosen; any selection count is
-                // still filtered correctly client-side
-                // (`FeedDashboardView.filteredTrades`).
+                // Server `type=` accepts CSV (`asTxTypes`).
                 Menu {
                     Button {
                         Task { await store.setTradeTypeSelection([]) }
@@ -564,6 +563,14 @@ struct FeedControlBar: View {
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
+        }
+    }
+
+    private static func partyDotColor(_ party: PartyFilter) -> Color {
+        switch party {
+        case .democrat: return Color(red: 0.16, green: 0.58, blue: 0.38)
+        case .republican: return Color(red: 0.78, green: 0.22, blue: 0.24)
+        case .other: return Color(red: 0.25, green: 0.45, blue: 0.85)
         }
     }
 

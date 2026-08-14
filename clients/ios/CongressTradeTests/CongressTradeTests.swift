@@ -243,12 +243,15 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedCallCount += 1
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(
-                items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                cursor: 110, count: 10, total: 718, limit: 100
-            ))
+            if request.url?.path.contains("/feed") == true {
+                feedCallCount += 1
+                feedURL = request.url
+                return Self.response(for: request, json: Self.feedJSON(
+                    items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
+                    cursor: 110, count: 10, total: 718, limit: 100
+                ))
+            }
+            return Self.response(for: request, json: "{}")
         }
 
         let store = CongressTradeStore(
@@ -270,7 +273,7 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(items.first(where: { $0.name == "sort" })?.value, "tx_date")
         XCTAssertNotNil(items.first(where: { $0.name == "from" })?.value, "Default 90d window must send from=")
         // Cursor watermark is keyed by chamber+range.
-        XCTAssertEqual(cursorStore.cursor(for: "house,senate|90d"), 110)
+        XCTAssertEqual(cursorStore.cursor(for: "house,senate|90d|all"), 110)
     }
 
     @MainActor
@@ -934,7 +937,7 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -946,14 +949,9 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
     }
 
-    /// Multi-select Trade Type pill (owner directive 2026-08-09): the
-    /// server's `type=` (`asTxType`) accepts exactly one value, so selecting
-    /// 2+ sides must omit the param (an unfiltered fetch, narrowed correctly
-    /// client-side by `FeedDashboardView.filteredTrades`) rather than send a
-    /// CSV the server can't parse — mirroring the web's own
-    /// `selectedSideParam` fallback for its `qSideGroup` chips.
+    /// Multi-select Trade Type pill: `type=` is CSV-capable (`asTxTypes`).
     @MainActor
-    func testSetTradeTypeSelectionOmitsTypeParamWhenMultipleSidesSelected() async throws {
+    func testSetTradeTypeSelectionSendsTypeCSVWhenMultipleSidesSelected() async throws {
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
             cursorStore: InMemorySyncCursorStore(),
@@ -964,14 +962,14 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
         await store.setTradeTypeSelection([.buy, .sell])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
-        XCTAssertNil(components.queryItems?.first(where: { $0.name == "type" }))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B,S")
     }
 
     /// Chamber's `chamber=` param is genuinely CSV-capable server-side
@@ -997,6 +995,28 @@ final class CongressTradeTests: XCTestCase {
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "chamber" })?.value, "executive,house")
+    }
+
+    @MainActor
+    func testSetPartySelectionSendsPartyCSV() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+
+        await store.setPartySelection([.democrat, .republican])
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "party" })?.value, "D,R")
     }
 
     @MainActor

@@ -1471,8 +1471,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #searchToggle { order:5; }
-    .trades-toolbars #tradesStats { order:6; }
+    .trades-toolbars #tradesStats { order:4; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1721,7 +1720,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        layout. The ID rule outranks any .toolbar class rule at every width. */
     #tradesExtraFilters { display: grid; grid-template-columns: 1fr auto; align-items: center; }
     #tradesExtraFilters #qSearchField { grid-column: 1 / -1; }
-    #tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }
     .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
     /* Pagers stay usable on phones: don't force every child full-width. */
@@ -2450,6 +2448,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="1825d">Past 5 Years</option>
           <option value="this_cy">This Calendar Year</option>
           <option value="last_cy">Last Calendar Year</option>
+          <option value="all">All Time</option>
         </select>
       </span>
       <div class="filter-groups">
@@ -2495,7 +2494,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <!-- The timeframe is named here, not just in the pill to the left: the same
            politician reads 988 trades in this window and 22,832 all time in the
            Directory, and an unlabelled count makes those look like a data bug. -->
@@ -2526,17 +2524,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
       <button class="btn ghost sm" onclick="resetCols()">Reset</button>
-    </dialog>
-    <dialog class="search-panel" id="searchPanel" onclick="if(event.target === this) closePanels()">
-      <div class="panel-head"><span class="panel-title">Filter this page</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
-      <p class="note" style="margin:0 0 8px">Filters the rows already loaded on this page only. Use the search field above to query the full feed.</p>
-      <span class="lbl">Search this page</span>
-      <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderTrades()" />
-      <span class="lbl">Min $ (this page)</span>
-      <input id="qPageMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderTrades()" />
-      <span class="lbl">Max $ (this page)</span>
-      <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderTrades()" />
-      <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </dialog>
     <!-- Pagination top + bottom: same controls, synced in updateTradesCountMsg / setPageSize. -->
     <div class="row-flex pager pager-top" data-pager="top">
@@ -2612,6 +2599,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="1825d">Past 5 Years</option>
           <option value="this_cy">This Calendar Year</option>
           <option value="last_cy">Last Calendar Year</option>
+          <option value="all">All Time</option>
         </select>
       </span>
       <div class="filter-groups">
@@ -4342,7 +4330,7 @@ function renderTradesHeader() {
 }
 
 /* Column chooser (the ⚙ Columns panel). */
-function panelIds() { return ['searchPanel', 'colChooser']; }
+function panelIds() { return ['colChooser']; }
 function anyPanelOpen() {
   return panelIds().some(function (id) { var p = el(id); return !!(p && p.classList.contains('open')); });
 }
@@ -4354,7 +4342,6 @@ function closePanels() {
       if (typeof p.close === 'function') p.close();
     }
   });
-  var st = el('searchToggle'); if (st) st.classList.remove('on');
 }
 function setPanelOpen(id, open) {
   panelIds().forEach(function (pid) {
@@ -4369,7 +4356,6 @@ function setPanelOpen(id, open) {
       }
     }
   });
-  var st = el('searchToggle'); if (st) st.classList.toggle('on', id === 'searchPanel' && open);
   if (id === 'colChooser' && open) renderColChooser();
 }
 function renderColChooser() {
@@ -4489,18 +4475,15 @@ function makeTradesFilterMatcher() {
   // Mirror the server's semantics: no HSP selection (empty param) = all
   // branches, including unresolved-chamber rows. Explicit chips filter exactly.
   var chDefault = chamberParam('qChamber') === '';
+  var sides = ty ? ty.split(',') : [];
   return function (r) {
     if (!chDefault && chs.indexOf(r.chamber) < 0) return false;
-    if (ty && r.type !== ty) return false;
+    if (sides.length && sides.indexOf(r.type) < 0) return false;
     return tradeRowMatchesSearch(r, q);
   };
 }
 function renderTrades() {
   var matchesActiveFilters = makeTradesFilterMatcher();
-  // Fold-out advanced search (panel may be collapsed; inputs still honored).
-  var qa = (el('qAll') && el('qAll').value || '').toLowerCase().trim();
-  var minAmt = parseFloat(el('qPageMinAmt') && el('qPageMinAmt').value);
-  var maxAmt = parseFloat(el('qMaxAmt') && el('qMaxAmt').value);
   var body = el('tradesBody');
   var cards = el('tradesCards');
   var cols = visibleCols();
@@ -4519,13 +4502,6 @@ function renderTrades() {
     // De-duplicated default (#1453): primary + historic seed rows can double
     // count the same real-world trade — Primary Only hides the seed copies.
     if (primaryOnly && r.source === 'seed_dataset') return false;
-    if (qa) {
-      var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
-                 (r.source || '') + ' ' + (r.owner || '') + ' ' + (r.st || '')).toLowerCase();
-      if (hay.indexOf(qa) < 0) return false;
-    }
-    if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
-    if (!isNaN(maxAmt) && !((r.max != null ? r.max : r.min) <= maxAmt)) return false;
     return matchesActiveFilters(r);
   });
   rows = sortRows(rows);
@@ -4576,24 +4552,7 @@ function updateTradesCountMsg(shown) {
   var end = Math.min(tradesPage * tradesPageSize + shown, total);
   var pageCount = Math.max(1, Math.ceil(total / tradesPageSize));
   var maxPage = maxReachableTradesPage(total);
-  // "Search this page" / Min-Max $ (this page) only ever narrow the rows
-  // already loaded into THIS page — they never reach the server (the search
-  // panel says so: "Filters the rows already loaded on this page only"), so
-  // total above stays the full server-filtered-query total, not a count of
-  // what these narrow to. Showing "N of total" while one is active would
-  // silently pass off a page-local slice as a corpus-wide count (owner
-  // report #2: never show a stale unfiltered total next to a filtered list).
-  var qa = (el('qAll') && el('qAll').value || '').trim();
-  var pageFilterActive = !!qa ||
-    (el('qPageMinAmt') && el('qPageMinAmt').value !== '') ||
-    (el('qMaxAmt') && el('qMaxAmt').value !== '');
-  var countHtml;
-  if (pageFilterActive) {
-    countHtml = '<span class="tick-num">' + shown.toLocaleString() + '</span> of <span class="tick-num">' +
-      TRADES.length.toLocaleString() + '</span> loaded rows match this page filter';
-  } else {
-    countHtml = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
-  }
+  var countHtml = '<span class="tick-num">' + start.toLocaleString() + '-' + end.toLocaleString() + '</span> of <span class="tick-num">' + total.toLocaleString() + '</span>';
   setAll('[data-trades-count]', function (msg) {
     msg.innerHTML = countHtml;
     msg.classList.remove('tick-animate');
@@ -4872,20 +4831,6 @@ function handleMobileSortKeyChange() {
 }
 function toggleMobileSortDir() {
   setSort(sortKey); // same key -> setSort() flips sortDir
-}
-
-/* ---- fold-out search ---- */
-function toggleSearch() {
-  var p = el('searchPanel');
-  var open = !(p && p.classList.contains('open'));
-  setPanelOpen('searchPanel', open);
-  if (open) setTimeout(function () { el('qAll').focus(); }, 0);
-}
-function clearSearch() {
-  if (el('qAll')) el('qAll').value = '';
-  if (el('qPageMinAmt')) el('qPageMinAmt').value = '';
-  if (el('qMaxAmt')) el('qMaxAmt').value = '';
-  renderTrades();
 }
 
 /* Friendly, human-readable label for a transaction's provenance. The raw value
@@ -8997,7 +8942,7 @@ function trParams() {
   }
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All' };
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* Tail phrase for the Consensus Moves explainer ("...within the past 3 months.") —
    keyed the same as TR_WINDOW_LABELS but phrased as a lowercase prepositional clause. */
@@ -11759,7 +11704,7 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
     // Sync other chamber filter group
     if (syncTarget) {
       syncChamberChips(groupId, syncTarget);
-      var targetStorageKey = syncTarget === 'qChamber' ? 'feed-chambers-v2' : 'trends-chambers-v2';
+      var targetStorageKey = 'shared-chambers-v1';
       try {
         var onT = [];
         el(syncTarget).querySelectorAll('.branch-toggle.on').forEach(function (c) { onT.push(c.getAttribute('data-ch')); });
@@ -11770,8 +11715,8 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
     onChange();
   });
 }
-initChamberChips('qChamber', 'feed-chambers-v2', function () { resetTradesPage(); }, 'trChamber');
-initChamberChips('trChamber', 'trends-chambers-v2', function () { loadTrends(); }, 'qChamber');
+initChamberChips('qChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'trChamber');
+initChamberChips('trChamber', 'shared-chambers-v1', function () { resetTradesPage(); loadTrends(); }, 'qChamber');
 restoreFiltersFromUrl(); // URL-mirrored filters (ft/fm/fty/fch/fw) win over localStorage
 
 /* One grouped explainer per branch strip: hover opens it on pointer devices,
@@ -11803,8 +11748,7 @@ function selectedSideParam(groupId) {
   var g = el(groupId); if (!g) return '';
   var on = [];
   g.querySelectorAll('.side-chip.on').forEach(function (b) { on.push(b.getAttribute('data-side')); });
-  if (on.length === 1) return on[0];
-  return '';
+  return on.length ? on.slice().sort().join(',') : '';
 }
 /* Multi-select party chips (D/R/O), same mental model as chamber chips: no
    selection = all parties (no filter). Returns the CSV ?party= value the

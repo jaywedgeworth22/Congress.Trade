@@ -79,6 +79,20 @@ export function asPartyBucket(v: unknown): PartyBucket | undefined {
   return c === 'D' ? 'D' : c === 'R' ? 'R' : c === 'O' || c === 'I' ? 'O' : undefined;
 }
 
+/** CSV multi-party selection (e.g. "D,R"). Undefined = no party filter. */
+export function asPartyBuckets(v: unknown): PartyBucket[] | undefined {
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(
+      v
+        .split(',')
+        .map((part) => asPartyBucket(part.trim()))
+        .filter((c): c is PartyBucket => !!c),
+    ),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
 export function asChamber(v: unknown): Chamber | undefined {
   return v === 'house' || v === 'senate' || v === 'executive' ? v : undefined;
 }
@@ -204,6 +218,8 @@ export interface CommonFilters {
   chambers?: Chamber[];
   /** Party bucket (D/R/O); matched against {@link PARTY_BUCKET_SQL}. */
   party?: PartyBucket;
+  /** Multi-party selection (takes precedence over `party`). */
+  parties?: PartyBucket[];
   /** 'all' (default) applies no source filter; else t.source = source. */
   source?: SourceFilter;
   /** Minimum per-row confidence (omit for no filter). */
@@ -269,7 +285,10 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   } else {
     // Default view = all chambers. We no longer exclude executive filings by default.
   }
-  if (p.party) {
+  if (p.parties && p.parties.length) {
+    where.push(`${PARTY_BUCKET_SQL} IN (${p.parties.map(() => '?').join(', ')})`);
+    for (const b of p.parties) params.push(b);
+  } else if (p.party) {
     where.push(`${PARTY_BUCKET_SQL} = ?`);
     params.push(p.party);
   }
