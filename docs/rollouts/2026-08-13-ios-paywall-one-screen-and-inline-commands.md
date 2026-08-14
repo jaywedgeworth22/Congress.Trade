@@ -134,6 +134,10 @@ passing `-derivedDataPath`) fixes it.
 1. **Confirm the App Store Connect introductory offer is 2 weeks** on both
    `trade.congress.premium.monthly` and `trade.congress.premium.annual`.  Copy
    now says 2-week everywhere; ASC is the authority.
+   **Verified 2026-08-14:** both products are `FREE_TRIAL` / `TWO_WEEKS`
+   (start 2026-08-12, no end); US prices $5 / $50; Infisical prod
+   `STRIPE_TRIAL_DAYS=14`.  Receipt:
+   `docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 2. Re-test the TestFlight purchase end to end after this ships — expect the
    redeem to confirm in one round trip.  The owner's existing Premium grant
    already landed, so testing a *fresh* purchase needs a new sandbox tester.
