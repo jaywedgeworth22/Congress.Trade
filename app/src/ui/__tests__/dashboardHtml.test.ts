@@ -1696,15 +1696,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('prefers-reduced-motion');
   });
 
-  it('adds an independent time-range control to the buys/sells chart, anchored to recent', () => {
-    expect(DASHBOARD_HTML).toContain('id="trTimeWin"');
-    expect(DASHBOARD_HTML).toContain('function setTrTimeWin(');
+  it('anchors the Buys vs Sells chart to the shared page window', () => {
     expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
-    expect(DASHBOARD_HTML).toContain('function trTimeParams(');
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+    expect(DASHBOARD_HTML).toContain("aGet('volume-over-time?' + trParams())");
+    expect(DASHBOARD_HTML).not.toContain('function setTrTimeWin(');
+    expect(DASHBOARD_HTML).not.toContain('function trTimeParams(');
+    expect(DASHBOARD_HTML).not.toContain('id="trTimeWin"');
+    expect(DASHBOARD_HTML).not.toContain('Buys vs Sells Over Time');
   });
 
-  it('toggles Buys vs Sells Over Time between trade counts and dollar volume', () => {
+  it('toggles Buys vs Sells between trade counts and dollar volume', () => {
     expect(DASHBOARD_HTML).toContain('id="trTimeMetric"');
     expect(DASHBOARD_HTML).toContain('function setTrTimeMetric(');
     expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\"");
@@ -1712,6 +1714,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("timeChartHtml(s, null, trTimeMetric)");
     expect(DASHBOARD_HTML).toContain("metric === 'count'");
     expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
+  });
+
+  it('does not put an explainer under Consensus Moves or Rising Activity', () => {
+    expect(DASHBOARD_HTML).not.toContain('trConsensusPhrase');
+    expect(DASHBOARD_HTML).not.toContain('Assets where several different politicians happened to trade the same direction');
+    expect(DASHBOARD_HTML).not.toContain('Assets whose trade count rose most');
   });
 
   it('fits the buys/sells time chart to the card width without horizontal scroll', () => {
@@ -2253,6 +2261,22 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('id="trGlobalWindow"');
     expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
     expect(DASHBOARD_HTML).toContain('.tr-window-label');
+  });
+
+  it('spells Top Performers scope as 5+ buys and +/-200% cap per trade', () => {
+    expect(DASHBOARD_HTML).toContain('5+ buys');
+    expect(DASHBOARD_HTML).toContain('+/-200% cap per trade');
+    expect(DASHBOARD_HTML).not.toContain('few scored trades');
+    expect(DASHBOARD_HTML).not.toContain('each trade capped at');
+  });
+
+  it('does not say in this window under Disclosure Timeliness', () => {
+    expect(DASHBOARD_HTML).toContain("'Middle disclosure lag. ' + lagBasis");
+    expect(DASHBOARD_HTML).toContain("'Number of trade rows with both transaction and official filing dates.'");
+    expect(DASHBOARD_HTML).not.toContain('Middle disclosure lag in this window');
+    expect(DASHBOARD_HTML).not.toContain('official filing dates in this window');
+    expect(DASHBOARD_HTML).toContain("'<div class=\"note\">No dated filings.</div>'");
+    expect(DASHBOARD_HTML).not.toContain('No dated filings in this window');
   });
 
   // ---- 4. "Healthcare" vs "Health Care" sector canonicalization ------------

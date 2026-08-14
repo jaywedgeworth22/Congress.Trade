@@ -13,6 +13,7 @@ struct TrendsView: View {
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
     @State private var selectedPoliticianPhotoUrl: String?
+    @State private var volumeMetric: VolumeChartMetric = .count
 
     var body: some View {
         NavigationStack {
@@ -159,13 +160,29 @@ struct TrendsView: View {
             || lower.contains("cancelled") || lower.contains("canceled")
     }
 
-
+    /// Italic dim window after the heading, matching the site `.tr-window-label`.
+    /// Extra top pad on later sections so the title sits closer to its own card
+    /// than to the card above.
+    private func trendsHeading(_ title: String, extraTop: CGFloat = 10) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.headline)
+            Text(store.selectedTimeRange.label)
+                .font(.caption.italic())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, extraTop)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(store.selectedTimeRange.label)")
+    }
 
     private var summaryStrip: some View {
         let s = store.analyticsSummary
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Market Snapshot")
-                .font(.headline)
+            trendsHeading("Market Snapshot", extraTop: 0)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 TrendKPI(title: "Trades", value: CompactFormat.count(s?.totalTrades))
                 TrendKPI(title: "Politicians", value: CompactFormat.count(s?.uniqueMembers))
@@ -187,15 +204,42 @@ struct TrendsView: View {
 
     private var volumeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Buys vs Sells Over Time")
-                .font(.headline)
-            Text("Trade counts bucketed by period over selected window.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Buys vs Sells")
+                        .font(.headline)
+                    Text(store.selectedTimeRange.label)
+                        .font(.caption.italic())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Buys vs Sells, \(store.selectedTimeRange.label)")
+                Spacer(minLength: 8)
+                Picker("Metric", selection: $volumeMetric) {
+                    ForEach(VolumeChartMetric.allCases) { metric in
+                        Text(metric.label).tag(metric)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 168)
+                .accessibilityLabel("Buys vs Sells metric")
+            }
+            .padding(.top, 10)
 
-            let maxCount = max(store.volumeSeries.map { $0.buys + $0.sells }.max() ?? 1, 1)
+            let useDollars = volumeMetric == .dollars
+            let totals: [Double] = store.volumeSeries.map { point in
+                if useDollars {
+                    return (point.estBuyVolUsd ?? 0) + (point.estSellVolUsd ?? 0)
+                }
+                return Double(point.buys + point.sells)
+            }
+            let maxVal = max(totals.max() ?? 1, 1)
             VStack(spacing: 6) {
                 ForEach(store.volumeSeries.suffix(12)) { point in
+                    let buyVal = useDollars ? (point.estBuyVolUsd ?? 0) : Double(point.buys)
+                    let sellVal = useDollars ? (point.estSellVolUsd ?? 0) : Double(point.sells)
                     HStack(spacing: 8) {
                         Text(formatVolumePeriod(point.period))
                             .font(.caption2.monospaced())
@@ -203,24 +247,30 @@ struct TrendsView: View {
                             .frame(width: 72, alignment: .leading)
                         GeometryReader { geo in
                             HStack(spacing: 2) {
-                                let buyW = geo.size.width * CGFloat(point.buys) / CGFloat(maxCount)
-                                let sellW = geo.size.width * CGFloat(point.sells) / CGFloat(maxCount)
+                                let buyW = geo.size.width * CGFloat(buyVal) / CGFloat(maxVal)
+                                let sellW = geo.size.width * CGFloat(sellVal) / CGFloat(maxVal)
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.green.opacity(0.75))
-                                    .frame(width: max(buyW, point.buys > 0 ? 2 : 0))
+                                    .frame(width: max(buyW, buyVal > 0 ? 2 : 0))
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.red.opacity(0.75))
-                                    .frame(width: max(sellW, point.sells > 0 ? 2 : 0))
+                                    .frame(width: max(sellW, sellVal > 0 ? 2 : 0))
                                 Spacer(minLength: 0)
                             }
                         }
                         .frame(height: 12)
-                        Text("\(point.buys + point.sells)")
+                        Text(useDollars
+                             ? CompactFormat.usd(buyVal + sellVal)
+                             : CompactFormat.count(Int(buyVal + sellVal)))
                             .font(.caption2.weight(.semibold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                            .frame(width: 50, alignment: .trailing)
+                            .frame(width: useDollars ? 64 : 50, alignment: .trailing)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        "\(formatVolumePeriod(point.period)), \(useDollars ? CompactFormat.usd(buyVal) : CompactFormat.count(Int(buyVal))) buys, \(useDollars ? CompactFormat.usd(sellVal) : CompactFormat.count(Int(sellVal))) sells"
+                    )
                 }
             }
             .padding(12)
@@ -230,8 +280,7 @@ struct TrendsView: View {
 
     private var tickerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("What Is Being Traded")
-                .font(.headline)
+            trendsHeading("What Is Being Traded")
             VStack(spacing: 0) {
                 ForEach(Array(store.tickerLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, item in
                     Button {
@@ -278,11 +327,7 @@ struct TrendsView: View {
 
     private var trendingSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Rising Activity")
-                .font(.headline)
-            Text("Assets whose trade count rose most vs prior equal period.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            trendsHeading("Rising Activity")
             VStack(spacing: 0) {
                 ForEach(Array(store.trendingAssets.prefix(8).enumerated()), id: \.element.id) { idx, item in
                     Button {
@@ -330,11 +375,7 @@ struct TrendsView: View {
 
     private var clusterSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Consensus Moves")
-                .font(.headline)
-            Text("Assets several politicians traded the same direction in this window.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            trendsHeading("Consensus Moves")
             VStack(spacing: 8) {
                 ForEach(store.clusterBuys.prefix(8)) { c in
                     Button {
@@ -388,6 +429,7 @@ struct TrendsView: View {
                 }
             }
         }
+        .padding(.top, 10)
     }
 
     @ViewBuilder
@@ -395,11 +437,7 @@ struct TrendsView: View {
         if !store.sectorFlow.isEmpty {
             let rows = SectorFlowRow.rows(from: store.sectorFlow, topCount: 8)
             VStack(alignment: .leading, spacing: 10) {
-                Text("Net Flow by Sector")
-                    .font(.headline)
-                Text("Sectors come from ticker enrichment — trades without a resolved ticker aren't included.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                trendsHeading("Net Flow by Sector", extraTop: 0)
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HStack {
@@ -431,8 +469,7 @@ struct TrendsView: View {
     private var marketCapCard: some View {
         if !store.marketCapBuckets.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("By Market Cap")
-                    .font(.headline)
+                trendsHeading("By Market Cap", extraTop: 0)
                 let caps = MarketCapOrder.sorted(store.marketCapBuckets)
                 VStack(spacing: 0) {
                     ForEach(Array(caps.enumerated()), id: \.element.id) { idx, cap in
@@ -475,7 +512,20 @@ struct TrendsView: View {
     /// is "prone to having wild numbers" — an unlabelled small-N guard is
     /// exactly the thing that makes a 3-trade streak look like skill. Keep in
     /// sync with the builder if that default ever moves.
-    private static let performersMinBuys = 5
+    static let performersMinBuys = 5
+
+    /// Scope line under Top Performers.  Owner: "5+ buys", not "minimum…",
+    /// and "+/-200% cap per trade" instead of "each trade capped at ±200%".
+    /// The selected window lives on the heading, not here.
+    static func performersScopeLine() -> String {
+        "\(performersMinBuys)+ buys  •  stocks only  •  +/-200% cap per trade"
+    }
+
+    /// Caption under Disclosure Timeliness.  The window is already on the
+    /// filter chips / heading — do not repeat "in this window".
+    static func timelinessBasis(count: Int) -> String {
+        "9 in 10 filings land inside the P90 figure.  Based on \(CompactFormat.count(count)) disclosed trades."
+    }
 
     private var performersSection: some View {
         // Rank by the SAME statistic the row prints. The API already orders by
@@ -487,8 +537,7 @@ struct TrendsView: View {
             .sorted { ($0.avgExcessReturn ?? -.greatestFiniteMagnitude) > ($1.avgExcessReturn ?? -.greatestFiniteMagnitude) }
             .prefix(8)
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Top Performers")
-                .font(.headline)
+            trendsHeading("Top Performers")
             // Benchmark named ONCE here instead of stamped on every row.
             // Wording mirrors the `note` field this endpoint returns
             // (`app/src/analytics/routes.ts`); iOS only decodes `members`, so
@@ -496,10 +545,7 @@ struct TrendsView: View {
             Text("How far each politician's disclosed buys beat the S&P 500, measured from the filing date — the part a follower could have acted on.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            // The scope line the owner asked for: an unlabelled small-N guard
-            // and an unlabelled window are what let a short streak read as
-            // skill ("prone to having wild numbers").
-            Text("\(store.selectedTimeRange.label)  •  minimum \(Self.performersMinBuys) buys  •  stocks only  •  each trade capped at ±200%")
+            Text(Self.performersScopeLine())
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -552,8 +598,7 @@ struct TrendsView: View {
 
     private var memberSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Most Active Politicians")
-                .font(.headline)
+            trendsHeading("Most Active Politicians")
             VStack(spacing: 0) {
                 ForEach(Array(store.memberLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, m in
                     Button {
@@ -596,8 +641,7 @@ struct TrendsView: View {
 
     private var conflictsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Committee Sector Conflicts")
-                .font(.headline)
+            trendsHeading("Committee Sector Conflicts")
             Text("Disclosed trades in sectors that a politician's committees oversee (curated committee→sector map). Observational — not evidence of impropriety.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -647,8 +691,7 @@ struct TrendsView: View {
 
     private func timelinessSection(lag: FilingLagResponse) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Disclosure Timeliness")
-                .font(.headline)
+            trendsHeading("Disclosure Timeliness")
             Text("Days from trade to official filing date (45-day STOCK Act limit).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -670,7 +713,7 @@ struct TrendsView: View {
                     )
                 }
                 if let count = s.count, count > 0 {
-                    Text("9 in 10 filings land inside the P90 figure.  Based on \(CompactFormat.count(count)) disclosed trades in this window.")
+                    Text(Self.timelinessBasis(count: count))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -952,6 +995,20 @@ private struct SectorFlowRow: Identifiable {
     }
 }
 
+private enum VolumeChartMetric: String, CaseIterable, Identifiable {
+    case count
+    case dollars
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .count: return "# Trades"
+        case .dollars: return "$"
+        }
+    }
+}
+
 struct TrendKPI: View {
     let title: String
     let value: String
@@ -982,6 +1039,7 @@ struct LatencyComparisonView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Speed vs. Data Providers")
                 .font(.headline)
+                .padding(.top, 10)
             Text("Live new imports only (seed/historical backfills excluded). Matched against provider feeds even if the gap is minutes or up to about two weeks either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
