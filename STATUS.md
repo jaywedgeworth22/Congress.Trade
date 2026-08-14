@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-14 GROK — Premium trial is actually 2 weeks (ASC + Stripe)
+
+Monet's leftover from #1835 is closed.  Live App Store Connect: both
+`trade.congress.premium.monthly` and `.annual` carry `FREE_TRIAL` / `TWO_WEEKS`
+(start 2026-08-12, no end).  US prices $5 / $50.  Infisical prod
+`STRIPE_TRIAL_DAYS=14`.  App copy already matches.  No owner call and no
+trial-length change.  Plan buttons stay hidden until sign-in (intentional);
+TestFlight 1.0.14 already has the one-screen Premium sheet.  Receipt:
+`docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
+
 ## 2026-08-13 GROK — pickup leftovers verified, no CT code
 
 iOS settings leftovers from today's capped chats are already on `main` (`b649778e`): Sign in with Apple, Google-branded button, full-height Account sheet, Trade Disclosure Alerts, CSV + Premium + legal.  Stay-funded and the fourth Cloudflare account are Usage Monitor (`grok/pickup-um-cf-accounts`).  No CT implementation.
