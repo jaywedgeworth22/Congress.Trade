@@ -2,7 +2,7 @@
  * src/ui/__tests__/legalHtml.test.ts
  *
  * Guards the Terms of Service pricing copy against drifting from the owner-
- * decided canonical Premium price ($5/mo · $50/yr, 1-month trial).
+ * decided canonical Premium price ($5/mo · $50/yr, 2-week trial).
  */
 
 import { describe, it, expect } from 'vitest';

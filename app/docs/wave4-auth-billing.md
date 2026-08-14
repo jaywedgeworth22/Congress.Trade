@@ -25,7 +25,7 @@ npx wrangler secret put APP_BASE_URL   # e.g. https://congress.trade
 
 ## 1. Stripe (freemium paywall)
 
-**Pricing (decided 2026-08-05):** 1-month free trial → **$5/mo** or **$50/yr**.
+**Pricing (current, verified 2026-08-14):** 2-week free trial → **$5/mo** or **$50/yr**.  The 2026-08-05 first-ship used a 1-month trial; the configured offer is now 14 days (`STRIPE_TRIAL_DAYS=14`, App Store Connect intro offer `TWO_WEEKS` on both `trade.congress.premium.monthly` and `.annual`).  In-app / store copy must quote 2 weeks, never 1 month.
 
 1. **Create the product + prices** (Stripe Dashboard → Products, in *live* mode):
    - Product: "Congress.Trade Premium".
@@ -46,13 +46,13 @@ npx wrangler secret put STRIPE_SECRET_KEY        # sk_live_…
 npx wrangler secret put STRIPE_WEBHOOK_SECRET    # whsec_…
 npx wrangler secret put STRIPE_PRICE_MONTHLY     # price_… ($5/mo)
 npx wrangler secret put STRIPE_PRICE_ANNUAL      # price_… ($50/yr)
-# optional — defaults to 7 if unset; can also live in wrangler.toml [vars]
-npx wrangler secret put STRIPE_TRIAL_DAYS        # 30
+# optional — code default is 14 if unset; Infisical prod is 14
+npx wrangler secret put STRIPE_TRIAL_DAYS        # 14
 ```
 
 **Test before live:** do all of the above in Stripe *test* mode with `sk_test_…`
-keys and the test webhook secret; use card `4242 4242 4242 4242`. The trial means
-no charge for 30 days (1 month), so confirm the flow end-to-end first.
+keys and the test webhook secret; use card `4242 4242 4242 4242`.  The trial means
+no charge for 14 days (2 weeks), so confirm the flow end-to-end first.
 
 How it reconciles: checkout creates the customer up-front and stores the
 `customer ↔ user` link; the `customer.subscription.*` webhooks are the source of

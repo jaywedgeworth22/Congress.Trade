@@ -1,5 +1,19 @@
 # Current Handoff
 
+## 2026-08-14 GROK — trial copy already matches the 2-week offer
+
+Monet leftover: store copy said one month, configured offer was two weeks.
+Verified 2026-08-14 (read-only): the offer is 14 days / 2 weeks everywhere that
+charges — Infisical prod `STRIPE_TRIAL_DAYS` classifies as 14, code default 14,
+ASC intro offers on `trade.congress.premium.monthly` and `.annual` are
+`TWO_WEEKS` (started 2026-08-12).  User-facing web / iOS / ToS / ASC listing
+already say 2-week (Claude #1835).  Only leftover was operator runbook
+`app/docs/wave4-auth-billing.md` still teaching 1-month / `STRIPE_TRIAL_DAYS=30`.
+Updated that plus the `legalHtml.test.ts` header.  No ASC writes.
+
+Branch `grok/ct-trial-copy`, worktree `~/apps/congress-grok-trial-copy`.
+Rollout: `docs/rollouts/2026-08-14-trial-copy-matches-offer.md`.
+
 ## 2026-08-13 GROK — pickup leftovers verified, no CT code
 
 iOS settings leftovers from today's capped chats are already on `main` (`b649778e`): Sign in with Apple, Google-branded button, full-height Account sheet, Trade Disclosure Alerts, CSV + Premium + legal.  Stay-funded and the fourth Cloudflare account are Usage Monitor (`grok/pickup-um-cf-accounts`).  No CT implementation.
