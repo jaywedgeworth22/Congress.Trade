@@ -280,8 +280,12 @@ describe('DASHBOARD_HTML', () => {
     // No selection = all chambers (no param); partial selection sends a CSV.
     expect(DASHBOARD_HTML).toContain("var CHAMBER_ALL = ['house', 'senate', 'executive']");
     expect(DASHBOARD_HTML).toContain('function chamberParam(');
-    expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'feed-chambers-v2'");
-    expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v2'");
+    expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'shared-chambers-v1'");
+    expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'shared-chambers-v1'");
+    expect(DASHBOARD_HTML).toContain('<option value="all">All Time</option>');
+    expect(DASHBOARD_HTML).not.toContain('id="searchPanel"');
+    expect(DASHBOARD_HTML).not.toContain('id="qPageMinAmt"');
+    expect(DASHBOARD_HTML).toContain("return on.length ? on.slice().sort().join(',') : '';");
     // HSP sits on the same row as party chips; no redundant Timeframe label / Refresh.
     expect(DASHBOARD_HTML).toMatch(/class="[^"]*trends-filter-row[^"]*"/);
 
@@ -2790,7 +2794,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="pageSize"');
     expect(extraFilters![0]).not.toContain('id="exportCsvBtn"');
     expect(extraFilters![0]).toContain('id="qSearch"');
-    expect(extraFilters![0]).toContain('id="searchToggle"');
+    expect(extraFilters![0]).not.toContain('id="searchToggle"');
     expect(extraFilters![0]).toContain('id="tradesStats"');
     expect(extraFilters![0]).toContain('matching trades');
     // Top + bottom pagers with shared data-* hooks.
@@ -3674,23 +3678,23 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(wrapMatch).not.toBeNull();
     expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesSharedFilters,\n    .trades-toolbars #tradesExtraFilters { display:contents; }');
-    // Desired order: timeframe, groups+ⓘ, unified search, Search, stats.
+    // Desired order: timeframe, groups+ⓘ, unified search, stats.
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .filter-groups { order:2; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #searchToggle { order:5; }');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:6; }');
+    expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
+    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1 / -1; }');
-    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #searchToggle { grid-column: 1; justify-self: start; }');
+    expect(DASHBOARD_HTML).not.toContain('#tradesExtraFilters #searchToggle');
     const document = parse(DASHBOARD_HTML);
     const extras = document.querySelectorAll('#tradesExtraFilters > *').map((n) => n.id).filter(Boolean);
     // Hidden legacy inputs have no visible layout role but may lack ids on wrappers.
     expect(extras).toContain('qSearchField');
-    expect(extras).toContain('searchToggle');
+    expect(extras).not.toContain('searchToggle');
     expect(extras).toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
     // #9's "tighten to match the app" mobile sub-clause).
@@ -4113,8 +4117,10 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
   });
 
   it('never shows a stale corpus-wide total next to a page-local-filtered list (owner report #2)', () => {
-    expect(DASHBOARD_HTML).toContain('var pageFilterActive = !!qa ||');
-    expect(DASHBOARD_HTML).toContain("loaded rows match this page filter");
+    // Page-local Search/$ is gone (owner: no $/size on any platform), so the
+    // pager count is always the server-filtered corpus total.
+    expect(DASHBOARD_HTML).not.toContain('var pageFilterActive = !!qa ||');
+    expect(DASHBOARD_HTML).not.toContain('loaded rows match this page filter');
   });
 });
 

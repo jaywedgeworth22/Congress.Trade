@@ -26,6 +26,7 @@ import { normalizeCompanyName, resolveAssetDisplayName } from '../shared/company
 import {
   asChambers,
   asPartyBucket,
+  asPartyBuckets,
   asSourceFilter,
   asWindow,
   autoGranularity,
@@ -168,6 +169,7 @@ function commonFromQuery(q: Record<string, string>): CommonQuery {
     chamber: chambers && chambers.length === 1 ? chambers[0] : undefined,
     chambers,
     party: asPartyBucket(q.party),
+    parties: asPartyBuckets(q.party),
     source: asSourceFilter(q.source),
     minConf: minConf !== undefined && Number.isFinite(minConf) ? minConf : undefined,
     excludeOptions: q.excludeOptions === 'true',

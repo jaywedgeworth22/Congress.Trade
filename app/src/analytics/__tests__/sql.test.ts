@@ -12,6 +12,7 @@ import {
   PARTY_BUCKET_SQL,
   asChamber,
   asPartyBucket,
+  asPartyBuckets,
   asSourceFilter,
   asWindow,
   autoGranularity,
@@ -62,6 +63,15 @@ describe('validators', () => {
     expect(asPartyBucket('Other')).toBe('O');
     expect(asPartyBucket('')).toBeUndefined();
     expect(asPartyBucket(undefined)).toBeUndefined();
+  });
+
+  it('asPartyBuckets parses CSV and IN-filters multiple buckets', () => {
+    expect(asPartyBuckets('D,R')).toEqual(['D', 'R']);
+    expect(asPartyBuckets('R, D, R')).toEqual(['D', 'R']);
+    expect(asPartyBuckets('')).toBeUndefined();
+    const { where, params } = buildCommonFilters({ window: '90d', parties: ['D', 'R'] });
+    expect(where.join(' AND ')).toContain('IN (?, ?)');
+    expect(params).toEqual(expect.arrayContaining(['D', 'R']));
   });
 
   it('asChamber / asSourceFilter validate against known sets', () => {

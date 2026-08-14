@@ -23,20 +23,8 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var conflicts: [ConflictCandidateItem] = []
     /// Multi-select party filter (owner directive 2026-08-09: Chamber/Party/
     /// Trade Type pills must support one-or-many, matching the web's CSV
-    /// multi-select semantics). Empty = all parties (default), matching the
-    /// Chamber convention. Wired two different ways because the two server
-    /// endpoints differ:
-    ///  - Trades feed (`/api/client/v1/feed`): `filtersFromQuery` in
-    ///    `app/src/client/utils.ts` has NO `party` param at all, so the
-    ///    Trades list is filtered by party entirely client-side
-    ///    (`FeedDashboardView.filteredTrades`), for any number selected.
-    ///  - Trends analytics (`/api/analytics/*`): `asPartyBucket` in
-    ///    `app/src/analytics/sql.ts` accepts one bucket. `refreshTrends()`
-    ///    below sends `party=` only when exactly one party is selected,
-    ///    mirroring the same single-value fallback the web itself uses for
-    ///    its `qSideGroup`/`selectedSideParam` side chips — selecting 2+
-    ///    parties shows unfiltered (all-party) analytics, honestly, rather
-    ///    than silently picking one.
+    /// multi-select semantics). Empty = all parties (default). Forwarded as
+    /// `party=` CSV on the feed and on Trends analytics.
     @Published private(set) var selectedParties: Set<PartyFilter> = []
     @Published private(set) var isLoadingTrends = false
     /// TRUE from the instant the user touches a filter control until the rows
@@ -98,12 +86,8 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
-    /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Server
-    /// `type=` (`app/src/client/utils.ts` `asTxType`) is single-valued, so
-    /// `tradeTypeQueryValue` only forwards it when exactly one side is
-    /// selected (same fallback the web's own `qSideGroup` chips use); any
-    /// selection count is still filtered correctly client-side in
-    /// `FeedDashboardView.filteredTrades`.
+    /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Forwarded
+    /// as `type=` CSV when a subset is selected (`asTxTypes`).
     @Published private(set) var selectedTradeTypes: Set<TradeTypeFilter> = []
     /// Trades-only free-text politician filter (`memberName=`).
     @Published private(set) var politicianFilter: String = ""
@@ -453,24 +437,10 @@ final class CongressTradeStore: ObservableObject {
     /// Whether the visible list is narrowed by something the SERVER never saw,
     /// which makes `tradeTotal` an overstatement of what is actually shown.
     ///
-    /// Three narrowings are client-only, each for a documented reason:
-    ///  - **Party** — `/api/client/v1/feed` has no `party` param at all
-    ///    (`filtersFromQuery`), so it is applied in
-    ///    `FeedDashboardView.filteredTrades`. Selecting every party narrows
-    ///    nothing, so that case is excluded.
-    ///  - **2+ trade types** — `type=` is single-valued (`asTxType`), so the
-    ///    request goes out unfiltered and the sides are applied locally.
-    ///    Selecting every side narrows nothing either.
-    ///  - **Local search text** — lives in the view and is the one input this
-    ///    store genuinely cannot see, so callers pass it in. Taking it as a
-    ///    parameter beats mirroring the view's debounced text into the store:
-    ///    a second copy is a second source of truth to keep in sync, and every
-    ///    drift here is a wrong number shown to the user.
+    /// The only remaining client-only narrowing is local search text — party
+    /// and multi-side now go to the server as CSV, so `tradeTotal` matches.
     func hasClientOnlyNarrowing(localSearchText: String = "") -> Bool {
-        let partyNarrows = !selectedParties.isEmpty && selectedParties.count < PartyFilter.allCases.count
-        let sidesNarrow = selectedTradeTypes.count > 1 && selectedTradeTypes.count < TradeTypeFilter.allCases.count
-        let searchNarrows = !localSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return partyNarrows || sidesNarrow || searchNarrows
+        !localSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The only count the Trades header is allowed to print.
@@ -644,6 +614,7 @@ final class CongressTradeStore: ObservableObject {
                     memberName: memberNameParam,
                     chamber: chamberParam,
                     type: typeParam,
+                    party: Self.partyQueryValue(for: selectedParties),
                     from: from,
                     to: to,
                     sort: "tx_date",
@@ -747,10 +718,7 @@ final class CongressTradeStore: ObservableObject {
         trendsNotice = nil
         // All-time + calendar-year analytics map through analyticsWindow.
         let analyticsWindow = selectedTimeRange.analyticsWindow
-        // Server `party=` (`asPartyBucket`) is single-valued — see the
-        // `selectedParties` doc comment above. Forward it only when exactly
-        // one party is selected; 0 or 2+ selected shows unfiltered analytics.
-        let partyParam = selectedParties.count == 1 ? selectedParties.first?.rawValue : nil
+        let partyParam = Self.partyQueryValue(for: selectedParties)
         let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
@@ -885,15 +853,18 @@ final class CongressTradeStore: ObservableObject {
         return chambers.map(\.rawValue).sorted().joined(separator: ",")
     }
 
-    /// The `type=` query value for a multi-selection, or `nil` to omit the
-    /// parameter — sent only when exactly one side is selected, since the
-    /// server's `type=` (`asTxType`) is single-valued. Mirrors the web's own
-    /// `selectedSideParam` fallback for its `qSideGroup` chips. Any selection
-    /// count is still filtered correctly client-side afterward (see
-    /// `FeedDashboardView.filteredTrades`).
+    /// The `type=` query value for a multi-selection. Empty / all sides omit
+    /// the param; otherwise send CSV (`B,S`) — `asTxTypes` accepts it.
     private static func tradeTypeQueryValue(for types: Set<TradeTypeFilter>) -> String? {
-        guard types.count == 1 else { return nil }
-        return types.first?.rawValue
+        let all = Set(TradeTypeFilter.allCases)
+        if types.isEmpty || types == all { return nil }
+        return types.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    private static func partyQueryValue(for parties: Set<PartyFilter>) -> String? {
+        let all = Set(PartyFilter.allCases)
+        if parties.isEmpty || parties == all { return nil }
+        return parties.map(\.rawValue).sorted().joined(separator: ",")
     }
 
     private func trimCache(in context: ModelContext) throws {

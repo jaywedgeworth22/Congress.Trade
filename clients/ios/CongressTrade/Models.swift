@@ -554,9 +554,8 @@ enum PartyFilter: String, CaseIterable, Identifiable {
     /// "Independent") the same way the server's `asPartyBucket` does
     /// (`app/src/analytics/sql.ts`): first letter D→Democrat, R→Republican,
     /// anything else non-empty→Other. `nil` for an empty/unresolved value.
-    /// Used for the Trades feed's client-side party filter, since
-    /// `/api/client/v1/feed` does not accept a `party=` param at all (see
-    /// `CongressTradeStore.setPartySelection` doc comment).
+    /// Still used as a local belt-and-suspenders pass; the feed now also
+    /// accepts `party=` CSV (`asPartyBuckets`).
     static func bucket(for raw: String?) -> PartyFilter? {
         guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return nil }
         switch first.uppercased() {
@@ -995,11 +994,13 @@ struct LatencySummary: Decodable {
 /// (`app/src/ui/dashboardHtml.ts` TR_WINDOW_LABELS / default `90d`) plus
 /// calendar-year options requested for iOS parity.
 enum TimeRange: String, CaseIterable, Identifiable, Codable {
+    case oneDay = "1d"
     case sevenDays = "7d"
     case thirtyDays = "30d"
     case ninetyDays = "90d"
     case sixMonths = "180d"
     case oneYear = "365d"
+    case fiveYears = "1825d"
     case thisCalendarYear = "ytd"
     case lastCalendarYear = "prev_year"
     case all = "all"
@@ -1008,11 +1009,13 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
+        case .oneDay: return "Past Day"
         case .sevenDays: return "Past Week"
         case .thirtyDays: return "Past Month"
         case .ninetyDays: return "Past 3 Months"
         case .sixMonths: return "Past 6 Months"
         case .oneYear: return "Past Year"
+        case .fiveYears: return "Past 5 Years"
         case .thisCalendarYear: return "This Calendar Year"
         case .lastCalendarYear: return "Last Calendar Year"
         case .all: return "All Time"
@@ -1027,7 +1030,7 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
         case .thisCalendarYear, .lastCalendarYear:
             return "365d"
         case .all:
-            return "1825d"
+            return "all"
         default:
             return rawValue
         }
@@ -1057,14 +1060,16 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
             comps.day = 1
             guard let date = cal.date(from: comps) else { return nil }
             return formatter.string(from: date)
-        case .sevenDays, .thirtyDays, .ninetyDays, .sixMonths, .oneYear:
+        case .oneDay, .sevenDays, .thirtyDays, .ninetyDays, .sixMonths, .oneYear, .fiveYears:
             let days: Int
             switch self {
+            case .oneDay: days = 1
             case .sevenDays: days = 7
             case .thirtyDays: days = 30
             case .ninetyDays: days = 90
             case .sixMonths: days = 180
             case .oneYear: days = 365
+            case .fiveYears: days = 1825
             default: return nil
             }
             guard let date = cal.date(byAdding: .day, value: -days, to: Date()) else { return nil }
