@@ -1,3 +1,5 @@
+- **2026-08-14 — GROK — IN PR #1851 — Unstick APNs send: merge main, keep 3.7 comments + APNS env fields, reword gitleaks env-name FP (branch `grok/apns-send`, worktree `~/apps/congress-grok-apns-send`).**  Types: main `gemini-3.7-flash` comments + Apple Sign-In env fields, plus PR APNS env fields.  Effort-log union both sides.  Comment no longer puts a key-like token next to PEM/base64.
+- **2026-08-13 — GROK — IN PROGRESS — Real APNs HTTP/2 send for official trades + review needed (branch `grok/apns-send`).** Register-only before.  Sender uses node:http2; tests mock transport.  Scheduled-tick fan-out over push_devices.  Infisical APNS_* seeded (lengths only).
 - **2026-08-14 — GROK — IN PR #1871 — Sticky filters + #/$ + iOS Directory Assets (branch `grok/sticky-dir-count`).**  Buys vs Sells toggle is `#` / `$`.  Drop italic timeframe after Trends headings.  Pin Trades/Trends filter bar.  iOS Directory People|Assets.
 - **2026-08-14 — GROK — COMPLETED/MERGED (#1870 `de41c6de`) — AppLegalFooter on Trends too.**
 - **2026-08-14 — GROK — COMPLETED/MERGED (#1863 `38167663`) + DEPLOYED — Mobile web filters match iOS + SIWA start route.**

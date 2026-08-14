@@ -1,3 +1,8 @@
 # False positives: curated executive-filer id strings in executiveTitles.ts pattern-match the generic-api-key rule.
 959ef3117b16acee8e4994fee015b16d3b3d7918:app/src/shared/executiveTitles.ts:generic-api-key:62
 959ef3117b16acee8e4994fee015b16d3b3d7918:app/src/shared/executiveTitles.ts:generic-api-key:66
+#
+# PR #1851 APNs send: comment listed the APNS p8 env name next to PEM/base64 wording.
+# Not a secret — hosted gitleaks scans the introducing commit, so the fingerprint is
+# required even after the comment was reworded.
+5872446d24ecf296d3a39db9820a589641f8802c:app/src/shared/apns.ts:generic-api-key:10

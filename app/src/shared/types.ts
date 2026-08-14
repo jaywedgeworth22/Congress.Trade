@@ -892,6 +892,17 @@ export interface Env {
   APPLE_KEY_ID?: string;
   APPLE_P8?: string;
   APPLE_PRIVATE_KEY?: string;
+  /** APNs provider key id (10-char). Required with team id + signing material to send. */
+  APNS_KEY_ID?: string;
+  /** Apple Developer Team ID. */
+  APNS_TEAM_ID?: string;
+  /** APNs topic; defaults to trade.congress.ios. */
+  APNS_BUNDLE_ID?: string;
+  /** Signing material for the APNs provider token. Never log. */
+  APNS_P8?: string;
+  /** Alternate env slot for the same signing material. */
+  APNS_PRIVATE_KEY_B64?: string;
+  APNS_PRIVATE_KEY?: string;
   /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */
