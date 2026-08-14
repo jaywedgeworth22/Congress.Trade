@@ -1,18 +1,25 @@
 # Current Handoff
 
-## 2026-08-14 GROK — trial copy already matches the 2-week offer
+## 2026-08-14 GROK — trial runbook leftover after #1867 ASC verify
 
-Monet leftover: store copy said one month, configured offer was two weeks.
-Verified 2026-08-14 (read-only): the offer is 14 days / 2 weeks everywhere that
-charges — Infisical prod `STRIPE_TRIAL_DAYS` classifies as 14, code default 14,
-ASC intro offers on `trade.congress.premium.monthly` and `.annual` are
-`TWO_WEEKS` (started 2026-08-12).  User-facing web / iOS / ToS / ASC listing
-already say 2-week (Claude #1835).  Only leftover was operator runbook
-`app/docs/wave4-auth-billing.md` still teaching 1-month / `STRIPE_TRIAL_DAYS=30`.
-Updated that plus the `legalHtml.test.ts` header.  No ASC writes.
+#1867 already confirmed ASC intro `TWO_WEEKS` + Infisical `STRIPE_TRIAL_DAYS=14`.
+This branch only fixes the last operator-facing 1-month leftover:
+`app/docs/wave4-auth-billing.md` still taught 1-month / `STRIPE_TRIAL_DAYS=30`
+and a "defaults to 7" comment.  `legalHtml.test.ts` header now says 2-week.
+No ASC writes.
 
 Branch `grok/ct-trial-copy`, worktree `~/apps/congress-grok-trial-copy`.
 Rollout: `docs/rollouts/2026-08-14-trial-copy-matches-offer.md`.
+
+## 2026-08-14 GROK — Premium trial is actually 2 weeks (ASC + Stripe)
+
+Monet's leftover from #1835 is closed.  Live App Store Connect: both
+`trade.congress.premium.monthly` and `.annual` carry `FREE_TRIAL` / `TWO_WEEKS`
+(start 2026-08-12, no end).  US prices $5 / $50.  Infisical prod
+`STRIPE_TRIAL_DAYS=14`.  App copy already matches.  No owner call and no
+trial-length change.  Plan buttons stay hidden until sign-in (intentional);
+TestFlight 1.0.14 already has the one-screen Premium sheet.  Receipt:
+`docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 
 ## 2026-08-13 GROK — pickup leftovers verified, no CT code
 
