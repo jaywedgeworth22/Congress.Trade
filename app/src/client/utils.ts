@@ -10,6 +10,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { validateSubscriptionFilters } from '../delivery/subscriptions.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { executiveTitleFor } from '../shared/executiveTitles.ts';
+import { memberPhotoUrl, normalizeMemberPhotoKey } from '../enrichment/memberPhotoPack.ts';
 
 export type ClientContext = Context<{ Bindings: Env }>;
 
@@ -316,6 +317,20 @@ export function securityRef(ticker: string, row: SecurityRefRow | null) {
   };
 }
 
+const BIOGUIDE_KEY = /^[A-Za-z]\d{6}$/;
+
+/** Prefer the stored pack URL; if a row has a bioguide but no photo_url, still
+ *  hand the client a same-origin `/api/photos/member` URL so iOS AsyncImage
+ *  can load the face instead of falling through to a party-emoji tile. */
+export function profilePhotoUrl(row: MemberProfileRow): string | null {
+  const stored = str(row.photo_url);
+  if (stored) return stored;
+  const key =
+    normalizeMemberPhotoKey(row.resolved_bioguide_id) ??
+    (BIOGUIDE_KEY.test(row.bioguide_id) ? row.bioguide_id : null);
+  return key ? memberPhotoUrl(key, 'https://congress.trade') : null;
+}
+
 export function memberProfile(row: MemberProfileRow | null, id: string) {
   if (!row) {
     return {
@@ -344,7 +359,7 @@ export function memberProfile(row: MemberProfileRow | null, id: string) {
     state: row.state,
     district: row.district,
     committees: Array.isArray(committees) ? committees : [],
-    photoUrl: row.photo_url,
+    photoUrl: profilePhotoUrl(row),
     // Curated agency/position label for executive-branch filers (see
     // shared/executiveTitles.ts); null for House/Senate filers.
     title: executiveTitleFor(row.bioguide_id),

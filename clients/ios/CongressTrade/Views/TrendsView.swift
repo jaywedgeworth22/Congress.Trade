@@ -12,6 +12,7 @@ struct TrendsView: View {
     @State private var selectedTicker: String?
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
+    @State private var selectedPoliticianPhotoUrl: String?
 
     var body: some View {
         NavigationStack {
@@ -136,10 +137,14 @@ struct TrendsView: View {
             }
             .sheet(isPresented: Binding<Bool>(
                 get: { selectedPoliticianId != nil },
-                set: { if !$0 { selectedPoliticianId = nil } }
+                set: { if !$0 { selectedPoliticianId = nil; selectedPoliticianPhotoUrl = nil } }
             )) {
                 if let memberId = selectedPoliticianId {
-                    PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                    PoliticianDetailView(
+                        memberId: memberId,
+                        memberName: selectedPoliticianName ?? "Politician",
+                        seedPhotoUrl: selectedPoliticianPhotoUrl
+                    )
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationCornerRadius(18)
@@ -503,6 +508,7 @@ struct TrendsView: View {
                     Button {
                         selectedPoliticianId = p.filerId
                         selectedPoliticianName = p.fullName ?? p.filerId
+                        selectedPoliticianPhotoUrl = p.photoUrl
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -553,6 +559,7 @@ struct TrendsView: View {
                     Button {
                         selectedPoliticianId = m.filerId
                         selectedPoliticianName = m.fullName ?? m.filerId
+                        selectedPoliticianPhotoUrl = nil
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -600,6 +607,7 @@ struct TrendsView: View {
                     Button {
                         selectedPoliticianId = c.bioguideId
                         selectedPoliticianName = c.memberName ?? c.bioguideId
+                        selectedPoliticianPhotoUrl = c.photoUrl
                     } label: {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -677,6 +685,7 @@ struct TrendsView: View {
                         Button {
                             selectedPoliticianId = f.filerId
                             selectedPoliticianName = f.fullName ?? f.filerId
+                            selectedPoliticianPhotoUrl = f.photoUrl
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {

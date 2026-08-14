@@ -10,6 +10,7 @@ struct FeedDashboardView: View {
     @State private var selectedTrade: ClientTrade?
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
+    @State private var selectedPoliticianPhotoUrl: String?
     @State private var selectedTicker: String?
     /// Shared with Trends via the same `@AppStorage` keys so the disclaimer's
     /// dismissed/expanded state is one truth across both tabs (owner punch
@@ -214,6 +215,7 @@ struct FeedDashboardView: View {
                                         {
                                             selectedPoliticianName = trade.member.name
                                             selectedPoliticianId = memberId
+                                            selectedPoliticianPhotoUrl = trade.member.photoUrl
                                         }
                                     },
                                     onTickerTap: trade.asset.ticker.map { ticker in
@@ -232,6 +234,7 @@ struct FeedDashboardView: View {
                                         {
                                             selectedPoliticianName = trade.member.name
                                             selectedPoliticianId = memberId
+                                            selectedPoliticianPhotoUrl = trade.member.photoUrl
                                         }
                                     },
                                     onTickerTap: trade.asset.ticker.map { ticker in
@@ -312,10 +315,14 @@ struct FeedDashboardView: View {
             }
             .sheet(isPresented: Binding<Bool>(
                 get: { selectedPoliticianId != nil },
-                set: { if !$0 { selectedPoliticianId = nil } }
+                set: { if !$0 { selectedPoliticianId = nil; selectedPoliticianPhotoUrl = nil } }
             )) {
                 if let memberId = selectedPoliticianId {
-                    PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                    PoliticianDetailView(
+                        memberId: memberId,
+                        memberName: selectedPoliticianName ?? "Politician",
+                        seedPhotoUrl: selectedPoliticianPhotoUrl
+                    )
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationCornerRadius(18)
@@ -735,6 +742,66 @@ struct SortRow<Content: View>: View {
     }
 }
 
+/// Directory sort: a single dropdown of keys plus a reverse-order button,
+/// the same language as Trades (`FeedSortControl`). A row of capsules for
+/// every key reads as filters, which is why Directory People/Assets used
+/// to look like a second filter bar.
+struct SortMenuControl<Key: Hashable>: View {
+    let keys: [Key]
+    @Binding var sortKey: Key
+    @Binding var sortAscending: Bool
+    let label: (Key) -> String
+    var defaultAscending: ((Key) -> Bool)? = nil
+
+    var body: some View {
+        SortRow {
+            HStack(spacing: 6) {
+                Menu {
+                    ForEach(keys, id: \.self) { key in
+                        Button {
+                            if sortKey != key {
+                                sortKey = key
+                                if let defaultAscending {
+                                    sortAscending = defaultAscending(key)
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text(label(key))
+                                if sortKey == key {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    ControlChip {
+                        HStack(spacing: 4) {
+                            Text(label(sortKey))
+                                .font(.caption.weight(.semibold))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .bold))
+                                .opacity(0.5)
+                        }
+                    }
+                }
+                .accessibilityLabel("Sort by \(label(sortKey))")
+
+                Button {
+                    sortAscending.toggle()
+                } label: {
+                    ControlChip(compact: true) {
+                        Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                            .font(.caption.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(sortAscending ? "Ascending, tap to reverse" : "Descending, tap to reverse")
+            }
+        }
+    }
+}
+
 /// Trades-only sort control (owner punch list #2, item 7) — mirrors the
 /// web's mobile sort dropdown + direction toggle (`app/src/ui/dashboardHtml.ts`
 /// `syncMobileSortControl()`/`toggleMobileSortDir()`): a key menu (Date /
@@ -853,7 +920,7 @@ struct PaginationBar: View {
                         onPageSize(size)
                     } label: {
                         HStack {
-                            Text("\(size) / page")
+                            Text("\(size) per page")
                             if pageSize == size {
                                 Image(systemName: "checkmark")
                             }
@@ -863,7 +930,7 @@ struct PaginationBar: View {
             } label: {
                 ControlChip {
                     HStack(spacing: 4) {
-                        Text("\(pageSize) / page")
+                        Text("\(pageSize)")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .bold))

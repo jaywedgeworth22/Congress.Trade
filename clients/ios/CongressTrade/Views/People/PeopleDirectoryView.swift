@@ -9,6 +9,7 @@ struct PeopleDirectoryView: View {
     @FocusState private var searchFocused: Bool
     @State private var selectedMemberId: String?
     @State private var selectedMemberName: String?
+    @State private var selectedMemberPhotoUrl: String?
     @State private var sortKey: MemberDirectorySearch.SortKey = .trades
     @State private var sortAscending = false
     /// 0-indexed page of `filteredMembers`. Purely local: `GET /api/members` is
@@ -61,14 +62,16 @@ struct PeopleDirectoryView: View {
                         Spacer(minLength: 0)
                     }
 
-                    DirectorySortHeader(
-                        sortKey: $sortKey,
-                        sortAscending: $sortAscending
-                    )
-
-                    // Same component the Trades tab uses, top and bottom —
-                    // never a second pager implementation.
-                    directoryPager(page: page, pages: pages)
+                    HStack(alignment: .center, spacing: 8) {
+                        SortMenuControl(
+                            keys: Array(MemberDirectorySearch.SortKey.allCases),
+                            sortKey: $sortKey,
+                            sortAscending: $sortAscending,
+                            label: { $0.label },
+                            defaultAscending: { $0 != .trades }
+                        )
+                        directoryPager(page: page, pages: pages)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -110,6 +113,7 @@ struct PeopleDirectoryView: View {
                                     Button {
                                         selectedMemberId = member.filerId
                                         selectedMemberName = member.fullName ?? member.filerId
+                                        selectedMemberPhotoUrl = member.photoUrl
                                     } label: {
                                         PersonRow(member: member)
                                     }
@@ -123,6 +127,7 @@ struct PeopleDirectoryView: View {
                                     Button {
                                         selectedMemberId = member.filerId
                                         selectedMemberName = member.fullName ?? member.filerId
+                                        selectedMemberPhotoUrl = member.photoUrl
                                     } label: {
                                         PersonRow(member: member)
                                     }
@@ -153,10 +158,14 @@ struct PeopleDirectoryView: View {
             }
             .sheet(isPresented: Binding<Bool>(
                 get: { selectedMemberId != nil },
-                set: { if !$0 { selectedMemberId = nil } }
+                set: { if !$0 { selectedMemberId = nil; selectedMemberPhotoUrl = nil } }
             )) {
                 if let memberId = selectedMemberId {
-                    PoliticianDetailView(memberId: memberId, memberName: selectedMemberName ?? "Politician")
+                    PoliticianDetailView(
+                        memberId: memberId,
+                        memberName: selectedMemberName ?? "Politician",
+                        seedPhotoUrl: selectedMemberPhotoUrl
+                    )
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationCornerRadius(18)
@@ -185,51 +194,6 @@ struct PeopleDirectoryView: View {
                 currentPage = 0
             }
         )
-    }
-}
-
-/// Sticky-style sort controls (mirrors web column headings).
-private struct DirectorySortHeader: View {
-    @Binding var sortKey: MemberDirectorySearch.SortKey
-    @Binding var sortAscending: Bool
-
-    var body: some View {
-        SortRow {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(MemberDirectorySearch.SortKey.allCases) { key in
-                        Button {
-                            if sortKey == key {
-                                sortAscending.toggle()
-                            } else {
-                                sortKey = key
-                                sortAscending = key != .trades
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Text(key.label)
-                                    .font(.caption.weight(.semibold))
-                                if sortKey == key {
-                                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                                        .font(.system(size: 9, weight: .bold))
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                sortKey == key
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color(uiColor: .secondarySystemBackground),
-                                in: Capsule()
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Sort by \(key.label)")
-                        .accessibilityValue(sortKey == key ? (sortAscending ? "Ascending" : "Descending") : "Off")
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -293,35 +257,12 @@ private struct PersonRow: View {
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
-    @ViewBuilder
     private var avatar: some View {
-        if let photoUrlString = member.photoUrl, let url = URL(string: photoUrlString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                case .failure:
-                    emojiTile
-                case .empty:
-                    ProgressView()
-                @unknown default:
-                    emojiTile
-                }
-            }
-            .frame(width: 44, height: 44)
-            .clipShape(Circle())
-            .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
-        } else {
-            emojiTile
-        }
-    }
-
-    private var emojiTile: some View {
-        Text((member.party ?? "").partyEmoji)
-            .font(.system(size: 20))
-            .frame(width: 44, height: 44)
-            .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-            .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+        MemberAvatar(
+            photoURL: MemberPhotoURL.resolve(member.photoUrl),
+            name: member.fullName ?? member.filerId,
+            size: 44
+        )
     }
 }
 

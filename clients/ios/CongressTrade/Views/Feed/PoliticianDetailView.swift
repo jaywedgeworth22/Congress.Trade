@@ -7,6 +7,10 @@ struct PoliticianDetailView: View {
     
     let memberId: String
     let memberName: String
+    /// Roster / trade-row photo already on screen. Shown immediately so the
+    /// sheet never flashes a party mascot while `/member/:id` loads, and used
+    /// as fallback when that envelope omits `photoUrl`.
+    var seedPhotoUrl: String? = nil
     
     @State private var isLoading = true
     @State private var member: ClientTrade.Member?
@@ -14,43 +18,38 @@ struct PoliticianDetailView: View {
     @State private var trades: [ClientTrade] = []
     @State private var error: String?
 
+    private var resolvedPhotoURL: URL? {
+        MemberPhotoURL.resolve(
+            member?.photoUrl,
+            seedPhotoUrl,
+            store.members.first(where: { $0.filerId == memberId })?.photoUrl
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     if isLoading {
-                        // The nav bar carries the entity class ("Politician"),
-                        // so the name has to live here while the hero is empty.
-                        ProgressView("Loading \(memberName)…")
-                            .padding(.top, 40)
+                        VStack(spacing: 12) {
+                            MemberAvatar(
+                                photoURL: resolvedPhotoURL,
+                                name: memberName,
+                                size: 80
+                            )
+                            ProgressView("Loading \(memberName)…")
+                        }
+                        .padding(.top, 24)
                     } else if let error = error {
                         ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
                     } else if let member = member {
                         // Header
                         VStack(spacing: 12) {
-                            if let photoUrlString = member.photoUrl, let url = URL(string: photoUrlString) {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image.resizable().aspectRatio(contentMode: .fill)
-                                    case .failure:
-                                        Text(member.party?.partyEmoji ?? "🦅").font(.system(size: 40))
-                                    case .empty:
-                                        ProgressView()
-                                    @unknown default:
-                                        EmptyView()
-                                    }
-                                }
-                                .frame(width: 80, height: 80)
-                                .clipShape(Circle())
-                                .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
-                            } else {
-                                Text(member.party?.partyEmoji ?? "🦅")
-                                    .font(.system(size: 40))
-                                    .frame(width: 80, height: 80)
-                                    .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
-                            }
+                            MemberAvatar(
+                                photoURL: resolvedPhotoURL,
+                                name: member.name ?? memberName,
+                                size: 80
+                            )
                             
                             VStack(spacing: 4) {
                                 Text(member.name ?? memberName)

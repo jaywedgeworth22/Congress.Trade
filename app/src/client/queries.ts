@@ -124,18 +124,32 @@ export async function getSecurityRef(env: Env, ticker: string): Promise<Security
   );
 }
 
+const MEMBER_PROFILE_COLS =
+  'bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url, resolved_bioguide_id';
+
 export async function resolveMember(env: Env, value: string): Promise<ResolvedMember | null> {
   const term = value.trim();
   const byId = await get<MemberProfileRow>(
     env.DB,
-    'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
+    `SELECT ${MEMBER_PROFILE_COLS} FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1`,
     [term],
   );
   if (byId) return { id: byId.bioguide_id, profile: byId };
+  // Official bioguides (K000389) live on filers.resolved_bioguide_id while the
+  // PK is a house-/senate- slug.  Directory rows use the slug (and have a
+  // photo); a trade or Trends tap that still carries the bioguide used to
+  // miss the profile and return photoUrl: null — iOS then painted the party
+  // donkey instead of the face already on the roster.
+  const byResolved = await get<MemberProfileRow>(
+    env.DB,
+    `SELECT ${MEMBER_PROFILE_COLS} FROM filers WHERE LOWER(resolved_bioguide_id) = LOWER(?) LIMIT 1`,
+    [term],
+  );
+  if (byResolved) return { id: byResolved.bioguide_id, profile: byResolved };
   const likeTerm = `%${escapeLikePattern(term.toLowerCase())}%`;
   const byName = await get<MemberProfileRow>(
     env.DB,
-    "SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers" +
+    `SELECT ${MEMBER_PROFILE_COLS} FROM filers` +
       " WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\'" +
       " OR LOWER(display_name) = LOWER(?) OR LOWER(display_name) LIKE ? ESCAPE '\\'" +
       " ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) OR LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1",
