@@ -225,7 +225,7 @@ struct TrendsView: View {
 
     private var tickerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("What Congress Is Trading")
+            Text("What Is Being Traded")
                 .font(.headline)
             VStack(spacing: 0) {
                 ForEach(Array(store.tickerLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, item in

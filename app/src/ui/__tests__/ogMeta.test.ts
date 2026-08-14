@@ -16,6 +16,8 @@ describe('resolveOgMeta', () => {
     expect(m.context).toBe('trends');
     expect(m.title).toBe('Trends');
     expect(m.imageUrl).toContain('/og-image-trends.png?v=');
+    expect(m.description).toMatch(/^Trading trends/);
+    expect(m.description).not.toMatch(/Congressional/i);
   });
 
   it('uses the Company card for ?ticker=', () => {
@@ -23,6 +25,8 @@ describe('resolveOgMeta', () => {
     expect(m.context).toBe('company');
     expect(m.title).toBe('AAPL');
     expect(m.imageUrl).toContain('/og-image-company.png?v=');
+    expect(m.description).toContain('Disclosed trades in AAPL');
+    expect(m.description).not.toMatch(/Congressional/i);
   });
 
   it('uses the Politician card for ?member= (priority over view)', () => {
@@ -56,6 +60,8 @@ describe('resolveOgMeta', () => {
     });
     expect(m.title).toBe('Nancy Pelosi (D-CA-11)');
     expect(m.description).toContain('Nancy Pelosi (D-CA-11)');
+    expect(m.description).toMatch(/^Trading activity for/);
+    expect(m.description).not.toMatch(/Congressional/i);
   });
 
   it('falls back to the bare name when no district is known', () => {
