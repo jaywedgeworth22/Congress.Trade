@@ -16,6 +16,10 @@ const allowedRunners = new Set([
   // but are rejected at submission as INVALID_BINARY). Do not schedule
   // non-Xcode jobs onto it.
   "[self-hosted, macOS, ARM64, xcode26]",
+  // GitHub-hosted Tahoe GM.  The owned Mac is macOS 27 beta; App Store
+  // review rejects those IPAs as INVALID_BINARY.  Only the App Store GM
+  // ship workflow may use this label.  macos-latest stays forbidden.
+  "macos-26",
   "self-hosted",
   "ubuntu-latest",
 ]);
@@ -57,6 +61,10 @@ for (const name of workflowNames) {
     if (text.includes(forbidden)) {
       errors.push(`${name}: forbidden hosted-runner or billable-cache token: ${forbidden}`);
     }
+  }
+
+  if (text.includes("runs-on: macos-26") && name !== "ios-appstore-gm.yml") {
+    errors.push(`${name}: macos-26 is only allowed on ios-appstore-gm.yml`);
   }
 
   lines.forEach((line, index) => {
