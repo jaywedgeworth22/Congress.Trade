@@ -262,6 +262,96 @@ describe('POST /api/webhooks/apple', () => {
     expect(await getAppleSubscription(env, 'otxn-never-redeemed')).toBeNull();
   });
 
+  it('DID_FAIL_TO_RENEW with a future gracePeriodExpiresDate keeps Premium (grace_period)', async () => {
+    const graceEnds = Date.now() + 3 * 86_400_000;
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'DID_FAIL_TO_RENEW',
+        subtype: 'GRACE_PERIOD',
+        notificationUUID: 'notif-grace-1',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ expiresDate: Date.now() - 1000 }));
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      gracePeriodExpiresDate: graceEnds,
+      isInBillingRetryPeriod: true,
+    });
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('grace_period');
+    expect(row?.expiresDate).toBe(new Date(graceEnds).toISOString());
+    expect(row?.lastNotificationType).toBe('DID_FAIL_TO_RENEW');
+  });
+
+  it('DID_FAIL_TO_RENEW without grace (paid retry only) marks billing_retry', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'DID_FAIL_TO_RENEW',
+        notificationUUID: 'notif-retry-1',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload());
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      isInBillingRetryPeriod: true,
+    });
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('billing_retry');
+  });
+
+  it('GRACE_PERIOD_EXPIRED drops Premium (expired, or billing_retry if Apple is still retrying)', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'GRACE_PERIOD_EXPIRED',
+        notificationUUID: 'notif-grace-end',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ expiresDate: Date.now() - 1000 }));
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      isInBillingRetryPeriod: true,
+    });
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('billing_retry');
+  });
+
   it('a bundleId mismatch is ignored (acknowledged, ledger untouched)', async () => {
     payloadsByJws.set('outer-jws', notificationPayload({ notificationUUID: 'notif-6' }));
     payloadsByJws.set('txn-jws', txPayload({ bundleId: 'com.other.app' }));
