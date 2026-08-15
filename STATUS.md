@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-14 GROK — App Store 1.0 now has TestFlight 1.0.14 attached
+
+Distribution was `INVALID_BINARY` because App Store version **1.0** still
+had the rejected **1.0.7** build attached.  TestFlight independently already
+had **1.0.14** (`202608141034`).  Attached that build.  Version is now
+`PREPARE_FOR_SUBMISSION`.  Not submitted for review.  Receipt:
+`docs/rollouts/2026-08-14-asc-attach-1014.md`.
+
 ## 2026-08-14 GROK — trial runbook leftover after #1867 ASC verify
 
 #1867 already confirmed ASC intro `TWO_WEEKS` + Infisical `STRIPE_TRIAL_DAYS=14`.
