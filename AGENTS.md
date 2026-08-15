@@ -533,8 +533,15 @@ Default product theme is **light**. See `/Users/jay/apps/FLEET-UI-COPY.md` and `
 ## Two spaces between sentences (owner — ALL contexts)
 
 Two spaces after sentence terminators in **all** human-readable prose for every
-agent: web, PWA, iOS UI, **App Store Connect listing fields** (description,
-promotional text, What's New, review notes), push/email, help, privacy, owner
-Notes. HTML must preserve the gap (NBSP+space / SENTENCE_GAP). Canonical:
+agent: web, PWA, iOS UI, **every App Store Connect field** (description,
+promotional text, What's New, **App Review notes**, **IAP / subscription
+review notes**, subscription localization descriptions), push/email, help,
+privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
+
+**Accuracy:** this app's corpus is House, Senate, **and Executive Branch**
+(OGE 278-T).  Store listing copy must say so — never Congress-only.  Premium
+trial is **2 weeks** (live ASC intro), never a leftover 1-month.
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and
 `/Users/jay/apps/FLEET-UI-COPY.md`.
 

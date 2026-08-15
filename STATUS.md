@@ -1,5 +1,20 @@
 # Current Handoff
 
+## 2026-08-14 GROK — App Store 1.0 listing copy audited and rewritten
+
+Every human-facing ASC field was re-read after attaching 1.0.14.  Review notes
+and IAP review notes still said **1-month free trial** (description already
+said 2 weeks).  Description, promo, keywords, and review notes described
+**House and Senate only** — the live corpus is House, Senate, **and Executive
+Branch** (OGE 278-T).  Rewrote those fields: 2-week trial, two spaces after
+periods, Executive included.  Subscription localization blurbs are 45-char
+capped and now use two spaces; they do not name chambers.  Version remains
+`PREPARE_FOR_SUBMISSION`, not submitted.  Receipt:
+`docs/rollouts/2026-08-14-asc-listing-copy.md`.
+
+Fleet rule strengthened in `~/apps/AGENT-SYNC.md` § Two spaces (all agents,
+all surfaces, including review notes).
+
 ## 2026-08-14 GROK — App Store 1.0 now has TestFlight 1.0.14 attached
 
 Distribution was `INVALID_BINARY` because App Store version **1.0** still
