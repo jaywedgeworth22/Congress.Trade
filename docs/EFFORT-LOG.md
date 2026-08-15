@@ -1,3 +1,5 @@
+- **2026-08-15 — GROK — COMPLETED — Resubmitted iOS 1.0 from Tahoe GM.**  #1878 merged.  Build `202608150702` attached.  Review `37412b30` WAITING_FOR_REVIEW (held 10+ min).  Rollout: `docs/rollouts/2026-08-15-invalid-binary-gm-resubmit.md`.
+
 - **2026-08-15 — GROK — IN PROGRESS — Fix App Store INVALID_BINARY + resubmit (branch `grok/asc-invalid-binary-gm`).**  1.0 flipped again after 1.0.14.  Host is macOS 27.0 beta; CT also lacked PrivacyInfo.  GM ship from GitHub-hosted macos-26.  Rollout: `docs/rollouts/2026-08-15-invalid-binary-gm-host.md`.
 
 - **2026-08-15 — GROK — IN PR — Point CT AGENTS.md / Claude.md at Mac background-jobs master list (branch `grok/mac-process-list`).**  Canonical list `~/apps/MAC-LOCAL-PROCESSES.md` + pinned Note `[FLEET, Grok] Mac background jobs master list`.
