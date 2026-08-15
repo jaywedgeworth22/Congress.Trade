@@ -11,7 +11,8 @@
  * verified against the pinned Apple root before any field is trusted.
  *
  * Handles the minimal notification set: DID_RENEW, EXPIRED,
- * DID_CHANGE_RENEWAL_STATUS, REVOKE. Idempotent on Apple's `notificationUUID`
+ * DID_CHANGE_RENEWAL_STATUS, REVOKE, DID_FAIL_TO_RENEW, GRACE_PERIOD_EXPIRED.
+ * Idempotent on Apple's `notificationUUID`
  * via the same claim/release/processed ledger pattern the Stripe webhook uses
  * (appleWebhookEvents.ts), so an at-least-once redelivery never double-applies
  * a subscription state change.
@@ -34,6 +35,9 @@ interface AppleRenewalInfoPayload {
   autoRenewProductId?: string;
   autoRenewStatus?: number; // 0 | 1
   expirationIntent?: number;
+  /** Milliseconds since epoch.  Present while Apple is in Billing Grace Period. */
+  gracePeriodExpiresDate?: number;
+  isInBillingRetryPeriod?: boolean;
 }
 
 interface AppleNotificationDataPayload {
@@ -55,6 +59,8 @@ const HANDLED_NOTIFICATION_TYPES = new Set([
   'EXPIRED',
   'DID_CHANGE_RENEWAL_STATUS',
   'REVOKE',
+  'DID_FAIL_TO_RENEW',
+  'GRACE_PERIOD_EXPIRED',
 ]);
 
 export function buildAppleWebhookRouter(): Hono<{ Bindings: Env }> {
@@ -98,10 +104,10 @@ export function buildAppleWebhookRouter(): Hono<{ Bindings: Env }> {
       if (HANDLED_NOTIFICATION_TYPES.has(notificationType)) {
         await applyNotification(c.env, notificationType, notification);
       }
-      // Unhandled types (SUBSCRIBED, DID_FAIL_TO_RENEW, GRACE_PERIOD_EXPIRED,
-      // REFUND, PRICE_INCREASE, ...) are acknowledged but not applied yet —
-      // the redeem_apple_purchase command / DID_RENEW already cover the
-      // entitlement-relevant paths for the initial minimal set.
+      // Unhandled types (SUBSCRIBED, REFUND, PRICE_INCREASE, ...) are
+      // acknowledged but not applied yet.  DID_FAIL_TO_RENEW and
+      // GRACE_PERIOD_EXPIRED are handled so Billing Grace Period keeps
+      // Premium live for the configured window.
 
       if (!(await markAppleWebhookEventProcessed(c.env, notificationUUID, claimToken))) {
         throw new Error('webhook claim was lost before completion');
@@ -213,5 +219,35 @@ async function applyNotification(
     // Entitlement is unaffected by this event alone — only the renewal-info
     // fields change; keep the subscription's current access status as-is.
     await upsertAppleSubscription(env, { ...base, status: existing.status });
+    return;
+  }
+  if (notificationType === 'DID_FAIL_TO_RENEW') {
+    const graceMs = renewalInfo?.gracePeriodExpiresDate != null
+      ? Number(renewalInfo.gracePeriodExpiresDate)
+      : NaN;
+    const graceStillOpen = Number.isFinite(graceMs) && graceMs > Date.now();
+    const appleSaysGrace = notification.subtype === 'GRACE_PERIOD' || graceStillOpen;
+    if (appleSaysGrace) {
+      const graceExpires = graceStillOpen
+        ? new Date(graceMs).toISOString()
+        : existing.expiresDate;
+      await upsertAppleSubscription(env, {
+        ...base,
+        status: 'grace_period',
+        expiresDate: graceExpires ?? base.expiresDate,
+      });
+      return;
+    }
+    await upsertAppleSubscription(env, {
+      ...base,
+      status: renewalInfo?.isInBillingRetryPeriod ? 'billing_retry' : 'expired',
+    });
+    return;
+  }
+  if (notificationType === 'GRACE_PERIOD_EXPIRED') {
+    await upsertAppleSubscription(env, {
+      ...base,
+      status: renewalInfo?.isInBillingRetryPeriod ? 'billing_retry' : 'expired',
+    });
   }
 }
