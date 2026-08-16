@@ -3234,7 +3234,7 @@ ${speedProofSectionHtml(true)}
       <a href="/terms-of-service">Terms</a>
       <a href="/pricing">Pricing</a>
       <a href="/api/feed.xml" rel="alternate" type="application/rss+xml">RSS</a>
-      <a href="mailto:congress.trade@jays.services">Support</a>
+      <a href="mailto:support@congress.trade">Support</a>
     </span>
   </footer>
 </main>

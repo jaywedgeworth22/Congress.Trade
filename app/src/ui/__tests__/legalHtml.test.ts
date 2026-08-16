@@ -27,6 +27,13 @@ describe('legalHtml pricing copy', () => {
     expect(PRIVACY_HTML).not.toContain('$15.00');
     expect(PRIVACY_HTML).not.toContain('$140.00');
   });
+
+  it('mails support@congress.trade, not the old jays.services inbox', () => {
+    expect(TOS_HTML).toContain('mailto:support@congress.trade');
+    expect(PRIVACY_HTML).toContain('mailto:support@congress.trade');
+    expect(TOS_HTML).not.toContain('congress.trade@jays.services');
+    expect(PRIVACY_HTML).not.toContain('congress.trade@jays.services');
+  });
 });
 
 describe('short legal and pricing routes', () => {

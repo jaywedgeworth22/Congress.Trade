@@ -1350,6 +1350,38 @@ struct TradeDisclosureAlertsToggle: View {
 
 // MARK: - Footer + filter chrome
 
+/// Canonical Privacy / Terms / Pricing / Support destinations for every tab.
+///
+/// SwiftUI `Text("…")` only parses Markdown when the string is a *literal*
+/// `LocalizedStringKey`. Concatenated strings render as raw `[label](url)` —
+/// that is what the owner screenshot of the tab footer showed. Build the
+/// attributed string ourselves so wrapping and taps both work.
+enum AppLegal {
+    static let supportEmail = "support@congress.trade"
+
+    struct Destination: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let url: URL
+    }
+
+    static let destinations: [Destination] = [
+        .init(id: "privacy", title: "Privacy", url: URL(string: "https://Congress.Trade/privacy-policy")!),
+        .init(id: "terms", title: "Terms", url: URL(string: "https://Congress.Trade/terms-of-service")!),
+        .init(id: "pricing", title: "Pricing", url: URL(string: "https://Congress.Trade/pricing")!),
+        .init(id: "support", title: "Support", url: URL(string: "mailto:\(supportEmail)")!),
+    ]
+
+    static let markdown = destinations
+        .map { "[\($0.title)](\($0.url.absoluteString))" }
+        .joined(separator: "  •  ")
+
+    static var attributed: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: markdown, options: options)) ?? AttributedString(markdown)
+    }
+}
+
 /// Small grey Privacy / Terms / Pricing / Support row for the bottom of a tab.
 ///
 /// Buttons rather than `Link`s: a `Link` renders in the accent color and this
@@ -1357,22 +1389,9 @@ struct TradeDisclosureAlertsToggle: View {
 struct LegalFooterLinks: View {
     @Environment(\.openURL) private var openURL
 
-    private struct Destination: Identifiable {
-        let id = UUID()
-        let title: String
-        let url: URL
-    }
-
-    private let destinations: [Destination] = [
-        .init(title: "Privacy", url: URL(string: "https://Congress.Trade/privacy-policy")!),
-        .init(title: "Terms", url: URL(string: "https://Congress.Trade/terms-of-service")!),
-        .init(title: "Pricing", url: URL(string: "https://Congress.Trade/pricing")!),
-        .init(title: "Support", url: URL(string: "mailto:congress.trade@jays.services")!),
-    ]
-
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(destinations.enumerated()), id: \.element.id) { index, destination in
+            ForEach(Array(AppLegal.destinations.enumerated()), id: \.element.id) { index, destination in
                 if index > 0 {
                     Text("  •  ")
                         .font(.caption2)

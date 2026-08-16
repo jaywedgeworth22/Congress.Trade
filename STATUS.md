@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-15 GROK — iOS tab footer links + latency lead/lag signs
+
+Owner screenshot: Trends legal row printed raw Markdown and Support mailed
+`congress.trade@jays.services`.  Speed cards showed negative averages in
+green as "Preliminary lead" (FMP −4.6d / UW −5.7h) while live medians are
+ahead (+13.0h / +24m).  iOS now parses footer links, mails
+`support@congress.trade`, and headlines the median with +green / −red.
+Branch `grok/ios-lead-footer`.  Issue #1880.
+Receipt: `docs/rollouts/2026-08-15-ios-footer-latency-signs.md`.
+
 ## 2026-08-14 GROK — App Store 1.0 listing copy audited and rewritten
 
 Every human-facing ASC field was re-read after attaching 1.0.14.  Review notes

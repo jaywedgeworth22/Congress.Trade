@@ -1774,6 +1774,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function useModelRows(docId, idx) {');
     expect(DASHBOARD_HTML).toContain("openReviewEditor(docId, rows, 'confirm', 'queued extracted rows', item && item.chamber);");
   });
+
+  it('footer Support mailto is support@congress.trade', () => {
+    expect(DASHBOARD_HTML).toContain('mailto:support@congress.trade');
+    expect(DASHBOARD_HTML).not.toContain('mailto:congress.trade@jays.services');
+  });
 });
 
 /**

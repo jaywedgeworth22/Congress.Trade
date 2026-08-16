@@ -10,7 +10,7 @@
 
 const EFFECTIVE_DATE = 'June 22, 2026';
 const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
-const CONTACT = 'congress.trade@jays.services';
+const CONTACT = 'support@congress.trade';
 
 /** Wrap page body in the shared dark-theme shell. */
 function shell(title: string, body: string): string {

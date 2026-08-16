@@ -1253,7 +1253,104 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(result.result?.subscription.secret, "claimed-secret")
     }
 
+    func testAppLegalFooterMailsSupportAtCongressTradeAndParsesMarkdown() {
+        XCTAssertEqual(AppLegal.supportEmail, "support@congress.trade")
+        XCTAssertTrue(AppLegal.markdown.contains("mailto:support@congress.trade"))
+        XCTAssertFalse(AppLegal.markdown.contains("congress.trade@jays.services"))
+        XCTAssertEqual(AppLegal.destinations.map(\.title), ["Privacy", "Terms", "Pricing", "Support"])
+        XCTAssertEqual(AppLegal.destinations.last?.url.absoluteString, "mailto:support@congress.trade")
+        let links = AppLegal.attributed.runs.compactMap(\.link)
+        XCTAssertEqual(links.count, 4)
+        XCTAssertEqual(links.last?.absoluteString, "mailto:support@congress.trade")
+    }
+
+    func testLatencyScorecardHeadlinesMedianAndColorsBySign() {
+        // Live 2026-08-16 FMP: 16-12 "win" but avg −4.6d from outliers; median +13.0h.
+        let fmp = Self.latencyProvider(
+            label: "FMP",
+            matched: 28,
+            usFirst: 16,
+            providerFirst: 12,
+            median: 46_971,
+            avg: -397_649,
+            status: "preliminary"
+        )
+        let snap = LatencyScorecardCopy.snapshot(for: fmp)
+        XCTAssertEqual(snap.headlineText, "+13.0h")
+        XCTAssertEqual(snap.direction, .ahead)
+        XCTAssertEqual(snap.badgeText, "Preliminary lead")
+        XCTAssertEqual(snap.basisLabel, "prelim. typical lead")
+        XCTAssertTrue(snap.averageDisagrees)
+        XCTAssertEqual(snap.averageCaption?.contains("−4.6d"), true)
+    }
+
+    func testLatencyScorecardNegativeMedianIsRedLagNotGreenLead() {
+        let behind = Self.latencyProvider(
+            label: "Slow Feed",
+            matched: 9,
+            usFirst: 2,
+            providerFirst: 7,
+            median: -20_356,
+            avg: -20_356,
+            status: "preliminary"
+        )
+        let snap = LatencyScorecardCopy.snapshot(for: behind)
+        XCTAssertEqual(snap.headlineText, "−5.7h")
+        XCTAssertEqual(snap.direction, .behind)
+        XCTAssertEqual(snap.badgeText, "Preliminary behind")
+        XCTAssertEqual(snap.basisLabel, "prelim. typical lag")
+        XCTAssertFalse(snap.averageDisagrees)
+    }
+
+    func testLatencyScorecardUsableAheadUsesPlusAndLeadLabel() {
+        let quiver = Self.latencyProvider(
+            label: "Quiver Quantitative",
+            matched: 13,
+            usFirst: 13,
+            providerFirst: 0,
+            median: 750,
+            avg: 6_932,
+            status: "usable"
+        )
+        let snap = LatencyScorecardCopy.snapshot(for: quiver)
+        XCTAssertEqual(snap.headlineText, "+13m")
+        XCTAssertEqual(snap.direction, .ahead)
+        XCTAssertEqual(snap.badgeText, "Ahead")
+        XCTAssertEqual(snap.basisLabel, "typical lead")
+        XCTAssertEqual(snap.winPct, 100)
+    }
+
     // MARK: - Test helpers
+
+    private static func latencyProvider(
+        label: String,
+        matched: Int,
+        usFirst: Int,
+        providerFirst: Int,
+        median: Int?,
+        avg: Int?,
+        status: String
+    ) -> LatencyProvider {
+        LatencyProvider(
+            id: label.lowercased(),
+            label: label,
+            candidates: matched,
+            matched: matched,
+            strongMatched: matched,
+            coveragePct: nil,
+            ctCoveragePct: nil,
+            providerCoveragePct: nil,
+            comparisonStatus: status,
+            usFirstCount: usFirst,
+            providerFirstCount: providerFirst,
+            tieCount: 0,
+            medianLeadSec: median,
+            avgLeadSec: avg,
+            p90LeadSec: median,
+            unmatchedProvider: 0,
+            providerObserved: matched
+        )
+    }
 
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
