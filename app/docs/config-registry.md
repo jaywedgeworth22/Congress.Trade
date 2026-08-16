@@ -1,6 +1,6 @@
 # Config Registry — Infisical as the Single Source of Truth
 
-Last updated: 2026-07-18
+Last updated: 2026-08-16
 
 Every configuration key and knob the Worker reads is routed through the
 Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
@@ -9,6 +9,10 @@ Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
 1. **Infisical** — the value set in the Infisical project (env `prod` by
    default). Edits go live within the resolver cache TTL
    (`INFISICAL_CACHE_TTL_SECONDS`, default 600s) with **no redeploy**.
+   The resolver merges **shared-at-ct first, then the app project**.  A
+   name that exists in both is shadowed by the app row — so fleet-wide
+   keys (`AGENT_SYNC_TOKEN`, `AGENT_SYNC_POST_TOKEN`) live **only** in
+   shared.  Do not copy them onto the ST or CT app projects.
 2. **Env fallback** — the `wrangler.toml [vars]` value or Worker secret.
    Kept so keyless local dev / tests still boot and so an Infisical outage
    never leaves production unconfigured. Disable with
@@ -55,6 +59,11 @@ someone re-runs an idempotent requeue.
 KV cache of resolved secrets keys off the Infisical client secret (falling
 back to the env `ADMIN_TOKEN`), so pulling ADMIN_TOKEN out of Worker env is
 safe only while a strong client secret exists.
+
+### Fleet coordination (shared-at-ct ONLY)
+`AGENT_SYNC_TOKEN`, `AGENT_SYNC_POST_TOKEN` — one pair for every app.
+Rotate in the shared project; never duplicate onto `socratic-trade` or
+`congress-trade` app projects.  Local Mac copy: `~/.secrets/agent-sync.env`.
 
 ### Integrations
 `APP_B_IMPORT_URL`, `APP_B_INGEST_TOKEN`, `USAGE_MONITOR_ENABLED`,
