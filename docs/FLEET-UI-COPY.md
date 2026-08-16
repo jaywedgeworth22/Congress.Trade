@@ -40,6 +40,10 @@ Use **sentence case or lowercase** — not Title Case:
   `account return minus SPY…` (lowercase leading **a**).
 
 ## Special cases
+- **Latency vs other providers (CT, 2026-08-16):** never print `+` or `−` on
+  lead/lag.  Positive seconds means we published first.  Say **earlier**
+  (green) or **later** (red), plus the magnitude (`13.0h earlier`,
+  `5.7h later`).  Later is always red.  Earlier is always green.
 - `vs SPY` — leave as-is (exception to value casing).
 - `Use` buttons — short; leave as `Use`.
 - Prefer **not** saying “Live” for account reality. All connected accounts are real money.

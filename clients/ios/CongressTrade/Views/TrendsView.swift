@@ -1085,11 +1085,11 @@ struct LatencyComparisonView: View {
 /// Presentation for one provider scorecard.
 ///
 /// Sign convention matches web (`dashboardHtml.ts` leadDirection): positive
-/// seconds means Congress.Trade published first.  The headline is the median
-/// so one freak race cannot flip the sign the way the mean did on iOS
-/// (FMP live 2026-08-16: median +13.0h, average −4.6d).  Colour follows the
-/// headline sign — + green when we are early, − red when we are late —
-/// never the win-count badge.
+/// seconds means Congress.Trade published first (we were earlier).  The
+/// headline is the median so one freak race cannot flip the direction the
+/// way the mean did (FMP live 2026-08-16: median 13.0h earlier, average
+/// 4.6d later).  Colour + wording only — earlier is green, later is red.
+/// Do not print + or −; the word is the sign.
 enum LatencyScorecardCopy {
     enum Direction: Equatable {
         case ahead, behind, even
@@ -1106,14 +1106,23 @@ enum LatencyScorecardCopy {
         var averageCaption: String?
     }
 
-    static func formatLead(_ secs: Int?) -> String {
+    static func formatMagnitude(_ secs: Int?) -> String {
         guard let s = secs else { return "—" }
         let absS = abs(Double(s))
-        let sign = s > 0 ? "+" : (s < 0 ? "−" : "")
-        if absS < 90 { return "\(sign)\(Int(round(absS)))s" }
-        if absS < 5400 { return "\(sign)\(Int(round(absS / 60)))m" }
-        if absS < 172800 { return "\(sign)\(String(format: "%.1f", absS / 3600))h" }
-        return "\(sign)\(String(format: "%.1f", absS / 86400))d"
+        if absS < 90 { return "\(Int(round(absS)))s" }
+        if absS < 5400 { return "\(Int(round(absS / 60)))m" }
+        if absS < 172800 { return String(format: "%.1fh", absS / 3600) }
+        return String(format: "%.1fd", absS / 86400)
+    }
+
+    static func formatLead(_ secs: Int?) -> String {
+        guard secs != nil else { return "—" }
+        let mag = formatMagnitude(secs)
+        switch direction(of: secs) {
+        case .ahead: return "\(mag) earlier"
+        case .behind: return "\(mag) later"
+        case .even: return "even"
+        }
     }
 
     static func direction(of secs: Int?) -> Direction {
@@ -1143,19 +1152,19 @@ enum LatencyScorecardCopy {
             badgeText = (provider.matched >= minMatched && !usable) ? "Coverage limited" : "Gathering"
         } else if preliminary {
             switch direction {
-            case .ahead: badgeText = "Preliminary lead"
-            case .behind: badgeText = "Preliminary behind"
-            case .even: badgeText = "Preliminary tie"
+            case .ahead: badgeText = "Preliminary earlier"
+            case .behind: badgeText = "Preliminary later"
+            case .even: badgeText = "Preliminary even"
             }
         } else {
             switch direction {
-            case .ahead: badgeText = "Ahead"
-            case .behind: badgeText = "Behind"
-            case .even: badgeText = "Tied"
+            case .ahead: badgeText = "Earlier"
+            case .behind: badgeText = "Later"
+            case .even: badgeText = "Even"
             }
         }
 
-        let word = direction == .behind ? "lag" : (direction == .even ? "even" : "lead")
+        let word = direction == .behind ? "later" : (direction == .even ? "even" : "earlier")
         let basisLabel: String
         if !hasStats {
             basisLabel = ""
@@ -1172,9 +1181,16 @@ enum LatencyScorecardCopy {
             && avgDir != direction
             && avgDir != .even
             && direction != .even
-        let averageCaption = averageDisagrees
-            ? "Average \(formatLead(provider.avgLeadSec)) — a few outlier races pull it the other way."
-            : nil
+        let averageCaption: String? = {
+            guard hasStats, provider.avgLeadSec != nil else { return nil }
+            if provider.medianLeadSec != nil && provider.avgLeadSec == provider.medianLeadSec {
+                return nil
+            }
+            if averageDisagrees {
+                return "Average \(formatLead(provider.avgLeadSec)) — a few outlier races pull it the other way."
+            }
+            return "Average \(formatLead(provider.avgLeadSec))"
+        }()
 
         return Snapshot(
             hasStats: hasStats,

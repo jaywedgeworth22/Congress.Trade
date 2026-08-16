@@ -1293,7 +1293,7 @@ final class CongressTradeTests: XCTestCase {
     }
 
     func testLatencyScorecardHeadlinesMedianAndColorsBySign() {
-        // Live 2026-08-16 FMP: 16-12 "win" but avg −4.6d from outliers; median +13.0h.
+        // Live 2026-08-16 FMP: 16-12 "win" but avg 4.6d later from outliers; median 13.0h earlier.
         let fmp = Self.latencyProvider(
             label: "FMP",
             matched: 28,
@@ -1304,15 +1304,18 @@ final class CongressTradeTests: XCTestCase {
             status: "preliminary"
         )
         let snap = LatencyScorecardCopy.snapshot(for: fmp)
-        XCTAssertEqual(snap.headlineText, "+13.0h")
+        XCTAssertEqual(snap.headlineText, "13.0h earlier")
         XCTAssertEqual(snap.direction, .ahead)
-        XCTAssertEqual(snap.badgeText, "Preliminary lead")
-        XCTAssertEqual(snap.basisLabel, "prelim. typical lead")
+        XCTAssertEqual(snap.badgeText, "Preliminary earlier")
+        XCTAssertEqual(snap.basisLabel, "prelim. typical earlier")
         XCTAssertTrue(snap.averageDisagrees)
-        XCTAssertEqual(snap.averageCaption?.contains("−4.6d"), true)
+        XCTAssertEqual(snap.averageCaption?.contains("4.6d later"), true)
+        XCTAssertFalse(snap.headlineText.contains("+"))
+        XCTAssertFalse(snap.headlineText.contains("−"))
+        XCTAssertFalse(snap.headlineText.contains("-"))
     }
 
-    func testLatencyScorecardNegativeMedianIsRedLagNotGreenLead() {
+    func testLatencyScorecardNegativeMedianIsRedLaterNotGreenEarlier() {
         let behind = Self.latencyProvider(
             label: "Slow Feed",
             matched: 9,
@@ -1323,14 +1326,16 @@ final class CongressTradeTests: XCTestCase {
             status: "preliminary"
         )
         let snap = LatencyScorecardCopy.snapshot(for: behind)
-        XCTAssertEqual(snap.headlineText, "−5.7h")
+        XCTAssertEqual(snap.headlineText, "5.7h later")
         XCTAssertEqual(snap.direction, .behind)
-        XCTAssertEqual(snap.badgeText, "Preliminary behind")
-        XCTAssertEqual(snap.basisLabel, "prelim. typical lag")
+        XCTAssertEqual(snap.badgeText, "Preliminary later")
+        XCTAssertEqual(snap.basisLabel, "prelim. typical later")
         XCTAssertFalse(snap.averageDisagrees)
+        XCTAssertFalse(snap.headlineText.contains("+"))
+        XCTAssertFalse(snap.headlineText.contains("−"))
     }
 
-    func testLatencyScorecardUsableAheadUsesPlusAndLeadLabel() {
+    func testLatencyScorecardUsableEarlierHasNoPlusSign() {
         let quiver = Self.latencyProvider(
             label: "Quiver Quantitative",
             matched: 13,
@@ -1341,11 +1346,12 @@ final class CongressTradeTests: XCTestCase {
             status: "usable"
         )
         let snap = LatencyScorecardCopy.snapshot(for: quiver)
-        XCTAssertEqual(snap.headlineText, "+13m")
+        XCTAssertEqual(snap.headlineText, "13m earlier")
         XCTAssertEqual(snap.direction, .ahead)
-        XCTAssertEqual(snap.badgeText, "Ahead")
-        XCTAssertEqual(snap.basisLabel, "typical lead")
+        XCTAssertEqual(snap.badgeText, "Earlier")
+        XCTAssertEqual(snap.basisLabel, "typical earlier")
         XCTAssertEqual(snap.winPct, 100)
+        XCTAssertEqual(snap.averageCaption, "Average 1.9h earlier")
     }
 
     // MARK: - Test helpers

@@ -403,18 +403,73 @@ function classifyUpstream(status, body) {
 }
 
 /**
- * Breaker-guarded entry point. The unguarded handshake lives in
- * detectSenateOnce; everything that decides *whether* to run it lives here.
+ * Prefer the same-Mac senate-relay (long-lived eFD session on :8899).
+ * Direct eFD is breaker-guarded and only used if the relay is down —
+ * a second handshake from this IP is what opened the breaker (503
+ * maintenance HTML) while the relay kept returning PTR rows.
  */
+const SENATE_RELAY = (process.env.SENATE_RELAY_URL || 'http://127.0.0.1:8899').replace(/\/$/, '');
+
+function parseSenateRows(rows) {
+  const out = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    // eFD's DataTables column order shifts (it recently inserted an "office"
+    // display column, moving the anchor from index 2 to 3), so find each cell
+    // by content rather than trusting a fixed index.
+    const cells = (Array.isArray(r) ? r : []).map((c) => (typeof c === 'string' ? c : ''));
+    const anchorCell = cells.find((c) => /\/search\/view\/ptr\//i.test(c));
+    const href = anchorCell ? (/href=["']([^"']+)["']/i.exec(anchorCell) || [])[1] : null;
+    const key = keyFromLink(href || '');
+    if (!key) continue;
+    const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c));
+    const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
+    out.push({
+      source: 'senate',
+      key,
+      link: href.startsWith('http') ? href : `${SENATE}${href}`,
+      name: stripTags(nameCell) || `${r[0]} ${r[1]}`.trim(),
+      filedDate: filedDate || undefined,
+    });
+  }
+  return out;
+}
+
+async function detectSenateViaRelay() {
+  const now = new Date();
+  const since = new Date(now.getTime() - 45 * 864e5);
+  const res = await fetch(`${SENATE_RELAY}/fetch-ptr`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      submitted_start_date: fmtSenate(since),
+      submitted_end_date: fmtSenate(now),
+      pageSize: 100,
+    }),
+  });
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => '')).slice(0, 400);
+    throw new Error(`relay /fetch-ptr HTTP ${res.status}${snippet ? ` — ${snippet}` : ''}`);
+  }
+  const json = await res.json();
+  if (json && json.error) throw new Error(`relay /fetch-ptr: ${json.error}`);
+  return parseSenateRows(json?.data);
+}
+
 async function detectSenate() {
-  if (breakerOpen('senate')) return [];
   try {
-    const out = await detectSenateOnce();
-    await recordSuccess('senate');
+    const out = await detectSenateViaRelay();
     return out;
-  } catch (e) {
-    await recordFailure('senate', e?.message || String(e));
-    throw e;
+  } catch (relayErr) {
+    log(`~ senate: local relay failed (${relayErr?.message || relayErr}) — direct eFD only if breaker closed`);
+    if (breakerOpen('senate')) return [];
+    try {
+      const out = await detectSenateOnce();
+      await recordSuccess('senate');
+      return out;
+    } catch (e) {
+      await recordFailure('senate', e?.message || String(e));
+      throw e;
+    }
   }
 }
 
@@ -501,28 +556,7 @@ async function detectSenateOnce() {
     }
   }
   const json = await data.json();
-  const rows = Array.isArray(json.data) ? json.data : [];
-  const out = [];
-  for (const r of Array.isArray(rows) ? rows : []) {
-    // eFD's DataTables column order shifts (it recently inserted an "office"
-    // display column, moving the anchor from index 2 to 3), so find each cell
-    // by content rather than trusting a fixed index.
-    const cells = (Array.isArray(r) ? r : []).map((c) => (typeof c === 'string' ? c : ''));
-    const anchorCell = cells.find((c) => /\/search\/view\/ptr\//i.test(c));
-    const href = anchorCell ? (/href=["']([^"']+)["']/i.exec(anchorCell) || [])[1] : null;
-    const key = keyFromLink(href || '');
-    if (!key) continue;
-    const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c));
-    const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
-    out.push({
-      source: 'senate',
-      key,
-      link: href.startsWith('http') ? href : `${SENATE}${href}`,
-      name: stripTags(nameCell) || `${r[0]} ${r[1]}`.trim(),
-      filedDate: filedDate || undefined,
-    });
-  }
-  return out;
+  return parseSenateRows(json.data);
 }
 
 // --- House Clerk (intraday live search + PDF-URL frontier probe) -------------
