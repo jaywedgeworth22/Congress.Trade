@@ -1142,7 +1142,7 @@ enum LatencyScorecardCopy {
         let hasLead = headlineSec != nil
         let hasTiming = provider.matched >= minMatched && deltaSample > 0 && hasLead
         let hasStats = hasTiming && (usable || preliminary)
-        let direction = direction(of: headlineSec)
+        let direction = Self.direction(of: headlineSec)
         let winPct = provider.matched > 0
             ? Int(round(100.0 * Double(wins) / Double(provider.matched)))
             : 0
@@ -1174,7 +1174,7 @@ enum LatencyScorecardCopy {
             basisLabel = preliminary ? "prelim. typical \(word)" : "typical \(word)"
         }
 
-        let avgDir = direction(of: provider.avgLeadSec)
+        let avgDir = Self.direction(of: provider.avgLeadSec)
         let averageDisagrees = hasStats
             && provider.avgLeadSec != nil
             && provider.medianLeadSec != nil
