@@ -98,15 +98,28 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       }
     }
 
+    const appleEnabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
+    const appleWeb = appleEnabled && Boolean(await loadAppleWebConfig(c.env));
+
     return c.json({
       user: user ? publicUser(user) : null,
       entitlement: await resolveEntitlementAsync(c.env, user),
       admin: { allowed: adminAllowed },
+      auth: { appleWeb },
       billing: {
         ...(await billingCapabilitiesAsync(c.env)),
         hasCustomer: Boolean(user?.stripeCustomerId),
       },
     });
+  });
+
+  // --- GET /auth/apple/status ----------------------------------------------
+  // Public, no side effects.  The login sheet uses this so a dead Apple
+  // button is not shown when web SIWA is missing Services ID / key.
+  r.get('/apple/status', async (c) => {
+    const enabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
+    const web = enabled && Boolean(await loadAppleWebConfig(c.env));
+    return c.json({ enabled, web });
   });
 
   // --- POST /auth/logout --------------------------------------------------
