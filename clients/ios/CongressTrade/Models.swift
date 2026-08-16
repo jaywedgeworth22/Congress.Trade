@@ -1000,8 +1000,14 @@ struct LatencySummary: Decodable {
     /// Max |delta| hours for concurrent-race timing; optional for older servers.
     let maxConcurrentDeltaHours: Int?
     let totals: LatencyTotals
+    let scope: LatencyScope?
     let providers: [LatencyProvider]
-    
+
+    struct LatencyScope: Decodable {
+        let matched: Int?
+        let total: Int?
+    }
+
     struct LatencyTotals: Decodable {
         let racedDisclosures: Int
         let matched: Int
@@ -1009,6 +1015,18 @@ struct LatencySummary: Decodable {
         let comparableProviders: Int
         let providerObserved: Int?
         let unmatchedProvider: Int?
+        let scopeMatched: Int?
+        let scopeTotal: Int?
+    }
+
+    var matchedOfTotal: (matched: Int, total: Int)? {
+        if let matched = totals.scopeMatched, let total = totals.scopeTotal, total > 0 {
+            return (matched, total)
+        }
+        if let matched = scope?.matched, let total = scope?.total, total > 0 {
+            return (matched, total)
+        }
+        return nil
     }
 }
 

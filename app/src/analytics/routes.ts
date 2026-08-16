@@ -1245,7 +1245,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   r.get('/latency-summary', async (c) => {
     // v5: FMP family merge + effective timing deltas (not published-only).
     // v6: strong/weak split, window-decoupled coverage, scope denominator.
-    const data = await cached(c.env, 'analytics:latency-summary:v7', 300, async () => {
+    const data = await cached(c.env, 'analytics:latency-summary:v8', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       const { summarizeProviderPublishBump } = await import('../ingestion/latencyPriceSnapshots.ts');
       const priceEdge = await summarizeProviderPublishBump(c.env);
@@ -1262,6 +1262,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           maturedProviderObserved: publicSummary.totals.maturedProviderObserved,
           unmatchedProvider: publicSummary.totals.unmatchedProvider,
           comparableProviders: publicSummary.totals.comparableProviders,
+          scopeMatched: publicSummary.scope.matched,
+          scopeTotal: publicSummary.scope.total,
         },
         // "N of M matched" over our whole realm of concern — see
         // DisclosureLatencyScope in ingestion/tradeLatency.ts for exactly what

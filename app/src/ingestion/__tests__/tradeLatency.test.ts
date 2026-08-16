@@ -194,7 +194,7 @@ describe('tradeLatency', () => {
       expect(LATENCY_SCORE_WINDOW_HOURS).toBe(168);
       expect(LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS).toBe(336);
       expect(LATENCY_MAX_CONCURRENT_DELTA_HOURS).toBe(336);
-      expect(LATENCY_LIVE_FILING_MAX_LAG_DAYS).toBe(21);
+      expect(LATENCY_LIVE_FILING_MAX_LAG_DAYS).toBe(7);
     });
   });
 
@@ -224,6 +224,26 @@ describe('tradeLatency', () => {
           source: 'primary',
           filedDate: '2026-08-01',
           firstSeenAt: '2026-08-03T12:00:00.000Z',
+        }),
+      ).toBe(true);
+    });
+
+    it('treats a 15-day first_seen lag as a crawl, not a live race', () => {
+      // Live 2026-08-16: FMP "losses" were July 24–27 House PTRs first_seen in
+      // one Aug 11 22:35Z batch.  15–18 days after filed is a reimport, not
+      // us losing a same-day race.
+      expect(
+        isLiveRaceImport({
+          source: 'primary',
+          filedDate: '2026-07-26',
+          firstSeenAt: '2026-08-11T22:35:05.988Z',
+        }),
+      ).toBe(false);
+      expect(
+        isLiveRaceImport({
+          source: 'primary',
+          filedDate: '2026-08-05',
+          firstSeenAt: '2026-08-11T22:36:03.656Z',
         }),
       ).toBe(true);
     });

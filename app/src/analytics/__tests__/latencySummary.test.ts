@@ -231,6 +231,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
   it('publishes the "N of M matched" scope denominator both clients render', async () => {
     const res = await app.request('http://localhost/latency-summary', {}, fairnessEnv());
     const body = (await res.json()) as {
+      totals: { scopeMatched?: number; scopeTotal?: number };
       scope: {
         windowHours: number;
         total: number;
@@ -244,6 +245,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     };
     // 20 House lines; both sides saw all 20 (one line, not two), and 10 are
     // strongly paired. M is the union, never the sum.
+    expect(body.totals).toMatchObject({ scopeMatched: 10, scopeTotal: 20 });
     expect(body.scope).toMatchObject({
       windowHours: 336,
       total: 20,

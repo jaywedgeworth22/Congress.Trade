@@ -4500,6 +4500,8 @@ describe('earlier/later lead figures (owner: no +/−, later red, earlier green)
   it('.lead-behind is wired to a RED variable, not the neutral provider gray', () => {
     expect(DASHBOARD_HTML).toContain('.lead-fig.lead-behind { color:var(--lag); }');
     expect(DASHBOARD_HTML).toContain('.lead-fig.lead-ahead { color:var(--good); }');
+    expect(DASHBOARD_HTML).toContain('.lead-inline.lead-ahead { color:var(--good); }');
+    expect(DASHBOARD_HTML).toContain('.lead-inline.lead-behind { color:var(--lag); }');
     // --lag aliases --sell (theme-following red); it is deliberately not --rival.
     expect(DASHBOARD_HTML).toMatch(/--lag:\s*var\(--sell\);/);
     expect(DASHBOARD_HTML).not.toContain('.lead-fig.lead-behind { color:var(--rival)');
@@ -4532,6 +4534,8 @@ function loadSpCardHtml() {
       'leadSignChar',
       'leadArrowChar',
       'leadWord',
+      'leadVerdict',
+      'leadInlineHtml',
       'fmtLeadSigned',
       'leadDescription',
       'leadFigureHtml',
@@ -4576,14 +4580,16 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
   it('headlines the MEDIAN, so one outlier race cannot flip the card against its own badge', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml(UW_LIVE);
-    // avg is -34s but the median is +1466s off 7 wins / 1 loss: the badge says
-    // "Preliminary earlier", and the headline now agrees with it.
-    expect(html).toContain('Preliminary earlier');
+    // avg is later while the median is earlier: never claim Lead.
+    expect(html).toContain('>Mixed<');
+    expect(html).not.toContain('Preliminary');
+    expect(html).not.toContain('>Lead<');
     expect(html).toContain('lead-fig lead-ahead lead-big');
     expect(html).toContain('24 min');
+    expect(html).toContain('lead-inline lead-ahead');
     expect(html).toContain('>earlier<');
     expect(html).not.toContain('+24 min');
-    expect(html).toContain('typically earlier than their feed on live imports (median)');
+    expect(html).toContain('typically <span class="lead-inline lead-ahead">earlier</span> than their feed on live imports (median)');
   });
 
   it('demotes the mean to a subline and paints it red later when it disagrees', () => {
@@ -4605,7 +4611,9 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml({ ...UW_LIVE, avgLeadSec: 1500, comparisonStatus: 'usable' });
     expect(html).not.toContain('The average disagrees with the median');
-    expect(html).toContain('typically earlier than their feed on live imports (median)');
+    expect(html).toContain('>Lead<');
+    expect(html).not.toContain('Preliminary');
+    expect(html).toContain('typically <span class="lead-inline lead-ahead">earlier</span> than their feed on live imports (median)');
   });
 
   it('renders a red later headline when the median says we were behind', () => {
@@ -4620,8 +4628,10 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
     expect(html).toContain(DOWN);
     expect(html).not.toContain(MINUS);
     expect(html).not.toContain('+');
-    expect(html).toContain('typically later than their feed on live imports (median)');
-    expect(html).not.toContain('typically earlier than their feed on live imports (median)');
+    expect(html).toContain('>Lag<');
+    expect(html).not.toContain('Preliminary');
+    expect(html).toContain('typically <span class="lead-inline lead-behind">later</span> than their feed on live imports (median)');
+    expect(html).not.toContain('lead-inline lead-ahead');
   });
 });
 
@@ -4669,8 +4679,8 @@ describe('"N of M matched" scope line (denominator the matcher lane exposes)', (
   it('both placements own a scope-note element that starts hidden', () => {
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNote" hidden></p>');
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNoteAdmin" hidden></p>');
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals, d.priceEdge)");
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals, d.priceEdge)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge)");
   });
 });
 
