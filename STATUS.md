@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-16 GROK — Health + Infisical shared-only AGENT_SYNC
+
+`AGENT_SYNC_TOKEN` / `AGENT_SYNC_POST_TOKEN` live only in Infisical
+shared-at-ct.  Deleted the copies that had been written onto the ST and
+CT app projects during the 2026-08-14 rotation.  `GET /api/health` now
+publishes `checks.secrets` (source names and counts, never values).
+Public `/api/health` is already HTTP 200; the scrape guard already
+exempts it.  Branch `grok/health-infisical-shared`.
+
 ## 2026-08-15 GROK — Trends layout, Directory pager, Khanna recent dates
 
 Buys vs Sells sits under Rising Activity.  What Is Being Traded has no

@@ -78,7 +78,7 @@ import {
 import { openSseStream } from './sse.ts';
 import { handleTickerLogoRequest } from '../ui/tickerLogos.ts';
 import { handleMemberPhotoRequest } from '../enrichment/memberPhotoPack.ts';
-import { resolveSecret } from '../secrets/infisical.ts';
+import { getSecretResolverStatus, resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
@@ -490,6 +490,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const build = readBuildInfo(envx);
     const storage = await readLocalLitestreamAge();
     const r2Weekly = await readR2WeeklyArchiveStatus();
+    // Public-safe Infisical view: source names, counts, errors.  Never values.
+    // Shared-project keys (AGENT_SYNC_*) live only in shared-at-ct; app
+    // projects must not duplicate them (app merge would shadow shared).
+    const secrets = getSecretResolverStatus(c.env);
     return c.json(
       {
         ...readiness,
@@ -499,7 +503,20 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         build,
         // Usage Monitor fleet backup reads checks.storage.litestreamAgeSeconds
         // and checks.storage.r2Weekly.
-        checks: { storage: { ...storage, r2Weekly } },
+        checks: {
+          storage: { ...storage, r2Weekly },
+          secrets: {
+            enabled: secrets.enabled,
+            cacheReady: secrets.cacheReady,
+            errors: secrets.errors,
+            sources: secrets.sources.map((source) => ({
+              name: source.name,
+              configured: source.configured,
+              ok: source.ok,
+              count: source.count,
+            })),
+          },
+        },
         time: new Date().toISOString(),
       },
       readiness.ok ? 200 : 503,
