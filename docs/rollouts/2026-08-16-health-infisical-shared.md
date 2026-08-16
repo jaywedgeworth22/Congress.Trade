@@ -56,6 +56,13 @@ cd app && npx vitest run src/delivery/__tests__/healthCache.test.ts \
 # 2 files / 9 passed
 ```
 
+CI on PR #1885: first `typecheck + test` (run 31926870126, attempt 1,
+04:32Z) failed with every file `(0 test)` and 0% coverage on
+`hetzner-ct-ci-1`.  Same-window `grok/note-title` failed the same way.
+Attempt 2 (19:41Z, same runner) succeeded.  Local health/infisical
+tests still 9/9.  Merged `origin/main` after #1886 (`77782b7b`)
+conflicted on `docs/EFFORT-LOG.md`; kept both rows.
+
 Infisical names-only check after delete: CT app and ST app no longer
 list `AGENT_SYNC_*`; shared still does.
 
@@ -66,6 +73,8 @@ list `AGENT_SYNC_*`; shared still does.
 2. Local Mac agents keep posting via `~/.secrets/agent-sync.env`.
    Cloud agents that used the ST/CT app project for `AGENT_SYNC_*`
    must read the shared project (or the handoff file) instead.
+3. Owner: replace congress.trade admin UI localStorage `ADMIN_TOKEN`
+   from `CT_ADMIN_TOKEN` in `~/.secrets/global-api-keys` (do not paste).
 
 ## 6. Zero-Code Findings
 

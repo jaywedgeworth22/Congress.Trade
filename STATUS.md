@@ -7,7 +7,10 @@ shared-at-ct.  Deleted the copies that had been written onto the ST and
 CT app projects during the 2026-08-14 rotation.  `GET /api/health` now
 publishes `checks.secrets` (source names and counts, never values).
 Public `/api/health` is already HTTP 200; the scrape guard already
-exempts it.  Branch `grok/health-infisical-shared`.
+exempts it.  PR #1885.  First CI typecheck+test was a hetzner-ct-ci-1
+collect flake (every file 0 tests / 0% coverage); rerun succeeded.
+Merged `origin/main` after #1886 dirtied the PR.  Branch
+`grok/health-infisical-shared`.
 
 ## 2026-08-15 GROK — Trends layout, Directory pager, Khanna recent dates
 
