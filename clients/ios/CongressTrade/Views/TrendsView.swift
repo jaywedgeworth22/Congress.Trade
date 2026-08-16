@@ -1042,13 +1042,46 @@ struct LatencyComparisonView: View {
     }
 }
 
-struct ProviderScorecard: View {
-    let provider: LatencyProvider
-    let minMatched: Int
+/// Presentation for one provider scorecard.
+///
+/// Sign convention matches web (`dashboardHtml.ts` leadDirection): positive
+/// seconds means Congress.Trade published first.  The headline is the median
+/// so one freak race cannot flip the sign the way the mean did on iOS
+/// (FMP live 2026-08-16: median +13.0h, average −4.6d).  Colour follows the
+/// headline sign — + green when we are early, − red when we are late —
+/// never the win-count badge.
+enum LatencyScorecardCopy {
+    enum Direction: Equatable {
+        case ahead, behind, even
+    }
 
-    var body: some View {
-        // Mirror web honesty gates: usable = full claim; preliminary = soft timing.
-        // Never paint "tie" when W+L+T is empty or lead seconds are missing (QQ empty-publish bug).
+    struct Snapshot: Equatable {
+        var hasStats: Bool
+        var headlineText: String
+        var direction: Direction
+        var badgeText: String
+        var basisLabel: String
+        var winPct: Int
+        var averageDisagrees: Bool
+        var averageCaption: String?
+    }
+
+    static func formatLead(_ secs: Int?) -> String {
+        guard let s = secs else { return "—" }
+        let absS = abs(Double(s))
+        let sign = s > 0 ? "+" : (s < 0 ? "−" : "")
+        if absS < 90 { return "\(sign)\(Int(round(absS)))s" }
+        if absS < 5400 { return "\(sign)\(Int(round(absS / 60)))m" }
+        if absS < 172800 { return "\(sign)\(String(format: "%.1f", absS / 3600))h" }
+        return "\(sign)\(String(format: "%.1f", absS / 86400))d"
+    }
+
+    static func direction(of secs: Int?) -> Direction {
+        guard let s = secs, s != 0 else { return .even }
+        return s > 0 ? .ahead : .behind
+    }
+
+    static func snapshot(for provider: LatencyProvider, minMatched: Int = 2) -> Snapshot {
         let status = provider.comparisonStatus ?? "insufficient"
         let usable = status == "usable"
         let preliminary = status == "preliminary"
@@ -1056,51 +1089,99 @@ struct ProviderScorecard: View {
         let losses = provider.providerFirstCount
         let ties = provider.tieCount
         let deltaSample = wins + losses + ties
-        let hasLead = provider.avgLeadSec != nil || provider.medianLeadSec != nil
+        let headlineSec = provider.medianLeadSec ?? provider.avgLeadSec
+        let hasLead = headlineSec != nil
         let hasTiming = provider.matched >= minMatched && deltaSample > 0 && hasLead
         let hasStats = hasTiming && (usable || preliminary)
-        let ahead = hasStats && wins > losses
-        let tied = hasStats && wins == losses && deltaSample > 0
+        let direction = direction(of: headlineSec)
+        let winPct = provider.matched > 0
+            ? Int(round(100.0 * Double(wins) / Double(provider.matched)))
+            : 0
+
+        let badgeText: String
+        if !hasStats {
+            badgeText = (provider.matched >= minMatched && !usable) ? "Coverage limited" : "Gathering"
+        } else if preliminary {
+            switch direction {
+            case .ahead: badgeText = "Preliminary lead"
+            case .behind: badgeText = "Preliminary behind"
+            case .even: badgeText = "Preliminary tie"
+            }
+        } else {
+            switch direction {
+            case .ahead: badgeText = "Ahead"
+            case .behind: badgeText = "Behind"
+            case .even: badgeText = "Tied"
+            }
+        }
+
+        let word = direction == .behind ? "lag" : (direction == .even ? "even" : "lead")
+        let basisLabel: String
+        if !hasStats {
+            basisLabel = ""
+        } else if direction == .even {
+            basisLabel = preliminary ? "prelim. typical even" : "typical even"
+        } else {
+            basisLabel = preliminary ? "prelim. typical \(word)" : "typical \(word)"
+        }
+
+        let avgDir = direction(of: provider.avgLeadSec)
+        let averageDisagrees = hasStats
+            && provider.avgLeadSec != nil
+            && provider.medianLeadSec != nil
+            && avgDir != direction
+            && avgDir != .even
+            && direction != .even
+        let averageCaption = averageDisagrees
+            ? "Average \(formatLead(provider.avgLeadSec)) — a few outlier races pull it the other way."
+            : nil
+
+        return Snapshot(
+            hasStats: hasStats,
+            headlineText: formatLead(headlineSec),
+            direction: direction,
+            badgeText: badgeText,
+            basisLabel: basisLabel,
+            winPct: winPct,
+            averageDisagrees: averageDisagrees,
+            averageCaption: averageCaption
+        )
+    }
+}
+
+struct ProviderScorecard: View {
+    let provider: LatencyProvider
+    let minMatched: Int
+
+    var body: some View {
+        let snap = LatencyScorecardCopy.snapshot(for: provider, minMatched: minMatched)
+        let status = provider.comparisonStatus ?? "insufficient"
+        let hasLead = provider.avgLeadSec != nil || provider.medianLeadSec != nil
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(provider.label)
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                if hasStats {
-                    if preliminary {
-                        Text(ahead ? "Preliminary lead" : (tied ? "Preliminary tie" : (wins < losses ? "Preliminary behind" : "Preliminary")))
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Color.orange.opacity(0.15)).foregroundStyle(.orange).clipShape(Capsule())
-                    } else if ahead {
-                        Text("Ahead").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.green.opacity(0.2)).foregroundStyle(.green).clipShape(Capsule())
-                    } else if tied {
-                        Text("Tied").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.gray.opacity(0.2)).foregroundStyle(.secondary).clipShape(Capsule())
-                    } else {
-                        Text("Behind").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.red.opacity(0.2)).foregroundStyle(.red).clipShape(Capsule())
-                    }
-                } else if provider.matched >= minMatched && !usable {
-                    Text("Coverage limited").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.orange.opacity(0.15)).foregroundStyle(.orange).clipShape(Capsule())
-                } else {
-                    Text("Gathering").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 3).background(Color.gray.opacity(0.2)).foregroundStyle(.secondary).clipShape(Capsule())
-                }
+                badge(snap.badgeText, kind: badgeKind(snap: snap, preliminary: status == "preliminary"))
             }
 
-            if hasStats {
-                let winPct = provider.matched > 0 ? Int(round(100.0 * Double(wins) / Double(provider.matched))) : 0
-                // Prefer average lead (matches human mean lead/lag); median is secondary.
-                let leadSecs = provider.avgLeadSec ?? provider.medianLeadSec
-                HStack {
-                    Text(formatLead(leadSecs))
+            if snap.hasStats {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(snap.headlineText)
                         .font(.title3.weight(.bold))
-                        .foregroundStyle(ahead ? .green : (tied ? .primary : .red))
-                    Text(preliminary ? "prelim. avg lead" : "avg lead")
+                        .foregroundStyle(leadColor(snap.direction))
+                    Text(snap.basisLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(winPct)% win")
+                    Text("\(snap.winPct)% win")
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                if let caption = snap.averageCaption {
+                    Text(caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             } else {
@@ -1131,13 +1212,45 @@ struct ProviderScorecard: View {
         .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func formatLead(_ secs: Int?) -> String {
-        guard let s = secs else { return "—" }
-        let absS = abs(Double(s))
-        let sign = s > 0 ? "+" : (s < 0 ? "−" : "")
-        if absS < 90 { return "\(sign)\(Int(round(absS)))s" }
-        if absS < 5400 { return "\(sign)\(Int(round(absS / 60)))m" }
-        if absS < 172800 { return "\(sign)\(String(format: "%.1f", absS / 3600))h" }
-        return "\(sign)\(String(format: "%.1f", absS / 86400))d"
+    private func leadColor(_ direction: LatencyScorecardCopy.Direction) -> Color {
+        switch direction {
+        case .ahead: return .green
+        case .behind: return .red
+        case .even: return .primary
+        }
+    }
+
+    private enum BadgeKind { case preliminary, ahead, behind, muted }
+
+    private func badgeKind(snap: LatencyScorecardCopy.Snapshot, preliminary: Bool) -> BadgeKind {
+        if !snap.hasStats || preliminary { return .preliminary }
+        switch snap.direction {
+        case .ahead: return .ahead
+        case .behind: return .behind
+        case .even: return .muted
+        }
+    }
+
+    private func badge(_ text: String, kind: BadgeKind) -> some View {
+        let bg: Color
+        let fg: Color
+        switch kind {
+        case .preliminary:
+            bg = Color.orange.opacity(0.15)
+            fg = .orange
+        case .ahead:
+            bg = Color.green.opacity(0.2)
+            fg = .green
+        case .behind:
+            bg = Color.red.opacity(0.2)
+            fg = .red
+        case .muted:
+            bg = Color.gray.opacity(0.2)
+            fg = Color.secondary
+        }
+        return Text(text)
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(bg).foregroundStyle(fg).clipShape(Capsule())
     }
 }

@@ -654,24 +654,19 @@ struct FeedControlBar: View {
 /// App Store review expects these reachable from inside the app, and the owner
 /// asked for them on all tabs rather than buried in Settings.
 ///
-/// One Markdown `Text` rather than an `HStack` of `Link`s so it wraps to a
-/// second line at large Dynamic Type instead of being squeezed or clipped.
-/// `.tint` is what colours Markdown links, so it is set explicitly — without it
-/// these render accent-blue like everything else and read as a call to action.
+/// One attributed Markdown `Text` rather than an `HStack` of `Link`s so it
+/// wraps to a second line at large Dynamic Type instead of being squeezed or
+/// clipped.  `.tint` colours the parsed links — without it they render
+/// accent-blue and read as a call to action.
 struct AppLegalFooter: View {
     var body: some View {
-        Text(
-            "[Privacy](https://Congress.Trade/privacy-policy)  •  " +
-            "[Terms](https://Congress.Trade/terms-of-service)  •  " +
-            "[Pricing](https://Congress.Trade/pricing)  •  " +
-            "[Support](mailto:congress.trade@jays.services)"
-        )
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .tint(Color.secondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
+        Text(AppLegal.attributed)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .tint(Color.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
     }
 }
 
