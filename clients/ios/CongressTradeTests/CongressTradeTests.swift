@@ -1283,10 +1283,16 @@ final class CongressTradeTests: XCTestCase {
 
     func testAppLegalFooterMailsSupportAtCongressTradeAndParsesMarkdown() {
         XCTAssertEqual(AppLegal.supportEmail, "support@congress.trade")
-        XCTAssertTrue(AppLegal.markdown.contains("mailto:support@congress.trade"))
-        XCTAssertFalse(AppLegal.markdown.contains("congress.trade@jays.services"))
         XCTAssertEqual(AppLegal.destinations.map(\.title), ["Privacy", "Terms", "Pricing", "Support"])
         XCTAssertEqual(AppLegal.destinations.last?.url.absoluteString, "mailto:support@congress.trade")
+        XCTAssertFalse(
+            AppLegal.destinations.contains { $0.url.absoluteString.contains("jays.services") }
+        )
+        // Tabs render `LegalFooterLinks` (buttons).  Keep the attributed
+        // fallback honest so a future Markdown caller cannot revive the
+        // raw `[Support](mailto:…)` row.
+        XCTAssertTrue(AppLegal.markdown.contains("mailto:support@congress.trade"))
+        XCTAssertFalse(AppLegal.markdown.contains("congress.trade@jays.services"))
         let links = AppLegal.attributed.runs.compactMap(\.link)
         XCTAssertEqual(links.count, 4)
         XCTAssertEqual(links.last?.absoluteString, "mailto:support@congress.trade")

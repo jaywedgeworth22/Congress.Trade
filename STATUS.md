@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-16 GROK — iOS tab footer still raw Markdown + wrong email
+
+TestFlight / App Review 1.0.15 (`202608150702`) still prints
+`[Privacy](url)` and mails `congress.trade@jays.services`.  #1881 is on
+`main` but never shipped.  Tab `AppLegalFooter` now uses button
+`LegalFooterLinks` (`support@congress.trade`) so Markdown cannot leak.
+Branch `grok/ios-footer-buttons`.  Force-ship TestFlight after merge.
+
 ## 2026-08-16 GROK — Store version 1.0.0 + custom EULA + beta review
 
 Owner: match version numbering to ST/UM and write ASC fields.  App Store
