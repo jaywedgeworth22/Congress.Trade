@@ -12411,7 +12411,8 @@ loadMe().then(function () {
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
     if (!fromUrl) {
-      var path = (window.location.pathname || '').replace(/\/+$/, '') || '/';
+      var path = window.location.pathname || '/';
+      while (path.length > 1 && path.charAt(path.length - 1) === '/') path = path.slice(0, -1);
       if (path === '/admin') fromUrl = 'admin';
       if (path === '/review') fromUrl = 'review';
     }
