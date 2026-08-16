@@ -9,10 +9,8 @@ struct TrendsView: View {
     /// 12pt gap, same 16/8 insets) so the chips and the top background match.
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
-    @State private var selectedTicker: String?
-    @State private var selectedPoliticianId: String?
-    @State private var selectedPoliticianName: String?
-    @State private var selectedPoliticianPhotoUrl: String?
+    @State private var selectedTicker: TickerSheetTarget?
+    @State private var selectedPolitician: MemberSheetTarget?
     @State private var volumeMetric: VolumeChartMetric = .count
     @State private var tickerMetric: VolumeChartMetric = .count
 
@@ -133,31 +131,21 @@ struct TrendsView: View {
             .refreshable {
                 await store.refreshTrends()
             }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedTicker != nil },
-                set: { if !$0 { selectedTicker = nil } }
-            )) {
-                if let ticker = selectedTicker {
-                    TickerDetailView(ticker: ticker)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedTicker) { target in
+                TickerDetailView(ticker: target.ticker)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedPoliticianId != nil },
-                set: { if !$0 { selectedPoliticianId = nil; selectedPoliticianPhotoUrl = nil } }
-            )) {
-                if let memberId = selectedPoliticianId {
-                    PoliticianDetailView(
-                        memberId: memberId,
-                        memberName: selectedPoliticianName ?? "Politician",
-                        seedPhotoUrl: selectedPoliticianPhotoUrl
-                    )
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedPolitician) { target in
+                PoliticianDetailView(
+                    memberId: target.id,
+                    memberName: target.name,
+                    seedPhotoUrl: target.photoUrl
+                )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
         }
     }
@@ -289,7 +277,7 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(ranked.enumerated()), id: \.element.id) { idx, item in
                     Button {
-                        selectedTicker = item.ticker
+                        selectedTicker = TickerSheetTarget(ticker: item.ticker)
                     } label: {
                         HStack(spacing: 10) {
                             AssetMark(symbol: item.ticker, isTicker: true, size: 28)
@@ -360,7 +348,7 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(store.trendingAssets.prefix(8).enumerated()), id: \.element.id) { idx, item in
                     Button {
-                        selectedTicker = item.ticker
+                        selectedTicker = TickerSheetTarget(ticker: item.ticker)
                     } label: {
                         HStack(spacing: 10) {
                             AssetMark(symbol: item.ticker, isTicker: true, size: 26)
@@ -408,7 +396,7 @@ struct TrendsView: View {
             VStack(spacing: 8) {
                 ForEach(store.clusterBuys.prefix(8)) { c in
                     Button {
-                        selectedTicker = c.ticker
+                        selectedTicker = TickerSheetTarget(ticker: c.ticker)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -581,9 +569,7 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(ranked.enumerated()), id: \.element.id) { idx, p in
                     Button {
-                        selectedPoliticianId = p.filerId
-                        selectedPoliticianName = p.fullName ?? p.filerId
-                        selectedPoliticianPhotoUrl = p.photoUrl
+                        selectedPolitician = MemberSheetTarget(id: p.filerId, name: p.fullName ?? p.filerId, photoUrl: p.photoUrl)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -631,9 +617,7 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(store.memberLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, m in
                     Button {
-                        selectedPoliticianId = m.filerId
-                        selectedPoliticianName = m.fullName ?? m.filerId
-                        selectedPoliticianPhotoUrl = nil
+                        selectedPolitician = MemberSheetTarget(id: m.filerId, name: m.fullName ?? m.filerId)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -678,9 +662,7 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(store.conflicts.prefix(8).enumerated()), id: \.element.id) { idx, c in
                     Button {
-                        selectedPoliticianId = c.bioguideId
-                        selectedPoliticianName = c.memberName ?? c.bioguideId
-                        selectedPoliticianPhotoUrl = c.photoUrl
+                        selectedPolitician = MemberSheetTarget(id: c.bioguideId, name: c.memberName ?? c.bioguideId, photoUrl: c.photoUrl)
                     } label: {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -755,9 +737,7 @@ struct TrendsView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(late.prefix(6).enumerated()), id: \.element.id) { idx, f in
                         Button {
-                            selectedPoliticianId = f.filerId
-                            selectedPoliticianName = f.fullName ?? f.filerId
-                            selectedPoliticianPhotoUrl = f.photoUrl
+                            selectedPolitician = MemberSheetTarget(id: f.filerId, name: f.fullName ?? f.filerId, photoUrl: f.photoUrl)
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {

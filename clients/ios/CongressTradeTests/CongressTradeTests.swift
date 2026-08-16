@@ -649,6 +649,35 @@ final class CongressTradeTests: XCTestCase {
     }
 
     @MainActor
+    func testMemberRequestPutsSortOnTheQueryNotThePath() async throws {
+        // Regression: get("member/id?sort=tx_date") encoded `?` into the path
+        // and the server 404'd "member not found" on the first politician tap.
+        let seen = expectation(description: "member request")
+        MockURLProtocol.handler = { request in
+            let url = request.url!
+            XCTAssertTrue(url.path.hasSuffix("/member/C001047"), url.path)
+            XCTAssertFalse(url.path.contains("sort"), url.path)
+            XCTAssertFalse(url.absoluteString.contains("%3F"), url.absoluteString)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "sort" })?.value, "tx_date")
+            XCTAssertEqual(items.first(where: { $0.name == "order" })?.value, "desc")
+            seen.fulfill()
+            return Self.response(
+                for: request,
+                json: """
+                {"member":{"id":"C001047","name":"Shelley Moore Capito"},"summary":{},"items":[]}
+                """
+            )
+        }
+        let api = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: makeSession()
+        )
+        _ = try await api.member(id: "C001047")
+        await fulfillment(of: [seen], timeout: 1)
+    }
+
     func testPermanentClientErrorIsNotRetried() async throws {
         var feedAttempts = 0
         MockURLProtocol.handler = { request in

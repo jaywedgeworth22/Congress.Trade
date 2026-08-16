@@ -196,13 +196,28 @@ struct PoliticianDetailView: View {
         isLoading = true
         error = nil
         do {
-            let response = try await store.api.member(id: memberId)
+            let response = try await fetchMember()
+            if Task.isCancelled { return }
             self.member = response.member
             self.summary = response.summary
             self.trades = response.items
+        } catch is CancellationError {
+            return
+        } catch let error as APIError where error.isCancellation {
+            return
         } catch {
-            self.error = error.localizedDescription
+            if Task.isCancelled { return }
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func fetchMember() async throws -> ClientMemberResponse {
+        do {
+            return try await store.api.member(id: memberId)
+        } catch let error as APIError where error.isRetryable {
+            try await Task.sleep(for: .milliseconds(400))
+            return try await store.api.member(id: memberId)
+        }
     }
 }
