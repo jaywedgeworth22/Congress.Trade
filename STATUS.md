@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-15 GROK — Trends layout, Directory pager, Khanna recent dates
+
+Buys vs Sells sits under Rising Activity.  What Is Being Traded has no
+rank numbers and a # / $ toggle.  Directory pager is left-aligned and
+scrolls with the list (top + bottom), like Trades.  Politician Recent
+Trades sort by trade date (Khanna lastTrade 2026-07-01; cursor order had
+been showing a reimported Dec 2025 filing).  Branch
+`grok/ios-trends-khanna`.  Issue #1883.
+Receipt: `docs/rollouts/2026-08-15-trends-directory-khanna.md`.
+
 ## 2026-08-15 GROK — iOS tab footer links + latency lead/lag signs
 
 Owner screenshot: Trends legal row printed raw Markdown and Support mailed

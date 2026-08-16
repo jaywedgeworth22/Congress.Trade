@@ -14,6 +14,7 @@ struct TrendsView: View {
     @State private var selectedPoliticianName: String?
     @State private var selectedPoliticianPhotoUrl: String?
     @State private var volumeMetric: VolumeChartMetric = .count
+    @State private var tickerMetric: VolumeChartMetric = .count
 
     var body: some View {
         NavigationStack {
@@ -40,16 +41,16 @@ struct TrendsView: View {
 
                         summaryStrip
 
-                        if !store.volumeSeries.isEmpty {
-                            volumeSection
-                        }
-
                         if !store.tickerLeaderboard.isEmpty {
                             tickerSection
                         }
 
                         if !store.trendingAssets.isEmpty {
                             trendingSection
+                        }
+
+                        if !store.volumeSeries.isEmpty {
+                            volumeSection
                         }
 
                         if !store.clusterBuys.isEmpty {
@@ -268,18 +269,29 @@ struct TrendsView: View {
     }
 
     private var tickerSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            trendsHeading("What Is Being Traded")
+        let ranked = Self.rankedTickers(store.tickerLeaderboard, metric: tickerMetric)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("What Is Being Traded")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                Picker("Metric", selection: $tickerMetric) {
+                    ForEach(VolumeChartMetric.allCases) { metric in
+                        Text(metric.label).tag(metric)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 88)
+                .accessibilityLabel("What Is Being Traded metric")
+            }
+            .padding(.top, 10)
             VStack(spacing: 0) {
-                ForEach(Array(store.tickerLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, item in
+                ForEach(Array(ranked.enumerated()), id: \.element.id) { idx, item in
                     Button {
                         selectedTicker = item.ticker
                     } label: {
                         HStack(spacing: 10) {
-                            Text("\(idx + 1)")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 18)
                             AssetMark(symbol: item.ticker, isTicker: true, size: 28)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.ticker)
@@ -291,11 +303,19 @@ struct TrendsView: View {
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 1) {
-                                Text("\(item.tradeCount)")
-                                    .font(.subheadline.weight(.bold))
-                                Text(CompactFormat.usd(item.estVolumeUsd))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                if tickerMetric == .dollars {
+                                    Text(CompactFormat.usd(item.estVolumeUsd))
+                                        .font(.subheadline.weight(.bold))
+                                    Text("\(item.tradeCount) trades")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("\(item.tradeCount)")
+                                        .font(.subheadline.weight(.bold))
+                                    Text(CompactFormat.usd(item.estVolumeUsd))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         .frame(minHeight: 44)
@@ -304,7 +324,7 @@ struct TrendsView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(item.ticker), \(item.formattedName ?? "—"), \(item.tradeCount) trades")
                     .accessibilityHint("Opens ticker details")
-                    if idx < min(9, store.tickerLeaderboard.count - 1) {
+                    if idx < ranked.count - 1 {
                         Divider()
                     }
                 }
@@ -312,6 +332,26 @@ struct TrendsView: View {
             .padding(.horizontal, 12)
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         }
+    }
+
+    static func rankedTickers(
+        _ items: [TickerLeaderboardItem],
+        metric: VolumeChartMetric,
+        limit: Int = 10
+    ) -> [TickerLeaderboardItem] {
+        let sorted = items.sorted { lhs, rhs in
+            switch metric {
+            case .count:
+                if lhs.tradeCount != rhs.tradeCount { return lhs.tradeCount > rhs.tradeCount }
+                return (lhs.estVolumeUsd ?? 0) > (rhs.estVolumeUsd ?? 0)
+            case .dollars:
+                let lv = lhs.estVolumeUsd ?? 0
+                let rv = rhs.estVolumeUsd ?? 0
+                if lv != rv { return lv > rv }
+                return lhs.tradeCount > rhs.tradeCount
+            }
+        }
+        return Array(sorted.prefix(limit))
     }
 
     private var trendingSection: some View {
@@ -984,7 +1024,7 @@ private struct SectorFlowRow: Identifiable {
     }
 }
 
-private enum VolumeChartMetric: String, CaseIterable, Identifiable {
+enum VolumeChartMetric: String, CaseIterable, Identifiable {
     case count
     case dollars
 

@@ -183,7 +183,8 @@ final class CongressTradeAPIClient {
     }
 
     func member(id: String) async throws -> ClientMemberResponse {
-        try await get("member/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await get("member/\(encoded)?sort=tx_date&order=desc")
     }
 
     /// `GET /api/members` — the People directory roster. Origin-level, not

@@ -47,6 +47,34 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertFalse(line.contains("Past"))
     }
 
+    func testWhatIsBeingTradedRanksByCountOrDollarsWithoutARowNumber() {
+        func item(_ ticker: String, trades: Int, volume: Double) -> TickerLeaderboardItem {
+            TickerLeaderboardItem(
+                ticker: ticker,
+                name: ticker,
+                tradeCount: trades,
+                buyCount: trades,
+                sellCount: 0,
+                memberCount: 1,
+                estVolumeUsd: volume,
+                estNetFlowUsd: volume
+            )
+        }
+        let rows = [
+            item("AAA", trades: 3, volume: 9_000_000),
+            item("BBB", trades: 10, volume: 1_000),
+            item("CCC", trades: 4, volume: 500_000),
+        ]
+        XCTAssertEqual(
+            TrendsView.rankedTickers(rows, metric: .count).map(\.ticker),
+            ["BBB", "CCC", "AAA"]
+        )
+        XCTAssertEqual(
+            TrendsView.rankedTickers(rows, metric: .dollars).map(\.ticker),
+            ["AAA", "CCC", "BBB"]
+        )
+    }
+
     func testDisclosureTimelinessOmitsInThisWindow() {
         let line = TrendsView.timelinessBasis(count: 1868)
         XCTAssertTrue(line.hasPrefix("9 in 10 filings land inside the P90 figure.  Based on "))

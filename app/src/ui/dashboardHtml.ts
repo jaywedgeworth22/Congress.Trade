@@ -2740,21 +2740,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
-        <summary class="tf-h">What Is Being Traded<span class="fold-cue" aria-hidden="true"></span></summary>
-        <div class="row-flex rankby-row" style="margin:-6px 0 12px">
-          <label class="lbl">Rank By:</label>
-          <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
-            <option value="trades">Trades</option>
-            <option value="members">Distinct Politicians</option>
-	            <option value="volume">Est. Volume</option>
-            <option value="netflow">Net Flow</option>
-          </select>
-        </div>
+        <summary class="tf-h tchart-summary">
+          <span class="tchart-summary-title">What Is Being Traded</span>
+          <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
+            <div class="seg" id="trTickerMetric" role="group" aria-label="Rank by trade count or volume">
+              <button type="button" data-m="trades" class="on" onclick="setTickerSort('trades')">#</button>
+              <button type="button" data-m="volume" onclick="setTickerSort('volume')">$</button>
+            </div>
+          </div>
+          <span class="fold-cue" aria-hidden="true"></span>
+        </summary>
         <div class="table-wrap">
           <table id="tableTrTickers">
             <thead>
               <tr>
-                <th style="width:32px"></th>
                 <th class="sortable" style="min-width: 140px;" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
                 <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
@@ -2784,13 +2783,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </details>
     </div>
 
-    <!-- Consensus / cluster buys -->
-    <details class="section trends-fold" open>
-      <summary class="tf-h">Consensus Moves<span class="fold-cue" aria-hidden="true"></span></summary>
-      <div class="cluster-grid" id="trClusters"></div>
-    </details>
-
-    <!-- Buys vs sells: same page window as every other Trends card -->
+    <!-- Buys vs sells: directly under Rising Activity (owner 2026-08-15). -->
     <details class="section trends-fold" open>
       <summary class="tf-h tchart-summary">
         <span class="tchart-summary-title">Buys vs Sells</span>
@@ -2804,6 +2797,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </summary>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
+    </details>
+
+    <!-- Consensus / cluster buys -->
+    <details class="section trends-fold" open>
+      <summary class="tf-h">Consensus Moves<span class="fold-cue" aria-hidden="true"></span></summary>
+      <div class="cluster-grid" id="trClusters"></div>
     </details>
 
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
@@ -9135,12 +9134,17 @@ function buySellText(buys, sells) {
 	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
 	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
 	}
+var trTickerSortVal = 'trades';
 function setTickerSort(val) {
-  var elSort = el('trTickerSort');
-  if (elSort) {
-    elSort.value = val;
-    loadTrTickers();
+  trTickerSortVal = val === 'volume' || val === 'members' || val === 'netflow' ? val : 'trades';
+  var metric = el('trTickerMetric');
+  if (metric) {
+    var btns = metric.querySelectorAll('button[data-m]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('on', btns[i].getAttribute('data-m') === trTickerSortVal);
+    }
   }
+  loadTrTickers();
 }
 function sparklineHtml(series, metric) {
   if (!series || !series.length) return '';
@@ -10218,8 +10222,8 @@ function loadTrSummary() {
 
 function loadTrTickers() {
   var body = el('trTickers');
-  body.innerHTML = skRows(6, 6);
-  var sortVal = el('trTickerSort') ? el('trTickerSort').value : 'trades';
+  body.innerHTML = skRows(5, 6);
+  var sortVal = trTickerSortVal || 'trades';
   var queryParams = trParams() + '&sort=' + sortVal + '&limit=15';
 
   // Update header sort icons
@@ -10230,10 +10234,9 @@ function loadTrTickers() {
 
   aGet('ticker-leaderboard?' + queryParams).then(function (d) {
     var rows = d.tickers || [];
-    if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
-    body.innerHTML = rows.map(function (r, i) {
+    if (!rows.length) { body.innerHTML = stateRow(5, 'No trades in this window.'); return; }
+    body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
-        '<td class="rank">' + (i + 1) + '</td>' +
         '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
@@ -10241,7 +10244,7 @@ function loadTrTickers() {
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(6, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
 }
 
 function loadTrTrending() {

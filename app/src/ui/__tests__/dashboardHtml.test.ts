@@ -175,7 +175,7 @@ describe('DASHBOARD_HTML', () => {
     const thead = DASHBOARD_HTML.match(/<table id="tableTrTickers">\s*<thead>\s*<tr>([\s\S]*?)<\/tr>/);
     expect(thead).not.toBeNull();
     const headerCells = (thead![1].match(/<th/g) || []).length;
-    expect(headerCells).toBe(6); // rank + Asset + Trades + Politicians + Est. Volume + Net $ Flow
+    expect(headerCells).toBe(5); // Asset + Trades + Politicians + Est. Volume + Net Flow
   });
 
   it('wires the Trends tab, its containers, and the analytics API', () => {
@@ -1708,6 +1708,23 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("timeChartHtml(s, null, trTimeMetric)");
     expect(DASHBOARD_HTML).toContain("metric === 'count'");
     expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
+  });
+
+  it('places Buys vs Sells immediately after Rising Activity', () => {
+    const rising = DASHBOARD_HTML.indexOf('>Rising Activity<');
+    const buys = DASHBOARD_HTML.indexOf('>Buys vs Sells<');
+    const consensus = DASHBOARD_HTML.indexOf('>Consensus Moves<');
+    expect(rising).toBeGreaterThan(-1);
+    expect(buys).toBeGreaterThan(rising);
+    expect(consensus).toBeGreaterThan(buys);
+  });
+
+  it('toggles What Is Being Traded between # trades and $ volume, with no rank numbers', () => {
+    expect(DASHBOARD_HTML).toContain('id="trTickerMetric"');
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTickerSort('trades')\"");
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTickerSort('volume')\"");
+    expect(DASHBOARD_HTML).not.toContain('id="trTickerSort"');
+    expect(DASHBOARD_HTML).not.toContain("'<td class=\"rank\">' + (i + 1) + '</td>'");
   });
 
   it('does not put an explainer under Consensus Moves or Rising Activity', () => {

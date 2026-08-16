@@ -20,6 +20,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { all, first, get, parseJson } from '../shared/db.ts';
+import { resolveMember } from '../client/queries.ts';
 import { cached, cacheKey } from '../shared/kvCache.ts';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes.ts';
 import { normalizeCompanyName, resolveAssetDisplayName } from '../shared/companyName.ts';
@@ -1041,16 +1042,22 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
       return c.json({ error: 'invalid member id' }, 400);
     }
-    const key = cacheKey(`member:${filerId}`, f as never);
+    // Official bioguides (K000389) live on filers.resolved_bioguide_id; the
+    // PK / transactions.filer_id is the house- slug.  Without this remap the
+    // web drawer for a Trends tap on K000389 returned profile:null and 0 trades
+    // while the directory slug house-ca17-ro-khanna had 22k rows.
+    const resolved = await resolveMember(c.env, filerId);
+    const txFilerId = resolved?.id ?? filerId;
+    const key = cacheKey(`member:${txFilerId}`, f as never);
     const data = await cached(c.env, key, 600, async () => {
-      const statsQ = buildMemberStatsQuery(filerId, f);
-      const topQ = buildMemberTopTickersQuery(filerId, f);
-      const recentQ = buildMemberRecentTradesQuery(filerId, f);
+      const statsQ = buildMemberStatsQuery(txFilerId, f);
+      const topQ = buildMemberTopTickersQuery(txFilerId, f);
+      const recentQ = buildMemberRecentTradesQuery(txFilerId, f);
       const [profileRow, statsRow, topRows, recentRows] = await Promise.all([
         get<Record<string, unknown>>(
           c.env.DB,
           'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
-          [filerId],
+          [txFilerId],
         ),
         first<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
         all<Record<string, unknown>>(c.env.DB, topQ.sql, topQ.params),
@@ -1063,7 +1070,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         ? parseJson<string[]>(profileRow.committees, [])
         : [];
       return meta(f, {
-        filerId,
+        filerId: txFilerId,
         profile: profileRow
           ? {
               fullName: filerName(profileRow.full_name),
@@ -1076,7 +1083,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
               photoUrl: str(profileRow.photo_url),
               // Curated agency/position label for executive-branch filers
               // (see shared/executiveTitles.ts); null for House/Senate filers.
-              title: executiveTitleFor(filerId),
+              title: executiveTitleFor(txFilerId) ?? executiveTitleFor(filerId),
             }
           : null,
         stats: {
