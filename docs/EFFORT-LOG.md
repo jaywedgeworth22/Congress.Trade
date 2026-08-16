@@ -1,3 +1,4 @@
+- **2026-08-16 — GROK — IN PR #1882 — Keep only the newest weekly R2 archive (branch `grok/r2-weekly-retain-one`).**  Host Sunday job now prunes older `weekly/` objects.  Extra copies already deleted live.
 - **2026-08-15 — GROK — IN PROGRESS — iOS tab footer links + latency lead/lag signs (branch `grok/ios-lead-footer`, worktree `~/apps/congress-grok-ios-lead-footer`, #1880).**  Raw Markdown footer; Support → `support@congress.trade`; iOS scorecard headlines median with +green / −red (live FMP median +13.0h vs avg −4.6d).  Rollout: `docs/rollouts/2026-08-15-ios-footer-latency-signs.md`.
 - **2026-08-15 — GROK — COMPLETED — Resubmitted iOS 1.0 from Tahoe GM.**  #1878 merged.  Build `202608150702` attached.  Review `37412b30` WAITING_FOR_REVIEW (held 10+ min).  Rollout: `docs/rollouts/2026-08-15-invalid-binary-gm-resubmit.md`.
 
