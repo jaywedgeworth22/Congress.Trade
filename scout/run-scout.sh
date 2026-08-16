@@ -4,6 +4,12 @@
 # Never echo secret values.
 set -euo pipefail
 
+# pm2 attaches a unix socket as stdin.  bash then hangs in reader_loop on the
+# secrets heredoc below.  Force stdin to /dev/null when we are not on a TTY.
+if [[ ! -t 0 ]]; then
+  exec 0</dev/null
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCOUT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
