@@ -3664,6 +3664,8 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).not.toContain('class="theme-guest"');
     expect(DASHBOARD_HTML).toContain("href=\"/auth/apple/start\"");
     expect(DASHBOARD_HTML).toContain("function syncAppleSignInButton()");
+    expect(DASHBOARD_HTML).toContain("if (path === '/admin') fromUrl = 'admin';");
+    expect(DASHBOARD_HTML).toContain("if (path === '/review') fromUrl = 'review';");
     expect(DASHBOARD_HTML).toContain('class="acct-auth-group"');
     expect(DASHBOARD_HTML).toContain("function acctMobileDisclaimerHtml() {\n  return '<div class=\"footer-disclaimer\">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';\n}");
   });

@@ -12410,6 +12410,11 @@ loadMe().then(function () {
   var initialView = 'trends';
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
+    if (!fromUrl) {
+      var path = (window.location.pathname || '').replace(/\/+$/, '') || '/';
+      if (path === '/admin') fromUrl = 'admin';
+      if (path === '/review') fromUrl = 'review';
+    }
     if (fromUrl) {
       // ?view= accepts legacy ids as aliases (issue #1458, batch #25) —
       // "feed" resolves to the Trades tab's canonical "trades", "delivery"
