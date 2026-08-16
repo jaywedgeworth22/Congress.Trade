@@ -122,6 +122,12 @@ PY
 )"
 fi
 
+# Senate discovery must use the same-Mac relay (long-lived eFD session).
+# Hairpinning https://scout.jays.services from this Mac is slower and can
+# miss while the local :8899 session is healthy.  Production Coolify keeps
+# SENATE_RELAY_URL=https://scout.jays.services — do not change that.
+export SENATE_RELAY_URL="${SENATE_RELAY_LOCAL:-http://127.0.0.1:8899}"
+
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 if [[ -z "$NODE_BIN" ]]; then
   echo "run-scout: node not found on PATH" >&2

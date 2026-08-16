@@ -654,17 +654,13 @@ struct FeedControlBar: View {
 /// App Store review expects these reachable from inside the app, and the owner
 /// asked for them on all tabs rather than buried in Settings.
 ///
-/// One attributed Markdown `Text` rather than an `HStack` of `Link`s so it
-/// wraps to a second line at large Dynamic Type instead of being squeezed or
-/// clipped.  `.tint` colours the parsed links — without it they render
-/// accent-blue and read as a call to action.
+/// Buttons (`LegalFooterLinks`), not Markdown `Text`.  SwiftUI only parses
+/// Markdown for string *literals*; a concatenated `[label](url)` string
+/// prints as source (owner screenshot, TestFlight 1.0.15).  `AttributedString`
+/// can still fall back to that raw source if parsing throws.  Buttons cannot.
 struct AppLegalFooter: View {
     var body: some View {
-        Text(AppLegal.attributed)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .tint(Color.secondary)
-            .multilineTextAlignment(.center)
+        LegalFooterLinks()
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
     }

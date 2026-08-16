@@ -1090,6 +1090,24 @@ export const APNS_FANOUT_STATE_SCHEMA_STATEMENTS = [
      VALUES ('default', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')`,
 ] as const;
 
+export const LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS latency_price_snapshots (
+     trade_hash TEXT NOT NULL,
+     ticker TEXT NOT NULL,
+     provider TEXT NOT NULL,
+     event TEXT NOT NULL,
+     due_at TEXT NOT NULL,
+     captured_at TEXT,
+     price REAL,
+     source TEXT,
+     error TEXT,
+     created_at TEXT NOT NULL,
+     PRIMARY KEY (trade_hash, provider, event)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_latency_price_due
+     ON latency_price_snapshots (captured_at, due_at)`,
+] as const;
+
 export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker_live ON transactions (ticker) WHERE deprecated_at IS NULL',
   "UPDATE transactions SET ticker = 'ETH' WHERE ticker IN ('ETHUSD', 'ETH-USD', 'ETH/USD', '$ETHUSD', '$ETH')",
@@ -1224,6 +1242,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS,
   // 0086_apns_fanout_state.sql
   ...APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
+  // 0087_latency_price_snapshots.sql
+  ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

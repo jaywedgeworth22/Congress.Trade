@@ -4424,7 +4424,7 @@ const MINUS = '−'; // U+2212 MINUS SIGN, not a hyphen
 const UP = '▲';
 const DOWN = '▼';
 
-describe('signed lead figures (owner: "+ sign … and stay in red when behind")', () => {
+describe('earlier/later lead figures (owner: no +/−, later red, earlier green)', () => {
   it('fmtLead is magnitude-only, so no caller can accidentally emit a bare hyphen', () => {
     const { fmtLead } = loadLeadHelpers();
     expect(fmtLead(82)).toBe('82 sec');
@@ -4437,16 +4437,19 @@ describe('signed lead figures (owner: "+ sign … and stay in red when behind")'
     }
   });
 
-  it('ahead carries an explicit "+" and behind a true minus sign (never a bare hyphen)', () => {
+  it('uses earlier/later wording and never prints + or −', () => {
     const { fmtLeadSigned } = loadLeadHelpers();
-    expect(fmtLeadSigned(1466)).toBe('+24 min');
-    expect(fmtLeadSigned(-1466)).toBe(`${MINUS}24 min`);
-    expect(fmtLeadSigned(-34)).toBe(`${MINUS}34 sec`);
+    expect(fmtLeadSigned(1466)).toBe('24 min earlier');
+    expect(fmtLeadSigned(-1466)).toBe('24 min later');
+    expect(fmtLeadSigned(-34)).toBe('34 sec later');
     expect(fmtLeadSigned(-1466)).not.toContain('-');
-    expect(fmtLeadSigned(0)).toBe('±0 sec');
+    expect(fmtLeadSigned(-1466)).not.toContain(MINUS);
+    expect(fmtLeadSigned(-1466)).not.toContain('+');
+    expect(fmtLeadSigned(1466)).not.toContain('+');
+    expect(fmtLeadSigned(0)).toBe('even');
   });
 
-  it('classifies direction from the sign (positive = Congress.Trade first)', () => {
+  it('classifies direction from the sign (positive = Congress.Trade first / earlier)', () => {
     const { leadDirection } = loadLeadHelpers();
     expect(leadDirection(1466)).toBe('ahead');
     expect(leadDirection(-34)).toBe('behind');
@@ -4456,7 +4459,7 @@ describe('signed lead figures (owner: "+ sign … and stay in red when behind")'
     expect(leadDirection(Number.NaN)).toBe('even');
   });
 
-  it('behind renders red via --lag, ahead green via --good — and neither relies on colour alone', () => {
+  it('later renders red via --lag, earlier green via --good — and neither relies on colour alone', () => {
     const { leadFigureHtml } = loadLeadHelpers();
     const behind = leadFigureHtml(-1466);
     const ahead = leadFigureHtml(1466);
@@ -4464,29 +4467,34 @@ describe('signed lead figures (owner: "+ sign … and stay in red when behind")'
     // Colour channel
     expect(behind).toContain('lead-fig lead-behind');
     expect(ahead).toContain('lead-fig lead-ahead');
-    // Non-colour channels: sign, arrow glyph, and the literal word
-    expect(behind).toContain(`${MINUS}24 min`);
+    // Non-colour channels: magnitude, arrow glyph, and the literal word
+    expect(behind).toContain('24 min');
     expect(behind).toContain(DOWN);
-    expect(behind).toContain('>behind<');
-    expect(ahead).toContain('+24 min');
+    expect(behind).toContain('>later<');
+    expect(behind).not.toContain(MINUS);
+    expect(behind).not.toContain('+');
+    expect(ahead).toContain('24 min');
     expect(ahead).toContain(UP);
-    expect(ahead).toContain('>ahead<');
+    expect(ahead).toContain('>earlier<');
+    expect(ahead).not.toContain('+');
     // Screen readers get the whole sentence
     expect(behind).toContain('aria-label="');
     expect(behind).toContain('the provider published first.');
     expect(ahead).toContain('Congress.Trade published first.');
-    // Arrows are decorative next to the word/sign, so they are not announced twice
+    // Arrows are decorative next to the word, so they are not announced twice
     expect(behind).toContain('class="lead-arrow" aria-hidden="true"');
   });
 
-  it('drops the word (never the sign or the arrow) when a caller asks for the compact form', () => {
+  it('keeps the word on compact table cells so +/− are never the only cue', () => {
     const { leadFigureHtml } = loadLeadHelpers();
     const compact = leadFigureHtml(-1466, { word: false });
-    expect(compact).not.toContain('>behind<');
-    expect(compact).toContain(`${MINUS}24 min`);
+    expect(compact).toContain('>later<');
+    expect(compact).toContain('24 min');
+    expect(compact).not.toContain(MINUS);
+    expect(compact).not.toContain('+');
     expect(compact).toContain(DOWN);
     expect(compact).toContain('aria-label="');
-    expect(compact).toContain('behind'); // still spelled out in the aria-label
+    expect(compact).toContain('later');
   });
 
   it('.lead-behind is wired to a RED variable, not the neutral provider gray', () => {
@@ -4569,21 +4577,26 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml(UW_LIVE);
     // avg is -34s but the median is +1466s off 7 wins / 1 loss: the badge says
-    // "Preliminary lead", and the headline now agrees with it.
-    expect(html).toContain('Preliminary lead');
+    // "Preliminary earlier", and the headline now agrees with it.
+    expect(html).toContain('Preliminary earlier');
     expect(html).toContain('lead-fig lead-ahead lead-big');
-    expect(html).toContain('+24 min');
-    expect(html).toContain('preliminary typical (median) lead on live imports vs. their feed');
+    expect(html).toContain('24 min');
+    expect(html).toContain('>earlier<');
+    expect(html).not.toContain('+24 min');
+    expect(html).toContain('typically earlier than their feed on live imports (median)');
   });
 
-  it('demotes the mean to a subline and signs it red when it disagrees', () => {
+  it('demotes the mean to a subline and paints it red later when it disagrees', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml(UW_LIVE);
     expect(html).toContain('Average: <span class="lead-fig lead-behind"');
-    expect(html).toContain(`${MINUS}34 sec`);
+    expect(html).toContain('34 sec');
+    expect(html).toContain('>later<');
+    expect(html).not.toContain(MINUS);
     expect(html).toContain(DOWN);
     expect(html).toContain('P90: <span class="lead-fig lead-ahead"');
-    expect(html).toContain('+30 min');
+    expect(html).toContain('30 min');
+    expect(html).toContain('>earlier<');
     // The disagreement is stated in words rather than left to be spotted.
     expect(html).toContain('The average disagrees with the median here');
   });
@@ -4592,21 +4605,23 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml({ ...UW_LIVE, avgLeadSec: 1500, comparisonStatus: 'usable' });
     expect(html).not.toContain('The average disagrees with the median');
-    expect(html).toContain('typical (median) lead on live imports vs. their feed');
+    expect(html).toContain('typically earlier than their feed on live imports (median)');
   });
 
-  it('renders a red, minus-signed headline and says "lag" when the median says behind', () => {
+  it('renders a red later headline when the median says we were behind', () => {
     const { spCardHtml } = loadSpCardHtml();
     const html = spCardHtml({
       ...UW_LIVE, medianLeadSec: -2400, avgLeadSec: -3600, p90LeadSec: -30,
       usFirstCount: 1, providerFirstCount: 7, comparisonStatus: 'usable',
     });
     expect(html).toContain('lead-fig lead-behind lead-big');
-    expect(html).toContain(`${MINUS}40 min`);
+    expect(html).toContain('40 min');
+    expect(html).toContain('>later<');
     expect(html).toContain(DOWN);
-    // ...and never describes a negative number as a "lead".
-    expect(html).toContain('typical (median) lag behind their feed on live imports');
-    expect(html).not.toContain('(median) lead on live imports');
+    expect(html).not.toContain(MINUS);
+    expect(html).not.toContain('+');
+    expect(html).toContain('typically later than their feed on live imports (median)');
+    expect(html).not.toContain('typically earlier than their feed on live imports (median)');
   });
 });
 
@@ -4654,8 +4669,8 @@ describe('"N of M matched" scope line (denominator the matcher lane exposes)', (
   it('both placements own a scope-note element that starts hidden', () => {
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNote" hidden></p>');
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNoteAdmin" hidden></p>');
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals)");
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals, d.priceEdge)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals, d.priceEdge)");
   });
 });
 

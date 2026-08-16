@@ -3979,6 +3979,7 @@ export async function runDisclosureLatencyProbe(
       }),
     );
   }
+  await tickLatencyPriceSnapshots(env, now, fetchImpl);
   return {
     enabled: true,
     fetchedRows: runs.reduce((sum, r) => sum + r.fetchedRows, 0),
@@ -3987,6 +3988,15 @@ export async function runDisclosureLatencyProbe(
     errors: runs.flatMap((r) => r.errors.map((err) => `${r.id}: ${err}`)),
     providers: runs,
   };
+}
+
+async function tickLatencyPriceSnapshots(env: Env, now: Date, fetchImpl: typeof fetch): Promise<void> {
+  try {
+    const { runLatencyPriceSnapshotTick } = await import('./latencyPriceSnapshots.ts');
+    await runLatencyPriceSnapshotTick(env, now, fetchImpl);
+  } catch (err) {
+    console.warn('latency price snapshots skipped:', (err as Error).message);
+  }
 }
 
 /**
@@ -4081,6 +4091,7 @@ export async function ingestScoutLatencyPayload(
     /* handoff bookkeeping best-effort */
   }
 
+  await tickLatencyPriceSnapshots(env, now, fetch);
   return { upserted: rows.length, matched, pending, errors, provider: providerId };
 }
 
