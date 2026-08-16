@@ -288,38 +288,22 @@ struct AssetDirectoryView: View {
     }
 
     private func directoryChrome(rows: [AssetDirectoryEntry], pages: Int, page: Int) -> some View {
-            VStack(spacing: 0) {
-                VStack(spacing: 10) {
-                    AssetSearchField(text: $searchText, focused: $searchFocused)
-                        .accessibilityLabel("Search assets by ticker or company name")
-
-                    HStack {
-                        // Truthful by construction: the roster endpoint returns
-                        // every ticker, so both numbers are real totals.
-                        Text("\(CompactFormat.count(rows.count)) of \(CompactFormat.count(assets.count)) shown")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(alignment: .center, spacing: 8) {
-                        SortMenuControl(
-                            keys: Array(AssetDirectorySearch.SortKey.allCases),
-                            sortKey: $sortKey,
-                            sortAscending: $sortAscending,
-                            label: { $0.label },
-                            defaultAscending: { $0 == .name }
-                        )
-                        assetPager(page: page, pages: pages)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
-                .background(AppTheme.background)
-
-                ScrollView {
+            ScrollView {
                     VStack(spacing: 8) {
+                        AssetSearchField(text: $searchText, focused: $searchFocused)
+                            .accessibilityLabel("Search assets by ticker or company name")
+
+                        HStack {
+                            // Truthful by construction: the roster endpoint returns
+                            // every ticker, so both numbers are real totals.
+                            Text("\(CompactFormat.count(rows.count)) of \(CompactFormat.count(assets.count)) shown")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+
+                        assetPager(page: page, pages: pages)
+
                         if let errorMessage {
                             FeedFreshnessView(
                                 isOffline: false,
@@ -364,10 +348,10 @@ struct AssetDirectoryView: View {
                             .padding(.top, 8)
                     }
                     .padding(.horizontal, 16)
+                    .padding(.top, 8)
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
-            }
             .background(AppTheme.background)
             .navigationTitle("Assets")
             .navigationBarTitleDisplayMode(.inline)
@@ -403,7 +387,16 @@ struct AssetDirectoryView: View {
             onPageSize: { size in
                 pageSize = size
                 currentPage = 0
-            }
+            },
+            sortControls: AnyView(
+                SortMenuControl(
+                    keys: Array(AssetDirectorySearch.SortKey.allCases),
+                    sortKey: $sortKey,
+                    sortAscending: $sortAscending,
+                    label: { $0.label },
+                    defaultAscending: { $0 == .name }
+                )
+            )
         )
     }
 

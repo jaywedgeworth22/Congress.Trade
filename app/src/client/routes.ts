@@ -34,6 +34,7 @@ import {
   filtersFromQuery,
   detailLimit,
   asOrder,
+  asSort,
   num,
   str,
   baseSummary,
@@ -256,6 +257,10 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     const params: TxQueryParams = {
       member: resolved.id,
       limit: detailLimit(c.req.query('limit')),
+      // Recent Trades must be newest *trade date*, not newest ingest cursor.
+      // Khanna 2026-08-16: lastTrade 2026-07-01 but cursor order put a
+      // reimported 2025-12-12 filing first on the politician sheet.
+      sort: asSort(c.req.query('sort')) ?? 'tx_date',
       order: asOrder(c.req.query('order')) ?? 'desc',
     };
     const summaryQ = memberSummarySql(resolved.id);

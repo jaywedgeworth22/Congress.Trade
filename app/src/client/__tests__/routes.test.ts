@@ -1125,6 +1125,47 @@ describe('client API routes', () => {
     expect(body.total).toBe(2);
   });
 
+  it('lists politician recent trades by trade date, not ingest cursor', async () => {
+    // Live Ro Khanna 2026-08-16: lastTrade 2026-07-01, but /member items
+    // defaulted to cursor_seq so a reimported Dec-2025 filing floated first.
+    const { env, feedRows, filers } = makeEnv();
+    filers.set('house-ca17-ro-khanna', {
+      bioguide_id: 'house-ca17-ro-khanna',
+      chamber: 'house',
+      full_name: 'Ro Khanna',
+      party: 'D',
+      state: 'CA',
+      district: '17',
+      committees: null,
+      photo_url: null,
+    });
+    feedRows.push(
+      feedRow({
+        id: 'tx-old-reimport',
+        filer_id: 'house-ca17-ro-khanna',
+        tx_date: '2025-12-12',
+        cursor_seq: 900,
+        ticker: null,
+        asset_name: 'Bond dump',
+        __chamber: 'house',
+      }),
+      feedRow({
+        id: 'tx-actually-recent',
+        filer_id: 'house-ca17-ro-khanna',
+        tx_date: '2026-07-01',
+        cursor_seq: 10,
+        ticker: 'NVDA',
+        __chamber: 'house',
+      }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/member/house-ca17-ro-khanna?limit=2', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }>; summary: { lastTrade: string | null } };
+    expect(body.summary.lastTrade).toBe('2026-07-01');
+    expect(body.items.map((item) => item.id)).toEqual(['tx-actually-recent', 'tx-old-reimport']);
+  });
+
   // Regression: TestFlight purchase, 2026-08-13. `redeem_apple_purchase` was
   // enqueued on the durable queue and only executed by the background tick —
   // a minute apart at best, five on the free profile — while the iOS client

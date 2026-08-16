@@ -100,39 +100,23 @@ struct PeopleDirectoryView: View {
 
     @ViewBuilder
     private func peopleDirectoryList(members: [MemberDirectoryEntry], page: Int, pages: Int) -> some View {
-                VStack(spacing: 0) {
-                VStack(spacing: 10) {
-                    PeopleSearchField(text: $searchText, focused: $searchFocused)
-                        .accessibilityLabel("Search directory by name, state, or party")
-
-                    HStack {
-                        // Truthful by construction: the roster endpoint returns
-                        // every member, so both numbers are real totals — no
-                        // page limit is ever printed here.
-                        Text("\(CompactFormat.count(members.count)) of \(CompactFormat.count(store.members.count)) shown")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(alignment: .center, spacing: 8) {
-                        SortMenuControl(
-                            keys: Array(MemberDirectorySearch.SortKey.allCases),
-                            sortKey: $sortKey,
-                            sortAscending: $sortAscending,
-                            label: { $0.label },
-                            defaultAscending: { $0 != .trades }
-                        )
-                        directoryPager(page: page, pages: pages)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
-                .background(AppTheme.background)
-
                 ScrollView {
                     VStack(spacing: 8) {
+                        PeopleSearchField(text: $searchText, focused: $searchFocused)
+                            .accessibilityLabel("Search directory by name, state, or party")
+
+                        HStack {
+                            // Truthful by construction: the roster endpoint returns
+                            // every member, so both numbers are real totals — no
+                            // page limit is ever printed here.
+                            Text("\(CompactFormat.count(members.count)) of \(CompactFormat.count(store.members.count)) shown")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+
+                        directoryPager(page: page, pages: pages)
+
                         if let notice = store.membersNotice {
                             FeedFreshnessView(
                                 isOffline: false,
@@ -198,10 +182,10 @@ struct PeopleDirectoryView: View {
                             .padding(.top, 8)
                     }
                     .padding(.horizontal, 16)
+                    .padding(.top, 8)
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                }
     }
 
     private func directoryPager(page: Int, pages: Int) -> some View {
@@ -216,7 +200,16 @@ struct PeopleDirectoryView: View {
             onPageSize: { size in
                 pageSize = size
                 currentPage = 0
-            }
+            },
+            sortControls: AnyView(
+                SortMenuControl(
+                    keys: Array(MemberDirectorySearch.SortKey.allCases),
+                    sortKey: $sortKey,
+                    sortAscending: $sortAscending,
+                    label: { $0.label },
+                    defaultAscending: { $0 != .trades }
+                )
+            )
         )
     }
 }
