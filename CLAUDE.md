@@ -19,7 +19,7 @@ Key reminders:
   is their source of truth, so keeping it current is not optional.
 - **Mac local processes:** any LaunchAgent / cron / pm2 job / shared helper
   script you add must be listed on `~/apps/MAC-LOCAL-PROCESSES.md` and the
-  pinned Apple Note `[FLEET, Grok] Mac background jobs master list`.  Say
+  pinned Apple Note `⭐️ Background Jobs Master List`.  Say
   always-on vs on-demand.  See `AGENTS.md` § Mac local processes.
 - Work from `app/` for the Cloudflare Worker application.
 - Treat the backend as the source of truth. The planned SwiftUI
