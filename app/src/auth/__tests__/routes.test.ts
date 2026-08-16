@@ -51,6 +51,7 @@ describe('auth router', () => {
       user: null,
       entitlement: ANONYMOUS_ENTITLEMENT,
       admin: { allowed: false },
+      auth: { appleWeb: false },
       billing: { configured: false, checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
     });
   });

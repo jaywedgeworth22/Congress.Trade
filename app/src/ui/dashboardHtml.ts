@@ -1239,9 +1239,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-menu-btn:hover { background:var(--panel-2); }
   .acct-menu-btn .acct-caret { color:var(--text-dim); font-size:11px; }
   .menu { position:relative; }
-  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:6px; min-width:260px; max-width:min(320px, calc(100vw - 24px)); box-shadow:0 12px 32px rgba(0,0,0,.38); display:none; z-index:30; }
+  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:12px; min-width:min(420px, calc(100vw - 24px)); max-width:min(440px, calc(100vw - 16px)); box-shadow:0 18px 44px rgba(0,0,0,.28); display:none; z-index:30; }
   .menu-pop.open { display:block; }
-  .menu-pop button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:8px 10px; border-radius:7px; cursor:pointer; font-size:13px; font-family:var(--sans); }
+  .menu-pop button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:12px 12px; border-radius:10px; cursor:pointer; font-size:15px; font-family:var(--sans); }
+  .menu-section-label { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--text-dim); padding:10px 12px 4px; }
   .menu-pop button:hover { background:var(--panel-2); }
   .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu-pop .theme-row {
@@ -1306,9 +1307,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-mobile-menu .footer-disclaimer { font-size:11px; line-height:1.45; color:var(--text-dim); padding:8px 2px 2px; border-top:1px solid var(--border); margin-top:2px; }
   html[data-theme="dark"] { color-scheme: dark; }
   html[data-theme="light"] { color-scheme: light; }
-  .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
+  .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:80; padding:18px; }
   .overlay.open { display:flex; }
-  .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:430px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
+  .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:520px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
+  .abtn, .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; min-height:48px; padding:12px 16px; border-radius:var(--radius-pill); font-weight:600; font-size:16px; cursor:pointer; text-decoration:none; box-sizing:border-box; position:relative; z-index:2; -webkit-tap-highlight-color:transparent; }
+  a.abtn { color:#fff; background:#000; border:1px solid #333; }
   .modal h2 { margin:0 0 6px; font-size:19px; }
   .modal p.sub { margin:0 0 18px; color:var(--text-dim); font-size:13px; }
   .modal .close { float:right; display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; margin:-10px -10px 0 6px; background:transparent; border:1px solid transparent; border-radius:999px; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
@@ -1691,7 +1694,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
   .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
   .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
-  @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+  @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse) {
     /* clip (not hidden): hidden on one axis makes the other compute to auto
        and turns html/body/main into a scrollport, which kills position:sticky
        on the Trades/Trends filter bars. */
@@ -1704,47 +1707,52 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     .brand { font-size: 15px; }
     .pill { padding: 3px 7px; }
+    /* Full-bleed dock like Socratic.Trade console — not a floating glass pill.
+       bottom:0 with safe-area padding INSIDE the painted bar so it sits
+       against Safari's URL chrome without a gap or a dead grey band. */
     nav.tabs {
-      position: fixed; left: 12px; right: 12px;
-      bottom: calc(10px + env(safe-area-inset-bottom, 0px)); margin: 0;
+      position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
       width: auto; max-width: none;
       display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
-      gap: 2px; padding: 6px;
-      background: color-mix(in srgb, var(--panel) 58%, transparent);
-      -webkit-backdrop-filter: saturate(190%) blur(28px);
-      backdrop-filter: saturate(190%) blur(28px);
-      border: 1px solid color-mix(in srgb, #fff 48%, var(--border));
-      border-radius: 28px; z-index: 45;
-      box-shadow: 0 10px 36px rgba(0,0,0,.16), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent);
+      gap: 0; padding: 9px 0 4px; padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      border: 0; border-top: 1px solid var(--border);
+      border-radius: 0; z-index: 45;
+      box-shadow: none;
       transform: translateZ(0);
       overflow: visible;
     }
     nav.tabs::after { content: none; }
     html[data-theme="light"] nav.tabs {
-      background: color-mix(in srgb, #fff 62%, transparent);
-      border-color: color-mix(in srgb, #fff 70%, var(--border));
+      background: color-mix(in srgb, #fff 94%, transparent);
+      border-top-color: rgba(23, 32, 46, 0.2);
     }
     html[data-theme="dark"] nav.tabs {
-      background: color-mix(in srgb, #1c1c1e 55%, transparent);
+      background: color-mix(in srgb, #1c1c1e 94%, transparent);
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      nav.tabs { background: var(--panel); }
+      html[data-theme="light"] nav.tabs { background: #fff; }
     }
     nav.tabs button {
       padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
-      border-radius: 22px; border: 0; background: transparent;
+      border-radius: 0; border: 0; background: transparent;
     }
     nav.tabs button.active {
-      background: color-mix(in srgb, #fff 42%, transparent);
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      background: transparent;
+      box-shadow: none;
     }
     html[data-theme="dark"] nav.tabs button.active {
-      background: color-mix(in srgb, #fff 14%, transparent);
+      background: transparent;
     }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
-    /* Owner punch list #5: nav.tabs is ~60px tall (8px + 44px button + 8px
-       padding, before safe-area) — 70px leaves a sane ~10px clearance without
-       the previous 86px's dead-space overshoot. */
+    /* Owner punch list #5: nav.tabs is ~56px tall before safe-area.  70px
+       content padding still clears the dock without a floating-pill gap. */
     main { max-width: none; min-width:0; overflow-x:clip; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
     .section { overflow:hidden; }
@@ -2447,13 +2455,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .card .v .est-money,
   #view-trends .card .v small { color: inherit !important; }
 
-  @media (max-width: 720px) {
-    header.top { padding: 14px 22px; }
+  @media (max-width: 720px), (hover: none) and (pointer: coarse) {
+    /* Keep the compact 52px header.  The old 14px 22px padding here made
+       --ct-header-h (52px) lie, so sticky filters slid through the logo. */
+    header.top { padding: 6px 10px; background: color-mix(in srgb, var(--bg) 94%, transparent); }
+    html[data-theme="light"] header.top { background: color-mix(in srgb, #fff 94%, transparent); }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
-       (issue #1456 — brand hidden behind a 3-button theme toggle at 375px). */
+       (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
+       Coarse pointer also matches iPhone "desktop site" (wide viewport). */
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
+  }
+  html.phone-chrome .acct-desktop { display: none !important; }
+  html.phone-chrome .acct-mobile { display: inline-flex !important; }
+  @media (max-width: 720px), (hover: none) and (pointer: coarse) {
+    .acct-desktop { display: none; }
+    .acct-mobile { display: inline-flex; }
+    .acct-mobile-menu {
+      position: fixed; left: 12px; right: 12px; top: calc(var(--ct-header-h, 52px) + 8px);
+      min-width: 0; max-width: none;
+      max-height: min(82vh, calc(100dvh - var(--ct-header-h, 52px) - 20px));
+      overflow: auto; padding: 18px 16px; border-radius: 18px; z-index: 70;
+    }
+    .acct-mobile-menu .btn, .acct-mobile-menu button { min-height: 48px; font-size: 16px; }
+    .overlay { align-items: flex-end; padding: 0; }
+    .overlay .modal {
+      max-width: none; width: 100%;
+      border-radius: 20px 20px 0 0;
+      padding: 28px 22px calc(28px + env(safe-area-inset-bottom, 0px));
+      max-height: 92dvh; overflow: auto;
+    }
     /* Owner punch list #5: this shorthand used to reset ALL four sides,
        silently clobbering the wider block's safe-area-aware padding-bottom
        for every phone <=720px (the width nearly all phones report in
@@ -3259,12 +3291,12 @@ ${speedProofSectionHtml(true)}
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
       Continue with Google
     </button>
-    <button class="abtn" onclick="loginApple()" style="margin-top:8px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 14px;background:#000;color:#fff;border:1px solid #333;border-radius:var(--radius-pill);font-weight:600;font-size:14px;cursor:pointer;">
+    <a class="abtn" id="appleSignInBtn" href="/auth/apple/start">
       <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
         <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
       </svg>
       Sign in with Apple
-    </button>
+    </a>
     <div class="divider">or</div>
     <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
     <div class="field">
@@ -6842,6 +6874,7 @@ function saveAdminToken() {
   var v = el('adminToken').value.trim();
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   applyAdminVisibility();
+  renderAccount();
   renderTradesHeader(); renderColChooser(); renderTrades();
   if (!v) {
     setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
@@ -6874,6 +6907,7 @@ function clearAdminToken() {
   setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
   setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
   applyAdminVisibility();
+  renderAccount();
   renderTradesHeader(); renderColChooser(); renderTrades();
 }
 // Populate the field from storage when the Admin tab opens.
@@ -11223,6 +11257,7 @@ var ME = {
   entitlement: { premium: false, status: null, plan: null, trialing: false },
   admin: { allowed: false },
   billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
+  auth: { appleWeb: false },
 };
 var selectedPlan = 'monthly';
 var checkoutRequestId = null;
@@ -11267,8 +11302,10 @@ function loadMe() {
       ME.entitlement = d.entitlement || { premium: false };
       ME.admin = d.admin || { allowed: false };
       ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false };
+      ME.auth = d.auth || { appleWeb: false };
       renderAccount();
       applyAdminVisibility();
+      syncAppleSignInButton();
       updatePremiumCues();
       updateGateRow();
       updateDeliveryGate();
@@ -11279,7 +11316,7 @@ function loadMe() {
       renderColChooser();
       renderTrades();
     })
-    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; ME.auth = { appleWeb: false }; renderAccount(); applyAdminVisibility(); syncAppleSignInButton(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
 }
 
 /* Header account control: .acct-desktop is the full theme-toggle / Sign In /
@@ -11295,21 +11332,31 @@ var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade · educational tool for public STOC
 function acctMobileDisclaimerHtml() {
   return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
 }
+function adminMenuHtml(closeCall) {
+  if (!canUseAdmin()) return '';
+  return '<div class="menu-section-label">Admin</div>' +
+    '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
+    '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
+}
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   var desktopHtml, mobileHtml;
   if (!ME.user) {
     // Sign In + Upgrade as one joined control so they read as a pair, not two orphans.
+    // Theme stays out of the signed-out top bar (owner: it dumped Light/Dark/System
+    // into the header).  Default is light; theme lives in the hamburger.
     var authGroup = '<span class="acct-auth-group">' +
       '<button class="btn ghost sm" type="button" onclick="openLogin()">Sign In</button>' +
       (checkoutConfigured() ? '<button class="btn sm" type="button" onclick="openPricing()">Upgrade</button>' : '') +
       '</span>';
-    desktopHtml = '<span class="theme-guest" title="Theme">' + themeSegHtml() + '</span>' + authGroup;
+    desktopHtml = authGroup;
     mobileHtml = '<span class="acct-auth-group">' +
       '<button class="btn ghost sm" type="button" onclick="closeAcctMobileMenu();openLogin()">Sign In</button>' +
       (checkoutConfigured() ? '<button class="btn sm" type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade</button>' : '') +
       '</span>' +
+      '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
+      adminMenuHtml('closeAcctMobileMenu();') +
       acctMobileDisclaimerHtml();
   } else {
     var ent = ME.entitlement || {};
@@ -11329,19 +11376,24 @@ function renderAccount() {
         '</button>' +
         '<div class="menu-pop" id="acctMenu">' +
           '<div class="who">' + esc(ME.user.email || '') + '</div>' +
+          '<div class="menu-section-label">Appearance</div>' +
           themeRowHtml() +
+          '<div class="menu-section-label">Account</div>' +
           '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Push Notifications</button>' +
           (hasBillingAccount() && portalConfigured()
             ? '<button onclick="manageBilling()">Manage Subscription</button>'
             : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+          adminMenuHtml('closeAcctMenu();') +
           '<button onclick="logout()">Sign Out</button>' +
         '</div>' +
       '</div>';
     mobileHtml = badge +
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
+      '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
+      '<div class="menu-section-label">Account</div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Push Notifications</button>' +
@@ -11349,6 +11401,7 @@ function renderAccount() {
       (hasBillingAccount() && portalConfigured()
         ? '<button onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
         : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+      adminMenuHtml('closeAcctMobileMenu();') +
       '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       acctMobileDisclaimerHtml();
   }
@@ -11407,6 +11460,28 @@ function loginApple() {
   if (msg) msg.textContent = 'Connecting to Apple…';
   window.location.href = '/auth/apple/start';
 }
+function syncAppleSignInButton() {
+  var btn = el('appleSignInBtn');
+  if (!btn) return;
+  btn.hidden = false;
+  if (ME.auth && ME.auth.appleWeb) {
+    btn.onclick = null;
+    return;
+  }
+  btn.onclick = function (e) {
+    if (e && e.preventDefault) e.preventDefault();
+    var msg = el('loginMsg');
+    if (msg) msg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
+    return false;
+  };
+}
+(function markPhoneChrome() {
+  try {
+    var noHover = window.matchMedia && window.matchMedia('(hover: none)').matches;
+    var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    if (noHover || coarse) document.documentElement.classList.add('phone-chrome');
+  } catch (e) {}
+})();
 function sendMagicLink() {
   var email = (el('magicEmail').value || '').trim();
   if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { el('loginMsg').textContent = 'Enter a valid email.'; return; }

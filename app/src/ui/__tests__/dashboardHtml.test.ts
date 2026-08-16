@@ -526,7 +526,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
     expect(DASHBOARD_HTML).toContain('nav.tabs {');
-    expect(DASHBOARD_HTML).toContain('backdrop-filter: saturate(190%) blur(28px)');
+    expect(DASHBOARD_HTML).toContain('backdrop-filter: blur(20px)');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
@@ -2752,7 +2752,7 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('details.trends-fold > summary');
     expect(DASHBOARD_HTML).toContain('class="section trends-fold"');
     // Fixed bottom tab bar with safe-area + body padding at the phone breakpoint.
-    expect(DASHBOARD_HTML).toContain('position: fixed; left: 12px; right: 12px;');
+    expect(DASHBOARD_HTML).toContain('position: fixed; left: 0; right: 0; bottom: 0;');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom');
     // Owner punch list #5: reduced from the old 86px overshoot to a ~10px
     // clearance over the ~60px tab bar (see "mobile bottom clearance" below
@@ -3158,10 +3158,10 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
   });
 
   it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
-    expect(DASHBOARD_HTML).toContain('@media (max-width:720px) {');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 720px), (hover: none) and (pointer: coarse)');
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
-    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse)');
     expect(DASHBOARD_HTML).toContain('#view-trades .table-wrap { display: none; }');
     expect(DASHBOARD_HTML).toContain('#view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }');
   });
@@ -3636,9 +3636,8 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     const mobileCalls = DASHBOARD_HTML.match(/themeRowHtml\(null, true\)/g) || [];
     expect(mobileCalls.length).toBe(2); // signed-out mobile + signed-in mobile
     // Desktop dropdown still calls the bare form (keeps its "Theme" label).
-    expect(DASHBOARD_HTML).toContain(
-      "'<div class=\"who\">' + esc(ME.user.email || '') + '</div>' +\n          themeRowHtml() +",
-    );
+    expect(DASHBOARD_HTML).toContain('themeRowHtml() +');
+    expect(DASHBOARD_HTML).toContain('function adminMenuHtml(closeCall)');
     // ~8px gap between the Google avatar photo and the email text (mobile
     // "who" row only — desktop .menu-pop .who is text-only and untouched).
     expect(DASHBOARD_HTML).toContain('.acct-mobile-menu .who { display:flex; align-items:center; gap:8px;');
@@ -3658,14 +3657,13 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain("var FOOTER_DISCLAIMER_TEXT = '" + footerLine + "';");
     // Static <footer> markup carries the identical sentence (single source of truth).
     expect(DASHBOARD_HTML).toContain('<span>' + footerLine + '</span>');
-    expect(DASHBOARD_HTML).toContain(
-      "'<button onclick=\"closeAcctMobileMenu();logout()\">Sign Out</button>' +\n      acctMobileDisclaimerHtml();",
-    );
-    // Guest mobile menu: Sign In/Upgrade joined in acct-auth-group, then theme,
-    // then the short footer disclaimer as the last item.
-    expect(DASHBOARD_HTML).toContain(
-      "(checkoutConfigured() ? '<button class=\"btn sm\" type=\"button\" onclick=\"closeAcctMobileMenu();openPricing()\">Upgrade</button>' : '') +\n      '</span>' +\n      themeRowHtml(null, true) +\n      acctMobileDisclaimerHtml();",
-    );
+    expect(DASHBOARD_HTML).toContain("closeAcctMobileMenu();logout()");
+    expect(DASHBOARD_HTML).toContain('acctMobileDisclaimerHtml()');
+    // Guest mobile menu: Sign In/Upgrade, then Appearance, then disclaimer.
+    expect(DASHBOARD_HTML).toContain("desktopHtml = authGroup;");
+    expect(DASHBOARD_HTML).not.toContain('class="theme-guest"');
+    expect(DASHBOARD_HTML).toContain("href=\"/auth/apple/start\"");
+    expect(DASHBOARD_HTML).toContain("function syncAppleSignInButton()");
     expect(DASHBOARD_HTML).toContain('class="acct-auth-group"');
     expect(DASHBOARD_HTML).toContain("function acctMobileDisclaimerHtml() {\n  return '<div class=\"footer-disclaimer\">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';\n}");
   });

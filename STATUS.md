@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-16 GROK — Web chrome (admin, tabs, header, Apple tap)
+
+Branch `grok/web-chrome`.  Solid full-bleed tab bar like ST.  Compact
+sticky header so filters no longer slide through the logo.  Signed-out
+top bar no longer dumps Light/Dark/System.  Settings/sign-in sheets
+are larger; Admin + Review Queue are in the menu when allowed.  Apple
+Sign In is a real link.  Website SIWA still needs Infisical
+`APPLE_SERVICES_ID` + team/key/.p8 (not invented).
+
 ## 2026-08-16 GROK — iOS tab footer still raw Markdown + wrong email
 
 TestFlight / App Review 1.0.15 (`202608150702`) still prints
