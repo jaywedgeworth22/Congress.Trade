@@ -1628,6 +1628,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-lead { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
   .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; text-wrap:pretty; overflow-wrap:break-word; word-break:break-word; }
   .sp-lead-sub { font-size:11px; color:var(--text-dim); margin-top:3px; }
+  /* Dim subtitle color must not wash out earlier/later on the median/average line. */
+  .sp-lead-label .lead-fig.lead-ahead, .sp-lead-sub .lead-fig.lead-ahead { color:var(--good); }
+  .sp-lead-label .lead-fig.lead-behind, .sp-lead-sub .lead-fig.lead-behind { color:var(--lag); }
+  .lead-inline { font-weight:700; }
+  .lead-inline.lead-ahead { color:var(--good); }
+  .lead-inline.lead-behind { color:var(--lag); }
   /* ---- Signed lead/lag figure (every latency number on the page) ----
      Owner 2026-08-11: "it has minus signs for time ahead and time behind, lets
      make it have + sign and stay in red when behind on time". So: AHEAD always
@@ -9761,6 +9767,19 @@ function leadDirection(secs) {
 function leadSignChar(dir) { return ''; }
 function leadArrowChar(dir) { return dir === 'ahead' ? '\\u25b2' : dir === 'behind' ? '\\u25bc' : '\\u2194'; }
 function leadWord(dir) { return dir === 'ahead' ? 'earlier' : dir === 'behind' ? 'later' : 'even'; }
+/* Lead only when median AND average agree we were first; Lag only when both
+   say we were later.  Mixed (or one missing) never claims a lead. */
+function leadVerdict(medianSec, avgSec) {
+  var med = leadDirection(medianSec);
+  var avg = avgSec == null || avgSec === '' ? med : leadDirection(avgSec);
+  if (med !== avg) return 'mixed';
+  if (med === 'ahead') return 'lead';
+  if (med === 'behind') return 'lag';
+  return 'even';
+}
+function leadInlineHtml(dir) {
+  return '<span class="lead-inline lead-' + dir + '">' + esc(leadWord(dir)) + '</span>';
+}
 /* Plain text with no markup: "24 min earlier" / "24 min later" / "even". */
 function fmtLeadSigned(secs) {
   var dir = leadDirection(secs);
@@ -9909,25 +9928,29 @@ function spCardHtml(p) {
      Win-count green + a later average is what made a negative delta look good. */
   var headlineSec = hasLead ? (p.medianLeadSec != null ? p.medianLeadSec : p.avgLeadSec) : null;
   var headlineDir = leadDirection(headlineSec);
-  var ahead = hasStats && headlineDir === 'ahead';
-  var tied = hasStats && headlineDir === 'even';
-  var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : tied ? ' sp-tied' : ' sp-behind') : '');
+  var verdict = hasStats ? leadVerdict(headlineSec, p.avgLeadSec) : null;
+  var ahead = verdict === 'lead';
+  var tied = verdict === 'even';
+  var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : (verdict === 'lag' ? ' sp-behind' : ' sp-tied')) : '');
 
-  /* Header: provider name + outcome badge */
+  /* Header: provider name + outcome badge.
+     Owner 2026-08-16: Lead or Lag only when median AND average agree.
+     Never "preliminary lead" when one of them is behind. */
   var badgeCls, badgeTxt;
   if (!hasStats && !hasTiming) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
-  } else if (preliminary && hasStats) {
-    badgeCls = 'sp-badge gathering';
-    badgeTxt = ahead ? 'Preliminary earlier' : (tied ? 'Preliminary even' : 'Preliminary later');
-  } else if (!usable) {
+  } else if (!hasStats && !usable) {
     badgeCls = 'sp-badge gathering'; badgeTxt = p.comparisonStatus === 'limited' ? 'Coverage limited' : 'Insufficient coverage';
-  } else if (ahead) {
-    badgeCls = 'sp-badge ahead'; badgeTxt = 'Earlier';
-  } else if (tied) {
+  } else if (verdict === 'lead') {
+    badgeCls = 'sp-badge ahead'; badgeTxt = 'Lead';
+  } else if (verdict === 'lag') {
+    badgeCls = 'sp-badge behind'; badgeTxt = 'Lag';
+  } else if (verdict === 'even') {
     badgeCls = 'sp-badge tied'; badgeTxt = 'Even';
+  } else if (hasStats) {
+    badgeCls = 'sp-badge gathering'; badgeTxt = 'Mixed';
   } else {
-    badgeCls = 'sp-badge behind'; badgeTxt = 'Later';
+    badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
     '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
@@ -9985,12 +10008,13 @@ function spCardHtml(p) {
       leadDirection(p.avgLeadSec) !== headlineDir && leadDirection(p.avgLeadSec) !== 'even' && headlineDir !== 'even')
       ? '<div class="sp-lead-sub">The average disagrees with the median here \\u2014 a few outlier races pull it the other way, so the median is the fair summary.</div>'
       : '';
-    var basisNote = headlineDir === 'behind'
-      ? 'typically later than their feed on live imports (median)'
-      : headlineDir === 'even'
-        ? 'no measurable typical difference vs. their feed on live imports'
-        : 'typically earlier than their feed on live imports (median)';
-    var labelNote = preliminary ? 'preliminary ' + basisNote + ' (coverage still building)' : basisNote;
+    var dirWord = leadInlineHtml(headlineDir);
+    var basisNote = headlineDir === 'even'
+      ? 'no measurable typical difference vs. their feed on live imports'
+      : 'typically ' + dirWord + ' than their feed on live imports (median)';
+    var labelNote = (preliminary && verdict === 'mixed')
+      ? basisNote + ' (coverage still building)'
+      : basisNote;
     leadHtml = '<div class="sp-lead">' +
       leadFigureHtml(headline, { cls: 'lead-big' }) +
       '<div class="sp-lead-label">' + labelNote + avgTxt + p90Txt + splitTxt + '</div>' +
@@ -10042,6 +10066,15 @@ function priceEdgeHtml(edge) {
   if (!bits.length) return '';
   return '<div class="sp-price-edge">Median move after they publish: ' + bits.join(' · ') + '.</div>';
 }
+function speedScopeFromSummary(d) {
+  var t = (d && d.totals) || {};
+  var s = (d && d.scope) || {};
+  return {
+    scopeMatched: t.scopeMatched != null ? t.scopeMatched : s.matched,
+    scopeTotal: t.scopeTotal != null ? t.scopeTotal : s.total,
+    scopeLabel: t.scopeLabel || s.label || null,
+  };
+}
 function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge) {
   var grid = el(gridId);
   if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
@@ -10073,12 +10106,12 @@ function renderSpeedProof() {
 
     if (adminBox) {
       adminBox.hidden = !hasData;
-      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals, d.priceEdge);
+      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge);
     }
     if (trendsBox) {
       var ahead = hasData && isLatencyAhead(d);
       trendsBox.hidden = !ahead;
-      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals, d.priceEdge);
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge);
     }
 
     refreshSpeedUpdated();

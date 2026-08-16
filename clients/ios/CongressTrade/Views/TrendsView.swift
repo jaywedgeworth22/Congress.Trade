@@ -1072,6 +1072,11 @@ struct LatencyComparisonView: View {
             Text("Live new imports only (seed/historical backfills excluded). Matched against provider feeds even if the gap is minutes or up to about two weeks either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let scope = summary.matchedOfTotal {
+                Text("\(scope.matched) of \(scope.total) matched")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
 
             let sortedProviders = summary.providers.sorted { $0.matched > $1.matched }
 
@@ -1095,10 +1100,15 @@ enum LatencyScorecardCopy {
         case ahead, behind, even
     }
 
+    enum Verdict: Equatable {
+        case lead, lag, even, mixed
+    }
+
     struct Snapshot: Equatable {
         var hasStats: Bool
         var headlineText: String
         var direction: Direction
+        var verdict: Verdict
         var badgeText: String
         var basisLabel: String
         var winPct: Int
@@ -1143,6 +1153,19 @@ enum LatencyScorecardCopy {
         let hasTiming = provider.matched >= minMatched && deltaSample > 0 && hasLead
         let hasStats = hasTiming && (usable || preliminary)
         let direction = Self.direction(of: headlineSec)
+        let avgDir = Self.direction(of: provider.avgLeadSec)
+        let verdict: Verdict = {
+            guard hasStats else { return .mixed }
+            let other = provider.avgLeadSec == nil ? direction : avgDir
+            if direction == other {
+                switch direction {
+                case .ahead: return .lead
+                case .behind: return .lag
+                case .even: return .even
+                }
+            }
+            return .mixed
+        }()
         let winPct = provider.matched > 0
             ? Int(round(100.0 * Double(wins) / Double(provider.matched)))
             : 0
@@ -1150,17 +1173,12 @@ enum LatencyScorecardCopy {
         let badgeText: String
         if !hasStats {
             badgeText = (provider.matched >= minMatched && !usable) ? "Coverage limited" : "Gathering"
-        } else if preliminary {
-            switch direction {
-            case .ahead: badgeText = "Preliminary earlier"
-            case .behind: badgeText = "Preliminary later"
-            case .even: badgeText = "Preliminary even"
-            }
         } else {
-            switch direction {
-            case .ahead: badgeText = "Earlier"
-            case .behind: badgeText = "Later"
+            switch verdict {
+            case .lead: badgeText = "Lead"
+            case .lag: badgeText = "Lag"
             case .even: badgeText = "Even"
+            case .mixed: badgeText = "Mixed"
             }
         }
 
@@ -1169,12 +1187,13 @@ enum LatencyScorecardCopy {
         if !hasStats {
             basisLabel = ""
         } else if direction == .even {
-            basisLabel = preliminary ? "prelim. typical even" : "typical even"
+            basisLabel = "typical even"
         } else {
-            basisLabel = preliminary ? "prelim. typical \(word)" : "typical \(word)"
+            basisLabel = preliminary && verdict == .mixed
+                ? "typical \(word) (coverage still building)"
+                : "typical \(word)"
         }
 
-        let avgDir = Self.direction(of: provider.avgLeadSec)
         let averageDisagrees = hasStats
             && provider.avgLeadSec != nil
             && provider.medianLeadSec != nil
@@ -1196,12 +1215,31 @@ enum LatencyScorecardCopy {
             hasStats: hasStats,
             headlineText: formatLead(headlineSec),
             direction: direction,
+            verdict: verdict,
             badgeText: badgeText,
             basisLabel: basisLabel,
             winPct: winPct,
             averageDisagrees: averageDisagrees,
             averageCaption: averageCaption
         )
+    }
+
+    static func coloredDirectionWords(_ text: String, base: Color = .secondary) -> Text {
+        let tokens = text.split(separator: " ", omittingEmptySubsequences: false)
+        return tokens.enumerated().reduce(Text("")) { acc, item in
+            let (idx, raw) = item
+            let token = String(raw)
+            let stem = token.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+            let piece: Text
+            if stem == "earlier" || stem == "lead" {
+                piece = Text(token).foregroundColor(.green).fontWeight(.semibold)
+            } else if stem == "later" || stem == "lag" {
+                piece = Text(token).foregroundColor(.red).fontWeight(.semibold)
+            } else {
+                piece = Text(token).foregroundColor(base)
+            }
+            return idx == 0 ? acc + piece : acc + Text(" ") + piece
+        }
     }
 }
 
@@ -1211,7 +1249,6 @@ struct ProviderScorecard: View {
 
     var body: some View {
         let snap = LatencyScorecardCopy.snapshot(for: provider, minMatched: minMatched)
-        let status = provider.comparisonStatus ?? "insufficient"
         let hasLead = provider.avgLeadSec != nil || provider.medianLeadSec != nil
 
         VStack(alignment: .leading, spacing: 10) {
@@ -1219,26 +1256,23 @@ struct ProviderScorecard: View {
                 Text(provider.label)
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                badge(snap.badgeText, kind: badgeKind(snap: snap, preliminary: status == "preliminary"))
+                badge(snap.badgeText, kind: badgeKind(snap: snap))
             }
 
             if snap.hasStats {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(snap.headlineText)
+                    LatencyScorecardCopy.coloredDirectionWords(snap.headlineText, base: .primary)
                         .font(.title3.weight(.bold))
-                        .foregroundStyle(leadColor(snap.direction))
-                    Text(snap.basisLabel)
+                    LatencyScorecardCopy.coloredDirectionWords(snap.basisLabel)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
                     Spacer()
                     Text("\(snap.winPct)% win")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 if let caption = snap.averageCaption {
-                    Text(caption)
+                    LatencyScorecardCopy.coloredDirectionWords(caption)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
             } else {
                 let unmatched = provider.unmatchedProvider ?? 0
@@ -1268,22 +1302,15 @@ struct ProviderScorecard: View {
         .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func leadColor(_ direction: LatencyScorecardCopy.Direction) -> Color {
-        switch direction {
-        case .ahead: return .green
-        case .behind: return .red
-        case .even: return .primary
-        }
-    }
+    private enum BadgeKind { case mixed, ahead, behind, muted }
 
-    private enum BadgeKind { case preliminary, ahead, behind, muted }
-
-    private func badgeKind(snap: LatencyScorecardCopy.Snapshot, preliminary: Bool) -> BadgeKind {
-        if !snap.hasStats || preliminary { return .preliminary }
-        switch snap.direction {
-        case .ahead: return .ahead
-        case .behind: return .behind
+    private func badgeKind(snap: LatencyScorecardCopy.Snapshot) -> BadgeKind {
+        if !snap.hasStats { return .muted }
+        switch snap.verdict {
+        case .lead: return .ahead
+        case .lag: return .behind
         case .even: return .muted
+        case .mixed: return .mixed
         }
     }
 
@@ -1291,7 +1318,7 @@ struct ProviderScorecard: View {
         let bg: Color
         let fg: Color
         switch kind {
-        case .preliminary:
+        case .mixed:
             bg = Color.orange.opacity(0.15)
             fg = .orange
         case .ahead:

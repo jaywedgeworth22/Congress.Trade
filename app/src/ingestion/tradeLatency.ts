@@ -1294,7 +1294,7 @@ export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = LATENCY_PROVIDER_MATCH_LOOKBAC
  * treat the import as a historical crawl/backfill (house index re-run, etc.)
  * even when transaction.source is still `primary`.
  */
-export const LATENCY_LIVE_FILING_MAX_LAG_DAYS = 21;
+export const LATENCY_LIVE_FILING_MAX_LAG_DAYS = 7;
 /** Allow trade dates to differ by this many days for near-miss fuzzy match. */
 export const LATENCY_FUZZY_DATE_SLACK_DAYS = 2;
 
