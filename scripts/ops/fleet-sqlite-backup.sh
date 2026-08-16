@@ -122,6 +122,18 @@ for app in congress socratic usage-monitor; do
           newest="$(ls -1t "$dir"/*"${STAMP}"*.db 2>/dev/null | head -1 || true)"
           key="weekly/$(basename "${newest:-congress-trade-${STAMP}.db}")"
           printf '{"ok":true,"key":"%s","completedAt":"%s"}\n' "$key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$status_path"
+          # R2 is weekly-archive-only.  One CT db is ~1.9 GB; extra copies
+          # trip the 10 GB free tier.  Keep the newest weekly set only.
+          keep="$(basename "${newest:-}")"
+          stamp_keep="${keep#congress-trade-}"
+          stamp_keep="${stamp_keep%.db}"
+          rclone lsf "r2:${r2bucket}/weekly/" 2>/dev/null | while read -r name; do
+            [ -n "$name" ] || continue
+            case "$name" in
+              *"${stamp_keep}"*) ;;
+              *) rclone deletefile "r2:${r2bucket}/weekly/${name}" && echo "[fleet-backup] R2 weekly pruned: $name" || true ;;
+            esac
+          done
         fi
       else
         echo "[fleet-backup] R2 weekly FAIL: $app"
