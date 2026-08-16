@@ -68,13 +68,16 @@ list `AGENT_SYNC_*`; shared still does.
 
 ## 5. Next Steps & Blockers
 
-1. After this lands, Coolify auto-deploys CT.  Confirm live
-   `checks.secrets.sources` shows shared + app both `ok`.
+1. **Done.**  Coolify auto-deployed #1885.  Live sha `a50c09e5`.
+   `checks.secrets.sources`: shared ok/65, app ok/145, 0 errors.
 2. Local Mac agents keep posting via `~/.secrets/agent-sync.env`.
    Cloud agents that used the ST/CT app project for `AGENT_SYNC_*`
    must read the shared project (or the handoff file) instead.
 3. Owner: replace congress.trade admin UI localStorage `ADMIN_TOKEN`
    from `CT_ADMIN_TOKEN` in `~/.secrets/global-api-keys` (do not paste).
+4. Not in this lane: Coolify preview ADMIN still older hash
+   `b687d700`; UM Infisical was not updated; no WAF skip for GH-runner
+   health 403s; pipeline `status:stalled` is existing autopilot/senate.
 
 ## 6. Zero-Code Findings
 
