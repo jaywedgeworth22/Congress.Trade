@@ -199,6 +199,7 @@ export type MaintenanceLane =
   | 'parked_deliveries'
   | 'usage_telemetry'
   | 'disclosure_latency'
+  | 'latency_price_snapshots'
   | 'daily_jobs'
   | 'd1_budget';
 
@@ -357,6 +358,10 @@ export async function runMaintenancePipeline(
           now,
         ),
       );
+      await runLane('latency_price_snapshots', async () => {
+        const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
+        return runLatencyPriceSnapshotTick(env, now, fetch);
+      });
     }
     if (options.includeDailyJobs !== false) {
       await runLane('daily_jobs', () => maybeRunDailyJobs(env, now));

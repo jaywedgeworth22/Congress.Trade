@@ -1245,8 +1245,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   r.get('/latency-summary', async (c) => {
     // v5: FMP family merge + effective timing deltas (not published-only).
     // v6: strong/weak split, window-decoupled coverage, scope denominator.
-    const data = await cached(c.env, 'analytics:latency-summary:v6', 300, async () => {
+    const data = await cached(c.env, 'analytics:latency-summary:v7', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
+      const { summarizeProviderPublishBump } = await import('../ingestion/latencyPriceSnapshots.ts');
+      const priceEdge = await summarizeProviderPublishBump(c.env);
       return {
         generatedAt: publicSummary.generatedAt,
         windowHours: publicSummary.windowHours,
@@ -1309,6 +1311,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           avgLeadSec: p.avgMonitorDeltaSec,
           p90LeadSec: p.p90MonitorDeltaSec,
         })),
+        priceEdge,
       };
     });
     // Edge/browser cache shield: the numbers only move every ~5 minutes.

@@ -9737,8 +9737,7 @@ function fetchLatencySummary() {
 }
 /* 5560 -> "1.5 hr", 82 -> "82 sec"; one unit, one decimal max. MAGNITUDE ONLY —
    direction belongs to fmtLeadSigned()/leadFigureHtml() so that every lead
-   figure on the site signs itself with the same convention instead of some
-   places emitting a bare "-" and others silently dropping the sign. */
+   figure on the site uses the same earlier/later wording instead of +/−. */
 function fmtLead(secs) {
   var s = Math.abs(Number(secs) || 0);
   function one(x) { var t = x.toFixed(1); return t.slice(-2) === '.0' ? t.slice(0, -2) : t; }
@@ -9747,41 +9746,37 @@ function fmtLead(secs) {
   if (s < 172800) return one(s / 3600) + ' hr';
   return one(s / 86400) + ' days';
 }
-/* ---- Signed lead/lag: ONE convention for every latency figure on the page ----
-   Sign convention: POSITIVE seconds = Congress.Trade published FIRST.
-     ahead  -> "+", green,  ▲
-     behind -> "\\u2212" (true minus, not a hyphen), RED, ▼
-     even   -> "\\u00b1", dim, ↔
-   Owner 2026-08-11: "it has minus signs for time ahead and time behind, lets
-   make it have + sign and stay in red when behind on time." Before this, the
-   big card number printed "+25 min" when ahead but an UNSIGNED "25 min" when
-   behind (colour was the only cue), while the median/P90 sublines and the raw
-   data table printed a bare hyphen for behind and no sign at all for ahead.
-   Accessibility: colour is never the only channel. Every figure also carries an
-   arrow glyph, and (outside the narrowest table cells) the literal word
-   "ahead"/"behind"; all of them carry a spelled-out title + aria-label. */
+/* ---- Earlier / later: ONE convention for every latency figure on the page ----
+   Positive seconds = Congress.Trade published FIRST (we were earlier).
+     ahead  -> green,  ▲, "earlier"
+     behind -> red,    ▼, "later"
+     even   -> dim,    ↔, "even"
+   Owner 2026-08-16: drop + and −.  Colour + wording only.  Later is red,
+   earlier is green.  A negative medianLeadSec is later, not a green lead. */
 function leadDirection(secs) {
   var n = Number(secs);
   if (!isFinite(n) || Math.round(n) === 0) return 'even';
   return n > 0 ? 'ahead' : 'behind';
 }
-function leadSignChar(dir) { return dir === 'ahead' ? '+' : dir === 'behind' ? '\\u2212' : '\\u00b1'; }
+function leadSignChar(dir) { return ''; }
 function leadArrowChar(dir) { return dir === 'ahead' ? '\\u25b2' : dir === 'behind' ? '\\u25bc' : '\\u2194'; }
-function leadWord(dir) { return dir === 'ahead' ? 'ahead' : dir === 'behind' ? 'behind' : 'even'; }
-/* Plain signed text with no markup: "+25 min" / "\\u221225 min" / "\\u00b10 sec". */
+function leadWord(dir) { return dir === 'ahead' ? 'earlier' : dir === 'behind' ? 'later' : 'even'; }
+/* Plain text with no markup: "24 min earlier" / "24 min later" / "even". */
 function fmtLeadSigned(secs) {
-  return leadSignChar(leadDirection(secs)) + fmtLead(secs);
+  var dir = leadDirection(secs);
+  if (dir === 'even') return 'even';
+  return fmtLead(secs) + ' ' + leadWord(dir);
 }
-/* Spelled-out sentence used as the title/aria-label of every signed figure. */
+/* Spelled-out sentence used as the title/aria-label of every figure. */
 function leadDescription(secs) {
   var dir = leadDirection(secs);
   if (dir === 'even') return 'Even \\u2014 no measurable difference either way.';
-  return fmtLeadSigned(secs) + ' ' + leadWord(dir) + ' \\u2014 ' +
+  return fmtLeadSigned(secs) + ' \\u2014 ' +
     (dir === 'ahead' ? 'Congress.Trade published first.' : 'the provider published first.');
 }
-/* Accessible signed lead figure.
-   opts: { word: false } drops the direction word (narrow table cells keep the
-   arrow + sign and rely on the title/aria-label for the word); { cls: 'lead-big' }
+/* Accessible lead figure. Colour is never the only channel: arrow + word.
+   opts: { word: false } is ignored for the visible word — owner 2026-08-16
+   wants wording on every figure, including table cells; { cls: 'lead-big' }
    promotes it to the card headline size. */
 function leadFigureHtml(secs, opts) {
   var o = opts || {};
@@ -9790,8 +9785,8 @@ function leadFigureHtml(secs, opts) {
   return '<span class="lead-fig lead-' + dir + (o.cls ? ' ' + o.cls : '') +
     '" title="' + esc(desc) + '" aria-label="' + esc(desc) + '">' +
     '<span class="lead-arrow" aria-hidden="true">' + leadArrowChar(dir) + '</span>' +
-    '<span class="lead-val">' + esc(fmtLeadSigned(secs)) + '</span>' +
-    (o.word === false ? '' : '<span class="lead-word">' + esc(leadWord(dir)) + '</span>') +
+    '<span class="lead-val">' + esc(fmtLead(secs)) + '</span>' +
+    '<span class="lead-word">' + esc(leadWord(dir)) + '</span>' +
     '</span>';
 }
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
@@ -9910,9 +9905,12 @@ function spCardHtml(p) {
   var preliminary = p.comparisonStatus === 'preliminary';
   /* Show timing for usable OR preliminary only when a real delta sample exists. */
   var hasStats = hasTiming && (usable || preliminary);
-  var ahead = hasStats && wins > losses;
-  /* Tie only when we actually observed equal wins/losses with n>=min — never 0-0. */
-  var tied = hasStats && wins === losses && deltaSample > 0;
+  /* Colour and badge follow the MEDIAN sign (earlier/later), not win-count.
+     Win-count green + a later average is what made a negative delta look good. */
+  var headlineSec = hasLead ? (p.medianLeadSec != null ? p.medianLeadSec : p.avgLeadSec) : null;
+  var headlineDir = leadDirection(headlineSec);
+  var ahead = hasStats && headlineDir === 'ahead';
+  var tied = hasStats && headlineDir === 'even';
   var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : tied ? ' sp-tied' : ' sp-behind') : '');
 
   /* Header: provider name + outcome badge */
@@ -9921,15 +9919,15 @@ function spCardHtml(p) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
   } else if (preliminary && hasStats) {
     badgeCls = 'sp-badge gathering';
-    badgeTxt = ahead ? 'Preliminary lead' : (tied ? 'Preliminary tie' : (wins < losses ? 'Preliminary behind' : 'Preliminary'));
+    badgeTxt = ahead ? 'Preliminary earlier' : (tied ? 'Preliminary even' : 'Preliminary later');
   } else if (!usable) {
     badgeCls = 'sp-badge gathering'; badgeTxt = p.comparisonStatus === 'limited' ? 'Coverage limited' : 'Insufficient coverage';
   } else if (ahead) {
-    badgeCls = 'sp-badge ahead'; badgeTxt = 'Ahead';
+    badgeCls = 'sp-badge ahead'; badgeTxt = 'Earlier';
   } else if (tied) {
-    badgeCls = 'sp-badge tied'; badgeTxt = 'Tied ↔';
+    badgeCls = 'sp-badge tied'; badgeTxt = 'Even';
   } else {
-    badgeCls = 'sp-badge behind'; badgeTxt = 'Behind ↓';
+    badgeCls = 'sp-badge behind'; badgeTxt = 'Later';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
     '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
@@ -9967,30 +9965,31 @@ function spCardHtml(p) {
        digits per provider) one freak race flips the mean's SIGN while the
        median doesn't move: Unusual Whales on 2026-08-11 read avg -34 sec
        against a median of +1,466 sec, because a single -3.1 h row outweighed
-       seven +24 min ones. The mean then contradicted this same card's own
-       "Preliminary lead" badge, which is derived from wins vs. losses. The
-       median agrees with the badge, survives an outlier, and is the figure
+       seven 24 min-earlier ones. The mean then contradicted this same card's
+       own earlier/later badge. The median agrees with the badge, survives an
+       outlier, and is the figure
        speedBoastProvider()/setPricingProof() already quote — so it is the one
        that gets to be the big number. The mean is still shown, just demoted. */
-    var headline = p.medianLeadSec != null ? p.medianLeadSec : (p.avgLeadSec || 0);
-    var headlineDir = leadDirection(headline);
+    var headline = headlineSec != null ? headlineSec : (p.avgLeadSec || 0);
     var avgTxt = p.avgLeadSec != null && p.avgLeadSec !== p.medianLeadSec
-      ? '<div class="sp-lead-sub">Average: ' + leadFigureHtml(p.avgLeadSec, { word: false }) + '</div>'
-      : '';
-    var p90Txt = p.p90LeadSec != null ? '<div class="sp-lead-sub">P90: ' + leadFigureHtml(p.p90LeadSec, { word: false }) + '</div>' : '';
+      ? '<div class="sp-lead-sub">Average: ' + leadFigureHtml(p.avgLeadSec) + '</div>'
+      : (p.avgLeadSec != null && p.medianLeadSec == null
+        ? ''
+        : '');
+    /* Always show the average when it exists and is not the same number as the
+       median.  The split note below fires only when they disagree on direction. */
+    var p90Txt = p.p90LeadSec != null ? '<div class="sp-lead-sub">P90: ' + leadFigureHtml(p.p90LeadSec) + '</div>' : '';
     /* Say it out loud when the mean and the median disagree on WHO WON, rather
-       than leaving a reader to spot a stray sign two lines apart. */
+       than leaving a reader to spot two opposite words two lines apart. */
     var splitTxt = (p.avgLeadSec != null && p.medianLeadSec != null &&
       leadDirection(p.avgLeadSec) !== headlineDir && leadDirection(p.avgLeadSec) !== 'even' && headlineDir !== 'even')
       ? '<div class="sp-lead-sub">The average disagrees with the median here \\u2014 a few outlier races pull it the other way, so the median is the fair summary.</div>'
       : '';
-    /* "lead" is only true when we're ahead; say "lag" when we're not, so the
-       sentence under the number can never contradict the sign above it. */
     var basisNote = headlineDir === 'behind'
-      ? 'typical (median) lag behind their feed on live imports'
+      ? 'typically later than their feed on live imports (median)'
       : headlineDir === 'even'
         ? 'no measurable typical difference vs. their feed on live imports'
-        : 'typical (median) lead on live imports vs. their feed';
+        : 'typically earlier than their feed on live imports (median)';
     var labelNote = preliminary ? 'preliminary ' + basisNote + ' (coverage still building)' : basisNote;
     leadHtml = '<div class="sp-lead">' +
       leadFigureHtml(headline, { cls: 'lead-big' }) +
@@ -10030,14 +10029,27 @@ function speedTableRowsHtml(provs) {
       td(p.p90LeadSec != null ? leadFigureHtml(p.p90LeadSec, { word: false }) : '—') + '</tr>';
   }).join('');
 }
-function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals) {
+function priceEdgeHtml(edge) {
+  if (!edge || !edge.length) return '';
+  var bits = [];
+  for (var i = 0; i < edge.length; i++) {
+    var b = edge[i];
+    if (!b || !b.n || b.medianBps == null) continue;
+    var label = b.event === 'provider_plus_5m' ? '5 min' : b.event === 'provider_plus_30m' ? '30 min' : '60 min';
+    var dir = b.medianBps > 0 ? 'up' : (b.medianBps < 0 ? 'down' : 'flat');
+    bits.push(label + ' ' + dir + ' ' + Math.abs(Number(b.medianBps)).toFixed(1) + ' bps (n=' + b.n + ')');
+  }
+  if (!bits.length) return '';
+  return '<div class="sp-price-edge">Median move after they publish: ' + bits.join(' · ') + '.</div>';
+}
+function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge) {
   var grid = el(gridId);
   if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
   var tb = el(tableBodyId);
   if (tb) tb.innerHTML = speedTableRowsHtml(provs);
   var note = el(noteId);
   if (note) {
-    var html = spScopeNoteHtml(totals);
+    var html = (spScopeNoteHtml(totals) || '') + priceEdgeHtml(priceEdge);
     note.innerHTML = html;
     note.hidden = !html;
   }
@@ -10061,12 +10073,12 @@ function renderSpeedProof() {
 
     if (adminBox) {
       adminBox.hidden = !hasData;
-      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals);
+      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, d.totals, d.priceEdge);
     }
     if (trendsBox) {
       var ahead = hasData && isLatencyAhead(d);
       trendsBox.hidden = !ahead;
-      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals);
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, d.totals, d.priceEdge);
     }
 
     refreshSpeedUpdated();
