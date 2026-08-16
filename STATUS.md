@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-16 GROK — Store version 1.0.0 + custom EULA + beta review
+
+Owner: match version numbering to ST/UM and write ASC fields.  App Store
+version is now **1.0.0** (was 1.0).  Custom EULA `7591ac97-…` is on the
+app.  Beta App Review has Jay Wedgeworth + no-demo notes.  What's New is
+blocked by Apple on this first version.  Did not touch Guideline 2.1
+Resolution Center (`37412b30`).  Receipt:
+`docs/rollouts/2026-08-16-asc-eula-100.md`.
+
 ## 2026-08-16 GROK — Health + Infisical shared-only AGENT_SYNC
 
 `AGENT_SYNC_TOKEN` / `AGENT_SYNC_POST_TOKEN` live only in Infisical
