@@ -27,7 +27,7 @@ struct CongressTradeApp: App {
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
     @StateObject private var pushManager = PushNotificationManager.shared
     @StateObject private var tabRouter = TabRouter()
-    @AppStorage("app_color_scheme") private var appColorScheme = "system"
+    @AppStorage("app_color_scheme") private var appColorScheme = "light"
 
     /// Built once, eagerly, instead of via `.modelContainer(for: ClientTrade.self)`
     /// — that convenience modifier has no error path and no recovery, so a store

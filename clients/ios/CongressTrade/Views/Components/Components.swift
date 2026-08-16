@@ -3,12 +3,31 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// Writes Light / Dark / System onto every window so a theme change restyles
-/// an already-presented Account sheet. `.preferredColorScheme` on the
-/// WindowGroup does not reach a sheet that was presented while Dark was
-/// active — Light/System look like no-ops until the sheet is dismissed.
+/// Writes Light / Dark / System onto every window **and** presented sheet
+/// so a theme change restyles an already-open Account popup. `.preferredColorScheme`
+/// on the WindowGroup does not reach a sheet that was presented while Dark
+/// was active — Light/System look like no-ops until the sheet is dismissed.
 enum AppAppearance {
+    private static var windowObserver: NSObjectProtocol?
+
     static func apply(_ pref: String) {
+        paint(pref)
+        // Sheet windows can appear a beat after the tap.  Paint again on the
+        // next turn and whenever a window becomes visible.
+        DispatchQueue.main.async { paint(pref) }
+        if windowObserver == nil {
+            windowObserver = NotificationCenter.default.addObserver(
+                forName: UIWindow.didBecomeVisibleNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                let pref = UserDefaults.standard.string(forKey: "app_color_scheme") ?? "light"
+                paint(pref)
+            }
+        }
+    }
+
+    private static func paint(_ pref: String) {
         let style: UIUserInterfaceStyle
         switch pref {
         case "light": style = .light
@@ -19,6 +38,7 @@ enum AppAppearance {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
                 window.overrideUserInterfaceStyle = style
+                window.rootViewController?.applyInterfaceStyleRecursively(style)
             }
         }
     }
@@ -30,6 +50,28 @@ enum AppAppearance {
         default: return nil
         }
     }
+}
+
+private extension UIViewController {
+    func applyInterfaceStyleRecursively(_ style: UIUserInterfaceStyle) {
+        overrideUserInterfaceStyle = style
+        presentedViewController?.applyInterfaceStyleRecursively(style)
+        children.forEach { $0.applyInterfaceStyleRecursively(style) }
+    }
+}
+
+/// Identifiable payload for politician sheets.  `sheet(item:)` captures the
+/// member on present so the first tap cannot fire `/member` with a nil/stale id.
+struct MemberSheetTarget: Identifiable, Hashable {
+    let id: String
+    let name: String
+    var photoUrl: String?
+}
+
+/// Identifiable payload for ticker/company sheets.
+struct TickerSheetTarget: Identifiable, Hashable {
+    let ticker: String
+    var id: String { ticker }
 }
 
 enum AppTheme {
@@ -801,7 +843,7 @@ struct HamburgerMenuButton: View {
 struct AccountQuickMenu: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.openURL) private var openURL
-    @AppStorage("app_color_scheme") private var appColorScheme = "system"
+    @AppStorage("app_color_scheme") private var appColorScheme = "light"
     @Binding var isPresented: Bool
     @State private var showPremiumInfo = false
     @State private var showExportSheet = false
@@ -862,7 +904,7 @@ struct AccountQuickMenu: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
-            .preferredColorScheme(AppAppearance.colorScheme(for: appColorScheme))
+            .modifier(ForcedColorScheme(pref: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
             .toolbar {
@@ -1422,6 +1464,23 @@ struct FilterActivityIndicator: View {
             .frame(width: 18, height: 18)
             .accessibilityHidden(!isActive)
             .accessibilityLabel("Updating")
+    }
+}
+
+/// Pushes Light/Dark into the SwiftUI environment of an already-presented
+/// sheet.  `nil` (System) clears the override so the sheet follows the device.
+struct ForcedColorScheme: ViewModifier {
+    let pref: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let scheme = AppAppearance.colorScheme(for: pref) {
+            content
+                .preferredColorScheme(scheme)
+                .environment(\.colorScheme, scheme)
+        } else {
+            content.preferredColorScheme(nil)
+        }
     }
 }
 

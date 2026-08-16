@@ -183,8 +183,19 @@ final class CongressTradeAPIClient {
     }
 
     func member(id: String) async throws -> ClientMemberResponse {
-        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await get("member/\(encoded)?sort=tx_date&order=desc")
+        // Query items must stay on the URL, not in the path.  `get("member/x?sort=")`
+        // went through `appendingPathComponent`, which encoded `?` and made the
+        // server look up `C001047?sort=tx_date` → 404 "member not found".
+        var components = URLComponents(
+            url: endpointURL("member").appendingPathComponent(id),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "sort", value: "tx_date"),
+            URLQueryItem(name: "order", value: "desc"),
+        ]
+        guard let url = components?.url else { throw APIError.invalidResponse }
+        return try await request(url)
     }
 
     /// `GET /api/members` — the People directory roster. Origin-level, not
@@ -692,6 +703,12 @@ final class CongressTradeAPIClient {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "accept")
+        // congress.trade sits behind a Cloudflare managed challenge that 502s
+        // some non-browser UAs.  A Safari iOS UA reaches the app.
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
         try interceptor.intercept(&request)
         return request
     }

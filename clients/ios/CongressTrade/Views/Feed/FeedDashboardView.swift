@@ -8,10 +8,8 @@ struct FeedDashboardView: View {
     @State private var searchText = ""
     @State private var filterTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
-    @State private var selectedPoliticianId: String?
-    @State private var selectedPoliticianName: String?
-    @State private var selectedPoliticianPhotoUrl: String?
-    @State private var selectedTicker: String?
+    @State private var selectedPolitician: MemberSheetTarget?
+    @State private var selectedTicker: TickerSheetTarget?
     /// Shared with Trends via the same `@AppStorage` keys so the disclaimer's
     /// dismissed/expanded state is one truth across both tabs (owner punch
     /// list item 2b) — never a per-view `@State` that resets on tab switch.
@@ -220,13 +218,15 @@ struct FeedDashboardView: View {
                                     onRowTap: { selectedTrade = trade },
                                     onPoliticianTap: trade.member.id.map { memberId in
                                         {
-                                            selectedPoliticianName = trade.member.name
-                                            selectedPoliticianId = memberId
-                                            selectedPoliticianPhotoUrl = trade.member.photoUrl
+                                            selectedPolitician = MemberSheetTarget(
+                                                id: memberId,
+                                                name: trade.member.name ?? "Politician",
+                                                photoUrl: trade.member.photoUrl
+                                            )
                                         }
                                     },
                                     onTickerTap: trade.asset.ticker.map { ticker in
-                                        { selectedTicker = ticker }
+                                        { selectedTicker = TickerSheetTarget(ticker: ticker) }
                                     }
                                 )
                             }
@@ -239,13 +239,15 @@ struct FeedDashboardView: View {
                                     onRowTap: { selectedTrade = trade },
                                     onPoliticianTap: trade.member.id.map { memberId in
                                         {
-                                            selectedPoliticianName = trade.member.name
-                                            selectedPoliticianId = memberId
-                                            selectedPoliticianPhotoUrl = trade.member.photoUrl
+                                            selectedPolitician = MemberSheetTarget(
+                                                id: memberId,
+                                                name: trade.member.name ?? "Politician",
+                                                photoUrl: trade.member.photoUrl
+                                            )
                                         }
                                     },
                                     onTickerTap: trade.asset.ticker.map { ticker in
-                                        { selectedTicker = ticker }
+                                        { selectedTicker = TickerSheetTarget(ticker: ticker) }
                                     }
                                 )
                             }
@@ -321,31 +323,21 @@ struct FeedDashboardView: View {
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
             }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedPoliticianId != nil },
-                set: { if !$0 { selectedPoliticianId = nil; selectedPoliticianPhotoUrl = nil } }
-            )) {
-                if let memberId = selectedPoliticianId {
-                    PoliticianDetailView(
-                        memberId: memberId,
-                        memberName: selectedPoliticianName ?? "Politician",
-                        seedPhotoUrl: selectedPoliticianPhotoUrl
-                    )
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedPolitician) { target in
+                PoliticianDetailView(
+                    memberId: target.id,
+                    memberName: target.name,
+                    seedPhotoUrl: target.photoUrl
+                )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedTicker != nil },
-                set: { if !$0 { selectedTicker = nil } }
-            )) {
-                if let ticker = selectedTicker {
-                    TickerDetailView(ticker: ticker)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedTicker) { target in
+                TickerDetailView(ticker: target.ticker)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
             .onDisappear {
                 filterTask?.cancel()

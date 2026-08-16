@@ -244,7 +244,7 @@ struct AssetDirectoryView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
-    @State private var selectedTicker: String?
+    @State private var selectedTicker: TickerSheetTarget?
     @State private var sortKey: AssetDirectorySearch.SortKey = .trades
     @State private var sortAscending = false
     @State private var assets: [AssetDirectoryEntry] = []
@@ -331,7 +331,7 @@ struct AssetDirectoryView: View {
                             LazyVStack(spacing: 8) {
                                 ForEach(pageSlice(of: rows, page: page)) { asset in
                                     Button {
-                                        selectedTicker = asset.ticker
+                                        selectedTicker = TickerSheetTarget(ticker: asset.ticker)
                                     } label: {
                                         AssetDirectoryRow(asset: asset)
                                     }
@@ -357,16 +357,11 @@ struct AssetDirectoryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await load(force: true) }
             .task { await load(force: false) }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedTicker != nil },
-                set: { if !$0 { selectedTicker = nil } }
-            )) {
-                if let ticker = selectedTicker {
-                    TickerDetailView(ticker: ticker)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedTicker) { target in
+                TickerDetailView(ticker: target.ticker)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
             // Same invalidation rule as PeopleDirectoryView: narrowing or
             // reordering can strand the current page past the new result count.

@@ -217,14 +217,29 @@ struct TickerDetailView: View {
         isLoading = true
         error = nil
         do {
-            let response = try await store.api.ticker(ticker)
+            let response = try await fetchTicker()
+            if Task.isCancelled { return }
             self.asset = response.asset
             self.summary = response.summary
             self.trades = response.items
+        } catch is CancellationError {
+            return
+        } catch let error as APIError where error.isCancellation {
+            return
         } catch {
-            self.error = error.localizedDescription
+            if Task.isCancelled { return }
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func fetchTicker() async throws -> ClientTickerResponse {
+        do {
+            return try await store.api.ticker(ticker)
+        } catch let error as APIError where error.isRetryable {
+            try await Task.sleep(for: .milliseconds(400))
+            return try await store.api.ticker(ticker)
+        }
     }
 }
 

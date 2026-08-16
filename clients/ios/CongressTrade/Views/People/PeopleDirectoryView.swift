@@ -7,9 +7,7 @@ struct PeopleDirectoryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
-    @State private var selectedMemberId: String?
-    @State private var selectedMemberName: String?
-    @State private var selectedMemberPhotoUrl: String?
+    @State private var selectedMember: MemberSheetTarget?
     @State private var sortKey: MemberDirectorySearch.SortKey = .trades
     @State private var sortAscending = false
     /// 0-indexed page of `filteredMembers`. Purely local: `GET /api/members` is
@@ -77,20 +75,15 @@ struct PeopleDirectoryView: View {
             .task {
                 await store.loadMembersDirectory()
             }
-            .sheet(isPresented: Binding<Bool>(
-                get: { selectedMemberId != nil },
-                set: { if !$0 { selectedMemberId = nil; selectedMemberPhotoUrl = nil } }
-            )) {
-                if let memberId = selectedMemberId {
-                    PoliticianDetailView(
-                        memberId: memberId,
-                        memberName: selectedMemberName ?? "Politician",
-                        seedPhotoUrl: selectedMemberPhotoUrl
-                    )
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(18)
-                }
+            .sheet(item: $selectedMember) { target in
+                PoliticianDetailView(
+                    memberId: target.id,
+                    memberName: target.name,
+                    seedPhotoUrl: target.photoUrl
+                )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
             .onChange(of: searchText) { _, _ in currentPage = 0 }
             .onChange(of: sortKey) { _, _ in currentPage = 0 }
@@ -148,9 +141,11 @@ struct PeopleDirectoryView: View {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 540), spacing: 12)], spacing: 12) {
                                 ForEach(pageSlice(of: members, page: page)) { member in
                                     Button {
-                                        selectedMemberId = member.filerId
-                                        selectedMemberName = member.fullName ?? member.filerId
-                                        selectedMemberPhotoUrl = member.photoUrl
+                                        selectedMember = MemberSheetTarget(
+                                            id: member.filerId,
+                                            name: member.fullName ?? member.filerId,
+                                            photoUrl: member.photoUrl
+                                        )
                                     } label: {
                                         PersonRow(member: member)
                                     }
@@ -162,9 +157,11 @@ struct PeopleDirectoryView: View {
                             LazyVStack(spacing: 8) {
                                 ForEach(pageSlice(of: members, page: page)) { member in
                                     Button {
-                                        selectedMemberId = member.filerId
-                                        selectedMemberName = member.fullName ?? member.filerId
-                                        selectedMemberPhotoUrl = member.photoUrl
+                                        selectedMember = MemberSheetTarget(
+                                            id: member.filerId,
+                                            name: member.fullName ?? member.filerId,
+                                            photoUrl: member.photoUrl
+                                        )
                                     } label: {
                                         PersonRow(member: member)
                                     }
