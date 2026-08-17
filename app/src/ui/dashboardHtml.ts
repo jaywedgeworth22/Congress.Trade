@@ -96,7 +96,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 %GA_SCRIPT%
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;600;700&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
@@ -142,8 +142,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme-pref', pref);
+    var stylePref = 'standard';
+    try {
+      var st = localStorage.getItem('ui-style');
+      if (st === 'ledger' || st === 'standard') stylePref = st;
+    } catch (e2) {}
+    document.documentElement.setAttribute('data-style', stylePref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
+    if (meta) {
+      var ledger = stylePref === 'ledger';
+      meta.setAttribute('content', effective === 'dark' ? '#08111f' : (ledger ? '#f4efe4' : '#eff3f8'));
+    }
   })();
 </script>
 <style>
@@ -209,6 +218,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: #fff;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+  /* Capitol Ledger (#1459): editorial paper / serif / mono, opt-in via Style. */
+  html[data-style="ledger"] {
+    --sans: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-style="ledger"][data-theme="light"] {
+    --bg:        #f4efe4;
+    --bg-2:      #ebe4d4;
+    --panel:     #fffaf0;
+    --panel-2:   #f3ead8;
+    --border:    #d4c4a8;
+    --text:      #2a2118;
+    --text-dim:  #6b5c48;
+    --accent:    #8a4b1f;
+  }
+  html[data-style="ledger"][data-theme="light"] header.top,
+  html[data-style="ledger"][data-theme="light"] .trades-toolbars,
+  html[data-style="ledger"][data-theme="light"] #trendsSharedFilters {
+    background: #fffaf0;
+  }
+  html[data-style="ledger"] h1, html[data-style="ledger"] h2, html[data-style="ledger"] h3,
+  html[data-style="ledger"] .tf-h, html[data-style="ledger"] .tf-cap, html[data-style="ledger"] .tkr {
+    font-family: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
+  }
+  html[data-style="ledger"] .amount-range, html[data-style="ledger"] .est, html[data-style="ledger"] .fc-amt-val,
+  html[data-style="ledger"] .trades-stats, html[data-style="ledger"] .k {
+    font-family: var(--mono);
   }
   /* The hidden attribute must always win, even over class display rules
      (e.g. .row-flex/.plan-grid set display and would otherwise override the
@@ -492,6 +529,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
+  /* Capitol Ledger / iOS: party-colored rings on politician photos (not account avatars). */
+  .avatar.party-D { box-shadow: 0 0 0 2px var(--party-d); border-color: transparent; }
+  .avatar.party-R { box-shadow: 0 0 0 2px var(--party-r); border-color: transparent; }
+  .avatar.party-O { box-shadow: 0 0 0 2px var(--party-o); border-color: transparent; }
   .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
   .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
@@ -504,7 +545,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mobile-only { display: none; }
   .trades-cards { display: none; gap: 16px; min-width: 0; max-width: 100%; }
   /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
-  .trades-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 19px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
+  .trades-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,.08); }
   .trades-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .trades-card:active { background: var(--panel-2); }
   .fc-main { grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -512,9 +553,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-row1 .asset-cell { flex: 1 1 auto; min-width: 0; }
   .fc-amt { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
   .fc-amt-val { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
-  .fc-row2 { font-size: 12px; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fc-row2 { font-size: 12px; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+  .fc-row2 .avatar { width: 22px; height: 22px; font-size: 8px; }
   .fc-sep { opacity: .5; margin: 0 1px; }
   .fc-member { color: var(--text); }
+  .fc-owner { display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
@@ -1262,9 +1305,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border:1px solid var(--border); border-radius:9px; background:var(--bg);
   }
   .theme-seg-btn {
-    display:inline-flex !important; align-items:center; gap:5px; width:auto !important;
+    display:inline-flex !important; align-items:center; justify-content:center; gap:0; width:auto !important;
     border:1px solid transparent !important; background:transparent !important;
-    color:var(--text-dim) !important; padding:5px 9px !important; border-radius:7px !important;
+    color:var(--text-dim) !important; padding:6px 8px !important; border-radius:7px !important;
     cursor:pointer; font-size:11px !important; font-family:var(--sans); font-weight:500;
     line-height:1.1; white-space:nowrap;
   }
@@ -1446,6 +1489,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border: 1px solid var(--border); border-radius: 999px;
     background: var(--panel-2); color: var(--text);
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .ios-filter-btn::after {
+    content: ""; width: 0; height: 0; margin-left: 2px;
+    border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+    border-top: 4px solid currentColor; opacity: .55;
   }
   .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
@@ -2808,6 +2856,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
 
+    <!-- Capitol Ledger structural win (#1459): scannable largest buy/sell assets. -->
+    <div class="trend-grid-split" id="trExtremes">
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Largest Buys<span class="fold-cue" aria-hidden="true"></span></summary>
+        <p class="sub">Estimated buy-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
+        <div class="table-wrap"><table><tbody id="trLargestBuys"><tr><td class="state">Loading…</td></tr></tbody></table></div>
+      </details>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Largest Sells<span class="fold-cue" aria-hidden="true"></span></summary>
+        <p class="sub">Estimated sell-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
+        <div class="table-wrap"><table><tbody id="trLargestSells"><tr><td class="state">Loading…</td></tr></tbody></table></div>
+      </details>
+    </div>
 
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
@@ -4031,8 +4092,8 @@ function themeSegHtml(pref) {
   ];
   var btns = opts.map(function (o) {
     var active = pref === o.id ? ' active' : '';
-    return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
-      themeIconSvg(o.id) + o.label + '</button>';
+    return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" title="' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
+      themeIconSvg(o.id) + '</button>';
   }).join('');
   return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
 }
@@ -4041,6 +4102,47 @@ function themeRowHtml(pref, hideLabel) {
   // stands alone there — no "Theme" caption. The desktop menu-pop dropdown
   // keeps the label (unchanged), so hideLabel is opt-in per call site.
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
+}
+function readStylePref() {
+  try {
+    var s = localStorage.getItem('ui-style');
+    if (s === 'ledger' || s === 'standard') return s;
+  } catch (e) {}
+  return 'standard';
+}
+function styleSegHtml(pref) {
+  pref = pref || readStylePref();
+  var opts = [
+    { id: 'standard', label: 'Standard' },
+    { id: 'ledger', label: 'Capitol Ledger' }
+  ];
+  var btns = opts.map(function (o) {
+    var active = pref === o.id ? ' active' : '';
+    return '<button type="button" class="style-seg-btn theme-seg-btn' + active + '" data-style-opt="' + o.id + '" aria-label="Set style to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
+      o.label + '</button>';
+  }).join('');
+  return '<div class="theme-seg" role="group" aria-label="Style">' + btns + '</div>';
+}
+function styleRowHtml() {
+  return '<div class="theme-row style-row"><span class="theme-row-label">Style</span>' + styleSegHtml() + '</div>';
+}
+function applyStyle(pref) {
+  pref = pref === 'ledger' ? 'ledger' : 'standard';
+  document.documentElement.setAttribute('data-style', pref);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && document.documentElement.getAttribute('data-theme') !== 'dark') {
+    meta.setAttribute('content', pref === 'ledger' ? '#f4efe4' : '#eff3f8');
+  }
+  document.querySelectorAll('.style-seg-btn[data-style-opt]').forEach(function (btn) {
+    var on = btn.getAttribute('data-style-opt') === pref;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function setStylePref(pref) {
+  pref = pref === 'ledger' ? 'ledger' : 'standard';
+  try { localStorage.setItem('ui-style', pref); } catch (e) {}
+  applyStyle(pref);
 }
 function applyTheme(effective) {
   effective = effective === 'dark' ? 'dark' : 'light';
@@ -4051,7 +4153,10 @@ function applyTheme(effective) {
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', effective === 'light' ? '#eff3f8' : '#08111f');
+  if (meta) {
+    var ledgerOn = document.documentElement.getAttribute('data-style') === 'ledger';
+    meta.setAttribute('content', effective === 'light' ? (ledgerOn ? '#f4efe4' : '#eff3f8') : '#08111f');
+  }
   syncThemeSegUI();
 }
 function syncThemeSegUI() {
@@ -4090,6 +4195,12 @@ function toggleTheme() {
 })();
 document.addEventListener('click', function (e) {
   var t = e.target;
+  var styleBtn = t && t.closest ? t.closest('.style-seg-btn[data-style-opt]') : null;
+  if (styleBtn) {
+    var stylePref = styleBtn.getAttribute('data-style-opt');
+    if (stylePref) setStylePref(stylePref);
+    return;
+  }
   var btn = t && t.closest ? t.closest('.theme-seg-btn[data-theme-opt]') : null;
   if (!btn) return;
   var pref = btn.getAttribute('data-theme-opt');
@@ -4151,11 +4262,20 @@ function initials(name) {
    photo is sometimes the ONLY identifier on screen (e.g. the cluster-card face
    strip has no adjacent name text), so it always gets a real alt with the
    politician's name rather than alt="". */
-function memberAvatarHtml(name, photoUrl) {
+function partyBucketClass(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^d/i.test(s) || /^dem/i.test(s)) return 'D';
+  if (/^r/i.test(s) || /^rep/i.test(s)) return 'R';
+  return 'O';
+}
+function memberAvatarHtml(name, photoUrl, party) {
   var img = photoUrl
     ? '<img src="' + esc(photoUrl) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="this.remove()" />'
     : '';
-  return '<span class="avatar">' + esc(initials(name)) + img + '</span>';
+  var bucket = partyBucketClass(party);
+  var ring = bucket ? ' party-' + bucket : '';
+  return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
   var b = el('banner');
@@ -4217,7 +4337,7 @@ function isAuthError(e) { return !!(e && e.isAuth); }
    magic "click here for X, there for Y" on the list surface). */
 function memberCellHtml(r) {
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
-  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
+  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
@@ -4278,22 +4398,48 @@ function amountCellHtml(r) {
     '<div class="amount-range fc-amt-val">' + esc(text) + '</div>' +
   '</div>';
 }
+function relativeTimeText(s) {
+  if (!s) return '';
+  var raw = String(s);
+  var t = Date.parse(raw);
+  if (!isFinite(t)) return '';
+  var sec = Math.round((Date.now() - t) / 1000);
+  if (sec < 0) sec = 0;
+  var dateOnly = raw.length <= 10 && /^\\d{4}-\\d{2}-\\d{2}$/.test(raw.slice(0, 10));
+  if (dateOnly) {
+    var days = Math.floor(sec / 86400);
+    if (days <= 0) return 'today';
+    if (days < 14) return days + 'd ago';
+    return dateText(raw);
+  }
+  if (sec < 45) return 'just now';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  if (sec < 86400 * 14) return Math.floor(sec / 86400) + 'd ago';
+  return dateText(raw);
+}
 function tradesCardHtml(r) {
   var traded = dateText(r.txdate);
-  var lag = shortLagText(r);
   // Executive filers show their position ("Treasury Sec.") instead of the
   // "Exec" branch word — row 2 is tight, so it asks for the tight budget.
   var chamber = memberBranchLabel(r, EXEC_TITLE_TIGHT);
   var member = fmtName(r.member);
-  // Whole card opens trade details — no nested data-member/data-asset chips.
-  var memberHtml = esc(member) + (r.st ? ', ' + esc(r.st) : '');
-  // Row 2 is identity-first (member, chamber, lag) — the trade date moved
-  // into the trailing amount/date stack on row 1 (see .fc-trail below), so
-  // it's intentionally NOT duplicated here as "Traded <date>" anymore.
+  // iOS TradeCard politician line: "Chamber · Name · D-ST"
+  var partyL = dirPartyLetter(r.party || r.partyBucket);
+  var st = r.st ? String(r.st).toUpperCase() : '';
+  var partyState = partyL && st ? partyL + '-' + st : (partyL || st);
+  var ident = [];
+  if (chamber && member) ident.push(esc(chamber) + ' · ' + esc(member));
+  else if (member) ident.push(esc(member));
+  else if (chamber) ident.push(esc(chamber));
+  if (partyState) ident.push(esc(partyState));
+  var owner = ownerLabel(r.owner);
+  var filedRel = relativeTimeText(r.filed || r.filedDate || r.firstSeenAt);
   var bits = [];
-  if (member) bits.push('<span class="fc-member">' + memberHtml + '</span>');
-  if (chamber) bits.push(esc(chamber));
-  if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
+  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket) +
+    '<span class="fc-member">' + ident.join(' · ') + '</span>');
+  if (owner) bits.push('<span class="fc-owner">' + esc(owner) + '</span>');
+  if (filedRel) bits.push('<span class="fc-filed" title="Official filed time">' + esc(filedRel) + '</span>');
   if (r.stockActStatus === 'late' || r.stockActStatus === 'severely_late') {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
@@ -4303,7 +4449,7 @@ function tradesCardHtml(r) {
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
       '</div>' +
-      '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  |  </span>') + '</div>' +
+      '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  ·  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
   '</article>';
@@ -5025,6 +5171,7 @@ function txToRow(tx) {
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
     chamber: tx.chamber || '',
+    party: tx.party || '',
     asset: cleanAsset(tx.assetName || ''),
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
@@ -9355,10 +9502,49 @@ function timeChartHtml(series, labelStep, metric) {
 
 function loadTrends() {
   stampWindowChips();
-  loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
+  loadTrSummary(); loadTrExtremes(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
   loadTrConflicts();
+}
+function loadTrExtremes() {
+  var buyBox = el('trLargestBuys');
+  var sellBox = el('trLargestSells');
+  if (!buyBox || !sellBox) return;
+  buyBox.innerHTML = skRows(5, 2);
+  sellBox.innerHTML = skRows(5, 2);
+  aGet('ticker-leaderboard?' + trParams() + '&sort=volume&limit=40').then(function (d) {
+    var rows = d.tickers || [];
+    function sideVol(r, side) {
+      var vol = Number(r.estVolumeUsd) || 0;
+      var net = Number(r.estNetFlowUsd) || 0;
+      var buy = Math.max(0, (vol + net) / 2);
+      var sell = Math.max(0, (vol - net) / 2);
+      return side === 'B' ? buy : sell;
+    }
+    function paint(box, side) {
+      var list = rows.slice().filter(function (r) { return sideVol(r, side) > 0; })
+        .sort(function (a, b) { return sideVol(b, side) - sideVol(a, side); })
+        .slice(0, 8);
+      if (!list.length) {
+        box.innerHTML = stateRow(2, 'No ' + (side === 'B' ? 'buys' : 'sells') + ' in this window.');
+        return;
+      }
+      box.innerHTML = list.map(function (r) {
+        return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
+          '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) +
+            '<div><span class="tkr">' + esc(r.ticker) + '</span>' +
+            (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') +
+            '</div></div></td>' +
+          '<td class="est">' + estUsd(sideVol(r, side)) + '</td></tr>';
+      }).join('');
+    }
+    paint(buyBox, 'B');
+    paint(sellBox, 'S');
+  }).catch(function (e) {
+    buyBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
+    sellBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
+  });
 }
 
 /* Committee sector conflicts for the current Trends window. */
@@ -9622,7 +9808,7 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td class="col-fill"><div' + memberAttr + '><span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
+      '<td class="col-fill"><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
@@ -10325,7 +10511,7 @@ function loadTrPerformers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
@@ -10407,7 +10593,7 @@ function loadTrClusters() {
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
-        var av = memberAvatarHtml(m.fullName, m.photoUrl);
+        var av = memberAvatarHtml(m.fullName, m.photoUrl, m.partyBucket || m.party);
         if (!m.filerId) return av;
         return '<span class="clickable face-member" data-member="' + esc(m.filerId) +
           '" title="Open ' + esc(fmtName(m.fullName || m.filerId)) + '">' + av + '</span>';
@@ -10470,7 +10656,7 @@ function loadTrMembers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
@@ -10571,7 +10757,7 @@ function loadTrLag() {
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
       var maxTip = 'Max: longest single trade-to-filing delay for this filer in the selected window. ' + basis;
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
-      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
+      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<div>' +
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
@@ -10941,7 +11127,7 @@ function openAsset(ticker) {
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
         return '<div class="hbar ledger" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + '>' +
-          memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          memberAvatarHtml(name, m.photoUrl, m.partyBucket) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
     }
@@ -11068,7 +11254,7 @@ function openMember(filerId) {
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +
+      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       // This drawer is always loaded with window=all, so its figures cover the
       // whole record — the Trades tab's own count is scoped to the active time
@@ -11170,7 +11356,7 @@ function openTrade(row) {
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -11421,6 +11607,7 @@ function renderAccount() {
       '</span>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
+      styleRowHtml() +
       adminMenuHtml('closeAcctMobileMenu();') +
       acctMobileDisclaimerHtml();
   } else {
@@ -11443,6 +11630,7 @@ function renderAccount() {
           '<div class="who">' + esc(ME.user.email || '') + '</div>' +
           '<div class="menu-section-label">Appearance</div>' +
           themeRowHtml() +
+          styleRowHtml() +
           '<div class="menu-section-label">Account</div>' +
           '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery</button>' +
@@ -11457,6 +11645,7 @@ function renderAccount() {
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
+      styleRowHtml() +
       '<div class="menu-section-label">Account</div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery</button>' +
