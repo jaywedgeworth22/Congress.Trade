@@ -5830,16 +5830,25 @@ function benchmarkModelCheckboxesHtml() {
            '<span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + esc(m.provider) + ': ' + esc(m.model) + '</span></label>';
   }).join('');
 }
+/* Visible model id for Review Queue chips/table. Provider (e.g. openrouter)
+   is a transport, not a model — never render it as the chip label. */
+function reviewModelDisplayName(m) {
+  var model = m && typeof m.model === 'string' ? String(m.model).trim() : '';
+  if (!model || model.toLowerCase() === 'openrouter') return 'unknown model';
+  return model;
+}
 /* One-line per-model confidence chips for the row (full readings load on demand). */
 function modelsSummaryHtml(models) {
   if (!models || !models.length) return '<span class="muted">—</span>';
   return models.map(function (m) {
     var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
-    var label = m.provider + ':' + m.model;
+    var modelName = reviewModelDisplayName(m);
+    var provider = m && m.provider ? String(m.provider) : '';
+    var label = provider ? provider + ':' + modelName : modelName;
     var color = m.ok ? '#1a7f37' : '#c0362c';
     var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + fmtMs(m.latencyMs) : '')) : ('ERROR: ' + (m.error || 'failed')));
     return '<span title="' + esc(title) + '" style="display:inline-block;margin:1px 3px 1px 0;padding:0 5px;border-radius:8px;font-size:11px;border:1px solid ' + color + ';color:' + color + '">' +
-      esc(m.provider) + ' ' + (m.ok ? esc(conf) : 'ERR') + '</span>';
+      esc(modelName) + ' ' + (m.ok ? esc(conf) : 'ERR') + '</span>';
   }).join('');
 }
 function renderReview() {
@@ -5954,7 +5963,10 @@ function modelsTableHtml(models) {
   if (!models || !models.length) return '<span class="muted">No bake-off model runs stored for this document. The prefilled rows can still come from the queued extraction payload.</span>';
   var rows = models.map(function (m) {
     var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
-    return '<tr><td>' + esc(m.provider + ':' + m.model) + '</td><td>' + esc(m.kind || '') + '</td>' +
+    var modelName = reviewModelDisplayName(m);
+    var provider = m && m.provider ? String(m.provider) : '';
+    var modelCell = esc(modelName) + (provider ? '<div class="muted">' + esc(provider) + '</div>' : '');
+    return '<tr><td>' + modelCell + '</td><td>' + esc(m.kind || '') + '</td>' +
       '<td>' + (m.ok ? 'ok' : '<span style="color:#c0362c">ERR</span>') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? m.rowCount : '—') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? esc(conf) : '—') + '</td>' +
