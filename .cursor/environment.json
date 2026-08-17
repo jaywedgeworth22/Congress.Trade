@@ -1,0 +1,6 @@
+{
+  "name": "Congress.Trade (Deno backend)",
+  "install": "bash scripts/cursor-cloud-setup.sh",
+  "start": "bash scripts/cursor-cloud-serve.sh",
+  "ports": [8787]
+}
