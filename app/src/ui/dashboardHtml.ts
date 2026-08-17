@@ -13098,12 +13098,16 @@ el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
-// ?view= aliases: "delivery" is the Delivery tab's subs view; "feed" is the
-// Trades tab's PRE-RENAME canonical id (owner follow-up batch #25 — "trades"
-// is now canonical, both in the URL and in localStorage's last-viewed tab;
-// "feed" is kept as a silent legacy alias forever so old bookmarked/shared
-// links never break). trends/people/admin already match their ids.
-var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };
+// ?view= aliases must accept the visible tab names (#1458): Directory is
+// people, Delivery is subs. "feed" is the Trades tab's PRE-RENAME id (batch
+// #25 — "trades" is now canonical in the URL and in localStorage; "feed"
+// stays a silent legacy alias so old bookmarked/shared links never break).
+var VIEW_ALIASES = { feed: 'trades', delivery: 'subs', directory: 'people' };
+function resolveViewId(raw) {
+  var key = String(raw || '').trim().toLowerCase();
+  if (!key) return '';
+  return Object.prototype.hasOwnProperty.call(VIEW_ALIASES, key) ? VIEW_ALIASES[key] : key;
+}
 
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 loadMe().then(function () {
@@ -13120,21 +13124,18 @@ loadMe().then(function () {
       if (path === '/review') fromUrl = 'review';
     }
     if (fromUrl) {
-      // ?view= accepts legacy ids as aliases (issue #1458, batch #25) —
-      // "feed" resolves to the Trades tab's canonical "trades", "delivery"
-      // resolves to "subs". Everything else (including canonical ids)
-      // matches as-is.
-      var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
-      // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
-      // or stale ?view= should never silently resurrect an old session.
+      // Visible names + legacy ids (#1458): directory→people, delivery→subs,
+      // feed→trades. Case-insensitive. Unknown values fall back to Trends,
+      // not the last-viewed tab — a typo'd or stale ?view= should never
+      // silently resurrect an old session. Tabs are <a>, not <button>
+      // (web-mobile chrome on main).
+      var canonicalView = resolveViewId(fromUrl);
       initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
-      // Same legacy-alias resolution applies to a stored last-viewed tab —
-      // visitors with "feed" persisted from before batch #25 still land back
-      // on the Trades tab, and the stored value is migrated to the canonical
-      // id in place so every later load reads it directly.
-      var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;
+      // Same alias table for a stored last-viewed tab — old "feed" still
+      // lands on Trades and is migrated to the canonical id in place.
+      var canonicalSaved = resolveViewId(saved);
       if (canonicalSaved && document.querySelector('nav.tabs a[data-view="' + canonicalSaved + '"]')) {
         initialView = canonicalSaved;
         if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }

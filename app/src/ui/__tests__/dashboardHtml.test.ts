@@ -3225,8 +3225,9 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   it('accepts visible tab names as ?view= aliases and falls back to Trends (not last-viewed) on unknown values', () => {
     // Owner follow-up batch #25: "trades" is now the canonical id (the URL
     // writes ?view=trades); "feed" is kept as a silent legacy alias forever.
-    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };");
-    expect(DASHBOARD_HTML).toContain('VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl');
+    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs', directory: 'people' };");
+    expect(DASHBOARD_HTML).toContain('function resolveViewId(raw)');
+    expect(DASHBOARD_HTML).toContain('var canonicalView = resolveViewId(fromUrl);');
     // Unknown/garbage values resolve straight to 'trends' inside the same
     // branch that handles ?view= — never falling through to localStorage's
     // last-viewed tab (issue #1458).
@@ -3239,7 +3240,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     // table — an old "feed" value still resolves to the Trades tab and gets
     // migrated to the canonical "trades" string in place, so links/last-tab
     // state made before the rename keep working.
-    expect(DASHBOARD_HTML).toContain("var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;");
+    expect(DASHBOARD_HTML).toContain('var canonicalSaved = resolveViewId(saved);');
     expect(DASHBOARD_HTML).toContain("if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }");
   });
 });

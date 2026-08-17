@@ -42,6 +42,13 @@ describe('filtersFromQuery offset', () => {
     expect(params.sort).toBe('tx_date');
     expect(params.order).toBe('desc');
   });
+
+  it('parses source=all and ignores unknown source values', () => {
+    expect(filtersFromQuery({ source: 'all' } as Record<string, string>).source).toBe('all');
+    expect(filtersFromQuery({ source: 'seed_dataset' } as Record<string, string>).source).toBe('seed_dataset');
+    expect(filtersFromQuery({} as Record<string, string>).source).toBeUndefined();
+    expect(filtersFromQuery({ source: 'nope' } as Record<string, string>).source).toBeUndefined();
+  });
 });
 
 describe('profilePhotoUrl', () => {

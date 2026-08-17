@@ -10,6 +10,49 @@ final class CongressTradeTests: XCTestCase {
         super.tearDown()
     }
 
+    /// Thread-safe per-path URL capture (#1549). `refresh()` and
+    /// `refreshTrends()` fire concurrently; a single `var feedURL` written
+    /// from every request races and intermittently reads an analytics URL.
+    private final class RequestCapture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var urls: [URL] = []
+
+        func record(_ url: URL?) {
+            guard let url else { return }
+            lock.lock()
+            urls.append(url)
+            lock.unlock()
+        }
+
+        func last(pathContains needle: String) -> URL? {
+            lock.lock()
+            defer { lock.unlock() }
+            return urls.last { $0.path.contains(needle) }
+        }
+
+        func all(pathContains needle: String) -> [URL] {
+            lock.lock()
+            defer { lock.unlock() }
+            return urls.filter { $0.path.contains(needle) }
+        }
+    }
+
+    private func installFeedMock(capture: RequestCapture, feedJSON: String? = nil) {
+        MockURLProtocol.handler = { request in
+            capture.record(request.url)
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") == true {
+                return Self.response(
+                    for: request,
+                    json: feedJSON ?? Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50)
+                )
+            }
+            return Self.response(for: request, json: "{}")
+        }
+    }
+
     func testParseTickersNormalizesAndDropsEmptyValues() async {
         let tickers = await CongressTradeStore.parseTickers(" aapl, MSFT, , nvda \n")
         XCTAssertEqual(tickers, ["AAPL", "MSFT", "NVDA"])
@@ -226,19 +269,13 @@ final class CongressTradeTests: XCTestCase {
         // Empty selection = website-style "no HSP chips selected" (all branches).
         XCTAssertEqual(store.selectedChambers, [])
 
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         // Empty selection omits chamber= so unresolved-chamber rows stay in view.
         await store.setChamberSelection([])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertNil(
             components.queryItems?.first(where: { $0.name == "chamber" }),
             "Empty (all) selection must omit chamber= entirely so unresolved-chamber rows stay in view"
@@ -252,19 +289,13 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         // Selecting a proper subset (not all three) must send a sorted CSV.
         await store.setChamberSelection([.executive, .house])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         let chamberValue = components.queryItems?.first(where: { $0.name == "chamber" })?.value
         XCTAssertEqual(chamberValue, "executive,house")
     }
@@ -295,22 +326,14 @@ final class CongressTradeTests: XCTestCase {
     @MainActor
     func testRefreshLoadsSingleNewestFirstSnapshotWithTradeDateSortAndDefaultWindow() async throws {
         let cursorStore = InMemorySyncCursorStore()
-        var feedCallCount = 0
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            if request.url?.path.contains("/feed") == true {
-                feedCallCount += 1
-                feedURL = request.url
-                return Self.response(for: request, json: Self.feedJSON(
-                    items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                    cursor: 110, count: 10, total: 718, limit: 100
-                ))
-            }
-            return Self.response(for: request, json: "{}")
-        }
+        let capture = RequestCapture()
+        installFeedMock(
+            capture: capture,
+            feedJSON: Self.feedJSON(
+                items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
+                cursor: 110, count: 10, total: 718, limit: 100
+            )
+        )
 
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -320,12 +343,12 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(store.selectedTimeRange, .ninetyDays)
         await store.setChamberSelection([.house, .senate])
 
-        XCTAssertEqual(feedCallCount, 1, "Visible feed is one newest-first snapshot, not a multi-page historical crawl")
+        XCTAssertEqual(capture.all(pathContains: "/feed").count, 1, "Visible feed is one newest-first snapshot, not a multi-page historical crawl")
         XCTAssertEqual(store.tradeTotal, 718, "Trades KPI must use API total, never max cursor_seq")
         XCTAssertEqual(store.feed?.cursor, 110)
         XCTAssertNil(store.feedNotice)
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         let items = components.queryItems ?? []
         XCTAssertEqual(items.first(where: { $0.name == "order" })?.value, "desc")
         XCTAssertEqual(items.first(where: { $0.name == "sort" })?.value, "tx_date")
@@ -336,14 +359,8 @@ final class CongressTradeTests: XCTestCase {
 
     @MainActor
     func testTimeRangeAllOmitsFromParameter() async throws {
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
 
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -352,7 +369,7 @@ final class CongressTradeTests: XCTestCase {
         )
         await store.setTimeRange(.all)
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "from" }))
     }
 
@@ -360,17 +377,14 @@ final class CongressTradeTests: XCTestCase {
 
     @MainActor
     func testGoToNextPageSendsOffsetAndTotalPagesReflectsAPITotal() async throws {
-        var feedURLs: [URL] = []
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURLs.append(request.url!)
-            return Self.response(for: request, json: Self.feedJSON(
+        let capture = RequestCapture()
+        installFeedMock(
+            capture: capture,
+            feedJSON: Self.feedJSON(
                 items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
                 cursor: 110, count: 10, total: 250, limit: 100
-            ))
-        }
+            )
+        )
 
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -383,14 +397,14 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(store.canGoToNextPage)
         XCTAssertFalse(store.canGoToPreviousPage)
         // The first page must not send offset= at all (page 1, not offset=0).
-        let firstComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        let firstComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertNil(firstComponents.queryItems?.first(where: { $0.name == "offset" }))
 
         await store.goToNextPage()
         XCTAssertEqual(store.currentPage, 1)
         XCTAssertTrue(store.canGoToPreviousPage)
 
-        let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "100")
 
         await store.goToPreviousPage()
@@ -400,16 +414,8 @@ final class CongressTradeTests: XCTestCase {
 
     @MainActor
     func testSwitchingToAmountSortDoesNotRefetchButSwitchingBackToDateDoes() async throws {
-        var feedCallCount = 0
-        var lastURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedCallCount += 1
-            lastURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
 
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -417,38 +423,32 @@ final class CongressTradeTests: XCTestCase {
             sleeper: { _ in }
         )
         await store.refresh()
-        XCTAssertEqual(feedCallCount, 1)
+        XCTAssertEqual(capture.all(pathContains: "/feed").count, 1)
 
         // Amount has no backend sort key — selecting it must NOT refetch.
         await store.setFeedSortKey(.amount)
         XCTAssertEqual(store.feedSortKey, .amount)
-        XCTAssertEqual(feedCallCount, 1, "Amount sort is a local re-sort of the already-loaded page only")
+        XCTAssertEqual(capture.all(pathContains: "/feed").count, 1, "Amount sort is a local re-sort of the already-loaded page only")
 
         // Flipping direction while on Amount is also local-only.
         await store.toggleFeedSortDirection()
         XCTAssertEqual(store.feedSortDirection, .ascending)
-        XCTAssertEqual(feedCallCount, 1)
+        XCTAssertEqual(capture.all(pathContains: "/feed").count, 1)
 
         // Switching back to Date DOES refetch (it's a real backend sort key)
         // and carries over the direction set while on Amount.
         await store.setFeedSortKey(.date)
-        XCTAssertEqual(feedCallCount, 2)
+        XCTAssertEqual(capture.all(pathContains: "/feed").count, 2)
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(lastURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "sort" })?.value, "tx_date")
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "order" })?.value, "asc")
     }
 
     @MainActor
     func testChangingATimeRangeResetsCurrentPageToZero() async throws {
-        var feedURLs: [URL] = []
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURLs.append(request.url!)
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 300, limit: 100))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 300, limit: 100))
 
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -462,7 +462,7 @@ final class CongressTradeTests: XCTestCase {
         await store.setTimeRange(.thirtyDays)
         XCTAssertEqual(store.currentPage, 0, "A filter change must not strand the user on a now-out-of-range page")
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "offset" }), "Page reset must omit offset (page 1)")
     }
 
@@ -1020,18 +1020,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            if request.url?.path.contains("/feed") == true { feedURL = request.url }
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setTradeTypeSelection([.buy])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
         // Free-text search still uses memberName when set later; type alone must not emit member=.
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
@@ -1138,18 +1132,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            if request.url?.path.contains("/feed") == true { feedURL = request.url }
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setTradeTypeSelection([.buy, .sell])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B,S")
     }
 
@@ -1163,18 +1151,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setChamberSelection([.house, .executive])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "chamber" })?.value, "executive,house")
     }
 
@@ -1185,18 +1167,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            if request.url?.path.contains("/feed") == true { feedURL = request.url }
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setPartySelection([.democrat, .republican])
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "party" })?.value, "D,R")
     }
 
@@ -1207,18 +1183,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            if request.url?.path.contains("/feed") == true { feedURL = request.url }
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setAssetClass(.equitiesFunds)
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "assetClass" })?.value, "equities_funds")
     }
 
@@ -1312,18 +1282,12 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        var feedURL: URL?
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedURL = request.url
-            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
-        }
+        let capture = RequestCapture()
+        installFeedMock(capture: capture)
 
         await store.setSearch("Nancy Pelosi")
 
-        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "memberName" })?.value, "Nancy Pelosi")
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
     }
