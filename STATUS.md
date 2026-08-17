@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-08-17 GROK — Effort-board hygiene
+
+In Progress rebuilt to leftover real work. Verified-merged rows moved to Completed. Landing this mirror so GitHub effort issues close.
+
+# Current Handoff
+
 ## 2026-08-16 GROK — Web chrome (admin, tabs, header, Apple tap)
 
 Branch `grok/web-chrome`.  Solid full-bleed tab bar like ST.  Compact
