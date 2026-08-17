@@ -26,11 +26,10 @@
  *  - Error-class kill-switch: when the same error class (billing / auth /
  *    quota / parse / timeout) occurs AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD
  *    times (default 2) in a run, the ENTIRE run halts immediately.
- *  - Halts require acknowledgment: a halted run persists a full receipt
- *    (per-class counts, bounded sample error text, per-doc outcomes, spend so
- *    far) surfaced via GET /api/admin/autopilot/status, and the cron will NOT
- *    start another run until POST /api/admin/autopilot/acknowledge. Errors
- *    are for seeing and understanding, not spending through.
+ *  - Halts require acknowledgment for auth and real runaway spend. Transient
+ *    OpenRouter files-prepaid / key-limit 402s use the budget circuit's
+ *    bounded cool-down and auto-resume — they must not silently latch
+ *    extraction for days. Jay is paged on every halt via Pushover.
  *
  * SPEND METER: every doc reserves a rate-card estimate against the shared
  * per-UTC-day autopilot_budget (AUTOPILOT_DAILY_USD_BUDGET, default $5.00,
@@ -60,7 +59,14 @@ import {
   type AgreementDocResult,
   type AgreementModelsC,
 } from './agreement.ts';
-import { classifyProviderErrorClass, type ProviderErrorClass } from './providerHealth.ts';
+import {
+  classifyProviderErrorClass,
+  isTransientFilesPrepaidError,
+  isTransientFilesPrepaidHalt,
+  type ProviderErrorClass,
+} from './providerHealth.ts';
+import { sendPushover } from '../shared/pushover.ts';
+import { countReviewQueueBuckets } from './reviewQueueHealth.ts';
 import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import { meanConfidence, persistExtractionRun, type CandidateDocResult, type Provider } from './bakeoff.ts';
 import { arbitrationRowKey } from '../extractors/types.ts';
@@ -328,10 +334,25 @@ export async function markAutopilotRunHalted(
         WHERE id = ? AND status = 'running'`,
       [reason, nowIso, nowIso, runId],
     );
-    return (result.meta?.changes ?? 0) > 0;
+    const halted = (result.meta?.changes ?? 0) > 0;
+    if (halted) await pageExtractionHalt(env, reason);
+    return halted;
   } catch (err) {
     console.warn('autopilot: halt mark failed:', runId, (err as Error).message);
     return false;
+  }
+}
+
+async function pageExtractionHalt(env: Env, reason: string): Promise<void> {
+  const delivered = await sendPushover(env, {
+    title: 'CT DOWN: extraction halted',
+    message: `Autopilot halted: ${reason.slice(0, 240)}`,
+    priority: 1,
+    url: 'https://congress.trade/?view=review',
+    urlTitle: 'Review + acknowledge',
+  });
+  if (!delivered.sent) {
+    console.error('autopilot: halt page NOT delivered —', delivered.reason ?? 'unknown reason');
   }
 }
 
@@ -721,19 +742,43 @@ export async function maybeStartBacklogAutopilot(
 
   // Halt/ack + single-run gates. A halted run must be acknowledged by a human
   // (POST /api/admin/autopilot/acknowledge) before any new run may start.
-  let open: Array<{ id: string; status: string; updated_at: string }>;
+  let open: Array<{
+    id: string;
+    status: string;
+    updated_at: string;
+    halt_reason: string | null;
+    sample_errors: string | null;
+  }>;
   try {
-    open = await all<{ id: string; status: string; updated_at: string }>(
+    open = await all<{
+      id: string;
+      status: string;
+      updated_at: string;
+      halt_reason: string | null;
+      sample_errors: string | null;
+    }>(
       env.DB,
-      `SELECT id, status, updated_at FROM autopilot_runs
+      `SELECT id, status, updated_at, halt_reason, sample_errors FROM autopilot_runs
         WHERE status IN ('running', 'halted')
         ORDER BY started_at DESC LIMIT 10`,
     );
   } catch {
     return null; // autopilot_runs not migrated yet — do nothing, never throw
   }
-  if (open.some((row) => row.status === 'halted')) {
-    return { blocked: 'unacknowledged_halt' };
+  const haltedRows = open.filter((row) => row.status === 'halted');
+  if (haltedRows.length) {
+    const resumable = haltedRows.filter((row) =>
+      isTransientFilesPrepaidHalt(row.halt_reason, row.sample_errors));
+    if (resumable.length && resumable.length === haltedRows.length) {
+      for (const row of resumable) {
+        await acknowledgeAutopilotHalt(env, {
+          runId: row.id,
+          actor: 'auto_resume:files_prepaid',
+        });
+      }
+    } else {
+      return { blocked: 'unacknowledged_halt' };
+    }
   }
   const runningRow = open.find((row) => row.status === 'running');
   if (runningRow) {
@@ -982,6 +1027,7 @@ export async function handleAutopilotTick(
     console.log(`autopilot: run ${runId} ${status} (${reason}); `
       + `attempted=${state.docsAttempted} published=${state.docsPublished} `
       + `deferred=${state.docsDeferred} spend=$${(state.spendMicro / MICRO).toFixed(4)}`);
+    if (status === 'halted') await pageExtractionHalt(env, reason);
   };
 
   let finished = false;
@@ -1282,11 +1328,16 @@ export async function handleAutopilotTick(
     }
 
     // Error-class kill-switch: same class twice (default) halts the WHOLE
-    // run. The app stops, explains itself in the receipt, and waits for ack.
+    // run for auth / real spend / parse / timeout. Transient OpenRouter
+    // files-prepaid / key-limit 402s are NOT a latch — the budget circuit
+    // already delayed those calls and the next run auto-resumes.
     const haltClass = KILL_SWITCH_CLASSES.find(
       (cls) => (state.errorClassCounts[cls] ?? 0) >= knobs.errorClassHaltThreshold,
     );
-    if (haltClass) {
+    const haltSamples = Object.values(state.sampleErrors);
+    const transientFilesOnly = haltSamples.length > 0
+      && haltSamples.every((sample) => isTransientFilesPrepaidError(sample));
+    if (haltClass && !(transientFilesOnly && (haltClass === 'billing' || haltClass === 'quota'))) {
       await finalize('halted', `error_class:${haltClass}`);
       finished = true;
       haltedByErrors = true;
@@ -1682,6 +1733,7 @@ export async function getAutopilotStatus(env: Env, now = new Date()): Promise<{
   enabled: boolean;
   knobs: Omit<AutopilotKnobs, 'enabled' | 'dailyBudgetMicroUsd'> & { dailyBudgetUsd: number };
   backlog: number | null;
+  reviewQueue: Awaited<ReturnType<typeof countReviewQueueBuckets>>;
   today: { day: string; spendUsd: number; budgetUsd: number };
   unacknowledgedHalt: AutopilotRunReceipt | null;
   runs: AutopilotRunReceipt[];
@@ -1715,6 +1767,7 @@ export async function getAutopilotStatus(env: Env, now = new Date()): Promise<{
       skipDocKinds: knobs.skipDocKinds,
     },
     backlog: await countEligibleBacklog(env),
+    reviewQueue: await countReviewQueueBuckets(env),
     today: {
       day,
       spendUsd: Math.round((spendMicro / MICRO) * 10_000) / 10_000,

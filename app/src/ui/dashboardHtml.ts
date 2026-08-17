@@ -389,6 +389,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
+  .extract-incident {
+    display: none;
+    border: 2px solid var(--sell);
+    background: color-mix(in srgb, var(--sell) 10%, var(--panel));
+    color: var(--text);
+    padding: 14px 16px;
+    border-radius: 12px;
+    margin: 0 0 22px;
+  }
+  .extract-incident.is-on { display: block; }
+  .extract-incident h3 { margin: 0 0 6px; font-size: 16px; color: var(--sell); }
+  .extract-incident p { margin: 0 0 8px; font-size: 13px; }
+  .extract-incident .row-flex { gap: 10px; align-items: center; flex-wrap: wrap; }
   .view { display: none; }
   .view.active { display: block; }
   .toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
@@ -2655,6 +2668,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
     .banner { margin-bottom: 18px; }
+    .extract-incident { margin-bottom: 18px; }
     .trend-grid2, .trend-grid-split, .trend-members-grid, .trend-side-stack { gap: 18px; }
     .timeliness-grid { gap: 24px; }
     .cluster-grid { gap: 12px; }
@@ -2701,6 +2715,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <main>
   <div class="banner" id="banner">Connecting to the live feed…</div>
+  <div class="extract-incident" id="extractIncidentBanner" role="alert" hidden>
+    <h3>Extraction Halted</h3>
+    <p id="extractIncidentDetail">The extraction loop is stopped.&nbsp; Review the reason, then acknowledge to resume when it is safe.</p>
+    <p id="extractIncidentCounts" class="note"></p>
+    <div class="row-flex">
+      <button class="btn" type="button" id="extractIncidentAck" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
+      <button class="btn ghost sm" type="button" onclick="showView('review')">Open Review Queue</button>
+      <span id="extractIncidentAckMsg" class="note" role="status"></span>
+    </div>
+  </div>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -3120,7 +3144,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the red <strong>Extraction Halted</strong> banner above this page is the acknowledge control.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -5711,6 +5735,77 @@ document.addEventListener('visibilitychange', function () {
 
 /* ============================ REVIEW ============================ */
 var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
+function renderExtractionIncident(health, autopilot) {
+  var banner = el('extractIncidentBanner');
+  if (!banner) return;
+  var checks = (health && health.pipeline && health.pipeline.checks) || [];
+  var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
+  var backlog = checks.filter(function (c) { return c.id === 'extraction_backlog'; })[0];
+  var provider = checks.filter(function (c) { return c.id === 'extraction_provider'; })[0];
+  var halted = !!(halt && halt.status && halt.status !== 'ok');
+  var review = (health && health.pipeline && health.pipeline.reviewQueue)
+    || (autopilot && autopilot.reviewQueue)
+    || null;
+  var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
+  var show = halted || unresolved > 0;
+  banner.hidden = !show;
+  banner.classList.toggle('is-on', show);
+  var detail = el('extractIncidentDetail');
+  if (detail) {
+    var parts = [];
+    if (halted) parts.push(halt.detail || 'Autopilot is halted.');
+    else parts.push('Extraction is not halted.');
+    if (provider && provider.status && provider.status !== 'ok') parts.push(provider.detail);
+    detail.textContent = parts.filter(Boolean).join('  ');
+  }
+  var counts = el('extractIncidentCounts');
+  if (counts) {
+    counts.textContent = review
+      ? ('Unresolved ' + review.unresolved + '  ·  eligible ' + review.eligible
+        + '  ·  suppressed ' + review.suppressed + '  ·  terminal ' + review.terminal)
+      : (backlog && backlog.detail ? backlog.detail : '');
+  }
+  var ack = el('extractIncidentAck');
+  if (ack) ack.disabled = !halted || !canUseAdmin();
+}
+function loadExtractionIncident() {
+  return fetch('/api/health')
+    .then(function (r) { return r.json(); })
+    .then(function (health) {
+      if (!canUseAdmin()) {
+        renderExtractionIncident(health, null);
+        return health;
+      }
+      return fetch('/api/admin/autopilot/status', { headers: adminHeaders() })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (autopilot) {
+          renderExtractionIncident(health, autopilot);
+          return health;
+        })
+        .catch(function () {
+          renderExtractionIncident(health, null);
+          return health;
+        });
+    })
+    .catch(function () { /* health read is best-effort */ });
+}
+function acknowledgeExtractionHalt() {
+  var msg = el('extractIncidentAckMsg');
+  if (msg) msg.textContent = 'Acknowledging…';
+  return fetch('/api/admin/autopilot/acknowledge', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()),
+    body: '{}',
+  })
+    .then(okOrThrow)
+    .then(function () {
+      if (msg) msg.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
+      return loadExtractionIncident();
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
+    });
+}
 function setReviewTab(resolved) {
   REVIEW_RESOLVED = resolved ? 1 : 0;
   var p = el('revTabPending'), rv = el('revTabReviewed');
@@ -12161,13 +12256,13 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     }
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'people') loadPeopleDirectory();
-    if (b.dataset.view === 'review') loadReview();
+    if (b.dataset.view === 'review') { loadReview(); loadExtractionIncident(); }
     if (b.dataset.view === 'subs') {
       updateDeliveryGate();
       loadSubs();
       renderSpeedProof();
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   };
 });
 
@@ -12825,6 +12920,7 @@ var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };
 loadMe().then(function () {
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
   if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
+  loadExtractionIncident();
   var initialView = 'trends';
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');

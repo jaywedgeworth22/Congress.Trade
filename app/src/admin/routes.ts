@@ -5498,6 +5498,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         // decisions table may lag in some local fixtures — park still lands.
       }
 
+      // local_mac_1 is supplemental only.  After local exhaustion, hand the
+      // doc to the hosted extraction path instead of leaving it parked.
+      let hostedFallbackEnqueued = false;
+      try {
+        await c.env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
+        hostedFallbackEnqueued = true;
+      } catch (err) {
+        console.warn('local-vision-park: hosted fallback enqueue failed', docId, (err as Error).message);
+      }
+
       return c.json({
         ok: true,
         docId,
@@ -5506,6 +5516,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         lastError,
         previousStatus: filingRow.ingest_status,
         ingestStatus: 'needs_review',
+        hostedFallbackEnqueued,
       });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);

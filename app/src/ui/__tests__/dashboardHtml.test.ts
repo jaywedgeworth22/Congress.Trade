@@ -5121,6 +5121,17 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
   });
 
+  it('surfaces the extraction-halt banner and acknowledge control', () => {
+    expect(DASHBOARD_HTML).toContain('id="extractIncidentBanner"');
+    expect(DASHBOARD_HTML).toContain('Extraction Halted');
+    expect(DASHBOARD_HTML).toContain('id="extractIncidentAck"');
+    expect(DASHBOARD_HTML).toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).toContain('function acknowledgeExtractionHalt()');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/autopilot/acknowledge'");
+    expect(DASHBOARD_HTML).toContain('function loadExtractionIncident()');
+    expect(DASHBOARD_HTML).toContain('The extraction loop is stopped.&nbsp; Review the reason');
+  });
+
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {
     expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party) + '<span class=\"cell-clip\"");
     expect(DASHBOARD_HTML).toContain('id="trLargestBuys"');
