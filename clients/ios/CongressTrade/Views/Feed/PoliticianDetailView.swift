@@ -206,8 +206,8 @@ struct PoliticianDetailView: View {
                 )
             }
             Text(matchesTopPerformers
-                 ? "Variable hold.  Each buy from the public filing date through the latest price.  Avg excess is vs S&P; avg return is the asset alone."
-                 : "Variable hold.  Each buy from the trade date through the latest price.  Avg excess is vs S&P; avg return is the asset alone.")
+                 ? "Variable hold.  Each buy from the public filing date through the latest price.  Avg excess is versus the index; avg return is the asset alone."
+                 : "Variable hold.  Each buy from the trade date through the latest price.  Avg excess is versus the index; avg return is the asset alone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if matchesTopPerformers, leg.avgExcess != nil {

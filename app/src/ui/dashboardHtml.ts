@@ -622,7 +622,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Owner punch list #13(c): Owner (Self/Spouse/Joint) rides beside the
      politician's name at the top of the trade drawer instead of its own row
      further down in Trade Details. */
-  .drawer-trade-owner, .owner-badge { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .drawer-trade-owner { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .owner-badge { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
   .member-cell .owner-badge { margin-left: 2px; }
   /* Owner punch list #13(b): a small link chevron on the "Name" row in Trade
      Details signals it opens the politician drawer (the click already worked). */
@@ -11385,7 +11386,7 @@ function memberPerfHtml(d) {
     return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.85;' : '') + '">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
       '<div class="note" style="margin:2px 0 6px">' + esc(horizon) + '</div>' +
-      '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess vs S&amp;P</span></div>' +
+      '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess</span></div>' +
       '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
         ' · Avg asset return ' + pctSigned(leg.avgReturn) +
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
@@ -11398,7 +11399,7 @@ function memberPerfHtml(d) {
   return legBlock(
       'Their timing (approx.)',
       'Size-weighted average excess return of disclosed equity buys from the trade date to now.  Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
-      'Variable hold — each buy from the trade date through the latest price.  Avg excess is vs S&P; avg asset return is the stock alone.',
+      'Variable hold — each buy from the trade date through the latest price.  Avg excess is versus the index; avg asset return is the stock alone.',
       trade,
       true
     ) +
@@ -11435,7 +11436,7 @@ function openTrade(row) {
   // Owner (Self/Spouse/Joint) moved up beside the politician's name instead
   // of sitting in its own row further down in Trade Details.
   var ownerText = ownerLabel(row.owner);
-  var ownerBadge = ownerText ? '<span class="drawer-trade-owner owner-badge muted">' + esc(ownerText) + '</span>' : '';
+  var ownerBadge = ownerText ? '<span class="drawer-trade-owner muted">' + esc(ownerText) + '</span>' : '';
   // Owner follow-up batch #1 (P1 regression): the badge must be a flex SIBLING
   // after the ellipsized name div, not appended inside it — otherwise a long
   // name (e.g. "David H. McCormick") ellipsizes and swallows the badge.

@@ -3800,7 +3800,7 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       expect(DASHBOARD_HTML).toContain(
         'Variable hold — each buy from the public filing date through the latest price.',
       );
-      expect(DASHBOARD_HTML).toContain('avg excess vs S&amp;P');
+      expect(DASHBOARD_HTML).toContain('Avg excess is versus the index');
       expect(DASHBOARD_HTML).toContain('Avg asset return');
     });
   });
