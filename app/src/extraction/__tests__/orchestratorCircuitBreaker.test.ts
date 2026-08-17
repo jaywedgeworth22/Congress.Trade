@@ -176,4 +176,35 @@ describe('orchestrator provider-ban circuit breaker', () => {
     expect(extract).toHaveBeenCalledTimes(1);
     expect(kvGet).not.toHaveBeenCalled();
   });
+
+  it('does not let a vision ban block the text-first OGE wrapper, including scans', async () => {
+    const extract = vi.fn(async () => ({
+      transactions: [{ id: 'tx-1' }],
+      confidence: 0.97,
+      raw: 'text',
+      extractor: 'ogeText',
+    }));
+    mocks.buildExtractorPipeline.mockReturnValue([
+      {
+        name: 'ogePdf(ogeText,arbitrating(configuredVision,visionLlm-secondary))',
+        circuitBreakerName: 'configuredVision',
+        canHandle: () => true,
+        extract,
+      },
+    ]);
+
+    const { db } = fakeDb();
+    const kvGet = vi.fn(async () => '1');
+    const env = {
+      DB: db,
+      RAW_FILES: fakeRawFiles(new ArrayBuffer(8)),
+      CONFIG_KV: { get: kvGet, put: vi.fn(), delete: vi.fn() },
+    } as unknown as Env;
+
+    const result = await extractParsed(env, 'H-1');
+
+    expect(result?.extractor).toBe('ogeText');
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(kvGet).not.toHaveBeenCalled();
+  });
 });

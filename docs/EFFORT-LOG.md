@@ -75,6 +75,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-17 4:15pm CT — CURSOR — IN PROGRESS — #1575 scanned_pdf vision/OCR path (branch `cursor/scanned-pdf-ocr-1575-691a`).** Executive `scanned_pdf` skipped OgeTextExtractor/unpdf (ogeText only claimed `text_pdf`) and jumped to paid vision. Adding `OgePdfExtractor`: unpdf/ogeText first; OpenRouter vision only when a scan yields zero rows; fail-soft on missing key / provider 4xx; rethrow `IngestRetryError` for budget backoff. Deterministic extractors unchanged. Local-worker `extraction_pending_local` path untouched. No new paid providers.
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Monet CI/ship landed as #1837; trades-sort as #1860; directory chrome as #1705; filter/iOS/ASC-prep rows already merged. First lines of the previous Active dump preserved under Recently completed. Rename of the Historical archive heading (below) is so effort-issues-sync does not treat that archive as still In Progress.
 
 ## Recently completed
