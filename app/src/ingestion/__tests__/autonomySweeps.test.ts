@@ -248,6 +248,60 @@ describe('autonomySweeps', () => {
       expect(result.updated).toBe(0);
       expect(fetchHouseIndex).not.toHaveBeenCalled();
     });
+
+    it('does not fetch the ZIP for not_found frontier-probe phantoms', async () => {
+      const env = makeEnv();
+      const now = new Date('2026-08-17T21:00:00Z');
+      const stale = new Date(now.getTime() - 100 * 3600_000).toISOString();
+      // Prod 2026-07-30 scout burst: sequential IDs that HEAD-404'd and
+      // are absent from every year's Clerk FD ZIP (#1577).
+      await insertFiling({
+        doc_id: 'H-2026-20035076',
+        chamber: 'house',
+        ingest_status: 'not_found',
+        first_seen_at: stale,
+        filed_date: null,
+      });
+
+      const result = await sweepFiledDateBackfill(env, now);
+      expect(result.updated).toBe(0);
+      expect(result.yearsFetched).toEqual([]);
+      expect(fetchHouseIndex).not.toHaveBeenCalled();
+    });
+
+    it('leaves filed_date NULL when the Clerk index has no matching DocID', async () => {
+      const env = makeEnv();
+      const now = new Date('2026-08-17T21:00:00Z');
+      const stale = new Date(now.getTime() - 100 * 3600_000).toISOString();
+      await insertFiling({
+        doc_id: 'H-2026-20035076',
+        chamber: 'house',
+        ingest_status: 'persisted',
+        first_seen_at: stale,
+        filed_date: null,
+      });
+      fetchHouseIndex.mockResolvedValueOnce([
+        {
+          docId: '9116249',
+          filingType: 'P',
+          year: '2026',
+          first: 'Tom',
+          last: 'Cole',
+          stateDst: 'OK04',
+          filingDate: '7/21/2026',
+          isPtr: true,
+          pipelineDocId: 'H-2026-9116249',
+          sourceUrl: 'https://x',
+        },
+      ]);
+
+      const result = await sweepFiledDateBackfill(env, now);
+      expect(result.updated).toBe(0);
+      expect(result.yearsFetched).toEqual(['2026']);
+      const row = await d1.prepare(`SELECT filed_date FROM filings WHERE doc_id = ?`)
+        .bind('H-2026-20035076').first<{ filed_date: string | null }>();
+      expect(row?.filed_date ?? null).toBeNull();
+    });
   });
 
   describe('extractPrintedDateFromText (pure)', () => {

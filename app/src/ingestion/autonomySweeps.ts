@@ -30,6 +30,7 @@ import {
   type DeterministicDrainResult,
   type LocalVisionRequeueResult,
 } from '../extraction/deterministicDrain.ts';
+import { reconcileResolvedReviewStatus } from './reviewStatusReconcile.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
  *  routeProviderOnlyObservationsToReview) are working-as-designed synthetic
@@ -168,6 +169,14 @@ export interface FiledDateBackfillResult {
  * the exact same COALESCE-style UPDATE watcher.ts's passive path uses, so a
  * doc that already got a date some other way is never overwritten. Bounded
  * to at most 2 distinct years per run to avoid hammering the Clerk.
+ *
+ * Year extraction is `H-(\d{4})-` (houseDocId in houseSource.ts). Live
+ * diagnosis for #1577 (2026-08-17) confirmed that regex matches every
+ * official House pipeline id; do not loosen it to invent dates for
+ * `provider-missing-*` stubs or `not_found` frontier-probe phantoms.
+ * Those ids are absent from the Clerk index, so NULL is the honest value.
+ * `not_found` is excluded so the hourly sweep does not re-fetch the ZIP
+ * for the 2026-07-30 sequential-probe burst (H-2026-20035076..20035975).
  */
 export async function sweepFiledDateBackfill(
   env: Env,
@@ -185,6 +194,7 @@ export async function sweepFiledDateBackfill(
       WHERE chamber = 'house'
         AND filed_date IS NULL
         AND ingest_status != 'error'
+        AND ingest_status != 'not_found'
         AND first_seen_at IS NOT NULL
         AND first_seen_at < ?
         AND doc_id NOT LIKE ?
@@ -364,59 +374,20 @@ export interface ResolvedDesyncSweepResult {
  *
  * This sweep owns exactly that population: it does NOT re-open, re-fetch, or
  * re-extract anything (the review outcome stands) — it only stamps the terminal
- * status. Provider-missing placeholder rows are excluded: they legitimately sit
- * in needs_review awaiting an official document and are not stuck filings.
- * status the resolution should have written, so operational queries and the
- * health signal stop lying. Idempotent and bounded.
+ * status from review_queue.resolution_kind / ingestion_decisions.  Provider-
+ * missing placeholder rows are excluded.  Idempotent and bounded.
  */
 export async function sweepResolvedStatusDesync(
   env: Env,
   now = new Date(),
   opts: { limit?: number } = {},
 ): Promise<ResolvedDesyncSweepResult> {
-  const limit = opts.limit ?? 500;
-  const nowIso = now.toISOString();
-  const statusPlaceholders = STRANDABLE_STATUSES.map(() => '?').join(',');
-
-  const rows = await all<{ doc_id: string; ingest_status: string; has_tx: number }>(
-    env.DB,
-    `SELECT f.doc_id, f.ingest_status,
-            EXISTS(SELECT 1 FROM transactions t
-                    WHERE t.doc_id = f.doc_id AND t.deprecated_at IS NULL) AS has_tx
-       FROM filings f
-      WHERE (f.ingest_status IN (${statusPlaceholders}) OR f.ingest_status = 'needs_review')
-        AND f.doc_id NOT LIKE ?
-        AND EXISTS (SELECT 1 FROM review_queue rq
-                     WHERE rq.doc_id = f.doc_id AND rq.resolved = 1)
-      LIMIT ?`,
-    [...STRANDABLE_STATUSES, PROVIDER_MISSING_PREFIX, limit],
-  );
-
-  let reconciled = 0;
-  for (const row of rows) {
-    // A resolved filing that produced trades is 'published'; one resolved with
-    // no trades (rejected / verified-empty) is terminal 'error' so it stays
-    // visible to the same operational queries as any other dead end.
-    const terminal = row.has_tx ? 'published' : 'error';
-    const res = await run(
-      env.DB,
-      `UPDATE filings
-          SET ingest_status = ?,
-              error = CASE WHEN ? = 'error'
-                           THEN COALESCE(error, ?)
-                           ELSE error END
-        WHERE doc_id = ? AND ingest_status = ?`,
-      [
-        terminal,
-        terminal,
-        `autonomy-sweep: review resolved with no extracted transactions; status reconciled ${nowIso}`,
-        row.doc_id,
-        row.ingest_status,
-      ],
-    );
-    if (res.meta?.changes) reconciled += 1;
-  }
-  return { scanned: rows.length, reconciled };
+  const result = await reconcileResolvedReviewStatus(env, {
+    apply: true,
+    limit: opts.limit ?? 500,
+    now,
+  });
+  return { scanned: result.scanned, reconciled: result.updated };
 }
 
 export interface AutonomySweepResult {
@@ -441,6 +412,7 @@ const LIVENESS_ALARM_CHECK_IDS = new Set([
   'polling_senate',
   'polling_executive',
   'latency_probes',
+  'senate_relay',
 ]);
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;

@@ -14,6 +14,7 @@
  *   POST  /subscriptions            -> operator-provisioned subscription
  *   POST  /subscriptions/:id/rotate-secret -> rotate signing secret (shown-once if generated)
  *   POST  /subscriptions/:id/deactivate    -> deactivate (drops from fanout, frees creation quota)
+ *   POST  /filings-hygiene              -> dry-run (default) / apply probe delete + review desync (#1576/#1574)
  *
  * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
@@ -240,6 +241,7 @@ import {
   CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
+import { runFilingsHygiene } from '../ingestion/reviewStatusReconcile.ts';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -5157,6 +5159,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
     }
     return c.json({ ok: true, matched: rows.length, enqueued, skipped, errors });
+  });
+
+  // --- POST /filings-hygiene ------------------------------------------------
+  // #1576 + #1574.  Default is dry-run.  Writes require apply:true AND
+  // dryRun !== true.  Probe delete is exact-doc_id and refuses if any
+  // transaction rows exist.  Never deletes a real filing.
+  // Body (all optional):
+  //   { apply?: boolean, dryRun?: boolean, deleteProbe?: boolean,
+  //     reconcileDesync?: boolean, limit?: number }
+  r.post('/filings-hygiene', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const apply = body.apply === true && body.dryRun !== true;
+    let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 600;
+    if (limit > 2000) limit = 2000;
+    const result = await runFilingsHygiene(c.env, {
+      apply,
+      deleteProbe: body.deleteProbe !== false,
+      reconcileDesync: body.reconcileDesync !== false,
+      limit,
+    });
+    return c.json({ ok: true, dryRun: !apply, ...result });
   });
 
   // --- GET /scanned-filings/pending ---------------------------------------

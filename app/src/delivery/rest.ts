@@ -8,6 +8,7 @@
  * (YYYY-MM-DD), and filtering by ticker / member / chamber / type.
  *
  * Routes (all relative to /api):
+ *   GET   /health/senate-relay  live probe of the named Senate tunnel origin (#1604)
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
  *   GET   /feed.xml          RSS 2.0 feed of recent trades (same filters as /transactions)
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
@@ -28,6 +29,7 @@ import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import { readBuildInfo } from '../shared/buildInfo.ts';
 import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
+import { probeSenateRelay } from '../ingestion/senateRelayHealth.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -576,6 +578,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const ok = check === null || (check.status !== 'stalled' && check.status !== 'degraded');
     c.header('Cache-Control', 'no-store');
     return c.json({ ok, check }, ok ? 200 : 503);
+  });
+
+  // --- GET /health/senate-relay --------------------------------------------
+  // Issue #1604: the named tunnel hostname is permanent; the Mac origin is
+  // not.  Live-probes GET {SENATE_RELAY_URL}/health (5s budget) so a sleeping
+  // laptop pages in minutes.  Does not call checkPipelineHealth — that path
+  // is already the uptime-monitor target and must not grow an outbound hop.
+  r.get('/health/senate-relay', async (c) => {
+    const check = await probeSenateRelay(c.env);
+    c.header('Cache-Control', 'no-store');
+    return c.json(check, check.ok ? 200 : 503);
   });
 
   // --- GET /transactions --------------------------------------------------

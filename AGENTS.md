@@ -200,6 +200,14 @@ reporting the tunnel "online" throughout.  If the Senate path is down now, the
 cause is the relay, the tunnel process, or upstream — not the URL.  See
 `scout/README.md` "Senate relay tunnel".
 
+When the named-tunnel origin is down (Cloudflare 502/5xx), search and
+`/fetch-doc` fall back to the box's own eFD egress instead of failing closed
+on a sleeping Mac.  `#1610`'s `/fetch-doc` contract is unchanged when the
+relay answers.  `GET /api/health/senate-relay` live-probes the origin so a
+dead laptop pages in minutes.  Remaining host dependency and the always-on
+residential fix: `docs/rollouts/2026-08-17-senate-relay-host-dependency.md`
+(issue #1604).
+
 ## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
 
 Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
