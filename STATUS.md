@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — House FD ZIP is healthy (#1577)
+
+Live Clerk `{YEAR}FD.ZIP` is reachable and complete.  Official persisted
+House rows already have `filed_date`.  Remaining NULLs are `not_found`
+frontier-probe ids and Quiver `provider-missing-*` stubs, both absent
+from the Clerk index.  NULL is honest; do not invent dates.  Sweep
+skips `not_found` so it stops hourly no-op ZIP fetches.  Receipt:
+`docs/rollouts/2026-08-17-house-fd-zip-1577.md`.
+
 ## 2026-08-17 CURSOR — Senate relay no longer fail-closes on a sleeping Mac (#1604)
 
 Named tunnel `scout.jays.services` is already permanent (#1779).  `#1610`

@@ -169,6 +169,14 @@ export interface FiledDateBackfillResult {
  * the exact same COALESCE-style UPDATE watcher.ts's passive path uses, so a
  * doc that already got a date some other way is never overwritten. Bounded
  * to at most 2 distinct years per run to avoid hammering the Clerk.
+ *
+ * Year extraction is `H-(\d{4})-` (houseDocId in houseSource.ts). Live
+ * diagnosis for #1577 (2026-08-17) confirmed that regex matches every
+ * official House pipeline id; do not loosen it to invent dates for
+ * `provider-missing-*` stubs or `not_found` frontier-probe phantoms.
+ * Those ids are absent from the Clerk index, so NULL is the honest value.
+ * `not_found` is excluded so the hourly sweep does not re-fetch the ZIP
+ * for the 2026-07-30 sequential-probe burst (H-2026-20035076..20035975).
  */
 export async function sweepFiledDateBackfill(
   env: Env,
@@ -186,6 +194,7 @@ export async function sweepFiledDateBackfill(
       WHERE chamber = 'house'
         AND filed_date IS NULL
         AND ingest_status != 'error'
+        AND ingest_status != 'not_found'
         AND first_seen_at IS NOT NULL
         AND first_seen_at < ?
         AND doc_id NOT LIKE ?
