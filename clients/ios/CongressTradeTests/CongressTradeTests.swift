@@ -1395,6 +1395,49 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(LatencyScorecardCopy.formatLead(snap.averageSec), "1.9h earlier")
     }
 
+    func testLatencyPublicGateHidesWhenMostProvidersLag() {
+        let ahead = Self.latencyProvider(
+            label: "A", matched: 10, usFirst: 8, providerFirst: 2,
+            median: 120, avg: 100, status: "usable"
+        )
+        let lag1 = Self.latencyProvider(
+            label: "B", matched: 10, usFirst: 1, providerFirst: 9,
+            median: -3600, avg: -1800, status: "usable"
+        )
+        let lag2 = Self.latencyProvider(
+            label: "C", matched: 10, usFirst: 2, providerFirst: 8,
+            median: -7200, avg: -5400, status: "usable"
+        )
+        let split = LatencySummary(
+            generatedAt: "2026-08-17T00:00:00Z",
+            windowHours: 48,
+            windowDays: 2,
+            maxConcurrentDeltaHours: 48,
+            totals: LatencySummary.LatencyTotals(
+                racedDisclosures: 10, matched: 10, pending: 0,
+                comparableProviders: 2, providerObserved: 10,
+                unmatchedProvider: 0, scopeMatched: 10, scopeTotal: 10
+            ),
+            scope: nil,
+            providers: [ahead, lag1]
+        )
+        let majorityBehind = LatencySummary(
+            generatedAt: "2026-08-17T00:00:00Z",
+            windowHours: 48,
+            windowDays: 2,
+            maxConcurrentDeltaHours: 48,
+            totals: LatencySummary.LatencyTotals(
+                racedDisclosures: 10, matched: 10, pending: 0,
+                comparableProviders: 3, providerObserved: 10,
+                unmatchedProvider: 0, scopeMatched: 10, scopeTotal: 10
+            ),
+            scope: nil,
+            providers: [ahead, lag1, lag2]
+        )
+        XCTAssertTrue(LatencyScorecardCopy.isPubliclyVisible(split))
+        XCTAssertFalse(LatencyScorecardCopy.isPubliclyVisible(majorityBehind))
+    }
+
     // MARK: - Test helpers
 
     private static func latencyProvider(

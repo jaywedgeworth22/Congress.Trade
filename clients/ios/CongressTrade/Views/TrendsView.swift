@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @EnvironmentObject private var tabRouter: TabRouter
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
     /// dismissed/expanded state is one truth across both tabs.  The filter
@@ -73,8 +74,23 @@ struct TrendsView: View {
                             timelinessSection(lag: lag)
                         }
 
-                        if let summary = store.latencySummary {
-                            LatencyComparisonView(summary: summary)
+                        if let summary = store.latencySummary,
+                           LatencyScorecardCopy.isPubliclyVisible(summary) {
+                            Button {
+                                tabRouter.selection = .delivery
+                            } label: {
+                                HStack {
+                                    Text("Filing latency comparison")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(12)
+                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens the Delivery tab")
                         }
                     }
 
@@ -1078,6 +1094,26 @@ struct LatencyComparisonView: View {
 enum LatencyScorecardCopy {
     enum Direction: Equatable {
         case ahead, behind, even
+    }
+
+    /// Public Delivery + Trends-link gate: hide when we are behind on most
+    /// usable providers (median and average must agree). Matches web
+    /// `isLatencyAhead()`.
+    static func isPubliclyVisible(_ summary: LatencySummary, minMatched: Int = 2) -> Bool {
+        var ahead = 0
+        var behind = 0
+        for provider in summary.providers {
+            let snap = snapshot(for: provider, minMatched: minMatched)
+            let usable = (provider.comparisonStatus ?? "") == "usable"
+            guard snap.hasStats, usable else { continue }
+            switch snap.verdict {
+            case .lead: ahead += 1
+            case .lag: behind += 1
+            default: break
+            }
+        }
+        let voted = ahead + behind
+        return voted > 0 && behind <= ahead
     }
 
     enum Verdict: Equatable {
