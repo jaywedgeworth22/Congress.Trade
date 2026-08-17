@@ -2497,6 +2497,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     const src = [
       extractFn(DASHBOARD_HTML, 'esc'),
       extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'partyBucketClass'),
       extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
       'return memberAvatarHtml;',
     ].join('\n');
@@ -3911,13 +3912,13 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).not.toContain('<option value="">Any $</option>');
   });
 
-  it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators', () => {
-    // Feed surfaces: desktop table cells (member state, asset title, amount
-    // title) and the mobile feed card's meta row.
+  it('#12 uses "  |  " (two spaces + pipe) for feed table separators; cards use the iOS middle-dot line', () => {
+    // Desktop table cells keep the owner-approved pipe pairing.
     expect(DASHBOARD_HTML).toContain("(r.st ? '<span class=\"muted\">  |  ' + esc(r.st) + '</span>' : '')");
     expect(DASHBOARD_HTML).toContain("esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || ''))");
     expect(DASHBOARD_HTML).toContain("esc(tier.title + '  |  ' + text)");
-    expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  |  </span>')");
+    // Mobile cards follow iOS TradeCard: "Chamber · Name · D-ST".
+    expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  ·  </span>')");
   });
 
   it('#14 uses "  |  " (two spaces + pipe) for drawer separators (ticker/company, stats row, Market Cap)', () => {
