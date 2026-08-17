@@ -1476,6 +1476,10 @@ struct TradeCard: View {
         if let partyState {
             parts.append(partyState)
         }
+        if let owner = trade.transaction.owner?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !owner.isEmpty {
+            parts.append(owner.capitalized)
+        }
         return parts.joined(separator: " · ")
     }
 

@@ -2492,7 +2492,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('Delivery paused.');
     expect(DASHBOARD_HTML).toContain('Delivery resumed.');
     expect(DASHBOARD_HTML).toContain('Delivery deleted.');
-    expect(DASHBOARD_HTML).toContain('Delete this delivery permanently?');
+    expect(DASHBOARD_HTML).toContain("delBtn.textContent = 'Confirm?';");
+    expect(DASHBOARD_HTML).toContain('Confirm delete this delivery permanently');
     expect(DASHBOARD_HTML).toContain('All deliveries are paused.');
   });
 
@@ -3790,6 +3791,42 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       expect(DASHBOARD_HTML).not.toContain('disclosed buys in window');
       expect(DASHBOARD_HTML).toContain("var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';");
       expect(DASHBOARD_HTML).toContain("fmtCount(buyCount) + ' disclosed buys' + horizonPhrase");
+    });
+
+    it('labels each skill leg as a variable hold and splits excess from asset return (#1460)', () => {
+      expect(DASHBOARD_HTML).toContain(
+        'Variable hold — each buy from the trade date through the latest price.',
+      );
+      expect(DASHBOARD_HTML).toContain(
+        'Variable hold — each buy from the public filing date through the latest price.',
+      );
+      expect(DASHBOARD_HTML).toContain('avg excess vs S&amp;P');
+      expect(DASHBOARD_HTML).toContain('Avg asset return');
+    });
+  });
+
+  describe('directory photos, filer owner, delivery delete (#1460 / #1429 leftovers)', () => {
+    it('renders People directory names with the same avatar helper as the feed', () => {
+      expect(DASHBOARD_HTML).toContain('function renderPeopleDirectory(all)');
+      expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl)");
+    });
+
+    it('shows the beneficial owner on feed rows and mobile cards', () => {
+      expect(DASHBOARD_HTML).toContain('function ownerBadgeHtml(o)');
+      expect(DASHBOARD_HTML).toContain('ownerBadgeHtml(r.owner)');
+      expect(DASHBOARD_HTML).toContain("bits.push('<span class=\"fc-owner\">' + esc(ownerText) + '</span>')");
+    });
+
+    it('replaces the politician-drawer Not recorded committee fallback', () => {
+      expect(DASHBOARD_HTML).not.toContain("? '<span class=\"muted\">Not recorded</span>'");
+      expect(DASHBOARD_HTML).toContain('No current assignments on file.');
+      expect(DASHBOARD_HTML).toContain('Executive filers do not sit on congressional committees.');
+    });
+
+    it('uses a second-click Confirm? for web delivery delete', () => {
+      expect(DASHBOARD_HTML).toContain('var PENDING_SUB_DELETE');
+      expect(DASHBOARD_HTML).toContain("delBtn.textContent = 'Confirm?';");
+      expect(DASHBOARD_HTML).not.toContain("window.confirm('Delete this delivery permanently?");
     });
   });
 });

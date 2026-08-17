@@ -95,6 +95,7 @@ final class ClientTrade: Decodable, Identifiable {
         var party: String?
         var state: String?
         var photoUrl: String?
+        var committees: [String]?
     }
 
     struct Asset: Codable {
