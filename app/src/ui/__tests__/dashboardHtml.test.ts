@@ -235,6 +235,9 @@ describe('DASHBOARD_HTML', () => {
 
   it('teaches the two paid delivery methods to signed-out visitors', () => {
     expect(DASHBOARD_HTML).toContain('id="subsMarketing"');
+    expect(DASHBOARD_HTML).toContain('id="subsPush"');
+    expect(DASHBOARD_HTML).toContain('<h3>Push Notifications</h3>');
+    expect(DASHBOARD_HTML).toContain('<h3>Alerts</h3>');
     expect(DASHBOARD_HTML).toContain('Get the Filing First');
     expect(DASHBOARD_HTML).toContain('Signed Webhooks');
     expect(DASHBOARD_HTML).toContain('HMAC-SHA256');
@@ -460,9 +463,11 @@ describe('DASHBOARD_HTML', () => {
   it('keeps Billing Portal management independent from checkout readiness', () => {
     expect(DASHBOARD_HTML).toContain('function portalConfigured()');
     expect(DASHBOARD_HTML).toContain('function hasBillingAccount()');
-    expect(DASHBOARD_HTML).toContain('hasBillingAccount() && portalConfigured()');
-    expect(DASHBOARD_HTML).toContain('if (!portalConfigured() || !hasBillingAccount())');
+    expect(DASHBOARD_HTML).toContain('function canManageSubscription()');
+    expect(DASHBOARD_HTML).toContain("source === 'apple'");
+    expect(DASHBOARD_HTML).toContain('if (!portalConfigured())');
     expect(DASHBOARD_HTML).toContain('Manage Subscription');
+    expect(DASHBOARD_HTML).toContain("credentials: 'same-origin'");
   });
 
   it('sends stable per-operation idempotency keys for Stripe writes', () => {
@@ -2954,10 +2959,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
 });
 
 describe('owner feedback: exchange toggle glyph + legend semantic colors', () => {
-  it('renders the resting ⇄ toggle glyph in the themed ink color with a bolder stroke, not var(--exch)', () => {
-    expect(DASHBOARD_HTML).toContain(
-      '.side-chip .side-ex { color:var(--text); font-size:12px; font-weight:900; -webkit-text-stroke:.5px var(--text); }',
-    );
+  it('renders the resting exchange glyph as a fat ink-colored mask arrow, not var(--exch)', () => {
+    expect(DASHBOARD_HTML).toContain('.side-ex {\n    color: var(--text);');
     // The old amber-off-state rule is gone entirely.
     expect(DASHBOARD_HTML).not.toContain('.side-chip .side-ex { color:var(--exch); font-size:12px; }');
     // The pressed/"on" state keeps its existing white-on-amber treatment —
@@ -4859,5 +4862,44 @@ describe('executive titles in the dashboard (owner: "don\'t say \'exec -\' befor
     expect(DASHBOARD_HTML).not.toContain("parts.push(esc(m.title ? String(m.title) : 'Executive'));");
     // And a district never tags along behind an executive position.
     expect(DASHBOARD_HTML).toContain("if (!isExec && p.district) subBits.push(");
+  });
+});
+
+describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
+  it('paints a solid white header through the sticky filters', () => {
+    expect(DASHBOARD_HTML).toContain('html[data-theme="light"] header.top {\n    background: #fff;');
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
+    expect(DASHBOARD_HTML).toContain('padding-bottom: 10px;');
+  });
+
+  it('defines showView so account-menu Delivery / Admin / Review actually switch tabs', () => {
+    expect(DASHBOARD_HTML).toContain('function showView(name, scrollId)');
+    expect(DASHBOARD_HTML).toContain('showView(\\\'subs\\\')">Delivery');
+    expect(DASHBOARD_HTML).not.toContain('Delivery & Alerts');
+    expect(DASHBOARD_HTML).not.toContain('showView(\\\'subs\\\')">Push Notifications');
+  });
+
+  it('keeps the CSV dialog off the hidden Trades view so showModal works from Trends', () => {
+    const tradesOpen = DASHBOARD_HTML.indexOf('id="view-trades"');
+    const tradesClose = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const dialog = DASHBOARD_HTML.indexOf('id="exportCsvDialog"');
+    expect(dialog).toBeGreaterThan(tradesClose);
+    expect(dialog).toBeGreaterThan(tradesOpen);
+    expect(DASHBOARD_HTML).toContain('if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);');
+  });
+
+  it('lists Admin + Review in the account menu even before canUseAdmin()', () => {
+    expect(DASHBOARD_HTML).toContain('if (!ME.user && !hasAdminToken()) return \'\'');
+    expect(DASHBOARD_HTML).toContain('showView(\\\'admin\\\')">Admin');
+    expect(DASHBOARD_HTML).toContain('showView(\\\'review\\\')">Review Queue');
+  });
+
+  it('uses fat mask arrows with green up and blue down on the side filter', () => {
+    expect(DASHBOARD_HTML).toContain('.side-up, .side-dn, .side-ex {');
+    expect(DASHBOARD_HTML).toContain('.side-up {\n    color: var(--buy);');
+    expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--accent);');
+    expect(DASHBOARD_HTML).toContain('mask-image: url("data:image/svg+xml');
   });
 });
