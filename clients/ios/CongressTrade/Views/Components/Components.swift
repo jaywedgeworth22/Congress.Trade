@@ -913,6 +913,7 @@ struct AccountQuickMenu: View {
                 }
             }
         }
+        .environment(\.openPremium) { showPremiumInfo = true }
         .sheet(isPresented: $showPremiumInfo) {
             PremiumSheet()
                 .environmentObject(store)
@@ -1410,6 +1411,8 @@ enum AppLegal {
     static let destinations: [Destination] = [
         .init(id: "privacy", title: "Privacy", url: URL(string: "https://Congress.Trade/privacy-policy")!),
         .init(id: "terms", title: "Terms", url: URL(string: "https://Congress.Trade/terms-of-service")!),
+        // Public URL stays for App Review / legal listings.  In-app taps use
+        // `openPremium` (StoreKit) when the environment provides it.
         .init(id: "pricing", title: "Pricing", url: URL(string: "https://Congress.Trade/pricing")!),
         .init(id: "support", title: "Support", url: URL(string: "mailto:\(supportEmail)")!),
     ]
@@ -1424,23 +1427,48 @@ enum AppLegal {
     }
 }
 
+/// Opens the in-app Premium / StoreKit sheet.  Set at the tab root and on
+/// Account / Settings so footer Pricing never bounces to Safari checkout
+/// (Apple 3.1.1 — same digital good as IAP).
+private struct OpenPremiumActionKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var openPremium: (() -> Void)? {
+        get { self[OpenPremiumActionKey.self] }
+        set { self[OpenPremiumActionKey.self] = newValue }
+    }
+}
+
 /// Small grey Privacy / Terms / Pricing / Support row for the bottom of a tab.
 ///
 /// Buttons rather than `Link`s: a `Link` renders in the accent color and this
 /// row must stay quiet chrome, not four blue calls to action.
 struct LegalFooterLinks: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.openPremium) private var openPremium
+    var includePricing: Bool = true
 
     var body: some View {
+        let items = includePricing
+            ? AppLegal.destinations
+            : AppLegal.destinations.filter { $0.id != "pricing" }
         HStack(spacing: 0) {
-            ForEach(Array(AppLegal.destinations.enumerated()), id: \.element.id) { index, destination in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, destination in
                 if index > 0 {
                     Text("  •  ")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
-                Button(destination.title) { openURL(destination.url) }
+                Button(destination.title) {
+                    if destination.id == "pricing", let openPremium {
+                        openPremium()
+                    } else {
+                        openURL(destination.url)
+                    }
+                }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .buttonStyle(.plain)

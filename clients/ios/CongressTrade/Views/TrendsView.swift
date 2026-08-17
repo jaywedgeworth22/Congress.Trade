@@ -1087,6 +1087,7 @@ enum LatencyScorecardCopy {
     struct Snapshot: Equatable {
         var hasStats: Bool
         var headlineText: String
+        var headlineSec: Int?
         var direction: Direction
         var verdict: Verdict
         var badgeText: String
@@ -1094,6 +1095,7 @@ enum LatencyScorecardCopy {
         var winPct: Int
         var averageDisagrees: Bool
         var averageCaption: String?
+        var averageSec: Int?
     }
 
     static func formatMagnitude(_ secs: Int?) -> String {
@@ -1194,14 +1196,32 @@ enum LatencyScorecardCopy {
         return Snapshot(
             hasStats: hasStats,
             headlineText: formatLead(headlineSec),
+            headlineSec: headlineSec,
             direction: direction,
             verdict: verdict,
             badgeText: badgeText,
             basisLabel: basisLabel,
             winPct: winPct,
             averageDisagrees: averageDisagrees,
-            averageCaption: averageCaption
+            averageCaption: averageCaption,
+            averageSec: provider.avgLeadSec
         )
+    }
+
+    static func leadColor(_ direction: Direction) -> Color {
+        switch direction {
+        case .ahead: return .green
+        case .behind: return .red
+        case .even: return .primary
+        }
+    }
+
+    /// Colour the whole "13.1h later" phrase — not just the word.  Tint-only
+    /// on "later" left the magnitude gray, which is what the owner still saw.
+    static func coloredLead(_ secs: Int?, base: Color = .primary) -> Text {
+        let dir = direction(of: secs)
+        let color = dir == .even ? base : leadColor(dir)
+        return Text(formatLead(secs)).foregroundColor(color).fontWeight(dir == .even ? .regular : .semibold)
     }
 
     static func coloredDirectionWords(_ text: String, base: Color = .secondary) -> Text {
@@ -1241,7 +1261,7 @@ struct ProviderScorecard: View {
 
             if snap.hasStats {
                 HStack(alignment: .firstTextBaseline) {
-                    LatencyScorecardCopy.coloredDirectionWords(snap.headlineText, base: .primary)
+                    LatencyScorecardCopy.coloredLead(snap.headlineSec, base: .primary)
                         .font(.title3.weight(.bold))
                     LatencyScorecardCopy.coloredDirectionWords(snap.basisLabel)
                         .font(.caption)
@@ -1250,9 +1270,15 @@ struct ProviderScorecard: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-                if let caption = snap.averageCaption {
-                    LatencyScorecardCopy.coloredDirectionWords(caption)
-                        .font(.caption2)
+                if snap.averageCaption != nil, let avgSec = snap.averageSec {
+                    (Text("Average ")
+                        .foregroundColor(.secondary)
+                     + LatencyScorecardCopy.coloredLead(avgSec, base: .secondary)
+                     + Text(snap.averageDisagrees
+                            ? " — a few outlier races pull it the other way."
+                            : "")
+                        .foregroundColor(.secondary))
+                    .font(.caption2)
                 }
             } else {
                 let unmatched = provider.unmatchedProvider ?? 0

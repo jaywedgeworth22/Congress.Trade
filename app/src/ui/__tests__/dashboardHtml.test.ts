@@ -449,6 +449,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("el('subscribeBtn').disabled = !available");
     expect(DASHBOARD_HTML).toContain('checkoutConfigured() ? \'<button class="btn sm" type="button" onclick="openPricing()">Upgrade</button>\' : \'\'');
     expect(DASHBOARD_HTML).not.toContain('function billingConfigured()');
+    // ?pricing=1 used to paint Billing Unavailable before /auth/me returned.
+    expect(DASHBOARD_HTML).toContain('function applyPricingAvailability()');
+    expect(DASHBOARD_HTML).toContain('ME.billingReady');
+    expect(DASHBOARD_HTML).toContain('Checking Checkout…');
+    expect(DASHBOARD_HTML).toContain('if (!ME.billingReady) loadMe()');
+    expect(DASHBOARD_HTML).toContain('applyPricingAvailability()');
   });
 
   it('keeps Billing Portal management independent from checkout readiness', () => {
@@ -3208,6 +3214,8 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
   function loadIsLatencyAhead(): (summary: LatencySummary) => boolean {
     const src = [
       extractVarDecl(DASHBOARD_HTML, 'SPEED_LANE_MIN_MATCHED'),
+      extractFn(DASHBOARD_HTML, 'leadDirection'),
+      extractFn(DASHBOARD_HTML, 'leadVerdict'),
       extractFn(DASHBOARD_HTML, 'isLatencyAhead'),
       'return isLatencyAhead;',
     ].join('\n');
@@ -3247,7 +3255,28 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       const summary = {
         providers: [
           provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
-          provider({ label: 'B', usFirstCount: 1, providerFirstCount: 9 }),
+          provider({
+            label: 'B',
+            usFirstCount: 1,
+            providerFirstCount: 9,
+            medianLeadSec: -3600,
+            avgLeadSec: -1800,
+          }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(false);
+    });
+
+    it('does not claim ahead when median and average disagree', () => {
+      const summary = {
+        providers: [
+          provider({
+            label: 'UW',
+            usFirstCount: 7,
+            providerFirstCount: 1,
+            medianLeadSec: 1466,
+            avgLeadSec: -34,
+          }),
         ],
       };
       expect(isLatencyAhead(summary)).toBe(false);
@@ -3286,7 +3315,15 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
     });
 
     it('is false on a tie (no provider strictly ahead)', () => {
-      const summary = { providers: [provider({ label: 'A', usFirstCount: 5, providerFirstCount: 5 })] };
+      const summary = {
+        providers: [provider({
+          label: 'A',
+          usFirstCount: 5,
+          providerFirstCount: 5,
+          medianLeadSec: 0,
+          avgLeadSec: 0,
+        })],
+      };
       expect(isLatencyAhead(summary)).toBe(false);
     });
 
@@ -4502,6 +4539,8 @@ describe('earlier/later lead figures (owner: no +/−, later red, earlier green)
     expect(DASHBOARD_HTML).toContain('.lead-fig.lead-ahead { color:var(--good); }');
     expect(DASHBOARD_HTML).toContain('.lead-inline.lead-ahead { color:var(--good); }');
     expect(DASHBOARD_HTML).toContain('.lead-inline.lead-behind { color:var(--lag); }');
+    expect(DASHBOARD_HTML).toContain('.lead-fig.lead-behind .lead-val');
+    expect(DASHBOARD_HTML).toContain('.lead-fig.lead-ahead .lead-val');
     // --lag aliases --sell (theme-following red); it is deliberately not --rival.
     expect(DASHBOARD_HTML).toMatch(/--lag:\s*var\(--sell\);/);
     expect(DASHBOARD_HTML).not.toContain('.lead-fig.lead-behind { color:var(--rival)');

@@ -98,6 +98,7 @@ struct SettingsView: View {
             .modifier(ForcedColorScheme(pref: appColorScheme))
             .navigationTitle("Settings")
             .inlineNavigationTitle()
+            .environment(\.openPremium) { showPremiumInfo = true }
             .sheet(isPresented: $showPremiumInfo) {
                 PremiumSheet()
                     .environmentObject(store)
