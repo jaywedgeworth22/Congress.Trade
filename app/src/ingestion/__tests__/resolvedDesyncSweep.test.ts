@@ -1,77 +1,114 @@
 /**
- * The blind spot the PR #1579 verifier found: every other sweep and the
- * stranded_filings health check EXCLUDE review-resolved rows, so the 562
- * production rows that were resolved=1 with a stale non-terminal
- * ingest_status could never be seen or fixed by any of them.
+ * Hourly autonomy sweep delegates to the honest review-status reconciler.
+ * These tests pin the wrapper contract: apply=true, published→persisted.
  */
-import { describe, it, expect } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { describe, expect, it } from 'vitest';
 
-import { sweepResolvedStatusDesync } from '../autonomySweeps.ts';
 import type { Env } from '../../shared/types.ts';
+import { sweepResolvedStatusDesync } from '../autonomySweeps.ts';
 
-interface Row {
-  doc_id: string;
-  ingest_status: string;
-  has_tx: number;
-}
+const SCHEMA = `
+CREATE TABLE filings (
+  doc_id TEXT PRIMARY KEY,
+  ingest_status TEXT,
+  error TEXT
+);
+CREATE TABLE review_queue (
+  doc_id TEXT PRIMARY KEY,
+  reason TEXT,
+  resolved INTEGER,
+  resolution_kind TEXT,
+  resolution_reason TEXT
+);
+CREATE TABLE transactions (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT,
+  deprecated_at TEXT
+);
+CREATE TABLE ingestion_decisions (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT,
+  action TEXT,
+  created_at TEXT
+);
+`;
 
-function makeEnv(rows: Row[]) {
-  const updates: Array<{ docId: string; status: string }> = [];
-  const prepare = (sql: string) => ({
-    params: [] as unknown[],
-    bind(...params: unknown[]) {
-      this.params = params;
-      return this;
-    },
-    async all<T>() {
-      return { results: rows as unknown as T[] };
-    },
-    async first<T>() {
-      return null as T | null;
-    },
-    async run() {
-      if (/UPDATE filings/i.test(sql)) {
-        const [status, , , docId] = this.params as string[];
-        updates.push({ docId, status });
-        return { success: true, meta: { changes: 1 } };
-      }
-      return { success: true, meta: { changes: 0 } };
-    },
-  });
-  return { env: { DB: { prepare } as unknown as D1Database } as unknown as Env, updates };
+function makeEnv() {
+  const raw = new DatabaseSync(':memory:');
+  raw.exec(SCHEMA);
+  const prepare = (sql: string) => {
+    let params: unknown[] = [];
+    const api = {
+      bind(...values: unknown[]) {
+        params = values;
+        return api;
+      },
+      async first<T>() {
+        return (raw.prepare(sql).get(...params) ?? null) as T | null;
+      },
+      async all<T>() {
+        return { results: raw.prepare(sql).all(...params) as T[] };
+      },
+      async run() {
+        const info = raw.prepare(sql).run(...params);
+        return { success: true, meta: { changes: Number(info.changes) } };
+      },
+    };
+    return api;
+  };
+  return { raw, env: { DB: { prepare } as unknown as D1Database } as unknown as Env };
 }
 
 describe('sweepResolvedStatusDesync', () => {
-  it('stamps published when a resolved filing produced transactions', async () => {
-    const { env, updates } = makeEnv([
-      { doc_id: 'H-1', ingest_status: 'classified', has_tx: 1 },
-    ]);
+  it('stamps persisted when a resolved filing produced transactions', async () => {
+    const { raw, env } = makeEnv();
+    raw.exec(`
+      INSERT INTO filings (doc_id, ingest_status) VALUES ('H-1', 'classified');
+      INSERT INTO review_queue (doc_id, reason, resolved, resolution_kind, resolution_reason)
+        VALUES ('H-1', 'low_confidence', 1, 'published', 'auto_published');
+      INSERT INTO transactions (id, doc_id, deprecated_at) VALUES ('tx-1', 'H-1', NULL);
+    `);
     const res = await sweepResolvedStatusDesync(env);
-    expect(res.reconciled).toBe(1);
-    expect(updates[0]).toEqual({ docId: 'H-1', status: 'published' });
+    expect(res).toEqual({ scanned: 1, reconciled: 1 });
+    const row = raw.prepare('SELECT ingest_status FROM filings WHERE doc_id = ?').get('H-1') as {
+      ingest_status: string;
+    };
+    expect(row.ingest_status).toBe('persisted');
   });
 
-  it('stamps a terminal error when a resolved filing yielded no transactions', async () => {
-    const { env, updates } = makeEnv([
-      { doc_id: 'H-2', ingest_status: 'extraction_pending_local', has_tx: 0 },
-    ]);
+  it('stamps a terminal error when a resolved filing was rejected', async () => {
+    const { raw, env } = makeEnv();
+    raw.exec(`
+      INSERT INTO filings (doc_id, ingest_status) VALUES ('H-2', 'extraction_pending_local');
+      INSERT INTO review_queue (doc_id, reason, resolved, resolution_kind, resolution_reason)
+        VALUES ('H-2', 'rejected: empty', 1, 'rejected', 'rejected: empty');
+    `);
     const res = await sweepResolvedStatusDesync(env);
     expect(res.reconciled).toBe(1);
-    expect(updates[0]).toEqual({ docId: 'H-2', status: 'error' });
+    const row = raw.prepare('SELECT ingest_status FROM filings WHERE doc_id = ?').get('H-2') as {
+      ingest_status: string;
+    };
+    expect(row.ingest_status).toBe('error');
   });
 
   it('covers needs_review, which the strandable-status sweeps deliberately skip', async () => {
-    const { env, updates } = makeEnv([
-      { doc_id: 'H-3', ingest_status: 'needs_review', has_tx: 0 },
-    ]);
+    const { raw, env } = makeEnv();
+    raw.exec(`
+      INSERT INTO filings (doc_id, ingest_status) VALUES ('H-3', 'needs_review');
+      INSERT INTO review_queue (doc_id, reason, resolved, resolution_kind, resolution_reason)
+        VALUES ('H-3', 'empty', 1, 'verified_empty', 'doc_class_empty_no_transactions');
+    `);
     await sweepResolvedStatusDesync(env);
-    expect(updates.map((u) => u.docId)).toContain('H-3');
+    const row = raw.prepare('SELECT ingest_status FROM filings WHERE doc_id = ?').get('H-3') as {
+      ingest_status: string;
+    };
+    expect(row.ingest_status).toBe('verified_empty');
   });
 
   it('is a no-op when nothing is desynced', async () => {
-    const { env, updates } = makeEnv([]);
+    const { env } = makeEnv();
     const res = await sweepResolvedStatusDesync(env);
     expect(res).toEqual({ scanned: 0, reconciled: 0 });
-    expect(updates).toHaveLength(0);
   });
 });
