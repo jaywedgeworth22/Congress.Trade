@@ -398,8 +398,9 @@ export function evaluatePipelineSignals(
   // 12. Latency-monitoring liveness (same owner directive): the provider
   // latency probes (Quiver/UW/FMP observations that feed the latency
   // scorecard) must never go silently dark. Whole-system silence is stalled;
-  // an individual recently-active provider going quiet is degraded with the
-  // provider named.
+  // an individual provider gone quiet past the silence threshold is degraded
+  // with the provider named. Age does not retire a row — turn the source
+  // off if it is intentionally decommissioned.
   if (s.latencyProviders === null) {
     checks.push({ id: 'latency_probes', status: 'unknown', detail: 'Latency-probe liveness uncollected', value: null });
   } else if (s.latencyProviders.length === 0) {
@@ -416,8 +417,7 @@ export function evaluatePipelineSignals(
       const ms = Date.parse(p.lastObservedAt);
       if (!Number.isFinite(ms)) continue;
       if (ms > newestMs) newestMs = ms;
-      if ((nowMs - ms) / 3_600_000 > t.latencyProviderSilenceHours
-        && (nowMs - ms) / 3_600_000 <= 7 * 24) {
+      if ((nowMs - ms) / 3_600_000 > t.latencyProviderSilenceHours) {
         silent.push(`${p.provider} (${Math.round((nowMs - ms) / 3_600_000)}h)`);
       }
     }

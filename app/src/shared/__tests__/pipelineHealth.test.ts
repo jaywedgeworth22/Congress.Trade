@@ -328,14 +328,16 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     expect(check.detail).toContain('unusual_whales');
   });
 
-  it('a provider dead for over a week stops being flagged per-provider (decommissioned, not broken)', () => {
+  it('a provider quiet for over a week is still degraded (never silently off)', () => {
     const res = evaluatePipelineSignals({
       ...base,
       latencyProviders: [
         { provider: 'quiver', lastObservedAt: new Date(nowMs - 2 * 3_600_000).toISOString() },
-        { provider: 'old_provider', lastObservedAt: new Date(nowMs - 10 * 24 * 3_600_000).toISOString() },
+        { provider: 'unusual_whales', lastObservedAt: new Date(nowMs - 10 * 24 * 3_600_000).toISOString() },
       ],
     }, nowMs);
-    expect(res.checks.find((c) => c.id === 'latency_probes')!.status).toBe('ok');
+    const check = res.checks.find((c) => c.id === 'latency_probes')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('unusual_whales');
   });
 });

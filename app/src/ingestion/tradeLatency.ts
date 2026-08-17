@@ -650,6 +650,35 @@ export async function addFmpLatencyUsed(
   return next;
 }
 
+function fmpHttp429DayKey(slot: FmpLatencyKeySlot, now = new Date()): string {
+  return `fmp-latency:http429:key${slot}:` + now.toISOString().slice(0, 10);
+}
+
+/** Mark a free-tier key as FMP-bandwidth-exhausted for the UTC day. */
+export async function markFmpSlotHttp429(
+  env: Env,
+  slot: FmpLatencyKeySlot,
+  now = new Date(),
+): Promise<void> {
+  try {
+    await env.CONFIG_KV.put(fmpHttp429DayKey(slot, now), '1', { expirationTtl: 172800 });
+  } catch {
+    /* best effort */
+  }
+}
+
+export async function isFmpSlotHttp429(
+  env: Env,
+  slot: FmpLatencyKeySlot,
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    return Boolean(await env.CONFIG_KV.get(fmpHttp429DayKey(slot, now)));
+  } catch {
+    return false;
+  }
+}
+
 function etHourAndWeekday(now: Date): { hour: number; weekday: string; isWeekend: boolean } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
@@ -1120,6 +1149,9 @@ export async function selectFmpLatencyKey(
     const used = await getFmpLatencyUsed(env, slot, now);
     const remaining = Math.max(0, cap - used);
     if (remaining < FMP_LATENCY_CALLS_PER_RUN) continue;
+    // FMP's own bandwidth cap is not our ledger. A 429 key must not keep
+    // winning rotation while the other free-tier key still answers 200.
+    if (await isFmpSlotHttp429(env, slot, now)) continue;
 
     const intervalSec = fmpLatencyIntervalSec(now, remaining, FMP_LATENCY_CALLS_PER_RUN, schedule);
     if (!opts.force) {
@@ -2074,19 +2106,29 @@ async function fetchUnusualWhalesRowsForDate(
 
 async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const headers = { authorization: `Token ${apiKey}`, 'Accept': 'application/json' };
-  const [house, senate, trump] = await Promise.all([
-    fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl).catch(() => []),
-    fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl).catch(() => []),
-    fetchJson('https://api.quiverquant.com/beta/bulk/trumpstocktrades', headers, fetchImpl).catch(() => []),
-  ]);
-  const houseSliced = Array.isArray(house) ? house.slice(0, max) : house;
-  const senateSliced = Array.isArray(senate) ? senate.slice(0, max) : senate;
-  const trumpSliced = Array.isArray(trump) ? trump.slice(0, max) : trump;
-  return [
-    ...parseQuiverDisclosureRows('house', houseSliced),
-    ...parseQuiverDisclosureRows('senate', senateSliced),
-    ...parseQuiverDisclosureRows('executive', trumpSliced, 'Donald Trump')
+  const endpoints: Array<{ chamber: Chamber; url: string; defaultFilerName?: string }> = [
+    { chamber: 'house', url: 'https://api.quiverquant.com/beta/live/housetrading?options=true' },
+    { chamber: 'senate', url: 'https://api.quiverquant.com/beta/live/senatetrading?options=true' },
+    { chamber: 'executive', url: 'https://api.quiverquant.com/beta/bulk/trumpstocktrades', defaultFilerName: 'Donald Trump' },
   ];
+  const rows: DisclosureProviderRow[] = [];
+  const errors: Error[] = [];
+  await Promise.all(
+    endpoints.map(async ({ chamber, url, defaultFilerName }) => {
+      try {
+        const json = await fetchJson(url, headers, fetchImpl);
+        const sliced = Array.isArray(json) ? json.slice(0, max) : json;
+        rows.push(...parseQuiverDisclosureRows(chamber, sliced, defaultFilerName));
+      } catch (err) {
+        errors.push(err as Error);
+      }
+    }),
+  );
+  // A 403/401 on every live endpoint used to become [] and record as success
+  // (lastSuccess=now, 0 rows) while last_observed_at stayed days old. Do not
+  // swallow a total failure as an empty feed.
+  if (errors.length && rows.length === 0) throw errors[0]!;
+  return rows;
 }
 
 
@@ -2189,6 +2231,25 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     reason = reason ?? `${provider.secretNames[0] ?? 'secret'} missing`;
   } else {
     operationalStatus = 'running';
+    // A configured key is not "running".  FMP/UW/QQ stayed running for 95h
+    // of silence because this branch never looked at last_observed_at.
+    try {
+      const row = await get<{ last_obs: string | null }>(
+        env.DB,
+        'SELECT MAX(last_observed_at) AS last_obs FROM trade_provider_observations WHERE provider = ?',
+        [provider.id],
+      );
+      const ms = row?.last_obs ? Date.parse(row.last_obs) : NaN;
+      if (Number.isFinite(ms)) {
+        const ageH = (Date.now() - ms) / 3_600_000;
+        if (ageH > 24) {
+          operationalStatus = 'error';
+          reason = `${provider.label} last observation ${Math.round(ageH)}h ago (threshold 24h)`;
+        }
+      }
+    } catch {
+      /* no DB / table — leave running so config-only callers stay unchanged */
+    }
   }
 
   return {
@@ -3725,19 +3786,40 @@ async function runProviderProbe(
           providerId: provider.id,
         };
       }
-      const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
-      fetchedRows = rows.length;
-      freshRows = rows;
-      await upsertProviderRows(env, provider.id, rows, nowIso);
-      if (fmpSelection && isFmpStable) {
-        await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
-      } else if (fmpSelection) {
-        await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
+      let fetchErr: Error | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
+          fetchedRows = rows.length;
+          freshRows = rows;
+          await upsertProviderRows(env, provider.id, rows, nowIso);
+          if (fmpSelection) {
+            await setLastPollAt(env, fmpLatencyPollSource(fmpSelection.slot), now);
+          }
+          await recordHandoff('success', { fetchedRows });
+          fetchErr = null;
+          break;
+        } catch (err) {
+          fetchErr = err as Error;
+          const msg = fetchErr.message || '';
+          const is429 = /FMP_HTTP_429|HTTP_429/.test(msg);
+          if (is429 && isFmpStable && fmpSelection && attempt === 0) {
+            await markFmpSlotHttp429(env, fmpSelection.slot, now);
+            const retry = await selectFmpLatencyKey(env, now, { force: true, schedule });
+            if (retry && retry.slot !== fmpSelection.slot) {
+              fmpSelection = retry;
+              apiKey = retry.apiKey;
+              await addFmpLatencyUsed(env, retry.slot, FMP_LATENCY_CALLS_PER_RUN, now);
+              continue;
+            }
+          }
+          break;
+        }
       }
-      await recordHandoff('success', { fetchedRows });
-    } catch (err) {
-      errors.push((err as Error).message);
-      await recordHandoff('error', { error: (err as Error).message, fetchedRows: 0 });
+      if (fetchErr) {
+        errors.push(fetchErr.message);
+        await recordHandoff('error', { error: fetchErr.message, fetchedRows: 0 });
+      }
     } finally {
       if (fmpSelection) {
         const overReserved = FMP_LATENCY_CALLS_PER_RUN - fmpCallsMade;

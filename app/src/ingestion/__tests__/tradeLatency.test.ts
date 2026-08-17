@@ -29,6 +29,8 @@ import {
   getFmpLatencyFleetRemaining,
   getFmpLatencyUsed,
   addFmpLatencyUsed,
+  markFmpSlotHttp429,
+  isFmpSlotHttp429,
   addLatencySourceUsed,
   getLatencySourceUsed,
   LATENCY_SOURCE_BUDGETS,
@@ -632,6 +634,143 @@ describe('tradeLatency', () => {
       const rotatedStable = r2.providers.find((p) => p.id === 'fmp');
       expect(rotatedStable?.enabled).toBe(false);
       expect(rotatedStable?.reason).toMatch(/rotated/i);
+    });
+
+    it('selectFmpLatencyKey skips a slot marked HTTP 429 for the UTC day', async () => {
+      const kv = new Map<string, string>();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        FMP_API_KEY: 'k2',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      await markFmpSlotHttp429(env, '1', now);
+      const picked = await selectFmpLatencyKey(env, now, { force: true });
+      expect(picked?.slot).toBe('2');
+    });
+
+    it('retries the other FMP free-tier key in the same cycle after HTTP 429', async () => {
+      const kv = new Map<string, string>();
+      const keysUsed: string[] = [];
+      const row = {
+        symbol: 'AAPL',
+        firstName: 'Ro',
+        lastName: 'Khanna',
+        office: 'Ro Khanna',
+        disclosureDate: '2026-08-17',
+        transactionDate: '2026-08-10',
+        type: 'Purchase',
+      };
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : (input as Request).url;
+        const key = decodeURIComponent((/[?&]apikey=([^&]+)/.exec(url) || [])[1] || '');
+        if (key && !keysUsed.includes(key)) keysUsed.push(key);
+        // First distinct key is the 429 slot; the retry must use a different one.
+        if (key && key === keysUsed[0]) {
+          return new Response(JSON.stringify({ 'Error Message': 'Bandwidth Limit Reach' }), { status: 429 });
+        }
+        return new Response(JSON.stringify([row]), { status: 200 });
+      }) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_API_KEY: 'k1',
+        FMP_API_KEY: 'k2',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() { return null; },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      const result = await runDisclosureLatencyProbe(env, now, fetchImpl, {
+        force: true,
+        providers: ['fmp'],
+      });
+      expect(keysUsed.length).toBe(2);
+      expect(result.errors).toEqual([]);
+      expect(result.fetchedRows).toBeGreaterThan(0);
+      const marked =
+        (await isFmpSlotHttp429(env, '1', now)) || (await isFmpSlotHttp429(env, '2', now));
+      expect(marked).toBe(true);
+    });
+
+    it('does not treat Quiver HTTP 403 as a successful empty feed', async () => {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ detail: 'Upgrade your subscription plan to access this dataset.' }), {
+          status: 403,
+        })) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        QUIVER_API_KEY: 'qq-dead',
+        CONFIG_KV: {
+          get: async () => null,
+          put: async () => {},
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() { return null; },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const result = await runDisclosureLatencyProbe(env, new Date('2026-08-05T15:00:00.000Z'), fetchImpl, {
+        force: true,
+        providers: ['quiver'],
+      });
+      expect(result.fetchedRows).toBe(0);
+      expect(result.errors.some((e) => /HTTP_403/.test(e))).toBe(true);
+    });
+
+    it('marks a configured provider error when last observation is older than 24h', async () => {
+      const stale = new Date(Date.now() - 95 * 3_600_000).toISOString();
+      const env = {
+        QUIVER_API_KEY: 'qq',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+        DB: {
+          prepare(sql: string) {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() {
+                if (String(sql).includes('trade_provider_observations')) {
+                  return { last_obs: stale };
+                }
+                return null;
+              },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const statuses = await getDisclosureLatencyProviderStatuses(env);
+      const qq = statuses.find((s) => s.id === 'quiver');
+      expect(qq?.operationalStatus).toBe('error');
+      expect(qq?.reason).toMatch(/95h/);
     });
 
     it('skips a key that is at daily cap', async () => {
