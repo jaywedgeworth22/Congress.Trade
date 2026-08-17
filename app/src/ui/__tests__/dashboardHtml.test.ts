@@ -5033,6 +5033,14 @@ describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
     expect(DASHBOARD_HTML).toContain('min-width: 0; height: auto; min-height: 0; justify-content: flex-start;');
     expect(DASHBOARD_HTML).toContain('.ios-filter .ios-filter-item.branch-toggle + .ios-filter-item.branch-toggle');
   });
+
+  it('does not fill dropdown rows or the closed pill with toggle-blue', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter-item.on { background: transparent; font-weight: 600; }');
+    expect(DASHBOARD_HTML).toContain('.ios-filter-item.on::after { content: "✓";');
+    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }');
+    expect(DASHBOARD_HTML).not.toContain('.ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }');
+    expect(DASHBOARD_HTML).not.toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }');
+  });
 });
 
 /**

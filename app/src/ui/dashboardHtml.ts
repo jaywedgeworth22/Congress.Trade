@@ -1461,9 +1461,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
   }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: #86efac; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: #fecaca; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: #fff; }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: var(--buy); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: var(--sell); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: var(--text); }
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
@@ -1495,7 +1495,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
     border-top: 4px solid currentColor; opacity: .55;
   }
-  .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
+     pill on the default chrome even when a filter is active.  The label
+     already shows House / D / Buys. */
+  .ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
@@ -1516,8 +1519,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
     border-radius: 10px; cursor: pointer;
   }
-  .ios-filter-item:hover, .ios-filter-clear:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
+  .ios-filter-item:hover, .ios-filter-clear:hover { background: var(--panel-2); }
+  .ios-filter-item.on { background: transparent; font-weight: 600; }
+  .ios-filter-item.on::after { content: "✓"; margin-left: auto; font-weight: 700; color: var(--text); }
   .ios-filter-clear { color: var(--text-dim); font-size: 13px; }
   /* The outer wrappers reuse .party-chips / .side-chips / .branch-filters
      so the existing delegated listeners keep working.  Those class names
@@ -1552,7 +1556,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .ios-filter .ios-filter-item.side-chip.on[data-side="B"],
   .ios-filter .ios-filter-item.side-chip.on[data-side="S"],
   .ios-filter .ios-filter-item.side-chip.on[data-side="E"] {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    background: transparent;
     color: var(--text); box-shadow: none;
   }
   .ios-filter .ios-filter-item.side-chip.on[data-side="B"] .side-up { color: var(--buy); }
