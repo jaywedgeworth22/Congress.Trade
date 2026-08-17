@@ -266,6 +266,7 @@ struct MainTabView: View {
         .tint(.blue)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        .environment(\.openPremium) { showSubscribeSheet = true }
         .sheet(isPresented: $showSubscribeSheet) {
             PremiumSheet()
                 .environmentObject(store)

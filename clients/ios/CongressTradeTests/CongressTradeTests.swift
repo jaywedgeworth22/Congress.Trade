@@ -1384,12 +1384,15 @@ final class CongressTradeTests: XCTestCase {
         )
         let snap = LatencyScorecardCopy.snapshot(for: quiver)
         XCTAssertEqual(snap.headlineText, "13m earlier")
+        XCTAssertEqual(snap.headlineSec, 750)
         XCTAssertEqual(snap.direction, .ahead)
         XCTAssertEqual(snap.verdict, .lead)
         XCTAssertEqual(snap.badgeText, "Lead")
         XCTAssertEqual(snap.basisLabel, "typical earlier")
         XCTAssertEqual(snap.winPct, 100)
         XCTAssertEqual(snap.averageCaption, "Average 1.9h earlier")
+        XCTAssertEqual(snap.averageSec, 6_932)
+        XCTAssertEqual(LatencyScorecardCopy.formatLead(snap.averageSec), "1.9h earlier")
     }
 
     // MARK: - Test helpers

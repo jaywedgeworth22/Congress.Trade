@@ -1648,10 +1648,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      spelling it out for screen readers. */
   .lead-fig { display:inline-flex; align-items:baseline; gap:4px; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .lead-fig .lead-arrow { font-size:0.78em; line-height:1; }
-  .lead-fig .lead-word { font-size:0.7em; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; opacity:0.85; }
+  .lead-fig .lead-word { font-size:0.7em; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; }
   .lead-fig.lead-ahead { color:var(--good); }
   .lead-fig.lead-behind { color:var(--lag); }
   .lead-fig.lead-even { color:var(--text-dim); }
+  /* Number + word both take the direction colour.  Parent .sp-lead-sub is dim
+     and used to wash the average "#h later" back to gray. */
+  .lead-fig.lead-ahead .lead-val,
+  .lead-fig.lead-ahead .lead-word,
+  .lead-fig.lead-ahead .lead-arrow { color:var(--good); opacity:1; }
+  .lead-fig.lead-behind .lead-val,
+  .lead-fig.lead-behind .lead-word,
+  .lead-fig.lead-behind .lead-arrow { color:var(--lag); opacity:1; }
   .lead-fig.lead-big { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; }
   .lead-fig.lead-big .lead-word { font-size:0.34em; letter-spacing:1px; }
   .lead-fig.lead-big.lead-even { font-size:20px; }
@@ -9874,8 +9882,12 @@ function isLatencyAhead(summary) {
     var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED && deltaSample > 0 && hasLead;
     var adequate = hasTiming && p.comparisonStatus === 'usable';
     if (!adequate) return; // gathering / preliminary / limited coverage — no vote either way
-    if (wins > losses) anyAhead = true;
-    else if (wins < losses) anyBehind = true;
+    /* Same rule as the card badge: Lead or Lag only when median AND average
+       agree.  Win-count alone used to claim Ahead while the average was later. */
+    var headline = p.medianLeadSec != null ? p.medianLeadSec : p.avgLeadSec;
+    var verdict = leadVerdict(headline, p.avgLeadSec);
+    if (verdict === 'lead') anyAhead = true;
+    else if (verdict === 'lag') anyBehind = true;
   });
   return anyAhead && !anyBehind;
 }
@@ -11257,6 +11269,7 @@ var ME = {
   entitlement: { premium: false, status: null, plan: null, trialing: false },
   admin: { allowed: false },
   billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
+  billingReady: false,
   auth: { appleWeb: false },
 };
 var selectedPlan = 'monthly';
@@ -11302,6 +11315,7 @@ function loadMe() {
       ME.entitlement = d.entitlement || { premium: false };
       ME.admin = d.admin || { allowed: false };
       ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false };
+      ME.billingReady = true;
       ME.auth = d.auth || { appleWeb: false };
       renderAccount();
       applyAdminVisibility();
@@ -11309,6 +11323,7 @@ function loadMe() {
       updatePremiumCues();
       updateGateRow();
       updateDeliveryGate();
+      applyPricingAvailability();
       hiddenCols = hiddenCols.filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
       });
@@ -11316,7 +11331,7 @@ function loadMe() {
       renderColChooser();
       renderTrades();
     })
-    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; ME.auth = { appleWeb: false }; renderAccount(); applyAdminVisibility(); syncAppleSignInButton(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; ME.billingReady = true; ME.auth = { appleWeb: false }; renderAccount(); applyAdminVisibility(); syncAppleSignInButton(); updatePremiumCues(); updateGateRow(); updateDeliveryGate(); applyPricingAvailability(); });
 }
 
 /* Header account control: .acct-desktop is the full theme-toggle / Sign In /
@@ -11538,6 +11553,21 @@ function pricingCopy(intent) {
     ],
   };
 }
+function applyPricingAvailability() {
+  var ready = !!ME.billingReady;
+  var available = ready && checkoutConfigured();
+  if (el('pricingPlans')) el('pricingPlans').hidden = !available;
+  if (el('pricingTrialNote')) el('pricingTrialNote').hidden = !available;
+  if (el('subscribeBtn')) {
+    el('subscribeBtn').disabled = !available;
+    el('subscribeBtn').textContent = !ready ? 'Checking Checkout…' : (available ? 'Start Free Trial' : 'Billing Unavailable');
+  }
+  if (el('pricingMsg')) {
+    el('pricingMsg').textContent = !ready
+      ? 'Checking whether Premium checkout is ready…'
+      : (available ? '' : 'Premium checkout is not available yet.');
+  }
+}
 function openPricing(intent) {
   focusTrapReturnEl = document.activeElement;
   closeAcctMenu();
@@ -11553,14 +11583,12 @@ function openPricing(intent) {
     if (el('pricingOverlay').classList.contains('open')) setPricingProof();
   }).catch(function () {});
   selectPlan(selectedPlan);
-  var available = checkoutConfigured();
-  if (el('pricingPlans')) el('pricingPlans').hidden = !available;
-  if (el('pricingTrialNote')) el('pricingTrialNote').hidden = !available;
-  if (el('subscribeBtn')) {
-    el('subscribeBtn').disabled = !available;
-    el('subscribeBtn').textContent = available ? 'Start Free Trial' : 'Billing Unavailable';
-  }
-  el('pricingMsg').textContent = available ? '' : 'Premium checkout is not available yet.';
+  /* /pricing redirects to ?pricing=1, which opens this modal from openDeepLink
+     after the trades fetch — often BEFORE /auth/me.  Default ME.billing is
+     false, so the first paint used to say Billing Unavailable even when
+     Stripe was live.  Wait for loadMe, then paint the real state. */
+  applyPricingAvailability();
+  if (!ME.billingReady) loadMe();
   el('pricingOverlay').classList.add('open');
   var pricingModal = document.querySelector('#pricingOverlay .modal');
   var pricingFocusable = focusableEls(pricingModal);

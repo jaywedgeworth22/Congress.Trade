@@ -112,7 +112,7 @@ struct PremiumSheet: View {
                     .buttonStyle(.bordered)
                     .disabled(isBusy)
 
-                    LegalFooterLinks()
+                    LegalFooterLinks(includePricing: false)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(20)
