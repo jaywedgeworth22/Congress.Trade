@@ -396,9 +396,9 @@ Deno-based backend (`app/src/deno/main.ts`), not the legacy `wrangler dev` path:
 - `install` → `bash scripts/cursor-cloud-setup.sh`: installs Deno (pinned to the
   CI version), runs `npm ci --include=dev` in `app/`, and warms the Deno module
   cache. Idempotent; safe to bake into an environment build snapshot.
-- `dev-server` terminal → `bash scripts/cursor-cloud-serve.sh`: starts the Deno
-  server on `http://localhost:8787` wired for keyless local dev — an **isolated
-  local SQLite file** (never the injected production `TURSO_DATABASE_URL`),
+- `start` → `bash scripts/cursor-cloud-serve.sh`: starts the Deno server on
+  `http://localhost:8787` wired for keyless local dev — an **isolated local
+  SQLite file** (never the injected production `TURSO_DATABASE_URL`),
   Infisical disabled (env/`.prod.vars` fallback), internal cron off, scrape
   guard off, and a per-boot random `ADMIN_TOKEN`. On boot it applies the schema
   via `POST /api/admin/migrate` and loads `app/scripts/seed-preview-fixtures.sql`

@@ -16,11 +16,11 @@ seeded data — with no production secrets and no risk of touching production.
 ## What changed
 
 - `.cursor/environment.json` — declares the environment: `install` script, a
-  long-running `dev-server` terminal, and exposes port `8787`.
+  `start` command that runs the dev server on boot, and exposes port `8787`.
 - `scripts/cursor-cloud-setup.sh` (install phase) — installs Deno pinned to the
   CI version (`2.9.3`, matching `.github/workflows/ci.yml`), runs
   `npm ci --include=dev` in `app/`, and warms the Deno module cache. Idempotent.
-- `scripts/cursor-cloud-serve.sh` (dev-server terminal) — starts the Deno server
+- `scripts/cursor-cloud-serve.sh` (start command) — starts the Deno server
   wired for keyless local dev and self-bootstraps schema + seed on boot.
 - `scripts/seed-local-db.ts` — loads `app/scripts/seed-preview-fixtures.sql` via
   the app's own `@libsql/client`; idempotent and refuses any non-`file:` URL.
