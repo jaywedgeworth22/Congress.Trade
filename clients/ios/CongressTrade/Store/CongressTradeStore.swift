@@ -709,6 +709,17 @@ final class CongressTradeStore: ObservableObject {
     /// board could settle on the OLDER selection's numbers with no spinner and
     /// nothing on screen admitting it. Serializing makes last-write-wins mean
     /// last-*requested*-wins.
+    func refreshLatency() async {
+        do {
+            latencySummary = try await api.latencySummary()
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation {
+                return
+            }
+            // Fail-soft: Delivery/Trends hide the scoreboard when this stays nil.
+        }
+    }
+
     func refreshTrends() async {
         trendsRequested = true
         isLoadingTrends = true

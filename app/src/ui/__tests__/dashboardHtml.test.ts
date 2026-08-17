@@ -2290,6 +2290,9 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
     expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
+    expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain("if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);");
     expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
     expect(DASHBOARD_HTML).toContain('main { max-width: none; min-width:0; overflow-x:clip;');
   });
@@ -3254,7 +3257,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(isLatencyAhead(summary)).toBe(true);
     });
 
-    it('is false when any adequately-covered provider is behind, even if another is ahead', () => {
+    it('is true when one adequate provider leads and another lags (not a majority behind)', () => {
       const summary = {
         providers: [
           provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
@@ -3264,6 +3267,29 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
             providerFirstCount: 9,
             medianLeadSec: -3600,
             avgLeadSec: -1800,
+          }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(true);
+    });
+
+    it('is false when we are behind on most adequately-covered providers', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          provider({
+            label: 'B',
+            usFirstCount: 1,
+            providerFirstCount: 9,
+            medianLeadSec: -3600,
+            avgLeadSec: -1800,
+          }),
+          provider({
+            label: 'C',
+            usFirstCount: 2,
+            providerFirstCount: 8,
+            medianLeadSec: -7200,
+            avgLeadSec: -5400,
           }),
         ],
       };
@@ -3344,15 +3370,24 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(feedView![0]).not.toContain('adminLatencySection');
     });
 
-    it('renders one copy at the BOTTOM of the Trends view (gated by isLatencyAhead() at runtime)', () => {
+    it('renders a gated link at the BOTTOM of the Trends view', () => {
       const trendsView = DASHBOARD_HTML.match(/<section class="view active" id="view-trends"[\s\S]*?\n  <\/section>/);
       expect(trendsView).not.toBeNull();
-      expect(trendsView![0]).toContain('id="trLatencySection"');
+      expect(trendsView![0]).toContain('id="trLatencyLink"');
+      expect(trendsView![0]).not.toContain('id="trLatencySection"');
       expect(trendsView![0]).not.toContain('id="adminLatencySection"');
-      // It's the last thing before the view closes (bottom placement) — nothing
-      // else with an id sits between the section and </section>.
-      const idx = trendsView![0].indexOf('id="trLatencySection"');
+      const idx = trendsView![0].indexOf('id="trLatencyLink"');
       const rest = trendsView![0].slice(idx);
+      expect(rest.trim().endsWith('</section>')).toBe(true);
+    });
+
+    it('renders the public scoreboard at the BOTTOM of the Delivery view', () => {
+      const subsView = DASHBOARD_HTML.match(/<section class="view" id="view-subs"[\s\S]*?\n  <\/section>/);
+      expect(subsView).not.toBeNull();
+      expect(subsView![0]).toContain('id="trLatencySection"');
+      expect(subsView![0]).not.toContain('id="adminLatencySection"');
+      const idx = subsView![0].indexOf('id="trLatencySection"');
+      const rest = subsView![0].slice(idx);
       expect(rest.trim().endsWith('</section>')).toBe(true);
     });
 
@@ -3370,13 +3405,15 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(latencyIdx).toBeLessThan(accessIdx);
     });
 
-    it('paints the Admin copy unconditionally and gates only the Trends copy on isLatencyAhead()', () => {
+    it('paints the Admin copy unconditionally and gates Delivery + the Trends link on isLatencyAhead()', () => {
       expect(DASHBOARD_HTML).toContain('function renderSpeedProof() {');
-      expect(DASHBOARD_HTML).toContain("var trendsBox = el('trLatencySection');");
+      expect(DASHBOARD_HTML).toContain("var publicBox = el('trLatencySection');");
+      expect(DASHBOARD_HTML).toContain("var publicLink = el('trLatencyLink');");
       expect(DASHBOARD_HTML).toContain("var adminBox = el('adminLatencySection');");
       expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasData;');
       expect(DASHBOARD_HTML).toContain('var ahead = hasData && isLatencyAhead(d);');
-      expect(DASHBOARD_HTML).toContain('trendsBox.hidden = !ahead;');
+      expect(DASHBOARD_HTML).toContain('publicBox.hidden = !ahead;');
+      expect(DASHBOARD_HTML).toContain('publicLink.hidden = !ahead;');
       // Admin kicks off the fetch/paint itself as soon as the tab opens (both
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
@@ -4871,7 +4908,8 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
-    expect(DASHBOARD_HTML).toContain('padding-bottom: 10px;');
+    expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
   });
 
   it('defines showView so account-menu Delivery / Admin / Review actually switch tabs', () => {

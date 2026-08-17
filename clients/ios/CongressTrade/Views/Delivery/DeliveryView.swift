@@ -254,6 +254,15 @@ struct DeliveryView: View {
                     Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
                 }
 
+                if let summary = store.latencySummary,
+                   LatencyScorecardCopy.isPubliclyVisible(summary) {
+                    Section {
+                        LatencyComparisonView(summary: summary)
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                }
+
                 // Footer links live in their own borderless row rather than a
                 // section footer so they read as page chrome, not as a note
                 // about the watchlist above them.
@@ -282,7 +291,12 @@ struct DeliveryView: View {
             }
             .onAppear {
                 watchlistDraft = store.watchlist
-                Task { await store.refreshSignedInState() }
+                Task {
+                    await store.refreshSignedInState()
+                    if store.latencySummary == nil {
+                        await store.refreshLatency()
+                    }
+                }
             }
             .onChange(of: store.watchlist) { _, newValue in
                 watchlistDraft = newValue

@@ -34,9 +34,10 @@ import { MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 
 /**
  * Filing Latency Comparison ("speed proof") section markup, shared between its
- * two placements (owner decision):
- *   - Trends tab: rendered at the BOTTOM, only when isLatencyAhead() (client
- *     JS) says we're clearly ahead — never shown on the Trades tab.
+ * two placements (owner 2026-08-17):
+ *   - Delivery tab: rendered at the BOTTOM, only when isLatencyAhead() says
+ *     we are not behind on most adequately-covered providers. Trends keeps a
+ *     link to this section under the same gate. Never shown on Trades.
  *   - Admin tab: rendered at the TOP, ALWAYS (full comparison incl. BEHIND),
  *     an operator diagnostic rather than a marketing module.
  * Both copies are painted by the same renderSpeedProof() client function
@@ -54,8 +55,8 @@ function speedProofSectionHtml(admin: boolean): string {
   const infoTip = admin
     ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
     : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
-  return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Trends: only when we're clearly ahead."} -->
-  <div class="section speed-proof" id="${sectionId}" style="margin-top:24px; padding:24px 20px;">
+  return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Delivery: only when we are not behind on most providers."} -->
+  <div class="section speed-proof" id="${sectionId}"${admin ? '' : ' hidden'} style="margin-top:24px; padding:24px 20px;">
     <div class="speed-head">
       <div>
         <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="${infoTip}" title="${infoTip}">ⓘ</span></h3>
@@ -314,7 +315,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
-  :root { --ct-header-h: 68px; }
+  :root { --ct-header-h: 68px; --ct-main-pad: 35px; }
+  html { overflow-x: clip; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
     border-bottom: 1px solid var(--border); background: var(--panel);
@@ -344,7 +346,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   nav.tabs button:hover { color: var(--text); background: var(--panel); }
   nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
-  main { padding: 35px; max-width: 1800px; margin: 0 auto; }
+  main { padding: var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
@@ -1531,6 +1533,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
+  /* Filter chrome: flush under the header, viewport-full-bleed, already at
+     the sticky rest position so it does not slide-then-pin through main's
+     padding. White (or --panel) paint goes edge to edge; chips keep the
+     same 35px inset as the header wordmark. */
+  .trades-toolbars, #trendsSharedFilters {
+    position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
+    width: 100vw; max-width: 100vw; box-sizing: border-box;
+    margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw);
+    margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
+    padding: 10px 35px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  .trades-toolbars .toolbar,
+  #trendsSharedFilters.toolbar { margin-bottom: 0; }
+  html[data-theme="light"] .trades-toolbars,
+  html[data-theme="light"] #trendsSharedFilters { background: #fff; }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
      toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
      search fields + Search button. display:contents on both toolbar divs
@@ -1548,16 +1568,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
     .trades-toolbars #tradesStats { order:4; }
-    .trades-toolbars, #trendsSharedFilters {
-      position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
-      background: var(--panel);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-      padding-bottom: 10px;
-      margin-bottom: 12px;
-    }
-    html[data-theme="light"] .trades-toolbars,
-    html[data-theme="light"] #trendsSharedFilters { background: #fff; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1736,7 +1746,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        on the Trades/Trends filter bars. */
     html, body { width:100%; max-width:100%; overflow-x:clip; }
     body { background: var(--bg); font-size: 13px; }
-    :root { --ct-header-h: 52px; }
+    :root { --ct-header-h: 52px; --ct-main-pad: 12px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 6px 10px; align-items: center; backdrop-filter: none;
@@ -1872,13 +1882,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
-      background: var(--panel);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-      padding-top: 4px; padding-bottom: 10px;
+      padding: 8px 12px 10px;
     }
-    html[data-theme="light"] #tradesToolbars,
-    html[data-theme="light"] #trendsSharedFilters { background: #fff; }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
@@ -2943,7 +2948,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table></div>
     </details>
 
-${speedProofSectionHtml(false)}
+    <div class="section" id="trLatencyLink" hidden>
+      <p class="sub" style="margin:0"><a href="#trLatencySection" onclick="openSpeedProof();return false;">Filing latency comparison</a> lives at the end of Delivery.</p>
+    </div>
   </section>
 
   <!-- ================= DIRECTORY (politician directory) ================= -->
@@ -3097,6 +3104,7 @@ ${speedProofSectionHtml(false)}
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
+${speedProofSectionHtml(false)}
   </section>
 
   <!-- ================= ADMIN · CADENCE ================= -->
@@ -4869,6 +4877,10 @@ function initColumnResize() {
     var k = ths[i].dataset.col;
     var savedW = clampSavedWidth(k, saved[k]);
     var w = savedW != null ? savedW : ths[i].offsetWidth;
+    // Trends is the default tab, so this often runs while #view-trades is
+    // display:none and every offsetWidth is 0. Fall back to the default cap
+    // (or the label floor) instead of painting 62px "PO…" columns.
+    if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);
     if (savedW == null && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
     ths[i].style.width = w + 'px';
   }
@@ -9885,20 +9897,16 @@ function speedBoastProvider(d) {
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
   return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
 }
-/* Trends-tab placement gate for the Filing Latency Comparison section (owner
-   UX work order item 1): the section renders at the BOTTOM of Trends only
-   when we are clearly ahead — at least one adequately-covered provider
-   resolves to the same definitive "Ahead" verdict spCardHtml would badge
-   (matched enough live races, non-preliminary "usable" comparisonStatus,
-   and us leading), AND no adequately-covered provider resolves to "Behind".
-   Providers still "Gathering data" (too few matches), preliminary, or with
-   limited/insufficient coverage neither qualify nor block — they're simply
-   skipped. The Admin tab ignores this gate entirely and always renders the
-   full comparison (including BEHIND) as an operator diagnostic. Never
-   rendered on the Trades tab at all. */
+/* Public placement gate for Filing Latency Comparison (owner 2026-08-17):
+   the Delivery section and the Trends link render only when we are NOT
+   behind on most adequately-covered providers. Each usable provider
+   votes Lead or Lag only when median AND average agree (same rule as the
+   card badge). Gathering / preliminary / limited-coverage providers
+   neither qualify nor block. Hide when there is no usable vote, or when
+   lag votes are a strict majority. Admin ignores this gate. */
 function isLatencyAhead(summary) {
   if (!summary || !summary.providers) return false;
-  var anyAhead = false, anyBehind = false;
+  var ahead = 0, behind = 0;
   (summary.providers || []).forEach(function (p) {
     if (!p || p.operationalStatus === 'off') return;
     var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
@@ -9906,15 +9914,14 @@ function isLatencyAhead(summary) {
     var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
     var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED && deltaSample > 0 && hasLead;
     var adequate = hasTiming && p.comparisonStatus === 'usable';
-    if (!adequate) return; // gathering / preliminary / limited coverage — no vote either way
-    /* Same rule as the card badge: Lead or Lag only when median AND average
-       agree.  Win-count alone used to claim Ahead while the average was later. */
+    if (!adequate) return;
     var headline = p.medianLeadSec != null ? p.medianLeadSec : p.avgLeadSec;
     var verdict = leadVerdict(headline, p.avgLeadSec);
-    if (verdict === 'lead') anyAhead = true;
-    else if (verdict === 'lag') anyBehind = true;
+    if (verdict === 'lead') ahead += 1;
+    else if (verdict === 'lag') behind += 1;
   });
-  return anyAhead && !anyBehind;
+  var voted = ahead + behind;
+  return voted > 0 && behind <= ahead;
 }
 function speedUpdatedText() {
   var d = LATENCY.data; if (!d || !d.generatedAt) return '';
@@ -10158,18 +10165,19 @@ function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge
     note.hidden = !html;
   }
 }
-/* Filing Latency Comparison placement (owner UX work order item 1): paints
-   BOTH copies from a single fetch —
-     - Trends (#trLatencySection, bottom of the tab): only when
-       isLatencyAhead() says we're clearly ahead; hidden otherwise.
+/* Filing Latency Comparison placement (owner 2026-08-17): paints BOTH
+   copies from a single fetch —
+     - Delivery (#trLatencySection, bottom of the tab): only when
+       isLatencyAhead() says we are not behind on most providers.
+     - Trends (#trLatencyLink): same gate; a link to the Delivery section.
      - Admin (#adminLatencySection, top of the tab): always the full
-       comparison (incl. BEHIND) whenever there's any raced data — an
-       operator diagnostic, not a marketing module.
-   Never rendered on the Trades tab at all (neither container exists there). */
+       comparison (incl. BEHIND) whenever there's any raced data.
+   Never rendered on the Trades tab. */
 function renderSpeedProof() {
-  var trendsBox = el('trLatencySection');
+  var publicBox = el('trLatencySection');
+  var publicLink = el('trLatencyLink');
   var adminBox = el('adminLatencySection');
-  if (!trendsBox && !adminBox) return;
+  if (!publicBox && !adminBox && !publicLink) return;
   fetchLatencySummary().then(function (d) {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
@@ -10179,17 +10187,18 @@ function renderSpeedProof() {
       adminBox.hidden = !hasData;
       if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge);
     }
-    if (trendsBox) {
-      var ahead = hasData && isLatencyAhead(d);
-      trendsBox.hidden = !ahead;
+    var ahead = hasData && isLatencyAhead(d);
+    if (publicBox) {
+      publicBox.hidden = !ahead;
       if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge);
     }
+    if (publicLink) publicLink.hidden = !ahead;
 
     refreshSpeedUpdated();
     renderAlertsMini();
   }).catch(function () {
-    /* endpoint unavailable: drop both quietly rather than show a scary error */
-    if (trendsBox) trendsBox.hidden = true;
+    if (publicBox) publicBox.hidden = true;
+    if (publicLink) publicLink.hidden = true;
     if (adminBox) adminBox.hidden = true;
   });
 }
@@ -10197,7 +10206,8 @@ function renderSpeedProof() {
    a one-liner has no room for honest hedging, so below threshold it stays silent. */
 function renderAlertsMini() {
   var box = el('alertsSpeedMini'); if (!box) return;
-  var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
+  var d = LATENCY.data;
+  var best = d && isLatencyAhead(d) ? speedBoastProvider(d) : null;
   if (!best) { box.className = 'speed-mini'; box.innerHTML = ''; return; }
   box.className = 'speed-mini show';
   box.innerHTML = '<span>⚡ Ahead of ' + esc(best.label) + ' on <span class="lead">' + fmtCount(best.usFirstCount) + ' of ' + fmtCount(best.matched) +
@@ -10205,10 +10215,7 @@ function renderAlertsMini() {
     '<button class="btn ghost sm" onclick="openSpeedProof()">See the scoreboard →</button>';
 }
 function openSpeedProof() {
-  var t = document.querySelector('nav.tabs button[data-view="trends"]');
-  if (t) t.click();
-  var s = el('trLatencySection');
-  if (s && !s.hidden) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showView('subs', 'trLatencySection');
 }
 /* The one place a lead deliberately renders UNSIGNED: this is a prose sentence
    whose own words carry the direction ("land here … BEFORE <provider>"), and a
@@ -11882,14 +11889,20 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
-    if (b.dataset.view === 'trades') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (b.dataset.view === 'trades') {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      requestAnimationFrame(function () {
+        syncTradesTableWidth();
+        applyColumnWidthClasses();
+      });
+    }
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'people') loadPeopleDirectory();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') {
       updateDeliveryGate();
       loadSubs();
-      fetchLatencySummary().then(renderAlertsMini).catch(function () {});
+      renderSpeedProof();
     }
     if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
   };
