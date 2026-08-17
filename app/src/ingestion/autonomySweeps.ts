@@ -403,6 +403,7 @@ const LIVENESS_ALARM_CHECK_IDS = new Set([
   'polling_senate',
   'polling_executive',
   'latency_probes',
+  'senate_relay',
 ]);
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;

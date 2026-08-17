@@ -30,6 +30,10 @@ describe('evaluatePipelineSignals', () => {
       { provider: 'quiver', lastObservedAt: new Date(nowMs - 2 * 3_600_000).toISOString() },
       { provider: 'unusual_whales', lastObservedAt: new Date(nowMs - 3 * 3_600_000).toISOString() },
     ],
+    senateRelay: {
+      configured: true,
+      probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 60_000).toISOString(), host: 'scout.jays.services' },
+    },
   };
 
   it('returns ok status for clean pipeline signals', () => {
@@ -54,6 +58,7 @@ describe('evaluatePipelineSignals', () => {
       strandedFilings: null,
       pollSources: null,
       latencyProviders: null,
+      senateRelay: null,
     };
     const res = evaluatePipelineSignals(nullSignals, nowMs);
     expect(res.status).toBe('unknown');
@@ -237,6 +242,10 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     latencyProviders: [
       { provider: 'quiver', lastObservedAt: new Date(nowMs - 2 * 3_600_000).toISOString() },
     ],
+    senateRelay: {
+      configured: true,
+      probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 60_000).toISOString(), host: 'scout.jays.services' },
+    },
   };
 
   it('config-disabled executive polling is stalled and says so (the OGE_WATCH_ENABLED incident)', () => {
@@ -339,5 +348,43 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     const check = res.checks.find((c) => c.id === 'latency_probes')!;
     expect(check.status).toBe('degraded');
     expect(check.detail).toContain('unusual_whales');
+  });
+
+  it('a dead Senate relay probe is stalled even when polling_senate is ok', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: {
+        configured: true,
+        probe: { ok: false, status: 502, checkedAt: new Date(nowMs - 30_000).toISOString(), host: 'scout.jays.services' },
+      },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('stalled');
+    expect(check.detail).toContain('DOWN');
+    expect(check.detail).toContain('scout.jays.services');
+    expect(res.checks.find((c) => c.id === 'polling_senate')!.status).toBe('ok');
+  });
+
+  it('an unset Senate relay URL is degraded, not silent', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: { configured: false, probe: null },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('SENATE_RELAY_URL unset');
+  });
+
+  it('a stale ok Senate relay probe is degraded', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: {
+        configured: true,
+        probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 45 * 60_000).toISOString(), host: 'scout.jays.services' },
+      },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('stale');
   });
 });

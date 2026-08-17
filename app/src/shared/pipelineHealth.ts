@@ -11,6 +11,7 @@ import { getLastPollAt } from './config.ts';
 import { countEligibleBacklog } from '../extraction/autopilot.ts';
 import { describeAutopilotHaltReason } from '../extraction/providerHealth.ts';
 import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
+import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
 
 export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
 
@@ -81,6 +82,20 @@ export interface PipelineSignals {
    * recorded anything (loud), null = uncollected.
    */
   latencyProviders: Array<{ provider: string; lastObservedAt: string }> | null;
+  /**
+   * Named-tunnel Senate relay liveness (issue #1604).  configured reflects
+   * SENATE_RELAY_URL; probe is the last GET /health written by the watcher
+   * or GET /api/health/senate-relay.  Missing probe is unknown, not silent.
+   */
+  senateRelay: {
+    configured: boolean;
+    probe: {
+      ok: boolean;
+      status: number | null;
+      checkedAt: string;
+      host: string | null;
+    } | null;
+  } | null;
 }
 
 export interface PipelineThresholds {
@@ -94,6 +109,8 @@ export interface PipelineThresholds {
   latencyObservationMaxAgeHours: number;
   /** Hours of silence before an individual recently-active provider is flagged. */
   latencyProviderSilenceHours: number;
+  /** Max minutes since the last Senate-relay /health probe before the check goes stale. */
+  senateRelayProbeMaxAgeMinutes: number;
 }
 
 export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
@@ -114,6 +131,7 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   pollSuccessMaxAgeHours: { house: 3, senate: 3, executive: 26 },
   latencyObservationMaxAgeHours: 24,
   latencyProviderSilenceHours: 48,
+  senateRelayProbeMaxAgeMinutes: 20,
 };
 
 const STATUS_WEIGHT: Record<PipelineStatus, number> = {
@@ -447,6 +465,57 @@ export function evaluatePipelineSignals(
     }
   }
 
+  // 13. Senate residential relay (issue #1604).  The named tunnel hostname
+  // is permanent; the Mac origin is not.  A dead origin must be loud even
+  // when polling_senate stays ok via the direct eFD fallback.
+  if (s.senateRelay == null) {
+    checks.push({ id: 'senate_relay', status: 'unknown', detail: 'Senate relay liveness uncollected', value: null });
+  } else if (!s.senateRelay.configured) {
+    checks.push({
+      id: 'senate_relay',
+      status: 'degraded',
+      detail:
+        'SENATE_RELAY_URL unset — Senate search/docs use the box egress.  Imperva has 403\'d that datacenter path before; keep a residential always-on host if it returns.',
+      value: null,
+    });
+  } else if (!s.senateRelay.probe) {
+    checks.push({
+      id: 'senate_relay',
+      status: 'unknown',
+      detail: 'Senate relay configured but not yet probed',
+      value: null,
+    });
+  } else {
+    const probe = s.senateRelay.probe;
+    const checkedMs = Date.parse(probe.checkedAt);
+    const ageMin = Number.isFinite(checkedMs) ? (nowMs - checkedMs) / 60_000 : Infinity;
+    const host = probe.host ?? 'senate-relay';
+    if (!probe.ok) {
+      checks.push({
+        id: 'senate_relay',
+        status: 'stalled',
+        detail: `Senate relay DOWN at ${host}`
+          + `${probe.status != null ? ` (HTTP ${probe.status})` : ''}`
+          + ` — Mac origin / named tunnel is unreachable.  Search/docs fall back to direct eFD.`,
+        value: probe.status,
+      });
+    } else if (ageMin > t.senateRelayProbeMaxAgeMinutes) {
+      checks.push({
+        id: 'senate_relay',
+        status: 'degraded',
+        detail: `Senate relay probe stale: last ok ${Math.round(ageMin)}m ago at ${host} (threshold ${t.senateRelayProbeMaxAgeMinutes}m)`,
+        value: Math.round(ageMin),
+      });
+    } else {
+      checks.push({
+        id: 'senate_relay',
+        status: 'ok',
+        detail: `Senate relay live at ${host}: probed ${ageMin < 1 ? Math.round(ageMin * 60) + 's' : Math.round(ageMin) + 'm'} ago`,
+        value: Math.round(ageMin * 10) / 10,
+      });
+    }
+  }
+
   for (const c of checks) {
     overall = worstStatus(overall, c.status);
   }
@@ -642,6 +711,19 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       .map((r) => ({ provider: r.provider, lastObservedAt: r.last_observed }));
   } catch {}
 
+  let senateRelay: PipelineSignals['senateRelay'] = {
+    configured: Boolean(env.SENATE_RELAY_URL?.trim()),
+    probe: null,
+  };
+  try {
+    senateRelay = {
+      configured: Boolean(env.SENATE_RELAY_URL?.trim()),
+      probe: await readSenateRelayProbe(env),
+    };
+  } catch {
+    senateRelay = null;
+  }
+
   const signals: PipelineSignals = {
     outboxPending,
     outboxOldestAt,
@@ -657,6 +739,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     strandedFilings,
     pollSources,
     latencyProviders,
+    senateRelay,
   };
 
   return evaluatePipelineSignals(signals, nowMs);

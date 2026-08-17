@@ -35,6 +35,7 @@
 
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import * as cheerio from 'cheerio';
+import { isSenateRelayUnreachable } from './senateRelayHealth.ts';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -376,23 +377,34 @@ export async function fetchSenatePtrFilings(
   // var correctly set, while explicit env-threaded calls did not reproduce it.
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
   if (relayUrl) {
-    const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        submitted_start_date: formatSenateDate(since),
-        submitted_end_date: formatSenateDate(now),
-        pageSize,
-      }),
-    }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
+    try {
+      const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({
+          submitted_start_date: formatSenateDate(since),
+          submitted_end_date: formatSenateDate(now),
+          pageSize,
+        }),
+      }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
 
-    if (!res.ok) throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
-    const json = (await res.json()) as { data?: unknown };
-    const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
-    return parseSenateRows(rows);
+      if (res.ok) {
+        const json = (await res.json()) as { data?: unknown };
+        const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
+        return parseSenateRows(rows);
+      }
+      if (!isSenateRelayUnreachable(res)) {
+        throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
+      }
+      await res.body?.cancel().catch(() => {});
+      console.warn(`senate relay unreachable (HTTP ${res.status}); falling back to direct eFD`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('senate relay POST')) throw err;
+      console.warn('senate relay failed; falling back to direct eFD:', (err as Error).message);
+    }
   }
 
   let session: SenateSession | null = null;
