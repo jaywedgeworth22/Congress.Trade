@@ -4,8 +4,8 @@
 
 Compose deploys still stop every in-project container before start.  Repo
 now has `ct-deploy-overlap.sh` (clone `congress-hold` outside Coolify) and
-Traefik failover in `ct-reattach-proxy.sh`.  Host install is required;
-this VM did not touch prod.  Receipt:
+Traefik failover in `ct-reattach-proxy.sh`.  PR #1964.  Host install is
+required; this VM did not touch prod.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
 
 # Current Handoff
