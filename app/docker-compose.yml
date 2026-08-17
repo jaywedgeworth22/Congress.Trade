@@ -30,6 +30,14 @@ services:
   # 2026-08-02. The build SHA for /api/health is taken from the runtime
   # environment instead — see src/shared/buildInfo.ts, which accepts
   # CT_BUILD_SHA or Coolify's own SOURCE_COMMIT.
+  # Coolify 4.x compose deploys call stop_running_container(force: true)
+  # BEFORE `compose up` (ApplicationDeploymentJob::deploy_docker_compose_buildpack).
+  # There is no health-gated rolling update on this build pack — healthchecks
+  # here only affect post-deploy status.  `container_name` and the host port
+  # bind below are additional rolling-update disqualifiers IF this service is
+  # ever moved to a Dockerfile application (see docs/rollouts/2026-08-17-coolify-deploy-overlap.md).
+  # Do not remove the loopback bind without updating congress-health-recover
+  # (LOCAL_HEALTH_URL=http://127.0.0.1:5000/api/health).
   congress-app:
     build: .
     container_name: congress-app

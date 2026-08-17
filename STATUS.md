@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — #1537 Coolify deploy overlap
+
+Compose deploys still stop every in-project container before start.  Repo
+now has `ct-deploy-overlap.sh` (clone `congress-hold` outside Coolify) and
+Traefik failover in `ct-reattach-proxy.sh`.  Host install is required;
+this VM did not touch prod.  Receipt:
+`docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+
+# Current Handoff
+
 ## 2026-08-17 GROK — Effort-board hygiene
 
 In Progress rebuilt to leftover real work. Verified-merged rows moved to Completed. Landing this mirror so GitHub effort issues close.

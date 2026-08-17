@@ -1,5 +1,9 @@
 # 2026-08-12 — Coolify deploy downtime: root cause, why no toggle exists, and the fix [CLAUDE]
 
+> **2026-08-17 follow-up (#1537):** compose still cannot roll.  The overlap
+> path (live `congress-hold` clone + Traefik failover) is in
+> `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+
 ## The observed failure
 
 The owner hit **`no available server`** while signing in with Google.  The scan
