@@ -806,6 +806,77 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
 
+  it('names Review Queue chips and bake-off rows by model id, not the OpenRouter transport', () => {
+    expect(DASHBOARD_HTML).toContain('function reviewModelDisplayName(');
+    expect(DASHBOARD_HTML).toContain("if (!model || model.toLowerCase() === 'openrouter') return 'unknown model'");
+    expect(DASHBOARD_HTML).toContain('esc(modelName) + \' \' + (m.ok ? esc(conf) : \'ERR\')');
+    expect(DASHBOARD_HTML).not.toContain("esc(m.provider) + ' ' + (m.ok ? esc(conf) : 'ERR')");
+    expect(DASHBOARD_HTML).not.toContain("esc(m.provider + ':' + m.model)");
+
+    const sources = loadDashboardFunctions([
+      'esc',
+      'fmtDuration',
+      'fmtMs',
+      'reviewModelDisplayName',
+      'modelsSummaryHtml',
+      'modelsTableHtml',
+    ]);
+    const helpers = new Function(
+      sources.join('\n\n') + '\nreturn { reviewModelDisplayName, modelsSummaryHtml, modelsTableHtml };',
+    )() as {
+      reviewModelDisplayName: (m: { provider?: string; model?: string }) => string;
+      modelsSummaryHtml: (models: Array<Record<string, unknown>>) => string;
+      modelsTableHtml: (models: Array<Record<string, unknown>>) => string;
+    };
+
+    expect(helpers.reviewModelDisplayName({ provider: 'openrouter', model: 'google/gemini-2.5-pro' }))
+      .toBe('google/gemini-2.5-pro');
+    expect(helpers.reviewModelDisplayName({ provider: 'openrouter', model: 'anthropic/claude-sonnet-4' }))
+      .toBe('anthropic/claude-sonnet-4');
+    expect(helpers.reviewModelDisplayName({ provider: 'openrouter', model: 'openrouter' }))
+      .toBe('unknown model');
+    expect(helpers.reviewModelDisplayName({ provider: 'openrouter', model: '' }))
+      .toBe('unknown model');
+    expect(helpers.reviewModelDisplayName({ provider: 'openrouter' }))
+      .toBe('unknown model');
+
+    const chip = helpers.modelsSummaryHtml([{
+      provider: 'openrouter',
+      model: 'google/gemini-2.5-pro',
+      ok: true,
+      rowCount: 3,
+      avgConfidence: 0.87,
+      latencyMs: 1200,
+    }]);
+    expect(chip).toContain('google/gemini-2.5-pro 87%');
+    expect(chip).toContain('title="openrouter:google/gemini-2.5-pro · 3 rows, conf 87%, 1s"');
+    expect(chip).not.toMatch(/>\s*openrouter\s+87%/);
+    expect(chip).not.toContain('>openrouter 87%');
+
+    const missing = helpers.modelsSummaryHtml([{
+      provider: 'openrouter',
+      ok: true,
+      rowCount: 1,
+      avgConfidence: 0.5,
+    }]);
+    expect(missing).toContain('unknown model 50%');
+    expect(missing).toContain('title="openrouter:unknown model · 1 rows, conf 50%"');
+    expect(missing).not.toContain('>openrouter 50%');
+
+    const table = helpers.modelsTableHtml([{
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4',
+      kind: 'bakeoff',
+      ok: true,
+      rowCount: 2,
+      avgConfidence: 0.91,
+      latencyMs: 800,
+    }]);
+    expect(table).toContain('anthropic/claude-sonnet-4');
+    expect(table).toContain('<div class="muted">openrouter</div>');
+    expect(table).not.toContain('openrouter:anthropic/claude-sonnet-4');
+  });
+
   it('uses review totals for queue KPIs and reloads them after review actions', () => {
     expect(DASHBOARD_HTML).toContain('var REVIEW_TOTALS = null;');
     expect(DASHBOARD_HTML).toContain('REVIEW_TOTALS = data.totals || null');
