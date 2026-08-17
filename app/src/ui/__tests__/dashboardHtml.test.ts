@@ -4981,6 +4981,12 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
     expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
     expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
+    expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');
+    expect(DASHBOARD_HTML).toContain(':root { --ct-main-pad: 22px; }');
+    expect(DASHBOARD_HTML).toContain('function syncChromeMetrics()');
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-header-h'");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-main-pad'");
   });
 
   it('defines showView so account-menu Delivery / Admin / Review actually switch tabs', () => {
@@ -5005,10 +5011,25 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('showView(\\\'review\\\')">Review Queue');
   });
 
-  it('uses fat mask arrows with green up and blue down on the side filter', () => {
+  it('uses fat mask arrows with green up and red down on the side filter', () => {
     expect(DASHBOARD_HTML).toContain('.side-up, .side-dn, .side-ex {');
     expect(DASHBOARD_HTML).toContain('.side-up {\n    color: var(--buy);');
-    expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--accent);');
+    expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--sell);');
     expect(DASHBOARD_HTML).toContain('mask-image: url("data:image/svg+xml');
+  });
+});
+
+describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
+  it('clears leftover chip overflow so Parties and Trade Type can open', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter.party-chips,\n  .ios-filter.side-chips,\n  .ios-filter.branch-filters {');
+    expect(DASHBOARD_HTML).toContain('display: block; overflow: visible; border: none; border-radius: 0;');
+    expect(DASHBOARD_HTML).toContain('function placeIosFilterPop(btn, pop)');
+    expect(DASHBOARD_HTML).toContain("pop.style.position = 'fixed'");
+  });
+
+  it('paints Branches / Parties / Sides menu rows as a list, not leftover chips', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter .ios-filter-item.branch-toggle,\n  .ios-filter .ios-filter-item.party-chip,\n  .ios-filter .ios-filter-item.side-chip {');
+    expect(DASHBOARD_HTML).toContain('min-width: 0; height: auto; min-height: 0; justify-content: flex-start;');
+    expect(DASHBOARD_HTML).toContain('.ios-filter .ios-filter-item.branch-toggle + .ios-filter-item.branch-toggle');
   });
 });
