@@ -204,7 +204,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --good:      #15803d;
     --rival:     #64748b;
   }
-  html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }
+  html[data-theme="light"] header.top {
+    background: #fff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   /* The hidden attribute must always win, even over class display rules
      (e.g. .row-flex/.plan-grid set display and would otherwise override the
      UA's [hidden]{display:none} — the entitlement cues rely on it). */
@@ -313,8 +317,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   :root { --ct-header-h: 68px; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
-    border-bottom: 1px solid var(--border); background: rgba(10,16,30,.6);
-    backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    position: sticky; top: 0; z-index: 10;
   }
   /* Zilla Slab (Typotheque/Mozilla), SIL OFL 1.1 — latin 700 subset via @fontsource, embedded so no external font request. */
   @font-face { font-family:'Zilla Slab'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/zilla-slab-700.woff2) format('woff2'); }
@@ -1385,16 +1390,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .party-chip { font-size:14px; }
   .party-chip.on[data-party="D"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .party-chip.on[data-party="R"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
-  .side-chip .side-up { color:var(--buy); font-size:11px; }
-  .side-chip .side-dn { color:var(--sell); font-size:11px; }
-  /* Owner feedback: the ⇄ toggle read as faint amber (var(--exch)) at this
-     size and was hard to read against the chip chrome — swap to the themed
-     ink color (var(--text): near-black on light, white on dark, so it never
-     vanishes) and thicken it with a text-stroke since the glyph is a single
-     Unicode character, not an SVG path we can set stroke-width on directly.
-     var(--exch) stays in use elsewhere (the pressed/"on" pill fill, .tag.E)
-     — only this resting glyph color changes. */
-  .side-chip .side-ex { color:var(--text); font-size:12px; font-weight:900; -webkit-text-stroke:.5px var(--text); }
+  /* Fat iOS-like arrows (mask, not thin unicode). Compact filter icon
+     and dropdown rows share these so color always shows — the old
+     .side-chip-only rules left the toolbar trio uncolored. Buy = green
+     up, sell = blue down (owner), exchange = ink left-right. */
+  .side-up, .side-dn, .side-ex {
+    display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
+    font-size: 0 !important; line-height: 0; overflow: hidden;
+    background-color: currentColor;
+    -webkit-mask: no-repeat center / contain;
+    mask: no-repeat center / contain;
+  }
+  .side-up {
+    color: var(--buy);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 13.2V2.8M3.4 7.4 8 2.8l4.6 4.6'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 13.2V2.8M3.4 7.4 8 2.8l4.6 4.6'/%3E%3C/svg%3E");
+  }
+  .side-dn {
+    color: var(--accent);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
+  }
+  .side-ex {
+    color: var(--text);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
+  }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: #86efac; }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: #93c5fd; }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: #fff; }
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
@@ -1423,7 +1447,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
-  .ios-filter-ico.sides { display: inline-flex; gap: 1px; font-size: 9px; font-weight: 800; }
+  .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
@@ -1526,10 +1550,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars #tradesStats { order:4; }
     .trades-toolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
-      background: color-mix(in srgb, var(--bg) 88%, transparent);
-      -webkit-backdrop-filter: blur(16px);
-      backdrop-filter: blur(16px);
+      background: var(--panel);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
     }
+    html[data-theme="light"] .trades-toolbars,
+    html[data-theme="light"] #trendsSharedFilters { background: #fff; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1844,11 +1872,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
-      background: color-mix(in srgb, var(--bg) 88%, transparent);
-      -webkit-backdrop-filter: blur(16px);
-      backdrop-filter: blur(16px);
-      padding-top: 4px; padding-bottom: 6px;
+      background: var(--panel);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      padding-top: 4px; padding-bottom: 10px;
     }
+    html[data-theme="light"] #tradesToolbars,
+    html[data-theme="light"] #trendsSharedFilters { background: #fff; }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
@@ -2466,8 +2496,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 720px), (hover: none) and (pointer: coarse) {
     /* Keep the compact 52px header.  The old 14px 22px padding here made
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
-    header.top { padding: 6px 10px; background: color-mix(in srgb, var(--bg) 94%, transparent); }
-    html[data-theme="light"] header.top { background: color-mix(in srgb, #fff 94%, transparent); }
+    header.top { padding: 6px 10px; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    html[data-theme="light"] header.top { background: #fff; }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -2637,15 +2667,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     </div>
-    <dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
-      <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
-      <p class="note" style="margin:0 0 10px">Optional date range (trade date). Full-history export is Premium.</p>
-      <label class="lbl" for="qFrom">From</label>
-      <input id="qFrom" type="date" aria-label="Trade date from" />
-      <label class="lbl" for="qTo">To</label>
-      <input id="qTo" type="date" aria-label="Trade date to" />
-      <button class="btn sm" type="button" onclick="exportCsv()">Download CSV</button>
-    </dialog>
     <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
          is hidden below the 768px breakpoint along with .table-wrap, so this is
          the only sort affordance on phones. Shares sortKey/sortDir + the
@@ -2996,12 +3017,16 @@ ${speedProofSectionHtml(false)}
 
   <!-- ================= DELIVERY (public education + account-owned management) ================= -->
   <section class="view" id="view-subs" role="tabpanel" aria-labelledby="tab-subs" aria-hidden="true">
+    <div class="section" id="subsPush">
+      <h3>Push Notifications</h3>
+      <p class="sub">Phone push alerts are set in the iOS app under Delivery.&nbsp; On the web, create a webhook or live stream below.</p>
+    </div>
     <!-- Public marketing/education: how the two paid delivery methods work.
          Visible to everyone, including signed-out visitors; creating a delivery
          requires a signed-in Premium account. -->
     <div class="section" id="subsMarketing">
-      <h3>Get the Filing First</h3>
-      <p class="sub">Premium pushes a filing to you the moment we ingest it &mdash; two methods, both included:</p>
+      <h3>Alerts</h3>
+      <p class="sub">Get the Filing First.&nbsp; Premium pushes a filing to you the moment we ingest it &mdash; two methods, both included:</p>
       <div class="speed-mini" id="alertsSpeedMini"></div>
       <div class="delivery-grid">
         <div class="delivery-card">
@@ -11348,10 +11373,16 @@ function acctMobileDisclaimerHtml() {
   return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
 }
 function adminMenuHtml(closeCall) {
-  if (!canUseAdmin()) return '';
+  // Always list Admin + Review for signed-in users (and guests with a stored
+  // token) so the Admin Access box stays reachable.  Hiding these until
+  // canUseAdmin() made token paste impossible after the tabs left the bar.
+  if (!ME.user && !hasAdminToken()) return '';
   return '<div class="menu-section-label">Admin</div>' +
     '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
     '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
+}
+function canManageSubscription() {
+  return !!(ME.user && (hasBillingAccount() || isPremium() || (ME.entitlement && ME.entitlement.source)));
 }
 function renderAccount() {
   var box = el('acct'); if (!box) return;
@@ -11395,11 +11426,10 @@ function renderAccount() {
           themeRowHtml() +
           '<div class="menu-section-label">Account</div>' +
           '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
-          '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
-          '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Push Notifications</button>' +
-          (hasBillingAccount() && portalConfigured()
-            ? '<button onclick="manageBilling()">Manage Subscription</button>'
-            : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+          '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery</button>' +
+          (canManageSubscription()
+            ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
+            : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
           adminMenuHtml('closeAcctMenu();') +
           '<button onclick="logout()">Sign Out</button>' +
         '</div>' +
@@ -11410,12 +11440,11 @@ function renderAccount() {
       themeRowHtml(null, true) +
       '<div class="menu-section-label">Account</div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
-      '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery & Alerts</button>' +
-      '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Push Notifications</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery</button>' +
       upgrade +
-      (hasBillingAccount() && portalConfigured()
-        ? '<button onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
-        : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+      (canManageSubscription()
+        ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
+        : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
       adminMenuHtml('closeAcctMobileMenu();') +
       '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       acctMobileDisclaimerHtml();
@@ -11631,15 +11660,34 @@ function startCheckout() {
     .catch(function () { el('pricingMsg').textContent = 'Network error — try again.'; if (btn) btn.disabled = false; });
 }
 function manageBilling() {
-  if (!portalConfigured() || !hasBillingAccount()) { showToast('Billing management is unavailable right now.', true); return; }
   closeAcctMenu();
+  closeAcctMobileMenu();
+  if (!ME.user) { openLogin(); return; }
+  var source = ME.entitlement && ME.entitlement.source;
+  if (source === 'apple') {
+    window.location.href = 'https://apps.apple.com/account/subscriptions';
+    return;
+  }
+  if (!portalConfigured()) { showToast('Billing management is unavailable right now.', true); return; }
+  if (!hasBillingAccount() && !isPremium()) { showToast('No billing account found yet.  If you subscribed on iPhone, manage it in the App Store.', true); return; }
   showToast('Opening billing portal…');
   if (!portalRequestId) portalRequestId = newBillingRequestId();
-  fetch('/billing/portal', { method: 'POST', headers: { 'Idempotency-Key': portalRequestId } })
-    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+  fetch('/billing/portal', { method: 'POST', credentials: 'same-origin', headers: { 'Idempotency-Key': portalRequestId } })
+    .then(function (r) {
+      return r.text().then(function (t) {
+        var j = {};
+        try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { error: 'Could not open billing portal.' }; }
+        return { ok: r.ok, status: r.status, j: j };
+      });
+    })
     .then(function (res) {
-      if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; }
-      else { showToast((res.j && res.j.error) || 'Could not open billing portal.', true); }
+      if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; return; }
+      if (res.status === 401) { openLogin(); return; }
+      if (res.status === 400 && source !== 'apple') {
+        showToast((res.j && res.j.error) || 'No billing account found yet.  Contact support if this seems wrong.', true);
+        return;
+      }
+      showToast((res.j && res.j.error) || 'Could not open billing portal.', true);
     })
     .catch(function () { showToast('Network error — try again.', true); });
 }
@@ -11665,8 +11713,15 @@ function openExportCsvDialog() {
     return;
   }
   var d = el('exportCsvDialog');
-  if (d && d.showModal) d.showModal();
-  else exportCsv();
+  if (!d) { exportCsv(); return; }
+  if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);
+  try {
+    if (d.showModal) d.showModal();
+    else exportCsv();
+  } catch (e) {
+    try { document.body.appendChild(d); if (d.showModal) d.showModal(); else exportCsv(); }
+    catch (e2) { exportCsv(); }
+  }
 }
 
 /* ---- CSV export (Premium; same filters as the live feed toolbar) ---- */
@@ -11795,9 +11850,23 @@ function handleAuthQueryParams() {
 }());
 
 /* ============================ TABS + BOOT ============================ */
+function showView(name, scrollId) {
+  var aliases = { feed: 'trades', delivery: 'subs', alerts: 'subs', push: 'subs' };
+  var view = aliases.hasOwnProperty(name) ? aliases[name] : name;
+  var btn = document.querySelector('nav.tabs button[data-view="' + view + '"]');
+  if (!btn) return;
+  if (btn.getAttribute('data-admin-tab') === 'true') btn.hidden = false;
+  if (typeof btn.click === 'function') btn.click();
+  if (scrollId) {
+    var node = el(scrollId);
+    if (node && node.scrollIntoView) {
+      setTimeout(function () { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 40);
+    }
+  }
+}
 document.querySelectorAll('nav.tabs button').forEach(function (b) {
   b.onclick = function () {
-    if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {
+    if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin() && !ME.user && !hasAdminToken()) {
       openLogin();
       return;
     }
@@ -12538,5 +12607,14 @@ document.addEventListener('mouseover', function(e) {
 
 
 </script>
+<dialog class="search-panel" id="exportCsvDialog" onclick="if(event.target === this) this.close()">
+  <div class="panel-head"><span class="panel-title">Export CSV</span><button class="panel-close" onclick="el('exportCsvDialog').close()" aria-label="Close">×</button></div>
+  <p class="note" style="margin:0 0 10px">Optional date range (trade date).&nbsp; Full-history export is Premium.</p>
+  <label class="lbl" for="qFrom">From</label>
+  <input id="qFrom" type="date" aria-label="Trade date from" />
+  <label class="lbl" for="qTo">To</label>
+  <input id="qTo" type="date" aria-label="Trade date to" />
+  <button class="btn sm" type="button" onclick="exportCsv()">Download CSV</button>
+</dialog>
 </body>
 </html>`;
