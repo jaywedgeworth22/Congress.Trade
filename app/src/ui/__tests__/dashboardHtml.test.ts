@@ -3193,10 +3193,10 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     // Row 2 no longer duplicates the trade date as a "Traded <date>" fragment.
     expect(fn).not.toContain("bits.push('Traded '");
     expect(fn).not.toContain("'Traded ' + esc(traded)");
-    // Member/chamber/lag/late-filing bits are untouched.
-    expect(fn).toContain("if (member) bits.push('<span class=\"fc-member\">' + memberHtml + '</span>');");
-    expect(fn).toContain('if (chamber) bits.push(esc(chamber));');
-    expect(fn).toContain("if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));");
+    // iOS politician line + Capitol Ledger owner / relative filed time.
+    expect(fn).toContain("ident.push(esc(chamber) + ' · ' + esc(member))");
+    expect(fn).toContain("bits.push('<span class=\"fc-owner\">' + esc(owner) + '</span>')");
+    expect(fn).toContain('relativeTimeText(');
     expect(fn).toContain("r.stockActStatus === 'late' || r.stockActStatus === 'severely_late'");
     // Click-scoping: the trailing amount/date block carries no data-asset/
     // data-member/data-txid of its own — it falls through to the card's own
@@ -3515,7 +3515,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("openTradeById(feedHit.getAttribute('data-txid'));");
       // Feed cell helpers no longer emit nested entity targets.
       expect(DASHBOARD_HTML).toContain('/* Feed cells are NOT nested entity links');
-      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl) +');
+      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +');
       expect(DASHBOARD_HTML).toContain('// No data-asset on the feed cell');
       expect(DASHBOARD_HTML).toContain('Politician Details');
       expect(DASHBOARD_HTML).toContain('Company Details');
@@ -3955,14 +3955,14 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
       "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';"
     );
     expect(DASHBOARD_HTML).toContain(
-      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
     );
     // Structural check: inside the generated personCard markup, the name div
     // (which carries the ellipsis) must fully close with </div> BEFORE the
     // <span class="drawer-trade-owner ...> badge opens — i.e. the badge is
     // outside, not nested inside, the ellipsized div.
     const personCardMatch = DASHBOARD_HTML.match(
-      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
+      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl, row\.party\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
     );
     expect(personCardMatch).toBeTruthy();
     const nameDivCloseIdx = DASHBOARD_HTML.indexOf("memberVal + '</div>'");
@@ -5010,5 +5010,95 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('.side-up {\n    color: var(--buy);');
     expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--accent);');
     expect(DASHBOARD_HTML).toContain('mask-image: url("data:image/svg+xml');
+  });
+});
+
+/**
+ * Issues #1529 + #1459 — web adopts remaining iOS language and harvests
+ * Capitol Ledger structural wins (style option, not a wholesale restyle).
+ */
+describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) return html.slice(start, i + 1);
+      }
+    }
+    throw new Error('unbalanced braces for ' + name);
+  }
+
+  it('boots a Style preference (standard | ledger) next to theme, defaulting to standard', () => {
+    expect(DASHBOARD_HTML).toContain("localStorage.getItem('ui-style')");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-style', stylePref)");
+    expect(DASHBOARD_HTML).toContain('function styleRowHtml()');
+    expect(DASHBOARD_HTML).toContain("id: 'ledger', label: 'Capitol Ledger'");
+    expect(DASHBOARD_HTML).toContain('themeRowHtml() +');
+    expect(DASHBOARD_HTML).toContain('styleRowHtml() +');
+    expect(DASHBOARD_HTML).toContain('html[data-style="ledger"]');
+    expect(DASHBOARD_HTML).toContain('--sans: "Source Serif 4"');
+    expect(DASHBOARD_HTML).toContain('#f4efe4');
+  });
+
+  it('makes the Light/Dark/System control icon-only (labels stay on aria-label + title)', () => {
+    expect(DASHBOARD_HTML).toContain("themeIconSvg(o.id) + '</button>'");
+    expect(DASHBOARD_HTML).not.toContain("themeIconSvg(o.id) + o.label + '</button>'");
+    expect(DASHBOARD_HTML).toContain("aria-label=\"Set theme to ' + o.label + '\" title=\"' + o.label + '\"");
+    expect(DASHBOARD_HTML).toContain('.ios-filter-btn::after {');
+  });
+
+  it('paints party-colored rings on politician avatars without touching the account photo', () => {
+    expect(DASHBOARD_HTML).toContain('.avatar.party-D { box-shadow: 0 0 0 2px var(--party-d);');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-R { box-shadow: 0 0 0 2px var(--party-r);');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-O { box-shadow: 0 0 0 2px var(--party-o);');
+    expect(DASHBOARD_HTML).toContain('function partyBucketClass(raw)');
+    expect(DASHBOARD_HTML).toContain('function memberAvatarHtml(name, photoUrl, party)');
+    expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
+    const src = [
+      extractFn(DASHBOARD_HTML, 'esc'),
+      extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'partyBucketClass'),
+      extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
+      'return memberAvatarHtml;',
+    ].join('\n');
+    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string, party?: string) => string;
+    expect(memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'Democrat')).toContain('party-D');
+    expect(memberAvatarHtml('Some Republican', '', 'R')).toContain('party-R');
+    expect(memberAvatarHtml('Guest', '', '')).not.toMatch(/party-[DRO]/);
+  });
+
+  it('surfaces owner, relative filed time, and the iOS politician line on mobile trade cards', () => {
+    const fn = extractFn(DASHBOARD_HTML, 'tradesCardHtml');
+    expect(fn).toContain("ident.push(esc(chamber) + ' · ' + esc(member))");
+    expect(fn).toContain('fc-owner');
+    expect(fn).toContain('relativeTimeText');
+    expect(fn).toContain('memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket)');
+    expect(DASHBOARD_HTML).toContain('party: tx.party || \'\'');
+    const relSrc = [
+      'function dateText(s) { return String(s || ""); }',
+      extractFn(DASHBOARD_HTML, 'relativeTimeText'),
+      'return relativeTimeText;',
+    ].join('\n');
+    const relativeTimeText = new Function(relSrc)() as (s: string) => string;
+    expect(relativeTimeText(new Date().toISOString())).toMatch(/just now|m ago|h ago/);
+    expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
+  });
+
+  it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {
+    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party) + '<span class=\"cell-clip\"");
+    expect(DASHBOARD_HTML).toContain('id="trLargestBuys"');
+    expect(DASHBOARD_HTML).toContain('id="trLargestSells"');
+    expect(DASHBOARD_HTML).toContain('Largest Buys');
+    expect(DASHBOARD_HTML).toContain('Largest Sells');
+    expect(DASHBOARD_HTML).toContain('function loadTrExtremes()');
+    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrExtremes(); loadTrTickers();');
+    expect(DASHBOARD_HTML).toContain("Estimated buy-side volume from STOCK Act bracket midpoints.");
   });
 });

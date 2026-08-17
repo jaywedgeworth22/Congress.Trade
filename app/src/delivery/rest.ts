@@ -655,18 +655,20 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       }
     }
     const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + politician name alongside the feed
-    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
-    // mapFeedTransaction maps the filer/filing columns (fullName, state,
-    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
-    // which aren't part of the base Transaction type.
+    // The query SELECTs the resolved chamber + politician name + party
+    // alongside the feed columns via `__chamber` / `__member_name` / `__party`
+    // (see buildTransactionsQuery). mapFeedTransaction maps the filer/filing
+    // columns (fullName, state, photoUrl, dates); we then attach the resolved
+    // `chamber` / `memberName` / `party`, which aren't part of the base
+    // Transaction type on webhook/normalizer paths.
     const rows = await all<
-      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }
     >(c.env.DB, built.sql, built.params);
     const transactions = rows.map((row) => ({
       ...mapFeedTransaction(row),
       chamber: (row.__chamber as Chamber | null) ?? null,
       memberName: row.__member_name ?? null,
+      party: row.__party ?? null,
     }));
     const maxCursor = transactions.reduce(
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),

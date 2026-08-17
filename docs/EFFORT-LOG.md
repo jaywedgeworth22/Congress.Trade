@@ -75,6 +75,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 - **2026-08-04 — GROK — R2 free-tier opt (ST/CT/UM).** Class A pace ST 74%/CT 123%; UM storage 104%. Applied litestream **60s sync** + shorter retention (ST 24h, CT 36h host, UM 48h). App path unchanged. ST kill-switch cleared + resumed. PRs: ST #2382, UM #915, CT docs #1298.
 ## Active / In Progress
+- **2026-08-17 — CURSOR — IN PROGRESS — #1529 design convergence + #1459 Capitol Ledger (branch `cursor/design-ios-ledger-6743`).** Web-only: iOS trade-card politician line, party-ringed photos, icon-only theme, filter chevrons; harvest owner + relative filed time, Directory photos, Largest Buys/Sells from ticker-leaderboard, editorial paper/serif as a Style option. No extract/halt/billing. No path-route rewrite.
 - **2026-08-17 — GROK — IN PROGRESS — Effort-board hygiene + this-session control board.** Zero open PRs on 2026-08-17. Monet CI/ship landed as #1837; trades-sort as #1860; directory chrome as #1705; filter/iOS/ASC-prep rows already merged. First lines of the previous Active dump preserved under Recently completed. Rename of the Historical archive heading (below) is so effort-issues-sync does not treat that archive as still In Progress.
 
 ## Recently completed
