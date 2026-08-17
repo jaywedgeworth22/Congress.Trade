@@ -12977,7 +12977,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }

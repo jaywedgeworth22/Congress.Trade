@@ -3490,10 +3490,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });
