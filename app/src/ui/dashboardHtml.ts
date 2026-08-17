@@ -356,7 +356,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html { overflow-x: clip; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
-    border-bottom: 1px solid var(--border); background: var(--panel);
+    border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
   }
@@ -1438,7 +1438,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Fat iOS-like arrows (mask, not thin unicode). Compact filter icon
      and dropdown rows share these so color always shows — the old
      .side-chip-only rules left the toolbar trio uncolored. Buy = green
-     up, sell = blue down (owner), exchange = ink left-right. */
+     up, sell = red down, exchange = ink left-right. */
   .side-up, .side-dn, .side-ex {
     display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
     font-size: 0 !important; line-height: 0; overflow: hidden;
@@ -1452,7 +1452,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 13.2V2.8M3.4 7.4 8 2.8l4.6 4.6'/%3E%3C/svg%3E");
   }
   .side-dn {
-    color: var(--accent);
+    color: var(--sell);
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
   }
@@ -1461,9 +1461,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
   }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: #86efac; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: #93c5fd; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: #fff; }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: var(--buy); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: var(--sell); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: var(--text); }
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
@@ -1495,7 +1495,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
     border-top: 4px solid currentColor; opacity: .55;
   }
-  .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
+     pill on the default chrome even when a filter is active.  The label
+     already shows House / D / Buys. */
+  .ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
@@ -1516,9 +1519,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
     border-radius: 10px; cursor: pointer;
   }
-  .ios-filter-item:hover, .ios-filter-clear:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
+  .ios-filter-item:hover, .ios-filter-clear:hover { background: var(--panel-2); }
+  .ios-filter-item.on { background: transparent; font-weight: 600; }
+  .ios-filter-item.on::after { content: "✓"; margin-left: auto; font-weight: 700; color: var(--text); }
   .ios-filter-clear { color: var(--text-dim); font-size: 13px; }
+  /* The outer wrappers reuse .party-chips / .side-chips / .branch-filters
+     so the existing delegated listeners keep working.  Those class names
+     still carry the old joined-segment chrome (overflow:hidden, pill
+     border, chip height) which clipped Parties/Sides menus and painted
+     House/Senate/Executive as leftover chips inside Branches. */
+  .ios-filter.party-chips,
+  .ios-filter.side-chips,
+  .ios-filter.branch-filters {
+    display: block; overflow: visible; border: none; border-radius: 0;
+    background: transparent; margin: 0; gap: 0;
+  }
+  .ios-filter .ios-filter-item.branch-toggle,
+  .ios-filter .ios-filter-item.party-chip,
+  .ios-filter .ios-filter-item.side-chip {
+    min-width: 0; height: auto; min-height: 0; justify-content: flex-start;
+    border: 0; border-left: 0; border-radius: 10px; padding: 9px 10px;
+    background: transparent; box-shadow: none; color: var(--text);
+    font-weight: 500; font-size: 14px;
+  }
+  .ios-filter .ios-filter-item.branch-toggle + .ios-filter-item.branch-toggle,
+  .ios-filter .ios-filter-item.party-chip + .ios-filter-item.party-chip,
+  .ios-filter .ios-filter-item.side-chip + .ios-filter-item.side-chip {
+    border-left: 0;
+  }
+  .ios-filter .ios-filter-item.branch-toggle.on,
+  .ios-filter .ios-filter-item.party-chip.on,
+  .ios-filter .ios-filter-item.party-chip.on[data-party="D"],
+  .ios-filter .ios-filter-item.party-chip.on[data-party="R"],
+  .ios-filter .ios-filter-item.party-chip.on[data-party="O"],
+  .ios-filter .ios-filter-item.side-chip.on,
+  .ios-filter .ios-filter-item.side-chip.on[data-side="B"],
+  .ios-filter .ios-filter-item.side-chip.on[data-side="S"],
+  .ios-filter .ios-filter-item.side-chip.on[data-side="E"] {
+    background: transparent;
+    color: var(--text); box-shadow: none;
+  }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="B"] .side-up { color: var(--buy); }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="S"] .side-dn { color: var(--sell); }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="E"] .side-ex { color: var(--text); }
   .side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }
   .side-chip.on[data-side="B"] .side-up { color:#fff; }
   .side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }
@@ -1592,7 +1635,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
     padding: 10px 35px 12px;
     background: var(--panel);
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
+    overflow: visible;
     -webkit-backdrop-filter: none; backdrop-filter: none;
   }
   .trades-toolbars .toolbar,
@@ -1883,6 +1927,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        34px --control-h at every width) — tightens mobile-site filter chrome
        toward the app's pill sizing. */
     .toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }
+    .toolbar .ios-filter-item.branch-toggle,
+    .toolbar .ios-filter-item.party-chip,
+    .toolbar .ios-filter-item.side-chip { min-height: 0; }
     /* .pill-select-el keeps an asymmetric left inset for its calendar icon —
        restore it after the generic mobile shorthand above (higher specificity
        than the desktop .pill-select-el rule so it wins, but scoped so it
@@ -1922,7 +1969,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        the 3 segmented groups + ⓘ never wrap further. */
     #tradesSharedFilters, #trendsSharedFilters {
       display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      overflow: visible;
     }
     #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
@@ -1931,6 +1978,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
       padding: 8px 12px 10px;
+      overflow: visible;
+      border-bottom: none;
     }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
@@ -1941,6 +1990,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
       min-width: 30px; padding: 0 6px;
+    }
+    #tradesSharedFilters .ios-filter-item.branch-toggle,
+    #tradesSharedFilters .ios-filter-item.party-chip,
+    #tradesSharedFilters .ios-filter-item.side-chip,
+    #trendsSharedFilters .ios-filter-item.branch-toggle,
+    #trendsSharedFilters .ios-filter-item.party-chip,
+    #trendsSharedFilters .ios-filter-item.side-chip {
+      min-width: 0; padding: 9px 10px;
     }
     #tradesSharedFilters .filters-info-wrap .branch-info, #trendsSharedFilters .filters-info-wrap .branch-info {
       width: 26px; height: 26px; font-size: 15px;
@@ -2039,6 +2096,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   @media (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     header.top { padding:8px 10px; }
+    :root { --ct-main-pad: 8px; }
     main { padding:8px 10px; padding-bottom:calc(72px + env(safe-area-inset-bottom)); }
     .disclaimer { font-size:10px; line-height:1.35; max-height:78px; overflow:auto; padding:8px 10px; }
     .section p.sub { font-size:11px; line-height:1.35; }
@@ -2581,7 +2639,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        silently clobbering the wider block's safe-area-aware padding-bottom
        for every phone <=720px (the width nearly all phones report in
        portrait) — footer/last content ended up hidden behind the fixed tab
-       bar. Re-assert padding-bottom explicitly so it survives here too. */
+       bar. Re-assert padding-bottom explicitly so it survives here too.
+       Keep --ct-main-pad in lockstep: the sticky filter bar pulls itself
+       up by that token, and a 12px token against 22px padding left a
+       moving gap between the header and the search row. */
+    :root { --ct-main-pad: 22px; }
     main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
@@ -12347,6 +12409,37 @@ function closeIosFilterMenus(except) {
     if (btn) btn.setAttribute('aria-expanded', 'false');
   });
 }
+function placeIosFilterPop(btn, pop) {
+  if (!btn || !pop) return;
+  pop.style.position = 'fixed';
+  pop.style.visibility = 'hidden';
+  pop.hidden = false;
+  var r = btn.getBoundingClientRect();
+  var w = pop.offsetWidth || 196;
+  var left = r.left;
+  if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - w - 8);
+  pop.style.top = Math.round(r.bottom + 6) + 'px';
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.zIndex = '80';
+  pop.style.visibility = '';
+}
+function repositionOpenIosFilters() {
+  document.querySelectorAll('.ios-filter').forEach(function (f) {
+    var pop = f.querySelector('.ios-filter-pop');
+    var btn = f.querySelector('.ios-filter-btn');
+    if (pop && btn && !pop.hidden) placeIosFilterPop(btn, pop);
+  });
+}
+function syncChromeMetrics() {
+  var header = document.querySelector('header.top');
+  var mainEl = document.querySelector('main');
+  if (header) {
+    document.documentElement.style.setProperty('--ct-header-h', header.getBoundingClientRect().height + 'px');
+  }
+  if (mainEl) {
+    document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingTop);
+  }
+}
 function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
     var f = el(id); if (!f) return;
@@ -12408,7 +12501,8 @@ function initIosFilterMenus() {
       var open = pop && pop.hidden;
       closeIosFilterMenus(open ? wrap : null);
       if (pop) {
-        pop.hidden = !open;
+        if (open) placeIosFilterPop(btn, pop);
+        else pop.hidden = true;
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       }
       e.preventDefault();
@@ -12416,9 +12510,22 @@ function initIosFilterMenus() {
     }
     if (!e.target.closest || !e.target.closest('.ios-filter-pop')) closeIosFilterMenus(null);
   });
+  window.addEventListener('scroll', repositionOpenIosFilters, true);
+  window.addEventListener('resize', function () {
+    syncChromeMetrics();
+    repositionOpenIosFilters();
+  });
   refreshIosFilterSummaries();
 }
 initIosFilterMenus();
+syncChromeMetrics();
+if (typeof ResizeObserver !== 'undefined') {
+  var chromeRo = new ResizeObserver(syncChromeMetrics);
+  var chromeHeader = document.querySelector('header.top');
+  var chromeMain = document.querySelector('main');
+  if (chromeHeader) chromeRo.observe(chromeHeader);
+  if (chromeMain) chromeRo.observe(chromeMain);
+}
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 /* Trends fold cards (mobile-only show/hide): CSS alone can't force a
    <details> open, so on desktop widths (above this file's 768px mobile
