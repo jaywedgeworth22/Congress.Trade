@@ -155,6 +155,8 @@ export interface Transaction {
   fullName?: string | null;
   /** Filer's state (e.g. 'CA') resolved from the filers table. */
   state?: string | null;
+  /** Filer party from the filers table (feed only; used for D/R/I rings and the iOS politician line). */
+  party?: string | null;
   /** Filer's headshot URL (unitedstates/images CDN); null = show initials. */
   photoUrl?: string | null;
   /**

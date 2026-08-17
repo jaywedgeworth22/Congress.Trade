@@ -160,6 +160,7 @@ describe('buildTransactionsQuery', () => {
     // display_name (the curated "campaign sign" preferred name) wins over
     // full_name when set — see migrations/0083_filers_display_name.sql.
     expect(q.sql).toContain('COALESCE(fl.display_name, fl.full_name) AS __member_name');
+    expect(q.sql).toContain('fl.party AS __party');
   });
 
   it('joins filers to project the politician name/state/headshot for the feed', () => {
