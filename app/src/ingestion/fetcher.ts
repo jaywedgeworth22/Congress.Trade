@@ -24,6 +24,7 @@ import {
   establishSenateSession,
   looksLikeSenateAgreementWall,
 } from './senateSource.ts';
+import { isSenateRelayUnreachable } from './senateRelayHealth.ts';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 
@@ -250,7 +251,28 @@ export async function fetchFiling(
         signal: lease?.signal,
       }, { service: 'filing-ingestion', operation: 'fetch-filing-document-relay', dynamicTarget: 'filing-source' });
 
-    if (row.chamber === 'senate' && env.CONFIG_KV && !senateRelayUrl) {
+    // Prefer #1610's /fetch-doc when the relay answers.  Cloudflare 502/5xx
+    // on the named tunnel means the Mac origin is gone — fall back to direct
+    // eFD so a sleeping laptop does not fail-close Senate document fetch.
+    // Mirrored upstream statuses (404/403) still travel the relay path.
+    let usedRelay = false;
+    let relayRes: Response | null = null;
+    if (senateRelayUrl) {
+      try {
+        const candidate = await fetchSenateDocViaRelay();
+        if (!isSenateRelayUnreachable(candidate)) {
+          usedRelay = true;
+          relayRes = candidate;
+        } else {
+          await candidate.body?.cancel().catch(() => {});
+          console.warn(`fetcher: senate relay unreachable (HTTP ${candidate.status}); falling back to direct eFD`);
+        }
+      } catch (err) {
+        console.warn('fetcher: senate relay failed; falling back to direct eFD:', (err as Error).message);
+      }
+    }
+
+    if (row.chamber === 'senate' && env.CONFIG_KV && !usedRelay) {
       try {
         const session = await env.CONFIG_KV.get<{ cookieHeader: string }>('senate_efd_session', 'json');
         if (session?.cookieHeader) {
@@ -262,7 +284,7 @@ export async function fetchFiling(
     }
     // The HEAD pre-validation is skipped on the relay path: the relay only
     // exposes POST endpoints, and the GET below surfaces the same statuses.
-    const headRes = senateRelayUrl ? null : await trackedFetch(
+    const headRes = usedRelay ? null : await trackedFetch(
       sourceUrl,
       {
         method: 'HEAD',
@@ -288,11 +310,13 @@ export async function fetchFiling(
       return;
     }
 
-    const res = senateRelayUrl ? await fetchSenateDocViaRelay() : await trackedFetch(sourceUrl, {
-      headers,
-      redirect: 'follow',
-      signal: lease?.signal,
-    }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
+    const res = usedRelay && relayRes
+      ? relayRes
+      : await trackedFetch(sourceUrl, {
+        headers,
+        redirect: 'follow',
+        signal: lease?.signal,
+      }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
     if (!res.ok) {
       const notYetPublished = res.status === 404 && shouldRetryFetchStatus(res.status, row.first_seen_at, new Date());
       const message = notYetPublished
@@ -334,7 +358,7 @@ export async function fetchFiling(
       // retried once internally); a second relay call is the correct retry.
       // Direct path: negotiate a fresh agreement-accepted session ourselves.
       let retry: Response;
-      if (senateRelayUrl) {
+      if (usedRelay) {
         retry = await fetchSenateDocViaRelay();
       } else {
         const session = await establishSenateSession({ kv: env.CONFIG_KV });

@@ -142,3 +142,63 @@ describe('GET /health/latency', () => {
     expect(body.check?.status).toBe('stalled');
   });
 });
+
+describe('GET /health/senate-relay', () => {
+  function relayEnv(url?: string) {
+    const store = new Map<string, string>();
+    return {
+      ...makeEnv(),
+      SENATE_RELAY_URL: url,
+      CONFIG_KV: {
+        get: async (k: string, mode?: string) => {
+          const v = store.get(k) ?? null;
+          if (v === null) return null;
+          return mode === 'json' ? JSON.parse(v) : v;
+        },
+        put: async (k: string, v: string) => { store.set(k, v); },
+      },
+    } as unknown as Env;
+  }
+
+  it('200 with mode=direct when SENATE_RELAY_URL is unset', async () => {
+    const res = await app.request('http://localhost/health/senate-relay', {}, relayEnv());
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    const body = await res.json() as { ok: boolean; configured: boolean; mode: string };
+    expect(body.ok).toBe(true);
+    expect(body.configured).toBe(false);
+    expect(body.mode).toBe('direct');
+  });
+
+  it('503 when the named-tunnel origin returns Cloudflare 502', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('error code: 502', { status: 502 })));
+    const res = await app.request(
+      'http://localhost/health/senate-relay',
+      {},
+      relayEnv('https://scout.jays.services'),
+    );
+    expect(res.status).toBe(503);
+    const body = await res.json() as { ok: boolean; host: string; status: number };
+    expect(body.ok).toBe(false);
+    expect(body.host).toBe('scout.jays.services');
+    expect(body.status).toBe(502);
+    vi.unstubAllGlobals();
+  });
+
+  it('200 when the relay /health answers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, service: 'senate-relay' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const res = await app.request(
+      'http://localhost/health/senate-relay',
+      {},
+      relayEnv('https://scout.jays.services'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; mode: string };
+    expect(body.ok).toBe(true);
+    expect(body.mode).toBe('relay');
+    vi.unstubAllGlobals();
+  });
+});

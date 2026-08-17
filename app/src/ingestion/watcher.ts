@@ -37,6 +37,7 @@ import {
 import { logProbeCadence, type ProbeCadenceAuthority } from './probeCadenceLog.ts';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource.ts';
 import { fetchSenatePtrFilings } from './senateSource.ts';
+import { refreshSenateRelayHealth } from './senateRelayHealth.ts';
 import { recordDisclosureLatencyCandidate, storageMissing } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
@@ -984,6 +985,15 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
     // "attempts running, successes stale" instead of silence.
     await recordSourceError(env, 'executive', now.toISOString(), err);
     result.executive = 'failure';
+  }
+
+  // Cheap GET /health against the named Senate tunnel.  Fail-soft: a probe
+  // error must never fail the watcher tick.  Writes CONFIG_KV so pipelineHealth
+  // can surface a dead Mac without adding an outbound hop to /api/health.
+  try {
+    await refreshSenateRelayHealth(env, now);
+  } catch (err) {
+    console.warn('watcher: senate relay health probe failed:', (err as Error).message);
   }
   return result;
 }

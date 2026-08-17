@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Senate relay no longer fail-closes on a sleeping Mac (#1604)
+
+Named tunnel `scout.jays.services` is already permanent (#1779).  `#1610`
+`/fetch-doc` is unchanged when the relay answers.  Search and document fetch
+now fall back to direct eFD on Cloudflare 502/5xx so one laptop sleeping does
+not zero Senate coverage while Imperva allows the box.  `GET /api/health/senate-relay`
+live-probes the origin.  Remaining always-on residential host:
+`docs/rollouts/2026-08-17-senate-relay-host-dependency.md`.
+
 ## 2026-08-17 GROK — Effort-board hygiene
 
 In Progress rebuilt to leftover real work. Verified-merged rows moved to Completed. Landing this mirror so GitHub effort issues close.
