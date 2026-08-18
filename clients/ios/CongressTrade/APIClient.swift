@@ -812,7 +812,7 @@ final class CongressTradeAPIClient {
     }
 
     /// Website parity: `ct_session` cookie for ADMIN_EMAILS, plus optional
-    /// `Authorization: Bearer ADMIN_TOKEN` (Jay's usual phone path).
+    /// `Authorization: Bearer ADMIN_TOKEN`.
     private func makeAdminRequest(_ url: URL, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
         var request = try makeRequest(url)
         request.httpMethod = method
