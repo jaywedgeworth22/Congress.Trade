@@ -362,6 +362,10 @@ export class FallbackExtractor implements Extractor {
  * PTRs never fall through to OpenRouter Files. Vision/Files is only for
  * documents classified as real scans, and only when the cheap read was empty
  * (not letterhead junk).
+ *
+ * House-only (`canHandle` is chamber === 'house'). Executive `scanned_pdf`
+ * OCR after unpdf is owned by PR #1959 (`OgePdfExtractor`). Do not add that
+ * class or rewrite that lane on this branch.
  */
 export class HousePdfExtractor implements Extractor {
   readonly name: string;
@@ -448,6 +452,10 @@ export class HousePdfExtractor implements Extractor {
  * is wrapped in an ArbitratingExtractor; when ARBITRATION_API_KEY is set (and
  * ARBITRATION_ENABLED === 'true'), a second, independent vision extractor — a
  * different model keyed by ARBITRATION_API_KEY — cross-checks every scanned doc.
+ *
+ * KEEPOUT #1959: this branch leaves executive `scanned_pdf` on the main-branch
+ * vision path (`ogeText` claims `text_pdf` only). Do not add `OgePdfExtractor`
+ * / `ogePdf` here. After #1959 lands, rebase and keep that wiring as written.
  */
 export function buildExtractorPipeline(env: Env): Extractor[] {
   const senateHtml = new SenateHtmlExtractor(env);

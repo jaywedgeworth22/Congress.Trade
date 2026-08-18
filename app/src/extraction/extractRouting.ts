@@ -10,6 +10,9 @@
  *
  * Cost target for a typed House PTR: local unpdf + optional Flash-Lite text
  * call (tokens only, typically well under $0.01) — not a $0.50 Files hold.
+ *
+ * House-only helpers. Executive `scanned_pdf` OCR after unpdf is PR #1959.
+ * Do not extend these DocID gates into that lane.
  */
 
 import type { Filing, ParsedTx } from '../shared/types.ts';
