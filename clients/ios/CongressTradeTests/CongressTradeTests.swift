@@ -1066,6 +1066,70 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
     }
 
+    @MainActor
+    func testSetPartySelectionSendsPartyToPartySplit() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var splitURL: URL?
+        var leaderboardURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/api/analytics/party-split") == true {
+                splitURL = request.url
+            }
+            if request.url?.path.contains("/api/analytics/ticker-leaderboard") == true {
+                leaderboardURL = request.url
+            }
+            if request.url?.path.contains("/feed") == true {
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            return Self.response(for: request, json: "{}")
+        }
+
+        await store.setPartySelection([.democrat])
+
+        let split = try XCTUnwrap(URLComponents(url: XCTUnwrap(splitURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(split.queryItems?.first(where: { $0.name == "party" })?.value, "D")
+        let board = try XCTUnwrap(URLComponents(url: XCTUnwrap(leaderboardURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(board.queryItems?.first(where: { $0.name == "sort" })?.value, "volume")
+        XCTAssertNil(board.queryItems?.first(where: { $0.name == "rankBy" }))
+    }
+
+    @MainActor
+    func testFetchTickerForwardsSharedFilters() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var tickerURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/ticker/") == true {
+                tickerURL = request.url
+                return Self.response(for: request, json: #"{"ticker":"AAPL","asset":{},"summary":{},"items":[],"count":0,"total":0}"#)
+            }
+            if request.url?.path.contains("/feed") == true {
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            return Self.response(for: request, json: "{}")
+        }
+
+        await store.setTradeTypeSelection([.buy])
+        _ = try? await store.fetchTicker("AAPL")
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(tickerURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "window" })?.value, "90d")
+    }
+
     /// Multi-select Trade Type pill: `type=` is CSV-capable (`asTxTypes`).
     @MainActor
     func testSetTradeTypeSelectionSendsTypeCSVWhenMultipleSidesSelected() async throws {

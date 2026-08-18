@@ -235,10 +235,10 @@ struct TickerDetailView: View {
 
     private func fetchTicker() async throws -> ClientTickerResponse {
         do {
-            return try await store.api.ticker(ticker)
+            return try await store.fetchTicker(ticker)
         } catch let error as APIError where error.isRetryable {
             try await Task.sleep(for: .milliseconds(400))
-            return try await store.api.ticker(ticker)
+            return try await store.fetchTicker(ticker)
         }
     }
 }

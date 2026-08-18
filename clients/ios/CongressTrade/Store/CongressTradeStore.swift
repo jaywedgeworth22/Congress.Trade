@@ -773,7 +773,7 @@ final class CongressTradeStore: ObservableObject {
 
         do {
             async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, rankBy: "volume")
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, sort: "volume")
             async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
@@ -781,7 +781,7 @@ final class CongressTradeStore: ObservableObject {
             async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam, type: typeParam)
+            async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             // Latency is independent of trends filters; load it fail-soft so a
@@ -913,6 +913,32 @@ final class CongressTradeStore: ObservableObject {
         let all = Set(PartyFilter.allCases)
         if parties.isEmpty || parties == all { return nil }
         return parties.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// Shared chips (window/chamber/party/side) forwarded onto ticker and
+    /// politician sheets so those functions honor the same filters as Trends.
+    func fetchTicker(_ symbol: String) async throws -> ClientTickerResponse {
+        try await api.ticker(
+            symbol,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
+    }
+
+    func fetchMember(id: String) async throws -> ClientMemberResponse {
+        try await api.member(
+            id: id,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
     }
 
     private func trimCache(in context: ModelContext) throws {
