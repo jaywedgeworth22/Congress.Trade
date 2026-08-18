@@ -73,16 +73,75 @@ function peelCircuitLastError(message: string): string | null {
   return last || null;
 }
 
-function isCredentialAuthFailure(message: string): boolean {
+/**
+ * Proven LLM/provider credential rejection.  These stay fail-closed + ack.
+ * Do not treat source-fetch 401/403 or admin 401 as a dead OpenRouter key.
+ */
+function isProvenLlmCredentialRejection(message: string): boolean {
   return (
-    /\b401\b/.test(message)
-    || message.includes('invalid_api_key')
+    message.includes('invalid_api_key')
     || message.includes('invalid api key')
-    || message.includes('authentication')
-    || message.includes('unauthorized')
     || message.includes('api key not configured')
     || message.includes('rejected the configured credential')
+    || message.includes('authentication_error')
+    || message.includes('authentication failed')
+    || (message.includes('user not found')
+      && (/\b401\b/.test(message) || message.includes('openrouter')))
+    || /openrouter api 401/.test(message)
   );
+}
+
+function isLlmCredentialContext(message: string): boolean {
+  return (
+    message.includes('openrouter')
+    || message.includes('openai')
+    || message.includes('anthropic')
+    || message.includes('gemini')
+    || message.includes('xai')
+    || message.includes('grok')
+    || message.includes('api key')
+    || message.includes('api_key')
+    || /\bllm\b/.test(message)
+    || message.includes('openroutervision')
+    || message.includes('openroutertext')
+  );
+}
+
+/**
+ * House Clerk / eFD / OGE / fetcher / admin 401-403.  Ingest already treats
+ * `fetcher: Unauthorized` as a transient DLQ.  The HTTP statusText for 401
+ * is the bare word "Unauthorized" — that must not trip extract auth.
+ */
+function isSourceFetchOrAdminAuthNoise(message: string): boolean {
+  const m = message.trim();
+  if (!m) return false;
+  if (m === 'unauthorized' || m === 'forbidden') return true;
+  if (m.startsWith('unauthorized —') || m.startsWith('unauthorized -')) return true;
+  if (m.includes('fetcher:')) return true;
+  if (m.includes('paste your admin token')) return true;
+  if (m.includes('/api/admin')) return true;
+  const statusish = /\b40[13]\b/.test(m) || m.includes('unauthorized') || m.includes('forbidden');
+  if (!statusish) return false;
+  return (
+    m.includes('clerk')
+    || m.includes('disclosures-clerk')
+    || /house (get|live|bulk|zip|ptr|fd|search|fetch)/.test(m)
+    || /senate (get|post|relay|search|fetch|agreement)/.test(m)
+    || m.includes('efdsearch')
+    || /oge (index|get|fetch)/.test(m)
+    || (/\badmin\b/.test(m) && !isLlmCredentialContext(m))
+  );
+}
+
+function isCredentialAuthFailure(message: string): boolean {
+  if (isSourceFetchOrAdminAuthNoise(message)) return false;
+  if (isProvenLlmCredentialRejection(message)) return true;
+  // Bare 401 / "unauthorized" is HTTP statusText from Clerk, admin, or R2 —
+  // only count it as a dead key when an LLM provider is named.
+  if (/\b401\b/.test(message) || message.includes('unauthorized')) {
+    return isLlmCredentialContext(message);
+  }
+  return false;
 }
 
 const label = (c: { provider: string; model: string }): string => `${c.provider}:${c.model}`;
@@ -183,6 +242,9 @@ export function summarizeProviderHaltCause(error: string | null | undefined): st
   if (/\b429\b/.test(lower) || /rate[- ]?limit/.test(lower) || lower.includes('too many requests')) {
     return 'provider rate-limit';
   }
+  if (isSourceFetchOrAdminAuthNoise(lower)) {
+    return 'source-fetch or admin unauthorized, not a dead LLM key';
+  }
   if (/\b403\b/.test(lower) && !isCredentialAuthFailure(lower)) {
     return 'transient 403';
   }
@@ -228,6 +290,52 @@ export function isTransientFilesPrepaidHalt(
     return Object.values(sampleErrors).some((value) => isTransientFilesPrepaidError(value));
   }
   return false;
+}
+
+function sampleErrorValues(
+  sampleErrors: string | Record<string, string> | null | undefined,
+): string[] {
+  if (typeof sampleErrors === 'string' && sampleErrors.trim()) {
+    try {
+      const value = JSON.parse(sampleErrors) as unknown;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return Object.values(value as Record<string, string>).filter((v) => typeof v === 'string');
+      }
+    } catch {
+      return [sampleErrors];
+    }
+    return [sampleErrors];
+  }
+  if (sampleErrors && typeof sampleErrors === 'object') {
+    return Object.values(sampleErrors).filter((v) => typeof v === 'string');
+  }
+  return [];
+}
+
+/** Source-fetch / admin / Clerk 401 statusText — not a rejected LLM key. */
+export function isFalseSourceAuthError(error: string | null | undefined): boolean {
+  const message = (error ?? '').trim().toLowerCase();
+  if (!message) return false;
+  if (isProvenLlmCredentialRejection(message)) return false;
+  return isSourceFetchOrAdminAuthNoise(message);
+}
+
+/**
+ * Stored `error_class:auth` latch from source-fetch / admin Unauthorized.
+ * Safe to auto-resume.  Proven invalid_api_key / User not found / OpenRouter
+ * API 401 stay fail-closed until a human acks.
+ */
+export function isFalseSourceAuthHalt(
+  haltReason: string | null | undefined,
+  sampleErrors: string | Record<string, string> | null | undefined = null,
+): boolean {
+  if ((haltReason ?? '').trim() !== 'error_class:auth') return false;
+  const samples = sampleErrorValues(sampleErrors);
+  if (samples.length === 0) return false;
+  if (samples.some((sample) => isProvenLlmCredentialRejection(sample.toLowerCase()))) {
+    return false;
+  }
+  return samples.every((sample) => isFalseSourceAuthError(sample));
 }
 
 export function describeAutopilotHaltReason(
