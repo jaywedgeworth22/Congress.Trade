@@ -9408,15 +9408,15 @@ function runMarketBackfill(dryRun) {
 	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
 	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
 	// Trends "Trades" answers a different question than the Trades tab's own
-	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party
-	// chips above (default: past 90 days, all parties), while the Trades tab
+	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party/side
+	// chips above (default: past 90 days, all parties, all sides), while the Trades tab
 	// counts whatever its own ticker/politician/date/chamber/party/side filters
 	// currently say, over its own separately paginated total. Both count the
 	// same underlying "real, disclosed trade" universe (synthetic/placeholder
 	// rows are excluded from both — see delivery/rows.ts + analytics/sql.ts),
 	// so a residual difference here is a scope difference, not a bug — this
 	// tip exists so that's obvious at a glance rather than a support question.
-	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party filters above — a different query than the Trades tab list, which has its own filters and total.';
+	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party/side filters above — a different query than the Trades tab list, which has its own filters and total.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(getTrWindow());
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
@@ -9427,6 +9427,8 @@ function trParams() {
     paGroup.querySelectorAll('.party-chip.on').forEach(function(b) { parties.push(b.getAttribute('data-party')); });
     if (parties.length > 0) p += '&party=' + parties.join(',');
   }
+  var ty = selectedSideParam('trSideGroup');
+  if (ty) p += '&type=' + encodeURIComponent(ty);
   return p;
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };

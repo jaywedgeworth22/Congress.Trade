@@ -2876,6 +2876,11 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("if (ty) p.set('type', ty);");
   });
 
+  it('forwards the Trends side chips as type= on every analytics request', () => {
+    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('trSideGroup');");
+    expect(DASHBOARD_HTML).toContain("if (ty) p += '&type=' + encodeURIComponent(ty);");
+  });
+
   it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
     expect(DASHBOARD_HTML).toContain('class="filter-groups"');
     // Party + side chips now share the exact joined-segment treatment as the

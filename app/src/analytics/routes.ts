@@ -8,7 +8,7 @@
  * sector mix, disclosure timeliness, and per-ticker deep dives.
  *
  * Every endpoint:
- *   - accepts the shared params window / chamber / party / source / minConf
+ *   - accepts the shared params window / chamber / party / type / source / minConf
  *     (+ endpoint-specific limit / sort / granularity / minMembers),
  *   - reports dollars as ESTIMATES from STOCK Act bracket midpoints
  *     (estimatedAmounts: true in the envelope),
@@ -29,8 +29,10 @@ import {
   asPartyBucket,
   asPartyBuckets,
   asSourceFilter,
+  asTxTypes,
   asWindow,
   autoGranularity,
+  constrainTxTypes,
   isGranularity,
   type CommonFilters,
   type Granularity,
@@ -171,6 +173,7 @@ function commonFromQuery(q: Record<string, string>): CommonQuery {
     chambers,
     party: asPartyBucket(q.party),
     parties: asPartyBuckets(q.party),
+    txTypes: asTxTypes(q.type),
     source: asSourceFilter(q.source),
     minConf: minConf !== undefined && Number.isFinite(minConf) ? minConf : undefined,
     excludeOptions: q.excludeOptions === 'true',
@@ -187,6 +190,7 @@ function meta(f: CommonQuery, extra: Record<string, unknown> = {}): Record<strin
     window: f.window,
     chamber: f.chambers ? f.chambers.join(',') : f.chamber ?? null,
     party: f.party ?? null,
+    type: f.txTypes?.join(',') ?? null,
     source: f.source ?? 'all',
     estimatedAmounts: true,
     asOf: new Date().toISOString(),
@@ -288,7 +292,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
       // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
       // ranking) directional, and a ticker with no P/S simply isn't a candidate.
-      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['B', 'S'], sort: 'trades', limit: pool });
+      const lbQ = buildTickerLeaderboardQuery({
+        ...fStock,
+        txTypes: constrainTxTypes(fStock.txTypes, ['B', 'S']),
+        sort: 'trades',
+        limit: pool,
+      });
       const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
       // Fetch the party + momentum + skill-link aggregates restricted to THIS
       // candidate set, so every ranked candidate's resolved side is present (a
@@ -306,7 +315,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const clQ = buildClusterBuysQuery({ ...fStock, tickers: batch, minMembers: 2, limit: 200 });
           // Momentum is PER SIDE (bySide) and directional (P/S) only — rising
           // purchases must not feed a SELL signal, and 'E'/option rows never count.
-          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['B', 'S'], bySide: true, limit: 200 });
+          const trQ = buildTrendingQuery({
+            ...fStock,
+            tickers: batch,
+            txTypes: constrainTxTypes(fStock.txTypes, ['B', 'S']),
+            bySide: true,
+            limit: 200,
+          });
           // Who traded each candidate, by side (for the realized-skill rollup).
           const lkQ = buildConvictionMemberLinksQuery(batch, fStock);
           return [

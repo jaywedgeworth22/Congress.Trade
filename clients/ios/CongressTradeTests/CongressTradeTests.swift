@@ -678,6 +678,7 @@ final class CongressTradeTests: XCTestCase {
         await fulfillment(of: [seen], timeout: 1)
     }
 
+    @MainActor
     func testPermanentClientErrorIsNotRetried() async throws {
         var feedAttempts = 0
         MockURLProtocol.handler = { request in
@@ -1034,6 +1035,35 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
         // Free-text search still uses memberName when set later; type alone must not emit member=.
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "member" }))
+    }
+
+    /// Trends analytics used to ignore the Buys/Sells chip (only the Trades
+    /// feed sent `type=`). Selecting Buys must reach `/api/analytics/summary`.
+    @MainActor
+    func testSetTradeTypeSelectionSendsTypeToTrendsAnalytics() async throws {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        var summaryURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/api/analytics/summary") == true {
+                summaryURL = request.url
+            }
+            if request.url?.path.contains("/feed") == true {
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            return Self.response(for: request, json: "{}")
+        }
+
+        await store.setTradeTypeSelection([.buy])
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(summaryURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "type" })?.value, "B")
     }
 
     /// Multi-select Trade Type pill: `type=` is CSV-capable (`asTxTypes`).

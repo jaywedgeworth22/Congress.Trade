@@ -592,12 +592,9 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
 }
 
 /// Buy / Sell / Exchange side filter. Multi-select (`CongressTradeStore.
-/// selectedTradeTypes: Set<TradeTypeFilter>`, empty = all sides) — the server's
-/// `type=` param is single-valued (`asTxType` in `app/src/client/utils.ts`),
-/// exactly mirroring the web's own `qSideGroup`/`selectedSideParam` chips,
-/// which likewise only forward `type=` when exactly one side is toggled and
-/// otherwise fall back to an unfiltered fetch narrowed client-side. See
-/// `CongressTradeStore.tradeTypeQueryValue`.
+/// selectedTradeTypes: Set<TradeTypeFilter>`, empty = all sides). Forwarded as
+/// `type=` CSV (`asTxTypes`) on the Trades feed and every Trends analytics
+/// request. See `CongressTradeStore.tradeTypeQueryValue`.
 /// Trades-only instrument-class filter (owner: All vs Public Equities, Funds, & ETFs).
 enum AssetClassFilter: String, CaseIterable, Identifiable, Hashable {
     case all = "all"

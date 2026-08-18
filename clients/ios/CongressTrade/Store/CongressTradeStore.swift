@@ -769,20 +769,21 @@ final class CongressTradeStore: ObservableObject {
         let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
+        let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
 
         do {
-            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, rankBy: "volume")
-            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam)
-            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, rankBy: "volume")
+            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam, type: typeParam)
+            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             // Latency is independent of trends filters; load it fail-soft so a
             // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
