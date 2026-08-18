@@ -144,6 +144,21 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       const txType = String(params[i++]);
       rows = rows.filter((row) => row.tx_type === txType);
     }
+    const typeIn = sql.match(/t\.tx_type IN \(([?, ]+)\)/i);
+    if (typeIn) {
+      const n = (typeIn[1].match(/\?/g) ?? []).length;
+      const types = params.slice(i, i + n).map(String);
+      i += n;
+      rows = rows.filter((row) => types.includes(String(row.tx_type)));
+    }
+    if (/t\.tx_date >= \?/i.test(sql)) {
+      const min = String(params[i++]).slice(0, 10);
+      rows = rows.filter((row) => String(row.tx_date ?? '') >= min);
+    }
+    if (/t\.tx_date <= \?/i.test(sql)) {
+      const max = String(params[i++]).slice(0, 10);
+      rows = rows.filter((row) => String(row.tx_date ?? '') <= max);
+    }
     const chamberIn = sql.match(/COALESCE\(fl\.chamber, f\.chamber\) IN \(([?, ]+)\)/i);
     if (chamberIn) {
       const n = (chamberIn[1].match(/\?/g) ?? []).length;
@@ -1026,6 +1041,39 @@ describe('client API routes', () => {
     ]);
     expect(body.count).toBe(1);
     expect(body.total).toBe(2);
+  });
+
+  it('applies shared type= filter to ticker list and summary', async () => {
+    const { env, feedRows, securities } = makeEnv();
+    securities.set('AAPL', {
+      ticker: 'AAPL',
+      company_name: 'Apple Inc.',
+      sector: 'Technology',
+      industry: 'Consumer Electronics',
+      asset_class: 'equity',
+      country: 'US',
+      exchange_short: 'NASDAQ',
+      currency: 'USD',
+      market_cap: 3_200_000_000_000,
+      market_cap_bucket: 'mega',
+      current_price: 210.25,
+      current_price_date: '2026-06-24',
+    });
+    feedRows.push(
+      feedRow({ id: 'tx_aapl_buy', ticker: 'AAPL', tx_type: 'B', cursor_seq: 20 }),
+      feedRow({ id: 'tx_aapl_sell', ticker: 'AAPL', tx_type: 'S', cursor_seq: 21 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/ticker/AAPL?type=B', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      summary: { totalTrades: number; buyCount: number; sellCount: number };
+      items: Array<{ id: string; transaction: { type: string } }>;
+      total: number;
+    };
+    expect(body.summary).toMatchObject({ totalTrades: 1, buyCount: 1, sellCount: 0 });
+    expect(body.total).toBe(1);
+    expect(body.items.map((item) => item.id)).toEqual(['tx_aapl_buy']);
   });
 
   it('returns a public politician detail envelope by member endpoint/name', async () => {

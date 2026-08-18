@@ -11267,7 +11267,7 @@ function openAsset(ticker) {
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
     : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
-  aGet('ticker/' + encodeURIComponent(ticker) + '?window=' + encodeURIComponent(tickerWindow)).then(function (d) {
+  aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
     var s = d.summary || {};
     var companyName = (d.ref && d.ref.companyName) || d.name || '';
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
@@ -11325,7 +11325,7 @@ function openAsset(ticker) {
       topbarTitle
     );
     // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
-    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?window=' + encodeURIComponent(tickerWindow)).then(function (bt) {
+    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?' + trParams()).then(function (bt) {
       var pEl = el('assetPerf'); if (pEl) pEl.innerHTML = tickerBacktestHtml(bt);
     }).catch(function () {
       var pEl = el('assetPerf');
@@ -11371,7 +11371,7 @@ function tickerBacktestHtml(d) {
 function openMember(filerId) {
   if (!filerId) return;
   openDrawer('<div class="note">Loading politician…</div>');
-  aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
+  aGet('member/' + encodeURIComponent(filerId) + '?' + trParams()).then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
@@ -11415,10 +11415,8 @@ function openMember(filerId) {
     openDrawer(
       '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
-      // This drawer is always loaded with window=all, so its figures cover the
-      // whole record — the Trades tab's own count is scoped to the active time
-      // window and will read much smaller for the same politician. Say which.
-      '<div class="drawer-section"><h3>Trade Stats (All Time)</h3><dl class="drawer-kv">' +
+      // Same shared chips as Trends (window/chamber/party/side) via trParams().
+      '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
 	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
@@ -11432,7 +11430,7 @@ function openMember(filerId) {
       esc(name)
     );
     // Lazy-load dual-anchor buy skill (trade-date approx + filing-date copy-trade).
-    aGet('member/' + encodeURIComponent(filerId) + '/performance?window=all').then(function (perf) {
+    aGet('member/' + encodeURIComponent(filerId) + '/performance?' + trParams()).then(function (perf) {
       var pEl = el('memberPerf'); if (pEl) pEl.innerHTML = memberPerfHtml(perf);
     }).catch(function () {
       var pEl = el('memberPerf');

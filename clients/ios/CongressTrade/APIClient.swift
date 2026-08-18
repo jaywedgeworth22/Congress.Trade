@@ -185,7 +185,15 @@ final class CongressTradeAPIClient {
         return try await request(url)
     }
 
-    func member(id: String) async throws -> ClientMemberResponse {
+    func member(
+        id: String,
+        window: String? = nil,
+        from: String? = nil,
+        to: String? = nil,
+        chamber: String? = nil,
+        party: String? = nil,
+        type: String? = nil
+    ) async throws -> ClientMemberResponse {
         // Query items must stay on the URL, not in the path.  `get("member/x?sort=")`
         // went through `appendingPathComponent`, which encoded `?` and made the
         // server look up `C001047?sort=tx_date` → 404 "member not found".
@@ -193,10 +201,17 @@ final class CongressTradeAPIClient {
             url: endpointURL("member").appendingPathComponent(id),
             resolvingAgainstBaseURL: false
         )
-        components?.queryItems = [
+        var items = [
             URLQueryItem(name: "sort", value: "tx_date"),
             URLQueryItem(name: "order", value: "desc"),
         ]
+        if let window, !window.isEmpty { items.append(URLQueryItem(name: "window", value: window)) }
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        components?.queryItems = items
         guard let url = components?.url else { throw APIError.invalidResponse }
         return try await request(url)
     }
@@ -219,9 +234,30 @@ final class CongressTradeAPIClient {
         try await request(originURL.appendingPathComponent("api/assets"))
     }
 
-    func ticker(_ ticker: String) async throws -> ClientTickerResponse {
+    func ticker(
+        _ ticker: String,
+        window: String? = nil,
+        from: String? = nil,
+        to: String? = nil,
+        chamber: String? = nil,
+        party: String? = nil,
+        type: String? = nil
+    ) async throws -> ClientTickerResponse {
         let encoded = ticker.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ticker
-        return try await get("ticker/\(encoded)")
+        guard var components = URLComponents(
+            url: endpointURL("ticker").appendingPathComponent(encoded),
+            resolvingAgainstBaseURL: false
+        ) else { throw APIError.invalidResponse }
+        var items: [URLQueryItem] = []
+        if let window, !window.isEmpty { items.append(URLQueryItem(name: "window", value: window)) }
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if !items.isEmpty { components.queryItems = items }
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await request(url)
     }
 
     /// Sends a magic-link sign-in email. The `client=ios` query makes the
@@ -279,10 +315,10 @@ final class CongressTradeAPIClient {
         try await analyticsGet("summary", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func tickerLeaderboard(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil, rankBy: String = "volume") async throws -> TickerLeaderboardResponse {
+    func tickerLeaderboard(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil, sort: String = "volume") async throws -> TickerLeaderboardResponse {
         try await analyticsGet(
             "ticker-leaderboard",
-            query: makeQueryItems(window: window, party: party, chamber: chamber, type: type, extra: [URLQueryItem(name: "rankBy", value: rankBy)])
+            query: makeQueryItems(window: window, party: party, chamber: chamber, type: type, extra: [URLQueryItem(name: "sort", value: sort)])
         )
     }
 
@@ -314,8 +350,8 @@ final class CongressTradeAPIClient {
         try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func partySplit(window: String, chamber: String? = nil, type: String? = nil) async throws -> PartySplitResponse {
-        try await analyticsGet("party-split", query: makeQueryItems(window: window, chamber: chamber, type: type))
+    func partySplit(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> PartySplitResponse {
+        try await analyticsGet("party-split", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
     func filingLag(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> FilingLagResponse {

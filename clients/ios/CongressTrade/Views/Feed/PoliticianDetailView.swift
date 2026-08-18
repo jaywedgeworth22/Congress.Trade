@@ -214,10 +214,10 @@ struct PoliticianDetailView: View {
 
     private func fetchMember() async throws -> ClientMemberResponse {
         do {
-            return try await store.api.member(id: memberId)
+            return try await store.fetchMember(id: memberId)
         } catch let error as APIError where error.isRetryable {
             try await Task.sleep(for: .milliseconds(400))
-            return try await store.api.member(id: memberId)
+            return try await store.fetchMember(id: memberId)
         }
     }
 }

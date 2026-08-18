@@ -592,7 +592,7 @@ describe('DASHBOARD_HTML', () => {
   it('wires politician dual performance (trade-date skill + filing-date copy-trade)', () => {
     expect(DASHBOARD_HTML).toContain('function memberPerfHtml(');
     expect(DASHBOARD_HTML).toContain("aGet('member/'");
-    expect(DASHBOARD_HTML).toContain("/performance?window=all'");
+    expect(DASHBOARD_HTML).toContain("/performance?' + trParams()");
     expect(DASHBOARD_HTML).toContain('id="memberPerf"');
     expect(DASHBOARD_HTML).toContain('Their timing (approx.)');
     expect(DASHBOARD_HTML).toContain('If you bought at filing');
@@ -2881,6 +2881,13 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("if (ty) p += '&type=' + encodeURIComponent(ty);");
   });
 
+  it('opens ticker and politician drawers with the same shared filter params', () => {
+    expect(DASHBOARD_HTML).toContain("'ticker/' + encodeURIComponent(ticker) + '?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'/backtest?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'member/' + encodeURIComponent(filerId) + '?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'/performance?' + trParams()");
+  });
+
   it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
     expect(DASHBOARD_HTML).toContain('class="filter-groups"');
     // Party + side chips now share the exact joined-segment treatment as the
@@ -4502,8 +4509,8 @@ describe('web blocking defects (audited)', () => {
     expect(DASHBOARD_HTML).toContain('trade counts are all time');
     expect(DASHBOARD_HTML).toContain('Trade counts cover the full record, not the timeframe set on Trades or Trends.');
     expect(DASHBOARD_HTML).toContain('title="Sort by trade count (all time)"');
-    // Politician drawer loads window=all, so it says so.
-    expect(DASHBOARD_HTML).toContain('<h3>Trade Stats (All Time)</h3>');
+    // Politician drawer follows the shared window/chamber/party/side chips.
+    expect(DASHBOARD_HTML).toContain("'member/' + encodeURIComponent(filerId) + '?' + trParams()");
     // Asset drawer subtitle carries the same window as its KPI section.
     expect(DASHBOARD_HTML).toContain("' approx. volume  |  ' + esc(tickerWindowLabel)");
     // Company drawer + Trends card: executive is in the default corpus, so

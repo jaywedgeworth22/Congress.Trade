@@ -616,7 +616,7 @@ export async function readCursorHighWater(env: Env): Promise<number> {
  * added — the count query omits it so it reports ALL rows matching the
  * ticker/member/type/chamber filters (independent of paging position).
  */
-function buildTxFilters(
+export function buildTxFilters(
   p: TxQueryParams,
   includeCursor: boolean,
 ): { where: string[]; params: Array<string | number> } {
