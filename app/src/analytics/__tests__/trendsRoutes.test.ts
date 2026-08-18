@@ -216,6 +216,13 @@ describe('GET /api/analytics/summary type=', () => {
     const body = (await getJson(fixture(), '/summary?window=90d')) as { type: string | null };
     expect(body.type).toBeNull();
   });
+
+  it('echoes a CSV party selection instead of the first letter only', async () => {
+    const body = (await getJson(fixture(), '/summary?window=90d&party=D,R')) as {
+      party: string | null;
+    };
+    expect(body.party).toBe('D,R');
+  });
 });
 
 describe('GET /api/analytics/sector-breakdown', () => {

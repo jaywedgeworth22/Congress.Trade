@@ -5483,7 +5483,7 @@ function handleTradesTextFilter() {
 }
 
 /* Mirror the feed filters + Trends window into the URL so a refresh or a
-   shared link restores them. These params (ft/fm/fty/fch/fw) are deliberately
+   shared link restores them. These params (fq/fty/fpa/fch/fw) are deliberately
    distinct from the deep-link params (?ticker=/?member=/?trade=), which open
    drawers instead of setting filters. */
 function syncFilterUrl() {
@@ -5495,6 +5495,7 @@ function syncFilterUrl() {
       ['ft', ''],
       ['fm', ''],
       ['fty', selectedSideParam('qSideGroup')],
+      ['fpa', partyParam('qPartyGroup')],
       ['fch', chamberParam('qChamber')],
       ['fw', getTrWindow()],
     ];
@@ -5513,14 +5514,15 @@ function restoreFiltersFromUrl() {
     else if (fq && el('qMember')) el('qMember').value = fq;
     var fty = sp.get('fty');
     if (fty) {
-      ['qSideGroup', 'trSideGroup'].forEach(function (gid) {
-        var g = el(gid); if (!g) return;
-        g.querySelectorAll('.side-chip').forEach(function (b) {
-          var on = b.getAttribute('data-side') === fty;
-          b.classList.toggle('on', on);
-          b.setAttribute('aria-pressed', on ? 'true' : 'false');
-        });
-      });
+      var sides = fty.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applySideSelection(sides);
+      try { localStorage.setItem('shared-sides-v1', JSON.stringify(sides)); } catch (_e) {}
+    }
+    var fpa = sp.get('fpa');
+    if (fpa) {
+      var parties = fpa.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applyPartySelection(parties);
+      try { localStorage.setItem('shared-parties-v1', JSON.stringify(parties)); } catch (_e2) {}
     }
     var fch = sp.get('fch');
     if (fch) {
@@ -12495,6 +12497,8 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+// URL wins over localStorage for party/side (chamber/window already restored above).
+restoreFiltersFromUrl();
 function closeIosFilterMenus(except) {
   document.querySelectorAll('.ios-filter').forEach(function (f) {
     if (except && f === except) return;

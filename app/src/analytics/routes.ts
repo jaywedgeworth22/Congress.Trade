@@ -189,7 +189,7 @@ function meta(f: CommonQuery, extra: Record<string, unknown> = {}): Record<strin
   return {
     window: f.window,
     chamber: f.chambers ? f.chambers.join(',') : f.chamber ?? null,
-    party: f.party ?? null,
+    party: f.parties && f.parties.length ? f.parties.join(',') : (f.party ?? null),
     type: f.txTypes?.join(',') ?? null,
     source: f.source ?? 'all',
     estimatedAmounts: true,
