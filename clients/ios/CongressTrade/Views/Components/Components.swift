@@ -857,6 +857,18 @@ struct AccountQuickMenu: View {
                     accountSection
                 }
 
+                if store.showsAdminRow {
+                    Section {
+                        NavigationLink(value: AdminRoute.panel) {
+                            Label("Admin", systemImage: "gearshape.2")
+                        }
+                    }
+                } else if store.showsAdminTokenField {
+                    Section("Admin Access") {
+                        AdminTokenField()
+                    }
+                }
+
                 Section {
                     TradeDisclosureAlertsToggle()
                 }
@@ -907,12 +919,23 @@ struct AccountQuickMenu: View {
             .modifier(ForcedColorScheme(pref: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
+            .navigationDestination(for: AdminRoute.self) { route in
+                switch route {
+                case .panel:
+                    AdminPanelView()
+                case .reviewQueue:
+                    ReviewQueueView()
+                case .reviewDetail(let docId):
+                    ReviewDetailView(docId: docId)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { isPresented = false }
                 }
             }
         }
+        .task { await store.probeAdminAccess() }
         .environment(\.openPremium) { showPremiumInfo = true }
         .sheet(isPresented: $showPremiumInfo) {
             PremiumSheet()

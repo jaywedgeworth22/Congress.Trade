@@ -1511,6 +1511,220 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
+    func testReviewModelDisplayNameNeverLabelsOpenRouterAsTheModel() {
+        XCTAssertEqual(ReviewModelSummary.displayName(model: "openrouter"), "unknown model")
+        XCTAssertEqual(ReviewModelSummary.displayName(model: "OpenRouter"), "unknown model")
+        XCTAssertEqual(ReviewModelSummary.displayName(model: "  "), "unknown model")
+        XCTAssertEqual(ReviewModelSummary.displayName(model: "google/gemini-2.5-flash"), "google/gemini-2.5-flash")
+    }
+
+    func testReviewQueueDecodingIsFailSoftAndKeepsModelId() throws {
+        let json = """
+        {
+          "items": [{
+            "docId": "H-2026-2003695",
+            "reason": "low_confidence,unresolved_ticker",
+            "payload": {"minConfidence": 0.4, "extractor": "vision", "transactions": [
+              {"ticker": "AAPL", "assetName": "Apple", "txType": "P", "txDate": "2026-07-01", "amountMin": 1001, "amountMax": 15000, "owner": "self"}
+            ]},
+            "createdAt": "2026-06-24T02:53:00.000Z",
+            "resolved": false,
+            "status": "pending",
+            "reviewRevision": 7,
+            "chamber": "house",
+            "docKind": "scanned_pdf",
+            "agreementSuppressedAt": "",
+            "models": [{
+              "provider": "openrouter",
+              "model": "google/gemini-2.5-flash",
+              "ok": true,
+              "rowCount": 1,
+              "avgConfidence": 0.42
+            }]
+          }],
+          "count": 1,
+          "resolved": false,
+          "nextCursor": "abc",
+          "totals": {"unresolved": 12, "matching": 1}
+        }
+        """
+        let decoded = try JSONDecoder().decode(ReviewQueueResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.items.count, 1)
+        XCTAssertEqual(decoded.totals?.unresolved, 12)
+        let item = decoded.items[0]
+        XCTAssertEqual(item.docId, "H-2026-2003695")
+        XCTAssertEqual(item.reviewRevision, 7)
+        XCTAssertFalse(item.isHeldFromAutomation)
+        XCTAssertEqual(item.primaryModelLabel, "google/gemini-2.5-flash")
+        XCTAssertEqual(item.reasonLabel, "Automated read below publish threshold; Asset symbol could not be matched to a known company")
+        XCTAssertEqual(item.queuedRows.count, 1)
+        XCTAssertEqual(item.queuedRows[0].confirmEditBody?["txType"] as? String, "B")
+        XCTAssertEqual(item.queuedRows[0].confirmEditBody?["ticker"] as? String, "AAPL")
+    }
+
+    func testReviewQueueDecodingSurvivesNullFields() throws {
+        let json = #"{"items":[{"docId":"X-1","models":null,"payload":null}],"totals":null}"#
+        let decoded = try JSONDecoder().decode(ReviewQueueResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.items.count, 1)
+        XCTAssertEqual(decoded.items[0].docId, "X-1")
+        XCTAssertEqual(decoded.items[0].reviewRevision, 1)
+        XCTAssertTrue(decoded.items[0].models.isEmpty)
+        XCTAssertEqual(decoded.items[0].reasonLabel, "Needs a human check")
+    }
+
+    func testPublicHealthAndAutopilotDecodingAreFailSoft() throws {
+        let healthJSON = """
+        {
+          "ok": true,
+          "status": "stalled",
+          "pipeline": {
+            "status": "stalled",
+            "checks": [
+              {"id": "extraction_provider", "status": "ok", "detail": "ok", "value": 3},
+              {"id": "extraction_backlog", "status": "stalled", "detail": "9 unresolved", "value": 9},
+              {"id": "autopilot_halt", "status": "stalled", "detail": "Autopilot runs halted: billing"},
+              {"id": "data_freshness", "status": "degraded", "detail": "Latest transaction is 149h old", "value": 149},
+              {"id": "ingestion_dead_letter", "status": "degraded", "detail": "320 failed", "value": 320},
+              {"id": "latency_probes", "status": "stalled", "detail": "silent", "value": null},
+              {"id": "polling_house", "status": "ok", "detail": "house polling live: last success 12m ago", "value": 0.2}
+            ],
+            "reviewQueue": {"unresolved": 9, "eligible": 4, "suppressed": 2, "terminal": 3}
+          }
+        }
+        """
+        let health = try JSONDecoder().decode(PublicHealthResponse.self, from: Data(healthJSON.utf8))
+        XCTAssertEqual(health.status, "stalled")
+        XCTAssertEqual(health.pipeline?.reviewQueue?.eligible, 4)
+        XCTAssertEqual(health.pipeline?.reviewQueue?.terminal, 3)
+        XCTAssertEqual(health.pipeline?.check(id: "latency_probes")?.status, "stalled")
+        XCTAssertNil(health.pipeline?.check(id: "latency_probes")?.value)
+
+        let autopilotJSON = """
+        {
+          "enabled": true,
+          "backlog": 4,
+          "reviewQueue": {"unresolved": 9, "eligible": 4, "suppressed": 2, "terminal": 3},
+          "today": {"day": "2026-08-18", "spendUsd": 0.12, "budgetUsd": 2},
+          "unacknowledgedHalt": {"id": "run-1", "status": "halted", "haltReason": "error_class:billing"},
+          "runs": []
+        }
+        """
+        let autopilot = try JSONDecoder().decode(AutopilotStatusResponse.self, from: Data(autopilotJSON.utf8))
+        XCTAssertEqual(autopilot.unacknowledgedHalt?.haltReason, "error_class:billing")
+        XCTAssertEqual(autopilot.today?.spendUsd, 0.12)
+    }
+
+    @MainActor
+    func testNonAdminSeesNoAdminRow() async {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(
+                baseURL: Self.baseURL,
+                tokenStore: MemoryTokenStore(token: nil),
+                session: makeSession()
+            )
+        )
+        XCTAssertFalse(store.adminAccessGranted)
+        XCTAssertFalse(store.showsAdminRow)
+        XCTAssertFalse(store.showsAdminTokenField)
+    }
+
+    @MainActor
+    func testSignedInNonAdminSeesTokenFieldButNoAdminRow() async throws {
+        let session = makeSession()
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(
+                baseURL: Self.baseURL,
+                tokenStore: MemoryTokenStore(token: "native-session"),
+                session: session
+            )
+        )
+        MockURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/api/admin/poll-config") {
+                return Self.response(for: request, status: 401, json: #"{"error":"unauthorized"}"#)
+            }
+            if path.hasSuffix("/bootstrap") {
+                return Self.response(for: request, json: """
+                {"serverTime":"2026-08-18T00:00:00Z","auth":{"user":{"id":"u1","email":"user@example.com","name":"User","picture":null},"entitlement":{"premium":false,"status":null,"plan":null}},"capabilities":{},"endpoints":{}}
+                """)
+            }
+            if path.contains("/feed") {
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            return Self.response(for: request, json: "{}")
+        }
+        await store.refresh()
+        XCTAssertTrue(store.signedIn)
+        XCTAssertFalse(store.showsAdminRow)
+        XCTAssertTrue(store.showsAdminTokenField)
+    }
+
+    @MainActor
+    func testAdminProbe200ShowsAdminRow() async throws {
+        let session = makeSession()
+        let tokens = MemoryTokenStore(token: "native-session")
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: tokens,
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/api/admin/poll-config") == true {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "ct_session=native-session")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
+                return Self.response(for: request, json: #"{"schedule":[],"aggressiveMode":false}"#)
+            }
+            return Self.response(for: request, json: "{}")
+        }
+        let store = CongressTradeStore(api: client)
+        await store.probeAdminAccess()
+        XCTAssertTrue(store.adminAccessGranted)
+        XCTAssertTrue(store.showsAdminRow)
+        XCTAssertFalse(store.showsAdminTokenField)
+    }
+
+    func testAdminRequestPrefersKeychainAdminTokenAndKeepsSessionCookie() async throws {
+        let session = makeSession()
+        let tokens = MemoryTokenStore(token: "native-session", adminToken: "device-admin-token")
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: tokens,
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/admin/review-queue")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "ct_session=native-session")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer device-admin-token")
+            return Self.response(for: request, json: #"{"items":[],"count":0,"resolved":false}"#)
+        }
+        let response = try await client.reviewQueue()
+        XCTAssertTrue(response.items.isEmpty)
+    }
+
+    func testReviewExtractionsDecodingMapsConfirmEdits() throws {
+        let json = """
+        {
+          "docId": "H-1",
+          "count": 1,
+          "runs": [{
+            "id": "run-1",
+            "provider": "openrouter",
+            "model": "google/gemini-2.5-flash",
+            "ok": true,
+            "rowCount": 1,
+            "rows": [
+              {"ticker": "MSFT", "assetName": "Microsoft", "txType": "S", "txDate": "2026-01-02", "amountMin": 15001, "owner": "spouse"}
+            ]
+          }]
+        }
+        """
+        let decoded = try JSONDecoder().decode(ReviewExtractionsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.runs[0].displayName, "google/gemini-2.5-flash")
+        XCTAssertTrue(decoded.runs[0].canConfirmFrom)
+        XCTAssertEqual(decoded.runs[0].confirmEdits.first?["txType"] as? String, "S")
+        XCTAssertEqual(decoded.runs[0].confirmEdits.first?["ticker"] as? String, "MSFT")
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
@@ -1601,16 +1815,22 @@ private final class InMemorySyncCursorStore: SyncCursorStore {
     func setCursor(_ cursor: Int, for key: String) { values[key] = cursor }
 }
 
-private final class MemoryTokenStore: SessionTokenStore {
+private final class MemoryTokenStore: SessionTokenStore, AdminTokenStore {
     private var token: String?
+    private var adminToken: String?
 
-    init(token: String?) {
+    init(token: String?, adminToken: String? = nil) {
         self.token = token
+        self.adminToken = adminToken
     }
 
     func load() throws -> String? { token }
     func save(_ token: String) throws { self.token = token }
     func clear() throws { token = nil }
+
+    func loadAdminToken() throws -> String? { adminToken }
+    func saveAdminToken(_ token: String) throws { adminToken = token }
+    func clearAdminToken() throws { adminToken = nil }
 }
 
 private final class MockURLProtocol: URLProtocol {
