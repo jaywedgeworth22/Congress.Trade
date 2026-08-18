@@ -46,4 +46,8 @@ cd app && npm run typecheck && npm test
 ## Follow-ups
 
 - Manual review of existing parked House rows (do not bulk resolve here)
-- #1959 executive scanned_pdf OCR remains a disjoint slice
+- **#1959 owns** fail-soft OpenRouter OCR for executive `scanned_pdf` after
+  unpdf (`OgePdfExtractor` on `cursor/scanned-pdf-ocr-1575-691a`). This
+  rollout must not rewrite that lane. Shared-file conflicts are expected in
+  `app/src/extractors/types.ts` and `arbitration.test.ts`. Preferred merge:
+  land #1959, rebase this branch, keep `ogePdf` as #1959 wrote it.

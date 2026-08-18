@@ -348,6 +348,9 @@ describe('buildExtractorPipeline routing', () => {
     expect(firstMatch(filing({ chamber: 'senate', docKind: 'senate_html' }))).toBe('senateHtml');
   });
 
+  // KEEPOUT #1959: that PR routes executive scanned_pdf to ogePdf (unpdf, then
+  // fail-soft OpenRouter OCR). This branch must not implement OgePdfExtractor
+  // or change this expectation to steal that lane.
   it('leaves executive scanned_pdf filings on the vision path (ogeText only claims text_pdf)', () => {
     const name = firstMatch(filing({ chamber: 'executive', docKind: 'scanned_pdf' }));
     expect(name).toMatch(/^arbitrating\(/);
