@@ -16,10 +16,13 @@
  *   POST  /subscriptions/:id/deactivate    -> deactivate (drops from fanout, frees creation quota)
  *   POST  /filings-hygiene              -> dry-run (default) / apply probe delete + review desync (#1576/#1574)
  *
- * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
+ * AUTH (deny-by-default once provisioned). A request is authorized if:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
  *      `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation); OR
- *   2. Cloudflare Access — an Access application fronts /api/admin/* and the
+ *   2. First-party session — cookie `ct_session` or `Authorization: Bearer
+ *      <session>` for an ADMIN_EMAILS user (website cookie; native iOS Bearer);
+ *      OR
+ *   3. Cloudflare Access — an Access application fronts /api/admin/* and the
  *      `Cf-Access-Jwt-Assertion` JWT verifies against the team keys with an
  *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
  *      (good for humans signing in with Google/SSO — no token to paste).
@@ -108,7 +111,7 @@ import {
 } from '../shared/memberIdentity.ts';
 import { dedupeSplitFilerIdentities } from './filerIdentityDedupe.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { getCurrentUser } from '../auth/session.ts';
+import { getCurrentUserFromRequest } from '../auth/session.ts';
 import {
   DEFAULT_CANDIDATES,
   EXTRACTION_SCHEMA_VERSION,
@@ -2101,15 +2104,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
     if (await isAuthorizedMaintenance(env, c.req.path, authorization)) return next();
-    // Always resolve the browser session email, even when an Authorization
-    // header is present. A stale/wrong ADMIN_TOKEN in localStorage used to
-    // skip this path (only looked up when !authorization), so allowlisted
-    // Google sessions got 401 on Review Queue and other admin routes while
-    // the UI still showed the admin tabs. isAuthorized still prefers a valid
-    // bearer ADMIN_TOKEN; a bad bearer falls through to session / Access.
+    // Always resolve the session email, even when an Authorization header is
+    // present. Cookie `ct_session` covers the website; native iOS sends the
+    // same opaque session as `Authorization: Bearer <session>`. A stale
+    // ADMIN_TOKEN in web localStorage used to skip this path (only looked up
+    // when !authorization), so allowlisted Google sessions got 401 on Review
+    // Queue while the UI still showed the admin tabs. isAuthorized still
+    // prefers a valid bearer ADMIN_TOKEN; a bad bearer falls through to
+    // session / Access. Native session bearers are not ADMIN_TOKEN — they
+    // resolve here via getCurrentUserFromRequest.
     let sessionEmail: string | undefined;
     try {
-      sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
+      sessionEmail = (await getCurrentUserFromRequest(c))?.email ?? undefined;
     } catch {
       sessionEmail = undefined;
     }

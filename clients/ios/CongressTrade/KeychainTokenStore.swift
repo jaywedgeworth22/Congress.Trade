@@ -1,9 +1,8 @@
 import Foundation
 import Security
 
-final class KeychainTokenStore: SessionTokenStore, AdminTokenStore {
+final class KeychainTokenStore: SessionTokenStore {
     private let sessionService = "trade.congress.session"
-    private let adminService = "trade.congress.admin"
     private let account = "default"
 
     func load() throws -> String? {
@@ -16,18 +15,6 @@ final class KeychainTokenStore: SessionTokenStore, AdminTokenStore {
 
     func clear() throws {
         try clearSecret(service: sessionService)
-    }
-
-    func loadAdminToken() throws -> String? {
-        try loadSecret(service: adminService)
-    }
-
-    func saveAdminToken(_ token: String) throws {
-        try saveSecret(token, service: adminService)
-    }
-
-    func clearAdminToken() throws {
-        try clearSecret(service: adminService)
     }
 
     private func loadSecret(service: String) throws -> String? {
