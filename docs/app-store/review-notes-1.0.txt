@@ -26,7 +26,7 @@ Account deletion: email support@congress.trade from the signed-in address and we
 5) EXTERNAL SERVICES
 - Congress.Trade backend (https://congress.trade) — feed, sessions, entitlements
 - Sign in with Apple; optional Google OAuth; transactional email for magic links
-- Apple In-App Purchase / StoreKit 2 for iOS Premium (web Premium uses Stripe at Congress.Trade; iOS does not take web payments)
+- Apple In-App Purchase / StoreKit 2 for iOS Premium (web Premium uses Stripe at Congress.Trade; iOS does not take web payments).  Delivery and the empty StoreKit catalog do not link to website checkout.  Existing Stripe subscribers manage via the billing portal; Apple subscribers manage on the App Store.
 - Apple Push Notification service for optional Trade Disclosure Alerts
 - Official public sources: House PTR, Senate eFD, OGE 278-T
 - Market quotes for analytics/latency: Financial Modeling Prep

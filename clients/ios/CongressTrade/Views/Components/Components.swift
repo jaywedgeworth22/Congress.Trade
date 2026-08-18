@@ -1425,6 +1425,21 @@ enum AppLegal {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: markdown, options: options)) ?? AttributedString(markdown)
     }
+
+    /// Pricing is the same digital good as IAP.  Footer taps must open
+    /// StoreKit, never Safari checkout (Guideline 3.1.1).
+    static func opensSafari(_ destination: Destination) -> Bool {
+        destination.id != "pricing"
+    }
+
+    static func footerDestinations(includePricing: Bool, canOpenInAppPurchase: Bool) -> [Destination] {
+        destinations.filter { destination in
+            if destination.id == "pricing" {
+                return includePricing && canOpenInAppPurchase
+            }
+            return true
+        }
+    }
 }
 
 /// Opens the in-app Premium / StoreKit sheet.  Set at the tab root and on
@@ -1451,9 +1466,10 @@ struct LegalFooterLinks: View {
     var includePricing: Bool = true
 
     var body: some View {
-        let items = includePricing
-            ? AppLegal.destinations
-            : AppLegal.destinations.filter { $0.id != "pricing" }
+        let items = AppLegal.footerDestinations(
+            includePricing: includePricing,
+            canOpenInAppPurchase: openPremium != nil
+        )
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, destination in
                 if index > 0 {
@@ -1463,11 +1479,13 @@ struct LegalFooterLinks: View {
                         .accessibilityHidden(true)
                 }
                 Button(destination.title) {
-                    if destination.id == "pricing", let openPremium {
-                        openPremium()
-                    } else {
-                        openURL(destination.url)
+                    if destination.id == "pricing" {
+                        // Never fall through to Safari /pricing — that is web
+                        // Stripe checkout for the same digital good as IAP.
+                        openPremium?()
+                        return
                     }
+                    openURL(destination.url)
                 }
                     .font(.caption2)
                     .foregroundStyle(.secondary)

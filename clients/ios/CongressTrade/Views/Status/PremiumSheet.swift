@@ -147,14 +147,10 @@ struct PremiumSheet: View {
             .frame(maxWidth: .infinity, minHeight: 50)
         } else if products.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("In-app purchase isn't available right now.  You can still subscribe on the website.")
+                Text(PremiumPricing.emptyCatalogMessage)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let url = store.api.upgradeURL {
-                    Link("Open Congress.Trade pricing", destination: url)
-                        .font(.subheadline.weight(.semibold))
-                }
                 restoreButton
             }
         } else {
@@ -367,6 +363,14 @@ struct PremiumSheet: View {
 /// `docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 enum PremiumPricing {
     static let headline = "$5/month  •  $50/year  •  2-week free trial"
+
+    /// Empty StoreKit catalog: Restore stays, website checkout does not.
+    /// Guideline 3.1.1 — same digital good as IAP.
+    static let emptyCatalogMessage = "In-app purchase isn't available.  Try again later."
+
+    /// Delivery paywall.  In-App Purchase only — no website Stripe CTA.
+    static let deliveryUpgradeMessage =
+        "2-week free trial, then $5/month or $50/year.  Upgrade with In-App Purchase to create SSE/webhook deliveries.  Existing deliveries still appear below."
 
     static func subtitle(for product: Product) -> String? {
         switch AppleIAPProduct(rawValue: product.id) {
