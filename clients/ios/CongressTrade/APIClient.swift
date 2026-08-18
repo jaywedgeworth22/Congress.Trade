@@ -100,6 +100,17 @@ final class AuthHeaderInterceptor: RequestInterceptor {
     }
 }
 
+/// Native iOS never starts web Stripe Checkout for Congress.Trade Premium
+/// (App Store Guideline 3.1.1).  Website checkout stays on congress.trade.
+/// Existing Stripe subscribers still manage via `billingPortalURL()`.
+enum DigitalGoodsCheckout {
+    static let allowsWebCheckout = false
+
+    static func webCheckoutURL(relativeTo _: URL) -> URL? {
+        nil
+    }
+}
+
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
@@ -152,16 +163,8 @@ final class CongressTradeAPIClient {
         return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
     }
 
-    /// Web dashboard URL for the Premium upgrade flow. Checkout itself is
-    /// cookie-session based (`POST /billing/checkout` in
-    /// `app/src/billing/routes.ts` reads the web session cookie, not the
-    /// bearer token), so the app links out to the site's pricing modal
-    /// instead of replaying that call.
-    var upgradeURL: URL? {
-        URL(string: "/", relativeTo: originURL)?.absoluteURL
-    }
-
     /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
+    /// Not a purchase path — do not point this at pricing or hosted checkout.
     func shareURL(queryItem: URLQueryItem) -> URL? {
         var components = URLComponents(url: originURL, resolvingAgainstBaseURL: false)
         components?.path = "/"

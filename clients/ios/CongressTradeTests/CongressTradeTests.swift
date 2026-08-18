@@ -1438,6 +1438,47 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertFalse(LatencyScorecardCopy.isPubliclyVisible(majorityBehind))
     }
 
+    func testIOSNeverOffersWebCheckoutForDigitalGoods() {
+        XCTAssertFalse(DigitalGoodsCheckout.allowsWebCheckout)
+        XCTAssertNil(
+            DigitalGoodsCheckout.webCheckoutURL(relativeTo: URL(string: "https://congress.trade")!)
+        )
+
+        XCTAssertFalse(PremiumPricing.emptyCatalogMessage.localizedCaseInsensitiveContains("website"))
+        XCTAssertFalse(PremiumPricing.emptyCatalogMessage.localizedCaseInsensitiveContains("congress.trade"))
+        XCTAssertFalse(PremiumPricing.emptyCatalogMessage.localizedCaseInsensitiveContains("pricing"))
+        XCTAssertTrue(PremiumPricing.emptyCatalogMessage.localizedCaseInsensitiveContains("try again later"))
+
+        XCTAssertFalse(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("website"))
+        XCTAssertFalse(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("congress.trade"))
+        XCTAssertTrue(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("in-app purchase"))
+
+        let pricing = AppLegal.destinations.first { $0.id == "pricing" }
+        XCTAssertEqual(pricing?.id, "pricing")
+        XCTAssertFalse(AppLegal.opensSafari(pricing!))
+        XCTAssertTrue(AppLegal.opensSafari(AppLegal.destinations.first { $0.id == "privacy" }!))
+        XCTAssertTrue(
+            AppLegal.footerDestinations(includePricing: true, canOpenInAppPurchase: false)
+                .allSatisfy { $0.id != "pricing" }
+        )
+        XCTAssertTrue(
+            AppLegal.footerDestinations(includePricing: true, canOpenInAppPurchase: true)
+                .contains { $0.id == "pricing" }
+        )
+    }
+
+    func testShareURLIsNotADigitalGoodsCheckoutPath() {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: nil)
+        )
+        let url = client.shareURL(queryItem: URLQueryItem(name: "ticker", value: "NVDA"))
+        XCTAssertEqual(url?.absoluteString, "https://example.test/?ticker=NVDA")
+        XCTAssertFalse(url?.path.contains("pricing") == true)
+        XCTAssertFalse(url?.path.contains("billing") == true)
+        XCTAssertFalse(url?.path.contains("checkout") == true)
+    }
+
     // MARK: - Test helpers
 
     private static func latencyProvider(

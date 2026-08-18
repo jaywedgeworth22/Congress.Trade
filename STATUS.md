@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — iOS does not take web payments for Premium
+
+Guideline 3.1.1.  Delivery and the empty StoreKit catalog no longer offer
+website Stripe checkout.  StoreKit / Restore stay.  Existing Stripe
+subscribers still manage via the billing portal.  Receipt:
+`docs/rollouts/2026-08-17-ios-no-web-checkout.md`.
+
 ## 2026-08-17 CURSOR — House FD ZIP is healthy (#1577)
 
 Live Clerk `{YEAR}FD.ZIP` is reachable and complete.  Official persisted
