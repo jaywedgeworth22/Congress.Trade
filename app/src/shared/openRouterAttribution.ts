@@ -51,6 +51,8 @@ export const OPENROUTER_PRIMARY_KEY_REF = 'OPENROUTER_API_KEY';
 export const OPENROUTER_PURPOSE = {
   /** Primary/failover vision extraction of a PTR/278-T PDF. */
   VISION_EXTRACT: 'vision_extract',
+  /** Cheap text-only extract (no Files attachment). */
+  TEXT_EXTRACT: 'text_extract',
   /** Pre-extraction doc_class model call (typed/clean_scan/hard_scan/…). */
   DOC_CLASS: 'doc_class',
   /** Senate paper PTR page-image OCR. */
@@ -68,6 +70,7 @@ export type OpenRouterPurpose = (typeof OPENROUTER_PURPOSE)[keyof typeof OPENROU
 /** Human labels for Activity generation_name / workspace classifier prompts. */
 export const OPENROUTER_PURPOSE_LABEL: Record<OpenRouterPurpose, string> = {
   vision_extract: 'PTR vision extraction',
+  text_extract: 'PTR text extract',
   doc_class: 'Document class routing',
   senate_paper_ocr: 'Senate paper page OCR',
   agreement_read: 'Agreement cascade re-read',

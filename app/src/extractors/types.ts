@@ -8,6 +8,10 @@
 
 import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import {
+  classifyHouseExtractRoute,
+  looksLikePlausibleTradeTable,
+} from '../extraction/extractRouting.ts';
 
 // ---------------------------------------------------------------------------
 // Arbitration merge helpers (pure, unit-testable)
@@ -203,6 +207,8 @@ export interface ExtractorInput {
   bytes?: ArrayBuffer;
   /** Raw HTML (Senate eFD) when applicable. */
   html?: string;
+  /** Already-extracted text for the cheap OpenRouter text path (no Files). */
+  extractedText?: string;
 }
 
 /**
@@ -352,8 +358,10 @@ export class FallbackExtractor implements Extractor {
 
 /**
  * House PDFs often have extractable text even when the cheap byte-sniff
- * classifier misses it. Prefer deterministic text parsing, then fall back to
- * vision only when text extraction produces no usable transaction rows.
+ * classifier misses it. Prefer deterministic text parsing. Electronic / typed
+ * PTRs never fall through to OpenRouter Files. Vision/Files is only for
+ * documents classified as real scans, and only when the cheap read was empty
+ * (not letterhead junk).
  */
 export class HousePdfExtractor implements Extractor {
   readonly name: string;
@@ -362,8 +370,11 @@ export class HousePdfExtractor implements Extractor {
   constructor(
     private readonly textPdf: Extractor,
     private readonly visionPdf: Extractor,
+    private readonly cheapText?: Extractor,
   ) {
-    this.name = `housePdf(${textPdf.name},${visionPdf.name})`;
+    this.name = this.cheapText
+      ? `housePdf(${textPdf.name},${this.cheapText.name},${visionPdf.name})`
+      : `housePdf(${textPdf.name},${visionPdf.name})`;
     this.circuitBreakerName = visionPdf.circuitBreakerName ?? visionPdf.name;
   }
 
@@ -372,11 +383,47 @@ export class HousePdfExtractor implements Extractor {
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    const route = classifyHouseExtractRoute(input.filing);
+    let textResult: ExtractorResult | null = null;
     try {
-      const textResult = await this.textPdf.extract(input);
-      if (textResult.transactions.length > 0) return textResult;
+      textResult = await this.textPdf.extract(input);
     } catch {
-      // Text-layer parsing can fail on image-only or malformed PDFs; vision is the fallback.
+      // Text-layer parsing can fail on image-only or malformed PDFs.
+    }
+
+    if (textResult) {
+      if (textResult.transactions.length > 0) {
+        // A cheap read that already failed (letterhead / headers) must not
+        // escalate to Files or the agreement trio. Orchestrator + agreement
+        // consult evaluateExtractQuality on these rows.
+        return textResult;
+      }
+      if (!route.allowFiles) {
+        if (
+          this.cheapText
+          && looksLikePlausibleTradeTable(textResult.raw)
+        ) {
+          try {
+            const cheap = await this.cheapText.extract({
+              ...input,
+              extractedText: textResult.raw,
+            });
+            return cheap;
+          } catch {
+            return textResult;
+          }
+        }
+        return textResult;
+      }
+    }
+
+    if (!route.allowFiles) {
+      return textResult ?? {
+        transactions: [],
+        confidence: 0.2,
+        raw: '',
+        extractor: this.textPdf.name,
+      };
     }
     return this.visionPdf.extract(input);
   }
@@ -431,7 +478,8 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   });
 
   const visionArbitrated = new ArbitratingExtractor(configuredVision, env, secondary);
-  const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);
+  const cheapText = new OpenRouterTextExtractor(env);
+  const housePdf = new HousePdfExtractor(textPdf, visionArbitrated, cheapText);
 
   // ogeText is ordered before the generic textPdf so executive-chamber PDFs
   // (OGE 278-T layout) get the parser tuned for their table, instead of
@@ -449,8 +497,9 @@ import { OgeTextExtractor } from '../extraction/ogeText.ts';
 import { VisionLlmExtractor } from '../extraction/visionLlm.ts';
 import { AnthropicVisionExtractor } from '../extraction/anthropicVision.ts';
 import { ConfiguredVisionExtractor } from '../extraction/configuredVision.ts';
+import { OpenRouterTextExtractor } from '../extraction/openRouterText.ts';
 
 export {
   SenateHtmlExtractor, TextPdfExtractor, OgeTextExtractor, VisionLlmExtractor, AnthropicVisionExtractor,
-  ConfiguredVisionExtractor,
+  ConfiguredVisionExtractor, OpenRouterTextExtractor,
 };

@@ -97,6 +97,7 @@ import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { recordProviderHealth } from './providerHealth.ts';
+import { shouldSkipAgreementForReviewReason } from './extractRouting.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -1982,6 +1983,12 @@ export async function enqueueAgreementCheck(
 ): Promise<boolean> {
   const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
+  const parked = await get<{ reason: string | null }>(
+    env.DB,
+    'SELECT reason FROM review_queue WHERE doc_id = ?',
+    [docId],
+  ).catch(() => null);
+  if (shouldSkipAgreementForReviewReason(parked?.reason)) return false;
   const token = await acquireAgreementLease(env, docId, maxAttempts(e), existingClaimToken);
   if (!token) return false;
 
@@ -2026,6 +2033,14 @@ export async function handleAgreementCheck(
   signal?.throwIfAborted();
   const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
+  const parked = await get<{ reason: string | null }>(
+    env.DB,
+    'SELECT reason FROM review_queue WHERE doc_id = ?',
+    [docId],
+  ).catch(() => null);
+  if (shouldSkipAgreementForReviewReason(parked?.reason)) {
+    return { docId, outcome: 'skipped', reason: `hard_stop:${parked?.reason ?? 'quality'}` };
+  }
   const max = maxAttempts(e);
 
   // A fresh check (tier unset) may start at tier 2 for a complex doc.
