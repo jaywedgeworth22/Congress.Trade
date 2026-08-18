@@ -44,7 +44,6 @@ export interface OpenRouterTextOptions {
   apiKey?: string;
   apiKeyName?: keyof Env & string;
   model?: string;
-  modelEnvName?: keyof Env & string;
   defaultModel?: string;
   name?: string;
 }
@@ -52,7 +51,6 @@ export interface OpenRouterTextOptions {
 export class OpenRouterTextExtractor implements Extractor {
   readonly name: string;
   private readonly modelOverride?: string;
-  private readonly modelEnvName: keyof Env & string;
   private readonly defaultModel: string;
   private readonly apiKeyOverride?: string;
   private readonly apiKeyName: keyof Env & string;
@@ -63,7 +61,6 @@ export class OpenRouterTextExtractor implements Extractor {
   ) {
     this.name = options.name ?? 'openRouterText';
     this.modelOverride = options.model;
-    this.modelEnvName = options.modelEnvName ?? 'OPENROUTER_TEXT_MODEL';
     this.defaultModel = options.defaultModel ?? OPENROUTER_TEXT_MODEL_DEFAULT;
     this.apiKeyOverride = options.apiKey;
     this.apiKeyName = options.apiKeyName ?? 'OPENROUTER_API_KEY';
@@ -74,12 +71,10 @@ export class OpenRouterTextExtractor implements Extractor {
   }
 
   private async resolveModel(): Promise<string> {
+    // Do not inherit OPENROUTER_MODEL (often Grok / Files). Cheap text stays
+    // on Flash-Lite unless a caller passes an explicit model override.
     if (this.modelOverride) return this.modelOverride;
-    try {
-      return (await resolveSecret(this.env, this.modelEnvName)).value || this.defaultModel;
-    } catch {
-      return (this.env[this.modelEnvName] as string | undefined) || this.defaultModel;
-    }
+    return this.defaultModel;
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {

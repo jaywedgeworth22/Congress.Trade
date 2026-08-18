@@ -92,7 +92,7 @@ export function allowOpenRouterFiles(filing: Filing): boolean {
  */
 export function looksLikePlausibleTradeTable(text: string): boolean {
   const body = (text || '').trim();
-  if (body.length < 80) return false;
+  if (body.length < 40) return false;
   if (looksLikeHeaderContaminatedAsset(body.slice(0, 240))) {
     // Letterhead in the first lines is normal on a PTR; still require trade tokens.
   }

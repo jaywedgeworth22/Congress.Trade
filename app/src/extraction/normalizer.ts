@@ -19,6 +19,7 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType, TxSource } from '../shared/types.ts';
+import { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
 import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
