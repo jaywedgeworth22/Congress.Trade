@@ -479,11 +479,17 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
         docId: string;
         reason: string;
         ingestStatus: string;
+        hostedFallbackEnqueued?: boolean;
       };
       expect(json.ok).toBe(true);
       expect(json.docId).toBe('doc-park-1');
       expect(json.reason).toBe('local_vision_exhausted,scanned_pdf_vision_spend');
       expect(json.ingestStatus).toBe('needs_review');
+      expect(json.hostedFallbackEnqueued).toBe(true);
+      expect(sentMessages.some((m) => {
+        const msg = m.message as { type?: string; docId?: string };
+        return msg.type === 'filing.extracted' && msg.docId === 'doc-park-1';
+      })).toBe(true);
 
       const filing = await d1.prepare(
         `SELECT ingest_status, error, local_wait_expires_at FROM filings WHERE doc_id = ?`

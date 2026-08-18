@@ -195,6 +195,41 @@ export function summarizeProviderHaltCause(error: string | null | undefined): st
   return `classified ${classifyProviderErrorClass(message) ?? 'other'}`;
 }
 
+/**
+ * Transient OpenRouter files / key-limit failures.  These are NOT a dead
+ * account and must not permanently latch autopilot.  Fail-closed classes
+ * (auth, app LLM daily budget, credits actually depleted) stay halt+ack.
+ */
+export function isTransientFilesPrepaidError(error: string | null | undefined): boolean {
+  const message = (error ?? '').trim().toLowerCase();
+  if (!message) return false;
+  if (message.includes(OPENROUTER_CIRCUIT_MARKER)) {
+    const last = peelCircuitLastError(message);
+    return last ? isTransientFilesPrepaidError(last) : false;
+  }
+  if (message.includes('balance for files') || /at least \$0\.50/.test(message)) return true;
+  if (message.includes('openrouter_key_limit')) return true;
+  if (message.includes('files-endpoint prepaid')) return true;
+  return false;
+}
+
+export function isTransientFilesPrepaidHalt(
+  haltReason: string | null | undefined,
+  sampleErrors: string | Record<string, string> | null | undefined = null,
+): boolean {
+  const described = describeAutopilotHaltReason(haltReason, sampleErrors) ?? '';
+  if (isTransientFilesPrepaidError(described) || isTransientFilesPrepaidError(haltReason)) {
+    return true;
+  }
+  if (typeof sampleErrors === 'string' && sampleErrors.trim()) {
+    return isTransientFilesPrepaidError(sampleErrors);
+  }
+  if (sampleErrors && typeof sampleErrors === 'object') {
+    return Object.values(sampleErrors).some((value) => isTransientFilesPrepaidError(value));
+  }
+  return false;
+}
+
 export function describeAutopilotHaltReason(
   haltReason: string | null | undefined,
   sampleErrors: string | Record<string, string> | null | undefined = null,

@@ -12,7 +12,10 @@ describe('evaluatePipelineSignals', () => {
     outboxPending: 0,
     outboxOldestAt: null,
     outboxFailed: 0,
-    reviewBacklog: 5,
+    reviewBacklog: 0,
+    reviewEligible: 0,
+    reviewSuppressed: 0,
+    reviewTerminal: 0,
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
@@ -48,6 +51,9 @@ describe('evaluatePipelineSignals', () => {
       outboxOldestAt: null,
       outboxFailed: null,
       reviewBacklog: null,
+      reviewEligible: null,
+      reviewSuppressed: null,
+      reviewTerminal: null,
       extractionAttempts24h: null,
       extractionOk24h: null,
       lastExtractionSuccessAt: null,
@@ -93,6 +99,9 @@ describe('evaluatePipelineSignals', () => {
     const backlogStallSignals: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 200,
+      reviewEligible: 9,
+      reviewSuppressed: 0,
+      reviewTerminal: 191,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
     };
@@ -100,14 +109,35 @@ describe('evaluatePipelineSignals', () => {
     expect(res.status).toBe('stalled');
     const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
     expect(backlogCheck?.status).toBe('stalled');
+    expect(backlogCheck?.detail).toContain('eligible 9');
+    expect(backlogCheck?.detail).toContain('terminal 191');
     const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
     expect(providerCheck?.status).toBe('stalled');
+  });
+
+  it('marks any unresolved review item unhealthy, split by bucket', () => {
+    const oneItem: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 1,
+      reviewEligible: 0,
+      reviewSuppressed: 0,
+      reviewTerminal: 1,
+    };
+    const res = evaluatePipelineSignals(oneItem, nowMs);
+    const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
+    expect(backlogCheck?.status).toBe('stalled');
+    expect(backlogCheck?.detail).toContain('1 unresolved');
+    expect(backlogCheck?.detail).toContain('terminal 1');
+    expect(res.status).toBe('stalled');
   });
 
   it('does not mark extraction_provider ok when attempts=0 and autopilot is halted', () => {
     const haltedIdle: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 0,
+      reviewEligible: 0,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
       autopilotHaltReason: 'error_class:billing (OpenRouter files-endpoint prepaid minimum, not account quota)',
@@ -122,6 +152,9 @@ describe('evaluatePipelineSignals', () => {
     const idleBacklog: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 5,
+      reviewEligible: 5,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
     };
@@ -225,7 +258,10 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     outboxPending: 0,
     outboxOldestAt: null,
     outboxFailed: 0,
-    reviewBacklog: 5,
+    reviewBacklog: 0,
+    reviewEligible: 0,
+    reviewSuppressed: 0,
+    reviewTerminal: 0,
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
