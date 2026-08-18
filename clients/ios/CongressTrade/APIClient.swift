@@ -6,6 +6,13 @@ protocol SessionTokenStore {
     func clear() throws
 }
 
+/// Separate Keychain slot for `ADMIN_TOKEN`.  Never log or default this value.
+protocol AdminTokenStore {
+    func loadAdminToken() throws -> String?
+    func saveAdminToken(_ token: String) throws
+    func clearAdminToken() throws
+}
+
 /// Persists the feed sync watermark (`ClientFeedResponse.cursor`) per request
 /// shape. A single global cursor is only valid for resuming the exact same
 /// filter that produced it — rows excluded by a narrower filter (e.g. an
@@ -114,6 +121,7 @@ enum DigitalGoodsCheckout {
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
+    let adminTokenStore: AdminTokenStore
     private let session: URLSession
     private let interceptor: RequestInterceptor
     private let decoder: JSONDecoder
@@ -121,11 +129,13 @@ final class CongressTradeAPIClient {
     init(
         baseURL: URL = CongressTradeAPIClient.defaultBaseURL,
         tokenStore: SessionTokenStore = KeychainTokenStore(),
+        adminTokenStore: AdminTokenStore? = nil,
         session: URLSession = .shared,
         interceptor: RequestInterceptor? = nil
     ) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
+        self.adminTokenStore = adminTokenStore ?? (tokenStore as? AdminTokenStore) ?? KeychainTokenStore()
         self.session = session
         self.interceptor = interceptor ?? AuthHeaderInterceptor(tokenStore: tokenStore)
         self.decoder = JSONDecoder()
@@ -535,6 +545,91 @@ final class CongressTradeAPIClient {
         return try await send(request)
     }
 
+    // MARK: - Admin (origin-level `/api/admin/*`, `/api/health*`)
+
+    /// Probe `GET /api/admin/poll-config` — the same cheap gate the website uses.
+    /// `true` on 200, `false` on 401/403.  Other failures throw.
+    func probeAdminAccess() async throws -> Bool {
+        let (data, http) = try await performAdmin(makeAdminRequest(adminURL(["poll-config"])))
+        if http.statusCode == 401 || http.statusCode == 403 { return false }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Admin probe failed",
+                retryAfterSeconds: nil
+            )
+        }
+        return true
+    }
+
+    func publicHealth() async throws -> PublicHealthResponse {
+        try await request(originURL.appendingPathComponent("api/health"))
+    }
+
+    func pollingHealth() async throws -> PollingHealthResponse {
+        try await request(originURL.appendingPathComponent("api/health/polling"))
+    }
+
+    func autopilotStatus() async throws -> AutopilotStatusResponse {
+        try await sendAdmin(makeAdminRequest(adminURL(["autopilot", "status"])))
+    }
+
+    func acknowledgeAutopilotHalt(runId: String? = nil) async throws -> AutopilotAcknowledgeResponse {
+        var body: [String: Any] = [:]
+        if let runId, !runId.isEmpty { body["runId"] = runId }
+        return try await sendAdmin(makeAdminRequest(adminURL(["autopilot", "acknowledge"]), method: "POST", body: body))
+    }
+
+    func reviewQueue(resolved: Bool = false, limit: Int = 50, cursor: String? = nil) async throws -> ReviewQueueResponse {
+        guard var components = URLComponents(url: adminURL(["review-queue"]), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
+        var items = [
+            URLQueryItem(name: "resolved", value: resolved ? "1" : "0"),
+            URLQueryItem(name: "limit", value: String(min(max(limit, 1), 200))),
+        ]
+        if let cursor, !cursor.isEmpty {
+            items.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = items
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await sendAdmin(makeAdminRequest(url))
+    }
+
+    func reviewExtractions(docId: String) async throws -> ReviewExtractionsResponse {
+        try await sendAdmin(makeAdminRequest(adminURL(["review", docId, "extractions"])))
+    }
+
+    func reviewDecision(docId: String, decision: String, reviewRevision: Int, edits: [[String: Any]]? = nil) async throws -> ReviewMutationResponse {
+        var body: [String: Any] = [
+            "decision": decision,
+            "reviewRevision": reviewRevision,
+        ]
+        if let edits { body["edits"] = edits }
+        return try await sendAdmin(makeAdminRequest(adminURL(["review", docId]), method: "POST", body: body))
+    }
+
+    func unpublishReview(docId: String, reviewRevision: Int, reason: String) async throws -> ReviewUnpublishResponse {
+        try await sendAdmin(
+            makeAdminRequest(
+                adminURL(["review", docId, "unpublish"]),
+                method: "POST",
+                body: ["reviewRevision": reviewRevision, "reason": reason]
+            )
+        )
+    }
+
+    func retryReviewAuto(docId: String, reviewRevision: Int) async throws -> ReviewRetryAutoResponse {
+        try await sendAdmin(
+            makeAdminRequest(
+                adminURL(["review", docId, "retry-auto"]),
+                method: "POST",
+                body: ["reviewRevision": reviewRevision]
+            )
+        )
+    }
+
     func logout() async throws {
         var request = try makeRequest(originURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"
@@ -714,6 +809,56 @@ final class CongressTradeAPIClient {
         )
         try interceptor.intercept(&request)
         return request
+    }
+
+    /// Website parity: `ct_session` cookie for ADMIN_EMAILS, plus optional
+    /// `Authorization: Bearer ADMIN_TOKEN` (Jay's usual phone path).
+    private func makeAdminRequest(_ url: URL, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
+        var request = try makeRequest(url)
+        request.httpMethod = method
+        if let session = try tokenStore.load() {
+            let trimmed = session.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                request.setValue("ct_session=\(trimmed)", forHTTPHeaderField: "Cookie")
+            }
+        }
+        if let admin = try adminTokenStore.loadAdminToken() {
+            let trimmed = admin.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "authorization")
+            }
+        }
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        }
+        return request
+    }
+
+    private func adminURL(_ parts: [String]) -> URL {
+        parts.reduce(originURL.appendingPathComponent("api/admin")) { url, part in
+            url.appendingPathComponent(part)
+        }
+    }
+
+    private func sendAdmin<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let (data, http) = try await performAdmin(request)
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) }
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Request failed",
+                retryAfterSeconds: retryAfter
+            )
+        }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    private func performAdmin(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        return (data, http)
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {

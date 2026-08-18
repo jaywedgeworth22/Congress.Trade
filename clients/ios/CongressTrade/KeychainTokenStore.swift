@@ -1,12 +1,37 @@
 import Foundation
 import Security
 
-final class KeychainTokenStore: SessionTokenStore {
-    private let service = "trade.congress.session"
+final class KeychainTokenStore: SessionTokenStore, AdminTokenStore {
+    private let sessionService = "trade.congress.session"
+    private let adminService = "trade.congress.admin"
     private let account = "default"
 
     func load() throws -> String? {
-        var query = baseQuery()
+        try loadSecret(service: sessionService)
+    }
+
+    func save(_ token: String) throws {
+        try saveSecret(token, service: sessionService)
+    }
+
+    func clear() throws {
+        try clearSecret(service: sessionService)
+    }
+
+    func loadAdminToken() throws -> String? {
+        try loadSecret(service: adminService)
+    }
+
+    func saveAdminToken(_ token: String) throws {
+        try saveSecret(token, service: adminService)
+    }
+
+    func clearAdminToken() throws {
+        try clearSecret(service: adminService)
+    }
+
+    private func loadSecret(service: String) throws -> String? {
+        var query = baseQuery(service: service)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -19,9 +44,9 @@ final class KeychainTokenStore: SessionTokenStore {
         return String(data: data, encoding: .utf8)
     }
 
-    func save(_ token: String) throws {
+    private func saveSecret(_ token: String, service: String) throws {
         let data = Data(token.utf8)
-        var query = baseQuery()
+        var query = baseQuery(service: service)
         let status = SecItemCopyMatching(query as CFDictionary, nil)
         if status == errSecSuccess {
             let update = [kSecValueData as String: data]
@@ -36,14 +61,14 @@ final class KeychainTokenStore: SessionTokenStore {
         guard addStatus == errSecSuccess else { throw KeychainError(status: addStatus) }
     }
 
-    func clear() throws {
-        let status = SecItemDelete(baseQuery() as CFDictionary)
+    private func clearSecret(service: String) throws {
+        let status = SecItemDelete(baseQuery(service: service) as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
             throw KeychainError(status: status)
         }
     }
 
-    private func baseQuery() -> [String: Any] {
+    private func baseQuery(service: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

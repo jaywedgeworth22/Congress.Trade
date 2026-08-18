@@ -98,6 +98,23 @@ final class CongressTradeStore: ObservableObject {
 
     @Published var isLoadingMore = false
 
+    /// Last successful admin probe (`GET /api/admin/poll-config` 200).
+    @Published private(set) var adminAccessGranted = false
+    @Published private(set) var hasStoredAdminToken = false
+    @Published private(set) var isProbingAdmin = false
+    @Published private(set) var isLoadingAdmin = false
+    @Published private(set) var isLoadingReviewQueue = false
+    @Published private(set) var adminNotice: String?
+    @Published private(set) var publicHealth: PublicHealthResponse?
+    @Published private(set) var pollingHealth: PollingHealthResponse?
+    @Published private(set) var autopilotStatus: AutopilotStatusResponse?
+    @Published private(set) var reviewQueueItems: [ReviewQueueItem] = []
+    @Published private(set) var reviewQueueTotals: ReviewQueueTotals?
+    @Published private(set) var reviewQueueNextCursor: String?
+    @Published private(set) var reviewQueueShowsResolved = false
+    @Published private(set) var reviewExtractions: [String: ReviewExtractionsResponse] = [:]
+    @Published private(set) var reviewActionDocId: String?
+
     var modelContext: ModelContext?
 
     internal let api: CongressTradeAPIClient
@@ -169,6 +186,16 @@ final class CongressTradeStore: ObservableObject {
         self.sleeper = sleeper
         let storedToken = try? api.tokenStore.load()
         self.hasStoredSessionToken = storedToken?.isEmpty == false
+        let storedAdmin = try? api.adminTokenStore.loadAdminToken()
+        self.hasStoredAdminToken = storedAdmin?.isEmpty == false
+    }
+
+    /// Admin hamburger row — hidden until a probe succeeds.
+    var showsAdminRow: Bool { adminAccessGranted }
+
+    /// Token field for a signed-in non-admin, or a stored token that the probe rejected.
+    var showsAdminTokenField: Bool {
+        !adminAccessGranted && (signedIn || hasStoredAdminToken || hasStoredSessionToken)
     }
 
     var signedIn: Bool {
@@ -652,6 +679,7 @@ final class CongressTradeStore: ObservableObject {
                 commands = []
                 watchlist = []
             }
+            await probeAdminAccess()
         } catch {
             if Task.isCancelled { /* superseding refresh / view teardown */ }
             else if let apiError = error as? APIError, apiError.isCancellation {
@@ -1151,6 +1179,206 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    func probeAdminAccess() async {
+        if isProbingAdmin { return }
+        isProbingAdmin = true
+        defer { isProbingAdmin = false }
+        do {
+            let granted = try await api.probeAdminAccess()
+            adminAccessGranted = granted
+            if !granted {
+                publicHealth = nil
+                pollingHealth = nil
+                autopilotStatus = nil
+                reviewQueueItems = []
+                reviewQueueTotals = nil
+                reviewQueueNextCursor = nil
+                reviewExtractions = [:]
+            }
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminAccessGranted = false
+        }
+    }
+
+    func saveAdminToken(_ token: String) async {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            adminNotice = "Enter an admin token."
+            return
+        }
+        do {
+            try api.adminTokenStore.saveAdminToken(trimmed)
+            hasStoredAdminToken = true
+            adminNotice = "Checking token…"
+            let granted = try await api.probeAdminAccess()
+            adminAccessGranted = granted
+            if granted {
+                adminNotice = "Token accepted.  It stays on this device in Keychain."
+                await refreshAdminSurface()
+            } else {
+                adminNotice = "Token rejected.  Wrong value, or the server has no matching ADMIN_TOKEN."
+            }
+        } catch {
+            adminNotice = "Could not save the admin token."
+        }
+    }
+
+    func clearAdminToken() async {
+        do {
+            try api.adminTokenStore.clearAdminToken()
+        } catch {
+            adminNotice = "Could not clear the stored admin token."
+            return
+        }
+        hasStoredAdminToken = false
+        adminNotice = "Cleared the admin token stored on this device."
+        await probeAdminAccess()
+        if !adminAccessGranted {
+            publicHealth = nil
+            pollingHealth = nil
+            autopilotStatus = nil
+            reviewQueueItems = []
+        }
+    }
+
+    func refreshAdminSurface() async {
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingAdmin = true
+        defer { isLoadingAdmin = false }
+        adminNotice = nil
+        do {
+            async let healthTask = api.publicHealth()
+            async let pollingTask = api.pollingHealth()
+            async let autopilotTask = api.autopilotStatus()
+            publicHealth = try await healthTask
+            pollingHealth = try await pollingTask
+            autopilotStatus = try await autopilotTask
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func refreshReviewQueue(resolved: Bool? = nil) async {
+        if let resolved { reviewQueueShowsResolved = resolved }
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(resolved: reviewQueueShowsResolved, limit: 50)
+            reviewQueueItems = response.items
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadMoreReviewQueue() async {
+        guard adminAccessGranted, let cursor = reviewQueueNextCursor, !cursor.isEmpty else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(
+                resolved: reviewQueueShowsResolved,
+                limit: 50,
+                cursor: cursor
+            )
+            let existing = Set(reviewQueueItems.map(\.docId))
+            reviewQueueItems.append(contentsOf: response.items.filter { !existing.contains($0.docId) })
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadReviewExtractions(docId: String) async {
+        guard adminAccessGranted, !docId.isEmpty else { return }
+        do {
+            reviewExtractions[docId] = try await api.reviewExtractions(docId: docId)
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func acknowledgeAutopilotHalt() async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = "autopilot-halt"
+        defer { reviewActionDocId = nil }
+        do {
+            _ = try await api.acknowledgeAutopilotHalt()
+            adminNotice = "Halt acknowledged.  A new run can start on the next cron tick."
+            await refreshAdminSurface()
+        } catch {
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func rejectReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "reject",
+                reviewRevision: item.reviewRevision
+            )
+            adminNotice = "Rejected \(item.docId)."
+        }
+    }
+
+    func confirmReviewItem(_ item: ReviewQueueItem, edits: [[String: Any]], modelName: String) async {
+        guard !edits.isEmpty else {
+            adminNotice = "Confirm needs at least one extracted row.  Use Reject to discard this filing."
+            return
+        }
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "confirm",
+                reviewRevision: item.reviewRevision,
+                edits: edits
+            )
+            adminNotice = "Confirmed \(item.docId) from \(modelName)."
+        }
+    }
+
+    func unpublishReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.unpublishReview(
+                docId: item.docId,
+                reviewRevision: item.reviewRevision,
+                reason: "unpublished from iOS admin"
+            )
+            adminNotice = "Unpublished \(item.docId).  It is back in the pending queue."
+        }
+    }
+
+    func retryReviewAuto(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.retryReviewAuto(docId: item.docId, reviewRevision: item.reviewRevision)
+            adminNotice = "Released the automation hold on \(item.docId)."
+        }
+    }
+
+    private func mutateReview(docId: String, _ work: () async throws -> Void) async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = docId
+        defer { reviewActionDocId = nil }
+        do {
+            try await work()
+            await refreshReviewQueue()
+            await refreshAdminSurface()
+        } catch {
+            adminNotice = error.localizedDescription
+        }
+    }
+
     func signOut() async {
         guard hasStoredSessionToken, !isLoggingOut else { return }
         isLoggingOut = true
@@ -1174,6 +1402,7 @@ final class CongressTradeStore: ObservableObject {
             commands = []
             watchlist = []
             watchlistNotice = "Signed out locally. Server revoke may have failed: \(error.localizedDescription)"
+            await probeAdminAccess()
         }
         isLoggingOut = false
     }
