@@ -2872,6 +2872,10 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
     expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
     expect(DASHBOARD_HTML).toContain("['fty', selectedSideParam('qSideGroup')]");
+    expect(DASHBOARD_HTML).toContain("['fpa', partyParam('qPartyGroup')]");
+    expect(DASHBOARD_HTML).toContain('applySideSelection(sides)');
+    expect(DASHBOARD_HTML).toContain('applyPartySelection(parties)');
+    expect(DASHBOARD_HTML).not.toContain("b.getAttribute('data-side') === fty");
     expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
     expect(DASHBOARD_HTML).toContain("if (ty) p.set('type', ty);");
   });
