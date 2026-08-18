@@ -71,10 +71,6 @@ struct SettingsView: View {
                             Label("Admin", systemImage: "gearshape.2")
                         }
                     }
-                } else if store.showsAdminTokenField {
-                    Section("Admin Access") {
-                        AdminTokenField()
-                    }
                 }
 
                 Section {
@@ -198,65 +194,11 @@ struct SettingsView: View {
 
 // MARK: - Admin (compiled here so the Xcode target needs no pbxproj edit)
 
-struct AdminTokenField: View {
-    @EnvironmentObject private var store: CongressTradeStore
-    @State private var tokenDraft = ""
-    @State private var isSaving = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SecureField("Admin Token", text: $tokenDraft)
-                .textContentType(.password)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            Text("Paste ADMIN_TOKEN.  It stays on this device in Keychain and is never logged.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button {
-                    isSaving = true
-                    Task {
-                        await store.saveAdminToken(tokenDraft)
-                        tokenDraft = ""
-                        isSaving = false
-                    }
-                } label: {
-                    if isSaving {
-                        ProgressView()
-                    } else {
-                        Text("Save Token")
-                    }
-                }
-                .disabled(isSaving || tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if store.hasStoredAdminToken {
-                    Button("Clear Token", role: .destructive) {
-                        Task { await store.clearAdminToken() }
-                    }
-                    .disabled(isSaving)
-                }
-            }
-            if let notice = store.adminNotice, !notice.isEmpty {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
 struct AdminPanelView: View {
     @EnvironmentObject private var store: CongressTradeStore
 
     var body: some View {
         List {
-            if store.showsAdminTokenField {
-                Section("Admin Access") {
-                    AdminTokenField()
-                }
-            }
-
             if let notice = store.adminNotice, !notice.isEmpty, store.adminAccessGranted {
                 Section {
                     Text(notice)
@@ -276,11 +218,6 @@ struct AdminPanelView: View {
             Section {
                 NavigationLink(value: AdminRoute.reviewQueue) {
                     Label("Review Queue", systemImage: "checklist")
-                }
-                if store.hasStoredAdminToken {
-                    Button("Clear Admin Token", role: .destructive) {
-                        Task { await store.clearAdminToken() }
-                    }
                 }
             }
         }

@@ -98,9 +98,8 @@ final class CongressTradeStore: ObservableObject {
 
     @Published var isLoadingMore = false
 
-    /// Last successful admin probe (`GET /api/admin/poll-config` 200).
+    /// Last successful `GET /auth/me` with `admin.allowed`.
     @Published private(set) var adminAccessGranted = false
-    @Published private(set) var hasStoredAdminToken = false
     @Published private(set) var isProbingAdmin = false
     @Published private(set) var isLoadingAdmin = false
     @Published private(set) var isLoadingReviewQueue = false
@@ -186,17 +185,10 @@ final class CongressTradeStore: ObservableObject {
         self.sleeper = sleeper
         let storedToken = try? api.tokenStore.load()
         self.hasStoredSessionToken = storedToken?.isEmpty == false
-        let storedAdmin = try? api.adminTokenStore.loadAdminToken()
-        self.hasStoredAdminToken = storedAdmin?.isEmpty == false
     }
 
-    /// Admin hamburger row — hidden until a probe succeeds.
+    /// Admin hamburger row — hidden unless `GET /auth/me` reports `admin.allowed`.
     var showsAdminRow: Bool { adminAccessGranted }
-
-    /// Token field for a signed-in non-admin, or a stored token that the probe rejected.
-    var showsAdminTokenField: Bool {
-        !adminAccessGranted && (signedIn || hasStoredAdminToken || hasStoredSessionToken)
-    }
 
     var signedIn: Bool {
         bootstrap?.auth.user != nil
@@ -674,12 +666,13 @@ final class CongressTradeStore: ObservableObject {
             if signedIn {
                 await refreshSignedInState()
                 await PushNotificationManager.shared.syncTokenWithBackend(api: api)
+                await probeAdminAccess()
             } else {
                 subscriptions = []
                 commands = []
                 watchlist = []
+                adminAccessGranted = false
             }
-            await probeAdminAccess()
         } catch {
             if Task.isCancelled { /* superseding refresh / view teardown */ }
             else if let apiError = error as? APIError, apiError.isCancellation {
@@ -1198,47 +1191,6 @@ final class CongressTradeStore: ObservableObject {
         } catch {
             if let apiError = error as? APIError, apiError.isCancellation { return }
             adminAccessGranted = false
-        }
-    }
-
-    func saveAdminToken(_ token: String) async {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            adminNotice = "Enter an admin token."
-            return
-        }
-        do {
-            try api.adminTokenStore.saveAdminToken(trimmed)
-            hasStoredAdminToken = true
-            adminNotice = "Checking token…"
-            let granted = try await api.probeAdminAccess()
-            adminAccessGranted = granted
-            if granted {
-                adminNotice = "Token accepted.  It stays on this device in Keychain."
-                await refreshAdminSurface()
-            } else {
-                adminNotice = "Token rejected.  Wrong value, or the server has no matching ADMIN_TOKEN."
-            }
-        } catch {
-            adminNotice = "Could not save the admin token."
-        }
-    }
-
-    func clearAdminToken() async {
-        do {
-            try api.adminTokenStore.clearAdminToken()
-        } catch {
-            adminNotice = "Could not clear the stored admin token."
-            return
-        }
-        hasStoredAdminToken = false
-        adminNotice = "Cleared the admin token stored on this device."
-        await probeAdminAccess()
-        if !adminAccessGranted {
-            publicHealth = nil
-            pollingHealth = nil
-            autopilotStatus = nil
-            reviewQueueItems = []
         }
     }
 

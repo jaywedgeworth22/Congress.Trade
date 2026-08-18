@@ -1533,6 +1533,28 @@ enum AdminRoute: Hashable {
     case reviewDetail(String)
 }
 
+/// `GET /auth/me` — native Admin is gated on `admin.allowed`, not a token field.
+struct AuthMeResponse: Decodable {
+    let user: User?
+    let admin: AdminAccess?
+
+    struct AdminAccess: Decodable {
+        let allowed: Bool?
+    }
+
+    var adminAllowed: Bool { admin?.allowed == true }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        user = try? c.decodeIfPresent(User.self, forKey: .user)
+        admin = try? c.decodeIfPresent(AdminAccess.self, forKey: .admin)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case user, admin
+    }
+}
+
 enum FailSoftJSON {
     static func string<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> String? {
         if let value = try? c.decodeIfPresent(String.self, forKey: key) { return value }
