@@ -126,6 +126,17 @@ describe('auth router', () => {
       billing: { hasCustomer: true },
       entitlement: { premium: false },
     });
+
+    const bearer = await app.request(
+      'http://localhost/me',
+      { headers: { authorization: 'Bearer tok' } },
+      env,
+    );
+    expect(bearer.status).toBe(200);
+    expect(await bearer.json()).toMatchObject({
+      user: { email: 'admin@example.com' },
+      admin: { allowed: true },
+    });
   });
 
   it('GET /google/start is 503 when Google is not configured', async () => {

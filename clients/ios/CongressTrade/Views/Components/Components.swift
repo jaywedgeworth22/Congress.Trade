@@ -863,10 +863,6 @@ struct AccountQuickMenu: View {
                             Label("Admin", systemImage: "gearshape.2")
                         }
                     }
-                } else if store.showsAdminTokenField {
-                    Section("Admin Access") {
-                        AdminTokenField()
-                    }
                 }
 
                 Section {

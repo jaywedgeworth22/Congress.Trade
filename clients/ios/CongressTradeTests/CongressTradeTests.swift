@@ -1625,11 +1625,10 @@ final class CongressTradeTests: XCTestCase {
         )
         XCTAssertFalse(store.adminAccessGranted)
         XCTAssertFalse(store.showsAdminRow)
-        XCTAssertFalse(store.showsAdminTokenField)
     }
 
     @MainActor
-    func testSignedInNonAdminSeesTokenFieldButNoAdminRow() async throws {
+    func testSignedInNonAdminSeesNoAdminRow() async throws {
         let session = makeSession()
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(
@@ -1640,8 +1639,12 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
-            if path.hasSuffix("/api/admin/poll-config") {
-                return Self.response(for: request, status: 401, json: #"{"error":"unauthorized"}"#)
+            if path.hasSuffix("/auth/me") {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+                return Self.response(for: request, json: """
+                {"user":{"id":"u1","email":"user@example.com","name":"User","picture":null},"admin":{"allowed":false}}
+                """)
             }
             if path.hasSuffix("/bootstrap") {
                 return Self.response(for: request, json: """
@@ -1656,11 +1659,10 @@ final class CongressTradeTests: XCTestCase {
         await store.refresh()
         XCTAssertTrue(store.signedIn)
         XCTAssertFalse(store.showsAdminRow)
-        XCTAssertTrue(store.showsAdminTokenField)
     }
 
     @MainActor
-    func testAdminProbe200ShowsAdminRow() async throws {
+    func testAuthMeAdminAllowedShowsAdminRow() async throws {
         let session = makeSession()
         let tokens = MemoryTokenStore(token: "native-session")
         let client = CongressTradeAPIClient(
@@ -1669,23 +1671,28 @@ final class CongressTradeTests: XCTestCase {
             session: session
         )
         MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/api/admin/poll-config") == true {
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "ct_session=native-session")
-                XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
-                return Self.response(for: request, json: #"{"schedule":[],"aggressiveMode":false}"#)
-            }
-            return Self.response(for: request, json: "{}")
+            XCTAssertEqual(request.url?.path, "/auth/me")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            return Self.response(for: request, json: """
+            {"user":{"id":"u-admin","email":"admin@example.com","name":"Admin","picture":null},"admin":{"allowed":true}}
+            """)
         }
         let store = CongressTradeStore(api: client)
         await store.probeAdminAccess()
         XCTAssertTrue(store.adminAccessGranted)
         XCTAssertTrue(store.showsAdminRow)
-        XCTAssertFalse(store.showsAdminTokenField)
     }
 
-    func testAdminRequestPrefersKeychainAdminTokenAndKeepsSessionCookie() async throws {
+    func testAuthMeDecodingIsFailSoft() throws {
+        let decoded = try JSONDecoder().decode(AuthMeResponse.self, from: Data(#"{"user":null}"#.utf8))
+        XCTAssertFalse(decoded.adminAllowed)
+        XCTAssertNil(decoded.user)
+    }
+
+    func testAdminRequestReusesSessionBearerAndOmitsAdminToken() async throws {
         let session = makeSession()
-        let tokens = MemoryTokenStore(token: "native-session", adminToken: "device-admin-token")
+        let tokens = MemoryTokenStore(token: "native-session")
         let client = CongressTradeAPIClient(
             baseURL: Self.baseURL,
             tokenStore: tokens,
@@ -1693,8 +1700,8 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/admin/review-queue")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "ct_session=native-session")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer device-admin-token")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
             return Self.response(for: request, json: #"{"items":[],"count":0,"resolved":false}"#)
         }
         let response = try await client.reviewQueue()
@@ -1815,22 +1822,16 @@ private final class InMemorySyncCursorStore: SyncCursorStore {
     func setCursor(_ cursor: Int, for key: String) { values[key] = cursor }
 }
 
-private final class MemoryTokenStore: SessionTokenStore, AdminTokenStore {
+private final class MemoryTokenStore: SessionTokenStore {
     private var token: String?
-    private var adminToken: String?
 
-    init(token: String?, adminToken: String? = nil) {
+    init(token: String?) {
         self.token = token
-        self.adminToken = adminToken
     }
 
     func load() throws -> String? { token }
     func save(_ token: String) throws { self.token = token }
     func clear() throws { token = nil }
-
-    func loadAdminToken() throws -> String? { adminToken }
-    func saveAdminToken(_ token: String) throws { adminToken = token }
-    func clearAdminToken() throws { adminToken = nil }
 }
 
 private final class MockURLProtocol: URLProtocol {
