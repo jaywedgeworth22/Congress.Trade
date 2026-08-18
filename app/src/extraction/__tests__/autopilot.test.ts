@@ -26,7 +26,13 @@ interface EligibleDocRow {
 }
 
 interface MockState {
-  openRuns: Array<{ id: string; status: string; updated_at: string }>;
+  openRuns: Array<{
+    id: string;
+    status: string;
+    updated_at: string;
+    halt_reason?: string | null;
+    sample_errors?: string | null;
+  }>;
   runRow: Record<string, unknown> | null;
   docs: EligibleDocRow[];
   /** Docs findable ONLY by the legacy-replay fallback query (never the primary one). */
@@ -696,6 +702,43 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(result?.blocked).toBe('unacknowledged_halt');
     expect(send).not.toHaveBeenCalled();
     expect(state.runInserts).toHaveLength(0);
+  });
+
+  it('auto-resumes a files-prepaid halt instead of latching forever', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-files',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:quota',
+        sample_errors: JSON.stringify({
+          quota: 'HTTP 402 {"error":{"message":"This request requires at least $0.50 in balance for files","code":402,"metadata":{"limit_source":"openrouter_key_limit"}}}',
+        }),
+      }],
+    });
+    const { env } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).not.toBe('unacknowledged_halt');
+    expect(state.openRuns[0].status).toBe('halt_acknowledged');
+  });
+
+  it('keeps a real depleted-credit halt latched until a human acknowledges', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-depleted',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:billing',
+        sample_errors: JSON.stringify({
+          billing: 'Your prepayment credits are depleted',
+        }),
+      }],
+    });
+    const { env, send } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('unacknowledged_halt');
+    expect(send).not.toHaveBeenCalled();
+    expect(state.openRuns[0].status).toBe('halted');
   });
 
   it('refuses to start while a fresh run is in progress', async () => {

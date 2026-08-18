@@ -4,6 +4,8 @@ import type { BakeoffCandidate } from '../bakeoff.ts';
 import {
   classifyProviderErrorClass,
   describeAutopilotHaltReason,
+  isTransientFilesPrepaidError,
+  isTransientFilesPrepaidHalt,
   summarizeProviderHaltCause,
   healthWindowKey,
   modelBanKey,
@@ -63,6 +65,11 @@ describe('classifyProviderErrorClass', () => {
     expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('stored as quota');
     expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('files-endpoint prepaid');
     expect(summarizeProviderHaltCause(sample.quota)).toContain('files-endpoint prepaid');
+    expect(isTransientFilesPrepaidError(sample.quota)).toBe(true);
+    expect(isTransientFilesPrepaidHalt('error_class:quota', sample)).toBe(true);
+    expect(isTransientFilesPrepaidHalt('error_class:auth', { auth: 'invalid_api_key' })).toBe(false);
+    expect(isTransientFilesPrepaidError('openrouter key budget circuit open: cool-down 3600s')).toBe(false);
+    expect(isTransientFilesPrepaidError('Your prepayment credits are depleted')).toBe(false);
   });
 
   it('classifies timeouts and parse failures', () => {

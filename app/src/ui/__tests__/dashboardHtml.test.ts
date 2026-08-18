@@ -3490,10 +3490,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });
@@ -5119,6 +5119,17 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     const relativeTimeText = new Function(relSrc)() as (s: string) => string;
     expect(relativeTimeText(new Date().toISOString())).toMatch(/just now|m ago|h ago/);
     expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
+  });
+
+  it('surfaces the extraction-halt banner and acknowledge control', () => {
+    expect(DASHBOARD_HTML).toContain('id="extractIncidentBanner"');
+    expect(DASHBOARD_HTML).toContain('Extraction Halted');
+    expect(DASHBOARD_HTML).toContain('id="extractIncidentAck"');
+    expect(DASHBOARD_HTML).toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).toContain('function acknowledgeExtractionHalt()');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/autopilot/acknowledge'");
+    expect(DASHBOARD_HTML).toContain('function loadExtractionIncident()');
+    expect(DASHBOARD_HTML).toContain('The extraction loop is stopped.&nbsp; Review the reason');
   });
 
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {
