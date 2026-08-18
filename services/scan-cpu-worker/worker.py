@@ -33,9 +33,14 @@ API_BASE_URL = os.getenv("CONGRESS_TRADE_API_URL", "http://localhost:8787").rstr
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 WORKER_ID = os.getenv("WORKER_ID", "server_cpu_1")
 POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "30"))
+STORE_AUTH_BACKOFF_SEC = int(os.getenv("STORE_AUTH_BACKOFF_SEC", "300"))
 HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "60"))
 OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")
 EXTRACTOR = os.getenv("EXTRACTOR", "server_cpu_v1")
+
+
+class StoredCopyAuthError(RuntimeError):
+    """Object store rejected credentials. Stop the pending batch."""
 
 
 def send_request(
@@ -121,6 +126,12 @@ def download_stored_document(filing: Dict[str, Any], dest: str) -> bool:
         with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
             f.write(resp.read())
         return os.path.getsize(dest) > 100
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:200]
+        logger.warning("stored download failed %s: HTTP %s %s", url, e.code, body)
+        if e.code in (401, 403, 500, 503) and "unauthor" in body.lower():
+            raise StoredCopyAuthError(f"HTTP {e.code}")
+        return False
     except Exception as e:
         logger.warning("stored download failed %s: %s", url, e)
         return False
@@ -184,6 +195,14 @@ def run_loop() -> None:
                 logger.info("Pending scanned filings: %d", len(filings))
                 for f in filings:
                     process_filing(f)
+        except StoredCopyAuthError as e:
+            logger.error(
+                "stored-raw auth failed (%s); backing off %ss instead of spinning the backlog",
+                e,
+                STORE_AUTH_BACKOFF_SEC,
+            )
+            time.sleep(STORE_AUTH_BACKOFF_SEC)
+            continue
         except Exception as e:
             logger.exception("Poll loop error: %s", e)
         time.sleep(POLL_INTERVAL_SEC)
