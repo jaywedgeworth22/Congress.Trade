@@ -154,6 +154,10 @@ import {
 } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
+
+function isObjectStoreAuthError(message: string): boolean {
+  return /\bunauthorized\b|\baccessdenied\b|\binvalidaccesskeyid\b|\bsignaturedoesnotmatch\b/i.test(message);
+}
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import {
   requeueTransientFailedDurableJobs,
@@ -5340,7 +5344,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       return new Response(obj.body, { headers });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      const message = err instanceof Error ? err.message : String(err);
+      if (isObjectStoreAuthError(message)) {
+        return c.json({
+          error: 'stored copy unavailable',
+          detail: 'object store rejected credentials',
+        }, 503);
+      }
+      return c.json({ error: 'stored copy read failed' }, 500);
     }
   });
 
