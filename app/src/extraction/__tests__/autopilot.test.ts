@@ -491,6 +491,22 @@ describe('handleAutopilotTick — error-class kill-switch', () => {
     expect(final!.params[10]).toBe('error_class:auth');
   });
 
+  it('does not latch on source-fetch Unauthorized (Clerk / admin 401 statusText)', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1'), doc('H-2')] });
+    const { env } = makeEnv(state, {
+      AUTOPILOT_DAILY_USD_BUDGET: '5',
+      AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD: '2',
+    });
+    const check = vi.fn(async () => { throw new Error('Unauthorized'); });
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).toHaveBeenCalledTimes(2);
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).not.toBe('error_class:auth');
+  });
+
   it('re-enqueues a continuation tick when the slice ends mid-run', async () => {
     const state = makeState({
       runRow: runRow(),
@@ -720,6 +736,44 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     const result = await maybeStartBacklogAutopilot(env);
     expect(result?.blocked).not.toBe('unacknowledged_halt');
     expect(state.openRuns[0].status).toBe('halt_acknowledged');
+  });
+
+  it('auto-resumes a false source-auth Unauthorized halt', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-unauth',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:auth',
+        sample_errors: JSON.stringify({ auth: 'Unauthorized' }),
+      }],
+    });
+    const { env } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).not.toBe('unacknowledged_halt');
+    expect(state.openRuns[0].status).toBe('halt_acknowledged');
+    expect(state.openRuns[0]).toMatchObject({
+      status: 'halt_acknowledged',
+    });
+  });
+
+  it('keeps a proven OpenRouter User-not-found auth halt latched', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-dead-key',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:auth',
+        sample_errors: JSON.stringify({
+          auth: 'openRouterVision: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}',
+        }),
+      }],
+    });
+    const { env, send } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('unacknowledged_halt');
+    expect(send).not.toHaveBeenCalled();
+    expect(state.openRuns[0].status).toBe('halted');
   });
 
   it('keeps a real depleted-credit halt latched until a human acknowledges', async () => {

@@ -61,6 +61,8 @@ import {
 } from './agreement.ts';
 import {
   classifyProviderErrorClass,
+  isFalseSourceAuthError,
+  isFalseSourceAuthHalt,
   isTransientFilesPrepaidError,
   isTransientFilesPrepaidHalt,
   type ProviderErrorClass,
@@ -768,12 +770,16 @@ export async function maybeStartBacklogAutopilot(
   const haltedRows = open.filter((row) => row.status === 'halted');
   if (haltedRows.length) {
     const resumable = haltedRows.filter((row) =>
-      isTransientFilesPrepaidHalt(row.halt_reason, row.sample_errors));
+      isTransientFilesPrepaidHalt(row.halt_reason, row.sample_errors)
+      || isFalseSourceAuthHalt(row.halt_reason, row.sample_errors));
     if (resumable.length && resumable.length === haltedRows.length) {
       for (const row of resumable) {
+        const actor = isFalseSourceAuthHalt(row.halt_reason, row.sample_errors)
+          ? 'auto_resume:false_source_auth'
+          : 'auto_resume:files_prepaid';
         await acknowledgeAutopilotHalt(env, {
           runId: row.id,
-          actor: 'auto_resume:files_prepaid',
+          actor,
         });
       }
     } else {
@@ -1329,15 +1335,22 @@ export async function handleAutopilotTick(
 
     // Error-class kill-switch: same class twice (default) halts the WHOLE
     // run for auth / real spend / parse / timeout. Transient OpenRouter
-    // files-prepaid / key-limit 402s are NOT a latch — the budget circuit
-    // already delayed those calls and the next run auto-resumes.
+    // files-prepaid / key-limit 402s and source-fetch / admin Unauthorized
+    // are NOT a latch — those auto-resume. Proven invalid_api_key / User
+    // not found stay fail-closed.
     const haltClass = KILL_SWITCH_CLASSES.find(
       (cls) => (state.errorClassCounts[cls] ?? 0) >= knobs.errorClassHaltThreshold,
     );
     const haltSamples = Object.values(state.sampleErrors);
     const transientFilesOnly = haltSamples.length > 0
       && haltSamples.every((sample) => isTransientFilesPrepaidError(sample));
-    if (haltClass && !(transientFilesOnly && (haltClass === 'billing' || haltClass === 'quota'))) {
+    const falseSourceAuthOnly = haltSamples.length > 0
+      && haltSamples.every((sample) => isFalseSourceAuthError(sample));
+    const skipTransientLatch = (
+      (transientFilesOnly && (haltClass === 'billing' || haltClass === 'quota'))
+      || (falseSourceAuthOnly && haltClass === 'auth')
+    );
+    if (haltClass && !skipTransientLatch) {
       await finalize('halted', `error_class:${haltClass}`);
       finished = true;
       haltedByErrors = true;
