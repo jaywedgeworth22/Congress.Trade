@@ -26,7 +26,7 @@ subscription) stay.  Website checkout and portal stay on the website.
 
 ## Verification
 
-- `cd app && npm run typecheck && npm test`
+- `cd app && npm run typecheck && npm test` — 256 files / 3122 tests after merging `main` (#1977)
 - Focused: `npx vitest run src/client/__tests__/iosNoWebCheckout.test.ts`
 - No Stripe Checkout or Billing Portal sessions created
 - No cards charged
