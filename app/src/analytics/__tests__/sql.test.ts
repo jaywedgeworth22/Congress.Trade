@@ -14,6 +14,9 @@ import {
   asPartyBucket,
   asPartyBuckets,
   asSourceFilter,
+  asTxType,
+  asTxTypes,
+  constrainTxTypes,
   asWindow,
   autoGranularity,
   buildCommonFilters,
@@ -79,6 +82,24 @@ describe('validators', () => {
     expect(asChamber('xyz')).toBeUndefined();
     expect(asSourceFilter('primary')).toBe('primary');
     expect(asSourceFilter('bogus')).toBe('all');
+  });
+
+  it('asTxType / asTxTypes parse B/S/E and expand legacy P to Buy', () => {
+    expect(asTxType('B')).toBe('B');
+    expect(asTxType('P')).toBe('B');
+    expect(asTxType('S')).toBe('S');
+    expect(asTxType('E')).toBe('E');
+    expect(asTxType('X')).toBeUndefined();
+    expect(asTxTypes('B,S')).toEqual(['B', 'S']);
+    expect(asTxTypes('P,S,B')).toEqual(['B', 'S']);
+    expect(asTxTypes('')).toBeUndefined();
+    expect(asTxTypes('nope')).toBeUndefined();
+  });
+
+  it('constrainTxTypes intersects a request with an endpoint universe', () => {
+    expect(constrainTxTypes(undefined, ['B', 'S'])).toEqual(['B', 'S']);
+    expect(constrainTxTypes(['B'], ['B', 'S'])).toEqual(['B']);
+    expect(constrainTxTypes(['E'], ['B', 'S'])).toEqual(['__none__']);
   });
 
   it('accepts calendar-year window presets', () => {

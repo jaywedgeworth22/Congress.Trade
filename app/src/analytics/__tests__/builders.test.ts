@@ -108,6 +108,12 @@ describe('buildClusterBuysQuery', () => {
     const q = buildClusterBuysQuery({ window: 'all' });
     expect(q.sql).toContain('HAVING COUNT(DISTINCT t.filer_id) >= 3');
   });
+
+  it('narrows the directional cluster to a requested side', () => {
+    const q = buildClusterBuysQuery({ window: '30d', txTypes: ['B'], minMembers: 4, limit: 10 });
+    expect(q.params).toEqual(['-30 days', 'B', 'P']);
+    expect(q.sql).toContain('t.tx_type IN (?, ?)');
+  });
 });
 
 describe('buildClusterMembersQuery', () => {

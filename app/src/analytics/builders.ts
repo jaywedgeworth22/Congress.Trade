@@ -27,6 +27,7 @@ import {
   TICKER_RESOLVED_SQL,
   buildCommonFilters,
   clampLimit,
+  constrainTxTypes,
   granularityFormat,
   whereSql,
   windowDays,
@@ -159,7 +160,11 @@ export function buildMemberLeaderboardQuery(
 export function buildClusterBuysQuery(
   p: CommonFilters & { minMembers?: number; limit?: number },
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    tickerNotNull: true,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const minMembers = clampLimit(p.minMembers, 3, 50);
   // Max 200 so a caller restricting to a candidate ticker set can fetch both the
   // buy ('B') and sell ('S') cluster row for up to 100 tickers; public callers
@@ -189,7 +194,10 @@ export function buildClusterMembersQuery(
   tickers: string[],
   p: CommonFilters,
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const placeholders = tickers.map(() => '?').join(', ');
   const allWhere = [`t.ticker IN (${placeholders})`, ...where];
   const allParams: SqlParam[] = [...tickers, ...params];
@@ -716,7 +724,11 @@ export function buildMemberPerformanceLeaderboardQuery(
  * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
  */
 export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    tickers,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const allWhere = ['t.filer_id IS NOT NULL', ...where];
   const sql =
     'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +

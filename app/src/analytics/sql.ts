@@ -112,6 +112,34 @@ export function asChambers(v: unknown): Chamber[] | undefined {
   return parsed.length ? parsed : undefined;
 }
 
+/** Canonical B|S|E. Legacy form letter P (Purchase) → Buy. */
+export function asTxType(v: unknown): TxType | undefined {
+  if (typeof v !== 'string') return undefined;
+  if (v === 'P' || v === 'p' || v === 'B' || v === 'b') return 'B';
+  return v === 'S' || v === 'E' ? v : undefined;
+}
+
+/** CSV multi-type selection (e.g. "B,S"). Undefined = no type filter. */
+export function asTxTypes(v: unknown): TxType[] | undefined {
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asTxType(part.trim())).filter((t): t is TxType => !!t)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
+/**
+ * Narrow a caller-requested type set to an endpoint's allowed universe
+ * (cluster/conviction are directional B/S only). Absent request → allowed.
+ * Empty intersection keeps a no-row bind so we do not silently widen.
+ */
+export function constrainTxTypes(requested: TxType[] | undefined, allowed: TxType[]): TxType[] {
+  if (!requested?.length) return [...allowed];
+  const allow = new Set(allowed);
+  const next = requested.filter((t) => allow.has(t));
+  return next.length ? next : (['__none__'] as unknown as TxType[]);
+}
+
 /**
  * Map a window to the SQLite date modifier used in `date('now', ?)`. `all` and
  * calendar-year presets return null (calendar years use absolute date bounds in
