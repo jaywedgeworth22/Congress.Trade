@@ -4,13 +4,14 @@
 
 Public Trends showed a red **Extraction Halted** card while `autopilot_halt` was ok, because `/api/health` review-backlog counts unhid a banner in `<main>` for everyone.  Eligible filings waited for the next UTC day tick or a 150-count threshold.
 
-Owner ruling: there is no halt/backlog card on Trends or Trades — not for admins either.  Acknowledge Halt is not a product.  Eligible drain is the unblocker.
+Owner ruling: the red Extraction Halted card must not show on the public site.  Prefer no incident card at all; put the same info on Admin / Review.
 
 This change:
 
 - Removes `#extractIncidentBanner` from `<main>`.
-- Gives admins iOS-style red nav badges: Review Queue = unresolved count; Admin = a real autopilot halt / stalled extract only.
-- Shows fail-closed auth/spend as Admin status text only.  No Acknowledge Halt control on Trends, nav, or Admin.
+- Gives admins first-class Review Queue and Admin nav tabs, hidden unless `canUseAdmin()`.
+- iOS-style red nav badges: Review Queue = unresolved count; Admin = a real autopilot halt / stalled extract only.  Hidden at 0.
+- Acknowledge Halt lives on Admin and Review, enabled only when actually halted and `canUseAdmin()`.
 - Does not auto-ack or clear the current auth latch.  Does not spendy-resume.
 - Starts a run when **one** selector-eligible-due doc exists (attempts remaining, next_attempt due, raw bytes, not suppressed, not skip-kind, no primary/manual tx).  Threshold is 1, not 150.  Daily UTC is catch-up only.  `minIntervalMinutes` does not park due-now work.
 - Keeps paid `idleShortCircuit` on; the idle probe now sees eligible-due review rows.
@@ -29,7 +30,7 @@ This change:
 cd app && npm run typecheck && npm test
 ```
 
-After deploy: trial or admin on `/?view=trends` must not show a red extract card.  Admins see Review / Admin badges in the top nav.  Fail-closed auth/spend is Admin status text only.  One selector-eligible-due House PTR claims on the next minute tick via the cheap-first path already on main (PR 1985).
+After deploy: trial or signed-out on `/?view=trends` must not show a red extract card.  Admins see Review Queue / Admin in the top nav with badges.  Acknowledge Halt is on Admin (and Review when halted).  One selector-eligible-due House PTR claims on the next minute tick via the cheap-first path already on main (PR 1985).
 
 ## Follow-ups
 
