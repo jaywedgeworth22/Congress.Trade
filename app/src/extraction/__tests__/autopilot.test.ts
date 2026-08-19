@@ -843,6 +843,7 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     kv.set('autopilot:lastrun', new Date().toISOString());
     const result = await maybeStartBacklogAutopilot(env);
     expect(result?.started?.trigger).toBe('eligible');
+    expect(state.runInserts[0]?.[1]).toBe('eligible');
     expect(send).toHaveBeenCalledTimes(1);
     const tick = send.mock.calls[0]?.[0] as { type: string; runId: string };
     expect(tick).toMatchObject({ type: 'autopilot.tick', runId: result!.started!.runId });

@@ -10,9 +10,13 @@ import {
 import type { DenoCostProfile } from '../costProfile.ts';
 import type { DurableQueueHandlers } from '../durableQueue.ts';
 
-vi.mock('../../extraction/agreement.ts', () => ({
-  maybeRunAgreementAutopublish: vi.fn(async () => ({ attempted: 0, enqueued: 0, terminalized: 0 })),
-}));
+vi.mock('../../extraction/agreement.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../extraction/agreement.ts')>();
+  return {
+    ...actual,
+    maybeRunAgreementAutopublish: vi.fn(async () => ({ attempted: 0, enqueued: 0, terminalized: 0 })),
+  };
+});
 vi.mock('../../extraction/autopilot.ts', () => ({
   maybeStartBacklogAutopilot: vi.fn(async () => ({ blocked: 'not_due' as const })),
 }));

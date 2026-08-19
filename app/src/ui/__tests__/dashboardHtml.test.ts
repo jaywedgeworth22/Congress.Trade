@@ -5137,50 +5137,59 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
   });
 
-  it('surfaces the extraction-halt banner and acknowledge control', () => {
-    expect(DASHBOARD_HTML).toContain('id="extractIncidentBanner"');
-    expect(DASHBOARD_HTML).toContain('id="extractIncidentTitle"');
-    expect(DASHBOARD_HTML).toContain('Extraction Halted');
-    expect(DASHBOARD_HTML).toContain('id="extractIncidentAck"');
-    expect(DASHBOARD_HTML).toContain('Acknowledge Halt');
+  it('keeps halt and review chrome off Trends and Trades', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentBanner"');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Review Backlog');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Halted');
+    const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
+    const tradesStart = DASHBOARD_HTML.indexOf('id="view-trades"');
+    const adminStart = DASHBOARD_HTML.indexOf('id="view-admin"');
+    expect(adminStart).toBeGreaterThan(tradesStart);
+    expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML.slice(adminStart)).toContain('id="extractIncidentAck"');
+    expect(DASHBOARD_HTML.slice(adminStart)).toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).toContain('id="reviewTabBadge"');
+    expect(DASHBOARD_HTML).toContain('id="adminTabBadge"');
     expect(DASHBOARD_HTML).toContain('function acknowledgeExtractionHalt()');
     expect(DASHBOARD_HTML).toContain("fetch('/api/admin/autopilot/acknowledge'");
-    expect(DASHBOARD_HTML).toContain('function loadExtractionIncident()');
-    expect(DASHBOARD_HTML).toContain('The extraction loop is stopped.&nbsp; Review the reason');
-    expect(DASHBOARD_HTML).toContain('if (!canUseAdmin()) {\n    renderExtractionIncident(null, null);');
-    expect(DASHBOARD_HTML).toContain('main:has(#extractIncidentBanner.is-on) #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('#extractIncidentAck:disabled');
     expect(DASHBOARD_HTML).toContain('pointer-events: none');
   });
 
-  it('keeps the extraction banner admin-only and matches halt vs backlog copy', () => {
-    const marker = 'function renderExtractionIncident(';
-    const start = DASHBOARD_HTML.indexOf(marker);
-    expect(start).toBeGreaterThan(-1);
-    const braceStart = DASHBOARD_HTML.indexOf('{', start);
-    let depth = 0;
-    let end = braceStart;
-    for (; end < DASHBOARD_HTML.length; end++) {
-      if (DASHBOARD_HTML[end] === '{') depth++;
-      else if (DASHBOARD_HTML[end] === '}') {
-        depth--;
-        if (depth === 0) {
-          end += 1;
-          break;
+  it('shows Review and Admin nav badges and enables Acknowledge only on a real halt', () => {
+    function extractFn(html: string, name: string): string {
+      const marker = 'function ' + name + '(';
+      const start = html.indexOf(marker);
+      if (start < 0) throw new Error('function not found: ' + name);
+      const braceStart = html.indexOf('{', start);
+      let depth = 0;
+      let i = braceStart;
+      for (; i < html.length; i++) {
+        if (html[i] === '{') depth++;
+        else if (html[i] === '}') {
+          depth--;
+          if (depth === 0) return html.slice(start, i + 1);
         }
       }
+      throw new Error('unbalanced braces for ' + name);
     }
-    const fnSrc = DASHBOARD_HTML.slice(start, end);
-    type BannerNode = {
+    type BadgeNode = {
       hidden: boolean;
       disabled: boolean;
       textContent: string;
-      classList: { toggle: (name: string, on?: boolean) => void; _on: Record<string, boolean> };
+      classList: {
+        toggle: (name: string, on?: boolean) => void;
+        add: (name: string) => void;
+        remove: (name: string) => void;
+        _on: Record<string, boolean>;
+      };
       setAttribute: (k: string, v: string) => void;
       attrs: Record<string, string>;
     };
-    const makeNodes = (): Record<string, BannerNode> => {
-      const node = (): BannerNode => ({
+    const makeNodes = (): Record<string, BadgeNode> => {
+      const node = (): BadgeNode => ({
         hidden: true,
         disabled: true,
         textContent: '',
@@ -5189,6 +5198,12 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
           toggle(name: string, on?: boolean) {
             this._on[name] = !!on;
           },
+          add(name: string) {
+            this._on[name] = true;
+          },
+          remove(name: string) {
+            this._on[name] = false;
+          },
         },
         attrs: {},
         setAttribute(k: string, v: string) {
@@ -5196,12 +5211,11 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
         },
       });
       return {
-        extractIncidentBanner: node(),
-        extractIncidentTitle: { ...node(), textContent: 'Extraction Halted' },
-        extractIncidentDetail: node(),
-        extractIncidentCounts: node(),
+        reviewTabBadge: node(),
+        adminTabBadge: node(),
+        extractHaltSection: node(),
+        extractHaltDetail: { ...node(), textContent: 'Extraction is not halted.' },
         extractIncidentAck: node(),
-        extractIncidentReview: node(),
       };
     };
     const factory = new Function(
@@ -5210,10 +5224,11 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
       [
         'function canUseAdmin() { return !!admin; }',
         'function el(id) { return nodes[id] || null; }',
-        fnSrc,
+        extractFn(DASHBOARD_HTML, 'setTabBadge'),
+        extractFn(DASHBOARD_HTML, 'renderExtractionIncident'),
         'return renderExtractionIncident;',
       ].join('\n'),
-    ) as (nodes: Record<string, BannerNode>, admin: boolean) => (
+    ) as (nodes: Record<string, BadgeNode>, admin: boolean) => (
       health: unknown,
       autopilot: unknown,
     ) => void;
@@ -5232,32 +5247,47 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
         checks: [
           { id: 'autopilot_halt', status: 'error', detail: 'Autopilot is halted on error_class:auth.' },
         ],
-        reviewQueue: { unresolved: 0, eligible: 0, suppressed: 0, terminal: 0 },
+        reviewQueue: { unresolved: 12, eligible: 4, suppressed: 4, terminal: 4 },
       },
     };
 
     const publicNodes = makeNodes();
     factory(publicNodes, false)(backlogHealth, null);
-    expect(publicNodes.extractIncidentBanner.hidden).toBe(true);
-    expect(publicNodes.extractIncidentAck.disabled).toBe(true);
+    expect(publicNodes.reviewTabBadge.hidden).toBe(true);
+    expect(publicNodes.adminTabBadge.hidden).toBe(true);
     expect(publicNodes.extractIncidentAck.hidden).toBe(true);
+    expect(publicNodes.extractIncidentAck.disabled).toBe(true);
 
     const adminBacklog = makeNodes();
     factory(adminBacklog, true)(backlogHealth, null);
-    expect(adminBacklog.extractIncidentBanner.hidden).toBe(false);
-    expect(adminBacklog.extractIncidentTitle.textContent).toBe('Extraction Review Backlog');
-    expect(adminBacklog.extractIncidentTitle.textContent).not.toBe('Extraction Halted');
-    expect(adminBacklog.extractIncidentDetail.textContent).toContain('Extraction is not halted.');
-    expect(adminBacklog.extractIncidentAck.disabled).toBe(true);
+    expect(adminBacklog.reviewTabBadge.hidden).toBe(false);
+    expect(adminBacklog.reviewTabBadge.textContent).toBe('99+');
+    expect(adminBacklog.adminTabBadge.hidden).toBe(true);
+    expect(adminBacklog.extractHaltDetail.textContent).toBe('Extraction is not halted.');
     expect(adminBacklog.extractIncidentAck.hidden).toBe(true);
-    expect(adminBacklog.extractIncidentAck.attrs['aria-disabled']).toBe('true');
+    expect(adminBacklog.extractIncidentAck.disabled).toBe(true);
+
+    const stalledBacklogNodes = makeNodes();
+    factory(stalledBacklogNodes, true)({
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'ok', detail: 'ok' },
+          { id: 'extraction_provider', status: 'stalled', detail: 'No extraction attempts in 24h while review backlog is 151' },
+          { id: 'extraction_backlog', status: 'error', value: 151, detail: '151 unresolved' },
+        ],
+        reviewQueue: { unresolved: 151, eligible: 24, suppressed: 76, terminal: 51 },
+      },
+    }, null);
+    expect(stalledBacklogNodes.adminTabBadge.hidden).toBe(true);
+    expect(stalledBacklogNodes.extractIncidentAck.hidden).toBe(true);
 
     const adminHalt = makeNodes();
     factory(adminHalt, true)(haltHealth, null);
-    expect(adminHalt.extractIncidentBanner.hidden).toBe(false);
-    expect(adminHalt.extractIncidentTitle.textContent).toBe('Extraction Halted');
-    expect(adminHalt.extractIncidentAck.disabled).toBe(false);
+    expect(adminHalt.reviewTabBadge.textContent).toBe('12');
+    expect(adminHalt.adminTabBadge.hidden).toBe(false);
+    expect(adminHalt.adminTabBadge.textContent).toBe('1');
     expect(adminHalt.extractIncidentAck.hidden).toBe(false);
+    expect(adminHalt.extractIncidentAck.disabled).toBe(false);
   });
 
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {

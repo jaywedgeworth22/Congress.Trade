@@ -1047,6 +1047,9 @@ export async function handleAutopilotTick(
   let revision = row.revision;
   const state = parseRunState(row);
   const seenDocIds = state.outcomes.map((outcome) => outcome.docId);
+  // Minute-tick eligible drain is one selector-eligible-due doc.  Daily
+  // UTC and threshold backlog runs keep the configured pilot cap.
+  const maxDocsThisRun = row.run_trigger === 'eligible' ? 1 : knobs.maxDocsPerRun;
   const day = budgetDay(now);
   const eraStart = currentEraStart(now);
 
@@ -1087,7 +1090,7 @@ export async function handleAutopilotTick(
   let haltedByErrors = false;
 
   for (let slot = 0; slot < DOCS_PER_TICK && !finished; slot++) {
-    if (seenDocIds.length >= knobs.maxDocsPerRun) {
+    if (seenDocIds.length >= maxDocsThisRun) {
       await finalize('completed', 'max_docs_reached');
       finished = true;
       break;
