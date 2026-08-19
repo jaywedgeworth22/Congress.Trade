@@ -5141,26 +5141,22 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(DASHBOARD_HTML).not.toContain('id="extractIncidentBanner"');
     expect(DASHBOARD_HTML).not.toContain('Extraction Review Backlog');
     expect(DASHBOARD_HTML).not.toContain('Extraction Halted');
+    expect(DASHBOARD_HTML).not.toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).not.toContain('function acknowledgeExtractionHalt()');
+    expect(DASHBOARD_HTML).not.toContain('/api/admin/autopilot/acknowledge');
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentAck"');
     const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
     const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
     const tradesStart = DASHBOARD_HTML.indexOf('id="view-trades"');
-    const reviewStart = DASHBOARD_HTML.indexOf('id="view-review"');
     const adminStart = DASHBOARD_HTML.indexOf('id="view-admin"');
     expect(adminStart).toBeGreaterThan(tradesStart);
-    expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('Acknowledge Halt');
-    expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('Acknowledge Halt');
-    expect(DASHBOARD_HTML.slice(reviewStart, DASHBOARD_HTML.indexOf('id="view-subs"'))).not.toContain('id="extractIncidentAck"');
-    expect(DASHBOARD_HTML.slice(reviewStart, DASHBOARD_HTML.indexOf('id="view-subs"'))).not.toContain('id="extractReviewAck"');
-    expect(DASHBOARD_HTML.slice(adminStart)).toContain('id="extractIncidentAck"');
-    expect(DASHBOARD_HTML.slice(adminStart)).toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('extractHaltDetail');
+    expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('extractHaltDetail');
     expect(DASHBOARD_HTML).toContain('id="reviewTabBadge"');
     expect(DASHBOARD_HTML).toContain('id="adminTabBadge"');
-    expect(DASHBOARD_HTML).toContain('function acknowledgeExtractionHalt()');
-    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/autopilot/acknowledge'");
-    expect(DASHBOARD_HTML).toContain('#extractIncidentAck:disabled');
   });
 
-  it('shows Review and Admin nav badges and enables Acknowledge only on a real halt', () => {
+  it('shows Review and Admin nav badges without an Acknowledge Halt control', () => {
     function extractFn(html: string, name: string): string {
       const marker = 'function ' + name + '(';
       const start = html.indexOf(marker);
@@ -5215,8 +5211,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
       return {
         reviewTabBadge: node(),
         adminTabBadge: node(),
-        extractHaltDetail: { ...node(), textContent: '' },
-        extractIncidentAck: node(),
       };
     };
     const factory = new Function(
@@ -5226,7 +5220,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
         'function canUseAdmin() { return !!admin; }',
         'function el(id) { return nodes[id] || null; }',
         extractFn(DASHBOARD_HTML, 'setTabBadge'),
-        extractFn(DASHBOARD_HTML, 'setAckControl'),
         extractFn(DASHBOARD_HTML, 'renderExtractionIncident'),
         'return renderExtractionIncident;',
       ].join('\n'),
@@ -5257,18 +5250,12 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     factory(publicNodes, false)(backlogHealth, null);
     expect(publicNodes.reviewTabBadge.hidden).toBe(true);
     expect(publicNodes.adminTabBadge.hidden).toBe(true);
-    expect(publicNodes.extractHaltDetail.hidden).toBe(true);
-    expect(publicNodes.extractIncidentAck.hidden).toBe(true);
-    expect(publicNodes.extractIncidentAck.disabled).toBe(true);
 
     const adminBacklog = makeNodes();
     factory(adminBacklog, true)(backlogHealth, null);
     expect(adminBacklog.reviewTabBadge.hidden).toBe(false);
     expect(adminBacklog.reviewTabBadge.textContent).toBe('99+');
     expect(adminBacklog.adminTabBadge.hidden).toBe(true);
-    expect(adminBacklog.extractHaltDetail.hidden).toBe(true);
-    expect(adminBacklog.extractIncidentAck.hidden).toBe(true);
-    expect(adminBacklog.extractIncidentAck.disabled).toBe(true);
 
     const stalledBacklogNodes = makeNodes();
     factory(stalledBacklogNodes, true)({
@@ -5282,7 +5269,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
       },
     }, null);
     expect(stalledBacklogNodes.adminTabBadge.hidden).toBe(true);
-    expect(stalledBacklogNodes.extractIncidentAck.hidden).toBe(true);
 
     const stalledHalt = makeNodes();
     factory(stalledHalt, true)({
@@ -5294,18 +5280,12 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
       },
     }, null);
     expect(stalledHalt.adminTabBadge.hidden).toBe(false);
-    expect(stalledHalt.extractIncidentAck.hidden).toBe(false);
-    expect(stalledHalt.extractIncidentAck.disabled).toBe(false);
 
     const adminHalt = makeNodes();
     factory(adminHalt, true)(haltHealth, null);
     expect(adminHalt.reviewTabBadge.textContent).toBe('12');
     expect(adminHalt.adminTabBadge.hidden).toBe(false);
     expect(adminHalt.adminTabBadge.textContent).toBe('1');
-    expect(adminHalt.extractHaltDetail.hidden).toBe(false);
-    expect(adminHalt.extractHaltDetail.textContent).toContain('error_class:auth');
-    expect(adminHalt.extractIncidentAck.hidden).toBe(false);
-    expect(adminHalt.extractIncidentAck.disabled).toBe(false);
   });
 
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {
