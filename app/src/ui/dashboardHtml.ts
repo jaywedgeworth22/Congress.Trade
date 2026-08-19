@@ -142,17 +142,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme-pref', pref);
-    var stylePref = 'standard';
-    try {
-      var st = localStorage.getItem('ui-style');
-      if (st === 'ledger' || st === 'standard') stylePref = st;
-    } catch (e2) {}
-    document.documentElement.setAttribute('data-style', stylePref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      var ledger = stylePref === 'ledger';
-      meta.setAttribute('content', effective === 'dark' ? '#08111f' : (ledger ? '#f4efe4' : '#eff3f8'));
-    }
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -218,34 +209,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: #fff;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-  }
-  /* Capitol Ledger (#1459): editorial paper / serif / mono, opt-in via Style. */
-  html[data-style="ledger"] {
-    --sans: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  html[data-style="ledger"][data-theme="light"] {
-    --bg:        #f4efe4;
-    --bg-2:      #ebe4d4;
-    --panel:     #fffaf0;
-    --panel-2:   #f3ead8;
-    --border:    #d4c4a8;
-    --text:      #2a2118;
-    --text-dim:  #6b5c48;
-    --accent:    #8a4b1f;
-  }
-  html[data-style="ledger"][data-theme="light"] header.top,
-  html[data-style="ledger"][data-theme="light"] .trades-toolbars,
-  html[data-style="ledger"][data-theme="light"] #trendsSharedFilters {
-    background: #fffaf0;
-  }
-  html[data-style="ledger"] h1, html[data-style="ledger"] h2, html[data-style="ledger"] h3,
-  html[data-style="ledger"] .tf-h, html[data-style="ledger"] .tf-cap, html[data-style="ledger"] .tkr {
-    font-family: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
-  }
-  html[data-style="ledger"] .amount-range, html[data-style="ledger"] .est, html[data-style="ledger"] .fc-amt-val,
-  html[data-style="ledger"] .trades-stats, html[data-style="ledger"] .k {
-    font-family: var(--mono);
   }
   /* The hidden attribute must always win, even over class display rules
      (e.g. .row-flex/.plan-grid set display and would otherwise override the
@@ -546,7 +509,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
-  /* Capitol Ledger / iOS: party-colored rings on politician photos (not account avatars). */
+  /* Party-colored rings on politician photos (not account avatars). */
   .avatar.party-D { box-shadow: 0 0 0 2px var(--party-d); border-color: transparent; }
   .avatar.party-R { box-shadow: 0 0 0 2px var(--party-r); border-color: transparent; }
   .avatar.party-O { box-shadow: 0 0 0 2px var(--party-o); border-color: transparent; }
@@ -666,7 +629,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
   /* Timeframe chips on section headers + the KPI-strip caption. */
   .tf-chip { font-weight: 400; font-size: .8em; color: var(--text-dim); white-space: nowrap; }
-  .tf-cap  { font-size: 12px; color: var(--text-dim); margin: 0 0 6px; }
   /* Skeleton shimmer loaders (GPU-composited background animation, no layout shift). */
   @keyframes tr-shimmer { 100% { background-position: -200% 0; } }
   .sk { display: inline-block; border-radius: 6px; background: linear-gradient(90deg, var(--panel-2) 25%, color-mix(in srgb, var(--text-dim) 18%, var(--panel-2)) 37%, var(--panel-2) 63%); background-size: 200% 100%; animation: tr-shimmer 1.25s ease-in-out infinite; }
@@ -839,10 +801,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table tbody tr[data-member]:hover td, .people-table tbody tr[data-asset]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .people-table th:first-child, .people-table td:first-child { text-align: left; }
   .people-table td { vertical-align: middle; }
-  .pager { margin-top:14px; justify-content:space-between; }
+  .pager { margin-top:14px; justify-content:space-between; gap:12px; }
   .pager.pager-top { margin-top:0; margin-bottom:12px; }
   .pager.pager-bottom { margin-top:14px; }
-  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width:auto; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -850,10 +812,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      off-center inside the pager control box (align-items:center centers the
      margin box, not the text) — zero it out here so the text itself centers. */
   .pager-controls .note { margin-top: 0; }
-  .pager select { padding:5px 9px; font-size:12px; }
-  /* Rows-per-page + Options menu live at the end of each pager bar
-     (toolbar stays filter-only; Export/Columns live under Options). */
-  .pager-tools { display:flex; align-items:center; gap:8px; }
+  .pager select { padding:5px 9px; font-size:12px; width:auto; }
+  /* Rows + Export live in the top control band.  Bottom pager is range +
+     page buttons only — do not park tools at the end of the list. */
+  .pager-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+  .pager-bottom .pager-tools { display: none; }
+  .pager .trades-count-msg { flex:0 0 auto; }
+  .pager-top .trades-sort-mobile { margin: 0; }
   .feed-options { position:relative; }
   .feed-options .menu-pop { min-width:200px; top:36px; }
   .feed-options .menu-pop .prem-hint { font-size:11px; color:var(--text-dim); margin-left:6px; }
@@ -1314,7 +1279,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu-pop .theme-row {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
-    margin:4px 2px 6px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;
+    margin:4px 2px 6px; padding:8px 10px; border:none; border-radius:0;
   }
   .menu-pop .theme-row-label { font-size:12px; color:var(--text-dim); flex:0 0 auto; }
   .theme-seg {
@@ -1322,9 +1287,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border:1px solid var(--border); border-radius:9px; background:var(--bg);
   }
   .theme-seg-btn {
-    display:inline-flex !important; align-items:center; justify-content:center; gap:0; width:auto !important;
+    display:inline-flex !important; align-items:center; justify-content:center; gap:5px; width:auto !important;
     border:1px solid transparent !important; background:transparent !important;
-    color:var(--text-dim) !important; padding:6px 8px !important; border-radius:7px !important;
+    color:var(--text-dim) !important; padding:5px 9px !important; border-radius:7px !important;
     cursor:pointer; font-size:11px !important; font-family:var(--sans); font-weight:500;
     line-height:1.1; white-space:nowrap;
   }
@@ -1335,6 +1300,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     box-shadow:0 1px 2px rgba(0,0,0,.12);
   }
   .theme-seg-btn svg { width:13px; height:13px; flex:0 0 auto; }
+  .acct-mobile-menu .theme-row {
+    display:block; margin:0; padding:0; border:none;
+  }
+  .acct-mobile-menu .theme-seg { display:flex; width:100%; background:var(--bg-2); }
+  .acct-mobile-menu .theme-seg-btn { flex:1 1 0; min-width:0; }
   /* Guest header theme control (signed-out) */
   .theme-guest { display:inline-flex; align-items:center; }
   .theme-guest .theme-seg { background:var(--panel-2); }
@@ -1618,12 +1588,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      batch #21: the $ Minimum pill/select was removed entirely — no $/size
      dropdown on any platform. The server-side minAmount query param still
      exists for direct API consumers.) */
-  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
+  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); width:max-content; max-width:100%; flex:0 0 auto; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
   .pill-select-el {
     appearance:none; -webkit-appearance:none; -moz-appearance:none;
-    width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
+    width:auto; field-sizing:content; max-width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
     color:var(--text); border-radius:var(--radius-pill); font:600 12px var(--sans);
     padding:0 26px 0 30px; cursor:pointer;
     background-repeat:no-repeat; background-position:right 8px center;
@@ -1668,7 +1638,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      #tradesExtraFilters grid (DO-NOT-BREAK) is completely unaffected — this
      whole block simply doesn't apply there. (Owner follow-up batch #21/#23:
      the $ pill that used to close this row is gone — no orphaned auto-margin
-     or trailing gap left behind; #tradesStats is now the last item.) */
+     or trailing gap left behind; search is now the last item.) */
   @media (min-width: 769px) {
     .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
     .trades-toolbars #tradesSharedFilters,
@@ -1676,7 +1646,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #tradesStats { order:4; }
+    .pager-top .trades-sort-mobile { display: none; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1845,10 +1815,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
   .trades-stats .match-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
   .trades-stats .match-label { color: var(--text-dim); font-weight: 500; }
-  /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
-     shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
-  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
-  .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
+  /* Mobile sort lives in the top pager band; hidden on desktop (table headers). */
+  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0; flex: 0 0 auto; }
+  .trades-sort-mobile #mobileSortKey { flex: 0 0 auto; width: auto; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse) {
     /* clip (not hidden): hidden on one axis makes the other compute to auto
        and turns html/body/main into a scrollport, which kills position:sticky
@@ -1975,34 +1944,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #tradesExtraFilters { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+    #tradesExtraFilters { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
     #tradesExtraFilters #qSearchField { grid-column: 1; min-width: 0; flex: 1 1 auto; }
-    .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
-    /* Pagers stay usable on phones: don't force every child full-width. */
-    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 8px; }
+    /* Pagers stay usable on phones: don't force every child full-width.
+       Controls stay intrinsic and right-aligned — no stretched empty bar. */
+    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 10px 12px; justify-content: space-between; }
     .pager.row-flex > * { width: auto; min-height: 0; }
-    .pager .pager-controls { flex: 1 1 auto; }
-    .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
-    .pager-top .pager-tools { display: none; }
+    .pager .pager-controls { flex: 0 0 auto; width: auto; margin-left: auto; }
+    .pager .pager-tools { flex: 0 0 auto; }
+    .pager-top .pager-tools { display: flex; }
+    .pager-top .feed-options { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
-    /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
-       party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
-       (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
-       2 direct children remain: the timeframe pill and .filter-groups. ID
-       selectors (not .toolbar/.shared-filters classes) so this reliably wins
-       regardless of source order against the ≤720px .toolbar re-flex below
-       (the CSS-cascade invariant every mobile rule here must respect). Line
-       1 = timeframe pill; .filter-groups is forced flex-basis:100% so it
-       always wraps to its own line 2, and its own children stay nowrap so
-       the 3 segmented groups + ⓘ never wrap further. */
+    .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
+    /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
+       Timeframe is content-sized (not flex-grown).  ID selectors beat the
+       later ≤720px `.toolbar { flex-wrap:wrap }` re-flex. */
     #tradesSharedFilters, #trendsSharedFilters {
-      display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
       overflow: visible;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal {
+      flex: 0 0 auto; width: max-content;
+    }
+    #tradesSharedFilters > .pill-select-el, #trendsSharedFilters > .pill-select-el,
+    #tradesSharedFilters .pill-select-el, #trendsSharedFilters .pill-select-el {
+      width: auto; field-sizing: content;
+    }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
-      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
+      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 6px;
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
@@ -2014,7 +1984,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
     #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
-    #tradesStats { flex: 0 0 auto; white-space: nowrap; }
     #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
@@ -2039,7 +2008,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
     #view-trades .table-wrap { display: none; }
     #view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-trades .trades-sort-mobile { display: flex; }
+    #view-trades .pager-top .trades-sort-mobile { display: flex; }
     /* The Columns chooser only affects the (hidden) table's field set — tradesCardHtml()
        renders a fixed field set, so hide Columns inside the Options menu on phones.
        Export CSV stays available. */
@@ -2272,13 +2241,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: var(--text-dim);
   letter-spacing: .03em;
 }
-/* KPI-strip caption sits in the same rhythm. */
-#view-trends .tf-cap {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
+/* KPI strip sits tight under the filter row — no Snapshot caption. */
+#view-trends #trKpis { margin-top: 0; }
 
 /* ---- 3. Surfaces: one calm material for sections, cards, clusters ------
    Token top-light gradient + 1px inner highlight via ::before (inset:0,
@@ -2676,10 +2640,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    .toolbar .trends-filter-row { flex: 1 1 auto; }
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    #view-trends .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    #view-trends .toolbar .trends-filter-row { flex: 1 1 auto; }
+    .toolbar .trends-filter-row { flex: 0 1 auto; }
+    #view-trends .toolbar { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
+    #view-trends .toolbar .time-filter-wrap { flex: 0 0 auto; }
+    #view-trends .toolbar .trends-filter-row { flex: 0 1 auto; width: auto; }
     .grid-cards { gap: 12px; margin-bottom: 20px; }
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
@@ -2700,10 +2664,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        breakpoint's footer rule, scaled to this block's tighter 26px base. */
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
-  @media (max-width: 420px) {
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
-    #view-trends .toolbar .time-filter-wrap,
-    #view-trends .toolbar .trends-filter-row { width: 100%; }
+  /* Two IDs so this wins over `#view-trends .toolbar { flex-wrap }` and the
+     generic `.toolbar select { width:100% }` mobile shorthand. */
+  #view-trends #trendsSharedFilters,
+  #view-trades #tradesSharedFilters {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center;
+    width: auto;
+    max-width: 100%;
+  }
+  #view-trends #trendsSharedFilters > .pill-select.pill-cal,
+  #view-trades #tradesSharedFilters > .pill-select.pill-cal {
+    flex: 0 0 auto;
+    width: max-content;
   }
 
 
@@ -2744,15 +2718,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
         <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2803,22 +2777,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <!-- The timeframe is named here, not just in the pill to the left: the same
-           politician reads 988 trades in this window and 22,832 all time in the
-           Directory, and an unlabelled count makes those look like a data bug. -->
-      <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">trades</span>
-      </div>
     </div>
-    </div>
-    <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
-         is hidden below the 768px breakpoint along with .table-wrap, so this is
-         the only sort affordance on phones. Shares sortKey/sortDir + the
-         setSort()/tradesQueryParams() refetch path with the desktop headers. -->
-    <div class="trades-sort-mobile" id="tradesSortMobile">
-      <label class="lbl" for="mobileSortKey">Sort</label>
-      <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
-      <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
     </div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
@@ -2827,6 +2786,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </dialog>
     <!-- Pagination top + bottom: same controls, synced in updateTradesCountMsg / setPageSize. -->
     <div class="row-flex pager pager-top" data-pager="top">
+      <div class="trades-sort-mobile" id="tradesSortMobile">
+        <label class="lbl" for="mobileSortKey">Sort</label>
+        <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
+        <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
+      </div>
       <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination top">
         <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
@@ -2890,15 +2854,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
       <span class="pill-select pill-cal">
         <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2942,21 +2906,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
-    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
 
-    <!-- Capitol Ledger structural win (#1459): scannable largest buy/sell assets. -->
     <div class="trend-grid-split" id="trExtremes">
       <details class="section trends-fold" open>
         <summary class="tf-h">Largest Buys<span class="fold-cue" aria-hidden="true"></span></summary>
-        <p class="sub">Estimated buy-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
         <div class="table-wrap"><table><tbody id="trLargestBuys"><tr><td class="state">Loading…</td></tr></tbody></table></div>
       </details>
       <details class="section trends-fold" open>
         <summary class="tf-h">Largest Sells<span class="fold-cue" aria-hidden="true"></span></summary>
-        <p class="sub">Estimated sell-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
         <div class="table-wrap"><table><tbody id="trLargestSells"><tr><td class="state">Loading…</td></tr></tbody></table></div>
       </details>
     </div>
@@ -4178,7 +4138,7 @@ function themeSegHtml(pref) {
   var btns = opts.map(function (o) {
     var active = pref === o.id ? ' active' : '';
     return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" title="' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
-      themeIconSvg(o.id) + '</button>';
+      themeIconSvg(o.id) + o.label + '</button>';
   }).join('');
   return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
 }
@@ -4187,47 +4147,6 @@ function themeRowHtml(pref, hideLabel) {
   // stands alone there — no "Theme" caption. The desktop menu-pop dropdown
   // keeps the label (unchanged), so hideLabel is opt-in per call site.
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
-}
-function readStylePref() {
-  try {
-    var s = localStorage.getItem('ui-style');
-    if (s === 'ledger' || s === 'standard') return s;
-  } catch (e) {}
-  return 'standard';
-}
-function styleSegHtml(pref) {
-  pref = pref || readStylePref();
-  var opts = [
-    { id: 'standard', label: 'Standard' },
-    { id: 'ledger', label: 'Capitol Ledger' }
-  ];
-  var btns = opts.map(function (o) {
-    var active = pref === o.id ? ' active' : '';
-    return '<button type="button" class="style-seg-btn theme-seg-btn' + active + '" data-style-opt="' + o.id + '" aria-label="Set style to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
-      o.label + '</button>';
-  }).join('');
-  return '<div class="theme-seg" role="group" aria-label="Style">' + btns + '</div>';
-}
-function styleRowHtml() {
-  return '<div class="theme-row style-row"><span class="theme-row-label">Style</span>' + styleSegHtml() + '</div>';
-}
-function applyStyle(pref) {
-  pref = pref === 'ledger' ? 'ledger' : 'standard';
-  document.documentElement.setAttribute('data-style', pref);
-  var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta && document.documentElement.getAttribute('data-theme') !== 'dark') {
-    meta.setAttribute('content', pref === 'ledger' ? '#f4efe4' : '#eff3f8');
-  }
-  document.querySelectorAll('.style-seg-btn[data-style-opt]').forEach(function (btn) {
-    var on = btn.getAttribute('data-style-opt') === pref;
-    btn.classList.toggle('active', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-function setStylePref(pref) {
-  pref = pref === 'ledger' ? 'ledger' : 'standard';
-  try { localStorage.setItem('ui-style', pref); } catch (e) {}
-  applyStyle(pref);
 }
 function applyTheme(effective) {
   effective = effective === 'dark' ? 'dark' : 'light';
@@ -4238,10 +4157,7 @@ function applyTheme(effective) {
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) {
-    var ledgerOn = document.documentElement.getAttribute('data-style') === 'ledger';
-    meta.setAttribute('content', effective === 'light' ? (ledgerOn ? '#f4efe4' : '#eff3f8') : '#08111f');
-  }
+  if (meta) meta.setAttribute('content', effective === 'light' ? '#eff3f8' : '#08111f');
   syncThemeSegUI();
 }
 function syncThemeSegUI() {
@@ -4280,12 +4196,6 @@ function toggleTheme() {
 })();
 document.addEventListener('click', function (e) {
   var t = e.target;
-  var styleBtn = t && t.closest ? t.closest('.style-seg-btn[data-style-opt]') : null;
-  if (styleBtn) {
-    var stylePref = styleBtn.getAttribute('data-style-opt');
-    if (stylePref) setStylePref(stylePref);
-    return;
-  }
   var btn = t && t.closest ? t.closest('.theme-seg-btn[data-theme-opt]') : null;
   if (!btn) return;
   var pref = btn.getAttribute('data-theme-opt');
@@ -11746,7 +11656,6 @@ function renderAccount() {
       '</span>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
-      styleRowHtml() +
       adminMenuHtml('closeAcctMobileMenu();') +
       acctMobileDisclaimerHtml();
   } else {
@@ -11769,13 +11678,12 @@ function renderAccount() {
           '<div class="who">' + esc(ME.user.email || '') + '</div>' +
           '<div class="menu-section-label">Appearance</div>' +
           themeRowHtml() +
-          styleRowHtml() +
           '<div class="menu-section-label">Account</div>' +
           '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery</button>' +
           (canManageSubscription()
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
-            : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+            : '') +
           adminMenuHtml('closeAcctMenu();') +
           '<button onclick="logout()">Sign Out</button>' +
         '</div>' +
@@ -11784,14 +11692,13 @@ function renderAccount() {
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
-      styleRowHtml() +
       '<div class="menu-section-label">Account</div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery</button>' +
       upgrade +
       (canManageSubscription()
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
-        : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+        : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
       '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       acctMobileDisclaimerHtml();
