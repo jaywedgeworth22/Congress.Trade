@@ -2910,17 +2910,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
 
-    <div class="trend-grid-split" id="trExtremes">
-      <details class="section trends-fold" open>
-        <summary class="tf-h">Largest Buys<span class="fold-cue" aria-hidden="true"></span></summary>
-        <div class="table-wrap"><table><tbody id="trLargestBuys"><tr><td class="state">Loading…</td></tr></tbody></table></div>
-      </details>
-      <details class="section trends-fold" open>
-        <summary class="tf-h">Largest Sells<span class="fold-cue" aria-hidden="true"></span></summary>
-        <div class="table-wrap"><table><tbody id="trLargestSells"><tr><td class="state">Loading…</td></tr></tbody></table></div>
-      </details>
-    </div>
-
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
@@ -9552,49 +9541,10 @@ function timeChartHtml(series, labelStep, metric) {
 
 function loadTrends() {
   stampWindowChips();
-  loadTrSummary(); loadTrExtremes(); loadTrTickers(); loadTrTrending(); loadTrClusters();
+  loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
   loadTrConflicts();
-}
-function loadTrExtremes() {
-  var buyBox = el('trLargestBuys');
-  var sellBox = el('trLargestSells');
-  if (!buyBox || !sellBox) return;
-  buyBox.innerHTML = skRows(5, 2);
-  sellBox.innerHTML = skRows(5, 2);
-  aGet('ticker-leaderboard?' + trParams() + '&sort=volume&limit=40').then(function (d) {
-    var rows = d.tickers || [];
-    function sideVol(r, side) {
-      var vol = Number(r.estVolumeUsd) || 0;
-      var net = Number(r.estNetFlowUsd) || 0;
-      var buy = Math.max(0, (vol + net) / 2);
-      var sell = Math.max(0, (vol - net) / 2);
-      return side === 'B' ? buy : sell;
-    }
-    function paint(box, side) {
-      var list = rows.slice().filter(function (r) { return sideVol(r, side) > 0; })
-        .sort(function (a, b) { return sideVol(b, side) - sideVol(a, side); })
-        .slice(0, 8);
-      if (!list.length) {
-        box.innerHTML = stateRow(2, 'No ' + (side === 'B' ? 'buys' : 'sells') + ' in this window.');
-        return;
-      }
-      box.innerHTML = list.map(function (r) {
-        return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
-          '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) +
-            '<div><span class="tkr">' + esc(r.ticker) + '</span>' +
-            (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') +
-            '</div></div></td>' +
-          '<td class="est">' + estUsd(sideVol(r, side)) + '</td></tr>';
-      }).join('');
-    }
-    paint(buyBox, 'B');
-    paint(sellBox, 'S');
-  }).catch(function (e) {
-    buyBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
-    sellBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
-  });
 }
 
 /* Committee sector conflicts for the current Trends window. */
