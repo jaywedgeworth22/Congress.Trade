@@ -214,7 +214,7 @@ describe('OpenRouterVisionExtractor', () => {
     }
     
     expect(caughtErr).toBeDefined();
-    expect(caughtErr?.message).toContain('could not parse model JSON');
+    expect(caughtErr?.message).toContain('openRouterReply:garbage');
     expect(caughtErr?.usage).toMatchObject({ promptTokens: 100, completionTokens: 50 });
     // The call was billed before the parse failure: the generation id must
     // survive onto the thrown error for bakeoff.ts's error-path telemetry.

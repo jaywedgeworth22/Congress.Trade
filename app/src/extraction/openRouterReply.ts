@@ -30,7 +30,9 @@ export type DocScopedOpenRouterKind = typeof DOC_SCOPED_OPENROUTER_KINDS[number]
 
 const REPLY_MARKER = 'openRouterReply:';
 
-export function isDocScopedOpenRouterReply(kind: OpenRouterReplyKind): boolean {
+export function isDocScopedOpenRouterReply(
+  kind: OpenRouterReplyKind,
+): kind is DocScopedOpenRouterKind {
   return kind === 'unauth_reply' || kind === 'garbage';
 }
 
@@ -53,6 +55,9 @@ export function isDocScopedOpenRouterError(error: string | null | undefined): bo
   const message = (error ?? '').trim();
   if (!message) return false;
   if (isProvenOpenRouterCredentialRejection(message)) return false;
+  const lower = message.toLowerCase();
+  const looksOpenRouter = lower.includes('openrouter') || lower.includes('openrouterreply:');
+  if (!looksOpenRouter) return false;
   return isDocScopedOpenRouterReply(classifyOpenRouterErrorMessage(message));
 }
 
