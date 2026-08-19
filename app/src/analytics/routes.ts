@@ -21,6 +21,7 @@ import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { all, first, get, parseJson } from '../shared/db.ts';
 import { resolveMember } from '../client/queries.ts';
+import { tradeLearnedAt } from '../delivery/tradeLearnedAt.ts';
 import { cached, cacheKey } from '../shared/kvCache.ts';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes.ts';
 import { normalizeCompanyName, resolveAssetDisplayName } from '../shared/companyName.ts';
@@ -984,7 +985,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
           filedDate: str(row.filed_date),
-          firstSeenAt: str(row.first_seen_at),
+          firstSeenAt: tradeLearnedAt(str(row.first_seen_at), str(row.created_at), str(row.tx_date)),
           sourceUrl: str(row.source_url),
           createdAt: str(row.created_at),
           source: str(row.source),
@@ -1131,7 +1132,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           txType: str(row.tx_type),
           txDate: str(row.tx_date),
           filedDate: str(row.filed_date),
-          firstSeenAt: str(row.first_seen_at),
+          firstSeenAt: tradeLearnedAt(str(row.first_seen_at), str(row.created_at), str(row.tx_date)),
           createdAt: str(row.created_at),
           sourceUrl: str(row.source_url),
           owner: str(row.owner),

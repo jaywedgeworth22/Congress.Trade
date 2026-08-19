@@ -31,6 +31,7 @@ import type { AssetTypeCategory } from '../shared/assetTypes.ts';
 import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { tradeLearnedAt } from './tradeLearnedAt.ts';
 
 
 // ---------------------------------------------------------------------------
@@ -232,7 +233,11 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     // `t.first_seen_at` are null there too; this fallback recovers real,
     // already-persisted data, never fabricates a value.
     filedDate: row.filing_filed_date ?? row.filed_date ?? null,
-    firstSeenAt: row.filing_first_seen_at ?? row.first_seen_at ?? null,
+    firstSeenAt: tradeLearnedAt(
+      row.filing_first_seen_at ?? row.first_seen_at,
+      row.created_at,
+      row.tx_date,
+    ),
     sourceUrl: row.filing_source_url ?? undefined,
     pdfUrl: row.filing_raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
     refCompanyName: row.ref_company_name,
