@@ -92,6 +92,23 @@ describe('OpenRouterVisionExtractor', () => {
     expect(result.extractor).toBe('openRouterVision');
   });
 
+  it('skips a bare Unauthorized reply without a second Files call', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => '{"error":{"message":"Unauthorized","code":401}}',
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    await expect(ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    })).rejects.toThrow(/openRouterReply:unauth_reply/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('throws an error if no API key is provided', async () => {
     const emptyEnv = {} as Env;
     const ex = new OpenRouterVisionExtractor(emptyEnv);
