@@ -5137,15 +5137,155 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
   });
 
-  it('surfaces the extraction-halt banner and acknowledge control', () => {
-    expect(DASHBOARD_HTML).toContain('id="extractIncidentBanner"');
-    expect(DASHBOARD_HTML).toContain('Extraction Halted');
-    expect(DASHBOARD_HTML).toContain('id="extractIncidentAck"');
-    expect(DASHBOARD_HTML).toContain('Acknowledge Halt');
-    expect(DASHBOARD_HTML).toContain('function acknowledgeExtractionHalt()');
-    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/autopilot/acknowledge'");
-    expect(DASHBOARD_HTML).toContain('function loadExtractionIncident()');
-    expect(DASHBOARD_HTML).toContain('The extraction loop is stopped.&nbsp; Review the reason');
+  it('keeps halt and review chrome off Trends and Trades', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentBanner"');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Review Backlog');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Halted');
+    expect(DASHBOARD_HTML).not.toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).not.toContain('function acknowledgeExtractionHalt()');
+    expect(DASHBOARD_HTML).not.toContain('/api/admin/autopilot/acknowledge');
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentAck"');
+    const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
+    const tradesStart = DASHBOARD_HTML.indexOf('id="view-trades"');
+    const adminStart = DASHBOARD_HTML.indexOf('id="view-admin"');
+    expect(adminStart).toBeGreaterThan(tradesStart);
+    expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('extractHaltDetail');
+    expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('extractHaltDetail');
+    expect(DASHBOARD_HTML).toContain('id="reviewTabBadge"');
+    expect(DASHBOARD_HTML).toContain('id="adminTabBadge"');
+  });
+
+  it('shows Review and Admin nav badges without an Acknowledge Halt control', () => {
+    function extractFn(html: string, name: string): string {
+      const marker = 'function ' + name + '(';
+      const start = html.indexOf(marker);
+      if (start < 0) throw new Error('function not found: ' + name);
+      const braceStart = html.indexOf('{', start);
+      let depth = 0;
+      let i = braceStart;
+      for (; i < html.length; i++) {
+        if (html[i] === '{') depth++;
+        else if (html[i] === '}') {
+          depth--;
+          if (depth === 0) return html.slice(start, i + 1);
+        }
+      }
+      throw new Error('unbalanced braces for ' + name);
+    }
+    type BadgeNode = {
+      hidden: boolean;
+      disabled: boolean;
+      textContent: string;
+      classList: {
+        toggle: (name: string, on?: boolean) => void;
+        add: (name: string) => void;
+        remove: (name: string) => void;
+        _on: Record<string, boolean>;
+      };
+      setAttribute: (k: string, v: string) => void;
+      attrs: Record<string, string>;
+    };
+    const makeNodes = (): Record<string, BadgeNode> => {
+      const node = (): BadgeNode => ({
+        hidden: true,
+        disabled: true,
+        textContent: '',
+        classList: {
+          _on: {},
+          toggle(name: string, on?: boolean) {
+            this._on[name] = !!on;
+          },
+          add(name: string) {
+            this._on[name] = true;
+          },
+          remove(name: string) {
+            this._on[name] = false;
+          },
+        },
+        attrs: {},
+        setAttribute(k: string, v: string) {
+          this.attrs[k] = v;
+        },
+      });
+      return {
+        reviewTabBadge: node(),
+        adminTabBadge: node(),
+      };
+    };
+    const factory = new Function(
+      'nodes',
+      'admin',
+      [
+        'function canUseAdmin() { return !!admin; }',
+        'function el(id) { return nodes[id] || null; }',
+        extractFn(DASHBOARD_HTML, 'setTabBadge'),
+        extractFn(DASHBOARD_HTML, 'renderExtractionIncident'),
+        'return renderExtractionIncident;',
+      ].join('\n'),
+    ) as (nodes: Record<string, BadgeNode>, admin: boolean) => (
+      health: unknown,
+      autopilot: unknown,
+    ) => void;
+
+    const backlogHealth = {
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'ok', detail: 'ok' },
+          { id: 'extraction_backlog', status: 'error', value: 151, detail: '151 unresolved' },
+        ],
+        reviewQueue: { unresolved: 151, eligible: 24, suppressed: 76, terminal: 51 },
+      },
+    };
+    const haltHealth = {
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'error', detail: 'Autopilot is halted on error_class:auth.' },
+        ],
+        reviewQueue: { unresolved: 12, eligible: 4, suppressed: 4, terminal: 4 },
+      },
+    };
+
+    const publicNodes = makeNodes();
+    factory(publicNodes, false)(backlogHealth, null);
+    expect(publicNodes.reviewTabBadge.hidden).toBe(true);
+    expect(publicNodes.adminTabBadge.hidden).toBe(true);
+
+    const adminBacklog = makeNodes();
+    factory(adminBacklog, true)(backlogHealth, null);
+    expect(adminBacklog.reviewTabBadge.hidden).toBe(false);
+    expect(adminBacklog.reviewTabBadge.textContent).toBe('99+');
+    expect(adminBacklog.adminTabBadge.hidden).toBe(true);
+
+    const stalledBacklogNodes = makeNodes();
+    factory(stalledBacklogNodes, true)({
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'ok', detail: 'ok' },
+          { id: 'extraction_provider', status: 'stalled', detail: 'No extraction attempts in 24h while review backlog is 151' },
+          { id: 'extraction_backlog', status: 'error', value: 151, detail: '151 unresolved' },
+        ],
+        reviewQueue: { unresolved: 151, eligible: 24, suppressed: 76, terminal: 51 },
+      },
+    }, null);
+    expect(stalledBacklogNodes.adminTabBadge.hidden).toBe(true);
+
+    const stalledHalt = makeNodes();
+    factory(stalledHalt, true)({
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'error', detail: 'Autopilot runs halted: stalled' },
+        ],
+        reviewQueue: { unresolved: 3, eligible: 1, suppressed: 1, terminal: 1 },
+      },
+    }, null);
+    expect(stalledHalt.adminTabBadge.hidden).toBe(false);
+
+    const adminHalt = makeNodes();
+    factory(adminHalt, true)(haltHealth, null);
+    expect(adminHalt.reviewTabBadge.textContent).toBe('12');
+    expect(adminHalt.adminTabBadge.hidden).toBe(false);
+    expect(adminHalt.adminTabBadge.textContent).toBe('1');
   });
 
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {

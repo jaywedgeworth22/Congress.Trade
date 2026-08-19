@@ -378,30 +378,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
   nav.tabs button {
+    position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
     padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
   }
   nav.tabs button:hover { color: var(--text); background: var(--panel); }
   nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  .tab-count-badge {
+    display: none;
+    min-width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .tab-count-badge.is-on { display: inline-block; }
   main { padding: var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
-  .extract-incident {
-    display: none;
-    border: 2px solid var(--sell);
-    background: color-mix(in srgb, var(--sell) 10%, var(--panel));
-    color: var(--text);
-    padding: 14px 16px;
-    border-radius: 12px;
-    margin: 0 0 22px;
-  }
-  .extract-incident.is-on { display: block; }
-  .extract-incident h3 { margin: 0 0 6px; font-size: 16px; color: var(--sell); }
-  .extract-incident p { margin: 0 0 8px; font-size: 13px; }
-  .extract-incident .row-flex { gap: 10px; align-items: center; flex-wrap: wrap; }
   .view { display: none; }
   .view.active { display: block; }
   .toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
@@ -700,7 +704,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
-  .btn:disabled { opacity: .5; cursor: default; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
   .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 24px; margin-bottom: 29px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
@@ -1900,6 +1904,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab-count-badge,
+    .tab-count-badge.is-on {
+      position: absolute;
+      top: 2px;
+      right: max(4px, calc(50% - 22px));
+      margin: 0;
+      min-width: 16px;
+      height: 16px;
+      line-height: 16px;
+      font-size: 10px;
+      z-index: 1;
+    }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
     /* Owner punch list #5: nav.tabs is ~56px tall before safe-area.  70px
@@ -2668,7 +2684,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
     .banner { margin-bottom: 18px; }
-    .extract-incident { margin-bottom: 18px; }
     .trend-grid2, .trend-grid-split, .trend-members-grid, .trend-side-stack { gap: 18px; }
     .timeliness-grid { gap: 24px; }
     .cluster-grid { gap: 12px; }
@@ -2706,25 +2721,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
     <button data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</button>
-    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
+    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></button>
     <button data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
+    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></button>
   </nav>
   <div id="acct" class="acct"></div>
 </header>
 
 <main>
   <div class="banner" id="banner">Connecting to the live feed…</div>
-  <div class="extract-incident" id="extractIncidentBanner" role="alert" hidden>
-    <h3>Extraction Halted</h3>
-    <p id="extractIncidentDetail">The extraction loop is stopped.&nbsp; Review the reason, then acknowledge to resume when it is safe.</p>
-    <p id="extractIncidentCounts" class="note"></p>
-    <div class="row-flex">
-      <button class="btn" type="button" id="extractIncidentAck" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
-      <button class="btn ghost sm" type="button" onclick="showView('review')">Open Review Queue</button>
-      <span id="extractIncidentAckMsg" class="note" role="status"></span>
-    </div>
-  </div>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -3144,7 +3149,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the red <strong>Extraction Halted</strong> banner above this page is the acknowledge control.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the Admin tab shows a red badge.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -5737,47 +5742,45 @@ document.addEventListener('visibilitychange', function () {
 
 /* ============================ REVIEW ============================ */
 var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
+function setTabBadge(id, value) {
+  var node = el(id);
+  if (!node) return;
+  var n = Number(value) || 0;
+  if (n <= 0) {
+    node.hidden = true;
+    node.textContent = '';
+    node.classList.remove('is-on');
+    return;
+  }
+  node.hidden = false;
+  node.classList.add('is-on');
+  node.textContent = n > 99 ? '99+' : String(n);
+}
 function renderExtractionIncident(health, autopilot) {
-  var banner = el('extractIncidentBanner');
-  if (!banner) return;
+  var admin = canUseAdmin();
   var checks = (health && health.pipeline && health.pipeline.checks) || [];
   var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
   var backlog = checks.filter(function (c) { return c.id === 'extraction_backlog'; })[0];
   var provider = checks.filter(function (c) { return c.id === 'extraction_provider'; })[0];
   var halted = !!(halt && halt.status && halt.status !== 'ok');
+  var stalledExtract = !!(provider && provider.status === 'stalled' && halted);
   var review = (health && health.pipeline && health.pipeline.reviewQueue)
     || (autopilot && autopilot.reviewQueue)
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
-  var show = halted || unresolved > 0;
-  banner.hidden = !show;
-  banner.classList.toggle('is-on', show);
-  var detail = el('extractIncidentDetail');
-  if (detail) {
-    var parts = [];
-    if (halted) parts.push(halt.detail || 'Autopilot is halted.');
-    else parts.push('Extraction is not halted.');
-    if (provider && provider.status && provider.status !== 'ok') parts.push(provider.detail);
-    detail.textContent = parts.filter(Boolean).join('  ');
-  }
-  var counts = el('extractIncidentCounts');
-  if (counts) {
-    counts.textContent = review
-      ? ('Unresolved ' + review.unresolved + '  ·  eligible ' + review.eligible
-        + '  ·  suppressed ' + review.suppressed + '  ·  terminal ' + review.terminal)
-      : (backlog && backlog.detail ? backlog.detail : '');
-  }
-  var ack = el('extractIncidentAck');
-  if (ack) ack.disabled = !halted || !canUseAdmin();
+  // No halt banner or Ack control.  Admins get nav badges only.
+  // Selector due-now drain publishes.
+  setTabBadge('reviewTabBadge', admin ? unresolved : 0);
+  setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
 }
 function loadExtractionIncident() {
+  if (!canUseAdmin()) {
+    renderExtractionIncident(null, null);
+    return Promise.resolve();
+  }
   return fetch('/api/health')
     .then(function (r) { return r.json(); })
     .then(function (health) {
-      if (!canUseAdmin()) {
-        renderExtractionIncident(health, null);
-        return health;
-      }
       return fetch('/api/admin/autopilot/status', { headers: adminHeaders() })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (autopilot) {
@@ -5791,23 +5794,6 @@ function loadExtractionIncident() {
     })
     .catch(function () { /* health read is best-effort */ });
 }
-function acknowledgeExtractionHalt() {
-  var msg = el('extractIncidentAckMsg');
-  if (msg) msg.textContent = 'Acknowledging…';
-  return fetch('/api/admin/autopilot/acknowledge', {
-    method: 'POST',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()),
-    body: '{}',
-  })
-    .then(okOrThrow)
-    .then(function () {
-      if (msg) msg.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
-      return loadExtractionIncident();
-    })
-    .catch(function (e) {
-      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
-    });
-}
 function setReviewTab(resolved) {
   REVIEW_RESOLVED = resolved ? 1 : 0;
   var p = el('revTabPending'), rv = el('revTabReviewed');
@@ -5819,7 +5805,7 @@ function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
     REVIEW_TOTALS = null;
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
   }
@@ -6159,9 +6145,8 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
   var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
-  el('reviewCount').textContent = matchingTotal ? '(' + fmtCount(matchingTotal) + ')' : '';
+  if (canUseAdmin()) setTabBadge('reviewTabBadge', unresolvedTotal);
   if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = fmtCount(unresolvedTotal);
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
@@ -11690,7 +11675,8 @@ function applyAdminVisibility() {
     if (trends) trends.click();
   }
   if (!allowed) {
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
+    setTabBadge('adminTabBadge', 0);
     if (el('kpiReview')) el('kpiReview').textContent = '—';
   }
 }

@@ -27,6 +27,24 @@ describe('reviewQueueHealth buckets', () => {
       suppressed: false,
       reason: 'agreement_cascade_unresolved',
     })).toBe('eligible');
+    expect(classifyUnresolvedReviewItem({
+      suppressed: false,
+      reason: 'agreement_cascade_unresolved',
+      attempts: 2,
+    })).toBe('eligible');
+  });
+
+  it('classifies attempt-capped cascade disagreements as terminal', () => {
+    expect(classifyUnresolvedReviewItem({
+      suppressed: false,
+      reason: 'agreement_cascade_unresolved',
+      attempts: 3,
+    })).toBe('terminal');
+    expect(classifyUnresolvedReviewItem({
+      suppressed: false,
+      reason: 'agreement_cascade_unresolved',
+      attempts: 4,
+    })).toBe('terminal');
   });
 
   it('formats the operator-facing split', () => {

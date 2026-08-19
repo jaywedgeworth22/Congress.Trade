@@ -3,9 +3,11 @@
  *
  * BACKLOG AUTOPILOT — the app-native replacement for the operator-driven
  * review-backlog drain. A cron gate (maybeStartBacklogAutopilot, invoked from
- * the per-minute scheduled handler) decides when a run is due — the first
- * tick of each UTC day, or sooner when the unresolved backlog exceeds
- * AUTOPILOT_BACKLOG_THRESHOLD — and starts a durable run row plus an
+ * the per-minute scheduled handler) decides when a run is due — any tick
+ * with at least one claimable eligible-due doc (threshold 1, not 150), a
+ * UTC-day catch-up when nothing is due now, or a rate-limited storm path
+ * when the unresolved backlog exceeds AUTOPILOT_BACKLOG_THRESHOLD — and
+ * starts a durable run row plus an
  * 'autopilot.tick' queue message. The queue consumer (handleAutopilotTick)
  * then drains docs a few at a time, re-enqueueing itself until the run ends,
  * because long model work must live in the queue (generous per-message
@@ -68,7 +70,7 @@ import {
   type ProviderErrorClass,
 } from './providerHealth.ts';
 import { sendPushover } from '../shared/pushover.ts';
-import { countReviewQueueBuckets } from './reviewQueueHealth.ts';
+import { countReviewQueueBuckets, TERMINAL_REVIEW_REASON_EXCLUDE_SQL } from './reviewQueueHealth.ts';
 import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import { meanConfidence, persistExtractionRun, type CandidateDocResult, type Provider } from './bakeoff.ts';
 import { arbitrationRowKey } from '../extractors/types.ts';
@@ -574,6 +576,7 @@ export function agreementSkipDocKindSql(kinds: string[]): string {
 const ELIGIBLE_PREDICATES = `
        rq.resolved = 0
    AND rq.agreement_suppressed_at IS NULL
+   AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL}
    AND COALESCE(rq.agreement_attempts, 0) < ?
    AND (rq.agreement_next_attempt_at IS NULL OR rq.agreement_next_attempt_at <= ?)
    AND (rq.agreement_claim_token IS NULL OR rq.agreement_claimed_at IS NULL OR rq.agreement_claimed_at <= ?)
@@ -726,12 +729,49 @@ export async function countEligibleBacklog(env: Env): Promise<number | null> {
   }
 }
 
+/**
+ * Selector-eligible due-now docs the cascade can claim on this tick.
+ * Health `eligible` is a looser bucket and must not be used as this count.
+ */
+export async function countEligibleDueDocs(env: Env, now = new Date()): Promise<number | null> {
+  let skipKindsRaw: string | undefined;
+  let maxAttemptsRaw: string | undefined;
+  try {
+    const s = (await resolveSecrets(env, ['AGREEMENT_SKIP_DOC_KINDS', 'AGREEMENT_MAX_ATTEMPTS'])) as {
+      AGREEMENT_SKIP_DOC_KINDS?: string;
+      AGREEMENT_MAX_ATTEMPTS?: string;
+    };
+    skipKindsRaw = s.AGREEMENT_SKIP_DOC_KINDS;
+    maxAttemptsRaw = s.AGREEMENT_MAX_ATTEMPTS;
+  } catch {
+    skipKindsRaw = undefined;
+    maxAttemptsRaw = undefined;
+  }
+  const attemptCap = maxAttempts({ AGREEMENT_MAX_ATTEMPTS: maxAttemptsRaw } as Parameters<typeof maxAttempts>[0]);
+  const nowIso = now.toISOString();
+  const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  try {
+    const row = await get<{ n: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS n
+         FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE ${ELIGIBLE_PREDICATES}${agreementSkipDocKindSql(agreementSkipDocKinds(skipKindsRaw))}`,
+      [attemptCap, nowIso, leaseExpired],
+    );
+    return row?.n ?? 0;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Cron gate — decide whether a run is due, create it, enqueue the first tick
 // ---------------------------------------------------------------------------
 
+export type AutopilotStartTrigger = 'daily' | 'backlog' | 'eligible';
+
 export interface AutopilotStartResult {
-  started?: { runId: string; trigger: 'daily' | 'backlog' };
+  started?: { runId: string; trigger: AutopilotStartTrigger };
   blocked?: 'unacknowledged_halt' | 'run_in_progress' | 'stalled_run_halted' | 'not_due';
 }
 
@@ -797,23 +837,30 @@ export async function maybeStartBacklogAutopilot(
     return { blocked: 'run_in_progress' };
   }
 
-  // Trigger: first tick of a UTC day, or a big backlog (rate-limited by
-  // AUTOPILOT_MIN_INTERVAL_MINUTES so the per-minute cron can't storm).
+  // Due-now first: one claimable eligible-due doc is enough.  Do not wait
+  // for UTC midnight or AUTOPILOT_BACKLOG_THRESHOLD.  minIntervalMinutes
+  // applies only to the leftover >150 storm path so it cannot park due work.
+  // Daily UTC is catch-up when nothing is due now — never the only start.
   const day = budgetDay(now);
-  let trigger: 'daily' | 'backlog' | null = null;
+  let trigger: AutopilotStartTrigger | null = null;
   let backlog: number | null = null;
   try {
-    const lastDay = await env.CONFIG_KV.get(KV_LAST_DAY);
-    if (lastDay !== day) {
-      trigger = 'daily';
+    const eligibleDue = await countEligibleDueDocs(env, now);
+    if (eligibleDue != null && eligibleDue >= 1) {
+      trigger = 'eligible';
     } else {
-      backlog = await countEligibleBacklog(env);
-      if (backlog != null && backlog > knobs.backlogThreshold) {
-        const lastRunRaw = await env.CONFIG_KV.get(KV_LAST_RUN_AT);
-        const lastRunAt = lastRunRaw ? Date.parse(lastRunRaw) : Number.NaN;
-        if (!Number.isFinite(lastRunAt)
-          || now.getTime() - lastRunAt >= knobs.minIntervalMinutes * 60 * 1000) {
-          trigger = 'backlog';
+      const lastDay = await env.CONFIG_KV.get(KV_LAST_DAY);
+      if (lastDay !== day) {
+        trigger = 'daily';
+      } else {
+        backlog = await countEligibleBacklog(env);
+        if (backlog != null && backlog > knobs.backlogThreshold) {
+          const lastRunRaw = await env.CONFIG_KV.get(KV_LAST_RUN_AT);
+          const lastRunAt = lastRunRaw ? Date.parse(lastRunRaw) : Number.NaN;
+          if (!Number.isFinite(lastRunAt)
+            || now.getTime() - lastRunAt >= knobs.minIntervalMinutes * 60 * 1000) {
+            trigger = 'backlog';
+          }
         }
       }
     }
@@ -1000,6 +1047,9 @@ export async function handleAutopilotTick(
   let revision = row.revision;
   const state = parseRunState(row);
   const seenDocIds = state.outcomes.map((outcome) => outcome.docId);
+  // Minute-tick eligible drain is one selector-eligible-due doc.  Daily
+  // UTC and threshold backlog runs keep the configured pilot cap.
+  const maxDocsThisRun = row.run_trigger === 'eligible' ? 1 : knobs.maxDocsPerRun;
   const day = budgetDay(now);
   const eraStart = currentEraStart(now);
 
@@ -1040,7 +1090,7 @@ export async function handleAutopilotTick(
   let haltedByErrors = false;
 
   for (let slot = 0; slot < DOCS_PER_TICK && !finished; slot++) {
-    if (seenDocIds.length >= knobs.maxDocsPerRun) {
+    if (seenDocIds.length >= maxDocsThisRun) {
       await finalize('completed', 'max_docs_reached');
       finished = true;
       break;
