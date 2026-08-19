@@ -260,30 +260,6 @@ final class CongressTradeAPIClient {
         return try await request(url)
     }
 
-    /// Sends a magic-link sign-in email. The `client=ios` query makes the
-    /// backend build a `congresstrade://auth` verify redirect
-    /// (`app/src/auth/routes.ts` POST /auth/magic/request). Always resolves on
-    /// the backend's anti-enumeration `ok:true` response.
-    func requestMagicLink(email: String) async throws {
-        guard var components = URLComponents(
-            url: originURL.appendingPathComponent("auth/magic/request"),
-            resolvingAgainstBaseURL: false
-        ) else { throw APIError.invalidResponse }
-        components.queryItems = [URLQueryItem(name: "client", value: "ios")]
-        guard let url = components.url else { throw APIError.invalidResponse }
-        var request = try makeRequest(url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email], options: [])
-        let (data, response) = try await perform(request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            let error = try? decoder.decode(APIErrorResponse.self, from: data)
-            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
-            throw APIError.server(status: http.statusCode, message: error?.error ?? "Could not send sign-in link", retryAfterSeconds: retryAfter)
-        }
-    }
-
     func subscriptions() async throws -> SubscriptionListResponse {
         try await get("subscriptions")
     }
