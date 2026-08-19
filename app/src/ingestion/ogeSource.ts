@@ -16,11 +16,14 @@
  *  - Only known executive filers are ingested (currently the President).
  *    Additional filers (VP, cabinet) are one FILERS entry away.
  *  - Product cadence is 15 minutes so we beat other sources to new 278-T
- *    filings.  Failed fetches back off 10 minutes (not every minutely cron
- *    tick).  The watcher stays fail-soft: an OGE outage must never affect
- *    House/Senate polling.  Filings can still land weeks after the trades
- *    (STOCK Act 45-day clock, often exceeded with late fees) — that is filing
- *    latency, not a reason to poll slowly.
+ *    filings.  After success wait 15 min.  After failure wait 15 min too
+ *    (not 10 min, not every minutely cron tick) — last_poll:oge only advances
+ *    on success, so without this a down OGE would be hit every minute.  A
+ *    down OGE must not be polled more often than a healthy one.  The watcher
+ *    stays fail-soft: an OGE outage must never affect House/Senate polling.
+ *    Filings can still land weeks after the trades (STOCK Act 45-day clock,
+ *    often exceeded with late fees) — that is filing latency, not a reason
+ *    to poll slowly.
  *  - EIGA §105(c) restricts certain uses of these reports; congress.trade
  *    disseminates them to the general public in the site's existing
  *    educational framing, mirroring its House/Senate STOCK Act posture.
@@ -52,10 +55,10 @@ export const OGE_DEFAULT_INDEX_URL = `${OGE_PRESIDENT_INDEX_URL},${OGE_PAS_INDEX
 const OGE_ORIGIN = 'https://extapps2.oge.gov';
 /** 15 min product cadence so we beat other sources. Not a politeness default. */
 export const DEFAULT_POLL_INTERVAL_SEC = 900;
-/** Minimum wait after a FAILED attempt before hitting the index again. Without
- *  this, an OGE outage was retried on EVERY minutely cron tick (last_poll:oge
- *  only advances on success), hammering the host 60x/hour. */
-export const OGE_FAILURE_BACKOFF_SEC = 600;
+/** Same 15 min as success. last_poll:oge only advances on success, so without
+ *  this a down OGE is hit every minutely cron tick. Matching the success
+ *  interval means a down OGE is not polled more often than a healthy one. */
+export const OGE_FAILURE_BACKOFF_SEC = 900;
 const POLL_SOURCE = 'oge';
 
 /** Known executive filers we pin to stable EXEC-* ids (filename match).
@@ -333,10 +336,9 @@ export async function pollOgeExecutive(
   if (!opts.force) {
     const last = await getLastPollAt(env, POLL_SOURCE);
     if (last && now.getTime() - last.getTime() < (await pollIntervalSec(env)) * 1000) return null;
-    // FAILURE BACKOFF (mirrors the House/Senate pattern in runWatcher): an
-    // attempt newer than the last success means the previous poll failed
-    // somewhere between fetch and persist; wait out the backoff window instead
-    // of retrying on every minutely tick.
+    // FAILURE BACKOFF: last_poll:oge only advances on success, so a failed
+    // fetch would otherwise retry on every minutely cron tick. Wait the same
+    // 15 min as a healthy poll — not 10 min, not every minute.
     const lastAttempt = await getLastAttemptAt(env, POLL_SOURCE);
     const lastAttemptFailed = lastAttempt && (!last || last.getTime() < lastAttempt.getTime());
     if (lastAttemptFailed && now.getTime() - lastAttempt.getTime() < OGE_FAILURE_BACKOFF_SEC * 1000) {

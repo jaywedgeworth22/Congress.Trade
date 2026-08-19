@@ -117,9 +117,10 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     return { fetchImpl, calls };
   }
 
-  it('pins the 15 min product default and 10 min failure backoff', () => {
+  it('pins 15 min after success and 15 min after failure', () => {
     expect(DEFAULT_POLL_INTERVAL_SEC).toBe(900);
-    expect(OGE_FAILURE_BACKOFF_SEC).toBe(600);
+    expect(OGE_FAILURE_BACKOFF_SEC).toBe(900);
+    expect(OGE_FAILURE_BACKOFF_SEC).toBe(DEFAULT_POLL_INTERVAL_SEC);
   });
 
   it('honors the env-configured interval (1h) instead of the 15 min fallback', async () => {
@@ -179,9 +180,24 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     expect(kv.get('last_attempt:oge')).toBe(new Date(NOW.getTime() - 120_000).toISOString());
   });
 
-  it('retries once the failure backoff window has elapsed, stamping the new attempt', async () => {
+  it('still waits 15 min after failure — 10 min is not enough', async () => {
+    const tenMinAgo = new Date(NOW.getTime() - 10 * 60_000).toISOString();
     const { env, kv } = envWithKv(
-      { 'last_attempt:oge': new Date(NOW.getTime() - 700_000).toISOString() },
+      { 'last_attempt:oge': tenMinAgo },
+      { OGE_POLL_INTERVAL_SEC: '3600' },
+    );
+    const { fetchImpl, calls } = countingFetch();
+
+    const out = await pollOgeExecutive(env, NOW, fetchImpl);
+
+    expect(out).toBeNull();
+    expect(calls).toHaveLength(0);
+    expect(kv.get('last_attempt:oge')).toBe(tenMinAgo);
+  });
+
+  it('retries once the 15 min failure backoff has elapsed, stamping the new attempt', async () => {
+    const { env, kv } = envWithKv(
+      { 'last_attempt:oge': new Date(NOW.getTime() - 16 * 60_000).toISOString() },
       { OGE_POLL_INTERVAL_SEC: '3600' },
     );
     const { fetchImpl, calls } = countingFetch();

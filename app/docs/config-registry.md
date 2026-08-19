@@ -162,7 +162,9 @@ budget-status polling, see Tunables & flags below)
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
   `OGE_POLL_INTERVAL_SEC` (default `900` = 15 min product cadence to beat
   other sources; Infisical wins if set — a leftover `21600` keeps the old
-  6h interval), `OGE_MAX_VISION_BYTES`
+  6h interval).  After success wait 15 min.  After failure wait 15 min too
+  (`OGE_FAILURE_BACKOFF_SEC = 900` in `ogeSource.ts` — last_poll does not
+  advance on failure).  `OGE_MAX_VISION_BYTES`
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
 - OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default
