@@ -12,7 +12,7 @@ This change:
 - Gives admins iOS-style red nav badges: Review Queue = unresolved count; Admin = a real autopilot halt / stalled extract only.
 - Shows fail-closed auth/spend as Admin status text only.  No Acknowledge Halt control on Trends, nav, or Admin.
 - Does not auto-ack or clear the current auth latch.  Does not spendy-resume.
-- Starts one selector-eligible-due doc on the per-minute cron (not health-eligible 24, not backlog > 150).  Daily UTC is catch-up only.
+- Starts a run when **one** selector-eligible-due doc exists (attempts remaining, next_attempt due, raw bytes, not suppressed, not skip-kind, no primary/manual tx).  Threshold is 1, not 150.  Daily UTC is catch-up only.  `minIntervalMinutes` does not park due-now work.
 - Keeps paid `idleShortCircuit` on; the idle probe now sees eligible-due review rows.
 
 ## Files changed

@@ -836,8 +836,8 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(above?.started?.trigger).toBe('backlog');
   });
 
-  it('starts while eligible-due docs exist without waiting for UTC midnight or the 150 threshold', async () => {
-    const state = makeState({ backlogCount: 24, eligibleDueCount: 24 });
+  it('starts a run from a single eligible-due doc without waiting for UTC midnight or 150', async () => {
+    const state = makeState({ backlogCount: 1, eligibleDueCount: 1 });
     const { env, kv, send } = makeEnv(state);
     kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10));
     kv.set('autopilot:lastrun', new Date().toISOString());
@@ -847,6 +847,16 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(send).toHaveBeenCalledTimes(1);
     const tick = send.mock.calls[0]?.[0] as { type: string; runId: string };
     expect(tick).toMatchObject({ type: 'autopilot.tick', runId: result!.started!.runId });
+  });
+
+  it('starts that single due doc even on a fresh UTC day, before the daily catch-up path', async () => {
+    const state = makeState({ backlogCount: 1, eligibleDueCount: 1 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.started?.trigger).toBe('eligible');
+    expect(kv.get('autopilot:lastday')).toBe(new Date().toISOString().slice(0, 10));
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
 

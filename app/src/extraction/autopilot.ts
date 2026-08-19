@@ -3,8 +3,9 @@
  *
  * BACKLOG AUTOPILOT — the app-native replacement for the operator-driven
  * review-backlog drain. A cron gate (maybeStartBacklogAutopilot, invoked from
- * the per-minute scheduled handler) decides when a run is due — the first
- * tick of each UTC day, any tick with claimable eligible-due docs, or sooner
+ * the per-minute scheduled handler) decides when a run is due — any tick
+ * with at least one claimable eligible-due doc (threshold 1, not 150), a
+ * UTC-day catch-up when nothing is due now, or a rate-limited storm path
  * when the unresolved backlog exceeds AUTOPILOT_BACKLOG_THRESHOLD — and
  * starts a durable run row plus an
  * 'autopilot.tick' queue message. The queue consumer (handleAutopilotTick)
@@ -837,21 +838,21 @@ export async function maybeStartBacklogAutopilot(
     return { blocked: 'run_in_progress' };
   }
 
-  // Trigger: first tick of a UTC day, any claimable eligible-due slice
-  // (do not wait for midnight or the 150 threshold), or a big backlog
-  // (rate-limited by AUTOPILOT_MIN_INTERVAL_MINUTES so the per-minute
-  // cron can't storm the threshold path).
+  // Due-now first: one claimable eligible-due doc is enough.  Do not wait
+  // for UTC midnight or AUTOPILOT_BACKLOG_THRESHOLD.  minIntervalMinutes
+  // applies only to the leftover >150 storm path so it cannot park due work.
+  // Daily UTC is catch-up when nothing is due now — never the only start.
   const day = budgetDay(now);
   let trigger: AutopilotStartTrigger | null = null;
   let backlog: number | null = null;
   try {
-    const lastDay = await env.CONFIG_KV.get(KV_LAST_DAY);
-    if (lastDay !== day) {
-      trigger = 'daily';
+    const eligibleDue = await countEligibleDueDocs(env, now);
+    if (eligibleDue != null && eligibleDue >= 1) {
+      trigger = 'eligible';
     } else {
-      const eligibleDue = await countEligibleDueDocs(env, now);
-      if (eligibleDue != null && eligibleDue > 0) {
-        trigger = 'eligible';
+      const lastDay = await env.CONFIG_KV.get(KV_LAST_DAY);
+      if (lastDay !== day) {
+        trigger = 'daily';
       } else {
         backlog = await countEligibleBacklog(env);
         if (backlog != null && backlog > knobs.backlogThreshold) {
