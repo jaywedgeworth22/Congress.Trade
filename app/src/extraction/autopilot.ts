@@ -730,9 +730,8 @@ export async function countEligibleBacklog(env: Env): Promise<number | null> {
 }
 
 /**
- * Docs the cascade can claim on this tick: health-eligible plus
- * attempts < cap, next_attempt due, raw bytes, no primary/manual txs.
- * Terminal letterhead/rejected rows stay for human review.
+ * Selector-eligible due-now docs the cascade can claim on this tick.
+ * Health `eligible` is a looser bucket and must not be used as this count.
  */
 export async function countEligibleDueDocs(env: Env, now = new Date()): Promise<number | null> {
   let skipKindsRaw: string | undefined;

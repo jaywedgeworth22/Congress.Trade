@@ -823,6 +823,16 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(kv.get('autopilot:lastday')).toBe(new Date().toISOString().slice(0, 10));
   });
 
+  it('does not start on health-eligible count when no selector-due doc exists', async () => {
+    const state = makeState({ backlogCount: 24, eligibleDueCount: 0 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10));
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('not_due');
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('same-day backlog trigger honors the threshold', async () => {
     const state = makeState({ backlogCount: 100, eligibleDueCount: 0 });
     const { env, kv, send } = makeEnv(state);

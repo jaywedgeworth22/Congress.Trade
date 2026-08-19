@@ -5149,7 +5149,8 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(adminStart).toBeGreaterThan(tradesStart);
     expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('Acknowledge Halt');
     expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('Acknowledge Halt');
-    expect(DASHBOARD_HTML.slice(reviewStart, DASHBOARD_HTML.indexOf('id="view-subs"'))).toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML.slice(reviewStart, DASHBOARD_HTML.indexOf('id="view-subs"'))).not.toContain('id="extractIncidentAck"');
+    expect(DASHBOARD_HTML.slice(reviewStart, DASHBOARD_HTML.indexOf('id="view-subs"'))).not.toContain('id="extractReviewAck"');
     expect(DASHBOARD_HTML.slice(adminStart)).toContain('id="extractIncidentAck"');
     expect(DASHBOARD_HTML.slice(adminStart)).toContain('Acknowledge Halt');
     expect(DASHBOARD_HTML).toContain('id="reviewTabBadge"');
@@ -5216,8 +5217,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
         adminTabBadge: node(),
         extractHaltDetail: { ...node(), textContent: '' },
         extractIncidentAck: node(),
-        extractReviewAck: node(),
-        extractReviewHaltRow: node(),
       };
     };
     const factory = new Function(
@@ -5261,7 +5260,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(publicNodes.extractHaltDetail.hidden).toBe(true);
     expect(publicNodes.extractIncidentAck.hidden).toBe(true);
     expect(publicNodes.extractIncidentAck.disabled).toBe(true);
-    expect(publicNodes.extractReviewAck.hidden).toBe(true);
 
     const adminBacklog = makeNodes();
     factory(adminBacklog, true)(backlogHealth, null);
@@ -5271,7 +5269,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(adminBacklog.extractHaltDetail.hidden).toBe(true);
     expect(adminBacklog.extractIncidentAck.hidden).toBe(true);
     expect(adminBacklog.extractIncidentAck.disabled).toBe(true);
-    expect(adminBacklog.extractReviewAck.hidden).toBe(true);
 
     const stalledBacklogNodes = makeNodes();
     factory(stalledBacklogNodes, true)({
@@ -5299,7 +5296,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(stalledHalt.adminTabBadge.hidden).toBe(false);
     expect(stalledHalt.extractIncidentAck.hidden).toBe(false);
     expect(stalledHalt.extractIncidentAck.disabled).toBe(false);
-    expect(stalledHalt.extractReviewAck.hidden).toBe(false);
 
     const adminHalt = makeNodes();
     factory(adminHalt, true)(haltHealth, null);
@@ -5310,7 +5306,6 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(adminHalt.extractHaltDetail.textContent).toContain('error_class:auth');
     expect(adminHalt.extractIncidentAck.hidden).toBe(false);
     expect(adminHalt.extractIncidentAck.disabled).toBe(false);
-    expect(adminHalt.extractReviewAck.disabled).toBe(false);
   });
 
   it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {

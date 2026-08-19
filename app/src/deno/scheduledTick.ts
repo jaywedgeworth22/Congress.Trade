@@ -123,8 +123,9 @@ export async function probePendingWork(env: Env, now = new Date()): Promise<Pend
       [nowIso, staleEnqueuedBefore],
     ),
     // Fail-closed: missing review_queue (tests / pre-migrate) is not work.
-    // Conservative defaults (attempt cap 3, skip senate_html) so a quiet
-    // paid tick cannot skip claimable House filings.
+    // Selector due-now, not health `eligible`.  Conservative defaults
+    // (attempt cap 3, skip senate_html) so a quiet paid tick cannot skip
+    // claimable House filings.
     existsOrFalse(
       `SELECT 1 AS ok
          FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id

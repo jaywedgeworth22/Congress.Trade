@@ -407,9 +407,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
   #extractIncidentAck:disabled,
-  #extractIncidentAck[aria-disabled="true"],
-  #extractReviewAck:disabled,
-  #extractReviewAck[aria-disabled="true"] {
+  #extractIncidentAck[aria-disabled="true"] {
     opacity: .45;
     cursor: not-allowed;
     pointer-events: none;
@@ -3157,11 +3155,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, Acknowledge Halt is on this page and on Admin.</p>
-      <div class="row-flex" id="extractReviewHaltRow" hidden>
-        <button class="btn" type="button" id="extractReviewAck" hidden disabled aria-disabled="true" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
-        <span id="extractReviewAckMsg" class="note" role="status"></span>
-      </div>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, Acknowledge Halt is on the Admin page.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -5792,8 +5786,8 @@ function renderExtractionIncident(health, autopilot) {
     || (autopilot && autopilot.reviewQueue)
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
-  // No public incident card.  Admins get nav badges plus Acknowledge on Admin
-  // and Review.  Eligible drain unsticks publishing.
+  // No public incident card.  Admins get nav badges.  Acknowledge Halt is
+  // on Admin only, when actually halted.  Selector due-now drain publishes.
   setTabBadge('reviewTabBadge', admin ? unresolved : 0);
   setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
   var ackOn = !!(admin && halted);
@@ -5804,9 +5798,6 @@ function renderExtractionIncident(health, autopilot) {
     detail.hidden = !status;
   }
   setAckControl('extractIncidentAck', ackOn);
-  setAckControl('extractReviewAck', ackOn);
-  var reviewRow = el('extractReviewHaltRow');
-  if (reviewRow) reviewRow.hidden = !ackOn;
 }
 function loadExtractionIncident() {
   if (!canUseAdmin()) {
@@ -5830,7 +5821,7 @@ function loadExtractionIncident() {
     .catch(function () { /* health read is best-effort */ });
 }
 function acknowledgeExtractionHalt() {
-  var msg = el('extractIncidentAckMsg') || el('extractReviewAckMsg');
+  var msg = el('extractIncidentAckMsg');
   if (msg) msg.textContent = 'Acknowledging…';
   return fetch('/api/admin/autopilot/acknowledge', {
     method: 'POST',
@@ -5839,16 +5830,11 @@ function acknowledgeExtractionHalt() {
   })
     .then(okOrThrow)
     .then(function () {
-      var done = el('extractIncidentAckMsg');
-      if (done) done.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
-      var reviewDone = el('extractReviewAckMsg');
-      if (reviewDone) reviewDone.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
+      if (msg) msg.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
       return loadExtractionIncident();
     })
     .catch(function (e) {
-      var text = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
-      if (el('extractIncidentAckMsg')) el('extractIncidentAckMsg').textContent = text;
-      if (el('extractReviewAckMsg')) el('extractReviewAckMsg').textContent = text;
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
     });
 }
 function setReviewTab(resolved) {
