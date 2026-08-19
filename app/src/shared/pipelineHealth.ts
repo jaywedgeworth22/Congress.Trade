@@ -264,9 +264,10 @@ export function evaluatePipelineSignals(
       suppressed: s.reviewSuppressed ?? 0,
       terminal: s.reviewTerminal ?? 0,
     };
+    const eligible = s.reviewEligible ?? 0;
     checks.push({
       id: 'extraction_backlog',
-      status: 'stalled',
+      status: eligible > 0 ? 'stalled' : 'degraded',
       detail: formatReviewQueueHealthDetail(counts),
       value: s.reviewBacklog,
     });
