@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ogeDocId, ogeFiledDateFromName, parseOgeIndex, pollOgeExecutive } from '../ogeSource.ts';
+import {
+  DEFAULT_POLL_INTERVAL_SEC,
+  OGE_FAILURE_BACKOFF_SEC,
+  ogeDocId,
+  ogeFiledDateFromName,
+  parseOgeIndex,
+  pollOgeExecutive,
+} from '../ogeSource.ts';
 
 /** Anchor markup lifted from the LIVE OGE President/VP index view (Domino
  *  renders single-quoted hrefs with raw spaces in filenames). */
@@ -110,7 +117,12 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     return { fetchImpl, calls };
   }
 
-  it('honors the env-configured interval (1h) instead of the 6h fallback', async () => {
+  it('pins the 15 min product default and 10 min failure backoff', () => {
+    expect(DEFAULT_POLL_INTERVAL_SEC).toBe(900);
+    expect(OGE_FAILURE_BACKOFF_SEC).toBe(600);
+  });
+
+  it('honors the env-configured interval (1h) instead of the 15 min fallback', async () => {
     const { env } = envWithKv(
       { 'last_poll:oge': new Date(NOW.getTime() - 2 * 3600_000).toISOString() },
       { OGE_POLL_INTERVAL_SEC: '3600' },
@@ -120,15 +132,15 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     const out = await pollOgeExecutive(env, NOW, fetchImpl);
 
     // 2h since last success >= the configured 1h -> polls (the old code sat on
-    // the 6h default whenever no value resolved and would have returned null).
+    // a 6h default whenever no value resolved and would have returned null).
     expect(out).toEqual([]);
     // Default OGE indexes: President/VP + PAS cabinet collection.
     expect(calls).toHaveLength(2);
   });
 
-  it('stays on the 6h fallback when no interval is configured', async () => {
+  it('stays inside the 15 min default when no interval is configured', async () => {
     const { env } = envWithKv({
-      'last_poll:oge': new Date(NOW.getTime() - 2 * 3600_000).toISOString(),
+      'last_poll:oge': new Date(NOW.getTime() - 5 * 60_000).toISOString(),
     });
     const { fetchImpl, calls } = countingFetch();
 
@@ -136,6 +148,18 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
 
     expect(out).toBeNull();
     expect(calls).toHaveLength(0);
+  });
+
+  it('polls after the 15 min default when no interval is configured', async () => {
+    const { env } = envWithKv({
+      'last_poll:oge': new Date(NOW.getTime() - 16 * 60_000).toISOString(),
+    });
+    const { fetchImpl, calls } = countingFetch();
+
+    const out = await pollOgeExecutive(env, NOW, fetchImpl);
+
+    expect(out).toEqual([]);
+    expect(calls).toHaveLength(2);
   });
 
   it('backs off after a failed attempt instead of retrying every cron tick', async () => {

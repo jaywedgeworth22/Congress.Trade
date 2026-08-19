@@ -15,9 +15,12 @@
  *    detected by diffing doc ids (INSERT OR IGNORE in the shared watcher path).
  *  - Only known executive filers are ingested (currently the President).
  *    Additional filers (VP, cabinet) are one FILERS entry away.
- *  - Filings land WEEKS after the trades (the STOCK Act 45-day clock, often
- *    exceeded with late fees), so this source polls on a slow cadence and is
- *    entirely fail-soft: an OGE outage must never affect House/Senate polling.
+ *  - Product cadence is 15 minutes so we beat other sources to new 278-T
+ *    filings.  Failed fetches back off 10 minutes (not every minutely cron
+ *    tick).  The watcher stays fail-soft: an OGE outage must never affect
+ *    House/Senate polling.  Filings can still land weeks after the trades
+ *    (STOCK Act 45-day clock, often exceeded with late fees) — that is filing
+ *    latency, not a reason to poll slowly.
  *  - EIGA §105(c) restricts certain uses of these reports; congress.trade
  *    disseminates them to the general public in the site's existing
  *    educational framing, mirroring its House/Senate STOCK Act posture.
@@ -47,7 +50,8 @@ export const OGE_PAS_INDEX_URL =
 export const OGE_DEFAULT_INDEX_URL = `${OGE_PRESIDENT_INDEX_URL},${OGE_PAS_INDEX_URL}`;
 
 const OGE_ORIGIN = 'https://extapps2.oge.gov';
-const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h fallback when no interval is configured
+/** 15 min product cadence so we beat other sources. Not a politeness default. */
+export const DEFAULT_POLL_INTERVAL_SEC = 900;
 /** Minimum wait after a FAILED attempt before hitting the index again. Without
  *  this, an OGE outage was retried on EVERY minutely cron tick (last_poll:oge
  *  only advances on success), hammering the host 60x/hour. */
@@ -241,7 +245,7 @@ async function indexUrls(env: Env): Promise<string[]> {
   }
 }
 
-/** Parse a configured interval string; >= 60s or the 6h default. */
+/** Parse a configured interval string; >= 60s or the 15 min product default. */
 function parseIntervalSec(raw: string | undefined): number {
   const n = parseInt(raw || '', 10);
   return Number.isFinite(n) && n >= 60 ? n : DEFAULT_POLL_INTERVAL_SEC;
@@ -249,11 +253,10 @@ function parseIntervalSec(raw: string | undefined): number {
 
 /**
  * Effective OGE poll interval: Infisical value, else the OGE_POLL_INTERVAL_SEC
- * env var, else 6h. The catch path previously returned the 6h default WITHOUT
- * consulting the env var — so any secrets-resolution failure silently ignored
- * the configured cadence (part of why production drifted to ~6h polls against
- * a 1h expectation; the other part was that no value was deployed at all —
- * wrangler.toml now ships OGE_POLL_INTERVAL_SEC explicitly).
+ * env var, else 15 min (900s). Infisical wins — a leftover prod secret of
+ * 21600 keeps the old 6h cadence even after this default ships. The catch
+ * path previously returned the default WITHOUT consulting the env var, so any
+ * secrets-resolution failure silently ignored a configured cadence.
  */
 async function pollIntervalSec(env: Env): Promise<number> {
   try {
