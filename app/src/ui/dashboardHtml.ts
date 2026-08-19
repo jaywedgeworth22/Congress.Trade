@@ -406,15 +406,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
-  .extract-halt-panel.is-halted {
-    border-color: color-mix(in srgb, var(--sell) 55%, var(--border));
-  }
-  #extractIncidentAck:disabled,
-  #extractIncidentAck[aria-disabled="true"] {
-    opacity: .45;
-    cursor: not-allowed;
-    pointer-events: none;
-  }
   .view { display: none; }
   .view.active { display: block; }
   .toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
@@ -3158,7 +3149,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the Admin tab shows a red badge.&nbsp; Acknowledge Halt is on the Admin page.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is fail-closed on auth or spend, the Admin tab shows a red badge and status text.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -3271,14 +3262,7 @@ ${speedProofSectionHtml(false)}
   <!-- ================= ADMIN · CADENCE ================= -->
   <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" aria-hidden="true">
 ${speedProofSectionHtml(true)}
-    <div class="section extract-halt-panel" id="extractHaltSection">
-      <h3>Extraction Halt</h3>
-      <p class="sub" id="extractHaltDetail">Extraction is not halted.</p>
-      <div class="row-flex">
-        <button class="btn" type="button" id="extractIncidentAck" hidden disabled aria-disabled="true" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
-        <span id="extractIncidentAckMsg" class="note" role="status"></span>
-      </div>
-    </div>
+    <p class="sub" id="extractHaltDetail" hidden></p>
     <div class="section">
       <h3>Admin Access</h3>
       <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token.&nbsp; Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests.&nbsp; <strong>Save Token</strong> checks the value against the server and reports accepted vs rejected.&nbsp; Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
@@ -5773,6 +5757,25 @@ function setTabBadge(id, value) {
   node.classList.add('is-on');
   node.textContent = n > 99 ? '99+' : String(n);
 }
+function failClosedAuthOrSpendText(health, autopilot) {
+  var checks = (health && health.pipeline && health.pipeline.checks) || [];
+  var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
+  var halted = !!(halt && halt.status && halt.status !== 'ok');
+  if (!halted) return '';
+  var receipt = autopilot && autopilot.unacknowledgedHalt;
+  var blob = [
+    halt.detail,
+    receipt && receipt.haltReason,
+    receipt && receipt.sampleErrors && JSON.stringify(receipt.sampleErrors),
+  ].filter(Boolean).join(' ').toLowerCase();
+  var failClosed = blob.indexOf('error_class:auth') >= 0
+    || blob.indexOf('error_class:billing') >= 0
+    || blob.indexOf('error_class:quota') >= 0
+    || blob.indexOf('llm_budget') >= 0
+    || blob.indexOf('invalid_api_key') >= 0;
+  if (!failClosed) return '';
+  return (halt.detail || (receipt && receipt.haltReason) || 'Extraction is fail-closed on auth or spend.');
+}
 function renderExtractionIncident(health, autopilot) {
   var admin = canUseAdmin();
   var checks = (health && health.pipeline && health.pipeline.checks) || [];
@@ -5786,22 +5789,14 @@ function renderExtractionIncident(health, autopilot) {
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
   // No halt/backlog card on Trends or Trades.  Admins get nav badges only.
+  // Eligible drain unsticks publishing.  No ack control in this UI.
   setTabBadge('reviewTabBadge', admin ? unresolved : 0);
   setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
-  var panel = el('extractHaltSection');
-  if (panel) panel.classList.toggle('is-halted', !!(admin && halted));
   var detail = el('extractHaltDetail');
   if (detail) {
-    if (!admin) detail.textContent = 'Extraction is not halted.';
-    else if (halted) detail.textContent = halt.detail || 'Autopilot is halted.';
-    else detail.textContent = 'Extraction is not halted.';
-  }
-  var ackOn = !!(halted && admin);
-  var ack = el('extractIncidentAck');
-  if (ack) {
-    ack.hidden = !ackOn;
-    ack.disabled = !ackOn;
-    ack.setAttribute('aria-disabled', ackOn ? 'false' : 'true');
+    var status = admin ? failClosedAuthOrSpendText(health, autopilot) : '';
+    detail.textContent = status;
+    detail.hidden = !status;
   }
 }
 function loadExtractionIncident() {
@@ -5824,23 +5819,6 @@ function loadExtractionIncident() {
         });
     })
     .catch(function () { /* health read is best-effort */ });
-}
-function acknowledgeExtractionHalt() {
-  var msg = el('extractIncidentAckMsg');
-  if (msg) msg.textContent = 'Acknowledging…';
-  return fetch('/api/admin/autopilot/acknowledge', {
-    method: 'POST',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()),
-    body: '{}',
-  })
-    .then(okOrThrow)
-    .then(function () {
-      if (msg) msg.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
-      return loadExtractionIncident();
-    })
-    .catch(function (e) {
-      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
-    });
 }
 function setReviewTab(resolved) {
   REVIEW_RESOLVED = resolved ? 1 : 0;
