@@ -28,6 +28,16 @@ export interface ReviewQueueHealthCounts {
 const TERMINAL_REASON_RE =
   /^(rejected:)|local_vision_exhausted|extraction_row_limit|ocr_unusable|scanned_pdf_vision_spend|form_chrome_only/i;
 
+/** SQL fragment: row is NOT a parked/rejected terminal class. */
+export const TERMINAL_REVIEW_REASON_EXCLUDE_SQL = `
+  COALESCE(rq.reason, '') NOT LIKE 'rejected:%'
+  AND COALESCE(rq.reason, '') NOT LIKE '%local_vision_exhausted%'
+  AND COALESCE(rq.reason, '') NOT LIKE '%extraction_row_limit%'
+  AND COALESCE(rq.reason, '') NOT LIKE '%ocr_unusable%'
+  AND COALESCE(rq.reason, '') NOT LIKE '%scanned_pdf_vision_spend%'
+  AND COALESCE(rq.reason, '') NOT LIKE '%form_chrome_only%'
+`.trim();
+
 export function isTerminalReviewReason(reason: string | null | undefined): boolean {
   return TERMINAL_REASON_RE.test((reason ?? '').trim());
 }
@@ -56,21 +66,11 @@ export async function countReviewQueueBuckets(
           COUNT(*) AS unresolved,
           SUM(CASE
             WHEN rq.agreement_suppressed_at IS NULL
-             AND COALESCE(rq.reason, '') NOT LIKE 'rejected:%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%local_vision_exhausted%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%extraction_row_limit%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%ocr_unusable%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%scanned_pdf_vision_spend%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%form_chrome_only%'
+             AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL}
             THEN 1 ELSE 0 END) AS eligible,
           SUM(CASE
             WHEN rq.agreement_suppressed_at IS NOT NULL
-             AND COALESCE(rq.reason, '') NOT LIKE 'rejected:%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%local_vision_exhausted%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%extraction_row_limit%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%ocr_unusable%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%scanned_pdf_vision_spend%'
-             AND COALESCE(rq.reason, '') NOT LIKE '%form_chrome_only%'
+             AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL}
             THEN 1 ELSE 0 END) AS suppressed,
           SUM(CASE
             WHEN COALESCE(rq.reason, '') LIKE 'rejected:%'

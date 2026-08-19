@@ -391,6 +391,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
   .extract-incident {
     display: none;
+    position: relative;
+    z-index: 10;
     border: 2px solid var(--sell);
     background: color-mix(in srgb, var(--sell) 10%, var(--panel));
     color: var(--text);
@@ -399,9 +401,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin: 0 0 22px;
   }
   .extract-incident.is-on { display: block; }
+  .extract-incident.is-backlog {
+    border-color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, var(--panel));
+  }
   .extract-incident h3 { margin: 0 0 6px; font-size: 16px; color: var(--sell); }
+  .extract-incident.is-backlog h3 { color: var(--warn); }
   .extract-incident p { margin: 0 0 8px; font-size: 13px; }
   .extract-incident .row-flex { gap: 10px; align-items: center; flex-wrap: wrap; }
+  #extractIncidentAck:disabled,
+  #extractIncidentAck[aria-disabled="true"] {
+    opacity: .45;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  /* Sticky Trends/Trades filters pull up into main padding (z-index 9) and
+     otherwise paint over this card.  Cancel the negative margin while the
+     operator banner is visible. */
+  main:has(#extractIncidentBanner.is-on) #trendsSharedFilters,
+  main:has(#extractIncidentBanner.is-on) .trades-toolbars {
+    margin-top: 0;
+  }
   .view { display: none; }
   .view.active { display: block; }
   .toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
@@ -700,7 +720,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
-  .btn:disabled { opacity: .5; cursor: default; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
   .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 24px; margin-bottom: 29px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
@@ -2716,12 +2736,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <main>
   <div class="banner" id="banner">Connecting to the live feed…</div>
   <div class="extract-incident" id="extractIncidentBanner" role="alert" hidden>
-    <h3>Extraction Halted</h3>
+    <h3 id="extractIncidentTitle">Extraction Halted</h3>
     <p id="extractIncidentDetail">The extraction loop is stopped.&nbsp; Review the reason, then acknowledge to resume when it is safe.</p>
-    <p id="extractIncidentCounts" class="note"></p>
+    <p id="extractIncidentCounts" class="note" hidden></p>
     <div class="row-flex">
-      <button class="btn" type="button" id="extractIncidentAck" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
-      <button class="btn ghost sm" type="button" onclick="showView('review')">Open Review Queue</button>
+      <button class="btn" type="button" id="extractIncidentAck" hidden disabled aria-disabled="true" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
+      <button class="btn ghost sm" type="button" id="extractIncidentReview" hidden onclick="showView('review')">Open Review Queue</button>
       <span id="extractIncidentAckMsg" class="note" role="status"></span>
     </div>
   </div>
@@ -5740,6 +5760,7 @@ var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
 function renderExtractionIncident(health, autopilot) {
   var banner = el('extractIncidentBanner');
   if (!banner) return;
+  var admin = canUseAdmin();
   var checks = (health && health.pipeline && health.pipeline.checks) || [];
   var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
   var backlog = checks.filter(function (c) { return c.id === 'extraction_backlog'; })[0];
@@ -5749,9 +5770,18 @@ function renderExtractionIncident(health, autopilot) {
     || (autopilot && autopilot.reviewQueue)
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
-  var show = halted || unresolved > 0;
+  // Consumer Trends/Trades must not show operator halt/review chrome.
+  // Admins see a real halt anywhere, or review-queue counts once they can
+  // use Admin / Review Queue (that access is the opt-in).
+  var show = admin && (halted || unresolved > 0);
   banner.hidden = !show;
   banner.classList.toggle('is-on', show);
+  banner.classList.toggle('is-halted', show && halted);
+  banner.classList.toggle('is-backlog', show && !halted);
+  var title = el('extractIncidentTitle');
+  if (title) {
+    title.textContent = halted ? 'Extraction Halted' : 'Extraction Review Backlog';
+  }
   var detail = el('extractIncidentDetail');
   if (detail) {
     var parts = [];
@@ -5762,22 +5792,30 @@ function renderExtractionIncident(health, autopilot) {
   }
   var counts = el('extractIncidentCounts');
   if (counts) {
-    counts.textContent = review
+    counts.hidden = !admin || !show;
+    counts.textContent = !admin ? '' : (review
       ? ('Unresolved ' + review.unresolved + '  ·  eligible ' + review.eligible
         + '  ·  suppressed ' + review.suppressed + '  ·  terminal ' + review.terminal)
-      : (backlog && backlog.detail ? backlog.detail : '');
+      : (backlog && backlog.detail ? backlog.detail : ''));
   }
+  var ackOn = !!(halted && admin);
   var ack = el('extractIncidentAck');
-  if (ack) ack.disabled = !halted || !canUseAdmin();
+  if (ack) {
+    ack.hidden = !ackOn;
+    ack.disabled = !ackOn;
+    ack.setAttribute('aria-disabled', ackOn ? 'false' : 'true');
+  }
+  var openReview = el('extractIncidentReview');
+  if (openReview) openReview.hidden = !admin || !show;
 }
 function loadExtractionIncident() {
+  if (!canUseAdmin()) {
+    renderExtractionIncident(null, null);
+    return Promise.resolve();
+  }
   return fetch('/api/health')
     .then(function (r) { return r.json(); })
     .then(function (health) {
-      if (!canUseAdmin()) {
-        renderExtractionIncident(health, null);
-        return health;
-      }
       return fetch('/api/admin/autopilot/status', { headers: adminHeaders() })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (autopilot) {

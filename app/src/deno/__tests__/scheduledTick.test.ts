@@ -126,6 +126,7 @@ describe('probePendingWork / hasDrainableWork', () => {
       deliveryQueue: false,
       ingestionOutbox: false,
       deliveryOutbox: false,
+      eligibleReview: false,
     });
     expect(hasDrainableWork(probe)).toBe(false);
   });
@@ -149,6 +150,54 @@ describe('probePendingWork / hasDrainableWork', () => {
     const probe = await probePendingWork(env, new Date(now));
     expect(probe.ingestQueue).toBe(true);
     expect(probe.deliveryOutbox).toBe(true);
+    expect(probe.eligibleReview).toBe(false);
+    expect(hasDrainableWork(probe)).toBe(true);
+  });
+
+  it('treats claimable eligible-due review rows as drainable work', async () => {
+    const { client, db } = await makeDb();
+    const now = '2026-08-18T23:00:00.000Z';
+    await client.execute(`
+      CREATE TABLE review_queue (
+        doc_id TEXT PRIMARY KEY,
+        resolved INTEGER,
+        agreement_suppressed_at TEXT,
+        agreement_attempts INTEGER,
+        agreement_next_attempt_at TEXT,
+        agreement_claim_token TEXT,
+        agreement_claimed_at TEXT,
+        reason TEXT
+      )
+    `);
+    await client.execute(`
+      CREATE TABLE filings (
+        doc_id TEXT PRIMARY KEY,
+        raw_object_key TEXT,
+        doc_kind TEXT
+      )
+    `);
+    await client.execute(`
+      CREATE TABLE transactions (
+        id INTEGER PRIMARY KEY,
+        doc_id TEXT,
+        source TEXT,
+        deprecated_at TEXT
+      )
+    `);
+    await client.execute({
+      sql: `INSERT INTO review_queue
+        (doc_id, resolved, agreement_suppressed_at, agreement_attempts, reason)
+        VALUES ('H-2026-20000001', 0, NULL, 0, 'agreement_cascade_unresolved')`,
+      args: [],
+    });
+    await client.execute({
+      sql: `INSERT INTO filings (doc_id, raw_object_key, doc_kind)
+        VALUES ('H-2026-20000001', 'raw/H-2026-20000001.pdf', 'ptr_pdf')`,
+      args: [],
+    });
+    const env = { DB: db } as unknown as Env;
+    const probe = await probePendingWork(env, new Date(now));
+    expect(probe.eligibleReview).toBe(true);
     expect(hasDrainableWork(probe)).toBe(true);
   });
 });

@@ -210,7 +210,9 @@ budget-status polling, see Tunables & flags below)
     without touching the per-minute cascade (default on)
   - `AUTOPILOT_BACKLOG_THRESHOLD` — unresolved-review count that triggers an
     extra same-day run (default `150`; a run always triggers on the first
-    cron tick of each UTC day)
+    cron tick of each UTC day, and also on any tick with claimable
+    eligible-due docs — attempts under cap, next_attempt due, raw bytes,
+    not suppressed/terminal)
   - `AUTOPILOT_DAILY_USD_BUDGET` — per-UTC-day USD spend meter priced via the
     shared benchmark rate card; reservations happen BEFORE model calls and
     the run halts when exhausted (default `5.00`)

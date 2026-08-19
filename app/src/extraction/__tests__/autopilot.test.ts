@@ -41,6 +41,7 @@ interface MockState {
   legacyReplayResetLands: boolean;
   readsByDoc: Record<string, Array<{ provider: string; model: string; ok: number; error: string | null; usage_json: string | null }>>;
   backlogCount: number;
+  eligibleDueCount: number;
   budget: Map<string, number>;
   reservations: Map<string, {
     day: string;
@@ -67,6 +68,7 @@ function makeState(over: Partial<MockState> = {}): MockState {
     legacyReplayResetLands: true,
     readsByDoc: {},
     backlogCount: 0,
+    eligibleDueCount: 0,
     budget: new Map(),
     reservations: new Map(),
     runUpdates: [],
@@ -128,6 +130,9 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
             return (halted ? { id: halted.id } : null) as T | null;
           }
           if (/SELECT COUNT\(\*\) AS n/i.test(sql)) {
+            if (/agreement_attempts/i.test(sql)) {
+              return { n: state.eligibleDueCount } as T;
+            }
             return { n: state.backlogCount } as T;
           }
           if (/SELECT f\.doc_id, f\.raw_object_key, f\.chamber, f\.page_count/i.test(sql)) {
@@ -819,7 +824,7 @@ describe('maybeStartBacklogAutopilot — gates', () => {
   });
 
   it('same-day backlog trigger honors the threshold', async () => {
-    const state = makeState({ backlogCount: 100 });
+    const state = makeState({ backlogCount: 100, eligibleDueCount: 0 });
     const { env, kv, send } = makeEnv(state);
     kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10)); // daily already ran
     const below = await maybeStartBacklogAutopilot(env);
@@ -829,6 +834,18 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     state.backlogCount = 300;
     const above = await maybeStartBacklogAutopilot(env);
     expect(above?.started?.trigger).toBe('backlog');
+  });
+
+  it('starts while eligible-due docs exist without waiting for UTC midnight or the 150 threshold', async () => {
+    const state = makeState({ backlogCount: 24, eligibleDueCount: 24 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10));
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.started?.trigger).toBe('eligible');
+    expect(send).toHaveBeenCalledTimes(1);
+    const tick = send.mock.calls[0]?.[0] as { type: string; runId: string };
+    expect(tick).toMatchObject({ type: 'autopilot.tick', runId: result!.started!.runId });
   });
 });
 
