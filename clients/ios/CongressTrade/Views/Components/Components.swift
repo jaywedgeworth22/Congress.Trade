@@ -836,10 +836,9 @@ struct HamburgerMenuButton: View {
 /// Premium, theme, legal links, disclaimer.
 ///
 /// It used to be a 290pt popover that could only fit a native Apple button and
-/// a "More Sign-In Options" signpost to the Settings tab; Google and magic-link
-/// lived only in Settings, so the two surfaces drifted. Sign-in is now one
-/// component (`SignInPanel`) used by both, and this sheet has the room to show
-/// it.
+/// a "More Sign-In Options" signpost to the Settings tab; Google lived only in
+/// Settings, so the two surfaces drifted. Sign-in is now one component
+/// (`SignInPanel`) used by both, and this sheet has the room to show it.
 struct AccountQuickMenu: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.openURL) private var openURL
@@ -1036,8 +1035,8 @@ struct AccountQuickMenu: View {
 
 // MARK: - Sign-in (one implementation, every surface)
 
-/// The app's single sign-in stack: native Apple button, Google button, magic
-/// link — plus the account notice, which is the part that was missing.
+/// The app's single sign-in stack: native Apple button and Google button —
+/// plus the account notice, which is the part that was missing.
 ///
 /// Every failure path in `Store/AppleSignIn.swift` already writes
 /// `setAccountNotice`, but the hamburger popover rendered no notice at all, so
@@ -1052,8 +1051,6 @@ struct SignInPanel: View {
     /// `handleAppleSignIn` on completion. See `Store/AppleSignIn.swift`.
     @State private var currentAppleNonce: String?
     @State private var isAuthenticatingWithGoogle = false
-    @State private var magicEmail = ""
-    @FocusState private var magicEmailFocused: Bool
 
     /// Fired once a session token has actually been stored — used by sheets
     /// that should close themselves on success.
@@ -1086,50 +1083,6 @@ struct SignInPanel: View {
 
             GoogleSignInButton(isBusy: isAuthenticatingWithGoogle) {
                 startGoogleSignIn()
-            }
-
-            HStack(spacing: 8) {
-                // `verbatim:` is load-bearing. A string LITERAL passed to
-                // `Text`/`TextField` is a `LocalizedStringKey`, which SwiftUI
-                // parses as Markdown — and Markdown autolinks a bare email
-                // address, so `"you@example.com"` rendered as a link in the
-                // accent color. It looked like the tint leak that grey-ed the
-                // header glyphs, but it is not: `.foregroundStyle` on the
-                // field, a `prompt:` styled `.secondary`, a `prompt:` styled
-                // with a concrete color, dropping `.roundedBorder`, and
-                // overriding `.tint` were all tried on device and all stayed
-                // blue, because link styling outranks every one of them.
-                // Not parsing it as Markdown is the fix.
-                TextField(
-                    "",
-                    text: $magicEmail,
-                    prompt: Text(verbatim: "you@example.com")
-                )
-                    .foregroundStyle(Color.primary)
-                    .accessibilityLabel("Email address")
-                    .urlKeyboard()
-                    .neverAutocapitalized()
-                    .autocorrectionDisabled()
-                    .focused($magicEmailFocused)
-                    .submitLabel(.done)
-                    .onSubmit { magicEmailFocused = false }
-                Button {
-                    magicEmailFocused = false
-                    Task { await store.requestMagicLink(email: magicEmail) }
-                } label: {
-                    Text("Email Link")
-                        .font(.subheadline.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-                .disabled(magicEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            // The keyboard-dismiss bar travels with the field it serves, so it
-            // works from Settings and from the account sheet alike.
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { magicEmailFocused = false }
-                }
             }
 
             if let notice = store.watchlistNotice, !notice.isEmpty {
@@ -1241,7 +1194,7 @@ struct GoogleSignInButton: View {
                     .frame(width: 20, height: 20)
                 // System font, not the app's Zilla Slab body font: Google's
                 // brand guidance is a neutral sans for the button label.
-                Text(isBusy ? "Opening Google…" : "Sign in with Google")
+                Text(isBusy ? "Opening Google…" : "Sign In with Google")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(label)
             }
@@ -1255,7 +1208,7 @@ struct GoogleSignInButton: View {
         .buttonStyle(.plain)
         .tint(label)
         .disabled(isBusy)
-        .accessibilityLabel("Sign in with Google")
+        .accessibilityLabel("Sign In with Google")
     }
 }
 

@@ -1182,23 +1182,6 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    /// Sends a magic-link sign-in email (`POST /auth/magic/request?client=ios`).
-    /// The emailed link deep-links back into the app as
-    /// `congresstrade://auth?token=…` (handled by `onOpenURL` in the app root).
-    func requestMagicLink(email: String) async {
-        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else {
-            watchlistNotice = "Enter your email address."
-            return
-        }
-        do {
-            try await api.requestMagicLink(email: trimmed)
-            watchlistNotice = "If that email is registered, a sign-in link is on its way."
-        } catch {
-            watchlistNotice = error.localizedDescription
-        }
-    }
-
     func probeAdminAccess() async {
         if isProbingAdmin { return }
         isProbingAdmin = true

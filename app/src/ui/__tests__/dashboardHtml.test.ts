@@ -487,6 +487,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
 
+  it('offers Google and Apple sign-in without email magic-link', () => {
+    expect(DASHBOARD_HTML).toContain('id="loginOverlay"');
+    expect(DASHBOARD_HTML).toContain('Sign In with Google');
+    expect(DASHBOARD_HTML).toContain('id="appleSignInBtn"');
+    expect(DASHBOARD_HTML).toContain('Sign In with Apple');
+    expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/google/start'");
+    expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/apple/start'");
+    expect(DASHBOARD_HTML).not.toContain('id="magicEmail"');
+    expect(DASHBOARD_HTML).not.toContain('function sendMagicLink(');
+    expect(DASHBOARD_HTML).not.toContain('/auth/magic/request');
+    expect(DASHBOARD_HTML).not.toContain('Send Link');
+    expect(DASHBOARD_HTML).not.toContain('Email me a one-click sign-in link');
+  });
+
   it('owner follow-up batch #6: removes the "pols" abbreviation — bare numbers in Politicians-headed table columns, full word only in prose', () => {
     // The u-full/u-abbr responsive-word mechanism and its polWord/polCell
     // helpers are gone entirely — dead once nothing renders "pol(s)" anymore.
