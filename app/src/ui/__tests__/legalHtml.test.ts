@@ -36,6 +36,51 @@ describe('legalHtml pricing copy', () => {
   });
 });
 
+describe('shared legal chrome and theme path', () => {
+  function styleBlock(html: string): string {
+    const match = html.match(/<style>[\s\S]*?<\/style>/);
+    if (!match) throw new Error('missing <style> block');
+    return match[0];
+  }
+
+  function themeBoot(html: string): string {
+    const match = html.match(/localStorage\.getItem\('ui-theme'\)[\s\S]*?data-theme-pref/);
+    if (!match) throw new Error('missing ui-theme boot');
+    return match[0];
+  }
+
+  it('gives ToS and Privacy Policy the same heading, font, and list chrome', () => {
+    expect(styleBlock(TOS_HTML)).toBe(styleBlock(PRIVACY_HTML));
+    for (const html of [TOS_HTML, PRIVACY_HTML]) {
+      expect(html).toContain('h1{font-size:26px;font-weight:700');
+      expect(html).toContain('.eff{color:var(--dim);font-size:13px');
+      expect(html).toContain('h2{font-size:17px;font-weight:700');
+      expect(html).toContain('--sans:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif');
+      expect(html).toContain('ul{padding-left:20px;list-style:disc}');
+      expect(html).toContain('Congress<span class="dot">.</span>Trade');
+    }
+    expect(TOS_HTML).toContain('<h1>Terms of Service</h1>');
+    expect(TOS_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+    expect(PRIVACY_HTML).toContain('<h1>Privacy Policy</h1>');
+    expect(PRIVACY_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+  });
+
+  it('honors the site Light / Dark / System switch on both pages', () => {
+    expect(themeBoot(TOS_HTML)).toBe(themeBoot(PRIVACY_HTML));
+    for (const html of [TOS_HTML, PRIVACY_HTML]) {
+      expect(html).toContain('localStorage.getItem(\'ui-theme\')');
+      expect(html).toContain('html[data-theme="light"]');
+      expect(html).toContain('html[data-theme="dark"]');
+      expect(html).toContain('--bg:#0b1120');
+      expect(html).toContain('--bg:#eff3f8');
+      expect(html).toContain('data-theme-opt="light"');
+      expect(html).toContain('data-theme-opt="dark"');
+      expect(html).toContain('data-theme-opt="system"');
+      expect(html).toContain('aria-label="Theme"');
+    }
+  });
+});
+
 describe('short legal and pricing routes', () => {
   it('redirects /privacy, /terms, and /pricing to canonical destinations', async () => {
     const { buildUiRouter } = await import('../routes.ts');
@@ -51,5 +96,23 @@ describe('short legal and pricing routes', () => {
     const pricing = await app.request('http://localhost/pricing', {}, {} as never);
     expect(pricing.status).toBe(302);
     expect(pricing.headers.get('location')).toContain('pricing=1');
+  });
+
+  it('serves ToS and Privacy Policy from the same themed shell', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+    const tos = await app.request('http://localhost/terms-of-service', {}, {} as never);
+    const privacy = await app.request('http://localhost/privacy-policy', {}, {} as never);
+    expect(tos.status).toBe(200);
+    expect(privacy.status).toBe(200);
+    const tosHtml = await tos.text();
+    const privacyHtml = await privacy.text();
+    expect(tosHtml).toContain('data-theme-opt="system"');
+    expect(privacyHtml).toContain('data-theme-opt="system"');
+    expect(tosHtml).toContain('<h1>Terms of Service</h1>');
+    expect(privacyHtml).toContain('<h1>Privacy Policy</h1>');
+    const tosStyle = tosHtml.match(/<style>[\s\S]*?<\/style>/)?.[0];
+    const privacyStyle = privacyHtml.match(/<style>[\s\S]*?<\/style>/)?.[0];
+    expect(tosStyle).toBe(privacyStyle);
   });
 });

@@ -12,7 +12,108 @@ const EFFECTIVE_DATE = 'June 22, 2026';
 const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
 const CONTACT = 'support@congress.trade';
 
-/** Wrap page body in the shared dark-theme shell. */
+/**
+ * Shared legal chrome for /terms-of-service and /privacy-policy.
+ *
+ * Dark tokens are the Privacy Policy reference (navy, 26px title, dim
+ * "Effective …" subtitle, numbered h2s, system sans).  Light tokens and
+ * the Light / Dark / System control are the same path the dashboard uses
+ * (`ui-theme` in localStorage, default light).  Do not give one page a
+ * second shell.
+ */
+const LEGAL_THEME_BOOT = /* html */ `<script>
+  (function () {
+    var pref = 'light';
+    try {
+      var s = localStorage.getItem('ui-theme');
+      if (s === 'light' || s === 'dark' || s === 'system') pref = s;
+    } catch (e) {}
+    var effective = pref;
+    if (pref === 'system') {
+      effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme-pref', pref);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#0b1120' : '#eff3f8');
+  })();
+</script>`;
+
+const LEGAL_THEME_ICONS: Record<'light' | 'dark' | 'system', string> = {
+  dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
+  system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>',
+  light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+};
+
+function legalThemeSegHtml(): string {
+  const opts = [
+    { id: 'light' as const, label: 'Light' },
+    { id: 'dark' as const, label: 'Dark' },
+    { id: 'system' as const, label: 'System' },
+  ];
+  const btns = opts.map((o) =>
+    `<button type="button" class="theme-seg-btn" data-theme-opt="${o.id}" aria-label="Set theme to ${o.label}" title="${o.label}" aria-pressed="false">${LEGAL_THEME_ICONS[o.id]}</button>`
+  ).join('');
+  return `<div class="theme-seg" role="group" aria-label="Theme">${btns}</div>`;
+}
+
+const LEGAL_THEME_RUNTIME = /* html */ `<script>
+  function readThemePref() {
+    try {
+      var s = localStorage.getItem('ui-theme');
+      if (s === 'light' || s === 'dark' || s === 'system') return s;
+    } catch (e) {}
+    return 'light';
+  }
+  function resolveTheme(pref) {
+    if (pref === 'dark' || pref === 'light') return pref;
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+    } catch (e) {}
+    return 'light';
+  }
+  function applyTheme(effective) {
+    effective = effective === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', effective);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effective === 'dark' ? '#0b1120' : '#eff3f8');
+    syncThemeSegUI();
+  }
+  function syncThemeSegUI() {
+    var pref = readThemePref();
+    document.querySelectorAll('.theme-seg-btn[data-theme-opt]').forEach(function (btn) {
+      var on = btn.getAttribute('data-theme-opt') === pref;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function setThemePref(pref) {
+    if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+    try { localStorage.setItem('ui-theme', pref); } catch (e) {}
+    document.documentElement.setAttribute('data-theme-pref', pref);
+    applyTheme(resolveTheme(pref));
+  }
+  (function bindSystemThemeListener() {
+    try {
+      if (!window.matchMedia) return;
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      var onChange = function () {
+        if (readThemePref() === 'system') applyTheme(resolveTheme('system'));
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    } catch (e) {}
+  })();
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    var btn = t && t.closest ? t.closest('.theme-seg-btn[data-theme-opt]') : null;
+    if (!btn) return;
+    var pref = btn.getAttribute('data-theme-opt');
+    if (pref) setThemePref(pref);
+  });
+  applyTheme(resolveTheme(readThemePref()));
+</script>`;
+
 function shell(title: string, body: string): string {
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -20,36 +121,55 @@ function shell(title: string, body: string): string {
 %GA_SCRIPT%
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#eff3f8" />
 <title>${title} · Congress.Trade</title>
+${LEGAL_THEME_BOOT}
 <style>
-  :root{--bg:#0b1120;--bg2:#111a2e;--panel:#15203a;--border:#243154;--text:#e6edf6;--dim:#8da2c0;--accent:#4f8cff;--warn:#f59e0b;}
+  :root {
+    --bg:#0b1120;--bg2:#111a2e;--panel:#15203a;--border:#243154;--text:#e6edf6;--dim:#8da2c0;--body:#cdd8ea;--accent:#4f8cff;--warn:#f59e0b;
+    --sans:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  html[data-theme="dark"] { color-scheme: dark; }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg:#eff3f8;--bg2:#e4ebf4;--panel:#ffffff;--border:#c1cde2;--text:#09101c;--dim:#34435b;--body:#34435b;--accent:#2563eb;--warn:#b45309;
+  }
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,var(--bg2),var(--bg));color:var(--text);
-       font:15px/1.65 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
-  header{display:flex;align-items:center;gap:14px;padding:16px 35px;border-bottom:1px solid var(--border);
+       font:15px/1.65 var(--sans);}
+  header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 35px;border-bottom:1px solid var(--border);
          background:rgba(10,16,30,.6);position:sticky;top:0;backdrop-filter:blur(8px)}
-  .brand{font-weight:700;font-size:16px}.brand .dot{color:var(--accent)}
+  html[data-theme="light"] header{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}
+  .brand{font-weight:700;font-size:16px;font-family:var(--sans)}.brand .dot{color:var(--accent)}
   a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
   main{max-width:820px;margin:0 auto;padding:32px 35px 64px}
-  h1{font-size:26px;margin:0 0 4px}.eff{color:var(--dim);font-size:13px;margin:0 0 28px}
-  h2{font-size:17px;margin:30px 0 8px;border-top:1px solid var(--border);padding-top:22px}
-  p,li{color:#cdd8ea}strong{color:var(--text)}
-  ul{padding-left:20px}li{margin:5px 0}
+  h1{font-size:26px;font-weight:700;margin:0 0 4px;font-family:var(--sans)}
+  .eff{color:var(--dim);font-size:13px;margin:0 0 28px;font-family:var(--sans)}
+  h2{font-size:17px;font-weight:700;margin:30px 0 8px;border-top:1px solid var(--border);padding-top:22px;font-family:var(--sans)}
+  p,li{color:var(--body)}strong{color:var(--text)}
+  ul{padding-left:20px;list-style:disc}li{margin:5px 0}
   .callout{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);
            background:color-mix(in srgb,var(--warn) 9%,transparent);border-radius:10px;padding:14px 16px;margin:18px 0}
   .callout strong{color:var(--warn)}
   footer{color:var(--dim);font-size:12px;border-top:1px solid var(--border);padding:22px 35px;text-align:center}
   code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:13px;color:var(--accent)}
+  .theme-seg{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:9px;background:var(--panel)}
+  .theme-seg-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;
+    color:var(--dim);padding:6px 8px;border-radius:7px;cursor:pointer;line-height:1}
+  .theme-seg-btn:hover{color:var(--text)}
+  .theme-seg-btn.active{color:var(--text);border-color:var(--border);background:var(--bg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .theme-seg-btn svg{width:13px;height:13px;flex:0 0 auto}
   @media (max-width:720px){header{padding:16px 22px}main{padding:32px 22px 64px}footer{padding:22px}}
 </style>
 </head>
 <body>
-<header><a class="brand" href="/">Congress<span class="dot">.</span>Trade</a></header>
+<header><a class="brand" href="/">Congress<span class="dot">.</span>Trade</a>${legalThemeSegHtml()}</header>
 <main>
 ${body}
 <p style="margin-top:36px"><a href="/">&larr; Back to Congress.Trade</a></p>
 </main>
 <footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
+${LEGAL_THEME_RUNTIME}
 </body>
 </html>`;
 }
