@@ -1959,7 +1959,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
     /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
        Timeframe is content-sized (not flex-grown).  ID selectors beat the
-       later ≤720px `.toolbar { flex-wrap:wrap }` re-flex. */
+       later 720px toolbar flex-wrap re-flex. */
     #tradesSharedFilters, #trendsSharedFilters {
       display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
       overflow: visible;
@@ -2664,8 +2664,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        breakpoint's footer rule, scaled to this block's tighter 26px base. */
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
-  /* Two IDs so this wins over `#view-trends .toolbar { flex-wrap }` and the
-     generic `.toolbar select { width:100% }` mobile shorthand. */
+  /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
+     generic toolbar-select width:100% mobile shorthand. */
   #view-trends #trendsSharedFilters,
   #view-trades #tradesSharedFilters {
     display: flex !important;

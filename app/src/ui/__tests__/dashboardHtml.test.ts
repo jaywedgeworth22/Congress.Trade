@@ -419,7 +419,7 @@ describe('DASHBOARD_HTML', () => {
     // already call, so the mobile control resyncs from state restored/changed elsewhere.
     expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
     expect(DASHBOARD_HTML).toContain('.trades-sort-mobile { display: none;');
-    expect(DASHBOARD_HTML).toContain('#view-trades .trades-sort-mobile { display: flex; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-sort-mobile { display: flex; }');
     // Columns chooser lives in the Options (⋯) menu; hidden on mobile because
     // tradesCardHtml() renders a fixed field set on phones.
     expect(DASHBOARD_HTML).toContain('feed-options-item-cols');
