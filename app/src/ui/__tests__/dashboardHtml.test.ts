@@ -5294,16 +5294,16 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(adminHalt.adminTabBadge.textContent).toBe('1');
   });
 
-  it('puts member photos on the People directory and adds Largest Buys/Sells on Trends', () => {
+  it('puts member photos on the People directory and does not add Largest Buys/Sells on Trends', () => {
     expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party) + '<span class=\"cell-clip\"");
-    expect(DASHBOARD_HTML).toContain('id="trLargestBuys"');
-    expect(DASHBOARD_HTML).toContain('id="trLargestSells"');
-    expect(DASHBOARD_HTML).toContain('Largest Buys');
-    expect(DASHBOARD_HTML).toContain('Largest Sells');
-    expect(DASHBOARD_HTML).toContain('function loadTrExtremes()');
-    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrExtremes(); loadTrTickers();');
-    expect(DASHBOARD_HTML).not.toContain('Estimated buy-side volume from STOCK Act bracket midpoints.');
-    expect(DASHBOARD_HTML).not.toContain('Estimated sell-side volume from STOCK Act bracket midpoints.');
+    expect(DASHBOARD_HTML).not.toContain('id="trLargestBuys"');
+    expect(DASHBOARD_HTML).not.toContain('id="trLargestSells"');
+    expect(DASHBOARD_HTML).not.toContain('id="trExtremes"');
+    expect(DASHBOARD_HTML).not.toContain('Largest Buys');
+    expect(DASHBOARD_HTML).not.toContain('Largest Sells');
+    expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
+    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
+    expect(DASHBOARD_HTML).not.toContain('loadTrExtremes()');
   });
 });
 
@@ -5317,12 +5317,14 @@ describe('mobile web chrome polish (issue #2016)', () => {
     expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
   });
 
-  it('removes Snapshot and the Largest Buys/Sells blurbs', () => {
+  it('removes Snapshot and the Largest Buys/Sells sections', () => {
     expect(DASHBOARD_HTML).not.toContain('>Snapshot<');
     expect(DASHBOARD_HTML).not.toContain('class="tf-cap"');
-    expect(DASHBOARD_HTML).toContain('Largest Buys');
+    expect(DASHBOARD_HTML).not.toContain('Largest Buys');
+    expect(DASHBOARD_HTML).not.toContain('Largest Sells');
     expect(DASHBOARD_HTML).toContain('fold-cue');
     expect(DASHBOARD_HTML).not.toContain('Not an exact figure.');
+    expect(DASHBOARD_HTML).toContain('id="trKpis"');
   });
 
   it('compacts Sort, right-aligns the pager, and parks Rows/Export in the top band', () => {
@@ -5344,5 +5346,23 @@ describe('mobile web chrome polish (issue #2016)', () => {
     expect(DASHBOARD_HTML).not.toContain('Upgrade to Premium</button>');
     expect(DASHBOARD_HTML).not.toContain('style-row');
     expect(DASHBOARD_HTML).not.toContain('data-style-opt');
+  });
+});
+
+describe('remove Largest Buys/Sells from Trends (issue #2019)', () => {
+  it('drops the extremes sections and loader, and keeps metric cards plus side filters', () => {
+    const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
+    const trends = DASHBOARD_HTML.slice(trendsStart, peopleStart);
+    expect(trends).not.toContain('Largest Buys');
+    expect(trends).not.toContain('Largest Sells');
+    expect(trends).not.toContain('id="trExtremes"');
+    expect(trends).toContain('id="trKpis"');
+    expect(trends).toContain('id="trSideGroup"');
+    expect(trends).toContain('data-side="B"');
+    expect(trends).toContain('data-side="S"');
+    expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
+    expect(DASHBOARD_HTML).toContain('function loadTrends()');
+    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
   });
 });
