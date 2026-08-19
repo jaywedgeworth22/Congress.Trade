@@ -419,7 +419,7 @@ describe('DASHBOARD_HTML', () => {
     // already call, so the mobile control resyncs from state restored/changed elsewhere.
     expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
     expect(DASHBOARD_HTML).toContain('.trades-sort-mobile { display: none;');
-    expect(DASHBOARD_HTML).toContain('#view-trades .trades-sort-mobile { display: flex; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-sort-mobile { display: flex; }');
     // Columns chooser lives in the Options (⋯) menu; hidden on mobile because
     // tradesCardHtml() renders a fixed field set on phones.
     expect(DASHBOARD_HTML).toContain('feed-options-item-cols');
@@ -2963,8 +2963,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="qAssetClass"');
     expect(extraFilters![0]).not.toContain('value="equities_funds"');
     expect(extraFilters![0]).not.toContain('All Assets');
-    expect(extraFilters![0]).toContain('id="tradesStats"');
-    expect(extraFilters![0]).toContain('trades');
+    expect(extraFilters![0]).not.toContain('id="tradesStats"');
+    expect(extraFilters![0]).not.toContain('kpiTotal');
     // Top + bottom pagers with shared data-* hooks.
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-bottom"');
@@ -3252,11 +3252,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     );
   });
 
-  it('right-aligns the desktop "N trades" count and compacts it (total only) on mobile', () => {
-    expect(DASHBOARD_HTML).toContain('.trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
-    expect(DASHBOARD_HTML).toContain('.trades-stats .stat-today { display: none; }');
-    // Regression (#1533 verifier): grid must be declared on the ID selector so
-    // the later ≤720px `.toolbar { display:flex }` rule can't override it.
+  it('keeps the filtered trade count on the pager only (not next to search)', () => {
+    expect(DASHBOARD_HTML).toContain('data-trades-count');
+    expect(DASHBOARD_HTML).toContain('id="tradesCountMsgTop"');
+    expect(DASHBOARD_HTML).not.toContain('id="tradesStats"');
+    expect(DASHBOARD_HTML).not.toContain('id="kpiTotal"');
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
 
     // #1551 verifier fix-forwards: no reserved right gutter on table wraps,
@@ -3264,11 +3264,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).not.toMatch(/\.table-wrap \{[^}]*padding-right: 60px/);
     expect(DASHBOARD_HTML).toMatch(/\.late-filers-wrap table \{[^}]*overflow: visible/);
     const document = parse(DASHBOARD_HTML);
-    const stats = document.querySelector('#tradesStats');
-    expect(stats).not.toBeNull();
-    expect(stats!.querySelector('#kpiTotal')).not.toBeNull();
-    expect(stats!.querySelector('.stat-today')).toBeNull();
-    expect(stats!.textContent).not.toContain('Past 3 Months');
+    expect(document.querySelector('#tradesStats')).toBeNull();
+    expect(document.querySelector('#kpiTotal')).toBeNull();
+    expect(document.querySelector('#tradesCountMsgTop')).not.toBeNull();
   });
 
   it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
@@ -3535,9 +3533,9 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("var authGroup = '<span class=\"acct-auth-group\">'");
     });
 
-    it('shows filtered matching trades count (not page size) upper-right', () => {
-      expect(DASHBOARD_HTML).toContain('id="kpiTotal"');
-      expect(DASHBOARD_HTML).toContain("totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';");
+    it('shows filtered matching trades count on the pager (not page size)', () => {
+      expect(DASHBOARD_HTML).toContain('data-trades-count');
+      expect(DASHBOARD_HTML).toContain("var total = typeof totalRows === 'number' ? totalRows : (shown || 0);");
       expect(DASHBOARD_HTML).not.toContain("el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);");
     });
 
@@ -3903,7 +3901,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #qAssetClassWrap');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
+    expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #tradesStats { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
@@ -3916,7 +3914,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(extras).toContain('qSearchField');
     expect(extras).not.toContain('qAssetClassWrap');
     expect(extras).not.toContain('searchToggle');
-    expect(extras).toContain('tradesStats');
+    expect(extras).not.toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
     // #9's "tighten to match the app" mobile sub-clause).
     expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
@@ -4335,8 +4333,6 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
   it('Trends "Trades" KPI carries a scope tooltip so a residual difference from the Trades tab total is self-explanatory, not confusing (owner report #3)', () => {
     expect(DASHBOARD_HTML).toContain("kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP)");
     expect(DASHBOARD_HTML).toMatch(/var TRENDS_TRADES_TIP = '[^']*Trades tab[^']*';/);
-    // The Trades-tab total gets the reciprocal explanation.
-    expect(DASHBOARD_HTML).toContain('id="tradesStats" class="trades-stats muted" title=');
     expect(DASHBOARD_HTML).toContain('Trends tab');
   });
 
@@ -4515,12 +4511,10 @@ describe('web blocking defects (audited)', () => {
   });
 
   it('labels what every trade count counts (this filter vs all time)', () => {
-    // Trades tab: the active timeframe sits next to the match count.
-    expect(DASHBOARD_HTML).toContain('<span class="match-label">trades</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="match-window">');
     expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
-    // Trends KPI strip is just the heading — window lives in the filter row.
-    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot</div>');
+    // Trends KPI strip has no Snapshot caption — window lives in the filter row.
+    expect(DASHBOARD_HTML).not.toContain('<div class="tf-cap">Snapshot</div>');
     expect(DASHBOARD_HTML).not.toContain('# Trades');
     expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\">#</button>");
     // Directory: whole-record scope on the counts, the sub copy and the headers.
@@ -5074,8 +5068,8 @@ describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
 });
 
 /**
- * Issues #1529 + #1459 — web adopts remaining iOS language and harvests
- * Capitol Ledger structural wins (style option, not a wholesale restyle).
+ * Issues #1529 + #1459 — web adopts remaining iOS language.
+ * Capitol Ledger (#1459 style option) was removed in #2016.
  */
 describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
   function extractFn(html: string, name: string): string {
@@ -5095,21 +5089,19 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     throw new Error('unbalanced braces for ' + name);
   }
 
-  it('boots a Style preference (standard | ledger) next to theme, defaulting to standard', () => {
-    expect(DASHBOARD_HTML).toContain("localStorage.getItem('ui-style')");
-    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-style', stylePref)");
-    expect(DASHBOARD_HTML).toContain('function styleRowHtml()');
-    expect(DASHBOARD_HTML).toContain("id: 'ledger', label: 'Capitol Ledger'");
+  it('drops the Capitol Ledger style option and does not leave a Standard-only toggle', () => {
+    expect(DASHBOARD_HTML).not.toContain("localStorage.getItem('ui-style')");
+    expect(DASHBOARD_HTML).not.toContain('function styleRowHtml()');
+    expect(DASHBOARD_HTML).not.toContain("id: 'ledger', label: 'Capitol Ledger'");
+    expect(DASHBOARD_HTML).not.toContain('styleRowHtml() +');
+    expect(DASHBOARD_HTML).not.toContain('html[data-style="ledger"]');
+    expect(DASHBOARD_HTML).not.toContain('Capitol Ledger');
     expect(DASHBOARD_HTML).toContain('themeRowHtml() +');
-    expect(DASHBOARD_HTML).toContain('styleRowHtml() +');
-    expect(DASHBOARD_HTML).toContain('html[data-style="ledger"]');
-    expect(DASHBOARD_HTML).toContain('--sans: "Source Serif 4"');
-    expect(DASHBOARD_HTML).toContain('#f4efe4');
   });
 
-  it('makes the Light/Dark/System control icon-only (labels stay on aria-label + title)', () => {
-    expect(DASHBOARD_HTML).toContain("themeIconSvg(o.id) + '</button>'");
-    expect(DASHBOARD_HTML).not.toContain("themeIconSvg(o.id) + o.label + '</button>'");
+  it('restores Light/Dark/System as a labeled segmented control', () => {
+    expect(DASHBOARD_HTML).toContain("themeIconSvg(o.id) + o.label + '</button>'");
+    expect(DASHBOARD_HTML).not.toContain("themeIconSvg(o.id) + '</button>'");
     expect(DASHBOARD_HTML).toContain("aria-label=\"Set theme to ' + o.label + '\" title=\"' + o.label + '\"");
     expect(DASHBOARD_HTML).toContain('.ios-filter-btn::after {');
   });
@@ -5310,6 +5302,47 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(DASHBOARD_HTML).toContain('Largest Sells');
     expect(DASHBOARD_HTML).toContain('function loadTrExtremes()');
     expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrExtremes(); loadTrTickers();');
-    expect(DASHBOARD_HTML).toContain("Estimated buy-side volume from STOCK Act bracket midpoints.");
+    expect(DASHBOARD_HTML).not.toContain('Estimated buy-side volume from STOCK Act bracket midpoints.');
+    expect(DASHBOARD_HTML).not.toContain('Estimated sell-side volume from STOCK Act bracket midpoints.');
+  });
+});
+
+describe('mobile web chrome polish (issue #2016)', () => {
+  it('keeps Trends and Trades filters on one nowrap row with a content-sized timeframe', () => {
+    expect(DASHBOARD_HTML).toContain('#view-trends #trendsSharedFilters');
+    expect(DASHBOARD_HTML).toContain('flex-wrap: nowrap !important;');
+    expect(DASHBOARD_HTML).toContain('field-sizing:content');
+    expect(DASHBOARD_HTML).toContain('>3 Months</option>');
+    expect(DASHBOARD_HTML).not.toContain('>Past 3 Months</option>');
+    expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
+  });
+
+  it('removes Snapshot and the Largest Buys/Sells blurbs', () => {
+    expect(DASHBOARD_HTML).not.toContain('>Snapshot<');
+    expect(DASHBOARD_HTML).not.toContain('class="tf-cap"');
+    expect(DASHBOARD_HTML).toContain('Largest Buys');
+    expect(DASHBOARD_HTML).toContain('fold-cue');
+    expect(DASHBOARD_HTML).not.toContain('Not an exact figure.');
+  });
+
+  it('compacts Sort, right-aligns the pager, and parks Rows/Export in the top band', () => {
+    expect(DASHBOARD_HTML).toContain('.trades-sort-mobile #mobileSortKey { flex: 0 0 auto; width: auto;');
+    expect(DASHBOARD_HTML).toContain('.pager-controls { display:flex; flex:0 0 auto;');
+    expect(DASHBOARD_HTML).toContain('margin-left:auto;');
+    expect(DASHBOARD_HTML).toContain('.pager-bottom .pager-tools { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.pager-top .feed-options { display: none; }');
+    const topPager = DASHBOARD_HTML.match(/<div class="row-flex pager pager-top"[\s\S]*?<div class="row-flex pager pager-bottom"/);
+    expect(topPager).not.toBeNull();
+    expect(topPager![0]).toContain('id="tradesSortMobile"');
+    expect(topPager![0]).toContain('id="mobileSortKey"');
+    expect(topPager![0]).toContain('data-page-size');
+    expect(topPager![0]).toContain('Export CSV');
+  });
+
+  it('keeps a single Upgrade control and no Style row in the account menus', () => {
+    expect(DASHBOARD_HTML).toContain("onclick=\"openPricing()\">Upgrade</button>");
+    expect(DASHBOARD_HTML).not.toContain('Upgrade to Premium</button>');
+    expect(DASHBOARD_HTML).not.toContain('style-row');
+    expect(DASHBOARD_HTML).not.toContain('data-style-opt');
   });
 });
