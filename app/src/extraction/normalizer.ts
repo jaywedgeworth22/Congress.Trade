@@ -86,6 +86,14 @@ export function isDeterministicExtractor(
     ) {
       return true;
     }
+    // Cheap OpenRouter text fallback on typed PTRs is not vision.  Default
+    // model confidence is 0.55 — same publish bar as textPdf.  Live 2026-08-18:
+    // 14 electronic House PTRs sat in review at 0.6 solely because
+    // "openrouter" in the extractor name inherited the 0.95 vision gate.
+    if (compact === 'openroutertext' || compact === 'open_router_text') {
+      const kind = (docKind || '').trim().toLowerCase();
+      return kind === 'text_pdf' || kind === 'senate_html' || kind === 'oge_html' || kind === 'oge_text';
+    }
     // Explicit vision/OCR extractors must never inherit the deterministic
     // threshold from a text/html doc_kind (scanned reclassifications, etc.).
     if (
