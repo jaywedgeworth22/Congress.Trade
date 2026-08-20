@@ -1,3 +1,14 @@
+# Current Shape
+
+Production is **not** a Cloudflare Worker / D1 / `wrangler.toml` app.
+Live site: [https://congress.trade](https://congress.trade).  The app in
+`app/` runs as Deno in Coolify `congress-app` on `fleet-hetzner-nbg1`,
+SQLite at `/data/congress-trade/db.sqlite`, Deno KV at
+`/data/congress-trade/kv.sqlite`, filing PDFs in R2, queues in
+`deno_runtime_queue`.  Proof: `app/Dockerfile`, `app/docker-compose.yml`,
+`app/src/deno/main.ts`, `app/DEPLOY.md`.  Dated Worker/D1 handoff rows
+below are historical.
+
 # Current Handoff
 
 ## 2026-08-20 CURSOR — #1537 Coolify deploy overlap (PR #1964)

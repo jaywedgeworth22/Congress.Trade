@@ -8,9 +8,10 @@ the implementation mounted at `/api/client/v1/*`.
 
 ## Source Of Truth
 
-- The Cloudflare Worker backend owns data access, calculations, entitlement,
-  billing state, scraping, extraction, enrichment, prices, delivery, backfills,
-  provider secrets, admin tokens, and MCP/tool orchestration.
+- The Coolify Deno backend at congress.trade owns data access, calculations,
+  entitlement, billing state, scraping, extraction, enrichment, prices,
+  delivery, backfills, provider secrets, admin tokens, and MCP/tool
+  orchestration.
 - SwiftUI are peer clients over the same backend-owned API.
 - Do not add client-only scraping, calculation, provider-secret, admin, MCP, or
   migration paths.
@@ -524,7 +525,8 @@ were verified live on 2026-08-11 and pinned by
 
 ## Production Boundaries
 
-- Mobile/web app work must not require production deploys, remote D1 migrations,
-  queue drains, production crawlers, or backfills unless Jay explicitly asks.
+- Mobile/web app work must not require production deploys, production schema
+  migrations, queue drains, production crawlers, or backfills unless Jay
+  explicitly asks.
 - If a contract change needs a migration or production backfill, document that
   in the PR and keep the code path safe before the production step runs.
