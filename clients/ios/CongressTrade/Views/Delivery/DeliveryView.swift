@@ -5,6 +5,7 @@ import UserNotifications
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var deliveryMode: DeliveryMode = .sse
     @State private var webhookURL = ""
     @State private var filterChambers: Set<ChamberFilter> = []
@@ -264,10 +265,27 @@ struct DeliveryView: View {
                         .listRowBackground(Color.clear)
                 }
             }
+            // Regular width class only (iPad): cap the Form to a comfortable
+            // reading measure and center it, instead of letting section
+            // footers (e.g. the Premium blurb below) run the full canvas
+            // width — iPad audit P1-3. `AppTheme.background` is
+            // `.systemBackground` in both light and dark, same as the
+            // NavigationStack's own default, so the margin this leaves on
+            // either side is seamless rather than a visible gutter.
+            .frame(maxWidth: horizontalSizeClass == .regular ? 640 : .infinity)
+            .frame(maxWidth: .infinity)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
             .navigationTitle("Delivery")
             .inlineNavigationTitle()
+            .toolbar {
+                // Sign-in, appearance, export, and Premium were otherwise
+                // unreachable from this tab — the hamburger menu only lived
+                // on Trends/Trades (iPad audit P2-2).
+                ToolbarItem(placement: .topBarTrailing) {
+                    HamburgerMenuButton()
+                }
+            }
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }
@@ -278,8 +296,9 @@ struct DeliveryView: View {
             .sheet(isPresented: $showExportSheet) {
                 ExportCSVSheet()
                     .environmentObject(store)
-                    .presentationDetents([.medium])
+                    .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+                    .iPadFullWidthSheet()
             }
             .onAppear {
                 watchlistDraft = store.watchlist
