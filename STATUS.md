@@ -7,6 +7,13 @@ has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
 failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
 install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+## 2026-08-20 CURSOR — scout.jays.services answers GET / like mac
+
+Same named tunnel and DNS as `mac.jays.services`.  The 404 on GET `/` was
+the origin: `senate-relay` only treated GET `/health` as liveness.  GET and
+HEAD on `/` and `/health` now return the same JSON.  `/fetch-doc` unchanged.
+Receipt: `docs/rollouts/2026-08-20-scout-tunnel-health.md`.  Activate with
+`pm2 restart senate-relay` on the Mac after pull.
 
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
 
