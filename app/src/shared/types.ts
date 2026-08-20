@@ -952,6 +952,14 @@ export interface Env {
   INFISICAL_SHARED_SECRET_PATH?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
+  /**
+   * Numeric App Store Connect id for the iOS app, e.g. "1234567890" — set
+   * once the app is Approved and has a real id (see src/ui/appLinks.ts).
+   * Unset by default: the app is not in the public App Store yet, so there
+   * is no real id to hardcode, and the Smart App Banner stays absent until
+   * this is configured.
+   */
+  IOS_APP_STORE_ID?: string;
   /** "true" to force arbitration on when configured. */
   ARBITRATION_ENABLED?: string;
   /** Cross-app import guardrails. Tune down for lean/free-compatible runs. */
