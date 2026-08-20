@@ -694,12 +694,9 @@ struct ControlChip<Content: View>: View {
         content()
             .padding(.horizontal, compact ? 10 : 12)
             .padding(.vertical, 8)
-            .foregroundStyle(isActive ? .white : .primary)
-            .background(
-                isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
-                in: Capsule()
-            )
-            .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+            .foregroundStyle(.primary)
+            .background(AppTheme.card, in: Capsule())
+            .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: isActive ? 1.5 : 1))
             .opacity(isEnabled ? 1 : 0.35)
     }
 }
@@ -960,7 +957,7 @@ struct SidesFilterMenuLabel: View {
         selected.isEmpty || selected.contains(type)
     }
 
-    private var dimColor: Color { isActive ? .white.opacity(0.45) : .secondary }
+    private var dimColor: Color { Color.secondary.opacity(isActive ? 0.45 : 1) }
 
     var body: some View {
         ControlChip(isActive: isActive, compact: !isActive) {
@@ -975,9 +972,8 @@ struct SidesFilterMenuLabel: View {
                     // Black rather than orange, matching the buy/sell arrows'
                     // treatment (owner). `Color.primary`, not a literal
                     // `.black`, because a literal black arrow is invisible on
-                    // the dark-mode chip — and on the blue active fill, where
-                    // `.primary` also stays legible. Size and weight now match
-                    // the two siblings exactly; the exchange glyph was a point
+                    // the dark-mode chip. Size and weight now match the two
+                    // siblings exactly; the exchange glyph was a point
                     // smaller, which read as a rendering slip.
                     Image(systemName: "arrow.left.arrow.right")
                         .font(.system(size: 9, weight: .heavy))
@@ -1185,12 +1181,12 @@ struct DisclaimerBanner: View {
 
     var body: some View {
         if isExpanded {
-            Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+            Text(AppTheme.siteFooterDisclaimer)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

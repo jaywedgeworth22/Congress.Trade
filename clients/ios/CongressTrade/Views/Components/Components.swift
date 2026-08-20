@@ -30,10 +30,17 @@ enum AppAppearance {
     private static func paint(_ pref: String) {
         let style: UIUserInterfaceStyle
         switch pref {
-        case "light": style = .light
+        case "light", "sepia": style = .light
         case "dark": style = .dark
         default: style = .unspecified
         }
+        let palette: CTPalette
+        switch pref {
+        case "sepia": palette = .sepia
+        case "dark": palette = .dark
+        default: palette = .light
+        }
+        AppTheme.currentPalette = palette
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
@@ -45,10 +52,70 @@ enum AppAppearance {
 
     static func colorScheme(for pref: String) -> ColorScheme? {
         switch pref {
-        case "light": return .light
+        case "light", "sepia": return .light
         case "dark": return .dark
         default: return nil
         }
+    }
+}
+
+enum CTPalette: String {
+    case light, sepia, dark
+
+    static func resolved(pref: String, system: ColorScheme) -> CTPalette {
+        switch pref {
+        case "sepia": return .sepia
+        case "dark": return .dark
+        case "light": return .light
+        default: return system == .dark ? .dark : .light
+        }
+    }
+
+    /// Cool light page (#eff3f8), warm paper, or night navy — never mix.
+    var background: Color {
+        switch self {
+        case .light: return Color(red: 0.937, green: 0.953, blue: 0.973)
+        case .sepia: return Color(red: 0.953, green: 0.902, blue: 0.816)
+        case .dark: return Color(red: 0.031, green: 0.047, blue: 0.090)
+        }
+    }
+
+    var card: Color {
+        switch self {
+        case .light: return Color.white
+        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910)
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188)
+        }
+    }
+
+    var panel: Color {
+        switch self {
+        case .light: return Color.white.opacity(0.92)
+        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910).opacity(0.94)
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188).opacity(0.72)
+        }
+    }
+}
+
+private struct CTPaletteKey: EnvironmentKey {
+    static let defaultValue: CTPalette = .light
+}
+
+extension EnvironmentValues {
+    var ctPalette: CTPalette {
+        get { self[CTPaletteKey.self] }
+        set { self[CTPaletteKey.self] = newValue }
+    }
+}
+
+struct CTPaletteInjector: ViewModifier {
+    let pref: String
+    @Environment(\.colorScheme) private var systemScheme
+
+    func body(content: Content) -> some View {
+        let palette = CTPalette.resolved(pref: pref, system: systemScheme)
+        AppTheme.currentPalette = palette
+        return content.environment(\.ctPalette, palette)
     }
 }
 
@@ -75,12 +142,18 @@ struct TickerSheetTarget: Identifiable, Hashable {
 }
 
 enum AppTheme {
-    static let background = Color(uiColor: .systemBackground)
-    static let panel = Color(uiColor: .systemGray6).opacity(0.4)
-    static let panelElevated = Color(uiColor: .systemGray5).opacity(0.6)
+    static var currentPalette: CTPalette = .light
+    static var background: Color { currentPalette.background }
+    static var card: Color { currentPalette.card }
+    static var panel: Color { currentPalette.panel }
+    static var panelElevated: Color { currentPalette.card }
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-    
+
+    /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
+    static let siteFooterDisclaimer =
+        "Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency"
+
     // Web app aesthetic alignment
     static let houseColor = Color.blue.opacity(0.8)
     static let senateColor = Color.purple.opacity(0.8)
@@ -89,6 +162,20 @@ enum AppTheme {
     static func border(cornerRadius: CGFloat = 16) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius)
             .stroke(borderColor, lineWidth: 1)
+    }
+}
+
+extension View {
+    func ctThemedForm() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
+            .toolbarBackground(AppTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    func ctThemedRow() -> some View {
+        listRowBackground(AppTheme.card)
     }
 }
 
@@ -164,7 +251,7 @@ struct MemberAvatar: View {
                 .font(.system(size: max(11, size * 0.34), weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
-                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                .background(AppTheme.card, in: Circle())
             if let photoURL {
                 AsyncImage(url: photoURL) { phase in
                     if case .success(let image) = phase {
@@ -288,9 +375,7 @@ struct AssetMark: View {
                         .padding(size * 0.12)
                         .frame(width: size, height: size)
                         .background(
-                            colorScheme == .dark
-                                ? Color(uiColor: .secondarySystemBackground)
-                                : Color.white,
+                            AppTheme.card,
                             in: RoundedRectangle(cornerRadius: size * 0.22)
                         )
                         .overlay(
@@ -865,6 +950,7 @@ struct HamburgerMenuButton: View {
             AccountQuickMenu(isPresented: $showMenu)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(AppTheme.background)
         }
     }
 }
@@ -898,6 +984,7 @@ struct AccountQuickMenu: View {
                         Text(notice)
                     }
                 }
+                .ctThemedRow()
 
                 if store.showsAdminRow {
                     Section {
@@ -905,11 +992,13 @@ struct AccountQuickMenu: View {
                             Label("Admin", systemImage: "gearshape.2")
                         }
                     }
+                    .ctThemedRow()
                 }
 
                 Section {
                     TradeDisclosureAlertsToggle()
                 }
+                .ctThemedRow()
 
                 Section {
                     Button {
@@ -919,6 +1008,7 @@ struct AccountQuickMenu: View {
                     }
                     billingRow
                 }
+                .ctThemedRow()
 
                 Section {
                     // No "Theme" caption and no explanation of what Light/Dark
@@ -927,6 +1017,7 @@ struct AccountQuickMenu: View {
                     ThemeSegmentControl(selection: $appColorScheme)
                         .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                 }
+                .ctThemedRow()
 
                 if store.signedIn || store.hasStoredSessionToken {
                     Section {
@@ -951,21 +1042,23 @@ struct AccountQuickMenu: View {
                             .disabled(store.isLoggingOut || store.isDeletingAccount)
                         }
                     }
+                    .ctThemedRow()
                 }
 
                 Section {
                     LegalFooterLinks()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     // Short disclaimer line — mobile-web parity with `.site-footer`.
-                    Text("Congress.Trade is an educational tool for public STOCK Act disclosures.  Not financial advice — dollar figures are estimates from disclosed brackets.")
+                    Text(AppTheme.siteFooterDisclaimer)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .ctThemedRow()
             }
-            .scrollContentBackground(.hidden)
-            .background(AppTheme.background)
+            .ctThemedForm()
             .modifier(ForcedColorScheme(pref: appColorScheme))
+            .modifier(CTPaletteInjector(pref: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
             .navigationDestination(for: AdminRoute.self) { route in
@@ -1585,6 +1678,7 @@ struct ThemeSegmentControl: View {
 
     private let options: [Option] = [
         .init(id: "light", label: "Light", systemImage: "sun.max"),
+        .init(id: "sepia", label: "Sepia", systemImage: "sun.haze"),
         .init(id: "dark", label: "Dark", systemImage: "moon"),
         .init(id: "system", label: "System", systemImage: "desktopcomputer"),
     ]
@@ -1611,7 +1705,7 @@ struct ThemeSegmentControl: View {
                     .background {
                         if selection == option.id {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                                .fill(AppTheme.card)
                                 .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
                         }
                     }
@@ -1629,7 +1723,7 @@ struct ThemeSegmentControl: View {
             }
         }
         .padding(3)
-        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 1)

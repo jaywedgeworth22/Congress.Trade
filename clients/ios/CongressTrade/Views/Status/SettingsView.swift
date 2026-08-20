@@ -102,10 +102,10 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .background(AppTheme.background)
+            .ctThemedForm()
             .modifier(ForcedColorScheme(pref: appColorScheme))
+            .modifier(CTPaletteInjector(pref: appColorScheme))
             .navigationTitle("Settings")
             .inlineNavigationTitle()
             .navigationDestination(for: AdminRoute.self) { route in
