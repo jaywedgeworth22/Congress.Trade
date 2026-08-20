@@ -38,6 +38,7 @@ import {
 } from '../billing/apple.ts';
 import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
   const type = String(value || '');
@@ -50,7 +51,8 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'unregister_device' ||
     type === 'start_checkout' ||
     type === 'request_export' ||
-    type === 'redeem_apple_purchase'
+    type === 'redeem_apple_purchase' ||
+    type === 'delete_account'
   ) {
     return type;
   }
@@ -352,6 +354,9 @@ export async function executeCommand(
       expiresAt: upserted.record.expiresDate,
       originalTransactionId: upserted.record.originalTransactionId,
     };
+  }
+  if (type === 'delete_account') {
+    return deleteUserAccount(env, user, { keepCommandId: opts.commandId });
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

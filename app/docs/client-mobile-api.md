@@ -63,8 +63,23 @@ be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
 The current router implements `update_preferences`, `create_subscription`,
 `update_subscription`, `delete_subscription`, `register_device`,
-`unregister_device`, and `redeem_apple_purchase`; `start_checkout` and
+`unregister_device`, `redeem_apple_purchase`, and `delete_account`; `start_checkout` and
 `request_export` are defined in the shared type set but still return `501`.
+
+### Account deletion — `delete_account`
+
+Guideline 5.1.1(v).  Signed-in only.  Permanently deletes the account:
+
+- delivery subscriptions for `user:<id>` (and their SSE leases)
+- `push_devices`, `user_preferences`, `apple_subscriptions`, other `client_commands`
+- indexed sessions (`sess:*` / `sess_user:<id>`)
+- the `users` row (PII)
+- best-effort Stripe subscription cancel (no refund)
+
+Web also exposes `POST /auth/account/delete` (cookie or bearer).  After a
+successful delete the client must clear its local token; a follow-up logout is
+unnecessary because the session is already gone.  Apple In-App Purchase
+subscriptions must still be cancelled in the App Store.
 
 ### Device registration (APNs / web push)
 
