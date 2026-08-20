@@ -226,7 +226,7 @@ describe('POST /api/webhooks/apple', () => {
     expect(row?.lastNotificationType).toBe('REFUND');
   });
 
-  it('does not apply a Sandbox DID_RENEW unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('applies a Sandbox DID_RENEW by default (TestFlight / Mac / App Review)', async () => {
     payloadsByJws.set(
       'outer-jws',
       notificationPayload({
@@ -237,6 +237,26 @@ describe('POST /api/webhooks/apple', () => {
     );
     payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', expiresDate: Date.now() + 30 * 86_400_000 }));
     const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.lastNotificationType).toBe('DID_RENEW');
+    expect(row?.status).toBe('active');
+  });
+
+  it('does not apply a Sandbox DID_RENEW when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'DID_RENEW',
+        notificationUUID: 'notif-sandbox-off',
+        data: { bundleId: 'trade.congress.ios', environment: 'Sandbox', signedTransactionInfo: 'txn-jws' },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', expiresDate: Date.now() + 30 * 86_400_000 }));
+    const { env } = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     await seedLedgerRow(env);
 
     const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
