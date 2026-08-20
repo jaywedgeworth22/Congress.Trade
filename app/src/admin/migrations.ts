@@ -1171,7 +1171,30 @@ export const PROBE_RUN_BRACKET_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * 0090_latency_snapshot_repair.sql
+ * 0090_admin_allowlist.sql — persisted admin grant/revoke allowlist + audit
+ * trail, consulted ADDITIONALLY to the ADMIN_EMAILS environment bootstrap
+ * list (see admin/identity.ts's adminRuntimeConfig, admin/adminAccess.ts for
+ * the grant/revoke logic).  ADMIN_EMAILS itself is never written to this
+ * table — it stays the un-editable root escape hatch.
+ */
+export const ADMIN_ALLOWLIST_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS admin_allowlist (
+     email       TEXT PRIMARY KEY,
+     granted_by  TEXT NOT NULL,
+     granted_at  TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS admin_access_audit (
+     id         TEXT PRIMARY KEY,
+     action     TEXT NOT NULL,
+     email      TEXT NOT NULL,
+     actor      TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_admin_access_audit_created ON admin_access_audit (created_at DESC)',
+] as const;
+
+/**
+ * 0091_latency_snapshot_repair.sql
  *
  * Repairs the latency-price-snapshot pipeline: 2937/2955 scheduled rows were
  * stuck at `missed_window` because snapshots are scheduled RETROSPECTIVELY
@@ -1330,7 +1353,9 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
   // 0089_probe_run_brackets.sql
   ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
-  // 0090_latency_snapshot_repair.sql
+  // 0090_admin_allowlist.sql
+  ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
+  // 0091_latency_snapshot_repair.sql
   ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
 ] as const;
 

@@ -61,6 +61,7 @@ import {
   APPLE_IAP_SCHEMA_STATEMENTS,
   REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS,
   FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS,
+  ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
 } from '../migrations.ts';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema.ts';
 import {
@@ -279,11 +280,20 @@ describe('admin migration bootstrap', () => {
       ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
       ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
       ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
+      ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
       ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
     ]);
   });
 
-  it('reopens missed_window snapshots and adds confidence/session/backfill columns (0090)', () => {
+  it('includes the persisted admin allowlist + audit trail (0090)', () => {
+    const sql = ADMIN_ALLOWLIST_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('admin_allowlist');
+    expect(sql).toContain('granted_by  TEXT NOT NULL');
+    expect(sql).toContain('admin_access_audit');
+    expect(sql).toContain('idx_admin_access_audit_created');
+  });
+
+  it('reopens missed_window snapshots and adds confidence/session/backfill columns (0091)', () => {
     const sql = LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS.join('\n');
     expect(sql).toContain('ADD COLUMN capture_mode TEXT');
     expect(sql).toContain('ADD COLUMN confidence TEXT');
@@ -294,7 +304,7 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain("WHERE error IN ('missed_window', 'fmp_quote_http_402')");
   });
 
-  it('reopens missed_window rows on real SQLite and stays idempotent on replay (0090)', async () => {
+  it('reopens missed_window rows on real SQLite and stays idempotent on replay (0091)', async () => {
     const db = await sqliteDatabase();
     applyMigrationFiles(db, migrationFiles());
 
@@ -347,8 +357,7 @@ describe('admin migration bootstrap', () => {
       expect(names).toContain(col);
     }
 
-    db.close();
-  });
+    db.close();  });
 
   it('includes the twin-seek covering index (0088 / #2062)', () => {
     const sql = TWIN_SEEK_INDEX_SCHEMA_STATEMENTS.join('\n');
