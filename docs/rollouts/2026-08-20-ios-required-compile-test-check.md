@@ -46,6 +46,11 @@ The Mac runner is the first place `xcodebuild test` actually compiles and
 runs XCTest.  This Linux workspace cannot execute that.  A broken compile or
 a failing case must paint the PR check `xcodebuild (unsigned)` red.
 
+PR #2036's first Mac run compiled, then failed before any XCTest case:
+`Failed to clone device named 'iPhone 17 Pro'` / stuck in creation.  The
+wrapper correctly went red.  The test step now boots an existing UDID,
+disables parallel clone destinations, and retries that clone fault once.
+
 ## Required check (Jay / ASC)
 
 Agents can POST a context to classic branch protection, but that must wait

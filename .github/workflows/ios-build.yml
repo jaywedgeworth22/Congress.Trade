@@ -173,7 +173,6 @@ jobs:
           set +e
           run_tests
           status=$?
-          set -e
           if [ "$status" -ne 0 ] && grep -q "Failed to clone device\|stuck in creation state" "$log"; then
             echo "Simulator clone/creation stuck; shutdown, boot, retry once. Tests are not skipped."
             xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
@@ -182,6 +181,7 @@ jobs:
             run_tests
             status=$?
           fi
+          set -e
           if [ "$status" -ne 0 ]; then
             echo "::error::xcodebuild test failed (compile or XCTest)."
             exit "$status"
