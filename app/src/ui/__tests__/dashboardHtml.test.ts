@@ -576,6 +576,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("aGet('member/");
     // the old centered ticker modal is fully replaced by the drawer
     expect(DASHBOARD_HTML).not.toContain('tickerModal');
+    // WEBA11Y-07: the drawer announces itself as a dialog and gets its name
+    // from the (aria-hidden but still referenceable) topbar title span.
+    expect(DASHBOARD_HTML).toContain(
+      '<div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTopbarTitle">',
+    );
+  });
+
+  it('renders the drawer "Copy link" affordance as a real focusable button, not a href-less <a> (WEBA11Y-08)', () => {
+    expect(DASHBOARD_HTML).toContain('function copyLinkHtml(param, value, label) {');
+    expect(DASHBOARD_HTML).toContain('<button type="button" class="drawer-all-link clickable" data-copy-param="');
+    expect(DASHBOARD_HTML).not.toContain('<a class="drawer-all-link');
+    // Reset to look identical to the plain <a> it replaces (no restyling).
+    expect(DASHBOARD_HTML).toContain(
+      '.drawer-all-link { display:block; margin-top:9px; font-size:13px; background:none; border:0; padding:0; color:var(--accent); text-decoration:none; cursor:pointer; text-align:left; font-family:inherit; }',
+    );
   });
 
   it('keeps mobile overlay controls dismissible and tap-safe', () => {
@@ -2447,6 +2462,31 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('$140/yr');
   });
 
+  it('makes the Monthly/Annual plan picker a real keyboard/AT-operable radio group (WEBA11Y-03)', () => {
+    // Native radio inputs give keyboard users arrow-key selection and a
+    // programmatic checked state, instead of mouse-only onclick divs whose
+    // selection was conveyed only by a border/tint colour change.
+    expect(DASHBOARD_HTML).toContain('role="radiogroup" aria-label="Plan"');
+    expect(DASHBOARD_HTML).toContain('<label class="plan sel" id="planMonthly" for="planMonthlyRadio">');
+    expect(DASHBOARD_HTML).toContain(
+      '<input type="radio" class="plan-radio-input" id="planMonthlyRadio" name="plan" value="monthly" checked onchange="selectPlan(\'monthly\')">',
+    );
+    expect(DASHBOARD_HTML).toContain('<label class="plan" id="planAnnual" for="planAnnualRadio">');
+    expect(DASHBOARD_HTML).toContain(
+      '<input type="radio" class="plan-radio-input" id="planAnnualRadio" name="plan" value="annual" onchange="selectPlan(\'annual\')">',
+    );
+    // Both radios share name="plan" so they behave as one native group.
+    expect(DASHBOARD_HTML.match(/name="plan"/g)?.length).toBe(2);
+    // selectPlan() keeps the native .checked state in sync with the visual
+    // 'sel' class, not just the class.
+    const fn = extractFn(DASHBOARD_HTML, 'selectPlan');
+    expect(fn).toContain("mr.checked = selectedPlan === 'monthly'");
+    expect(fn).toContain("ar.checked = selectedPlan === 'annual'");
+    // Focus lands on the visually-hidden input, so the ring goes on the
+    // visible label via :focus-within, not a raw outline around a 1px box.
+    expect(DASHBOARD_HTML).toContain('.plan:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }');
+  });
+
   it('supports editing existing deliveries (edit button + save path)', () => {
     expect(DASHBOARD_HTML).toContain('data-sub-edit');
     expect(DASHBOARD_HTML).toContain('function beginEditSubscription(');
@@ -2474,17 +2514,24 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   });
 
   // ---- 8b. Keyboard-operable sort headers ----------------------------------
-  it('makes the "What Is Being Traded" ticker leaderboard sort headers keyboard-operable', () => {
+  it('makes the "What Is Being Traded" ticker leaderboard sort headers keyboard-operable without breaking columnheader semantics', () => {
     for (const sortKey of ['trades', 'members', 'volume', 'netflow']) {
       expect(DASHBOARD_HTML).toContain(
         `event.preventDefault();setTickerSort('${sortKey}');}`,
       );
     }
-    expect(DASHBOARD_HTML.match(/class="sortable[^"]*" (?:style="[^"]*" )?tabindex="0" role="button"/g)?.length).toBeGreaterThanOrEqual(5);
+    // WEBA11Y-01: tabindex keeps these Tab-focusable, but no role="button" —
+    // a <th> must keep its native columnheader role for screen readers.
+    expect(DASHBOARD_HTML.match(/class="sortable[^"]*" (?:style="[^"]*" )?tabindex="0" onclick="setTickerSort/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(DASHBOARD_HTML).not.toMatch(/class="sortable[^"]*" (?:style="[^"]*" )?tabindex="0" role="button" onclick="setTickerSort/);
   });
 
-  it('makes the main Trades feed table sort headers keyboard-operable with aria-sort', () => {
-    expect(DASHBOARD_HTML).toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" role=\"button\" aria-sort=\"none\"' : '';");
+  it('makes the main Trades feed table sort headers keyboard-operable with valid aria-sort (WEBA11Y-01)', () => {
+    // No role="button" on sortAttrs: overriding a <th>'s native columnheader
+    // role made aria-sort invalid ARIA and broke column-header association
+    // for screen readers (finding WEBA11Y-01).
+    expect(DASHBOARD_HTML).toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" aria-sort=\"none\"' : '';");
+    expect(DASHBOARD_HTML).not.toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" role=\"button\" aria-sort=\"none\"' : '';");
     expect(DASHBOARD_HTML).toContain('th.onkeydown = function (e) {');
     expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');");
     expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', 'none');");
@@ -2569,6 +2616,18 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     const sameSurname = ['John Delaney', 'April McClain Delaney'];
     const sortedSame = [...sameSurname].sort((a, b) => (surnameSortKey(a) < surnameSortKey(b) ? -1 : 1));
     expect(sortedSame).toEqual(['April McClain Delaney', 'John Delaney']);
+  });
+
+  it('makes the People directory column headers keyboard-operable with aria-sort (WEBA11Y-05)', () => {
+    for (const key of ['name', 'chamber', 'trades']) {
+      expect(DASHBOARD_HTML).toContain(
+        `data-sort="${key}" tabindex="0" aria-sort="none" onclick="sortPeopleDirectory('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortPeopleDirectory('${key}');}"`,
+      );
+    }
+    expect(DASHBOARD_HTML).toContain('.people-table thead th[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+    const fn = extractFn(DASHBOARD_HTML, 'syncPeopleSortIndicators');
+    expect(fn).toContain("th.setAttribute('aria-sort', PEOPLE_SORT.dir > 0 ? 'ascending' : 'descending');");
+    expect(fn).toContain("th.setAttribute('aria-sort', 'none');");
   });
 });
 
@@ -2853,6 +2912,19 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('payload: { delivery: delivery, targetUrl: targetUrl || null, filters: filters }');
     expect(DASHBOARD_HTML).toContain('<option value="E">Exchanges</option>');
     expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sells</option>');
+  });
+
+  it('gives every Delivery create-form control a programmatic label (WEBA11Y-04)', () => {
+    // Visible-if-hidden <label for> siblings, not wrapping (wrapping would
+    // stop the control being a direct .row-flex child and break the
+    // existing responsive `.row-flex > select/input` sizing rules).
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newDelivery">Channel</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newTarget">Target URL</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newTickers">Tickers</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newMembers">Members</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newChambers">Branches</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newSides">Trade side</label>');
+    expect(DASHBOARD_HTML).toContain('.field-vh-label { position: absolute;');
   });
 
   it('styles trends-fold summaries like section headers and keeps mobile bottom nav', () => {
@@ -3741,6 +3813,24 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       makeEntityTargetsFocusable(fakeRoot([link]));
       expect(link.hasAttribute('tabindex')).toBe(false);
       expect(link.hasAttribute('role')).toBe(false);
+    });
+
+    it('keeps native row/columnheader/cell roles on TR/TH/TD entity targets (WEBA11Y-01)', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const row = fakeNode('TR', { class: 'row clickable', 'data-txid': 'abc' });
+      const th = fakeNode('TH', { class: 'clickable', 'data-asset': 'AAPL' });
+      const td = fakeNode('TD', { class: 'asset-cell clickable', 'data-asset': 'AAPL' });
+      makeEntityTargetsFocusable(fakeRoot([row, th, td]));
+      // Still Tab-focusable...
+      expect(row.getAttribute('tabindex')).toBe('0');
+      expect(th.getAttribute('tabindex')).toBe('0');
+      expect(td.getAttribute('tabindex')).toBe('0');
+      // ...but role="button" is never applied: overriding it would destroy
+      // the native row/columnheader/cell semantics screen readers rely on
+      // for table navigation and make aria-sort invalid ARIA.
+      expect(row.hasAttribute('role')).toBe(false);
+      expect(th.hasAttribute('role')).toBe(false);
+      expect(td.hasAttribute('role')).toBe(false);
     });
 
     it('also tags the root node itself when it matches (MutationObserver addedNodes case)', () => {
@@ -5168,6 +5258,23 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'Democrat')).toContain('party-D');
     expect(memberAvatarHtml('Some Republican', '', 'R')).toContain('party-R');
     expect(memberAvatarHtml('Guest', '', '')).not.toMatch(/party-[DRO]/);
+  });
+
+  it('does not mask mobile trade card content with a name-replacing aria-label (WEBA11Y-02)', () => {
+    const fn = extractFn(DASHBOARD_HTML, 'tradesCardHtml');
+    // No aria-label on the card: it used to collapse the accessible name down
+    // to just "Open trade details for TICKER by NAME", hiding the visible
+    // Buy/Sell badge, amount bracket and date from screen-reader users. The
+    // card's own content (assetCellHtml + actionBadge + amountCellHtml +
+    // date) now becomes the accessible name instead.
+    expect(fn).not.toContain('aria-label="Open trade details for');
+    expect(fn).toContain(
+      String.raw`<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details">`,
+    );
+    // The action hint is appended as a visually-hidden suffix instead of
+    // replacing the name.
+    expect(fn).toContain('<span class="fc-hint">Open trade details</span>');
+    expect(DASHBOARD_HTML).toContain('.fc-hint { position: absolute;');
   });
 
   it('surfaces owner, relative filed time, and the iOS politician line on mobile trade cards', () => {

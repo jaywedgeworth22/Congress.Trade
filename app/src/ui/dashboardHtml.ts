@@ -540,6 +540,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-owner { display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
+  /* Visually hidden but still readable by AT — folded into the card's
+     accessible name after the visible content (WEBA11Y-02). */
+  .fc-hint { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
      bold trailing amount+date stack, tighter identity-first meta line.
      Replaces .fc-row1 (kept above, unused, harmless) as tradesCardHtml()'s
@@ -794,6 +797,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     box-shadow: 0 1px 0 var(--border);
   }
   .people-table thead th:hover { color: var(--accent); }
+  .people-table thead th[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .people-table thead th .sort-ind { font-size: 10px; opacity: .55; margin-left: 2px; }
   .people-table thead th.sort-asc .sort-ind::after { content: '▲'; opacity: 1; }
   .people-table thead th.sort-desc .sort-ind::after { content: '▼'; opacity: 1; }
@@ -1159,7 +1163,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      drawer for no reason. ID-scoped so it always wins. */
   #detailDrawerBody .table-wrap { padding-right:0; }
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
-  .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
+  .drawer-all-link { display:block; margin-top:9px; font-size:13px; background:none; border:0; padding:0; color:var(--accent); text-decoration:none; cursor:pointer; text-align:left; font-family:inherit; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
   .review-doc-link { display:block; margin-top:5px; font-size:12px; font-family:var(--sans); font-weight:600; white-space:nowrap; }
   .review-doc-link.inline { display:inline-block; margin:0 0 0 10px; }
@@ -1220,6 +1224,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-party.clickable { transition: border-color 0.15s ease, background 0.15s ease; }
   .drawer-trade-party.clickable:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
   .subs-msg { flex-basis: 100%; margin-top: 10px; }
+  /* Programmatic labels for the Delivery create-form controls (WEBA11Y-04):
+     absolutely positioned so they never occupy layout space or participate
+     in flex sizing, and stay a sibling (not a wrapper) so the existing
+     .row-flex > select/input responsive rules keep matching. */
+  .field-vh-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .secret-panel { display:grid; gap:16px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:19px; color:var(--text); max-width:100%; }
   .secret-panel strong { font-size:13px; }
   .secret-panel code { display:block; overflow:auto; white-space:nowrap; padding:8px; }
@@ -1361,12 +1370,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .field { display:flex; gap:8px; margin-top:6px; }
   .field input { flex:1; }
   .plan-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
-  .plan { border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
+  .plan { display:block; border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
   .plan:hover, .plan.sel { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 7%,transparent); }
+  .plan:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .plan .price { font-size:23px; font-weight:800; }
   .plan .per { font-size:12px; color:var(--text-dim); }
   .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
   .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:800; color:#ffffff; background:#15803d; padding:2px 7px; border-radius:999px; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
+  .plan-radio-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
   .toast.show { display:block; }
@@ -2931,11 +2942,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTickers">
             <thead>
               <tr>
-                <th class="sortable" style="min-width: 140px;" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
-                <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable" style="min-width: 140px;" tabindex="0" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
+                <th class="sortable" tabindex="0" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable r" tabindex="0" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
+                <th class="sortable r est" tabindex="0" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r" tabindex="0" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
@@ -3079,9 +3090,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th class="col-fill" data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
-          <th class="col-fit" data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
+          <th class="col-fill" data-sort="name" tabindex="0" aria-sort="none" onclick="sortPeopleDirectory('name')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortPeopleDirectory('name');}" title="Sort by name">Politician <span class="sort-ind"></span></th>
+          <th class="col-fit" data-sort="chamber" tabindex="0" aria-sort="none" onclick="sortPeopleDirectory('chamber')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortPeopleDirectory('chamber');}" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
+          <th class="col-num" data-sort="trades" tabindex="0" aria-sort="none" onclick="sortPeopleDirectory('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortPeopleDirectory('trades');}" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -3165,12 +3176,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
+        <label class="field-vh-label" for="newDelivery">Channel</label>
         <select id="newDelivery" disabled onchange="updateNewTargetVisibility()">
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
+        <label class="field-vh-label" for="newTarget">Target URL</label>
         <input id="newTarget" placeholder="target URL (webhook only)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newTickers">Tickers</label>
         <input id="newTickers" placeholder="tickers (CSV, optional)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newMembers">Members</label>
         <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated filer ids or names" />
+        <label class="field-vh-label" for="newChambers">Branches</label>
         <select id="newChambers" disabled>
           <option value="">House + Senate + Executive</option>
           <option value="house">House</option>
@@ -3178,6 +3194,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="house,senate">House + Senate</option>
           <option value="executive">Executive</option>
         </select>
+        <label class="field-vh-label" for="newSides">Trade side</label>
         <select id="newSides" disabled title="Trade side filter (B buy / S sell / E exchange)">
           <option value="">Buys + Sells + Exchanges</option>
           <option value="B">Buys</option>
@@ -3424,7 +3441,7 @@ ${speedProofSectionHtml(true)}
 
 <div class="drawer" id="detailDrawer">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-  <div class="drawer-panel"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTopbarTitle"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
@@ -3462,16 +3479,18 @@ ${speedProofSectionHtml(true)}
       <li style="opacity:0.8; font-size:0.9em; margin-top:0.5rem">Note: Users can add up to 2 delivery methods (webhooks or SSE streams).</li>
     </ul>
 
-    <div class="plan-grid" id="pricingPlans">
-      <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
+    <div class="plan-grid" id="pricingPlans" role="radiogroup" aria-label="Plan">
+      <label class="plan sel" id="planMonthly" for="planMonthlyRadio">
+        <input type="radio" class="plan-radio-input" id="planMonthlyRadio" name="plan" value="monthly" checked onchange="selectPlan('monthly')">
         <div class="cad">Monthly</div>
         <div class="price">$5<span class="per">/mo</span></div>
-      </div>
-      <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
+      </label>
+      <label class="plan" id="planAnnual" for="planAnnualRadio">
+        <input type="radio" class="plan-radio-input" id="planAnnualRadio" name="plan" value="annual" onchange="selectPlan('annual')">
         <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
         <div class="price">$50<span class="per">/yr</span></div>
-      </div>
+      </label>
     </div>
     <p class="trial-note" id="pricingTrialNote">2-week free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
@@ -4432,7 +4451,13 @@ function tradesCardHtml(r) {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
   }
-  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+  // No aria-label here (WEBA11Y-02): it used to replace the accessible name
+  // with just "TICKER by NAME", hiding Buy/Sell, the amount bracket and the
+  // date from screen-reader users. Dropping it lets the card's own visible
+  // content (ticker, Buy/Sell badge, amount, date, member line) become the
+  // name, matching what a sighted user sees; the action hint is appended as
+  // a visually-hidden suffix instead of replacing the name.
+  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details">' +
     '<div class="fc-main">' +
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
@@ -4440,6 +4465,7 @@ function tradesCardHtml(r) {
       '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  ·  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
+    '<span class="fc-hint">Open trade details</span>' +
   '</article>';
 }
 function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
@@ -4606,7 +4632,10 @@ function renderTradesHeader() {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    var sortAttrs = c.sort ? ' tabindex="0" role="button" aria-sort="none"' : '';
+    // No role="button" here: a <th> keeps its native columnheader role so
+    // aria-sort (set by updateSortIndicators()) stays valid ARIA (WEBA11Y-01).
+    // Keyboard activation still works via th.onkeydown below.
+    var sortAttrs = c.sort ? ' tabindex="0" aria-sort="none"' : '';
     return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
   }).join('');
   var ths = head.querySelectorAll('th.sortable');
@@ -9748,6 +9777,9 @@ function syncPeopleSortIndicators() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.getAttribute('data-sort') === PEOPLE_SORT.key) {
       th.classList.add(PEOPLE_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+      th.setAttribute('aria-sort', PEOPLE_SORT.dir > 0 ? 'ascending' : 'descending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
     }
   }
 }
@@ -10885,7 +10917,11 @@ function closeDrawer() {
 /* Deep links: every drawer gets a shareable URL (?ticker= / ?member= / ?trade=)
    via a "Copy link" action; openDeepLink() below restores the drawer on boot. */
 function copyLinkHtml(param, value, label) {
-  return '<a class="drawer-all-link clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
+  // Real <button>, not a href-less <a> (WEBA11Y-08): an <a> with no href is
+  // not in the tab order and is invisible to AT as a control. The click
+  // delegate below already handles both mouse and (via native button
+  // semantics) Enter/Space activation.
+  return '<button type="button" class="drawer-all-link clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</button>';
 }
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-copy-param]') : null;
@@ -11853,6 +11889,9 @@ function selectPlan(p) {
   var m = el('planMonthly'), a = el('planAnnual');
   if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
   if (a) a.classList.toggle('sel', selectedPlan === 'annual');
+  var mr = el('planMonthlyRadio'), ar = el('planAnnualRadio');
+  if (mr) mr.checked = selectedPlan === 'monthly';
+  if (ar) ar.checked = selectedPlan === 'annual';
 }
 function startCheckout() {
   if (!checkoutConfigured()) {
@@ -12684,6 +12723,12 @@ function makeEntityTargetsFocusable(root) {
   nodes.forEach(function (n) {
     if (n.tagName === 'A' || n.tagName === 'BUTTON') return;
     if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    // TR/TH/TD keep their native row/columnheader/cell roles (WEBA11Y-01):
+    // role="button" on a table row destroys table semantics for screen
+    // readers (no column-header association, aria-sort becomes invalid).
+    // These stay keyboard-activatable via tabindex + the delegated
+    // Enter/Space handler above, which keys off the .clickable class, not role.
+    if (n.tagName === 'TR' || n.tagName === 'TH' || n.tagName === 'TD') return;
     if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
   });
 }
