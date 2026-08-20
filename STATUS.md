@@ -7,6 +7,7 @@ has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
 failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
 install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+
 ## 2026-08-20 CURSOR — Monet P0/P1 pack (#2029)
 
 Apple webhook is on the production Hono app.  Politician detail peels an
