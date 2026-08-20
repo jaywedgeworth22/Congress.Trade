@@ -87,6 +87,7 @@ import {
   loadResolver,
 } from './normalizer.ts';
 import { cleanAssetString } from './nameNormalizer.ts';
+import { prepareExtractedTx } from './prepareTx.ts';
 import { mapFiling, type FilingRow } from '../delivery/rows.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus.ts';
@@ -196,6 +197,19 @@ function canonicalAgreementText(value: string | null | undefined, ticker?: strin
     .replace(/[.,;:'"()[\]{}/\\_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Demote House type codes stuffed into ticker, then resolve real symbols. */
+async function prepareAgreementReads(env: Env, reads: CandidateDocResult[]): Promise<void> {
+  const resolver = await loadResolver(env);
+  for (const read of reads) {
+    if (!read.ok) continue;
+    for (let i = 0; i < read.rows.length; i += 1) {
+      const prepared = prepareExtractedTx(read.rows[i]);
+      const resolved = resolver(prepared.ticker, prepared.assetName);
+      read.rows[i] = resolved ? { ...prepared, ticker: resolved } : prepared;
+    }
+  }
 }
 
 /**
@@ -318,7 +332,7 @@ export function sameRowSet(
  * mixes assetName from one model with description from another, keeping a
  * published row internally coherent.
  */
-function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean): ParsedTx[] {
+export function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean): ParsedTx[] {
   if (!normalizeText) return reads[0]?.rows ?? [];
   const grouped = reads.map((r) => {
     const byFingerprint = new Map<string, ParsedTx[]>();
@@ -838,7 +852,7 @@ async function readAndPersist(
  * identical regardless of how the rows were agreed. Returns 'agree_but_hardfail'
  * without publishing when any resulting row carries a hard-failure flag.
  */
-async function finalizePublish(
+export async function finalizePublish(
   env: Env,
   frow: FilingRow,
   docId: string,
@@ -990,6 +1004,7 @@ export async function processAgreementDoc(
     options.signal,
   );
   const [rA, rB, rC] = [reads[0], reads[1], reads[2] ?? null];
+  await prepareAgreementReads(env, reads);
 
   if (!rA.ok || !rB.ok || (rC !== null && !rC.ok)) {
     return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed' };
@@ -1079,7 +1094,7 @@ interface MajorityBuild {
  * `normalizeText` is true. Soft free-text uses the same text comparator but
  * never fails the row.
  */
-function buildMajorityRows(
+export function buildMajorityRows(
   reads: CandidateDocResult[],
   totalModels: number,
   normalizeText: boolean,
@@ -1191,9 +1206,20 @@ function buildMajorityRows(
         if (bloc) { bloc.count += 1; bloc.entries.push({ tx, order }); }
         else blocs.set(key, { count: 1, entries: [{ tx, order }] });
       });
-      const winnerBloc = [...blocs.entries()]
-        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))[0]?.[1];
-      if (!winnerBloc || winnerBloc.count * 2 <= totalModels) {
+      const ranked = [...blocs.entries()]
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
+      const winnerBloc = ranked[0]?.[1];
+      const secondCount = ranked[1]?.[1].count ?? 0;
+      const uniquePlurality = Boolean(
+        winnerBloc && winnerBloc.count >= 2 && winnerBloc.count > secondCount,
+      );
+      const majority = Boolean(winnerBloc && winnerBloc.count * 2 > totalModels);
+      const variableField = field === 'assetName' || field === 'assetType';
+      if (!winnerBloc || (!majority && !(variableField && uniquePlurality))) {
+        if (field === 'assetType') {
+          winners.set(field, pickSoftValue(present, field as SoftFreeTextField) ?? present[0]?.assetType ?? null);
+          continue;
+        }
         return { ok: false, rows: [], reason: `field_disagreement:${rowKey}:${field}` };
       }
       // Within the winning bloc, publish the CONTRIBUTING row's own reading
@@ -1481,23 +1507,7 @@ export async function processAgreementCascadeTier2(
     signal,
   );
 
-  // Align rows before consensus checks to prevent spurious field_disagreement
-  // on raw string variants of the same ticker/asset.
-  const resolver = await loadResolver(env);
-  for (const read of reads) {
-    if (read.ok) {
-      for (const tx of read.rows) {
-        const cleaned = cleanAssetString(tx.assetName, tx.ticker);
-        const resolved = resolver(tx.ticker, cleaned);
-        if (resolved) {
-          tx.ticker = resolved;
-        }
-        if (cleaned) {
-          tx.assetName = cleaned;
-        }
-      }
-    }
-  }
+  await prepareAgreementReads(env, reads);
 
   const [rA, rB, rC] = reads;
 

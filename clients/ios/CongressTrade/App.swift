@@ -41,6 +41,7 @@ struct CongressTradeApp: App {
                 .environmentObject(store)
                 .environmentObject(pushManager)
                 .environmentObject(tabRouter)
+                .modifier(CTPaletteInjector(pref: appColorScheme))
                 .preferredColorScheme(colorScheme)
                 .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
                 .onAppear { AppAppearance.apply(appColorScheme) }
@@ -53,7 +54,7 @@ struct CongressTradeApp: App {
 
     private var colorScheme: ColorScheme? {
         switch appColorScheme {
-        case "light": return .light
+        case "light", "sepia": return .light
         case "dark": return .dark
         default: return nil
         }
