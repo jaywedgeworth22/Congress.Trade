@@ -808,6 +808,11 @@ struct DeleteSubscriptionResult: Decodable {
     let id: String?
 }
 
+struct DeleteAccountResult: Decodable {
+    let deleted: Bool?
+    let userId: String?
+}
+
 struct PreferencesCommandResult: Decodable {
     let preferences: ClientPreferences
 }

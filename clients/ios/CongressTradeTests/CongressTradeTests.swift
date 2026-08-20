@@ -1274,6 +1274,39 @@ final class CongressTradeTests: XCTestCase {
     }
 
     @MainActor
+    func testDeleteAccountCommandPayload() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-acct-1")
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["type"] as? String, "delete_account")
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "command": {
+                    "id": "cmd_del_acct", "userId": "user_1", "type": "delete_account",
+                    "status": "succeeded", "idempotencyKey": "del-acct-1", "error": null,
+                    "createdAt": "2026-08-20T00:00:00Z", "updatedAt": "2026-08-20T00:00:00Z",
+                    "startedAt": "2026-08-20T00:00:00Z", "finishedAt": "2026-08-20T00:00:01Z"
+                  },
+                  "result": { "deleted": true, "userId": "user_1" }
+                }
+                """
+            )
+        }
+        let result = try await client.deleteAccount(idempotencyKey: "del-acct-1")
+        XCTAssertEqual(result.result?.deleted, true)
+        XCTAssertEqual(result.result?.userId, "user_1")
+    }
+
+    @MainActor
     func testSetSearchUsesMemberNameNotMember() async throws {
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
