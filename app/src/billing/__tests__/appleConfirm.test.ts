@@ -165,9 +165,25 @@ describe('POST /billing/apple/confirm', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true — no users-table grant', async () => {
+  it('grants a Sandbox transaction by default via the Apple ledger — no users-table stamp', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
+    const res = await postConfirm(env, { signedTransaction: 'a.b.c' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; entitlement: { premium: boolean } };
+    expect(body.ok).toBe(true);
+    expect(body.entitlement.premium).toBe(true);
+    const user = env.__db.prepare('SELECT subscription_status, plan, stripe_subscription_id FROM users WHERE id = ?').get('user_1');
+    expect(user).toMatchObject({ subscription_status: null, plan: null, stripe_subscription_id: null });
+    const row = env.__db
+      .prepare('SELECT environment FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { environment: string | null };
+    expect(row.environment).toBe('Sandbox');
+  });
+
+  it('rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false — no users-table grant', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     const res = await postConfirm(env, { signedTransaction: 'a.b.c' });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
