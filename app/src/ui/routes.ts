@@ -38,9 +38,11 @@ import {
   ZILLA_SLAB_WOFF2,
   type StaticAsset,
 } from './assets.ts';
-import { applyOgMeta, resolveOgMeta } from './ogMeta.ts';
+import { applyOgMeta, resolveOgMeta, SITE } from './ogMeta.ts';
 import { mountAppLinks } from './appLinks.ts';
 import { DEFAULT_EXECUTIVE_TITLE, executiveTitleFor } from '../shared/executiveTitles.ts';
+import { getSitemapXml } from './sitemap.ts';
+import { TICKER_RESOLVED_SQL } from '../analytics/sql.ts';
 
 /**
  * Analytics injection was removed (CT-AUD-P1-15).
@@ -152,22 +154,162 @@ async function lookupMemberShareIdentity(env: Env, memberId: string): Promise<Me
   }
 }
 
+/** SEOSOCIAL-06: same shape check `sitemap.ts` uses so a malformed ?ticker=
+ *  value never even reaches the DB. */
+const TICKER_QUERY_FORMAT = /^[A-Z][A-Z0-9.\-]{0,9}$/;
+
+/** Whether ?ticker= names a security that has actually traded (never
+ *  throws) — gates the company share card so arbitrary query text can't be
+ *  echoed back as branded og:title/og:description (SEOSOCIAL-06). */
+async function lookupTickerResolved(env: Env, ticker: string): Promise<boolean> {
+  const t = ticker.trim().toUpperCase();
+  if (!t || !TICKER_QUERY_FORMAT.test(t) || !env.DB) return false;
+  try {
+    const row = await env.DB
+      .prepare(`SELECT 1 FROM transactions WHERE ${TICKER_RESOLVED_SQL} AND ticker = ? LIMIT 1`)
+      .bind(t)
+      .first();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
+/** TS port of the client's fmtBracketAmount (dashboardHtml.ts) — kept
+ *  side-by-side rather than shared since one is server TS and the other a
+ *  string literal inside the browser-JS template; a unit test on each side
+ *  pins them to the same output for the STOCK Act bracket range this
+ *  actually sees (four figures to eight). */
+function formatBracketAmount(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  const clean = (v: string) => v.replace(/\.0$/, '');
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}t`;
+  if (abs >= 1e9) return `${sign}$${clean((abs / 1e9).toFixed(abs >= 10e9 ? 0 : 1))}b`;
+  if (abs >= 1e6) return `${sign}$${clean((abs / 1e6).toFixed(abs >= 10e6 ? 0 : 1))}m`;
+  if (abs >= 1e3) return `${sign}$${clean((abs / 1e3).toFixed(abs >= 10e3 ? 0 : 1))}k`;
+  return `${sign}$${Math.round(abs)}`;
+}
+
+/** "$1k - $15k" / "$1m - $5m" — the STOCK Act disclosure bracket, formatted
+ *  the same way the client's amountText() renders it in the trade drawer. */
+function formatAmountBracket(min: number | null, max: number | null): string {
+  if (min == null && max == null) return 'an undisclosed amount';
+  return `${formatBracketAmount(min)} - ${max == null ? '+' : formatBracketAmount(max)}`;
+}
+
+/** "Aug 5, 2026" from a 'YYYY-MM-DD' tx_date — UTC so the date never shifts
+ *  a day depending on the server's local timezone. */
+function formatShareTxDate(txDate: string | null): string {
+  const d = txDate ? new Date(`${txDate}T00:00:00Z`) : null;
+  if (!d || Number.isNaN(d.getTime())) return 'an undisclosed date';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(d);
+}
+
+type TradeShareRow = {
+  tx_type: string | null;
+  ticker: string | null;
+  asset_name: string | null;
+  amount_min: number | null;
+  amount_max: number | null;
+  tx_date: string | null;
+  filer_id: string | null;
+  full_name: string | null;
+  chamber: string | null;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+};
+
+/** Best-effort trade share summary for the ?trade= permalink card
+ *  (SEOSOCIAL-05, never throws) — mirrors the "bought/sold/traded" wording
+ *  delivery/rest.ts's RSS feed already uses, and SEOSOCIAL-06's rule that an
+ *  unresolved id (bad/deleted trade) gets no card, not an echoed one. */
+async function lookupTradeShareSummary(
+  env: Env,
+  tradeId: string,
+): Promise<{
+  filerLabel: string | null;
+  verb: 'bought' | 'sold' | 'traded';
+  assetLabel: string;
+  amountBracket: string;
+  txDateLabel: string;
+} | null> {
+  const id = tradeId.trim();
+  if (!id || !env.DB) return null;
+  try {
+    const row = await env.DB
+      .prepare(
+        'SELECT t.tx_type, t.ticker, t.asset_name, t.amount_min, t.amount_max, t.tx_date, t.filer_id, ' +
+          'f.full_name, f.chamber, f.party, f.state, f.district ' +
+          'FROM transactions t LEFT JOIN filers f ON f.bioguide_id = t.filer_id ' +
+          'WHERE t.id = ? LIMIT 1',
+      )
+      .bind(id)
+      .first<TradeShareRow>();
+    if (!row) return null;
+
+    const verb: 'bought' | 'sold' | 'traded' =
+      row.tx_type === 'B' || row.tx_type === 'P' ? 'bought' : row.tx_type === 'S' ? 'sold' : 'traded';
+
+    const tickerOk = (row.ticker || '').trim() && TICKER_QUERY_FORMAT.test((row.ticker || '').trim().toUpperCase());
+    const assetLabel = tickerOk
+      ? (row.ticker as string).trim().toUpperCase()
+      : (row.asset_name || '').trim().slice(0, 60) || 'an asset';
+
+    const name = row.full_name?.trim() || null;
+    const district = name ? formatMemberSeat(row.filer_id, row.chamber, row.party, row.state, row.district) : null;
+    const filerLabel = name ? (district ? `${name} (${district})` : name) : null;
+
+    return {
+      filerLabel,
+      verb,
+      assetLabel,
+      amountBracket: formatAmountBracket(row.amount_min, row.amount_max),
+      txDateLabel: formatShareTxDate(row.tx_date),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function renderDashboard(env: Env, requestUrl: string): Promise<string> {
   const logoDisplay = await getLogoDisplay(env);
   let memberDisplayName: string | null = null;
   let memberDistrict: string | null = null;
+  let tickerResolved = false;
+  let tradeSummary: Awaited<ReturnType<typeof lookupTradeShareSummary>> = null;
   try {
     const u = new URL(requestUrl);
     const member = (u.searchParams.get('member') || '').trim();
+    const ticker = (u.searchParams.get('ticker') || '').trim();
+    const trade = (u.searchParams.get('trade') || '').trim();
     if (member) {
       const identity = await lookupMemberShareIdentity(env, member);
       memberDisplayName = identity.displayName;
       memberDistrict = identity.district;
     }
+    // resolveOgMeta gives a RESOLVED member priority over ticker, so the
+    // ticker lookup is only wasted work when member is both present and
+    // resolved — an unresolved (or absent) member still needs it checked.
+    if (ticker && !memberDisplayName) {
+      tickerResolved = await lookupTickerResolved(env, ticker);
+    }
+    // Same priority logic one level down: a trade lookup is wasted work only
+    // when a higher-priority (member or ticker) card already resolved.
+    if (trade && !memberDisplayName && !tickerResolved) {
+      tradeSummary = await lookupTradeShareSummary(env, trade);
+    }
   } catch {
     /* ignore bad URL */
   }
-  const og = resolveOgMeta(requestUrl, 'https://congress.trade', { memberDisplayName, memberDistrict });
+  const og = resolveOgMeta(requestUrl, 'https://congress.trade', {
+    memberDisplayName,
+    memberDistrict,
+    tickerResolved,
+    tradeSummary,
+  });
   let html = DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
     .split('%GA_SCRIPT%').join('');
@@ -234,8 +376,24 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
 
   // robots.txt — allow search engines, block AI/LLM crawlers and scrapers.
   // Follows the same policy as capitoltrades.com/robots.txt.
+  //
+  // SEOSOCIAL-01: the whole page is a shell — every trade, politician, ticker
+  // and Trends number is fetched from /api/* client-side after load, so a
+  // blanket "Disallow: /api/" makes Googlebot/Bingbot render (and index) an
+  // empty page. The explicit Allow lines below re-open exactly the read-only,
+  // public GET endpoints the SPA needs to paint real content; everything else
+  // under /api/ (admin, billing, delivery writes, export) stays disallowed.
+  // This is safe independent of robots.txt: publicApiGuard (security/
+  // botDefense.ts) always stamps `X-Robots-Tag: noindex` on every /api/*
+  // response, so the raw JSON itself can never appear in search results even
+  // though a crawler is now allowed to fetch it for rendering.
   r.get('/robots.txt', (c) => c.text(`User-Agent: *
 Allow: /
+Allow: /api/analytics/
+Allow: /api/transactions
+Allow: /api/photos/
+Allow: /api/logos/
+Allow: /api/feed.xml
 Disallow: /api/
 
 User-Agent: GPTBot
@@ -265,7 +423,19 @@ User-Agent: Timpibot
 User-Agent: VelenPublicWebCrawler
 User-Agent: Scrapy
 Disallow: /
+
+Sitemap: ${SITE}/sitemap.xml
 `, 200, { 'content-type': 'text/plain; charset=utf-8' }));
+
+  // SEOSOCIAL-03: the only remaining way to tell search engines the
+  // ?member=/?ticker= entity URLs exist, now that SEOSOCIAL-02's crawlable
+  // <a href> links still need JS/API round-trips to enumerate. Cached ~1h in
+  // isolate memory; falls back to the static view URLs (never a 500) if the
+  // DB is unreachable.
+  r.get('/sitemap.xml', async (c) => c.body(await getSitemapXml(c.env), 200, {
+    'content-type': 'application/xml; charset=utf-8',
+    'cache-control': 'public, max-age=3600',
+  }));
 
   return r;
 }
