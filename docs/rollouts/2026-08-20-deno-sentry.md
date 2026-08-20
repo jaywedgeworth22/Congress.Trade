@@ -4,7 +4,7 @@
 
 Production Deno had no real Sentry.  `#sentry` resolved to `sentryDummy.ts` (passthrough `withSentry` + `console.error`).  Coolify container logs die on redeploy, so unhandled route / cron / queue failures had no durable signal.
 
-`#sentry` now binds `@sentry/deno`.  `src/deno/main.ts` inits after Infisical refresh from `SENTRY_DSN` (Infisical first, env fallback).  Missing DSN or `init` throw is fail-soft: the app still boots and captures no-op.  Events reuse `scrubSentryEvent` so credential query params, headers, and URL userinfo are `[Filtered]`.  Coolify log retention was not changed.
+`#sentry` now binds `@sentry/deno` (the Deno *runtime* SDK).  Production is Deno-in-Docker on Coolify (Hetzner fleet), not Deno Deploy — no deployctl, no Deploy integration, no Deploy-only APIs.  `src/deno/main.ts` inits after Infisical refresh from `SENTRY_DSN` (Infisical first, Coolify env fallback).  Missing DSN or `init` throw is fail-soft: the app still boots and captures no-op.  Events reuse `scrubSentryEvent` so credential query params, headers, and URL userinfo are `[Filtered]`.  Release is the Coolify image SHA via `readBuildInfo` (`CT_BUILD_SHA`, then `SOURCE_COMMIT`).  Coolify log retention was not changed.
 
 ## Files changed
 

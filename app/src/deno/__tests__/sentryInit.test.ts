@@ -48,6 +48,32 @@ describe('production Sentry init', () => {
     expect(options.tracesSampleRate).toBe(0.2);
     expect(options.sendDefaultPii).toBe(false);
     expect(typeof options.beforeSend).toBe('function');
+    expect((options.initialScope as { tags?: { runtime?: string } })?.tags?.runtime).toBe('coolify-docker');
+  });
+
+  it('tags the Coolify image SHA as the Sentry release, not a Deploy id', () => {
+    const options = buildSentryInitOptions({
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+      CT_BUILD_SHA: 'abc123def',
+    }, 0.1);
+    expect(options.release).toBe('abc123def');
+    expect(options).not.toHaveProperty('dsnDeployment');
+  });
+
+  it('falls back to Coolify SOURCE_COMMIT when CT_BUILD_SHA is unset', () => {
+    const options = buildSentryInitOptions({
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+      SOURCE_COMMIT: '94a3a921f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5',
+    }, 0.1);
+    expect(options.release).toBe('94a3a921f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5');
+  });
+
+  it('omits release when Coolify did not supply a real SHA', () => {
+    const options = buildSentryInitOptions({
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+      SOURCE_COMMIT: '$SOURCE_COMMIT',
+    }, 0.1);
+    expect(options).not.toHaveProperty('release');
   });
 
   it('no-ops cleanly when DSN is missing', async () => {
@@ -157,6 +183,21 @@ describe('production entry wiring', () => {
     expect(src).toContain('initProductionSentry');
     expect(src).toContain('captureException(err, { tags: { cron: \'deno-tick\' } })');
     expect(src).not.toContain('sentryDummy');
+  });
+
+  it('does not add Deno Deploy, deployctl, or Deploy-only APIs', () => {
+    const files = [
+      'src/deno/sentry.ts',
+      'src/shared/sentryRuntime.ts',
+      'src/deno/main.ts',
+    ].map((rel) => readFileSync(resolve(process.cwd(), rel), 'utf8'));
+    const code = files.join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/from ['"][^'"]*deployctl/);
+    expect(code).not.toMatch(/deno\.com\/deploy/i);
+    expect(code).not.toMatch(/from ['"]https:\/\/deno\.land\/x\/deploy/);
+    expect(code).not.toMatch(/Deno\.env\.get\(\s*['"]DENO_DEPLOYMENT_ID['"]/);
+    expect(code).not.toMatch(/Deno\.env\.get\(\s*['"]DENO_REGION['"]/);
+    expect(files.join('\n')).toContain('Coolify');
   });
 });
 

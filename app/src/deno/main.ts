@@ -55,7 +55,9 @@ const secretEnv = {
   CONFIG_KV: configKvShim as any,
 } as Env;
 
-// 2. Resolve Infisical secrets at boot
+// 2. Resolve Infisical secrets at boot, then init Sentry for this Coolify
+// container (Deno-in-Docker on Hetzner).  Not Deno Deploy — no deployctl,
+// no Deploy APIs.  Missing Coolify/Infisical SENTRY_DSN is fail-soft.
 await refreshSecrets(secretEnv);
 const sentryResolved = await resolveProductionSentryEnv(secretEnv, resolveSecret);
 const sentryBoot = initProductionSentry(sentryResolved);
@@ -73,7 +75,7 @@ const rawTursoToken = tursoTokenRes.value || Deno.env.get('TURSO_AUTH_TOKEN') ||
 const tursoToken = rawTursoToken.trim().replace(/^['"]+|['"]+$/g, '').trim();
 
 if (!tursoUrl || tursoUrl.includes('dummy-url')) {
-  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Deno Deploy.");
+  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Coolify.");
 }
 
 // 3. Initialize Turso DB Shim

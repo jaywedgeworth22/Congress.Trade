@@ -1,12 +1,14 @@
 /**
- * Deno / production Sentry runtime.
+ * Coolify Docker / production Sentry runtime.
  *
- * `#sentry` used to resolve to a dummy that no-op'd every capture.  This
- * module is the real init + capture surface: it talks to an injected SDK
- * (`@sentry/deno` in production) and fail-softs when DSN is missing or
- * `init` throws.  Secrets are stripped by `scrubSentryEvent` before send.
+ * Production is Deno-in-Docker on Coolify (Hetzner fleet), not Deno Deploy.
+ * This module talks to an injected SDK (`@sentry/deno` — the Deno *runtime*
+ * SDK, not a Deploy integration) and fail-softs when Coolify/Infisical has
+ * no `SENTRY_DSN` or `init` throws.  Secrets are stripped by
+ * `scrubSentryEvent` before send.  Do not add deployctl or Deploy-only APIs.
  */
 
+import { readBuildInfo } from './buildInfo.ts';
 import { scrubSentryEvent } from './sentryScrub.ts';
 import type { Env } from './types.ts';
 
@@ -25,6 +27,10 @@ export interface SentryInitInput {
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   SENTRY_TRACES_SAMPLE_RATE?: string;
+  /** Coolify image SHA (`SOURCE_COMMIT` → `CT_BUILD_SHA`).  Not a Deploy id. */
+  CT_BUILD_SHA?: string;
+  /** Coolify runtime commit when the image ARG was empty. */
+  SOURCE_COMMIT?: string;
 }
 
 export interface SentryInitResult {
@@ -66,11 +72,17 @@ export function buildSentryInitOptions(
   tracesSampleRate: number,
   extras: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const build = readBuildInfo(env);
+  const release = build.sha === 'unknown' ? undefined : build.sha;
   return {
     dsn: resolveSentryDsn(env),
     environment: env.SENTRY_ENVIRONMENT || 'production',
     tracesSampleRate,
     sendDefaultPii: false,
+    ...(release ? { release } : {}),
+    initialScope: {
+      tags: { runtime: 'coolify-docker' },
+    },
     beforeSend: <T>(event: T) => scrubSentryEvent(event),
     beforeSendTransaction: <T>(event: T) => scrubSentryEvent(event),
     beforeSendLog: <T>(log: T) => scrubSentryEvent(log),
@@ -143,6 +155,8 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
               ? options.environment
               : env?.SENTRY_ENVIRONMENT,
             SENTRY_TRACES_SAMPLE_RATE: env?.SENTRY_TRACES_SAMPLE_RATE,
+            CT_BUILD_SHA: env?.CT_BUILD_SHA,
+            SOURCE_COMMIT: env?.SOURCE_COMMIT,
           }, typeof options.tracesSampleRate === 'number' ? options.tracesSampleRate : undefined);
         } catch {
           // Fail-soft: a bad options factory must not take down the request.
@@ -237,5 +251,7 @@ export async function resolveProductionSentryEnv(
     SENTRY_DSN: dsn.value || env.SENTRY_DSN,
     SENTRY_ENVIRONMENT: environment.value || env.SENTRY_ENVIRONMENT,
     SENTRY_TRACES_SAMPLE_RATE: traces.value || env.SENTRY_TRACES_SAMPLE_RATE,
+    CT_BUILD_SHA: env.CT_BUILD_SHA,
+    SOURCE_COMMIT: env.SOURCE_COMMIT,
   };
 }
