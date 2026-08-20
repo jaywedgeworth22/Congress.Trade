@@ -189,8 +189,10 @@ export interface UpsertAppleSubscriptionInput {
  * FIRST authenticated account that presents a matching verified JWS
  * (`link_apple_entitlement` / `redeem_apple_purchase`), because nobody has a
  * competing claim on it yet. Once claimed, the row behaves exactly like any
- * other owned row — this function never reverts a non-null owner back to
- * null, and never reassigns a non-null owner to a different non-null owner.
+ * other owned row. The SELECT+guard is not a transaction; the UPSERT uses
+ * `COALESCE(existing.user_id, excluded.user_id)` so an in-flight anonymous
+ * redeem cannot write NULL over a claim that landed after the read, and a
+ * non-null owner is never reassigned.
  */
 export async function upsertAppleSubscription(
   env: Env,
@@ -210,11 +212,14 @@ export async function upsertAppleSubscription(
        last_notification_type, last_notification_subtype, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(original_transaction_id) DO UPDATE SET
-       -- Safe unconditionally: by this point the guard above already
-       -- established input.userId is either the SAME as existing.userId, or
-       -- existing.userId is null (an anonymous row being claimed). It is
-       -- never a different non-null owner — that case returned early.
-       user_id = excluded.user_id,
+       -- The SELECT+guard above is not atomic with this write. iOS leaves a
+       -- signed-out purchase UNFINISHED so Transaction.updates redelivers it
+       -- after sign-in (AppleIAP.observeAppleTransactions) while
+       -- link_apple_entitlement claims the same row. If the in-flight
+       -- anonymous redeem still saw user_id NULL, user_id = excluded.user_id
+       -- would write NULL over the claim and drop account Premium.
+       -- COALESCE keeps any existing owner and only fills a NULL.
+       user_id = COALESCE(apple_subscriptions.user_id, excluded.user_id),
        product_id = excluded.product_id,
        plan = excluded.plan,
        status = excluded.status,
