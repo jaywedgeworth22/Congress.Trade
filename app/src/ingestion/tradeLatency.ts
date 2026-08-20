@@ -218,6 +218,8 @@ export interface DisclosureLatencyProviderMetrics {
   label: string;
   /** Lifecycle for scoreboard (FMP family defaults to off). */
   operationalStatus?: LatencySourceStatus;
+  /** Set on publicSummary rows: whether the public scoreboard paints this lane. */
+  publiclyShown?: boolean;
   candidates: number;
   /**
    * Concurrent races only (both first-seen in window, |delta| ≤ max concurrent
@@ -4525,6 +4527,23 @@ export function mergeFmpOperationalStatus(
   return 'unknown';
 }
 
+/** Public scorecard heading for the merged FMP family lane. */
+export const PUBLIC_FMP_LATENCY_LABEL = 'FinancialModelingPrep.com';
+
+/**
+ * Public scorecards only show a lane whose probe is currently operating
+ * (`running`) and whose coverage join is not known-broken.  error / stopped /
+ * off / unknown stay on the admin scoreboard with a Hidden From Public chip.
+ */
+export function isLatencyComparisonPublic(p: {
+  operationalStatus?: LatencySourceStatus | string | null;
+  coverageIntegrity?: CoverageIntegrity | string | null;
+}): boolean {
+  if ((p.operationalStatus ?? 'unknown') !== 'running') return false;
+  if (p.coverageIntegrity === 'contradiction') return false;
+  return true;
+}
+
 function comparisonStatusFromSample(opts: {
   timingN: number;
   sampleOk: boolean;
@@ -4875,8 +4894,10 @@ export function computeLatencyScope(opts: {
 }
 
 /**
- * Public scoreboard providers: FMP stable + RapidAPI collapse to one "FMP" lane
- * using the earliest path observation per trade. Other direct providers pass through.
+ * Public scoreboard providers: FMP stable + RapidAPI collapse to one
+ * FinancialModelingPrep.com lane using the earliest path observation per trade.
+ * Other direct providers pass through.  Callers still filter with
+ * {@link isLatencyComparisonPublic} before painting the public grid.
  */
 export function buildPublicLatencyProviders(
   pathMetrics: DisclosureLatencyProviderMetrics[],
@@ -4902,7 +4923,7 @@ export function buildPublicLatencyProviders(
   );
   const fmpMetrics = computeProviderMetrics({
     providerId: 'fmp',
-    label: 'FMP',
+    label: PUBLIC_FMP_LATENCY_LABEL,
     timestampKind: 'monitor',
     operationalStatus: fmpStatus,
     mine: fmpCandidates,
@@ -5056,13 +5077,14 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     comparableProviders: PROVIDERS.filter((p) => p.supportsDirectLatest).length,
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
   };
-  // Public totals count scoreboard lanes (FMP merged), not dual FMP paths.
+  // Public totals count functioning scoreboard lanes (FMP merged), not dual FMP paths.
+  const visiblePublicProviders = publicProviders.filter(isLatencyComparisonPublic);
   const publicTotals = {
     ...totals,
-    matched: publicProviders.reduce((sum, p) => sum + p.matched, 0),
-    maturedProviderObserved: publicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
-    unmatchedProvider: publicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
-    comparableProviders: publicProviders.length,
+    matched: visiblePublicProviders.reduce((sum, p) => sum + p.matched, 0),
+    maturedProviderObserved: visiblePublicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
+    unmatchedProvider: visiblePublicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
+    comparableProviders: visiblePublicProviders.length,
     configuredComparableProviders: statuses.filter(
       (p) =>
         p.supportsDirectLatest &&
@@ -5088,7 +5110,10 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       ...meta,
       totals: publicTotals,
       scope,
-      providers: publicProviders,
+      providers: publicProviders.map((p) => ({
+        ...p,
+        publiclyShown: isLatencyComparisonPublic(p),
+      })),
     },
   };
 }

@@ -53,7 +53,7 @@ function speedProofSectionHtml(admin: boolean): string {
   // SPEED_SCOPE_NOTE_DEFAULT contract block in the client script).
   const scopeNoteId = admin ? 'spScopeNoteAdmin' : 'spScopeNote';
   const infoTip = admin
-    ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
+    ? 'Full operator scorecard: every configured provider, including where we are behind. Each card is marked Shown Publicly or Hidden From Public. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
     : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
   return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Delivery: only when we are not behind on most providers."} -->
   <div class="section speed-proof" id="${sectionId}"${admin ? '' : ' hidden'} style="margin-top:24px; padding:24px 20px;">
@@ -81,7 +81,7 @@ function speedProofSectionHtml(admin: boolean): string {
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <thead><tr><th>Provider</th>${admin ? '<th>Public</th>' : ''}<th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="${tableBodyId}"></tbody>
       </table></div>
     </details>
@@ -1736,6 +1736,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
   .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
   .sp-badge.off { background:color-mix(in srgb,var(--text-dim) 10%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--text-dim) 30%,transparent); }
+  .sp-badge.shown, .sp-badge.hidden-public { text-transform:none; letter-spacing:0.2px; }
+  .sp-badge.shown { background:color-mix(in srgb,var(--good) 14%,transparent); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 35%,transparent); }
+  .sp-badge.hidden-public { background:color-mix(in srgb,var(--text-dim) 10%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--text-dim) 30%,transparent); }
+  .sp-header-end { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; align-items:center; }
   .sp-card.sp-off { opacity: 0.72; border-color: color-mix(in srgb, var(--text-dim) 25%, var(--border)); }
   /* Win-rate bar */
   .sp-bar-wrap { display:flex; flex-direction:column; gap:5px; }
@@ -10086,11 +10090,21 @@ function leadFigureHtml(secs, opts) {
     '<span class="lead-word">' + esc(leadWord(dir)) + '</span>' +
     '</span>';
 }
+/* Public lanes only: probe running and coverage join not known-broken. */
+function isLatencyComparisonPublic(p) {
+  if (!p) return false;
+  if (p.publiclyShown === true) return true;
+  if (p.publiclyShown === false) return false;
+  if ((p.operationalStatus || 'unknown') !== 'running') return false;
+  if (p.coverageIntegrity === 'contradiction') return false;
+  return true;
+}
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
   var best = null;
   (d.providers || []).filter(function (p) {
-    return p.matched >= SPEED_LANE_MIN_MATCHED && p.comparisonStatus === 'usable' &&
+    return isLatencyComparisonPublic(p) &&
+      p.matched >= SPEED_LANE_MIN_MATCHED && p.comparisonStatus === 'usable' &&
       Number(p.ctCoveragePct) >= SPEED_MIN_COVERAGE_PCT && Number(p.providerCoveragePct) >= SPEED_MIN_COVERAGE_PCT;
   })
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
@@ -10107,7 +10121,7 @@ function isLatencyAhead(summary) {
   if (!summary || !summary.providers) return false;
   var ahead = 0, behind = 0;
   (summary.providers || []).forEach(function (p) {
-    if (!p || p.operationalStatus === 'off') return;
+    if (!isLatencyComparisonPublic(p)) return;
     var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
     var deltaSample = wins + losses + ties;
     var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
@@ -10182,13 +10196,19 @@ function spScopeNoteHtml(totals) {
   var note = (totals && totals.scopeLabel) ? esc(String(totals.scopeLabel)) : SPEED_SCOPE_NOTE_DEFAULT;
   return spScopeCountHtml(c) + '.&nbsp; ' + note;
 }
-/* Build a single provider scorecard card. */
-function spCardHtml(p) {
+function spVisibilityBadgeHtml(p) {
+  return isLatencyComparisonPublic(p)
+    ? '<span class="sp-badge shown">Shown Publicly</span>'
+    : '<span class="sp-badge hidden-public">Hidden From Public</span>';
+}
+/* Build a single provider scorecard card. admin=true adds Shown/Hidden chips. */
+function spCardHtml(p, admin) {
+  var vis = admin ? spVisibilityBadgeHtml(p) : '';
   /* Intentional OFF (grey) — FMP family default until operator enables probes. */
   if (p.operationalStatus === 'off') {
     return '<div class="sp-card sp-off">' +
       '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
-      '<span class="sp-badge off">OFF</span></div>' +
+      '<span class="sp-header-end">' + vis + '<span class="sp-badge off">OFF</span></span></div>' +
       '<div class="sp-gathering">Intentionally disabled (no API spend). Enable with <code>FMP_LATENCY_PROBE_ENABLED=true</code>.</div>' +
       '</div>';
   }
@@ -10230,7 +10250,7 @@ function spCardHtml(p) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
-    '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
+    '<span class="sp-header-end">' + vis + '<span class="' + badgeCls + '">' + badgeTxt + '</span></span></div>';
 
   /* Win-rate bar */
   var barHtml = '';
@@ -10314,11 +10334,12 @@ function spCardHtml(p) {
   return '<div class="' + cardCls + '">' + header + spScopeHtml(p) + barHtml + leadHtml + wlt + '</div>';
 }
 /* Raw data table rows shared by both placements (inside their <details>). */
-function speedTableRowsHtml(provs) {
+function speedTableRowsHtml(provs, admin) {
   return provs.map(function (p) {
     function td(v) { return '<td>' + v + '</td>'; }
     var strong = p.strongMatched != null ? p.strongMatched : p.matched;
-    return '<tr>' + td(esc(p.label)) + td(fmtCount(p.matched) + ' / ' + fmtCount(strong) + ' / ' + fmtCount(p.candidates)) +
+    var publicCell = admin ? td(isLatencyComparisonPublic(p) ? 'Shown' : 'Hidden') : '';
+    return '<tr>' + td(esc(p.label)) + publicCell + td(fmtCount(p.matched) + ' / ' + fmtCount(strong) + ' / ' + fmtCount(p.candidates)) +
       td(fmtCount(p.maturedMatched || 0) + ' / ' + fmtCount(p.maturedProviderObserved || 0)) +
       td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
       td(fmtCount(p.unmatchedProvider || 0)) + td(p.comparisonStatus || 'insufficient') +
@@ -10352,11 +10373,11 @@ function speedScopeFromSummary(d) {
     scopeLabel: t.scopeLabel || s.label || null,
   };
 }
-function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge) {
+function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge, admin) {
   var grid = el(gridId);
-  if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+  if (grid) grid.innerHTML = provs.map(function (p) { return spCardHtml(p, admin); }).join('');
   var tb = el(tableBodyId);
-  if (tb) tb.innerHTML = speedTableRowsHtml(provs);
+  if (tb) tb.innerHTML = speedTableRowsHtml(provs, admin);
   var note = el(noteId);
   if (note) {
     var html = (spScopeNoteHtml(totals) || '') + priceEdgeHtml(priceEdge);
@@ -10378,18 +10399,20 @@ function renderSpeedProof() {
   var adminBox = el('adminLatencySection');
   if (!publicBox && !adminBox && !publicLink) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).slice()
-      .sort(function (a, b) { return b.matched - a.matched; });
-    var hasData = !!(d.totals && d.totals.racedDisclosures && provs.length);
+    function byMatched(a, b) { return b.matched - a.matched; }
+    var adminProvs = (d.adminProviders && d.adminProviders.length ? d.adminProviders : (d.providers || [])).slice().sort(byMatched);
+    var publicProvs = (d.providers || []).filter(isLatencyComparisonPublic).slice().sort(byMatched);
+    var hasAdminData = !!(d.totals && d.totals.racedDisclosures && adminProvs.length);
+    var hasPublicData = !!(d.totals && d.totals.racedDisclosures && publicProvs.length);
 
     if (adminBox) {
-      adminBox.hidden = !hasData;
-      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge);
+      adminBox.hidden = !hasAdminData;
+      if (hasAdminData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', adminProvs, speedScopeFromSummary(d), d.priceEdge, true);
     }
-    var ahead = hasData && isLatencyAhead(d);
+    var ahead = hasPublicData && isLatencyAhead({ providers: publicProvs });
     if (publicBox) {
       publicBox.hidden = !ahead;
-      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge);
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', publicProvs, speedScopeFromSummary(d), d.priceEdge, false);
     }
     if (publicLink) publicLink.hidden = !ahead;
 
