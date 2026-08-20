@@ -322,10 +322,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain("p.label !== 'Quiver Quantitative'");
     // Accessible table twin + never buy/sell colors for the race.
     expect(DASHBOARD_HTML).toContain('id="speedTableBody"');
+    expect(DASHBOARD_HTML).toContain('<th>Public</th>');
     expect(DASHBOARD_HTML).toContain('--rival');
     // Intentional OFF (grey) for FMP family — distinct from green running / red error.
     expect(DASHBOARD_HTML).toContain('.diag-status.off');
     expect(DASHBOARD_HTML).toContain('.sp-badge.off');
+    expect(DASHBOARD_HTML).toContain('.sp-badge.shown');
+    expect(DASHBOARD_HTML).toContain('.sp-badge.hidden-public');
     expect(DASHBOARD_HTML).toContain("p.operationalStatus === 'off'");
     expect(DASHBOARD_HTML).toContain('FMP_LATENCY_PROBE_ENABLED');
     // The public pager mirrors the server's anti-scrape offset cap.
@@ -3326,6 +3329,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       extractVarDecl(DASHBOARD_HTML, 'SPEED_LANE_MIN_MATCHED'),
       extractFn(DASHBOARD_HTML, 'leadDirection'),
       extractFn(DASHBOARD_HTML, 'leadVerdict'),
+      extractFn(DASHBOARD_HTML, 'isLatencyComparisonPublic'),
       extractFn(DASHBOARD_HTML, 'isLatencyAhead'),
       'return isLatencyAhead;',
     ].join('\n');
@@ -3343,7 +3347,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       avgLeadSec: 120,
       medianLeadSec: 100,
       comparisonStatus: 'usable',
-      operationalStatus: 'on',
+      operationalStatus: 'running',
       ...overrides,
     };
   }
@@ -3447,6 +3451,31 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(isLatencyAhead(summary)).toBe(true);
     });
 
+    it('ignores error and stopped providers so a dead probe cannot vote', () => {
+      const summary = {
+        providers: [
+          provider({ label: 'A', usFirstCount: 8, providerFirstCount: 2 }),
+          provider({
+            label: 'Quiver',
+            operationalStatus: 'error',
+            usFirstCount: 1,
+            providerFirstCount: 9,
+            medianLeadSec: -3600,
+            avgLeadSec: -1800,
+          }),
+          provider({
+            label: 'UW',
+            operationalStatus: 'stopped',
+            usFirstCount: 2,
+            providerFirstCount: 8,
+            medianLeadSec: -7200,
+            avgLeadSec: -5400,
+          }),
+        ],
+      };
+      expect(isLatencyAhead(summary)).toBe(true);
+    });
+
     it('is false on a tie (no provider strictly ahead)', () => {
       const summary = {
         providers: [provider({
@@ -3514,8 +3543,8 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("var publicBox = el('trLatencySection');");
       expect(DASHBOARD_HTML).toContain("var publicLink = el('trLatencyLink');");
       expect(DASHBOARD_HTML).toContain("var adminBox = el('adminLatencySection');");
-      expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasData;');
-      expect(DASHBOARD_HTML).toContain('var ahead = hasData && isLatencyAhead(d);');
+      expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasAdminData;');
+      expect(DASHBOARD_HTML).toContain('var ahead = hasPublicData && isLatencyAhead({ providers: publicProvs });');
       expect(DASHBOARD_HTML).toContain('publicBox.hidden = !ahead;');
       expect(DASHBOARD_HTML).toContain('publicLink.hidden = !ahead;');
       // Admin kicks off the fetch/paint itself as soon as the tab opens (both
@@ -4722,13 +4751,15 @@ function loadSpCardHtml() {
       'spScopeCountHtml',
       'spScopeHtml',
       'spScopeNoteHtml',
+      'isLatencyComparisonPublic',
+      'spVisibilityBadgeHtml',
       'spCardHtml',
     ]),
   ];
   return new Function(
     sources.join('\n\n') + '\nreturn { spCardHtml: spCardHtml, spScopeNoteHtml: spScopeNoteHtml };',
   )() as {
-    spCardHtml: (p: Record<string, unknown>) => string;
+    spCardHtml: (p: Record<string, unknown>, admin?: boolean) => string;
     spScopeNoteHtml: (totals: Record<string, unknown> | null) => string;
   };
 }
@@ -4812,6 +4843,15 @@ describe('provider scorecard card (live Unusual Whales shape)', () => {
     expect(html).toContain('typically <span class="lead-inline lead-behind">later</span> than their feed on live imports (median)');
     expect(html).not.toContain('lead-inline lead-ahead');
   });
+
+  it('marks admin cards Shown Publicly or Hidden From Public and stays quiet on the public card', () => {
+    const { spCardHtml } = loadSpCardHtml();
+    expect(spCardHtml(UW_LIVE)).not.toContain('Shown Publicly');
+    expect(spCardHtml(UW_LIVE)).not.toContain('Hidden From Public');
+    expect(spCardHtml(UW_LIVE, true)).toContain('Shown Publicly');
+    expect(spCardHtml({ ...UW_LIVE, operationalStatus: 'error' }, true)).toContain('Hidden From Public');
+    expect(spCardHtml({ ...UW_LIVE, operationalStatus: 'error' }, true)).not.toContain('Shown Publicly');
+  });
 });
 
 describe('"N of M matched" scope line (denominator the matcher lane exposes)', () => {
@@ -4858,8 +4898,8 @@ describe('"N of M matched" scope line (denominator the matcher lane exposes)', (
   it('both placements own a scope-note element that starts hidden', () => {
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNote" hidden></p>');
     expect(DASHBOARD_HTML).toContain('<p class="note sp-scope-note" id="spScopeNoteAdmin" hidden></p>');
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge)");
-    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', publicProvs, speedScopeFromSummary(d), d.priceEdge, false)");
+    expect(DASHBOARD_HTML).toContain("paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', adminProvs, speedScopeFromSummary(d), d.priceEdge, true)");
   });
 });
 
