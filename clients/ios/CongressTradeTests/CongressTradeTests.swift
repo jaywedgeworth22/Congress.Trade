@@ -1562,6 +1562,28 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
+    func testFilingPDFNeverOpensSafariCheckout() {
+        XCTAssertEqual(FilingPDFAccess.action(isPremium: false), .showPremiumSheet)
+        XCTAssertEqual(FilingPDFAccess.action(isPremium: true), .fetchInApp)
+
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "sess-token")
+        )
+        let url = client.documentPDFURL(docId: "H-2026-1")
+        XCTAssertEqual(url?.path, "/api/documents/H-2026-1/pdf")
+        XCTAssertFalse(url?.absoluteString.contains("pricing") == true)
+        XCTAssertFalse(url?.absoluteString.contains("billing") == true)
+        XCTAssertFalse(url?.absoluteString.contains("checkout") == true)
+        XCTAssertFalse(url?.absoluteString.contains("stripe") == true)
+
+        let request = try XCTUnwrap(try? client.documentPDFRequest(docId: "H-2026-1"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "application/pdf")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer sess-token")
+
+        XCTAssertNil(DigitalGoodsCheckout.webCheckoutURL(relativeTo: URL(string: "https://congress.trade")!))
+    }
+
     func testShareURLIsNotADigitalGoodsCheckoutPath() {
         let client = CongressTradeAPIClient(
             baseURL: URL(string: "https://example.test/api/client/v1")!,

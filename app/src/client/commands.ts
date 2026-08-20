@@ -29,7 +29,9 @@ import {
 } from './pushDevices.ts';
 import { verifyAppleSignedJws, AppleJwsVerificationError } from '../billing/appleJws.ts';
 import {
+  appleSandboxPurchasesAllowed,
   appleTransactionIsActive,
+  isAppleSandboxEnvironment,
   planFromConfiguredAppleProductId,
   resolveAppleProductIds,
   type AppleTransactionPayload,
@@ -311,6 +313,9 @@ export async function executeCommand(
     const expectedBundle = (await resolveSecret(env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
     if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
       throw new ClientInputError('bundleId mismatch');
+    }
+    if (isAppleSandboxEnvironment(transaction.environment) && !(await appleSandboxPurchasesAllowed(env))) {
+      throw new ClientInputError('Sandbox Apple purchases are not accepted');
     }
     const configuredProducts = await resolveAppleProductIds(env);
     const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts);

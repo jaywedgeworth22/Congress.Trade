@@ -2944,6 +2944,12 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("'/performance?' + trParams()");
   });
 
+  it('builds analytics URLs without percent-encoding the query into the path', () => {
+    expect(DASHBOARD_HTML).toContain('function analyticsUrl(path)');
+    expect(DASHBOARD_HTML).toContain("fetch(url)");
+    expect(DASHBOARD_HTML).not.toContain("fetch('/api/analytics/' + path)");
+  });
+
   it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
     expect(DASHBOARD_HTML).toContain('class="filter-groups"');
     // Party + side chips now share the exact joined-segment treatment as the
