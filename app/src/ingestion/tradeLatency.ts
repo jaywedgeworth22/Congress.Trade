@@ -30,6 +30,7 @@ import {
 } from './probeSchedule.ts';
 import { logProbeCadence } from './probeCadenceLog.ts';
 import { ALL_CHAMBERS, previousSuccessfulProbeAt, recordProbeRun } from './probeRunLog.ts';
+import { scheduleCtPublishSnapshot } from './latencyPriceSnapshots.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -148,6 +149,11 @@ interface ProviderObservationRow {
   filed_date: string | null;
   filer_name: string | null;
   payload: string | null;
+  /** Last successful probe of this lane strictly before first_observed_at, or
+   *  null when none exists (cold start). Publication window lower bound —
+   *  see probeRunLog.ts. Not selected by every query site; only populated
+   *  where the caller needs it to bracket trade_latency_candidates.provider_window_*. */
+  prev_probe_at?: string | null;
 }
 
 export interface DisclosureProviderRow {
@@ -2338,6 +2344,12 @@ export async function recordTradeLatencyCandidates(
 
   const updates: Array<[string, SqlParam[]]> = [];
   const mintedHashes = new Set<string>();
+  // ct_publish is scheduled inline, right here at mint time — the one moment
+  // congress_first_seen_at is actually "now" (raceFirstSeenAt keeps the real
+  // stamp for live imports), so the very next per-minute tick can capture it
+  // LIVE instead of it aging into a backfill before a row even exists. See
+  // latencyPriceSnapshots.ts's module header.
+  const ctPublishRows: Array<{ trade_hash: string; ticker: string | null; provider: ProviderId; congress_first_seen_at: string }> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
     for (const tx of transactions) {
       const ctx = contexts.get(tx.id);
@@ -2361,6 +2373,7 @@ export async function recordTradeLatencyCandidates(
       // Keep the real first_seen for live imports (no clamp-to-now for recent stamps).
       const firstSeen = raceFirstSeenAt(firstSeenRaw, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
       mintedHashes.add(trade_hash);
+      ctPublishRows.push({ trade_hash, ticker: tx.ticker || ctx?.ticker || null, provider, congress_first_seen_at: firstSeen });
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
@@ -2408,6 +2421,19 @@ export async function recordTradeLatencyCandidates(
       if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
       return;
     }
+    // Best-effort ct_publish snapshot scheduling. scheduleCtPublishSnapshot
+    // never throws (its own DB write is internally caught), but this loop is
+    // still wrapped so a future change there can never break candidate
+    // minting — the one thing this function must never fail to do.
+    try {
+      for (const row of ctPublishRows) {
+        await scheduleCtPublishSnapshot(env, row, nowIso);
+      }
+    } catch (err) {
+      if (!storageMissing(err)) {
+        console.warn('trade latency ct_publish snapshot scheduling failed:', (err as Error).message);
+      }
+    }
     // Immediate match against already-stored provider observations so a live
     // publish that a provider already listed becomes a concurrent race now,
     // rather than waiting for the next cron probe.
@@ -2441,7 +2467,7 @@ async function matchJustMintedCandidates(
       const rows = await all<ProviderObservationRow>(
         env.DB,
         `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
-                provider_published_at, source_url, filed_date, filer_name, payload
+                provider_published_at, source_url, filed_date, filer_name, payload, prev_probe_at
            FROM trade_provider_observations
           WHERE provider = ? AND trade_hash IN (${placeholders})`,
         [provider.id, ...chunk],
@@ -2653,7 +2679,7 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   return all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
-            trade_hash, source_url, filed_date, filer_name, payload
+            trade_hash, source_url, filed_date, filer_name, payload, prev_probe_at
        FROM trade_provider_observations
       WHERE provider = ? AND first_observed_at >= ?
       ORDER BY first_observed_at DESC
@@ -2888,6 +2914,8 @@ async function matchAndUpdateCandidates(
                 provider_published_at = ?,
                 match_method = ?,
                 payload = ?,
+                provider_window_start = ?,
+                provider_window_end = ?,
                 attempts = attempts + 1,
                 last_checked_at = ?,
                 error = NULL,
@@ -2899,6 +2927,8 @@ async function matchAndUpdateCandidates(
           match.provider_published_at,
           method,
           match.payload,
+          match.prev_probe_at ?? null,
+          match.first_observed_at,
           nowIso,
           nowIso,
           candidate.trade_hash,
@@ -2945,6 +2975,9 @@ async function loadExactPendingHashMatches(
   obs_first_observed_at: string;
   obs_provider_published_at: string | null;
   obs_payload: string | null;
+  /** Publication-window lower bound for the matched observation — see
+   *  probeRunLog.ts. Null for observations recorded before PR #2080 (0089). */
+  obs_prev_probe_at: string | null;
 }>> {
   return all(
     env.DB,
@@ -2953,7 +2986,8 @@ async function loadExactPendingHashMatches(
             o.provider_key AS obs_provider_key,
             o.first_observed_at AS obs_first_observed_at,
             o.provider_published_at AS obs_provider_published_at,
-            o.payload AS obs_payload
+            o.payload AS obs_payload,
+            o.prev_probe_at AS obs_prev_probe_at
        FROM trade_latency_candidates c
        JOIN trade_provider_observations o
          ON o.provider = c.provider
@@ -2995,6 +3029,8 @@ async function applyExactHashMatches(
               provider_published_at = ?,
               match_method = 'trade-hash',
               payload = ?,
+              provider_window_start = ?,
+              provider_window_end = ?,
               attempts = attempts + 1,
               last_checked_at = ?,
               error = NULL,
@@ -3005,6 +3041,8 @@ async function applyExactHashMatches(
         row.obs_first_observed_at,
         row.obs_provider_published_at,
         row.obs_payload,
+        row.obs_prev_probe_at,
+        row.obs_first_observed_at,
         nowIso,
         nowIso,
         row.trade_hash,
@@ -3038,6 +3076,7 @@ async function applyExactHashMatches(
       filed_date: row.filed_date,
       filer_name: row.filer_name,
       payload: row.obs_payload,
+      prev_probe_at: row.obs_prev_probe_at,
     };
     alerts.push(() => alertMatch(env, provider, candidate, obs));
   }
@@ -3375,7 +3414,7 @@ async function loadObservationRowsByKeys(
       ...(await all<ProviderObservationRow>(
         env.DB,
         `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at, provider_published_at,
-                source_url, filed_date, filer_name, payload
+                source_url, filed_date, filer_name, payload, prev_probe_at
            FROM trade_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
         [provider, ...chunk],

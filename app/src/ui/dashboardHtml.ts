@@ -10475,7 +10475,7 @@ function priceEdgeHtml(edge) {
   for (var i = 0; i < edge.length; i++) {
     var b = edge[i];
     if (!b || !b.n || b.medianBps == null) continue;
-    var label = b.event === 'provider_plus_5m' ? '5 min' : b.event === 'provider_plus_30m' ? '30 min' : '60 min';
+    var label = b.event === 'provider_plus_5m' ? '5 min' : b.event === 'provider_plus_15m' ? '15 min' : b.event === 'provider_plus_30m' ? '30 min' : '60 min';
     var dir = b.medianBps > 0 ? 'up' : (b.medianBps < 0 ? 'down' : 'flat');
     bits.push(label + ' ' + dir + ' ' + Math.abs(Number(b.medianBps)).toFixed(1) + ' bps (n=' + b.n + ')');
   }

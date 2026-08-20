@@ -42,6 +42,7 @@ import {
   LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
   TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
   PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
+  LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
   RETENTION_INDEX_SCHEMA_STATEMENTS,
@@ -278,7 +279,75 @@ describe('admin migration bootstrap', () => {
       ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
       ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
       ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
+      ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('reopens missed_window snapshots and adds confidence/session/backfill columns (0090)', () => {
+    const sql = LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('ADD COLUMN capture_mode TEXT');
+    expect(sql).toContain('ADD COLUMN confidence TEXT');
+    expect(sql).toContain('ADD COLUMN due_at_uncertainty_sec INTEGER');
+    expect(sql).toContain('ADD COLUMN market_session TEXT');
+    expect(sql).toContain('ADD COLUMN backfill_attempts INTEGER NOT NULL DEFAULT 0');
+    expect(sql).toContain('idx_latency_price_backfill_due');
+    expect(sql).toContain("WHERE error IN ('missed_window', 'fmp_quote_http_402')");
+  });
+
+  it('reopens missed_window rows on real SQLite and stays idempotent on replay (0090)', async () => {
+    const db = await sqliteDatabase();
+    applyMigrationFiles(db, migrationFiles());
+
+    const insertSnapshot = (event: string, error: string | null, capturedAt: string | null): void => {
+      db.prepare(
+        `INSERT INTO latency_price_snapshots (trade_hash, ticker, provider, event, due_at, captured_at, price, error, created_at)
+         VALUES ('h1', 'AAPL', 'fmp', ?, '2026-08-01T00:00:00Z', ?, NULL, ?, '2026-08-01T00:00:00Z')`,
+      ).run(event, capturedAt, error);
+    };
+    // A row previously abandoned with missed_window ...
+    insertSnapshot('ct_publish', 'missed_window', '2026-08-01T00:03:00Z');
+    // ... a row already terminal with a real outcome, which must never be
+    // reset by any later replay of the reopen UPDATE ...
+    insertSnapshot('provider_publish', 'confirmed_no_bars', '2026-08-02T00:00:00Z');
+    // ... and a row already successfully captured.
+    db.prepare(
+      `INSERT INTO latency_price_snapshots (trade_hash, ticker, provider, event, due_at, captured_at, price, error, created_at)
+       VALUES ('h1', 'AAPL', 'fmp', 'provider_plus_5m', '2026-08-01T00:05:00Z', '2026-08-01T00:05:30Z', 190.5, NULL, '2026-08-01T00:00:00Z')`,
+    ).run();
+
+    // Replayed on every deploy (POST /api/admin/migrate re-runs the full
+    // statement list, tolerating "duplicate column"/"already exists" the way
+    // the real route does — see applyAdminTail), so applying the tail twice
+    // more must change nothing further than the first reopen pass.
+    applyAdminTail(db);
+    applyAdminTail(db);
+
+    const rows = db
+      .prepare('SELECT event, captured_at, error FROM latency_price_snapshots ORDER BY event')
+      .all() as Array<{ event: string; captured_at: string | null; error: string | null }>;
+    const byEvent = Object.fromEntries(rows.map((r) => [r.event, r]));
+
+    expect(byEvent.ct_publish).toEqual({ event: 'ct_publish', captured_at: null, error: null });
+    expect(byEvent.provider_publish).toEqual({
+      event: 'provider_publish',
+      captured_at: '2026-08-02T00:00:00Z',
+      error: 'confirmed_no_bars',
+    });
+    expect(byEvent.provider_plus_5m).toEqual({
+      event: 'provider_plus_5m',
+      captured_at: '2026-08-01T00:05:30Z',
+      error: null,
+    });
+
+    const cols = db
+      .prepare("PRAGMA table_info(latency_price_snapshots)")
+      .all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    for (const col of ['capture_mode', 'confidence', 'due_at_uncertainty_sec', 'market_session', 'backfill_attempts']) {
+      expect(names).toContain(col);
+    }
+
+    db.close();
   });
 
   it('includes the twin-seek covering index (0088 / #2062)', () => {
