@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../../shared/types.ts';
 import type { ApnsHttpRequest } from '../../shared/apns.ts';
-import { fanOutApnsProductEvents } from '../apnsFanout.ts';
+import { fanOutApnsProductEvents, officialTradeFanoutSql } from '../apnsFanout.ts';
 
 const pem = generateKeyPairSync('ec', { namedCurve: 'P-256' })
   .privateKey.export({ type: 'pkcs8', format: 'pem' })
@@ -160,5 +160,44 @@ describe('fanOutApnsProductEvents', () => {
     expect(titles).toContain('Jane Pelosi bought NVDA');
     expect(titles).toContain('Review needed');
     expect(calls[0]?.headers['apns-topic']).toBe('trade.congress.ios');
+  });
+
+  it('joins filers on bioguide_id against a real SQLite schema (no f.id)', async () => {
+    const sql = officialTradeFanoutSql(40);
+    expect(sql).toMatch(/LEFT JOIN filers f ON f\.bioguide_id = t\.filer_id/);
+    expect(sql).not.toMatch(/f\.id\s*=/);
+
+    const sqlite = (await import('node:sqlite')) as {
+      DatabaseSync: new (path: string) => {
+        exec(s: string): void;
+        prepare(s: string): { all: (...params: unknown[]) => Array<Record<string, unknown>> };
+      };
+    };
+    const db = new sqlite.DatabaseSync(':memory:');
+    db.exec(`
+      CREATE TABLE filers (
+        bioguide_id TEXT PRIMARY KEY,
+        full_name TEXT,
+        display_name TEXT
+      );
+      CREATE TABLE transactions (
+        id TEXT PRIMARY KEY,
+        ticker TEXT,
+        tx_type TEXT,
+        asset_name TEXT,
+        created_at TEXT,
+        filer_id TEXT,
+        deprecated_at TEXT
+      );
+      CREATE TABLE delivery_outbox (tx_id TEXT);
+      INSERT INTO filers (bioguide_id, full_name, display_name)
+        VALUES ('P000197', 'Nancy Pelosi', 'Nancy Pelosi');
+      INSERT INTO transactions (id, ticker, tx_type, asset_name, created_at, filer_id, deprecated_at)
+        VALUES ('tx_1', 'NVDA', 'P', 'NVIDIA', '2026-08-13T17:30:00.000Z', 'P000197', NULL);
+      INSERT INTO delivery_outbox (tx_id) VALUES ('tx_1');
+    `);
+    const rows = db.prepare(sql).all('2026-08-13T16:00:00.000Z');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.filer_name).toBe('Nancy Pelosi');
   });
 });

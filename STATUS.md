@@ -7,6 +7,14 @@ has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
 failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
 install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+## 2026-08-20 CURSOR — Monet P0/P1 pack (#2029)
+
+Apple webhook is on the production Hono app.  APNs fan-out joins
+`filers.bioguide_id`.  Politician detail peels an encoded query out of the
+path.  Delivery shows the one-time secret on inline create.  Apple REFUND
+revokes; Sandbox does not grant live Premium unless `APPLE_ALLOW_SANDBOX`;
+Stripe `livemode` must match the key prefix.  Receipt:
+`docs/rollouts/2026-08-20-monet-p0-pack.md`.
 
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
 

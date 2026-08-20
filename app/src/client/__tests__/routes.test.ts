@@ -1216,6 +1216,40 @@ describe('client API routes', () => {
     expect(body.items.map((item) => item.id)).toEqual(['tx-actually-recent', 'tx-old-reimport']);
   });
 
+  it('peels a percent-encoded query string off the politician path (APICONTRACT-01)', async () => {
+    const { env, feedRows, filers } = makeEnv();
+    filers.set('house-ca17-ro-khanna', {
+      bioguide_id: 'house-ca17-ro-khanna',
+      chamber: 'house',
+      full_name: 'Ro Khanna',
+      party: 'D',
+      state: 'CA',
+      district: '17',
+      committees: null,
+      photo_url: null,
+    });
+    feedRows.push(
+      feedRow({
+        id: 'tx-recent',
+        filer_id: 'house-ca17-ro-khanna',
+        tx_date: '2026-07-01',
+        cursor_seq: 10,
+        ticker: 'NVDA',
+        __chamber: 'house',
+      }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/member/house-ca17-ro-khanna%3Fsort%3Dtx_date%26order%3Ddesc',
+      {},
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { member: { id: string }; items: Array<{ id: string }> };
+    expect(body.member.id).toBe('house-ca17-ro-khanna');
+    expect(body.items.map((item) => item.id)).toEqual(['tx-recent']);
+  });
+
   // Regression: TestFlight purchase, 2026-08-13. `redeem_apple_purchase` was
   // enqueued on the durable queue and only executed by the background tick —
   // a minute apart at best, five on the free profile — while the iOS client
@@ -1302,30 +1336,34 @@ describe('client API routes', () => {
 
     const first = await app.request('http://localhost/commands', req, env);
     expect(first.status).toBe(200);
-    const accepted = (await first.json()) as { command: { id: string; status: string } };
+    const accepted = (await first.json()) as {
+      command: { id: string; status: string; result: { subscription: { secret?: string; streamUrl?: string } } };
+    };
     expect(accepted.command.status).toBe('succeeded');
     expect(subscriptions.size).toBe(1);
+    // Inline success claims the one-time secret on the POST (DELIVERYALERTS-01).
+    expect(accepted.command.result.subscription.secret).toMatch(/^whsec_/);
+    expect(accepted.command.result.subscription.streamUrl).toContain('/api/stream?subscription=');
 
     // Redelivery of the backstop message must not create a second subscription.
     await drainQueuedCommands(env, queuedMessages);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
-    // The secret is stored separately in result_secret; the persisted result is redacted:
+    // The persisted row stays redacted; the secret is not logged or stored in result.
     const persisted = JSON.parse(Array.from(commands.values())[0].result ?? '{}') as {
       subscription: { secret?: string; streamUrl?: string };
     };
     expect(persisted.subscription.secret).toBeUndefined();
     expect(persisted.subscription.streamUrl).toBeUndefined();
 
-    // First GET /commands/:id claims the one-time secret:
+    // Later GET /commands/:id does not disclose the secret again:
     const cmdId = accepted.command.id;
     const firstRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
     expect(firstRead.status).toBe(200);
     const firstBody = (await firstRead.json()) as { command: { result: { subscription: { secret?: string; streamUrl?: string } } } };
-    expect(firstBody.command.result.subscription.secret).toMatch(/^whsec_/);
-    expect(firstBody.command.result.subscription.streamUrl).toContain('/api/stream?subscription=');
+    expect(firstBody.command.result.subscription.secret).toBeUndefined();
 
-    // Second GET /commands/:id does NOT disclose the secret again:
+    // Second GET /commands/:id still does not disclose:
     const secondRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
     expect(secondRead.status).toBe(200);
     const secondBody = (await secondRead.json()) as { command: { result: { subscription: { secret?: string } } } };
@@ -1746,9 +1784,11 @@ describe('client API routes', () => {
     };
     expect(result.subscription.id).toBe('sub_recover_sub');
     expect(result.subscription.secret).toBeUndefined();
+    const posted = body as { command: { result?: { subscription?: { secret?: string } } } };
+    expect(posted.command.result?.subscription?.secret).toBe('whsec_existing');
     const read = await app.request('http://localhost/commands/cmd_recover_sub', { headers: { authorization: await bearer(env) } }, env);
     const readBody = (await read.json()) as { command: { result: { subscription: { secret?: string } } } };
-    expect(readBody.command.result.subscription.secret).toBe('whsec_existing');
+    expect(readBody.command.result.subscription.secret).toBeUndefined();
     expect(result.subscription.filters.tickers).toEqual(['AAPL']);
     expect(subscriptions.size).toBe(1);
   });

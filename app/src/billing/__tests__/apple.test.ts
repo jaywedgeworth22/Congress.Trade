@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import type { Env } from '../../shared/types.ts';
 import {
   APPLE_PRODUCT_ANNUAL,
   APPLE_PRODUCT_MONTHLY,
+  appleSandboxPurchasesAllowed,
   appleTransactionIsActive,
   assertAppleJwsShape,
+  isAppleSandboxEnvironment,
   planFromAppleProductId,
 } from '../apple.ts';
 
@@ -48,5 +51,17 @@ describe('apple IAP helpers', () => {
         revocationDate: Date.now() - 10,
       }),
     ).toBe(false);
+  });
+
+  it('detects Apple Sandbox environments case-insensitively', () => {
+    expect(isAppleSandboxEnvironment('Sandbox')).toBe(true);
+    expect(isAppleSandboxEnvironment('sandbox')).toBe(true);
+    expect(isAppleSandboxEnvironment('Production')).toBe(false);
+    expect(isAppleSandboxEnvironment(undefined)).toBe(false);
+  });
+
+  it('allows Sandbox purchases only when APPLE_ALLOW_SANDBOX is true', async () => {
+    expect(await appleSandboxPurchasesAllowed({} as Env)).toBe(false);
+    expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: 'true' } as Env)).toBe(true);
   });
 });

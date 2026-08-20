@@ -9347,18 +9347,31 @@ function stampWindowChips() {
    inside the feed's own cadence, so nothing here goes visibly stale. */
 var AGET_CACHE = {};
 var AGET_TTL_MS = 60000;
+/* APICONTRACT-01: never let `?` ride inside a path segment. If a caller
+   percent-encoded `member/id?window=` into the path, peel it back out. */
+function analyticsUrl(path) {
+  var decoded = path;
+  try { decoded = decodeURIComponent(path); } catch (e) { /* keep raw */ }
+  var q = decoded.indexOf('?');
+  var pathname = q >= 0 ? decoded.slice(0, q) : decoded;
+  var search = q >= 0 ? decoded.slice(q + 1) : '';
+  var url = '/api/analytics/' + pathname;
+  if (search) url += '?' + search;
+  return url;
+}
 function aGet(path) {
   var now = Date.now();
-  var hit = AGET_CACHE[path];
+  var url = analyticsUrl(path);
+  var hit = AGET_CACHE[url];
   if (hit && hit.data !== undefined && now - hit.at < AGET_TTL_MS) return Promise.resolve(hit.data);
   if (hit && hit.promise) return hit.promise;
-  var entry = AGET_CACHE[path] = { data: undefined, at: 0, promise: null };
-  entry.promise = fetch('/api/analytics/' + path)
+  var entry = AGET_CACHE[url] = { data: undefined, at: 0, promise: null };
+  entry.promise = fetch(url)
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     })
     .then(function (d) { entry.data = d; entry.at = Date.now(); entry.promise = null; return d; })
-    .catch(function (e) { delete AGET_CACHE[path]; throw e; });
+    .catch(function (e) { delete AGET_CACHE[url]; throw e; });
   return entry.promise;
 }
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */

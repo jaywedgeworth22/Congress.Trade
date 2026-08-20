@@ -94,6 +94,7 @@ import {
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { executiveTitleFor } from '../shared/executiveTitles.ts';
 import { sanitizeCompetitorPublication } from '../shared/tradeIdentity.ts';
+import { mergePeeledQuery, peelEncodedQueryFromPathParam } from '../shared/memberPath.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -1117,10 +1118,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /member/:filerId (politician deep dive) -----------------------
   r.get('/member/:filerId', async (c) => {
-    const q = c.req.query();
+    const peeled = peelEncodedQueryFromPathParam(c.req.param('filerId') || '');
+    const q = mergePeeledQuery(c.req.query(), peeled.query);
     // Politician view defaults to the full history (window=all) unless overridden.
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
-    const filerId = c.req.param('filerId') || '';
+    const filerId = peeled.id;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
       return c.json({ error: 'invalid member id' }, 400);
     }
@@ -1239,9 +1241,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // then. Defaults to full history (window=all).
   // `performance` is a legacy alias of tradeDate for older clients.
   r.get('/member/:filerId/performance', async (c) => {
-    const q = c.req.query();
+    const peeled = peelEncodedQueryFromPathParam(c.req.param('filerId') || '');
+    const q = mergePeeledQuery(c.req.query(), peeled.query);
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
-    const filerId = c.req.param('filerId') || '';
+    const filerId = peeled.id;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
       return c.json({ error: 'invalid member id' }, 400);
     }
