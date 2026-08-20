@@ -29,6 +29,7 @@ import {
   type ProbeScheduleConfig,
 } from './probeSchedule.ts';
 import { logProbeCadence } from './probeCadenceLog.ts';
+import { ALL_CHAMBERS, previousSuccessfulProbeAt, recordProbeRun } from './probeRunLog.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -2571,13 +2572,21 @@ async function upsertProviderRows(env: Env, provider: ProviderId, rows: Disclosu
       `trade latency: ${provider} produced ${missingFiler}/${rows.length} observations with no filer in the trade hash — these can never match; check the provider's payload field names`,
     );
   }
+  // Publication-window lower bound. Read BEFORE this run is recorded, otherwise
+  // the current probe becomes its own predecessor and every bracket collapses to
+  // zero width — a fictional perfect measurement. See probeRunLog.ts.
+  const prevByChamber = new Map<string, string | null>();
+  for (const chamber of new Set(rows.map((r) => r.chamber))) {
+    prevByChamber.set(chamber, await previousSuccessfulProbeAt(env, provider, chamber, nowIso));
+  }
+
   for (const row of rows) {
     await run(
       env.DB,
       `INSERT INTO trade_provider_observations
          (provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
-          provider_published_at, source_url, filed_date, filer_name, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          prev_probe_at, provider_published_at, source_url, filed_date, filer_name, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(provider, chamber, provider_key, trade_hash) DO UPDATE SET
          last_observed_at=excluded.last_observed_at,
          provider_published_at=COALESCE(trade_provider_observations.provider_published_at, excluded.provider_published_at),
@@ -2592,6 +2601,7 @@ async function upsertProviderRows(env: Env, provider: ProviderId, rows: Disclosu
         row.tradeHash,
         nowIso,
         nowIso,
+        prevByChamber.get(row.chamber) ?? null,
         row.providerPublishedAt,
         row.sourceUrl,
         row.filedDate,
@@ -3569,6 +3579,21 @@ async function runProviderProbe(
     kind: 'success' | 'error' | 'budget_skip' | 'not_configured' | 'disabled',
     detail?: { error?: string | null; fetchedRows?: number },
   ) => {
+    // Durable probe-run record for EVERY provider and every terminal outcome —
+    // including the ones that found nothing. A probe that looked and saw the
+    // filing absent is what establishes the lower bound of the publication
+    // window; without it the bracket is unbounded. Only 'success' sets ok=1:
+    // a skipped, unconfigured or failed probe never observed the competitor's
+    // state, so it cannot bound anything. See probeRunLog.ts.
+    await recordProbeRun(env, {
+      provider: provider.id,
+      chamber: ALL_CHAMBERS,
+      ranAt: now.toISOString(),
+      ok: kind === 'success',
+      rowsSeen: detail?.fetchedRows ?? 0,
+      error: detail?.error ?? (kind === 'success' ? null : kind),
+    });
+
     if (!isFmpFamilyProvider(provider.id) && provider.id !== 'unusual_whales' && provider.id !== 'quiver') {
       return;
     }
