@@ -44,7 +44,7 @@ struct TrendsView: View {
                             tickerSection
                         }
 
-                        if !store.trendingAssets.isEmpty {
+                        if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
                             trendingSection
                         }
 
@@ -87,7 +87,7 @@ struct TrendsView: View {
                                         .foregroundStyle(.tertiary)
                                 }
                                 .padding(12)
-                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens the Delivery tab")
@@ -268,7 +268,7 @@ struct TrendsView: View {
                 }
             }
             .padding(12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -334,7 +334,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -402,7 +402,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -435,7 +435,7 @@ struct TrendsView: View {
                         }
                         .padding(10)
                         .frame(minHeight: 44)
-                        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 10))
                         .contentShape(RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
@@ -493,7 +493,7 @@ struct TrendsView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -532,7 +532,7 @@ struct TrendsView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -623,7 +623,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -664,7 +664,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -712,7 +712,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -782,7 +782,7 @@ struct TrendsView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -854,11 +854,13 @@ struct TrendsView: View {
 enum SignedFlowFormat {
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
-        let base = CompactFormat.usd(value)
+        let magnitude = CompactFormat.usd(abs(value))
         // Test the RENDERED string, not the raw double: a sub-dollar residue
-        // would otherwise print as a signed "+$0".
-        guard value > 0, base != "$0" else { return base }
-        return "+" + base
+        // would otherwise print as a signed "+$0" or "−$0".
+        if magnitude == "$0" { return magnitude }
+        if value > 0 { return "+" + magnitude }
+        if value < 0 { return "\u{2212}" + magnitude }
+        return magnitude
     }
 
     /// Green up / red down, but neutral for a real zero and for no-data — those
@@ -1052,7 +1054,7 @@ struct TrendKPI: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -1341,7 +1343,7 @@ struct ProviderScorecard: View {
             }
         }
         .padding(12)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private enum BadgeKind { case mixed, ahead, behind, muted }

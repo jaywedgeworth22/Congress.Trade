@@ -94,7 +94,7 @@ final class CongressTradeStore: ObservableObject {
     /// where nothing selected means all. Non-empty = filter to that subset.
     /// Empty = all branches (website HSP: no chips selected). Non-empty filters to that subset.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
-    /// Time window for the feed + trends (website default = Past 3 Months).
+    /// Time window for the feed + trends (website default = 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Forwarded
     /// as `type=` CSV when a subset is selected (`asTxTypes`).
@@ -780,6 +780,7 @@ final class CongressTradeStore: ObservableObject {
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
         let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        let skipRising = selectedTimeRange == .all
 
         do {
             async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
@@ -788,7 +789,10 @@ final class CongressTradeStore: ObservableObject {
             async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let trendingTask: [TrendingItem] = {
+                if skipRising { return [] }
+                return (try? await api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam))?.trending ?? []
+            }()
             async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
@@ -804,7 +808,7 @@ final class CongressTradeStore: ObservableObject {
             sectorFlow = try await sectorsTask.sectors
             memberLeaderboard = try await membersTask.members
             clusterBuys = try await clustersTask.clusters
-            trendingAssets = (try? await trendingTask)?.trending ?? []
+            trendingAssets = await trendingTask
             topPerformers = (try? await topPerformersTask)?.members ?? []
             marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
             partySplit = try? await partySplitTask
