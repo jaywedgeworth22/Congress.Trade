@@ -27,6 +27,7 @@ import {
   createCheckoutSession,
   createBillingPortalSession,
   verifyStripeSignature,
+  stripeEventLivemodeMatchesKey,
 } from './stripe.ts';
 import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
 import {
@@ -266,11 +267,15 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     const valid = await verifyStripeSignature(payload, sig, secret);
     if (!valid) return c.json({ error: 'invalid signature' }, 400);
 
-    let event: { id?: string; type?: string; created?: number; data?: { object?: unknown } };
+    let event: { id?: string; type?: string; created?: number; livemode?: unknown; data?: { object?: unknown } };
     try {
-      event = JSON.parse(payload) as { id?: string; type?: string; created?: number; data?: { object?: unknown } };
+      event = JSON.parse(payload) as { id?: string; type?: string; created?: number; livemode?: unknown; data?: { object?: unknown } };
     } catch {
       return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const stripeKey = (await resolveSecret(c.env, 'STRIPE_SECRET_KEY')).value;
+    if (!stripeEventLivemodeMatchesKey(event.livemode, stripeKey)) {
+      return c.json({ error: 'livemode does not match Stripe key' }, 400);
     }
     if (
       !event.id
