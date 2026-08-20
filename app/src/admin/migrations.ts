@@ -1108,6 +1108,18 @@ export const LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS = [
      ON latency_price_snapshots (captured_at, due_at)`,
 ] as const;
 
+/**
+ * 0088_tx_twin_seek_index.sql — issue #2062 (PR 2037 twin-dedupe hang).
+ * Partial covering index matching TWIN_DEDUPE_SQL's inner seek
+ * (filer_id, tx_date on live rows) so the correlated NOT EXISTS on the
+ * page / CSV / analytics path is an index SEARCH, not a per-row corpus scan.
+ */
+export const TWIN_SEEK_INDEX_SCHEMA_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS idx_tx_twin_seek
+     ON transactions (filer_id, tx_date)
+     WHERE deprecated_at IS NULL`,
+] as const;
+
 export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker_live ON transactions (ticker) WHERE deprecated_at IS NULL',
   "UPDATE transactions SET ticker = 'ETH' WHERE ticker IN ('ETHUSD', 'ETH-USD', 'ETH/USD', '$ETHUSD', '$ETH')",
@@ -1244,6 +1256,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
   // 0087_latency_price_snapshots.sql
   ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
+  // 0088_tx_twin_seek_index.sql
+  ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

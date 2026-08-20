@@ -690,9 +690,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Zero-delta incremental poll: a `?since=` cursor with no new rows is the
     // dashboard's steady state (its fetchUpdates() bails out on an empty
     // delta before ever reading `total`/`filingsImportedToday`), so skip the
-    // full unindexed COUNT(*) scan AND the today-filings aggregate entirely
-    // rather than paying D1 read cost every ~poll interval for numbers nobody
-    // reads. Both fields are omitted (not falsely reported as 0) so a
+    // COUNT(*) and today-filings aggregates entirely rather than paying a
+    // full live-row read every ~poll interval for numbers nobody reads. Both fields are omitted (not falsely reported as 0) so a
     // reconciliation consumer that DOES want a fresh total on every poll can
     // tell "not computed this round" apart from "actually zero".
     // `since > 0` (not merely present): the dashboard sends since=0 on its

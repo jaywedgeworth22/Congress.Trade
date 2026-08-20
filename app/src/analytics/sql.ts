@@ -316,6 +316,7 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   );
   // Same real-world trade must count once (DATACORRECTNESS-01). Twin
   // guard lives in shared/tradeIdentity.ts so the feed uses the same rule.
+  // Relies on idx_tx_twin_seek (0088 / #2062) so this is an index SEARCH.
   where.push(TWIN_DEDUPE_SQL);
 
   const win = p.window ?? '30d';
