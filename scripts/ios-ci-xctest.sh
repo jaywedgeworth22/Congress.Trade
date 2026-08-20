@@ -8,15 +8,24 @@ SCHEME="${IOS_CI_SCHEME:-CongressTrade}"
 MIN_TESTS="${IOS_CI_MIN_TESTS:-71}"
 RESULT="${RUNNER_TEMP:-/tmp}/CongressTrade.xcresult"
 LOG="${RUNNER_TEMP:-/tmp}/xcodebuild-test.log"
-CREATED_UDID=""
+CREATED_FILE="$(mktemp)"
 
 cleanup() {
-  if [ -n "$CREATED_UDID" ]; then
-    xcrun simctl shutdown "$CREATED_UDID" >/dev/null 2>&1 || true
-    xcrun simctl delete "$CREATED_UDID" >/dev/null 2>&1 || true
+  if [ -s "$CREATED_FILE" ]; then
+    created="$(cat "$CREATED_FILE")"
+    xcrun simctl shutdown "$created" >/dev/null 2>&1 || true
+    xcrun simctl delete "$created" >/dev/null 2>&1 || true
   fi
+  rm -f "$CREATED_FILE"
 }
 trap cleanup EXIT
+
+# Reap leftover CI sims from a prior failed run.
+while IFS= read -r leftover; do
+  [ -z "$leftover" ] && continue
+  xcrun simctl shutdown "$leftover" >/dev/null 2>&1 || true
+  xcrun simctl delete "$leftover" >/dev/null 2>&1 || true
+done < <(xcrun simctl list devices | sed -n 's/.*ct-ci-xctest-[0-9]* (\([A-F0-9-]\{36\}\)).*/\1/p')
 
 try_boot() {
   local id="$1"
@@ -31,6 +40,9 @@ try_boot() {
     return 0
   fi
   echo "Skipping ${id}: $(tr '\n' ' ' <"$err")" >&2
+  if grep -q "cannot be located on disk" "$err"; then
+    xcrun simctl delete "$id" >/dev/null 2>&1 || true
+  fi
   rm -f "$err"
   return 1
 }
@@ -56,7 +68,7 @@ pick_existing() {
 
 create_fresh() {
   local runtime dtype created
-  runtime="$(xcrun simctl list runtimes | sed -n 's/.*(\(com.apple.CoreSimulator.SimRuntime.iOS-[^)]*\)).*/\1/p' | head -1)"
+  runtime="$(xcrun simctl list runtimes | grep -o 'com.apple.CoreSimulator.SimRuntime.iOS-[^[:space:]]*' | head -1)"
   if [ -z "$runtime" ]; then
     echo "::error::No iOS Simulator runtime is installed. XCTest must run; do not skip." >&2
     xcrun simctl list runtimes >&2
@@ -64,14 +76,14 @@ create_fresh() {
   fi
   for dtype in "iPhone 17 Pro" "iPhone 16 Pro"; do
     if created="$(xcrun simctl create "ct-ci-xctest-$$" "$dtype" "$runtime")"; then
-      CREATED_UDID="$created"
+      printf '%s\n' "$created" >"$CREATED_FILE"
       if try_boot "$created"; then
         echo "Created and booted ${dtype} id=${created} runtime=${runtime}" >&2
         printf '%s\n' "$created"
         return 0
       fi
       xcrun simctl delete "$created" >/dev/null 2>&1 || true
-      CREATED_UDID=""
+      : >"$CREATED_FILE"
     fi
   done
   echo "::error::Could not create a bootable iPhone 17 Pro or iPhone 16 Pro simulator. XCTest must run; do not skip." >&2
