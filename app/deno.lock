@@ -8,6 +8,7 @@
     "npm:@libsql/client@*": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
+    "npm:@sentry/deno@^10.70.0": "10.70.0",
     "npm:@vitest/coverage-v8@4.1.10": "4.1.10_vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
     "npm:cheerio@^1.2.0": "1.2.0",
     "npm:dotenv@*": "17.4.2",
@@ -31,8 +32,17 @@
         "module-details-from-path"
       ]
     },
-    "@apm-js-collab/code-transformer@0.18.0": {
-      "integrity": "sha512-aN3Oq8r1J3gPJtCwErP664gM0+HhM1I1lujPr9TMTCcEl/joQQbpGpeMdts9B1+W2wHMsvioDMv5F4PvMWE6gw==",
+    "@apm-js-collab/code-transformer-bundler-plugins@0.7.4": {
+      "integrity": "sha512-nAfOeZPSUAQvJa1iFT/5oCrTm5YQhMMrfCNthNnaXHZiOQhu1KGuLoIx7HtbAi3wfwaBYLaICPIeenIaEwcXIg==",
+      "dependencies": [
+        "@apm-js-collab/code-transformer",
+        "es-module-lexer",
+        "magic-string",
+        "module-details-from-path"
+      ]
+    },
+    "@apm-js-collab/code-transformer@0.18.1": {
+      "integrity": "sha512-u1Hb6bHjWtkSpiprwVP6YaHC1DTN4RAU3zYkUDUe7WMnJwdyU1pwTL9dFKiSJB9IiLue/EQovmyx6xhU7FFtAQ==",
       "dependencies": [
         "@types/estree",
         "astring",
@@ -725,9 +735,9 @@
       "dependencies": [
         "@cloudflare/workers-types",
         "@opentelemetry/api",
-        "@sentry/core",
+        "@sentry/core@10.66.0",
         "@sentry/node",
-        "@sentry/server-utils"
+        "@sentry/server-utils@10.66.0"
       ],
       "optionalPeers": [
         "@cloudflare/workers-types"
@@ -742,6 +752,20 @@
         "@sentry/conventions"
       ]
     },
+    "@sentry/core@10.70.0": {
+      "integrity": "sha512-ozhCTDqg89oB4XmWfAwuHshABpvT7AkRpaPnogopPfMAaI61G1t8EKCJ4W7aum8JSBonlfyjPCyW5oYZFm0KvA==",
+      "dependencies": [
+        "@sentry/conventions"
+      ]
+    },
+    "@sentry/deno@10.70.0": {
+      "integrity": "sha512-t+DDYrzSciRsHgtgziJZQbUMoPokGvxkG2YXcXZ+n2kIAcilNKW+Y8ybC523u78b3XcRqa9Tup/IaJ+RmQHKng==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@sentry/core@10.70.0",
+        "@sentry/server-utils@10.70.0"
+      ]
+    },
     "@sentry/node-core@10.66.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+instrumentation@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
       "integrity": "sha512-SUnXHROqSdSetKgZC1goDEKCuMz3OmQ1h4rxzWeexLyqan+pensZXfLouP6jzZXlA8e/HP7uQg78LnfqYDcZlQ==",
       "dependencies": [
@@ -750,7 +774,7 @@
         "@opentelemetry/instrumentation",
         "@opentelemetry/sdk-trace-base",
         "@sentry/conventions",
-        "@sentry/core",
+        "@sentry/core@10.66.0",
         "@sentry/opentelemetry",
         "import-in-the-middle"
       ],
@@ -768,10 +792,10 @@
         "@opentelemetry/instrumentation",
         "@opentelemetry/sdk-trace-base",
         "@sentry/conventions",
-        "@sentry/core",
+        "@sentry/core@10.66.0",
         "@sentry/node-core",
         "@sentry/opentelemetry",
-        "@sentry/server-utils",
+        "@sentry/server-utils@10.66.0",
         "import-in-the-middle"
       ]
     },
@@ -782,17 +806,27 @@
         "@opentelemetry/core",
         "@opentelemetry/sdk-trace-base",
         "@sentry/conventions",
-        "@sentry/core"
+        "@sentry/core@10.66.0"
       ]
     },
     "@sentry/server-utils@10.66.0": {
       "integrity": "sha512-h9EM9Wz9Mc6w2Vn7Fyh6ozjy4JC2UbUvWf9Ra1HYA4KMeYqjFA5/o0oB4pg4w/TF+rb+9OF/HNqxjuczxpudpA==",
       "dependencies": [
         "@apm-js-collab/code-transformer",
-        "@apm-js-collab/code-transformer-bundler-plugins",
+        "@apm-js-collab/code-transformer-bundler-plugins@0.6.2",
         "@apm-js-collab/tracing-hooks",
         "@sentry/conventions",
-        "@sentry/core"
+        "@sentry/core@10.66.0"
+      ]
+    },
+    "@sentry/server-utils@10.70.0": {
+      "integrity": "sha512-rzegZjMFFgCp3o+N8+XU13rfSvz4B+f8rU0ijBGrQcHdMNyfsFDTu1UTm262JofmrV2u+s+D0u0vFTnqtOGkbA==",
+      "dependencies": [
+        "@apm-js-collab/code-transformer-bundler-plugins@0.7.4",
+        "@apm-js-collab/tracing-hooks",
+        "@sentry/conventions",
+        "@sentry/core@10.70.0",
+        "meriyah"
       ]
     },
     "@smithy/core@3.29.7": {
@@ -1772,6 +1806,7 @@
       "npm:@google/genai@^2.13.0",
       "npm:@libsql/client@~0.17.4",
       "npm:@sentry/cloudflare@^10.66.0",
+      "npm:@sentry/deno@^10.70.0",
       "npm:cheerio@^1.2.0",
       "npm:fflate@~0.8.3",
       "npm:hono@^4.12.31",
@@ -1783,11 +1818,12 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1110.0",
+        "npm:@aws-sdk/client-s3@3.1111.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.17.1",
         "npm:@libsql/client@~0.17.4",
         "npm:@sentry/cli@^3.6.2",
+        "npm:@sentry/deno@^10.70.0",
         "npm:@types/node@26.2.0",
         "npm:@typescript-eslint/eslint-plugin@^8.67.0",
         "npm:@typescript-eslint/parser@^8.67.0",
