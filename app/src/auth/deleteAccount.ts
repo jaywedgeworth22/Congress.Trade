@@ -11,6 +11,7 @@ import type { Env, User } from '../shared/types.ts';
 import { all, run } from '../shared/db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { deleteSubscription } from '../delivery/subscriptions.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { destroySessionsForUser } from './session.ts';
 
 function clientIdForUser(user: User): string {
@@ -59,13 +60,17 @@ export async function cancelStripeSubscriptionIfAny(
   const secretKey = fromEnv || (await resolveSecret(env, 'STRIPE_SECRET_KEY')).value?.trim();
   if (!secretKey) return 'skipped';
   try {
-    const res = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: {
-        authorization: `Bearer ${secretKey}`,
-        'Stripe-Version': '2025-03-31.basil',
+    const res = await trackedFetch(
+      `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${secretKey}`,
+          'Stripe-Version': '2025-03-31.basil',
+        },
       },
-    });
+      { service: 'billing', operation: 'stripe-subscription-cancel' },
+    );
     if (res.ok || res.status === 404) return 'canceled';
     return 'failed';
   } catch {

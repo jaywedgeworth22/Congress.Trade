@@ -20,7 +20,8 @@ honoured.
 
 ## Verification
 
-- `cd app && npm run typecheck && npm test`
+- `cd app && npm test` — 262 files / 3214 tests
+- `npm run typecheck` still reports pre-existing Deno `Buffer` / `cf` errors outside this slice
 - Delete-path tests: command, `POST /auth/account/delete`, SQLite row removal
 - iOS `testDeleteAccountCommandPayload` (hourly TestFlight; this seat does not ship TF)
 
