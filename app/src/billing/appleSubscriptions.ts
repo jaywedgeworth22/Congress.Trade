@@ -8,6 +8,15 @@
  * `Transaction.originalID`); upserts here are what make both the
  * `redeem_apple_purchase` command and the App Store Server Notifications
  * webhook idempotent on that id.
+ *
+ * `userId` is nullable (migration 00NN_apple_subscriptions_nullable_user —
+ * see that file for why): a purchase made signed OUT (Guideline 5.1.1(v),
+ * `POST /api/client/v1/entitlements/apple/redeem`) writes a row with
+ * `userId: null`, granting Premium to the DEVICE via a separately-issued
+ * entitlement token (`billing/deviceEntitlement.ts`), not to any account. The
+ * row is claimable by the first account that later presents the same
+ * verified transaction (`link_apple_entitlement`) — see the owner-mismatch
+ * guard in `upsertAppleSubscription` below.
  */
 
 import type { ApplePlan } from './apple.ts';
@@ -18,7 +27,8 @@ export type AppleSubscriptionStatus = 'active' | 'expired' | 'revoked' | 'grace_
 
 export interface AppleSubscriptionRecord {
   originalTransactionId: string;
-  userId: string;
+  /** null = anonymous device purchase, not yet (or never) claimed by an account. */
+  userId: string | null;
   productId: string;
   plan: ApplePlan;
   status: AppleSubscriptionStatus;
@@ -38,7 +48,7 @@ export interface AppleSubscriptionRecord {
 
 interface AppleSubscriptionRow {
   original_transaction_id: string;
-  user_id: string;
+  user_id: string | null;
   product_id: string;
   plan: string;
   status: string;
@@ -122,7 +132,8 @@ export async function activeAppleSubscriptionForUser(
 
 export interface UpsertAppleSubscriptionInput {
   originalTransactionId: string;
-  userId: string;
+  /** null = anonymous device purchase (no Congress.Trade account). */
+  userId: string | null;
   productId: string;
   plan: ApplePlan;
   status: AppleSubscriptionStatus;
@@ -139,18 +150,27 @@ export interface UpsertAppleSubscriptionInput {
 }
 
 /**
- * Idempotent upsert keyed on `originalTransactionId`. Reassigning the row to
- * a DIFFERENT userId is refused (returns `{ ok: false, reason: 'owner_mismatch' }`)
- * rather than silently reassigning a subscription's Premium grant to a new
- * account — the only legitimate way a transaction id's owner should ever
- * change is a support-assisted account merge, not an unauthenticated replay.
+ * Idempotent upsert keyed on `originalTransactionId`. Reassigning a row
+ * already owned by a DIFFERENT (non-null) userId is refused (returns
+ * `{ ok: false, reason: 'owner_mismatch' }`) rather than silently reassigning
+ * a subscription's Premium grant to a new account — the only legitimate way
+ * an OWNED transaction id's owner should ever change is a support-assisted
+ * account merge, not an unauthenticated replay.
+ *
+ * A `null`-owner row (anonymous device purchase — Guideline 5.1.1(v)) is the
+ * one case this guard deliberately lets through: it is claimable by the
+ * FIRST authenticated account that presents a matching verified JWS
+ * (`link_apple_entitlement` / `redeem_apple_purchase`), because nobody has a
+ * competing claim on it yet. Once claimed, the row behaves exactly like any
+ * other owned row — this function never reverts a non-null owner back to
+ * null, and never reassigns a non-null owner to a different non-null owner.
  */
 export async function upsertAppleSubscription(
   env: Env,
   input: UpsertAppleSubscriptionInput,
 ): Promise<{ ok: true; record: AppleSubscriptionRecord } | { ok: false; reason: 'owner_mismatch'; ownerId: string }> {
   const existing = await getAppleSubscription(env, input.originalTransactionId);
-  if (existing && existing.userId !== input.userId) {
+  if (existing && existing.userId != null && existing.userId !== input.userId) {
     return { ok: false, reason: 'owner_mismatch', ownerId: existing.userId };
   }
   const now = new Date().toISOString();
@@ -163,6 +183,11 @@ export async function upsertAppleSubscription(
        last_notification_type, last_notification_subtype, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(original_transaction_id) DO UPDATE SET
+       -- Safe unconditionally: by this point the guard above already
+       -- established input.userId is either the SAME as existing.userId, or
+       -- existing.userId is null (an anonymous row being claimed). It is
+       -- never a different non-null owner — that case returned early.
+       user_id = excluded.user_id,
        product_id = excluded.product_id,
        plan = excluded.plan,
        status = excluded.status,

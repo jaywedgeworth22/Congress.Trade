@@ -13,6 +13,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
+import { redeemAppleEntitlementAnonymously } from './entitlements.ts';
 import {
   claimCommandResultSecret,
   createCommand,
@@ -104,6 +105,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   });
 
   r.get('/documents/:docId/pdf', serveDocumentPdf);
+
+  // Unauthenticated by design (Guideline 5.1.1(v)) — see client/entitlements.ts.
+  r.post('/entitlements/apple/redeem', redeemAppleEntitlementAnonymously);
 
   r.get('/me', async (c) => {
     const user = await getCurrentUserFromRequest(c);
