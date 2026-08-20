@@ -27,6 +27,7 @@ name: iOS build (Mac runner)
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -73,7 +74,7 @@ jobs:
             exit 0
           fi
           git fetch --depth=1 origin "$BASE_SHA"
-          if git diff --name-only "$BASE_SHA" "$GITHUB_SHA" | grep -E '^(clients/ios/|\.github/workflows/ios-build\.yml$)'; then
+          if git diff --name-only "$BASE_SHA" "$GITHUB_SHA" | grep -E '^(clients/ios/|\.github/workflows/ios-build\.yml$|scripts/ios-ci-xctest\.sh$)'; then
             echo "ios=1" >> "$GITHUB_OUTPUT"
             echo "iOS paths changed; Mac compile+test required."
           else
