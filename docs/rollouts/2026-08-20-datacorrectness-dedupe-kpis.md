@@ -2,7 +2,7 @@
 
 ## Summary
 
-Monet 2026-08-19 DATACORRECTNESS-01 / 02 / 10.  The same real-world trade now counts once in analytics and the public feed.  Competitor backfill rows no longer publish a fabricated $1,001–$15,000 bracket or `filed_date = tx_date`.  Headline Net Flow / Approx. Volume / ticker net-flow are stock-only, with an `incl. N option trades` footnote.  Largest Buys / Largest Sells stay gone.
+Monet 2026-08-19 DATACORRECTNESS-01 / 02 / 10 (issue #2032, PR #2037).  The same real-world trade now counts once in analytics and the public feed.  Competitor backfill rows no longer publish a fabricated $1,001–$15,000 bracket or `filed_date = tx_date`.  Headline Net Flow / Approx. Volume / ticker net-flow are stock-only, with an `incl. N option trades` footnote.  Largest Buys / Largest Sells stay gone.
 
 ## Files changed
 
