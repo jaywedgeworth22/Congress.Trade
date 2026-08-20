@@ -32,7 +32,11 @@ import {
   resolveAppleProductIds,
   type AppleTransactionPayload,
 } from './apple.ts';
-import { getAppleSubscription, upsertAppleSubscription } from './appleSubscriptions.ts';
+import {
+  clientRedeemWouldResurrectRevoked,
+  getAppleSubscription,
+  upsertAppleSubscription,
+} from './appleSubscriptions.ts';
 import {
   claimAppleWebhookEvent,
   markAppleWebhookEventProcessed,
@@ -224,7 +228,22 @@ async function applyNotification(
     lastNotificationSubtype: notification.subtype ?? null,
   };
 
+  // Same newer-purchase rule as redeem/confirm. Apple retries each
+  // notificationUUID independently, so a DID_RENEW that 500'd (or was still
+  // in flight) can land AFTER REFUND/REVOKE and clear revokedAt. A genuine
+  // resubscribe has a new transactionId and a purchaseDate after revokedAt.
+  const staleRevokedReplay = clientRedeemWouldResurrectRevoked(existing, {
+    transactionId: transaction.transactionId,
+    purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
+  });
+
   if (notificationType === 'DID_RENEW') {
+    if (staleRevokedReplay) {
+      console.warn(
+        `apple webhook DID_RENEW: refusing to resurrect revoked ${originalTransactionId} from a pre-refund retry`,
+      );
+      return;
+    }
     await upsertAppleSubscription(env, { ...base, status: 'active', revokedAt: null, revocationReason: null });
     return;
   }
@@ -255,6 +274,12 @@ async function applyNotification(
     const graceStillOpen = Number.isFinite(graceMs) && graceMs > Date.now();
     const appleSaysGrace = notification.subtype === 'GRACE_PERIOD' || graceStillOpen;
     if (appleSaysGrace) {
+      if (staleRevokedReplay) {
+        console.warn(
+          `apple webhook DID_FAIL_TO_RENEW: refusing to resurrect revoked ${originalTransactionId} as grace_period`,
+        );
+        return;
+      }
       const graceExpires = graceStillOpen
         ? new Date(graceMs).toISOString()
         : existing.expiresDate;
