@@ -213,6 +213,57 @@ describe('POST /api/webhooks/apple', () => {
     expect(row?.status).toBe('expired');
   });
 
+  it('REFUND marks the ledger row revoked like REVOKE', async () => {
+    payloadsByJws.set('outer-jws', notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund' }));
+    payloadsByJws.set('txn-jws', txPayload({ revocationReason: 1 }));
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.lastNotificationType).toBe('REFUND');
+  });
+
+  it('does not apply a Sandbox DID_RENEW unless APPLE_ALLOW_SANDBOX is true', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'DID_RENEW',
+        notificationUUID: 'notif-sandbox',
+        data: { bundleId: 'trade.congress.ios', environment: 'Sandbox', signedTransactionInfo: 'txn-jws' },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', expiresDate: Date.now() + 30 * 86_400_000 }));
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.lastNotificationType).toBeNull();
+    expect(row?.status).toBe('active');
+  });
+
+  it('applies a Sandbox REFUND so leaked Premium is revoked', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'REFUND',
+        notificationUUID: 'notif-sandbox-refund',
+        data: { bundleId: 'trade.congress.ios', environment: 'Sandbox', signedTransactionInfo: 'txn-jws' },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', revocationReason: 0 }));
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+  });
+
   it('REVOKE marks the ledger row revoked with revokedAt set', async () => {
     payloadsByJws.set('outer-jws', notificationPayload({ notificationType: 'REVOKE', notificationUUID: 'notif-3' }));
     payloadsByJws.set('txn-jws', txPayload({ revocationReason: 1 }));

@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-08-11
+Last updated: 2026-08-20
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -25,6 +25,21 @@ the implementation mounted at `/api/client/v1/*`.
 - Account alerts and developer delivery settings should be account-owned
   resources, not bearer-secret-only objects in mobile UI.
 
+## Archived Filing PDF (Premium, in-app)
+
+Jay 2026-08-20: the stored R2 copy is a Premium digital good.
+
+- `GET /api/documents/:docId/pdf` (also mounted at `/api/client/v1/documents/:docId/pdf`)
+  serves the archived bytes.  iOS must fetch it with the session Bearer and
+  `Accept: application/pdf`, then present QuickLook/PDFKit or a temp file.
+  Never open Safari to `congress.trade/pricing` or Stripe.
+- Free or anonymous iOS: the Filing PDF control opens `PremiumSheet` (StoreKit).
+- Backend: Bearer and/or `Accept: application/pdf` on a non-premium request
+  returns **402 JSON** `{ upgradeRequired: true, feature: "pdf" }`, not a 302
+  to `/pricing`.  Browser HTML navigations without Bearer still 302 to the
+  web paywall.
+- The public government **Source Filing** URL on the trade row stays ungated.
+
 ## Command And Status Model
 
 Client mutations go through a backend command when the route supports it:
@@ -48,8 +63,23 @@ be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
 The current router implements `update_preferences`, `create_subscription`,
 `update_subscription`, `delete_subscription`, `register_device`,
-`unregister_device`, and `redeem_apple_purchase`; `start_checkout` and
+`unregister_device`, `redeem_apple_purchase`, and `delete_account`; `start_checkout` and
 `request_export` are defined in the shared type set but still return `501`.
+
+### Account deletion — `delete_account`
+
+Guideline 5.1.1(v).  Signed-in only.  Permanently deletes the account:
+
+- delivery subscriptions for `user:<id>` (and their SSE leases)
+- `push_devices`, `user_preferences`, `apple_subscriptions`, other `client_commands`
+- indexed sessions (`sess:*` / `sess_user:<id>`)
+- the `users` row (PII)
+- best-effort Stripe subscription cancel (no refund)
+
+Web also exposes `POST /auth/account/delete` (cookie or bearer).  After a
+successful delete the client must clear its local token; a follow-up logout is
+unnecessary because the session is already gone.  Apple In-App Purchase
+subscriptions must still be cancelled in the App Store.
 
 ### Device registration (APNs / web push)
 

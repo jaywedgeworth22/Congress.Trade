@@ -1273,6 +1273,39 @@ final class CongressTradeTests: XCTestCase {
     }
 
     @MainActor
+    func testDeleteAccountCommandPayload() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-acct-1")
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["type"] as? String, "delete_account")
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "command": {
+                    "id": "cmd_del_acct", "userId": "user_1", "type": "delete_account",
+                    "status": "succeeded", "idempotencyKey": "del-acct-1", "error": null,
+                    "createdAt": "2026-08-20T00:00:00Z", "updatedAt": "2026-08-20T00:00:00Z",
+                    "startedAt": "2026-08-20T00:00:00Z", "finishedAt": "2026-08-20T00:00:01Z"
+                  },
+                  "result": { "deleted": true, "userId": "user_1" }
+                }
+                """
+            )
+        }
+        let result = try await client.deleteAccount(idempotencyKey: "del-acct-1")
+        XCTAssertEqual(result.result?.deleted, true)
+        XCTAssertEqual(result.result?.userId, "user_1")
+    }
+
+    @MainActor
     func testSetSearchUsesMemberNameNotMember() async throws {
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
@@ -1559,6 +1592,28 @@ final class CongressTradeTests: XCTestCase {
             AppLegal.footerDestinations(includePricing: true, canOpenInAppPurchase: true)
                 .contains { $0.id == "pricing" }
         )
+    }
+
+    func testFilingPDFNeverOpensSafariCheckout() {
+        XCTAssertEqual(FilingPDFAccess.action(isPremium: false), .showPremiumSheet)
+        XCTAssertEqual(FilingPDFAccess.action(isPremium: true), .fetchInApp)
+
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "sess-token")
+        )
+        let url = client.documentPDFURL(docId: "H-2026-1")
+        XCTAssertEqual(url?.path, "/api/documents/H-2026-1/pdf")
+        XCTAssertFalse(url?.absoluteString.contains("pricing") == true)
+        XCTAssertFalse(url?.absoluteString.contains("billing") == true)
+        XCTAssertFalse(url?.absoluteString.contains("checkout") == true)
+        XCTAssertFalse(url?.absoluteString.contains("stripe") == true)
+
+        let request = try XCTUnwrap(try? client.documentPDFRequest(docId: "H-2026-1"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "application/pdf")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer sess-token")
+
+        XCTAssertNil(DigitalGoodsCheckout.webCheckoutURL(relativeTo: URL(string: "https://congress.trade")!))
     }
 
     func testShareURLIsNotADigitalGoodsCheckoutPath() {

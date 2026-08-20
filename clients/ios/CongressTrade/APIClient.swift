@@ -111,6 +111,20 @@ enum DigitalGoodsCheckout {
     }
 }
 
+/// Archived Filing PDF is a Premium digital good (APPSTORECOMPLIANCE-01/02).
+/// Free and anonymous users open StoreKit.  Premium fetches with the Bearer
+/// session.  Never Safari to congress.trade/pricing or Stripe.
+enum FilingPDFAccess {
+    enum Action: Equatable {
+        case showPremiumSheet
+        case fetchInApp
+    }
+
+    static func action(isPremium: Bool) -> Action {
+        isPremium ? .fetchInApp : .showPremiumSheet
+    }
+}
+
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
@@ -155,12 +169,58 @@ final class CongressTradeAPIClient {
         originURL
     }
 
-    /// URL for the filing PDF served from R2 (or redirected to the source).
+    /// URL for the archived filing PDF served from R2.
     /// Mirrors `GET /api/documents/:docId/pdf` in `app/src/delivery/rest.ts`.
+    /// Do not open this in Safari — fetch with `fetchDocumentPDF` and the
+    /// Bearer session.  Government source URLs stay ungated on the trade row.
     func documentPDFURL(docId: String) -> URL? {
         guard !docId.isEmpty else { return nil }
         let encoded = docId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? docId
         return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
+    }
+
+    /// Bearer + `Accept: application/pdf`.  The server returns 402 JSON for
+    /// free/anonymous clients instead of a 302 to `/pricing`.
+    func documentPDFRequest(docId: String) throws -> URLRequest {
+        guard let url = documentPDFURL(docId: docId) else { throw APIError.invalidResponse }
+        var request = try makeRequest(url)
+        request.setValue("application/pdf", forHTTPHeaderField: "accept")
+        return request
+    }
+
+    func fetchDocumentPDF(docId: String) async throws -> (data: Data, contentType: String) {
+        let request = try documentPDFRequest(docId: docId)
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if let finalURL = http.url,
+           finalURL.path.contains("pricing") || finalURL.path.contains("billing") {
+            throw APIError.server(
+                status: 402,
+                message: "Archived filing PDF requires a Premium account",
+                retryAfterSeconds: nil
+            )
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Request failed",
+                retryAfterSeconds: http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) }
+            )
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "application/pdf"
+        return (data, contentType)
+    }
+
+    func writeDocumentPDFPreviewFile(docId: String, data: Data, contentType: String) throws -> URL {
+        let ext = contentType.lowercased().contains("html") ? "html" : "pdf"
+        let safe = docId
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "..", with: "_")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ct-filing-\(safe).\(ext)")
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
     /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
@@ -630,6 +690,22 @@ final class CongressTradeAPIClient {
                 method: "POST",
                 body: ["reviewRevision": reviewRevision]
             )
+        )
+    }
+
+    /// Permanently delete the signed-in account (`delete_account` command).
+    /// The backend revokes sessions, push devices, delivery subscriptions, and
+    /// PII.  Callers must clear the local token after success — a follow-up
+    /// logout is unnecessary because the session is already dead.
+    func deleteAccount(
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<DeleteAccountResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "delete_account",
+                "payload": [:] as [String: Any]
+            ]
         )
     }
 

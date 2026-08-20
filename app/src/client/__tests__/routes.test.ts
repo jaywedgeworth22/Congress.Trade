@@ -111,6 +111,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
   };
   const pushDevices = new Map<string, PushDeviceRow>();
   const feedRows: FeedTransactionRow[] = [];
+  const deletedUsers = new Set<string>();
   let duplicateRaceTriggered = false;
 
   const filterFeedRows = (sql: string, params: unknown[]) => {
@@ -263,7 +264,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       return this;
     },
     async first<T>() {
-      if (/FROM users WHERE id = \?/i.test(sql) && this.params[0] === 'user_1') {
+      if (/FROM users WHERE id = \?/i.test(sql) && this.params[0] === 'user_1' && !deletedUsers.has('user_1')) {
         return userRow() as T;
       }
       if (/FROM user_preferences WHERE user_id = \?/i.test(sql)) {
@@ -571,6 +572,41 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
           row.active = 0;
           row.updated_at = String(updatedAt);
         }
+      } else if (/DELETE FROM users WHERE id = \?/i.test(sql)) {
+        deletedUsers.add(String(this.params[0]));
+        return { success: true, meta: { changes: 1 } };
+      } else if (/DELETE FROM push_devices WHERE user_id = \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of pushDevices) {
+          if (row.user_id === this.params[0]) {
+            pushDevices.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
+      } else if (/DELETE FROM user_preferences WHERE user_id = \?/i.test(sql)) {
+        const existed = preferences.delete(String(this.params[0]));
+        return { success: true, meta: { changes: existed ? 1 : 0 } };
+      } else if (/DELETE FROM apple_subscriptions WHERE user_id = \?/i.test(sql)) {
+        return { success: true, meta: { changes: 0 } };
+      } else if (/DELETE FROM client_commands WHERE user_id = \? AND id != \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of commands) {
+          if (row.user_id === this.params[0] && id !== this.params[1]) {
+            commands.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
+      } else if (/DELETE FROM client_commands WHERE user_id = \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of commands) {
+          if (row.user_id === this.params[0]) {
+            commands.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
       } else if (
         /UPDATE push_devices SET active = 0, updated_at = \?\s+WHERE user_id = \? AND platform = \? AND token = \?/i
           .test(sql)
@@ -616,7 +652,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
-  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages, pushDevices };
+  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages, pushDevices, deletedUsers };
 }
 
 /** Simulate the queue worker: run every captured command.execute message. */
@@ -1216,6 +1252,40 @@ describe('client API routes', () => {
     expect(body.items.map((item) => item.id)).toEqual(['tx-actually-recent', 'tx-old-reimport']);
   });
 
+  it('peels a percent-encoded query string off the politician path (APICONTRACT-01)', async () => {
+    const { env, feedRows, filers } = makeEnv();
+    filers.set('house-ca17-ro-khanna', {
+      bioguide_id: 'house-ca17-ro-khanna',
+      chamber: 'house',
+      full_name: 'Ro Khanna',
+      party: 'D',
+      state: 'CA',
+      district: '17',
+      committees: null,
+      photo_url: null,
+    });
+    feedRows.push(
+      feedRow({
+        id: 'tx-recent',
+        filer_id: 'house-ca17-ro-khanna',
+        tx_date: '2026-07-01',
+        cursor_seq: 10,
+        ticker: 'NVDA',
+        __chamber: 'house',
+      }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/member/house-ca17-ro-khanna%3Fsort%3Dtx_date%26order%3Ddesc',
+      {},
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { member: { id: string }; items: Array<{ id: string }> };
+    expect(body.member.id).toBe('house-ca17-ro-khanna');
+    expect(body.items.map((item) => item.id)).toEqual(['tx-recent']);
+  });
+
   // Regression: TestFlight purchase, 2026-08-13. `redeem_apple_purchase` was
   // enqueued on the durable queue and only executed by the background tick —
   // a minute apart at best, five on the free profile — while the iOS client
@@ -1302,30 +1372,34 @@ describe('client API routes', () => {
 
     const first = await app.request('http://localhost/commands', req, env);
     expect(first.status).toBe(200);
-    const accepted = (await first.json()) as { command: { id: string; status: string } };
+    const accepted = (await first.json()) as {
+      command: { id: string; status: string; result: { subscription: { secret?: string; streamUrl?: string } } };
+    };
     expect(accepted.command.status).toBe('succeeded');
     expect(subscriptions.size).toBe(1);
+    // Inline success claims the one-time secret on the POST (DELIVERYALERTS-01).
+    expect(accepted.command.result.subscription.secret).toMatch(/^whsec_/);
+    expect(accepted.command.result.subscription.streamUrl).toContain('/api/stream?subscription=');
 
     // Redelivery of the backstop message must not create a second subscription.
     await drainQueuedCommands(env, queuedMessages);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
-    // The secret is stored separately in result_secret; the persisted result is redacted:
+    // The persisted row stays redacted; the secret is not logged or stored in result.
     const persisted = JSON.parse(Array.from(commands.values())[0].result ?? '{}') as {
       subscription: { secret?: string; streamUrl?: string };
     };
     expect(persisted.subscription.secret).toBeUndefined();
     expect(persisted.subscription.streamUrl).toBeUndefined();
 
-    // First GET /commands/:id claims the one-time secret:
+    // Later GET /commands/:id does not disclose the secret again:
     const cmdId = accepted.command.id;
     const firstRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
     expect(firstRead.status).toBe(200);
     const firstBody = (await firstRead.json()) as { command: { result: { subscription: { secret?: string; streamUrl?: string } } } };
-    expect(firstBody.command.result.subscription.secret).toMatch(/^whsec_/);
-    expect(firstBody.command.result.subscription.streamUrl).toContain('/api/stream?subscription=');
+    expect(firstBody.command.result.subscription.secret).toBeUndefined();
 
-    // Second GET /commands/:id does NOT disclose the secret again:
+    // Second GET /commands/:id still does not disclose:
     const secondRead = await app.request(`http://localhost/commands/${cmdId}`, { headers: { authorization: auth } }, env);
     expect(secondRead.status).toBe(200);
     const secondBody = (await secondRead.json()) as { command: { result: { subscription: { secret?: string } } } };
@@ -1581,6 +1655,49 @@ describe('client API routes', () => {
     expect(subscriptions.get('sub_toggle')?.active).toBe(1);
   });
 
+  it('deletes the signed-in account via delete_account', async () => {
+    const { env, subscriptions, commands, pushDevices, deletedUsers, queuedMessages } = makeEnv();
+    subscriptions.set('sub_mine', {
+      id: 'sub_mine',
+      client_id: 'user:user_1',
+      delivery: 'sse',
+      target_url: null,
+      secret: 'whsec_mine',
+      filters: '{}',
+      cursor: 0,
+      active: 1,
+      created_at: '2026-08-01T00:00:00.000Z',
+    });
+    pushDevices.set('dev_1', {
+      id: 'dev_1',
+      user_id: 'user_1',
+      platform: 'apns',
+      token: 'a'.repeat(64),
+      app_bundle: 'trade.congress.ios',
+      env: 'production',
+      active: 1,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const ok = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'delete_account', payload: {} }),
+    }, env);
+    expect(ok.status).toBe(200);
+    await drainQueuedCommands(env, queuedMessages);
+    const command = Array.from(commands.values()).find((row) => row.type === 'delete_account');
+    expect(command?.status).toBe('succeeded');
+    expect(command?.result && JSON.parse(String(command.result))).toMatchObject({
+      deleted: true,
+      userId: 'user_1',
+    });
+    expect(deletedUsers.has('user_1')).toBe(true);
+    expect(subscriptions.has('sub_mine')).toBe(false);
+    expect(pushDevices.has('dev_1')).toBe(false);
+  });
+
   it('fails unsupported client command types on the command row', async () => {
     const { env, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
@@ -1746,9 +1863,11 @@ describe('client API routes', () => {
     };
     expect(result.subscription.id).toBe('sub_recover_sub');
     expect(result.subscription.secret).toBeUndefined();
+    const posted = body as { command: { result?: { subscription?: { secret?: string } } } };
+    expect(posted.command.result?.subscription?.secret).toBe('whsec_existing');
     const read = await app.request('http://localhost/commands/cmd_recover_sub', { headers: { authorization: await bearer(env) } }, env);
     const readBody = (await read.json()) as { command: { result: { subscription: { secret?: string } } } };
-    expect(readBody.command.result.subscription.secret).toBe('whsec_existing');
+    expect(readBody.command.result.subscription.secret).toBeUndefined();
     expect(result.subscription.filters.tickers).toEqual(['AAPL']);
     expect(subscriptions.size).toBe(1);
   });

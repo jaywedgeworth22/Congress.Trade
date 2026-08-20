@@ -17,12 +17,11 @@ env:
 
 jobs:
   gitleaks:
-    # Self-hosted CI with automatic hosted fallback. Dependabot forced to hosted
-    # runners for security. See ci.yml for the full rationale/runbook.
+    # GitHub-hosted only. Dependabot stays on hosted runners for security.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.CT_CI_RUNNER != '' && github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       # pull-requests: read is gone with the action — nothing writes or reads
@@ -60,7 +59,7 @@ jobs:
       # killed it and marked a green PR red. That blocked four PRs
       # (#1747 #1749 #1776 #1777) inside one hour on 2026-08-12, each needing a
       # manual `gh run rerun`; identical commits then passed in ~2m50s. The hang
-      # correlates with contention on the self-hosted hetzner-ct-ci runners.
+      # correlates with runner contention and GitHub API write-back after the scan.
       #
       # Running the binary directly removes every GitHub-API code path (job
       # summary, PR annotations, SARIF artifact upload, and the action's
@@ -74,7 +73,7 @@ jobs:
           set -euo pipefail
           tmp_root="${TMPDIR:-/tmp}"; tmp_root="${tmp_root%/}"
           # The old action left these behind; a stale copy could poison a later
-          # run on a persistent self-hosted runner.
+          # run if the workspace is reused.
           rm -f "$tmp_root/gitleaks.tmp"
           rm -rf "$tmp_root/gitleaks-${GITLEAKS_VERSION}"
 

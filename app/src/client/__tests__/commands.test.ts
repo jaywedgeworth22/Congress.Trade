@@ -52,6 +52,25 @@ async function freshDb(): Promise<SqliteDatabase> {
       last_notification_type TEXT, last_notification_subtype TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE user_preferences (
+      user_id TEXT PRIMARY KEY, saved_filters TEXT, watchlist TEXT,
+      notification_settings TEXT, default_window TEXT, updated_at TEXT
+    );
+    CREATE TABLE push_devices (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, platform TEXT, token TEXT,
+      app_bundle TEXT, env TEXT, active INTEGER, created_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE subscriptions (
+      id TEXT PRIMARY KEY, client_id TEXT, delivery TEXT, target_url TEXT,
+      secret TEXT, filters TEXT, cursor INTEGER, active INTEGER, created_at TEXT
+    );
+    CREATE TABLE sse_leases (
+      id TEXT PRIMARY KEY, subscription_id TEXT, client_id TEXT, expires_at TEXT, created_at TEXT
+    );
+    CREATE TABLE client_commands (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT, status TEXT,
+      payload TEXT, created_at TEXT, updated_at TEXT
+    );
   `);
   db.exec(
     `INSERT INTO users (id, email, google_sub, email_verified, created_at) VALUES ('user_1', 'u1@example.com', NULL, 1, '2026-01-01T00:00:00Z')`,
@@ -86,13 +105,24 @@ function d1Database(db: SqliteDatabase): Env['DB'] {
   return { prepare } as unknown as Env['DB'];
 }
 
-async function fakeEnv(overrides: Partial<Env> = {}): Promise<Env> {
+async function fakeEnv(overrides: Partial<Env> = {}): Promise<Env & { __db: SqliteDatabase }> {
   const db = await freshDb();
+  const kv = new Map<string, string>();
   return {
     DB: d1Database(db),
     APPLE_IAP_ENABLED: 'true',
+    CONFIG_KV: {
+      get: async (k: string) => (kv.has(k) ? kv.get(k)! : null),
+      put: async (k: string, v: string) => {
+        kv.set(k, v);
+      },
+      delete: async (k: string) => {
+        kv.delete(k);
+      },
+    },
     ...overrides,
-  } as unknown as Env;
+    __db: db,
+  } as unknown as Env & { __db: SqliteDatabase };
 }
 
 function baseUser(id = 'user_1'): User {
@@ -136,6 +166,10 @@ describe('commandType', () => {
   it('accepts redeem_apple_purchase', () => {
     expect(commandType('redeem_apple_purchase')).toBe('redeem_apple_purchase');
   });
+
+  it('accepts delete_account', () => {
+    expect(commandType('delete_account')).toBe('delete_account');
+  });
 });
 
 describe('executeCommand redeem_apple_purchase', () => {
@@ -164,6 +198,20 @@ describe('executeCommand redeem_apple_purchase', () => {
     await expect(
       executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
     ).rejects.toThrow(ClientInputError);
+  });
+
+  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv();
+    await expect(
+      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/Sandbox/);
+
+    const allowed = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'true' });
+    const result = (await executeCommand(allowed, baseUser(), 'redeem_apple_purchase', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean } };
+    expect(result.entitlement.premium).toBe(true);
   });
 
   it('rejects a bundle id mismatch', async () => {
@@ -270,5 +318,27 @@ describe('executeCommand redeem_apple_purchase', () => {
     })) as { expiresAt: string };
 
     expect(new Date(second.expiresAt).getTime()).toBeGreaterThan(new Date(first.expiresAt).getTime());
+  });
+});
+
+describe('executeCommand delete_account', () => {
+  it('deletes the users row and owned PII', async () => {
+    const env = await fakeEnv();
+    const db = (env as Env & { __db: SqliteDatabase }).__db;
+    db.exec(`
+      INSERT INTO push_devices (id, user_id, platform, token, active, created_at, updated_at)
+      VALUES ('dev_1', 'user_1', 'apns', '${'b'.repeat(64)}', 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z');
+      INSERT INTO subscriptions (id, client_id, delivery, secret, filters, cursor, active, created_at)
+      VALUES ('sub_1', 'user:user_1', 'sse', 'whsec_x', '{}', 0, 1, '2026-08-01T00:00:00Z');
+    `);
+    const result = (await executeCommand(env, baseUser(), 'delete_account', {}, { commandId: 'cmd_del' })) as {
+      deleted: boolean;
+      userId: string;
+    };
+    expect(result.deleted).toBe(true);
+    expect(result.userId).toBe('user_1');
+    expect(db.prepare('SELECT id FROM users WHERE id = ?').get('user_1')).toBeUndefined();
+    expect(db.prepare('SELECT id FROM push_devices WHERE user_id = ?').get('user_1')).toBeUndefined();
+    expect(db.prepare('SELECT id FROM subscriptions WHERE client_id = ?').get('user:user_1')).toBeUndefined();
   });
 });

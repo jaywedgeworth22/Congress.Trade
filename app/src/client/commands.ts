@@ -29,13 +29,16 @@ import {
 } from './pushDevices.ts';
 import { verifyAppleSignedJws, AppleJwsVerificationError } from '../billing/appleJws.ts';
 import {
+  appleSandboxPurchasesAllowed,
   appleTransactionIsActive,
+  isAppleSandboxEnvironment,
   planFromConfiguredAppleProductId,
   resolveAppleProductIds,
   type AppleTransactionPayload,
 } from '../billing/apple.ts';
 import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
   const type = String(value || '');
@@ -48,7 +51,8 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'unregister_device' ||
     type === 'start_checkout' ||
     type === 'request_export' ||
-    type === 'redeem_apple_purchase'
+    type === 'redeem_apple_purchase' ||
+    type === 'delete_account'
   ) {
     return type;
   }
@@ -312,6 +316,9 @@ export async function executeCommand(
     if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
       throw new ClientInputError('bundleId mismatch');
     }
+    if (isAppleSandboxEnvironment(transaction.environment) && !(await appleSandboxPurchasesAllowed(env))) {
+      throw new ClientInputError('Sandbox Apple purchases are not accepted');
+    }
     const configuredProducts = await resolveAppleProductIds(env);
     const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts);
     if (!plan) throw new ClientInputError('unrecognized Apple product id');
@@ -347,6 +354,9 @@ export async function executeCommand(
       expiresAt: upserted.record.expiresDate,
       originalTransactionId: upserted.record.originalTransactionId,
     };
+  }
+  if (type === 'delete_account') {
+    return deleteUserAccount(env, user, { keepCommandId: opts.commandId });
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

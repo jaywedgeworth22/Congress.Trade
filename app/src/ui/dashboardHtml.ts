@@ -380,6 +380,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
+  /* #2071: empty / hidden banners are not chrome. They must take no space so
+     the sticky filter row can sit flush under header.top. */
+  .banner[hidden],
+  .banner:empty { display: none; margin: 0; padding: 0; border: 0; }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
   .view { display: none; }
   .view.active { display: block; }
@@ -2722,7 +2726,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 </header>
 
 <main>
-  <div class="banner" id="banner">Connecting to the live feed…</div>
+  <!-- #2071: do not put #banner here. A first-child status strip sits
+       between header.top and the sticky filter rows. Feed status lives
+       inside each filtered view, after that view's filter row, and stays
+       hidden until setBanner() has a real error. -->
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -2798,6 +2805,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input type="hidden" id="qTicker" value="" />
     </div>
     </div>
+    <div class="banner feed-banner" hidden></div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
@@ -2924,6 +2932,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
+    <div class="banner feed-banner" id="banner" hidden></div>
     <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
@@ -4303,11 +4312,21 @@ function memberAvatarHtml(name, photoUrl, party) {
   return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
-  var b = el('banner');
-  if (!text) { b.style.display = 'none'; return; }
-  b.style.display = 'block';
-  b.className = 'banner' + (isErr ? ' err' : '');
-  b.textContent = text;
+  var nodes = document.querySelectorAll('#banner, .feed-banner');
+  for (var i = 0; i < nodes.length; i++) {
+    var b = nodes[i];
+    if (!text) {
+      b.hidden = true;
+      b.textContent = '';
+      b.style.display = 'none';
+      b.className = 'banner feed-banner';
+      continue;
+    }
+    b.hidden = false;
+    b.style.display = 'block';
+    b.className = 'banner feed-banner' + (isErr ? ' err' : '');
+    b.textContent = text;
+  }
 }
 function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
@@ -5368,7 +5387,7 @@ function fetchPage() {
       tradesGated = !!data.gated;             // freemium: limited recent window
       updateGateRow();
       realDataLoaded = true;
-      setBanner('');                       // drop the illustrative banner
+      setBanner('');                       // hide feed-status until a real error
       setTradesKpis();
       renderTrades();
       return txs.length;
@@ -9372,18 +9391,31 @@ function stampWindowChips() {
    inside the feed's own cadence, so nothing here goes visibly stale. */
 var AGET_CACHE = {};
 var AGET_TTL_MS = 60000;
+/* APICONTRACT-01: never let a query marker ride inside a path segment. If a
+   caller percent-encoded member/id?window= into the path, peel it back out. */
+function analyticsUrl(path) {
+  var decoded = path;
+  try { decoded = decodeURIComponent(path); } catch (e) { /* keep raw */ }
+  var q = decoded.indexOf('?');
+  var pathname = q >= 0 ? decoded.slice(0, q) : decoded;
+  var search = q >= 0 ? decoded.slice(q + 1) : '';
+  var url = '/api/analytics/' + pathname;
+  if (search) url += '?' + search;
+  return url;
+}
 function aGet(path) {
   var now = Date.now();
-  var hit = AGET_CACHE[path];
+  var url = analyticsUrl(path);
+  var hit = AGET_CACHE[url];
   if (hit && hit.data !== undefined && now - hit.at < AGET_TTL_MS) return Promise.resolve(hit.data);
   if (hit && hit.promise) return hit.promise;
-  var entry = AGET_CACHE[path] = { data: undefined, at: 0, promise: null };
-  entry.promise = fetch('/api/analytics/' + path)
+  var entry = AGET_CACHE[url] = { data: undefined, at: 0, promise: null };
+  entry.promise = fetch(url)
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     })
     .then(function (d) { entry.data = d; entry.at = Date.now(); entry.promise = null; return d; })
-    .catch(function (e) { delete AGET_CACHE[path]; throw e; });
+    .catch(function (e) { delete AGET_CACHE[url]; throw e; });
   return entry.promise;
 }
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
@@ -11724,7 +11756,8 @@ function renderAccount() {
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
             : '') +
           adminMenuHtml('closeAcctMenu();') +
-          '<button onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
       '</div>';
     mobileHtml = badge +
@@ -11739,7 +11772,8 @@ function renderAccount() {
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
         : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
-      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();
   }
   box.innerHTML =
@@ -11823,6 +11857,19 @@ function logout() {
   fetch('/auth/logout', { method: 'POST' })
     .then(function () { window.location.reload(); })
     .catch(function () { window.location.reload(); });
+}
+function deleteAccount() {
+  if (!window.confirm('Delete Account? This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in the App Store.  This cannot be undone.')) {
+    return;
+  }
+  fetch('/auth/account/delete', { method: 'POST' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('delete failed');
+      window.location.reload();
+    })
+    .catch(function () {
+      window.alert('Could not delete the account.  Try again or email support@congress.trade.');
+    });
 }
 
 /* ---- pricing / checkout ---- */

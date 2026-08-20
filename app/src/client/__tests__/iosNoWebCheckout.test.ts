@@ -68,6 +68,31 @@ describe('iOS digital-goods checkout (Guideline 3.1.1)', () => {
     expect(tests).toContain('testIOSNeverOffersWebCheckoutForDigitalGoods');
   });
 
+  it('opens Filing PDF in-app or PremiumSheet, never Safari checkout', () => {
+    const detail = readFileSync(
+      join(iosRoot, 'CongressTrade/Views/Feed/TradeDetailView.swift'),
+      'utf8',
+    );
+    const api = readFileSync(join(iosRoot, 'CongressTrade/APIClient.swift'), 'utf8');
+    const tests = readFileSync(join(iosRoot, 'CongressTradeTests/CongressTradeTests.swift'), 'utf8');
+
+    expect(detail).toContain('FilingPDFAccess.action');
+    expect(detail).toContain('openPremium');
+    expect(detail).toContain('fetchDocumentPDF');
+    expect(detail).toContain('FilingPDFQuickLook');
+    expect(detail).not.toContain('openURL(pdfURL)');
+    expect(detail).not.toContain('/pricing');
+    expect(detail).not.toContain('/billing/checkout');
+    expect(detail).toContain('openURL(sourceURL)');
+
+    expect(api).toContain('enum FilingPDFAccess');
+    expect(api).toContain('application/pdf');
+    expect(api).toContain('func fetchDocumentPDF');
+    expect(api).not.toMatch(/documentPDFURL[\s\S]{0,200}pricing/);
+
+    expect(tests).toContain('testFilingPDFNeverOpensSafariCheckout');
+  });
+
   it('never Safari-opens /pricing from the legal footer', () => {
     const components = readFileSync(
       join(iosRoot, 'CongressTrade/Views/Components/Components.swift'),
