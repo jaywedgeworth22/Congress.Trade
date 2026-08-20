@@ -231,6 +231,74 @@ describe('probe wiring: the kill switch restores the old behaviour, not silence'
   });
 });
 
+describe('probe wiring: executive uses the adaptive schedule, not a flat 6h/15m gate', () => {
+  it('is due on the weekday 15-minute floor and too-soon inside it', () => {
+    const now = et(12, 0);
+    const due = decideSourcePoll({
+      source: 'executive',
+      now,
+      cfg: CFG,
+      lastPollAt: new Date(now.getTime() - 901_000),
+      schedule: DEFAULT_PROBE_SCHEDULE_CONFIG,
+    });
+    expect(due.poll).toBe(true);
+    expect(due.authority).toBe('schedule');
+    expect(due.intervalSec).toBe(900);
+    expect(due.reason).toBe('interval-elapsed');
+
+    const hold = decideSourcePoll({
+      source: 'executive',
+      now,
+      cfg: CFG,
+      lastPollAt: new Date(now.getTime() - 5 * 60_000),
+      schedule: DEFAULT_PROBE_SCHEDULE_CONFIG,
+    });
+    expect(hold.poll).toBe(false);
+    expect(hold.reason).toBe('too-soon');
+    expect(hold.intervalSec).toBe(900);
+  });
+
+  it('never-probed executive is due even with leftover Infisical 21600 sitting unused', () => {
+    const schedule = probeScheduleConfigFromEnv({
+      OGE_POLL_INTERVAL_SEC: '21600',
+    } as { OGE_POLL_INTERVAL_SEC?: string });
+    const decision = decideSourcePoll({
+      source: 'executive',
+      now: et(12, 0),
+      cfg: CFG,
+      lastPollAt: null,
+      schedule,
+    });
+    expect(decision.poll).toBe(true);
+    expect(decision.reason).toBe('never-probed');
+    expect(decision.intervalSec).toBe(900);
+    expect(decision.intervalSec).toBeLessThan(6 * 3600);
+  });
+
+  it('weekends stay hourly like House', () => {
+    const sat = new Date('2026-08-08T16:00:00.000Z');
+    const tooSoon = decideSourcePoll({
+      source: 'executive',
+      now: sat,
+      cfg: CFG,
+      lastPollAt: new Date(sat.getTime() - 20 * 60_000),
+      schedule: DEFAULT_PROBE_SCHEDULE_CONFIG,
+    });
+    expect(tooSoon.poll).toBe(false);
+    expect(tooSoon.intervalSec).toBe(3600);
+
+    const due = decideSourcePoll({
+      source: 'executive',
+      now: sat,
+      cfg: CFG,
+      lastPollAt: new Date(sat.getTime() - 3601_000),
+      schedule: DEFAULT_PROBE_SCHEDULE_CONFIG,
+    });
+    expect(due.poll).toBe(true);
+    expect(due.intervalSec).toBe(3600);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Lease + schedule composition (real SQLite)
 // ---------------------------------------------------------------------------

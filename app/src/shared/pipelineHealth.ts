@@ -137,9 +137,10 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   // Safe against quiet days: liveness records a *poll* success, not a filing —
   // a poll that returns zero rows still counts (see recordProbeOutcome, where
   // kind:'success' is independent of fetchedRows).
-  // Executive (OGE) product cadence is 15 min (beat other sources). last_poll
-  // advances on empty success, so a working poller never looks stale. The 26h
-  // window is slack for a disabled/broken executive path, not the poll interval.
+  // Executive follows the same adaptive probeSchedule as House/Senate
+  // (weekday coverage floor 15 min; weekend hourly). last_poll advances on
+  // empty success, so a working poller never looks stale. The 26h window is
+  // slack for a disabled/broken executive path, not the poll interval.
   pollSuccessMaxAgeHours: { house: 3, senate: 3, executive: 26 },
   latencyObservationMaxAgeHours: 24,
   latencyProviderSilenceHours: 48,

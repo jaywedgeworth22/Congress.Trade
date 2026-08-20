@@ -113,6 +113,9 @@ budget-status polling, see Tunables & flags below)
   `PROBE_SCHEDULE_HOUSE_BUDGET` / `PROBE_SCHEDULE_SENATE_BUDGET` (default `171`
   probes/weekday each — a self-imposed politeness budget, **not** a documented
   Clerk rate limit), `PROBE_SCHEDULE_PROVIDER_BUDGET` (default `240` runs),
+  `PROBE_SCHEDULE_EXECUTIVE_BUDGET` (default `107` weekday probes — 96
+  spendable after 10% headroom = a flat 15-minute coverage floor; there is
+  **no measured OGE arrival-hour sample**, so this is not a 78% peak curve),
   and `PROBE_SCHEDULE_JSON` for a full window-table override.  Every key is
   optional and total: a malformed value degrades to the shipped default rather
   than stalling ingestion, so the windows can be retuned live when Congress
@@ -160,11 +163,16 @@ budget-status polling, see Tunables & flags below)
 
 - Ingestion: `HOUSE_LIVE_SEARCH_ENABLED`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
-  `OGE_POLL_INTERVAL_SEC` (default `900` = 15 min product cadence to beat
-  other sources; Infisical wins if set — a leftover `21600` keeps the old
-  6h interval).  After success wait 15 min.  After failure wait 15 min too
-  (`OGE_FAILURE_BACKOFF_SEC = 900` in `ogeSource.ts` — last_poll does not
-  advance on failure).  `OGE_MAX_VISION_BYTES`
+  `OGE_MAX_VISION_BYTES`.  Cadence is `probeSchedule` / `decideSourcePoll`
+  (weekday 15-minute coverage floor, weekend hourly like House; politeness
+  floor 60s).  `OGE_POLL_INTERVAL_SEC` is **unused** — a leftover Infisical
+  `21600` must not re-impose 6h.  Fetch is **server-first**: direct
+  `extapps2.oge.gov`, then Mac/scout `POST /fetch-oge` if
+  `OGE_RELAY_URL` / `INGEST_RELAY_URL` is set and direct fails.  House
+  bulk index is the same (direct Clerk, then `/fetch-house`).  Senate
+  eFD stays **relay-first** — Imperva 403s the box.  Failure skip
+  matches House/Senate `last_attempt`
+  (never a shorter-than-success 10-minute backoff).
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
 - OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default

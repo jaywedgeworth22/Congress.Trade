@@ -692,7 +692,10 @@ export interface Env {
   OGE_INDEX_URL?: string;
   /** CSV list of override URLs for OGE filings index views. */
   OGE_INDEX_URLS?: string;
-  /** Minimum seconds between OGE index polls (default 900 = 15 min product cadence, beat other sources). */
+  /**
+   * UNUSED live gate. Adaptive `probeSchedule` / `decideSourcePoll` owns
+   * executive cadence. A leftover Infisical 21600 must not re-impose 6h.
+   */
   OGE_POLL_INTERVAL_SEC?: string;
   /** Max raw PDF bytes sent to vision extraction for executive filings (default 6MB). */
   OGE_MAX_VISION_BYTES?: string;
