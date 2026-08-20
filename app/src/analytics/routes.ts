@@ -86,7 +86,11 @@ import {
 import { committeeConflict } from './conflicts.ts';
 import { computePerformance } from '../prices/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
-import { getDisclosureLatencySummary } from '../ingestion/tradeLatency.ts';
+import {
+  getDisclosureLatencySummary,
+  isLatencyComparisonPublic,
+  type DisclosureLatencyProviderMetrics,
+} from '../ingestion/tradeLatency.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { executiveTitleFor } from '../shared/executiveTitles.ts';
 import { sanitizeCompetitorPublication } from '../shared/tradeIdentity.ts';
@@ -183,6 +187,57 @@ function commonFromQuery(q: Record<string, string>): CommonQuery {
 
 function granularityFromQuery(q: Record<string, string>, w: Window): Granularity {
   return isGranularity(q.granularity) ? q.granularity : autoGranularity(w);
+}
+
+function toLatencyScoreboardRow(
+  p: DisclosureLatencyProviderMetrics,
+  extras: { publiclyShown?: boolean } = {},
+) {
+  return {
+    id: p.provider,
+    label: p.label,
+    operationalStatus: p.operationalStatus ?? 'unknown',
+    candidates: p.candidates,
+    // Timed live races (CT live first_seen in 7d; |Δ| up to 14d).
+    matched: p.matched,
+    // Same cohort as matched (live imports only; backfills excluded).
+    strongMatched: p.strongMatched,
+    // Pairings that left one identity axis unverified — reported beside
+    // the headline, never inside it.
+    weakMatched: p.weakMatched,
+    providerObserved: p.providerObserved,
+    maturedProviderObserved: p.maturedProviderObserved,
+    unmatchedProvider: p.unmatchedProvider,
+    observedRowsMissingFiler: p.observedRowsMissingFiler,
+    pendingProvider: p.pendingProvider,
+    maturedCandidates: p.maturedCandidates,
+    maturedMatched: p.maturedMatched,
+    maturedWeakMatched: p.maturedWeakMatched,
+    ctCoveragePct: p.ctCoveragePct,
+    providerCoveragePct: p.providerCoveragePct,
+    // Backward-compatible alias; unlike the former field this is CT's
+    // coverage of the mature provider-observed cohort, not matched/CT
+    // candidates.
+    coveragePct: p.ctCoveragePct,
+    overlapPct: p.overlapPct,
+    // `contradiction` means the coverage join is broken and the ratios
+    // above are deliberately null. Consumers must render that as
+    // "unavailable", never as 0%.
+    coverageIntegrity: p.coverageIntegrity,
+    coverageStrongPairingsOnFile: p.coverageStrongPairingsOnFile,
+    comparisonStatus: p.comparisonStatus,
+    comparisonBasis: p.comparisonBasis,
+    // Effective race deltas (monitor* fields already include provider-stamp
+    // fallback). Never switch to published-only — that empty-set path made
+    // Quiver show "preliminary tie" with null median/avg.
+    usFirstCount: p.ctAheadMonitorCount,
+    providerFirstCount: p.providerAheadMonitorCount,
+    tieCount: p.tieMonitorCount,
+    medianLeadSec: p.medianMonitorDeltaSec,
+    avgLeadSec: p.avgMonitorDeltaSec,
+    p90LeadSec: p.p90MonitorDeltaSec,
+    ...(typeof extras.publiclyShown === 'boolean' ? { publiclyShown: extras.publiclyShown } : {}),
+  };
 }
 
 /** Common envelope fields stamped on every response. */
@@ -1273,17 +1328,21 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // the public denominator so a congress.trade miss cannot become a speed win.
   //
   // Honesty (2026-08):
-  //  - FMP stable + RapidAPI are one public "FMP" lane (earliest path stamp).
+  //  - FMP stable + RapidAPI are one FinancialModelingPrep.com lane (earliest path stamp).
+  //  - Public `providers` are functioning lanes only (running, coverage join ok).
+  //  - `adminProviders` keeps every merged lane plus publiclyShown.
   //  - Lead stats always use effective race timestamps (provider stamp with
   //    monitor first-seen fallback) so Quiver-style feeds never report
   //    matched=N with empty W/L → fake "preliminary tie".
   r.get('/latency-summary', async (c) => {
     // v5: FMP family merge + effective timing deltas (not published-only).
     // v6: strong/weak split, window-decoupled coverage, scope denominator.
-    const data = await cached(c.env, 'analytics:latency-summary:v8', 300, async () => {
+    // v9: public providers = functioning only; adminProviders keep hidden lanes.
+    const data = await cached(c.env, 'analytics:latency-summary:v9', 300, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       const { summarizeProviderPublishBump } = await import('../ingestion/latencyPriceSnapshots.ts');
       const priceEdge = await summarizeProviderPublishBump(c.env);
+      const visible = publicSummary.providers.filter(isLatencyComparisonPublic);
       return {
         generatedAt: publicSummary.generatedAt,
         windowHours: publicSummary.windowHours,
@@ -1304,50 +1363,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         // DisclosureLatencyScope in ingestion/tradeLatency.ts for exactly what
         // M counts. Both clients render this as one line; do not re-derive it.
         scope: publicSummary.scope,
-        providers: publicSummary.providers.map((p) => ({
-          id: p.provider,
-          label: p.label,
-          operationalStatus: p.operationalStatus ?? 'unknown',
-          candidates: p.candidates,
-          // Timed live races (CT live first_seen in 7d; |Δ| up to 14d).
-          matched: p.matched,
-          // Same cohort as matched (live imports only; backfills excluded).
-          strongMatched: p.strongMatched,
-          // Pairings that left one identity axis unverified — reported beside
-          // the headline, never inside it.
-          weakMatched: p.weakMatched,
-          providerObserved: p.providerObserved,
-          maturedProviderObserved: p.maturedProviderObserved,
-          unmatchedProvider: p.unmatchedProvider,
-          observedRowsMissingFiler: p.observedRowsMissingFiler,
-          pendingProvider: p.pendingProvider,
-          maturedCandidates: p.maturedCandidates,
-          maturedMatched: p.maturedMatched,
-          maturedWeakMatched: p.maturedWeakMatched,
-          ctCoveragePct: p.ctCoveragePct,
-          providerCoveragePct: p.providerCoveragePct,
-          // Backward-compatible alias; unlike the former field this is CT's
-          // coverage of the mature provider-observed cohort, not matched/CT
-          // candidates.
-          coveragePct: p.ctCoveragePct,
-          overlapPct: p.overlapPct,
-          // `contradiction` means the coverage join is broken and the ratios
-          // above are deliberately null. Consumers must render that as
-          // "unavailable", never as 0%.
-          coverageIntegrity: p.coverageIntegrity,
-          coverageStrongPairingsOnFile: p.coverageStrongPairingsOnFile,
-          comparisonStatus: p.comparisonStatus,
-          comparisonBasis: p.comparisonBasis,
-          // Effective race deltas (monitor* fields already include provider-stamp
-          // fallback). Never switch to published-only — that empty-set path made
-          // Quiver show "preliminary tie" with null median/avg.
-          usFirstCount: p.ctAheadMonitorCount,
-          providerFirstCount: p.providerAheadMonitorCount,
-          tieCount: p.tieMonitorCount,
-          medianLeadSec: p.medianMonitorDeltaSec,
-          avgLeadSec: p.avgMonitorDeltaSec,
-          p90LeadSec: p.p90MonitorDeltaSec,
-        })),
+        providers: visible.map((p) => toLatencyScoreboardRow(p)),
+        adminProviders: publicSummary.providers.map((p) =>
+          toLatencyScoreboardRow(p, { publiclyShown: isLatencyComparisonPublic(p) }),
+        ),
         priceEdge,
       };
     });
