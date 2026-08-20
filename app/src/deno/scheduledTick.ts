@@ -338,7 +338,12 @@ export async function runMaintenancePipeline(
         const { maybeRunDeterministicReviewDrain } = await import(
           '../extraction/deterministicDrain.ts'
         );
-        return maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const drain = await maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const { maybePublishFromStoredRuns } = await import(
+          '../extraction/storedRunPublish.ts'
+        );
+        await maybePublishFromStoredRuns(env, { signal: options.signal });
+        return drain;
       },
     );
     result.agreementAutopublish = await runLane(
