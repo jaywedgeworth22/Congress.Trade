@@ -33,6 +33,31 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(AssetDirectorySearch.SortKey.name.label, "Asset")
     }
 
+    func testTimeRangeLabelsMatchWebsiteWithoutPastPrefix() {
+        XCTAssertEqual(TimeRange.oneDay.label, "Day")
+        XCTAssertEqual(TimeRange.ninetyDays.label, "3 Months")
+        XCTAssertEqual(TimeRange.all.label, "All Time")
+        for range in TimeRange.allCases {
+            XCTAssertFalse(range.label.hasPrefix("Past "), "\(range.rawValue) still says Past")
+        }
+    }
+
+    func testSiteFooterDisclaimerIsOneCombinedLine() {
+        let line = AppTheme.siteFooterDisclaimer
+        XCTAssertTrue(line.contains("  ·  "))
+        XCTAssertTrue(line.contains("(2012)"))
+        XCTAssertTrue(line.hasSuffix("agency"))
+        XCTAssertFalse(line.hasSuffix("."))
+        XCTAssertTrue(line.contains("independent/private service not affiliated"))
+    }
+
+    func testSignedFlowFormatUsesUnicodeMinusOnOneLine() {
+        XCTAssertEqual(SignedFlowFormat.usd(1_200_000), "+$1.2m")
+        XCTAssertEqual(SignedFlowFormat.usd(-178_300_000), "\u{2212}$178.3m")
+        XCTAssertEqual(SignedFlowFormat.usd(0), "$0")
+        XCTAssertEqual(SignedFlowFormat.usd(nil), "—")
+    }
+
     func testNameInitialsMatchWebAvatarFallback() {
         XCTAssertEqual("Ro Khanna".nameInitials, "RK")
         XCTAssertEqual("Pelosi".nameInitials, "PE")
@@ -952,8 +977,8 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(toLast!.hasSuffix("-12-31"))
         XCTAssertNil(thisYear.toDateISO)
         XCTAssertEqual(TimeRange.all.fromDateISO, nil)
-        XCTAssertEqual(thisYear.label, "This Calendar Year")
-        XCTAssertEqual(lastYear.label, "Last Calendar Year")
+        XCTAssertEqual(thisYear.label, "This Year")
+        XCTAssertEqual(lastYear.label, "Last Year")
     }
 
     func testAPIErrorCancellationIsNotRetryable() {

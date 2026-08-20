@@ -496,6 +496,27 @@ describe('agreement cascade — text-field normalization', () => {
     expect(insertedRows[0].assetName).toBe('First Data, Corp.'); // majority (A+B) text, B's wording
   });
 
+  it('tier 1: House GS type-code as ticker still agrees with a no-ticker T-bill read', async () => {
+    stub(
+      asJson([row('GS', 'B', AB, {
+        assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+        ticker: 'GS',
+        assetType: 'GS',
+        confidence: 0.55,
+      })]),
+      asJson([row('GS', 'B', AB, {
+        assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+        ticker: null,
+        assetType: 'GS',
+        confidence: 0.5,
+      })]),
+    );
+    const { env, cap } = makeEnv();
+    await handleAgreementCheck(env, 'H-tbill-gs', 'raw/H-tbill-gs');
+    expect(cap.inserted).toHaveLength(1);
+    expect(cap.sent).toHaveLength(0);
+  });
+
   it('kill switch (AGREEMENT_TEXT_NORMALIZATION=false) restores byte-strict comparison: the SAME near-miss pair that agrees by default now disagrees', async () => {
     stub(
       asJson([row('AAPL', 'B', AB, { assetName: 'FIRST DATA CORP', ticker: null })]),

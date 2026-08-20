@@ -1106,15 +1106,15 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
-        case .oneDay: return "Past Day"
-        case .sevenDays: return "Past Week"
-        case .thirtyDays: return "Past Month"
-        case .ninetyDays: return "Past 3 Months"
-        case .sixMonths: return "Past 6 Months"
-        case .oneYear: return "Past Year"
-        case .fiveYears: return "Past 5 Years"
-        case .thisCalendarYear: return "This Calendar Year"
-        case .lastCalendarYear: return "Last Calendar Year"
+        case .oneDay: return "Day"
+        case .sevenDays: return "Week"
+        case .thirtyDays: return "Month"
+        case .ninetyDays: return "3 Months"
+        case .sixMonths: return "6 Months"
+        case .oneYear: return "Year"
+        case .fiveYears: return "5 Years"
+        case .thisCalendarYear: return "This Year"
+        case .lastCalendarYear: return "Last Year"
         case .all: return "All Time"
         }
     }
