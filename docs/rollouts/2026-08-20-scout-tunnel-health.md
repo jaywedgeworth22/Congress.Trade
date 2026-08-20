@@ -20,6 +20,14 @@ Deno.serve does not map HEAD onto GET, so uptime checks that HEAD `/` or
 `/health` treated scout as down while mac answered GET `/`.  `#1610`
 `POST /fetch-doc` and `POST /fetch-ptr` were already 200.
 
+Live 2026-08-20 (no Mac restart yet): a zone Transform Rule on
+`jays.services` rewrites `scout.jays.services` path `/` → `/health`.
+Measured after it propagated: `GET https://scout.jays.services/` is 200
+`{"ok":true,"service":"senate-relay",...}` — same idea as mac GET `/`.
+HEAD still 404 until `senate-relay` reloads the origin handler.  The
+rewrite is hostname-scoped and can stay after the origin update; both
+paths return the same JSON.
+
 ## Files changed
 
 - `scout/liveness.ts` — GET/HEAD `/` and `/health`
