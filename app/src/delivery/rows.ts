@@ -31,6 +31,7 @@ import type { AssetTypeCategory } from '../shared/assetTypes.ts';
 import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { sanitizeCompetitorPublication, TWIN_DEDUPE_SQL } from '../shared/tradeIdentity.ts';
 
 
 // ---------------------------------------------------------------------------
@@ -195,7 +196,10 @@ export function mapTransaction(row: TransactionRow): Transaction {
     stockActStatus: (row.stock_act_status as StockActStatus | null) ?? null,
     cleaningNote: plainCleaningNote(row.cleaning_note ?? null) || null,
   };
-  return transaction;
+  return sanitizeCompetitorPublication({
+    ...transaction,
+    filedDate: row.filed_date ?? null,
+  });
 }
 
 /**
@@ -215,7 +219,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
   transaction.assetName =
     resolveAssetDisplayName(row.asset_name, row.ticker, row.ref_company_name) || transaction.assetName;
 
-  return {
+  return sanitizeCompetitorPublication({
     ...transaction,
     fullName: row.filer_full_name ? (cleanFilerName(row.filer_full_name) || row.filer_full_name) : null,
     state: row.filer_state,
@@ -230,7 +234,8 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     // either way — the source watcher dump the seed backfill reads has no
     // disclosure-date/first-seen equivalent, so `t.filed_date`/
     // `t.first_seen_at` are null there too; this fallback recovers real,
-    // already-persisted data, never fabricates a value.
+    // already-persisted data, never fabricates a value.  Competitor rows
+    // whose only date is filed_date = tx_date are stripped below.
     filedDate: row.filing_filed_date ?? row.filed_date ?? null,
     firstSeenAt: row.filing_first_seen_at ?? row.first_seen_at ?? null,
     sourceUrl: row.filing_source_url ?? undefined,
@@ -242,7 +247,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     refCountry: row.ref_country,
     refExchangeShort: row.ref_exchange_short,
     refAssetClass: row.ref_asset_class,
-  };
+  });
 }
 
 export function mapSubscription(row: SubscriptionRow): Subscription {
@@ -634,6 +639,7 @@ export function buildTxFilters(
   where.push(
     "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
   );
+  where.push(TWIN_DEDUPE_SQL);
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;

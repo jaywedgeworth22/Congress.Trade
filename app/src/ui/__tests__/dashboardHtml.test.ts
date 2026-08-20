@@ -1584,6 +1584,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
     expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');
     expect(DASHBOARD_HTML).toContain('cell: amountCellHtml');
+    expect(DASHBOARD_HTML).toContain('bracket unavailable');
+    expect(DASHBOARD_HTML).toContain('function optionFootnote(');
+    expect(DASHBOARD_HTML).toContain("incl. ' + fmtCount(n) + ' option trade");
+    expect(DASHBOARD_HTML).toContain('Option premiums are excluded');
     expect(DASHBOARD_HTML).not.toContain("label: 'Tier I'");
     expect(DASHBOARD_HTML).not.toContain('<span>\' + esc(tier.label)');
   });

@@ -89,6 +89,7 @@ import { latestSpxClose } from '../prices/service.ts';
 import { getDisclosureLatencySummary } from '../ingestion/tradeLatency.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { executiveTitleFor } from '../shared/executiveTitles.ts';
+import { sanitizeCompetitorPublication } from '../shared/tradeIdentity.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -224,6 +225,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         estimatedVolumeUsd: usd(row.est_volume),
         estimatedNetFlowUsd: usd(row.est_net_flow),
         optionCount: num(row.option_count),
+        dollarsExcludeOptions: true,
         resolvedTickerPct:
           totalTrades > 0 ? round(num(row.resolved_ticker_count) / totalTrades, 4) : null,
         netSentiment: netSentiment(buyCount, sellCount),
@@ -947,6 +949,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           memberCount: num(s.member_count),
           estVolumeUsd: usd(s.est_volume),
           estNetFlowUsd: usd(s.est_net_flow),
+          optionCount: num(s.option_count),
+          dollarsExcludeOptions: true,
           netSentiment: netSentiment(buyCount, sellCount),
           firstTrade: str(s.first_trade),
           lastTrade: str(s.last_trade),
@@ -960,7 +964,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         })),
         topBuyers: buyerRows.map(mapTrader),
         topSellers: sellerRows.map(mapTrader),
-        recentTrades: recentRows.map((row) => ({
+        recentTrades: recentRows.map((row) => {
+          const published = sanitizeCompetitorPublication({
+            source: str(row.source),
+            amountMin: row.amount_min == null ? null : num(row.amount_min),
+            amountMax: row.amount_max == null ? null : num(row.amount_max),
+            filedDate: str(row.filed_date),
+            txDate: str(row.tx_date),
+          });
+          return {
           id: str(row.id),
           docId: str(row.doc_id),
           ticker: str(row.ticker),
@@ -971,25 +983,25 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           txType: str(row.tx_type),
           owner: str(row.owner),
           isOption: num(row.is_option) === 1,
-          amountMin: row.amount_min == null ? null : num(row.amount_min),
-          amountMax: row.amount_max == null ? null : num(row.amount_max),
-          estValueUsd: Math.round(
-            bracketMidpoint(
-              row.amount_min == null ? null : num(row.amount_min),
-              row.amount_max == null ? null : num(row.amount_max),
-            ),
-          ),
+          amountMin: published.amountMin ?? null,
+          amountMax: published.amountMax ?? null,
+          estValueUsd: published.amountMin == null && published.amountMax == null
+            ? null
+            : Math.round(
+                bracketMidpoint(published.amountMin ?? null, published.amountMax ?? null),
+              ),
           filerId: str(row.filer_id),
           fullName: filerName(row.full_name),
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
-          filedDate: str(row.filed_date),
+          filedDate: published.filedDate ?? null,
           firstSeenAt: str(row.first_seen_at),
           sourceUrl: str(row.source_url),
           createdAt: str(row.created_at),
           source: str(row.source),
           rawText: str(row.raw_text),
-        })),
+        };
+        }),
       });
     });
     return c.json(data);
@@ -1122,7 +1134,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           sellCount: num(row.sell_count),
           estVolumeUsd: usd(row.est_volume),
         })),
-        recentTrades: recentRows.map((row) => ({
+        recentTrades: recentRows.map((row) => {
+          const published = sanitizeCompetitorPublication({
+            source: str(row.source),
+            amountMin: row.amount_min == null ? null : num(row.amount_min),
+            amountMax: row.amount_max == null ? null : num(row.amount_max),
+            filedDate: str(row.filed_date),
+            txDate: str(row.tx_date),
+          });
+          return {
           id: str(row.id),
           docId: str(row.doc_id),
           ticker: str(row.ticker),
@@ -1130,7 +1150,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           assetName: str(row.asset_name),
           txType: str(row.tx_type),
           txDate: str(row.tx_date),
-          filedDate: str(row.filed_date),
+          filedDate: published.filedDate ?? null,
           firstSeenAt: str(row.first_seen_at),
           createdAt: str(row.created_at),
           sourceUrl: str(row.source_url),
@@ -1138,17 +1158,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           isOption: num(row.is_option) === 1,
           assetType: str(row.asset_type),
           assetTypeName: str(row.asset_type_name),
-          amountMin: row.amount_min == null ? null : num(row.amount_min),
-          amountMax: row.amount_max == null ? null : num(row.amount_max),
+          amountMin: published.amountMin ?? null,
+          amountMax: published.amountMax ?? null,
           source: str(row.source),
           rawText: str(row.raw_text),
-          estValueUsd: Math.round(
-            bracketMidpoint(
-              row.amount_min == null ? null : num(row.amount_min),
-              row.amount_max == null ? null : num(row.amount_max),
-            ),
-          ),
-        })),
+          estValueUsd: published.amountMin == null && published.amountMax == null
+            ? null
+            : Math.round(
+                bracketMidpoint(published.amountMin ?? null, published.amountMax ?? null),
+              ),
+        };
+        }),
       });
     });
     return c.json(data);

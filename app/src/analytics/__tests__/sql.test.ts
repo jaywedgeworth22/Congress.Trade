@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BRACKET_MIDPOINT_SQL,
+  STOCK_MIDPOINT_SQL,
   PARTY_BUCKET_SQL,
   asChamber,
   asPartyBucket,
@@ -27,6 +28,7 @@ import {
   windowToOffset,
   windowDays,
 } from '../sql.ts';
+import { TWIN_DEDUPE_SQL } from '../../shared/tradeIdentity.ts';
 
 describe('validators', () => {
   it('asWindow accepts preset + custom <N>d windows and falls back otherwise', () => {
@@ -139,6 +141,8 @@ describe('SQL fragments', () => {
   it('bracket midpoint guards the open-ended top tier (amount_max IS NULL)', () => {
     expect(BRACKET_MIDPOINT_SQL).toContain('t.amount_max IS NOT NULL');
     expect(BRACKET_MIDPOINT_SQL).toContain('(t.amount_min + t.amount_max) / 2.0');
+    expect(BRACKET_MIDPOINT_SQL).toContain("t.source = 'competitor_backfill'");
+    expect(STOCK_MIDPOINT_SQL).toContain('t.is_option = 1');
   });
 
   it('party bucket classifies known parties and leaves unknown as NULL', () => {
@@ -161,7 +165,8 @@ describe('buildCommonFilters', () => {
     expect(where[3]).toBe(
       "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
     );
-    expect(where[4]).toBe("t.tx_date >= date('now', ?)");
+    expect(where[4]).toBe(TWIN_DEDUPE_SQL);
+    expect(where[5]).toBe("t.tx_date >= date('now', ?)");
     expect(params[0]).toBe('-30 days');
   });
 
@@ -186,6 +191,7 @@ describe('buildCommonFilters', () => {
       "SUBSTR(t.doc_id, 1, 17) != 'provider-missing-'",
       't.filer_id IS NOT NULL',
       "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
+      TWIN_DEDUPE_SQL,
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
       "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' ELSE NULL END) = ?",
@@ -217,6 +223,11 @@ describe('buildCommonFilters', () => {
     const { where, params } = buildCommonFilters({ window: 'all', tickers: ['AAPL', 'MSFT', 'NVDA'] });
     expect(where.some((w) => w === 't.ticker IN (?, ?, ?)')).toBe(true);
     expect(params).toEqual(['AAPL', 'MSFT', 'NVDA']);
+  });
+
+  it('always applies the canonical-trade twin guard so one real-world trade counts once', () => {
+    const { where } = buildCommonFilters({ window: 'all' });
+    expect(where).toContain(TWIN_DEDUPE_SQL);
   });
 
   it('excludeOptions adds an is_option = 0 clause (no bind), off by default', () => {
