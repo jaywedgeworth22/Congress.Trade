@@ -28,7 +28,7 @@ import {
   upsertPushDevice,
 } from './pushDevices.ts';
 import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
-import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
 import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
@@ -146,6 +146,16 @@ async function redeemAppleTransactionForUser(
     throw err;
   }
   const { transaction, plan, originalTransactionId } = verified;
+
+  const existing = await getAppleSubscription(env, originalTransactionId);
+  if (
+    clientRedeemWouldResurrectRevoked(existing, {
+      transactionId: transaction.transactionId,
+      purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
+    })
+  ) {
+    throw new ClientInputError('this Apple subscription was refunded or revoked', 400);
+  }
 
   const upserted = await upsertAppleSubscription(env, {
     originalTransactionId,
