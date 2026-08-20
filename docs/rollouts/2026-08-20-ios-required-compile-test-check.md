@@ -49,16 +49,16 @@ simulator was created after ghost UDID `27C2C925-…` failed boot; **71
 XCTest cases ran**; 4 failures made `xcodebuild-mac` and the wrapper
 `xcodebuild (unsigned)` red.  That is the success condition.
 
-Pre-existing failures on current `main` (not this PR; keepout is app
-product code):
+GROK babysit (2026-08-20, same PR, after rebase onto current main) fixed
+the three XCTest failures that painted the unsigned wrapper red, plus the
+`testDeleteAccountCommandPayload` body unwrap that would have failed next:
 
-- `testActiveOnlySubscriptionCommandPreservesFilters` — `XCTUnwrap` Data nil
-- `testDeleteSubscriptionCommandPayload` — `XCTUnwrap` Data nil
-- `testGoToNextPageSendsOffsetAndTotalPagesReflectsAPITotal` — page size
-  50 vs expected 100 (two asserts)
-
-Ticking the check required will block iOS-touching PRs until those three
-tests are fixed in a separate slice.
+- POST body tests read `Self.requestBody(request)` (httpBody or stream).
+- Pager test expects the default 50-row page size (offset `50`, 5 pages
+  for 250 rows).
+- Device compile and XCTest use `$RUNNER_TEMP/DerivedData-ct-ci` so a
+  contended default DerivedData lock cannot sit until the 45-minute
+  timeout and cancel the Mac job.
 
 ## Required check (Jay / ASC)
 

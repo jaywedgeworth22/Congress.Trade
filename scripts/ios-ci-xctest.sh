@@ -8,6 +8,7 @@ SCHEME="${IOS_CI_SCHEME:-CongressTrade}"
 MIN_TESTS="${IOS_CI_MIN_TESTS:-71}"
 RESULT="${RUNNER_TEMP:-/tmp}/CongressTrade.xcresult"
 LOG="${RUNNER_TEMP:-/tmp}/xcodebuild-test.log"
+DERIVED="${RUNNER_TEMP:-/tmp}/DerivedData-ct-ci"
 CREATED_FILE="$(mktemp)"
 
 cleanup() {
@@ -111,6 +112,8 @@ run_tests() {
     -project "$PROJECT" \
     -scheme "$SCHEME" \
     -destination "platform=iOS Simulator,id=${udid}" \
+    -destination-timeout 60 \
+    -derivedDataPath "$DERIVED" \
     -only-testing:CongressTradeTests \
     -parallel-testing-enabled NO \
     -maximum-concurrent-test-simulator-destinations 1 \
