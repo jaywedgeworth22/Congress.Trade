@@ -4233,10 +4233,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     connections.push({
       id: 'delivery:apns',
       label: 'APNs Fan-out',
-      status: !apnsReady
-        ? 'warn'
-        : apnsErrorCount > 0
-          ? 'error'
+      status: apnsErrorCount > 0
+        ? 'error'
+        : !apnsReady
+          ? 'warn'
           : (apnsFanout?.activeDevices ?? 0) === 0
             ? 'warn'
             : connectionStatus(true, 0, apnsFanout?.lastTradeAt ?? apnsFanout?.lastReviewAt ?? null),
