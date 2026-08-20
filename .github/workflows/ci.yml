@@ -328,6 +328,7 @@ jobs:
           bash -n scripts/ios-fleet/scheduled-ship-gate.sh
           bash -n scripts/ios-fleet/test-scheduled-ship-gate.sh
           bash -n scripts/ios-ship-testflight.sh
+          bash -n scripts/ios-ci-xctest.sh
           node --check scripts/ios-fleet/asc-api.mjs
 
       - name: Build-number + ship-gate tests

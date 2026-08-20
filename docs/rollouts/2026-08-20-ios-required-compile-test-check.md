@@ -48,8 +48,10 @@ a failing case must paint the PR check `xcodebuild (unsigned)` red.
 
 PR #2036's first Mac run compiled, then failed before any XCTest case:
 `Failed to clone device named 'iPhone 17 Pro'` / stuck in creation.  The
-wrapper correctly went red.  The test step now boots an existing UDID,
-disables parallel clone destinations, and retries that clone fault once.
+listed UDID then failed boot (`cannot be located on disk`).  The wrapper
+correctly went red both times.  `scripts/ios-ci-xctest.sh` now skips
+ghost devices, creates a fresh iPhone 17 Pro / 16 Pro if needed, disables
+parallel clone destinations, and retries that clone fault once.
 
 ## Required check (Jay / ASC)
 

@@ -32,6 +32,7 @@ on:
     paths:
       - 'clients/ios/**'
       - '.github/workflows/ios-build.yml'
+      - 'scripts/ios-ci-xctest.sh'
   workflow_dispatch:
 
 permissions:
@@ -123,81 +124,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
 
       - name: Test CongressTrade (simulator XCTest, do not skip)
-        run: |
-          set -euo pipefail
-          # Prefer an existing UDID.  name= destinations make xcodebuild clone a
-          # device; that clone stuck in "creation" on this runner (TEST FAILED
-          # before any XCTest case).  id= + no parallel testing uses the
-          # already-created sim.
-          udid=""
-          name=""
-          while IFS= read -r line; do
-            case "$line" in
-              *"iPhone 17 Pro ("*|*"iPhone 16 Pro ("*)
-                name="${line%% (*}"
-                name="${name#"${name%%[![:space:]]*}"}"
-                udid="$(printf '%s\n' "$line" | sed -n 's/.*(\([A-F0-9-]\{36\}\)).*/\1/p')"
-                if [ -n "$udid" ]; then
-                  break
-                fi
-                ;;
-            esac
-          done < <(xcrun simctl list devices available)
-          if [ -z "$udid" ]; then
-            echo "::error::No approved iOS Simulator (iPhone 17 Pro or iPhone 16 Pro) is available. XCTest must run; do not skip."
-            xcrun simctl list devices available
-            exit 1
-          fi
-          echo "Using destination id=${udid} (${name})"
-          xcrun simctl boot "$udid" >/dev/null 2>&1 || true
-          xcrun simctl bootstatus "$udid" -b
-
-          result="${RUNNER_TEMP}/CongressTrade.xcresult"
-          log="${RUNNER_TEMP}/xcodebuild-test.log"
-          run_tests() {
-            rm -rf "$result"
-            # Simulator XCTest needs a runnable TEST_HOST.  Do not pass
-            # CODE_SIGNING_ALLOWED=NO here — that is only for the device compile
-            # above.  A missing simulator or a failed case still exits non-zero.
-            xcodebuild test \
-              -project clients/ios/CongressTrade.xcodeproj \
-              -scheme CongressTrade \
-              -destination "platform=iOS Simulator,id=${udid}" \
-              -only-testing:CongressTradeTests \
-              -parallel-testing-enabled NO \
-              -maximum-concurrent-test-simulator-destinations 1 \
-              -resultBundlePath "$result" \
-              | tee "$log"
-          }
-
-          set +e
-          run_tests
-          status=$?
-          if [ "$status" -ne 0 ] && grep -q "Failed to clone device\|stuck in creation state" "$log"; then
-            echo "Simulator clone/creation stuck; shutdown, boot, retry once. Tests are not skipped."
-            xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
-            xcrun simctl boot "$udid"
-            xcrun simctl bootstatus "$udid" -b
-            run_tests
-            status=$?
-          fi
-          set -e
-          if [ "$status" -ne 0 ]; then
-            echo "::error::xcodebuild test failed (compile or XCTest)."
-            exit "$status"
-          fi
-
-          executed="$(
-            grep -E "Executed [0-9]+ tests?" "$log" \
-              | tail -1 \
-              | awk '{print $2}'
-          )"
-          executed="${executed:-0}"
-          if [ "$executed" -lt 71 ]; then
-            echo "::error::Expected at least 71 XCTest cases in CongressTradeTests; executed ${executed}. Do not skip tests."
-            exit 1
-          fi
-          echo "Executed ${executed} XCTest cases."
+        run: bash scripts/ios-ci-xctest.sh
 
       - name: Upload XCTest result bundle
         if: ${{ !cancelled() }}
