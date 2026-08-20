@@ -488,6 +488,24 @@ export const DEFAULT_TX_LIMIT = 100;
 export const MAX_TX_LIMIT = 250;
 
 /**
+ * Cheap-index candidate window before twin-collapse (issue #2062 follow-up).
+ * The published page still applies {@link TWIN_DEDUPE_SQL}, but only after
+ * SQLite walks ORDER+LIMIT on the live filters. Putting NOT EXISTS in the
+ * same WHERE as the driving LIMIT lets the planner evaluate the correlated
+ * subquery against the full corpus before returning a row — the 20s+
+ * zero-byte hang still seen on SHA c2b6757e after COUNT was fixed.
+ */
+export function twinCandidateLimit(limit: number, offset: number): number {
+  const needed = Math.max(1, offset + limit);
+  // Slack covers source-twins inside the cheap window so OFFSET still
+  // lands on the requested unique page. Cap slack, never the needed
+  // prefix — a hard cap of MAX_TX_LIMIT*8 would empty offset=2000
+  // (the public pager ceiling).
+  const slack = Math.min(MAX_TX_LIMIT * 8, Math.max(needed * 3, 32));
+  return needed + slack;
+}
+
+/**
  * Historical freemium feed constants retained for compatibility. The public
  * transactions feed is not currently gated; Premium is enforced on CSV export
  * and UI enrichment workflows.
@@ -787,7 +805,7 @@ function canNestTransactionKeyset(p: TxQueryParams): boolean {
  * Pure + deterministic so it can be unit-tested without a DB.
  */
 export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
-  const { where, params } = buildTxFilters(p, true);
+  const { where, params } = buildTxFilters(p, true, { twinDedupe: false });
 
   // LIMIT/OFFSET are interpolated directly into the SQL text below (D1/SQLite
   // has no bound-parameter form for them), so a fractional value here isn't
@@ -821,20 +839,29 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
 
-  const limitClause =
+  const pageLimitClause =
     `LIMIT ${limit}` + (offset > 0 ? ` OFFSET ${offset}` : '');
+  const candidateLimit = twinCandidateLimit(limit, offset);
+  const cheapWhere = where.join(' AND ');
 
-  // Nested keyset: apply WHERE/ORDER/LIMIT on transactions alone, then join
-  // enrichment tables. Same result set; far fewer Turso rows read on the hot
-  // unfiltered cursor poll path.
+  // Walk the cheap live filters to a bounded candidate page FIRST, then
+  // collapse source-twins. NOT EXISTS still reads the full table for each
+  // candidate (correct Fleischmann semantics) but only for this window —
+  // not for every live row before LIMIT, and not dependent on idx_tx_twin_seek
+  // existing (Coolify auto-deploy never runs POST /api/admin/migrate).
   if (canNestTransactionKeyset(p)) {
     const sql =
       selectList +
       'FROM (' +
+      'SELECT t.* FROM (' +
       'SELECT t.* FROM transactions t ' +
-      `WHERE ${where.join(' AND ')} ` +
+      `WHERE ${cheapWhere} ` +
       `ORDER BY ${orderClause} ` +
-      limitClause +
+      `LIMIT ${candidateLimit}` +
+      ') t ' +
+      `WHERE ${TWIN_DEDUPE_SQL} ` +
+      `ORDER BY ${orderClause} ` +
+      pageLimitClause +
       ') t ' +
       'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
       'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
@@ -844,10 +871,19 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
 
   const sql =
     selectList +
-    TX_FROM_JOINS +
-    `WHERE ${where.join(' AND ')} ` +
+    'FROM (' +
+    'SELECT t.* ' +
+    TX_FROM_JOINS_LITE +
+    `WHERE ${cheapWhere} ` +
     `ORDER BY ${orderClause} ` +
-    limitClause;
+    `LIMIT ${candidateLimit}` +
+    ') t ' +
+    'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    `WHERE ${TWIN_DEDUPE_SQL} ` +
+    `ORDER BY ${orderClause} ` +
+    pageLimitClause;
 
   return { sql, params, limit, offset };
 }

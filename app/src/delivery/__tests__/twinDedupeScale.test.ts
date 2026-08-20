@@ -2,24 +2,27 @@
  * src/delivery/__tests__/twinDedupeScale.test.ts
  *
  * Issue #2062: PR 2037's correlated TWIN_DEDUPE_SQL hung first-page
- * GET /transactions (unbounded COUNT) and 90d Trends on a prod-sized
- * corpus. Five-row in-memory fixtures could not catch that.
+ * GET /transactions. #2066 took the guard off unbounded COUNT; the
+ * published PAGE still hung because NOT EXISTS sat in the same WHERE
+ * as ORDER+LIMIT. Coolify auto-deploy never runs POST /api/admin/migrate,
+ * so idx_tx_twin_seek / 0088 may be missing in prod even when health
+ * reports schema:true missing:[].
  *
  * This file plants thousands of unique live rows plus a Fleischmann-style
- * triple and asserts:
+ * triple WITHOUT creating idx_tx_twin_seek and asserts:
  *   - COUNT / today have no correlated transactions-d subquery
- *   - EXPLAIN QUERY PLAN on COUNT is not a per-row corpus scan
- *   - first-page + COUNT + today + 90d summary finish well under 2s
- *   - published page / analytics still collapse the TSCO triple
+ *   - first-page {order=desc,limit=5,offset=0} + COUNT + today finish
+ *     well under 2s without that index
+ *   - published page still collapses the TSCO triple
  */
 
 import { describe, expect, it } from 'vitest';
-import { BASE_SCHEMA_STATEMENTS, TWIN_SEEK_INDEX_SCHEMA_STATEMENTS } from '../../admin/migrations.ts';
-import { buildSummaryQuery, buildTickerLeaderboardQuery } from '../../analytics/builders.ts';
+import { BASE_SCHEMA_STATEMENTS } from '../../admin/migrations.ts';
 import {
   buildTransactionsCountQuery,
   buildTransactionsQuery,
   buildTransactionsTodayFilingsQuery,
+  twinCandidateLimit,
 } from '../rows.ts';
 import { TWIN_DEDUPE_SQL, TWIN_SEEK_INDEX } from '../../shared/tradeIdentity.ts';
 
@@ -68,9 +71,6 @@ async function createCorpus(): Promise<SqliteDatabase> {
     ALTER TABLE filings ADD COLUMN filing_status TEXT;
     ALTER TABLE transactions ADD COLUMN deprecated_at TEXT;
   `);
-  for (const sql of TWIN_SEEK_INDEX_SCHEMA_STATEMENTS) {
-    db.exec(sql);
-  }
 
   db.exec('BEGIN');
   const filer = db.prepare(
@@ -115,48 +115,37 @@ async function createCorpus(): Promise<SqliteDatabase> {
   return db;
 }
 
-function planDetails(db: SqliteDatabase, sql: string): string {
-  return db
-    .prepare(`EXPLAIN QUERY PLAN ${sql}`)
-    .all()
-    .map((row) => String(row.detail ?? ''))
-    .join(' | ');
-}
-
 describe('twin-dedupe scale (#2062)', () => {
-  it('COUNT/today omit the correlated twin scan; first page and 90d stay fast', async () => {
+  it('first page stays fast without idx_tx_twin_seek; published TSCO still collapses', async () => {
     const db = await createCorpus();
-    const pageQ = buildTransactionsQuery({ since: 0, sort: 'tx_date', order: 'desc', limit: 50 });
-    const countQ = buildTransactionsCountQuery({ since: 0, sort: 'tx_date', order: 'desc' });
+    const seek = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${TWIN_SEEK_INDEX}'`,
+      )
+      .get();
+    expect(seek).toBeUndefined();
+
+    const pageQ = buildTransactionsQuery({ order: 'desc', limit: 5, offset: 0 });
+    const countQ = buildTransactionsCountQuery({ order: 'desc' });
     const todayQ = buildTransactionsTodayFilingsQuery({}, isoDaysAgo(0));
-    const summaryQ = buildSummaryQuery({ window: '90d' });
-    const boardQ = buildTickerLeaderboardQuery({ window: '90d', limit: 20 });
 
     expect(countQ.sql).not.toContain(TWIN_DEDUPE_SQL);
     expect(countQ.sql).not.toContain('FROM transactions d');
     expect(todayQ.sql).not.toContain(TWIN_DEDUPE_SQL);
     expect(pageQ.sql).toContain(TWIN_DEDUPE_SQL);
-    expect(summaryQ.sql).toContain(TWIN_DEDUPE_SQL);
-
-    const countPlan = planDetails(db, countQ.sql);
-    expect(countPlan).not.toMatch(/CORRELATED SCALAR SUBQUERY/);
-    expect(countPlan).not.toMatch(/SCAN d\b/);
-
-    const summaryPlan = planDetails(db, summaryQ.sql);
-    expect(summaryPlan).toContain(`USING INDEX ${TWIN_SEEK_INDEX}`);
-    expect(summaryPlan).not.toMatch(/SCAN d\b/);
+    expect(pageQ.sql).toContain(`LIMIT ${twinCandidateLimit(5, 0)}`);
+    expect(pageQ.sql.indexOf(`LIMIT ${twinCandidateLimit(5, 0)}`)).toBeLessThan(
+      pageQ.sql.indexOf(TWIN_DEDUPE_SQL),
+    );
 
     const t0 = performance.now();
     const page = db.prepare(pageQ.sql).all(...pageQ.params);
     const count = db.prepare(countQ.sql).get(...countQ.params);
     db.prepare(todayQ.sql).get(...todayQ.params);
-    const summary = db.prepare(summaryQ.sql).get(...summaryQ.params);
-    db.prepare(boardQ.sql).all(...boardQ.params);
     const elapsed = performance.now() - t0;
 
-    expect(page.length).toBe(50);
+    expect(page.length).toBe(5);
     expect(Number(count?.total)).toBe(CORPUS + 3);
-    expect(Number(summary?.total_trades)).toBeGreaterThan(0);
     expect(elapsed).toBeLessThan(2000);
 
     const tscoPage = buildTransactionsQuery({

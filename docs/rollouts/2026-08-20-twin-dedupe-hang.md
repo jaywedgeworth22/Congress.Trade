@@ -22,3 +22,5 @@ Scale fixture: 12,000 unique live rows plus a Fleischmann TSCO triple.  EXPLAIN 
 ## Follow-ups
 
 `total` on the feed is now a live-row count (slightly above the published unique-trade count when twins exist).  Write-time canonicalization would make COUNT exact without a correlated subquery; not done here.  Production schema lands via `POST /api/admin/migrate` on ship.
+
+**2026-08-20 follow-up:** COUNT-off was not enough.  Live SHA `c2b6757e` still sat 30s with zero bytes on `GET /api/transactions?order=desc&limit=5&offset=0` because the PAGE query kept `TWIN_DEDUPE_SQL` in the driving WHERE.  See `docs/rollouts/2026-08-20-twin-dedupe-page-hang.md`.

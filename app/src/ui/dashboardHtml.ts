@@ -94,9 +94,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 %GA_SCRIPT%
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;600;700&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
@@ -325,6 +322,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   /* Zilla Slab (Typotheque/Mozilla), SIL OFL 1.1 — latin 700 subset via @fontsource, embedded so no external font request. */
   @font-face { font-family:'Zilla Slab'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/zilla-slab-700.woff2) format('woff2'); }
+  /* Inter (Rasmus Andersson), SIL OFL 1.1 — self-hosted latin subset, the
+     weights the CSS below actually uses (QABUGHUNT-01 / WEBPERF-01): the
+     Google Fonts <link> this replaced had an invalid axis tuple for the
+     Source Serif 4 family, so the whole combined stylesheet 400'd and Inter
+     never loaded on production. IBM Plex Mono and Source Serif 4 were also
+     requested but never referenced by any rule here, so both are dropped
+     rather than fixed. Self-hosting removes the third-party render-blocking
+     Google Fonts request (and the CSP exceptions it required) the same way
+     Zilla Slab is handled above. */
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url(/assets/inter-400.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url(/assets/inter-500.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url(/assets/inter-600.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/inter-700.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:800; font-display:swap; src:url(/assets/inter-800.woff2) format('woff2'); }
   /* Wordmark face (owner-chosen typewriter slab), self-hosted Zilla Slab first
      with a local typewriter-slab fallback stack. */
   .brand { display:inline-flex; align-items:center; gap:0; min-width:0; flex:0 1 auto; }
@@ -3429,6 +3440,7 @@ ${speedProofSectionHtml(true)}
 
   <footer class="site-footer">
     <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
+    <span>Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.</span>
     <span class="footer-links">
       <a href="/privacy-policy">Privacy</a>
       <a href="/terms-of-service">Terms</a>

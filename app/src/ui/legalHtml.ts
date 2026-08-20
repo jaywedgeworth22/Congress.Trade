@@ -8,9 +8,18 @@
  * before relying on them. Update EFFECTIVE_DATE when the text changes.
  */
 
-const EFFECTIVE_DATE = 'June 22, 2026';
+const EFFECTIVE_DATE = 'August 19, 2026';
 const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
 const CONTACT = 'support@congress.trade';
+
+/**
+ * LEGALCOMPLIANCE-04: a product named "Congress.Trade" that carries a
+ * bald-eagle mark needs an explicit, unmissable non-affiliation statement —
+ * shown in the site footer, the legal-page footer, and ToS §1.  Keep this
+ * string identical everywhere it appears so the disclaimer cannot drift.
+ */
+const NOT_AFFILIATED_SENTENCE =
+  'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.';
 
 /**
  * Shared legal chrome for /terms-of-service and /privacy-policy.
@@ -152,6 +161,7 @@ ${LEGAL_THEME_BOOT}
            background:color-mix(in srgb,var(--warn) 9%,transparent);border-radius:10px;padding:14px 16px;margin:18px 0}
   .callout strong{color:var(--warn)}
   footer{color:var(--dim);font-size:12px;border-top:1px solid var(--border);padding:22px 35px;text-align:center}
+  footer .not-affiliated{display:block;margin-top:6px}
   code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:13px;color:var(--accent)}
   .theme-seg{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:9px;background:var(--panel)}
   .theme-seg-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;
@@ -168,7 +178,7 @@ ${LEGAL_THEME_BOOT}
 ${body}
 <p style="margin-top:36px"><a href="/">&larr; Back to Congress.Trade</a></p>
 </main>
-<footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
+<footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets<span class="not-affiliated">${NOT_AFFILIATED_SENTENCE}</span></footer>
 ${LEGAL_THEME_RUNTIME}
 </body>
 </html>`;
@@ -183,7 +193,13 @@ export const TOS_HTML = shell(
 <p>These Terms of Service ("Terms") are a binding agreement between you and ${ENTITY} ("Congress.Trade," "we," "us"), governing your access to and use of the Congress.Trade website, API, data feeds, and related services (the "Service").&nbsp; By creating an account, subscribing, or otherwise using the Service, you agree to these Terms.&nbsp; If you do not agree, do not use the Service.</p>
 
 <h2>1. What the Service is</h2>
-<p>Congress.Trade aggregates and presents <strong>public financial-disclosure data</strong> filed by politicians serving in the U.S. Congress under the STOCK Act (2012), and provides tools to explore, analyze, and receive that data (including webhook and SSE delivery).&nbsp; It is an <strong>informational and educational</strong> product.</p>
+<p>Congress.Trade aggregates and presents <strong>public financial-disclosure data</strong> filed by (a) Members and staff of the U.S. House of Representatives and U.S. Senate under the STOCK Act (2012), and (b) certain U.S. Executive Branch officials under the Ethics in Government Act of 1978, as amended — including Periodic Transaction Reports (OGE Form 278-T) published by the U.S. Office of Government Ethics and individual federal agencies.&nbsp; The Service provides tools to explore, analyze, and receive that data (including webhook and SSE delivery).&nbsp; It is an <strong>informational and educational</strong> product, and the underlying filings remain public records of their respective source agencies (the U.S. House Clerk, the U.S. Senate, and the Office of Government Ethics).</p>
+
+<p>Executive Branch financial disclosure reports are additionally subject to use restrictions under 5 U.S.C. &sect;13107(c) (formerly Ethics in Government Act &sect;105(c)), which limits use of those reports for certain commercial, credit, and solicitation purposes.&nbsp; Congress.Trade's posture toward those restrictions for Executive Branch rows is under ongoing review and may result in changes to how those rows are delivered, gated, or labeled; this Section will be updated when that review concludes.</p>
+
+<div class="callout">
+<strong>Not affiliated with, or endorsed by, any government body.</strong>&nbsp; ${NOT_AFFILIATED_SENTENCE}
+</div>
 
 <div class="callout">
 <strong>Not financial advice.</strong>&nbsp; The Service is for informational and educational purposes only.&nbsp; Nothing on Congress.Trade is investment, financial, legal, or tax advice, a recommendation, an offer or solicitation to buy or sell any security, or a "trading signal."&nbsp; We are not a broker-dealer, investment adviser, or fiduciary, and no advisory relationship is created by your use of the Service.&nbsp; Disclosure data is sourced from third parties and public filings, may be delayed, incomplete, or inaccurate, and <strong>dollar amounts are estimates derived from the disclosed value brackets</strong>.&nbsp; Always do your own research and consult a licensed professional before making any financial decision.&nbsp; You are solely responsible for your decisions and any resulting gains or losses.
@@ -198,7 +214,7 @@ export const TOS_HTML = shell(
 
 <h2>3. Subscriptions, billing &amp; trials</h2>
 <ul>
-<li>Premium is offered as an auto-renewing subscription: <strong>$5.00 / month</strong> or <strong>$50.00 / year</strong> (USD), plus any applicable taxes.</li>
+<li>Premium is offered as an auto-renewing subscription: <strong>$5.00 / month</strong> or <strong>$50.00 / year</strong> (USD), plus any applicable taxes.&nbsp; The same Premium entitlement is available through the Congress.Trade website (billed by Stripe) or through the Congress.Trade iOS app (billed by Apple as an In-App Purchase); whichever you purchase through, the entitlement applies across both the website and the iOS app on your account.</li>
 <li>New subscriptions may include a free trial (currently 14 days / 2 weeks).&nbsp; If you do not cancel before the trial ends, the subscription renews and your payment method is charged.</li>
 <li>Subscriptions <strong>automatically renew</strong> at the end of each billing period until canceled.&nbsp; You authorize recurring charges to your payment method.</li>
 <li>We may change prices or plan features; changes apply to the next billing period after reasonable notice.&nbsp; Continued use after a price change constitutes acceptance.</li>
@@ -206,13 +222,15 @@ export const TOS_HTML = shell(
 
 <h2>4. Cancellation &amp; refunds</h2>
 <ul>
-<li>You may cancel at any time from your account / billing portal.&nbsp; Cancellation stops future renewals; you retain access through the end of the current paid period.</li>
+<li><strong>Web (Stripe) purchases</strong> — you may cancel at any time from your account / billing portal.&nbsp; Cancellation stops future renewals; you retain access through the end of the current paid period.</li>
+<li><strong>iOS App Store (Apple) purchases</strong> — your subscription is billed to your Apple ID, and you manage or cancel it in iOS Settings &rsaquo; [your name] &rsaquo; Subscriptions, not from the Congress.Trade website.&nbsp; Cancel at least 24 hours before the end of the current period to avoid renewal.</li>
 <li>Because the Service is a <strong>digital product delivered immediately</strong>, payments are generally <strong>non-refundable</strong> except where required by law or as expressly granted by us or the payment processor.</li>
-<li>Where Stripe acts as merchant of record (see §5), Stripe may issue refunds within its own policy windows (e.g., to resolve disputes).</li>
+<li>Where Stripe acts as merchant of record (see §5), Stripe may issue refunds within its own policy windows (e.g., to resolve disputes).&nbsp; For App Store purchases, refunds are granted solely by Apple under Apple's own policy — request one at <a href="https://reportaproblem.apple.com" target="_blank" rel="noopener noreferrer">reportaproblem.apple.com</a> or via Apple Support; Congress.Trade cannot issue or override an Apple refund.</li>
 </ul>
 
 <h2>5. Payments &amp; merchant of record</h2>
-<p>Payments are processed by <strong>Stripe</strong>.&nbsp; We do not collect or store full payment-card details.&nbsp; Where <strong>Stripe Managed Payments</strong> is enabled, Stripe (via its Link entity) acts as the <strong>merchant of record</strong> for your purchase and is responsible for charging, billing receipts, applicable sales tax/VAT, and certain transaction support.&nbsp; Your purchase is also subject to Stripe's applicable terms.</p>
+<p><strong>Web purchases.</strong>&nbsp; Payments made on the Congress.Trade website are processed by <strong>Stripe</strong>.&nbsp; We do not collect or store full payment-card details.&nbsp; Where <strong>Stripe Managed Payments</strong> is enabled, Stripe (via its Link entity) acts as the <strong>merchant of record</strong> for your purchase and is responsible for charging, billing receipts, applicable sales tax/VAT, and certain transaction support.&nbsp; Your purchase is also subject to Stripe's applicable terms.</p>
+<p><strong>iOS App Store purchases.</strong>&nbsp; Premium purchased inside the Congress.Trade iOS app is billed through Apple's In-App Purchase system.&nbsp; <strong>Apple, not Congress.Trade, is the merchant of record</strong> for those purchases and handles billing, receipts, and applicable tax.&nbsp; Your purchase is also subject to Apple's Media Services Terms and Conditions and the App Store's own refund and subscription-management rules.</p>
 
 <h2>6. Acceptable use</h2>
 <p>You agree not to: (a) scrape, crawl, or bulk-extract the Service except through interfaces we provide; (b) resell, sublicense, or publicly redistribute the data or feeds except as expressly permitted; (c) exceed published rate limits or interfere with the Service's operation or security; (d) reverse engineer or attempt unauthorized access; or (e) use the Service unlawfully or to violate any third party's rights.</p>
@@ -256,9 +274,11 @@ export const PRIVACY_HTML = shell(
 
 <h2>1. Information we collect</h2>
 <ul>
-<li><strong>Account information</strong> — your email address, and (if you sign in with Google) your name, profile picture, and Google account identifier.</li>
-<li><strong>Billing information</strong> — handled by Stripe.&nbsp; We receive subscription status and limited metadata (e.g., plan, period end, last 4 / brand are stored by Stripe, not us). <strong>We do not collect or store full payment-card numbers.</strong></li>
-<li><strong>Usage &amp; technical data</strong> — IP address, device/browser type, pages viewed, and similar log data, used for security, analytics, and reliability.</li>
+<li><strong>Account information</strong> — your email address, and, depending on how you sign in: (Google) your name, profile picture, and Google account identifier; (Apple, "Sign in with Apple") your Apple-assigned user identifier and the name/email you choose to share, which may be an Apple private-relay email address.</li>
+<li><strong>Billing information</strong> — handled by our payment processors.&nbsp; For web purchases, Stripe gives us subscription status and limited metadata (e.g., plan, period end; card last 4 / brand are stored by Stripe, not us).&nbsp; For iOS App Store purchases, Apple gives us subscription/transaction status and an Apple transaction identifier. <strong>We do not collect or store full payment-card numbers, and we never see your Apple ID password or App Store payment method.</strong></li>
+<li><strong>Push notification tokens</strong> — if you enable push alerts in the iOS app, we store the device's Apple Push Notification service (APNs) token so we can deliver alerts to that device.</li>
+<li><strong>Delivery preferences</strong> — watchlist and alert preferences you configure, and, if you set up webhook delivery, the destination URL you provide (we send filing data to that URL; we do not control what the receiving server does with it).</li>
+<li><strong>Usage &amp; technical data</strong> — IP address, device/browser type, pages viewed, and similar log data, used for security, debugging, and reliability, including error and performance reports generated when the Service encounters a problem.</li>
 <li><strong>Communications</strong> — messages you send us (e.g., support email).</li>
 </ul>
 
@@ -270,17 +290,20 @@ export const PRIVACY_HTML = shell(
 <li>To comply with legal obligations and enforce our Terms.</li>
 </ul>
 
-<h2>3. Cookies</h2>
-<p>We use a small number of <strong>essential cookies</strong> (e.g., to keep you signed in).&nbsp; We do not use third-party advertising or cross-site tracking cookies.&nbsp; You can control cookies through your browser, but disabling essential cookies may break sign-in.</p>
+<h2>3. Cookies &amp; similar technologies</h2>
+<p>We use a small number of <strong>essential cookies</strong> (e.g., to keep you signed in).&nbsp; We do not use third-party advertising or cross-site tracking cookies.&nbsp; Our hosting provider, Cloudflare, also runs a cookieless page-view "Web Analytics" beacon on our domain that reports aggregate page-load metrics; it does not use cookies or cross-site identifiers.&nbsp; You can control cookies through your browser, but disabling essential cookies may break sign-in.</p>
 
 <h2>4. How we share information (service providers)</h2>
 <p>We do not sell your personal information.&nbsp; We share it only with providers that process it on our behalf to run the Service:</p>
 <ul>
-<li><strong>Stripe</strong> — payment processing and, where enabled, merchant-of-record billing.</li>
-<li><strong>Cloudflare</strong> — hosting, content delivery, security, and email routing for our domain.</li>
+<li><strong>Stripe</strong> — web payment processing and, where enabled, merchant-of-record billing.</li>
+<li><strong>Apple</strong> — "Sign in with Apple" authentication, In-App Purchase billing/merchant-of-record for the iOS app, and Apple Push Notification service (APNs) delivery for push alerts (each only if you use that Apple feature).</li>
+<li><strong>Cloudflare</strong> — hosting, content delivery, security, email routing for our domain, and the cookieless Web Analytics beacon described in §3.</li>
 <li><strong>Google</strong> — "Sign in with Google" authentication (only if you choose it).</li>
 <li><strong>Resend</strong> — delivery of transactional emails (e.g., magic sign-in links).</li>
 <li><strong>Financial Modeling Prep</strong> — market-data enrichment (we send ticker symbols, <em>not</em> your personal information).</li>
+<li><strong>Sentry (Functional Software, Inc.)</strong> — error and performance monitoring; reports may include IP address and request metadata for the request that triggered the error.</li>
+<li><strong>OpenRouter, Mistral, and LlamaParse</strong> — large-language-model and OCR providers we use to extract structured data from public filing PDFs (House/Senate/Executive Branch disclosure documents); we send filing-document content and images to these providers, <em>not</em> your account or personal information.</li>
 </ul>
 <p>We may also disclose information to comply with law, respond to lawful requests, or protect our rights, users, and the public.</p>
 
