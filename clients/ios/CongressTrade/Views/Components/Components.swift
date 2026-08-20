@@ -122,6 +122,20 @@ extension String {
         default: return self.capitalized
         }
     }
+
+    /// Same as `chamberLabel`, but for an executive-branch filer with a
+    /// curated position on file (`member.title`, sourced server-side from
+    /// `shared/executiveTitles.ts`) shows that position instead of the bare
+    /// branch name — "President" / "Treasury Secretary", never the literal
+    /// word "Executive" (iPad audit P1-4).  Falls back to `chamberLabel`
+    /// whenever no title is available, so House/Senate rows and executive
+    /// filers with no curated title yet render exactly as before.
+    func chamberLabel(title: String?) -> String {
+        if self.lowercased() == "executive", let title, !title.isEmpty {
+            return title
+        }
+        return chamberLabel
+    }
 }
 
 enum MemberPhotoURL {
@@ -753,6 +767,30 @@ extension View {
         self
         #endif
     }
+
+    /// Fills the iPad canvas instead of iPadOS's default "form sheet" card
+    /// (a fixed ~830pt-wide box centered in a sea of dimmed background —
+    /// the pattern behind every sheet flagged in the iPad audit, P1-1).
+    /// Apply this to the content passed to `.sheet` / `.fullScreenCover`.
+    /// Regular width class only: on iPhone's compact class this is a no-op,
+    /// because `.sheet` there already fills the available width and
+    /// `presentationSizing` never runs.
+    @ViewBuilder
+    func iPadFullWidthSheet() -> some View {
+        modifier(IPadFullWidthSheetModifier())
+    }
+}
+
+private struct IPadFullWidthSheetModifier: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), horizontalSizeClass == .regular {
+            content.presentationSizing(.page)
+        } else {
+            content
+        }
+    }
 }
 
 // MARK: - Header chrome (subtle icon buttons + hamburger account menu)
@@ -1223,7 +1261,7 @@ struct GoogleSignInButton: View {
                     .frame(width: 20, height: 20)
                 // System font, not the app's Zilla Slab body font: Google's
                 // brand guidance is a neutral sans for the button label.
-                Text(isBusy ? "Opening Google…" : "Sign In with Google")
+                Text(isBusy ? "Opening Google…" : "Sign in with Google")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(label)
             }
@@ -1237,7 +1275,7 @@ struct GoogleSignInButton: View {
         .buttonStyle(.plain)
         .tint(label)
         .disabled(isBusy)
-        .accessibilityLabel("Sign In with Google")
+        .accessibilityLabel("Sign in with Google")
     }
 }
 
