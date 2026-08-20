@@ -263,6 +263,13 @@ above is still set.
 
 ---
 
+## 2026-08-20 update — docs-only skip is live
+
+`watch_paths` on `c11c5hdhuczureb6w2pg20p0` is now `app/**` + `services/**`.
+A docs-only merge no longer queues a compose swap.  Code merges still take
+the origin down until PR #1964 is installed or this app leaves the compose
+build pack.  Receipt: `docs/rollouts/2026-08-20-docs-only-deploy-skip.md`.
+
 ## Immediate actions, cheapest first
 
 1. **Keep `fleet-deploy-guard@congress-trade.timer` enabled.**  Do **not**
