@@ -128,6 +128,12 @@ enum FilingPDFAccess {
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
+    /// Device-scoped (not account-scoped) proof of an anonymous Apple
+    /// purchase (Guideline 5.1.1(v)) — a separate Keychain item from
+    /// `tokenStore`. Attached as `X-Apple-Device-Entitlement` on the two
+    /// requests that accept it (archived filing PDF, CSV export) whenever
+    /// present; the server only consults it when there is no session.
+    let deviceEntitlementStore: SessionTokenStore
     private let session: URLSession
     private let interceptor: RequestInterceptor
     private let decoder: JSONDecoder
@@ -135,11 +141,13 @@ final class CongressTradeAPIClient {
     init(
         baseURL: URL = CongressTradeAPIClient.defaultBaseURL,
         tokenStore: SessionTokenStore = KeychainTokenStore(),
+        deviceEntitlementStore: SessionTokenStore = KeychainTokenStore(service: "trade.congress.appleDeviceEntitlement"),
         session: URLSession = .shared,
         interceptor: RequestInterceptor? = nil
     ) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
+        self.deviceEntitlementStore = deviceEntitlementStore
         self.session = session
         self.interceptor = interceptor ?? AuthHeaderInterceptor(tokenStore: tokenStore)
         self.decoder = JSONDecoder()
@@ -185,7 +193,20 @@ final class CongressTradeAPIClient {
         guard let url = documentPDFURL(docId: docId) else { throw APIError.invalidResponse }
         var request = try makeRequest(url)
         request.setValue("application/pdf", forHTTPHeaderField: "accept")
+        attachDeviceEntitlementHeaderIfNeeded(to: &request)
         return request
+    }
+
+    /// Attaches the cached device entitlement token (Guideline 5.1.1(v)), if
+    /// any, so a signed-out device can reach the two routes that accept it.
+    /// Harmless to attach even when a session Bearer is also present — the
+    /// server always prefers the session and only falls back to this header
+    /// when there is no signed-in user at all.
+    private func attachDeviceEntitlementHeaderIfNeeded(to request: inout URLRequest) {
+        guard let token = try? deviceEntitlementStore.load() else { return }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        request.setValue(trimmed, forHTTPHeaderField: "X-Apple-Device-Entitlement")
     }
 
     func fetchDocumentPDF(docId: String) async throws -> (data: Data, contentType: String) {
@@ -583,6 +604,7 @@ final class CongressTradeAPIClient {
         if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
         var request = try makeRequest(url)
+        attachDeviceEntitlementHeaderIfNeeded(to: &request)
         // Export can be large; give it a longer budget than interactive GETs.
         request.timeoutInterval = 60
         let (data, response) = try await perform(request)
@@ -762,6 +784,43 @@ final class CongressTradeAPIClient {
                 "payload": ["signedTransaction": signedTransaction]
             ]
         )
+    }
+
+    /// Claims an anonymously-purchased Apple subscription (`user_id: NULL`
+    /// ledger row) for the just-signed-in account (`link_apple_entitlement`
+    /// command — `app/docs/client-mobile-api.md` "Anonymous Apple purchase").
+    /// Server-identical to `redeemApplePurchase`; the distinct command name
+    /// only lets the CALLER (see `Store/AppleIAP.swift`
+    /// `linkAppleEntitlementIfNeeded`) treat a 409 "already linked to a
+    /// different account" as silent, not an error to show.
+    func linkAppleEntitlement(
+        signedTransaction: String,
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<RedeemAppleResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "link_apple_entitlement",
+                "payload": ["signedTransaction": signedTransaction]
+            ]
+        )
+    }
+
+    /// Anonymous counterpart of `redeemApplePurchase` (Guideline 5.1.1(v)) —
+    /// `POST /api/client/v1/entitlements/apple/redeem`, no session sent or
+    /// required. Records the purchase against a device, not an account, and
+    /// returns a short-lived device entitlement token the caller is
+    /// responsible for caching (`api.deviceEntitlementStore`) — this method
+    /// has no side effects of its own beyond the network call.
+    func redeemAppleEntitlementAnonymously(signedTransaction: String) async throws -> AnonymousAppleRedeemResult {
+        var request = try makeRequest(endpointURL("entitlements/apple/redeem"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["signedTransaction": signedTransaction],
+            options: []
+        )
+        return try await send(request)
     }
 
     /// Mints a short-lived Stripe-hosted Billing Portal URL for the
