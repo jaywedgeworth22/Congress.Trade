@@ -15,6 +15,9 @@
  * REFUND/REVOKE with no existing ledger row insert a null-owner tombstone so a
  * later client redeem of the original StoreKit JWS cannot mint Premium (#2088
  * only works once a revoked row exists). Other types still ignore unknown ids.
+ * A revoked row is not overwritten by a stale pre-refund retry of any other
+ * handled type — upsert would otherwise clear revokedAt and, for EXPIRED /
+ * billing_retry, drop status off 'revoked' so redeem/confirm would re-grant.
  * Idempotent on Apple's `notificationUUID`
  * via the same claim/release/processed ledger pattern the Stripe webhook uses
  * (appleWebhookEvents.ts), so an at-least-once redelivery never double-applies
@@ -229,21 +232,26 @@ async function applyNotification(
   };
 
   // Same newer-purchase rule as redeem/confirm. Apple retries each
-  // notificationUUID independently, so a DID_RENEW that 500'd (or was still
-  // in flight) can land AFTER REFUND/REVOKE and clear revokedAt. A genuine
-  // resubscribe has a new transactionId and a purchaseDate after revokedAt.
+  // notificationUUID independently, so EXPIRED / DID_FAIL_TO_RENEW /
+  // DID_CHANGE_RENEWAL_STATUS / DID_RENEW that 500'd (or was still in
+  // flight) can land AFTER REFUND/REVOKE. upsert writes revokedAt=null
+  // unless the caller passes it, and EXPIRED / billing_retry move status
+  // off 'revoked' — after which clientRedeemWouldResurrectRevoked no
+  // longer fires and a StoreKit restore of the original JWS re-grants
+  // Premium. A genuine resubscribe has a new transactionId and a
+  // purchaseDate after revokedAt.
   const staleRevokedReplay = clientRedeemWouldResurrectRevoked(existing, {
     transactionId: transaction.transactionId,
     purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
   });
+  if (staleRevokedReplay && notificationType !== 'REVOKE' && notificationType !== 'REFUND') {
+    console.warn(
+      `apple webhook ${notificationType}: refusing to overwrite revoked ${originalTransactionId} from a pre-refund retry`,
+    );
+    return;
+  }
 
   if (notificationType === 'DID_RENEW') {
-    if (staleRevokedReplay) {
-      console.warn(
-        `apple webhook DID_RENEW: refusing to resurrect revoked ${originalTransactionId} from a pre-refund retry`,
-      );
-      return;
-    }
     await upsertAppleSubscription(env, { ...base, status: 'active', revokedAt: null, revocationReason: null });
     return;
   }
@@ -274,12 +282,6 @@ async function applyNotification(
     const graceStillOpen = Number.isFinite(graceMs) && graceMs > Date.now();
     const appleSaysGrace = notification.subtype === 'GRACE_PERIOD' || graceStillOpen;
     if (appleSaysGrace) {
-      if (staleRevokedReplay) {
-        console.warn(
-          `apple webhook DID_FAIL_TO_RENEW: refusing to resurrect revoked ${originalTransactionId} as grace_period`,
-        );
-        return;
-      }
       const graceExpires = graceStillOpen
         ? new Date(graceMs).toISOString()
         : existing.expiresDate;
