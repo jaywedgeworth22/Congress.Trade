@@ -55,7 +55,11 @@ struct PoliticianDetailView: View {
                                 Text(member.name ?? memberName)
                                     .font(.title2.weight(.bold))
                                 
-                                Text([member.chamber?.capitalized, member.party, member.state].compactMap { $0 }.joined(separator: " · "))
+                                Text([
+                                    member.chamber?.chamberLabel(title: member.title),
+                                    Self.partyDisplayLabel(member.party),
+                                    member.state,
+                                ].compactMap { $0 }.joined(separator: " · "))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -218,6 +222,20 @@ struct PoliticianDetailView: View {
         } catch let error as APIError where error.isRetryable {
             try await Task.sleep(for: .milliseconds(400))
             return try await store.fetchMember(id: memberId)
+        }
+    }
+
+    /// `GET /member/:id` returns `party` as a single letter ("R"/"D"), while
+    /// the Directory roster and every trade-row member embed return the full
+    /// word ("Republican"/"Democrat") — without this the header here read
+    /// "Executive · R" next to a Directory row reading "Executive ·
+    /// Republican" for the same politician (iPad audit P1-4).
+    private static func partyDisplayLabel(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        switch raw.uppercased() {
+        case "D": return "Democrat"
+        case "R": return "Republican"
+        default: return raw
         }
     }
 }
