@@ -39,6 +39,7 @@ import {
   type StaticAsset,
 } from './assets.ts';
 import { applyOgMeta, resolveOgMeta, SITE } from './ogMeta.ts';
+import { mountAppLinks } from './appLinks.ts';
 import { DEFAULT_EXECUTIVE_TITLE, executiveTitleFor } from '../shared/executiveTitles.ts';
 import { getSitemapXml } from './sitemap.ts';
 import { TICKER_RESOLVED_SQL } from '../analytics/sql.ts';
@@ -322,6 +323,7 @@ function renderLegalHtml(html: string, _env: Env): string {
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
+  mountAppLinks(r); // iOS Universal Links (AASA + Smart App Banner) — src/ui/appLinks.ts.
 
   // Dashboard SPA. Hono's c.html() sets `content-type: text/html; charset=UTF-8`.
   // OG/Twitter meta is filled from the request URL so crawlers unfurl the
