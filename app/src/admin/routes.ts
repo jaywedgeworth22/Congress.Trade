@@ -3225,8 +3225,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
-      // Executive (OGE 278-T) polls on a ~6h cadence, so it needs a much longer staleness window
-      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 21600 * 3 : staleAfterSec;
+      // Executive (OGE 278-T) product cadence is 15 min (beat other sources).
+      // Staleness is 3 missed cycles, same multiplier as House/Senate.
+      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 900 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
         || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'

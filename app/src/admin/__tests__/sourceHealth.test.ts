@@ -53,8 +53,10 @@ describe('source health status', () => {
     const body = await response.json() as { sources: Array<Record<string, unknown>> };
     const house = body.sources.find((source) => source.source === 'house');
     const senate = body.sources.find((source) => source.source === 'senate');
+    const oge = body.sources.find((source) => source.source === 'oge');
     expect(house).toMatchObject({ status: 'stale', stale: true, effectivePollIntervalSec: 300, staleAfterSec: 900 });
     expect(senate).toMatchObject({ status: 'error', stale: true, lastError: 'upstream blocked' });
+    expect(oge).toMatchObject({ stale: true, staleAfterSec: 2700 });
     const ranked = sqlSeen.find((sql) => /ROW_NUMBER/.test(sql)) ?? '';
     expect(ranked).toContain('PARTITION BY source');
     expect(ranked).toContain('WHERE rn <= ?');
