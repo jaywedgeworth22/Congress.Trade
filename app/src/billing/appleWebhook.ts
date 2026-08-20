@@ -11,7 +11,10 @@
  * verified against the pinned Apple root before any field is trusted.
  *
  * Handles the minimal notification set: DID_RENEW, EXPIRED,
- * DID_CHANGE_RENEWAL_STATUS, REVOKE, DID_FAIL_TO_RENEW, GRACE_PERIOD_EXPIRED.
+ * DID_CHANGE_RENEWAL_STATUS, REVOKE, REFUND, DID_FAIL_TO_RENEW, GRACE_PERIOD_EXPIRED.
+ * REFUND/REVOKE with no existing ledger row insert a null-owner tombstone so a
+ * later client redeem of the original StoreKit JWS cannot mint Premium (#2088
+ * only works once a revoked row exists). Other types still ignore unknown ids.
  * Idempotent on Apple's `notificationUUID`
  * via the same claim/release/processed ledger pattern the Stripe webhook uses
  * (appleWebhookEvents.ts), so an at-least-once redelivery never double-applies
@@ -172,13 +175,16 @@ async function applyNotification(
   const originalTransactionId = transaction.originalTransactionId || transaction.transactionId;
   if (!originalTransactionId) return;
 
-  // The ledger row's owner is established by redeem_apple_purchase (which
-  // knows the signed-in userId); a webhook can only UPDATE an existing row,
-  // never attribute a subscription to a user on its own.
+  // Owner is established by redeem/link, never by the webhook. ACCESS-ENDING
+  // notifications are the exception to "ignore if no row": after #2087 a
+  // client can redeem later with the original StoreKit JWS (no revocationDate),
+  // so a REFUND/REVOKE that arrived first must leave a null-owner tombstone
+  // or #2088's replay guard never sees a revoked row.
   const existing = await getAppleSubscription(env, originalTransactionId);
-  if (!existing) {
+  const writeRefundTombstone = !existing && (notificationType === 'REVOKE' || notificationType === 'REFUND');
+  if (!existing && !writeRefundTombstone) {
     console.warn(
-      `apple webhook ${notificationType}: no ledger row for originalTransactionId ${originalTransactionId} yet (redeem_apple_purchase has not run) — ignoring`,
+      `apple webhook ${notificationType}: no ledger row for originalTransactionId ${originalTransactionId} yet (redeem has not run) — ignoring`,
     );
     return;
   }
@@ -193,23 +199,27 @@ async function applyNotification(
   }
 
   const configuredProducts = await resolveAppleProductIds(env);
-  const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts) ?? existing.plan;
+  const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts) ?? existing?.plan;
+  if (!plan) {
+    console.warn(`apple webhook ${notificationType}: unrecognized product id and no existing plan, skipping`);
+    return;
+  }
   const expiresDate =
-    transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : existing.expiresDate;
+    transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : existing?.expiresDate ?? null;
 
   const base = {
     originalTransactionId,
-    userId: existing.userId,
-    productId: transaction.productId ?? existing.productId,
+    userId: existing?.userId ?? null,
+    productId: transaction.productId ?? existing?.productId ?? '',
     plan,
-    environment: transaction.environment ?? existing.environment,
-    latestTransactionId: transaction.transactionId ?? existing.latestTransactionId,
+    environment: transaction.environment ?? existing?.environment ?? null,
+    latestTransactionId: transaction.transactionId ?? existing?.latestTransactionId ?? null,
     purchaseDate:
-      transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : existing.purchaseDate,
+      transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : existing?.purchaseDate ?? null,
     expiresDate,
     autoRenewStatus:
-      renewalInfo?.autoRenewStatus != null ? renewalInfo.autoRenewStatus === 1 : existing.autoRenewStatus,
-    autoRenewProductId: renewalInfo?.autoRenewProductId ?? existing.autoRenewProductId,
+      renewalInfo?.autoRenewStatus != null ? renewalInfo.autoRenewStatus === 1 : existing?.autoRenewStatus ?? null,
+    autoRenewProductId: renewalInfo?.autoRenewProductId ?? existing?.autoRenewProductId ?? null,
     lastNotificationType: notificationType,
     lastNotificationSubtype: notification.subtype ?? null,
   };
@@ -231,6 +241,7 @@ async function applyNotification(
     });
     return;
   }
+  if (!existing) return;
   if (notificationType === 'DID_CHANGE_RENEWAL_STATUS') {
     // Entitlement is unaffected by this event alone — only the renewal-info
     // fields change; keep the subscription's current access status as-is.
