@@ -770,4 +770,59 @@ describe('POST /api/webhooks/apple', () => {
       }),
     ).toBe(false);
   });
+
+  it('DID_CHANGE_RENEWAL_STATUS after REFUND with a later purchase still keeps revokedAt and the old transaction id', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-resub-renewal-status' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+    const revoked = await getAppleSubscription(env, 'otxn-1');
+    expect(revoked?.status).toBe('revoked');
+    const revokedAt = revoked?.revokedAt ?? '';
+    expect(revokedAt.length).toBeGreaterThan(0);
+
+    payloadsByJws.set(
+      'renewal-status-jws',
+      notificationPayload({
+        notificationType: 'DID_CHANGE_RENEWAL_STATUS',
+        subtype: 'AUTO_RENEW_ENABLED',
+        notificationUUID: 'notif-resub-renewal-status',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-resub',
+        purchaseDate: Date.parse(revokedAt) + 60_000,
+        expiresDate: Date.now() + 30 * 86_400_000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      autoRenewProductId: 'trade.congress.premium.monthly',
+    });
+    await post(buildAppleWebhookRouter(), env, 'renewal-status-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).toBe(revokedAt);
+    expect(row?.latestTransactionId).toBe('txn-old');
+    expect(row?.autoRenewStatus).toBe(true);
+    expect(
+      clientRedeemWouldResurrectRevoked(row, {
+        transactionId: 'txn-resub',
+        purchaseDateMs: Date.parse(revokedAt) + 60_000,
+      }),
+    ).toBe(false);
+  });
 });
