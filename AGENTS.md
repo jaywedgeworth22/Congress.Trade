@@ -148,17 +148,16 @@ Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as producti
 Note that the backend deployment targets Coolify on the Hetzner fleet box `fleet-hetzner-nbg1`
 (`ssh coolify`) — the Oracle ARM64 host is decommissioned (see "Current Shape" above).
 
-Preview deploys are the default review path after verified app changes. If
-`app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
-`npm run typecheck` and `npm test` pass, then report the preview URL. If the
-preview config is missing and the user has asked for preview behavior, run
-`cd app && npm run preview:provision` once, then `npm run preview:deploy`.
-Preview resources must stay isolated from production; do not use production D1,
-KV, R2, queues, custom domains, cron triggers, or `app/wrangler.toml` for
-preview work. Per owner directive (2026-07-29, applies to all chats and apps):
-merges to `main` are always pre-approved — land finished work once CI is green
-without asking for merge approval. Production deploys remain part of completing
-app changes (`bash app/scripts/ship.sh`); do not hold ready work undeployed.
+Preview deploys are leftover isolated Wrangler tooling
+(`app/scripts/deploy-preview.sh`), not the live host.  Production is Coolify
+`congress-app` on `fleet-hetzner-nbg1` serving `https://congress.trade`.  There
+is no production `app/wrangler.toml`.  If a leftover preview config exists
+and the user has asked for preview behavior, keep it isolated from the host
+SQLite file, production R2, `congress.trade`, and Coolify cron.  Per owner
+directive (2026-07-29, applies to all chats and apps): merges to `main` are
+always pre-approved — land finished work once CI is green without asking for
+merge approval.  Production deploys remain part of completing app changes
+(`bash app/scripts/ship.sh`); do not hold ready work undeployed.
 
 Backfill and ingestion commands can mutate queues, database state, R2, or provider
 state. Do not run remote backfills, queue drains, production crawlers, or
@@ -177,8 +176,8 @@ production ingestion jobs unless the user explicitly asks.
 
 ## `SENATE_RELAY_URL` is static (READ THIS — it must never need a manual update)
 
-Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Worker
-reaches it through a relay on the owner's Mac.  The address is permanent:
+Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Coolify
+app reaches it through a relay on the owner's Mac.  The address is permanent:
 
 ```
 SENATE_RELAY_URL=https://scout.jays.services
@@ -320,11 +319,13 @@ to length/hash only, and use the wrong-token sanity check above so a 401 you see
 statement list in `app/src/admin/routes.ts`).**
 Do not use local SQLite migration commands against the production database.
 
-**Canonical production deploy:** `bash app/scripts/ship.sh` — it runs `npm run deploy`
-then `POST /api/admin/migrate` (idempotent;
-"duplicate column" is treated as already-applied) against the production database.
-`npm run deploy:full` now aliases `ship.sh`; `npm run migrate:remote` is intentionally
-disabled (it errors with guidance). `npm run migrate` (`--local`) is for local dev only.
+**Canonical production deploy:** Coolify rebuilds `congress-app` on push to
+`main`.  Then `bash app/scripts/ship.sh` waits for `https://congress.trade/api/health`
+to report the HEAD SHA and POSTs `/api/admin/migrate` (idempotent;
+"duplicate column" is treated as already-applied) against the host SQLite file.
+`npm run deploy` is a reminder, not a Worker publish.  `npm run deploy:full`
+aliases `ship.sh`; `npm run migrate:remote` is intentionally disabled (it
+errors with guidance).  `npm run migrate` is a local leftover helper only.
 
 If you add or change a migration:
 
@@ -380,8 +381,9 @@ npm run typecheck
 npm test
 ```
 
-For deployment/config changes, also inspect `app/wrangler.toml`, relevant docs,
-and whether migrations need to be applied separately.
+For deployment/config changes, also inspect `app/docker-compose.yml`,
+`app/DEPLOY.md`, relevant docs, and whether migrations need to be applied
+separately via `POST /api/admin/migrate`.
 
 ## Cursor / Cursor Cloud Instructions
 
@@ -393,7 +395,7 @@ Cursor project rules live in `.cursor/rules/`. They should point back to this
 file rather than duplicating long policy text.
 
 The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
-`npm ci` in `app/` + applies local D1 migrations). After it runs, the dev
+`npm ci` in `app/` + applies local schema helpers).  After it runs, the dev
 environment is ready; do not re-install deps to start services.
 
 Durable, non-obvious notes for running/testing locally (all from `app/`):
@@ -411,13 +413,14 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
   setup fills only missing or empty managed entries. To change an existing
   managed value, deliberately remove or empty that line, then re-run setup;
   unrelated `.dev.vars` bytes remain untouched.
-- Admin/ingest routes (`/api/admin/*`) fail closed. For local testing,
-  `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: `wrangler.toml` `[vars]` set
-  `SENTRY_ENVIRONMENT="production"` and `USAGE_MONITOR_ENVIRONMENT="production"`,
-  which mark the run as production and disable open-admin. To actually open admin
-  locally, also override those two in `app/.dev.vars` (`.dev.vars` wins over
-  `[vars]`), e.g. `SENTRY_ENVIRONMENT="development"` and
-  `USAGE_MONITOR_ENVIRONMENT="local"`. Confirm via the local server logs if the admin API is OPEN.
+- Admin/ingest routes (`/api/admin/*`) fail closed.  For local testing,
+  `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: Infisical / image defaults
+  can still resolve `SENTRY_ENVIRONMENT="production"` and
+  `USAGE_MONITOR_ENVIRONMENT="production"`, which mark the run as production
+  and disable open-admin.  To actually open admin locally, override those two
+  in `app/.dev.vars`, e.g. `SENTRY_ENVIRONMENT="development"` and
+  `USAGE_MONITOR_ENVIRONMENT="local"`.  Confirm via the local server logs if
+  the admin API is OPEN.
 - The cron handler does NOT auto-fire in local dev. Trigger
   it manually: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
 - Queue consumers run inside the same local Deno process. Ingest is async:
