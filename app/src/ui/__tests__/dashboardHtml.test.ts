@@ -102,6 +102,30 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'Zilla Slab'");
   });
 
+  it('self-hosts Inter instead of the Google Fonts <link> that 400s (QABUGHUNT-01 / WEBPERF-01)', () => {
+    // The old combined request 400'd because Source Serif 4's axis tuple was
+    // invalid for the css2 API, so Inter (the declared --sans body font)
+    // never actually loaded on production. It must never come back as a
+    // render-blocking cross-origin request.
+    expect(DASHBOARD_HTML).not.toContain('fonts.googleapis.com');
+    expect(DASHBOARD_HTML).not.toContain('fonts.gstatic.com');
+    expect(DASHBOARD_HTML).not.toContain('rel="preconnect"');
+    // IBM Plex Mono / Source Serif 4 were requested but never referenced by
+    // any CSS rule (--mono is a system stack) — dropped rather than fixed.
+    expect(DASHBOARD_HTML).not.toContain('IBM+Plex+Mono');
+    expect(DASHBOARD_HTML).not.toContain('Source+Serif');
+    expect(DASHBOARD_HTML).not.toMatch(/font-family:\s*['"]?Source Serif/);
+    expect(DASHBOARD_HTML).not.toMatch(/font-family:\s*['"]?IBM Plex Mono/);
+    // Every weight the CSS actually sets (400/500/600/700/800) is self-hosted
+    // with font-display:swap, matching the Zilla Slab pattern.
+    for (const weight of [400, 500, 600, 700, 800]) {
+      expect(DASHBOARD_HTML).toContain(
+        `@font-face { font-family:'Inter'; font-style:normal; font-weight:${weight}; font-display:swap; src:url(/assets/inter-${weight}.woff2) format('woff2'); }`,
+      );
+    }
+    expect(DASHBOARD_HTML).toContain('--sans:      "Inter",');
+  });
+
   it('references icons/logos via cacheable URL paths (not inline base64 data URIs)', () => {
     // Issue #1040 — heavy brand/icon assets must not ship inside the HTML document.
     expect(DASHBOARD_HTML).not.toMatch(/data:image\/png;base64,/);
@@ -3783,6 +3807,7 @@ describe('static UI assets (issue #1040)', () => {
       ICON_192_PNG,
       BRAND_LOGO_LIGHT_PNG,
       ZILLA_SLAB_WOFF2,
+      INTER_400_WOFF2,
       FAVICON_PNG,
     } = await import('../assets.ts');
 
@@ -3791,12 +3816,15 @@ describe('static UI assets (issue #1040)', () => {
     expect(BRAND_LOGO_LIGHT_PNG.bytes.byteLength).toBeGreaterThan(1_000);
     expect(ZILLA_SLAB_WOFF2.contentType).toBe('font/woff2');
     expect(ZILLA_SLAB_WOFF2.bytes.byteLength).toBeGreaterThan(1_000);
+    expect(INTER_400_WOFF2.contentType).toBe('font/woff2');
+    expect(INTER_400_WOFF2.bytes.byteLength).toBeGreaterThan(1_000);
     expect(FAVICON_PNG.bytes.byteLength).toBeGreaterThan(100);
 
     // PNG signature
     expect(Array.from(ICON_192_PNG.bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
     // wOFF magic
     expect(String.fromCharCode(...ZILLA_SLAB_WOFF2.bytes.slice(0, 4))).toBe('wOF2');
+    expect(String.fromCharCode(...INTER_400_WOFF2.bytes.slice(0, 4))).toBe('wOF2');
 
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
@@ -3806,6 +3834,11 @@ describe('static UI assets (issue #1040)', () => {
       { path: '/favicon.ico', typePrefix: 'image/png', minBytes: 100, cache: 'public, max-age=86400' },
       { path: '/assets/brand-logo-light.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'immutable' },
       { path: '/assets/zilla-slab-700.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/inter-400.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/inter-500.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/inter-600.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/inter-700.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
+      { path: '/assets/inter-800.woff2', typePrefix: 'font/woff2', minBytes: 1_000, cache: 'immutable' },
       { path: '/og-image.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
       { path: '/og-image-trends.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
       { path: '/og-image-company.png', typePrefix: 'image/png', minBytes: 1_000, cache: 'public, max-age=86400' },
