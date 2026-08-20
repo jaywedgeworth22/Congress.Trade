@@ -166,6 +166,20 @@ describe('executeCommand redeem_apple_purchase', () => {
     ).rejects.toThrow(ClientInputError);
   });
 
+  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv();
+    await expect(
+      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/Sandbox/);
+
+    const allowed = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'true' });
+    const result = (await executeCommand(allowed, baseUser(), 'redeem_apple_purchase', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean } };
+    expect(result.entitlement.premium).toBe(true);
+  });
+
   it('rejects a bundle id mismatch', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ bundleId: 'com.other.app' }));
     const env = await fakeEnv();
