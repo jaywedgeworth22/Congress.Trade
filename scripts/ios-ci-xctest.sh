@@ -30,7 +30,7 @@ try_boot() {
     rm -f "$err"
     return 0
   fi
-  echo "Skipping ${id}: $(tr '\n' ' ' <"$err")"
+  echo "Skipping ${id}: $(tr '\n' ' ' <"$err")" >&2
   rm -f "$err"
   return 1
 }
@@ -58,15 +58,15 @@ create_fresh() {
   local runtime dtype created
   runtime="$(xcrun simctl list runtimes | sed -n 's/.*(\(com.apple.CoreSimulator.SimRuntime.iOS-[^)]*\)).*/\1/p' | head -1)"
   if [ -z "$runtime" ]; then
-    echo "::error::No iOS Simulator runtime is installed. XCTest must run; do not skip."
-    xcrun simctl list runtimes
+    echo "::error::No iOS Simulator runtime is installed. XCTest must run; do not skip." >&2
+    xcrun simctl list runtimes >&2
     return 1
   fi
   for dtype in "iPhone 17 Pro" "iPhone 16 Pro"; do
     if created="$(xcrun simctl create "ct-ci-xctest-$$" "$dtype" "$runtime")"; then
       CREATED_UDID="$created"
       if try_boot "$created"; then
-        echo "Created and booted ${dtype} id=${created} runtime=${runtime}"
+        echo "Created and booted ${dtype} id=${created} runtime=${runtime}" >&2
         printf '%s\n' "$created"
         return 0
       fi
@@ -74,13 +74,21 @@ create_fresh() {
       CREATED_UDID=""
     fi
   done
-  echo "::error::Could not create a bootable iPhone 17 Pro or iPhone 16 Pro simulator. XCTest must run; do not skip."
-  xcrun simctl list devices available
-  xcrun simctl list runtimes
+  echo "::error::Could not create a bootable iPhone 17 Pro or iPhone 16 Pro simulator. XCTest must run; do not skip." >&2
+  xcrun simctl list devices available >&2
+  xcrun simctl list runtimes >&2
   return 1
 }
 
-udid="$(pick_existing || create_fresh)"
+udid="$(pick_existing || create_fresh)" || {
+  echo "::error::No bootable iPhone 17 Pro or iPhone 16 Pro simulator. XCTest must run; do not skip." >&2
+  exit 1
+}
+if ! printf '%s' "$udid" | grep -Eq '^[A-F0-9-]{36}$'; then
+  echo "::error::Simulator picker returned a non-UDID: ${udid}" >&2
+  exit 1
+fi
+echo "Using destination id=${udid}"
 xcrun simctl bootstatus "$udid" -b
 
 run_tests() {
