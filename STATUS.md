@@ -1,3 +1,18 @@
+# Current Handoff
+
+## 2026-08-20 CLAUDE — Probe-run brackets (PR pending)
+
+Competitor "lead" numbers were an artifact of our own polling.
+`provider_published_at` is NULL 600/600; quiver and unusual_whales both report
+68.28h / 147.28h leads across dozens of rows.  New `provider_probe_runs` records
+every probe including no-ops so publication is bracketed to (T_prev, T] instead
+of guessed.  Migration 0089.  Dashboard still shows point leads — next step.
+
+Separately diagnosed, NOT yet fixed: `latency_price_snapshots` has 7 priced rows
+of 2955 (2937 `missed_window`) because snapshots are scheduled retrospectively
+and are born stale.  Owner ruling 2026-08-20: never use FMP for market data.
+Receipt: `docs/rollouts/2026-08-20-probe-run-brackets.md`.
+
 # Current Shape
 
 Production is **not** a Cloudflare Worker / D1 / `wrangler.toml` app.
@@ -8,8 +23,6 @@ SQLite at `/data/congress-trade/db.sqlite`, Deno KV at
 `deno_runtime_queue`.  Proof: `app/Dockerfile`, `app/docker-compose.yml`,
 `app/src/deno/main.ts`, `app/DEPLOY.md`.  Dated Worker/D1 handoff rows
 below are historical.
-
-# Current Handoff
 
 ## 2026-08-20 CURSOR — #1537 Coolify deploy overlap (PR #1964)
 
