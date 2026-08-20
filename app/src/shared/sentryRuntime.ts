@@ -72,7 +72,10 @@ export function buildSentryInitOptions(
   tracesSampleRate: number,
   extras: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const build = readBuildInfo(env);
+  const build = readBuildInfo({
+    CT_BUILD_SHA: env.CT_BUILD_SHA,
+    SOURCE_COMMIT: env.SOURCE_COMMIT,
+  });
   const release = build.sha === 'unknown' ? undefined : build.sha;
   return {
     dsn: resolveSentryDsn(env),
