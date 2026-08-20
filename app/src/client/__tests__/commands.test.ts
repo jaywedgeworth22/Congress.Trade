@@ -306,6 +306,33 @@ describe('executeCommand redeem_apple_purchase', () => {
     ).rejects.toThrow(/already linked/);
   });
 
+  it('refuses to flip a webhook-revoked row back to active by replaying the original JWS', async () => {
+    verifyAppleSignedJws.mockResolvedValue(
+      activeTransaction({
+        transactionId: 'txn-1',
+        purchaseDate: Date.parse('2026-01-01T00:00:00.000Z'),
+      }),
+    );
+    const env = await fakeEnv();
+    env.__db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status, latest_transaction_id,
+        revoked_at, created_at, updated_at
+      ) VALUES (
+        'otxn-1', 'user_1', 'trade.congress.premium.monthly', 'monthly', 'revoked', 'txn-refund',
+        '2026-01-15T00:00:00.000Z', '2026-01-01T00:00:00Z', '2026-01-15T00:00:00Z'
+      );
+    `);
+    await expect(
+      executeCommand(env, baseUser('user_1'), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/refunded or revoked/);
+    const row = env.__db
+      .prepare('SELECT status, revoked_at FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { status: string; revoked_at: string | null };
+    expect(row.status).toBe('revoked');
+    expect(row.revoked_at).toBe('2026-01-15T00:00:00.000Z');
+  });
+
   it('a renewal transaction with a newer expiry updates the same ledger row', async () => {
     verifyAppleSignedJws.mockResolvedValueOnce(activeTransaction({ transactionId: 'txn-1', expiresDate: FUTURE_MS }));
     const env = await fakeEnv();

@@ -238,4 +238,32 @@ describe('POST /entitlements/apple/redeem — no session required', () => {
       .get('otxn-anon-1') as { user_id: string | null };
     expect(row.user_id).toBe('user_owner');
   });
+
+  it('refuses to flip a webhook-revoked anonymous row back to active by replaying the original JWS', async () => {
+    verifyAppleSignedJws.mockResolvedValue(
+      activeTransaction({
+        transactionId: 'txn-1',
+        purchaseDate: Date.parse('2026-01-01T00:00:00.000Z'),
+      }),
+    );
+    const env = await fakeEnv();
+    env.__db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status, latest_transaction_id,
+        revoked_at, created_at, updated_at
+      ) VALUES (
+        'otxn-anon-1', NULL, 'trade.congress.premium.monthly', 'monthly', 'revoked', 'txn-refund',
+        '2026-01-15T00:00:00.000Z', '2026-01-01T00:00:00Z', '2026-01-15T00:00:00Z'
+      );
+    `);
+    const res = await post(buildApp(), env, { signedTransaction: 'a.b.c' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/refunded or revoked/);
+    const row = env.__db
+      .prepare('SELECT status, revoked_at FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-anon-1') as { status: string; revoked_at: string | null };
+    expect(row.status).toBe('revoked');
+    expect(row.revoked_at).toBe('2026-01-15T00:00:00.000Z');
+  });
 });
