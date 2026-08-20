@@ -93,6 +93,33 @@ export function appleStatusGrantsAccess(status: AppleSubscriptionStatus): boolea
   return status === 'active' || status === 'grace_period';
 }
 
+/**
+ * Client redeem/restore presents the original StoreKit JWS, which usually
+ * has no `revocationDate` even after Apple's REFUND/REVOKE webhook has
+ * already marked the ledger revoked. Replaying that JWS must not flip
+ * `status` back to `active`. A later purchase on the same
+ * `originalTransactionId` (new `transactionId` and `purchaseDate` after
+ * `revokedAt`) is allowed so a genuine resubscribe can restore without
+ * waiting for DID_RENEW.
+ */
+export function clientRedeemWouldResurrectRevoked(
+  existing: AppleSubscriptionRecord | null,
+  incoming: { transactionId?: string | null; purchaseDateMs?: number | null },
+): boolean {
+  if (!existing || existing.status !== 'revoked') return false;
+  const incomingTxn = incoming.transactionId ?? '';
+  const existingTxn = existing.latestTransactionId ?? '';
+  const purchaseMs = incoming.purchaseDateMs ?? Number.NaN;
+  const revokedMs = existing.revokedAt ? Date.parse(existing.revokedAt) : Number.NaN;
+  const isNewerPurchase =
+    incomingTxn.length > 0 &&
+    incomingTxn !== existingTxn &&
+    Number.isFinite(purchaseMs) &&
+    Number.isFinite(revokedMs) &&
+    purchaseMs > revokedMs;
+  return !isNewerPurchase;
+}
+
 export async function getAppleSubscription(
   env: Env,
   originalTransactionId: string,
