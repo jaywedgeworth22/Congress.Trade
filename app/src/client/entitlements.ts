@@ -25,7 +25,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
-import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
 import { issueDeviceEntitlementToken } from '../billing/deviceEntitlement.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 
@@ -70,6 +70,16 @@ export async function redeemAppleEntitlementAnonymously(c: Context<{ Bindings: E
     return errorResponse(c, err);
   }
   const { transaction, plan, originalTransactionId } = verified;
+
+  const existing = await getAppleSubscription(c.env, originalTransactionId);
+  if (
+    clientRedeemWouldResurrectRevoked(existing, {
+      transactionId: transaction.transactionId,
+      purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
+    })
+  ) {
+    return c.json({ error: 'this Apple subscription was refunded or revoked' }, 400);
+  }
 
   const txnLimited = await rateLimit(c.env, 'apple-anon-redeem-txn', originalTransactionId, TXN_LIMIT, TXN_WINDOW_SEC);
   if (!txnLimited.ok) {
