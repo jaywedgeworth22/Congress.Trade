@@ -73,6 +73,8 @@ import {
   webhookTargetLengthError,
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
+import { apnsLaneErrorIsRecent, inspectApnsFanoutDiagnostics, resolveApnsConfig } from '../delivery/apnsFanout.ts';
+import { apnsConfigured } from '../shared/apns.ts';
 import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
 import { runFmpSenateRecovery } from '../backfill/fmpSenateRecovery.ts';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
@@ -4202,6 +4204,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY is not available to this Worker runtime',
     });
 
+    const apnsConfig = await resolveApnsConfig(c.env);
+    const apnsReady = apnsConfigured(apnsConfig);
+    const apnsFanout = await inspectApnsFanoutDiagnostics(c.env).catch(() => null);
+    const apnsLaneError = apnsFanout?.lastLaneError ?? null;
+    const apnsLaneErrorRecent = apnsLaneErrorIsRecent(apnsLaneError?.at, now);
+    const apnsQueryError = apnsFanout && !apnsFanout.queryOk ? apnsFanout.queryError : null;
+    const apnsErrorCount = (apnsLaneErrorRecent ? 1 : 0) + (apnsQueryError ? 1 : 0);
+    const apnsNoteParts = [
+      apnsReady ? 'APNs credentials present' : 'APNs credentials are not available to this runtime',
+      `${apnsFanout?.activeDevices ?? 0} active device${(apnsFanout?.activeDevices ?? 0) === 1 ? '' : 's'}`,
+    ];
+    if (apnsQueryError) apnsNoteParts.push(`trade query failed: ${apnsQueryError}`);
+    else if (apnsFanout) apnsNoteParts.push('trade query ok');
+    if (apnsLaneErrorRecent) apnsNoteParts.push(`last lane error: ${apnsLaneError.message}`);
+    else if (apnsLaneError) apnsNoteParts.push(`last lane error (older than 24h): ${apnsLaneError.message}`);
+    connections.push({
+      id: 'delivery:apns',
+      label: 'APNs Fan-out',
+      status: apnsErrorCount > 0
+        ? 'error'
+        : !apnsReady
+          ? 'warn'
+          : (apnsFanout?.activeDevices ?? 0) === 0
+            ? 'warn'
+            : connectionStatus(true, 0, apnsFanout?.lastTradeAt ?? apnsFanout?.lastReviewAt ?? null),
+      configured: apnsReady,
+      lastUsedAt: apnsFanout?.lastTradeAt ?? apnsFanout?.lastReviewAt ?? null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: apnsErrorCount,
+      note: apnsNoteParts.join('; '),
+    });
+
     connections.push({
       id: 'auth:google',
       label: 'Google Sign-In',
@@ -4240,6 +4276,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
 
     const errors: DiagnosticError[] = [];
+    if (apnsQueryError) {
+      errors.push({
+        at: now.toISOString(),
+        area: 'APNs Fan-out',
+        severity: 'error',
+        subject: 'apns_fanout',
+        message: apnsQueryError,
+      });
+    }
+    if (apnsLaneErrorRecent && apnsLaneError) {
+      errors.push({
+        at: apnsLaneError.at,
+        area: 'APNs Fan-out',
+        severity: 'error',
+        subject: 'apns_fanout',
+        message: apnsLaneError.message,
+      });
+    }
     for (const source of secretStatus.sources) {
       if (source.configured && !source.ok) {
         errors.push({
