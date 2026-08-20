@@ -3313,7 +3313,9 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
     expect(DASHBOARD_HTML).toContain('class="acct-desktop"');
-    expect(DASHBOARD_HTML).toContain('class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu"');
+    // "Account menu" (not "Menu") — a truer accessible name once the button
+    // can render the signed-in user's avatar instead of the ☰ glyph.
+    expect(DASHBOARD_HTML).toContain('class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu"');
     expect(DASHBOARD_HTML).toContain('id="acctMobileMenu"');
     expect(DASHBOARD_HTML).toContain('function toggleAcctMobileMenu()');
     // Mobile dropdown reuses the exact same theme handlers (themeRowHtml()),
@@ -3539,9 +3541,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(fn).not.toMatch(/fc-trail[^"]*"[^>]*data-(asset|member|txid)/);
   });
 
-  it('keeps .acct-hamburger a capsule tap target but with NO ring/circle at rest (owner punch list #1)', () => {
+  it('keeps .acct-hamburger a >=44x44 capsule tap target but with NO ring/circle at rest (owner punch list #1)', () => {
+    // 44x44 (not 38x38) so the tap target stays a11y-sized even when the
+    // button renders a smaller (28x28) avatar photo instead of the glyph.
     expect(DASHBOARD_HTML).toContain(
-      '.acct-hamburger {\n    width:38px; height:38px; border:none; border-radius: var(--radius-pill);',
+      '.acct-hamburger {\n    width:44px; height:44px; border:none; border-radius: var(--radius-pill);',
     );
     // No border color at all (was var(--border), a blue-tinted gray that read
     // as a stray blue circle) — background stays transparent until hover/open.
@@ -5799,5 +5803,147 @@ describe('remove Largest Buys/Sells from Trends (issue #2019)', () => {
     expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
     expect(DASHBOARD_HTML).toContain('function loadTrends()');
     expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
+  });
+});
+
+/**
+ * Regression cover for the LIVE mobile tab bar bug: PR #2075 swapped the
+ * view tabs from <button> to <a href> for crawlability, which silently
+ * dropped the UA button's auto-centered label (an <a> inherits
+ * text-align:start), leaving every icon/label flush left in its fixed-dock
+ * grid cell on mobile.  Also covers the two owner-requested chrome fixes
+ * that shipped alongside the fix: the six-tab (signed-in admin) dock
+ * shrinking to fit instead of assuming four tabs, and the mobile hamburger
+ * button becoming the account avatar for signed-in users with a photo.
+ */
+describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar hamburger', () => {
+  it('gives nav.tabs a a real text-align:center in the base (all-widths) rule, not just the mobile media query', () => {
+    expect(DASHBOARD_HTML).toContain(
+      'A <button> centers its label via the UA stylesheet; an <a> inherits',
+    );
+    const navTabsA = DASHBOARD_HTML.slice(
+      DASHBOARD_HTML.indexOf('nav.tabs a {'),
+      DASHBOARD_HTML.indexOf('nav.tabs a:hover'),
+    );
+    expect(navTabsA).toContain('text-align: center;');
+  });
+
+  it('shrinks the six-tab (signed-in admin) mobile dock via :has() rather than assuming four tabs', () => {
+    // :has() reacts to the same [hidden] toggle the admin-tab JS already
+    // flips, so six-tab detection needs no dedicated class or extra JS.
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a {');
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {');
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {');
+    expect(DASHBOARD_HTML).toContain('font-size: clamp(8px, 2.3vw, 9px);');
+    // The default badge offset (right: max(4px, calc(50% - 22px))) assumes
+    // the four-tab ~97.5px cell and crowds the centered icon on six ~53-65px
+    // cells, so the six-tab case pins it to a fixed corner inset instead.
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,');
+    expect(DASHBOARD_HTML).toContain('right: 3px;');
+    // Measured live at 390px and 320px (Chrome DevTools MCP, six tabs
+    // visible, see .review-shots/tabbar/after-{390,320}-6tab.png): the
+    // longest data-mobile label ("Directory", 9 chars) renders at ~40.6px
+    // (390px viewport, 63px available) and ~36.7px (320px viewport, 51.3px
+    // available) — comfortably one line at the clamp's own floor, so
+    // text-overflow:ellipsis on nav.tabs a::after stays a last resort for
+    // pathological cases, not the normal six-tab render path.
+    expect(DASHBOARD_HTML).toContain(
+      'nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+    );
+  });
+
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+
+  function loadAccountSandbox(): (me: unknown) => string {
+    const html = DASHBOARD_HTML;
+    const src = [
+      'var CAPTURED_HTML = "";',
+      'function el(id) { if (id !== "acct") return null; return { set innerHTML(v) { CAPTURED_HTML = v; }, get innerHTML() { return CAPTURED_HTML; } }; }',
+      'var ME = { user: null, entitlement: {} };',
+      'function checkoutConfigured() { return false; }',
+      'function themeRowHtml() { return ""; }',
+      'function adminMenuHtml() { return ""; }',
+      'function acctMobileDisclaimerHtml() { return ""; }',
+      'function canManageSubscription() { return false; }',
+      extractFn(html, 'esc'),
+      extractFn(html, 'initials'),
+      extractFn(html, 'renderAccount'),
+      'return function (me) { ME.user = me; ME.entitlement = (me && me.entitlement) || {}; renderAccount(); return CAPTURED_HTML; };',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source, see comment above
+    const factory = new Function(src);
+    return factory() as (me: unknown) => string;
+  }
+
+  // Isolate just the <button id="acctHamburgerBtn">...</button> markup so
+  // assertions can't accidentally match the desktop avatar menu button,
+  // which renders the same avatar markup elsewhere in the signed-in case.
+  function hamburgerButtonHtml(fullHtml: string): string {
+    const idIdx = fullHtml.indexOf('id="acctHamburgerBtn"');
+    const btnStart = fullHtml.lastIndexOf('<button', idIdx);
+    const btnEnd = fullHtml.indexOf('</button>', idIdx) + '</button>'.length;
+    return fullHtml.slice(btnStart, btnEnd);
+  }
+
+  it('renders the ☰ glyph on the mobile hamburger button for signed-out visitors', () => {
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(render(null));
+    expect(btn).toContain('>&#9776;</button>');
+    expect(btn).not.toContain('<img');
+    expect(btn).toContain('aria-label="Account menu"');
+    expect(btn).toContain('aria-expanded="false"');
+    expect(btn).toContain('aria-controls="acctMobileMenu"');
+  });
+
+  it('renders the account avatar <img> on the hamburger button for a signed-in user with a picture', () => {
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(
+      render({ name: 'Jay Wedgeworth', email: 'jay@example.com', picture: 'https://example.com/photo.jpg' }),
+    );
+    expect(btn).not.toContain('&#9776;');
+    expect(btn).toContain('<img src="https://example.com/photo.jpg" alt="" onerror="this.remove()"');
+    // Initials render underneath the photo (same DOM as the desktop avatar),
+    // so the existing onerror="this.remove()" degrades to initials, not an
+    // empty circle, if the photo URL ever 404s.
+    expect(btn).toContain('>JW<img');
+    expect(btn).toContain('aria-label="Account menu"');
+  });
+
+  it('falls back to the initials avatar (not the glyph) on the hamburger button for a signed-in user with no picture', () => {
+    // Chosen fallback for signed-in + no ME.user.picture: reuse the same
+    // initials avatar as the photo case (not the ☰ glyph) for a consistent
+    // "you are signed in" affordance on mobile.
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(render({ name: 'Jay Wedgeworth', email: 'jay@example.com' }));
+    expect(btn).not.toContain('&#9776;');
+    expect(btn).not.toContain('<img');
+    expect(btn).toContain('class="avatar lg"');
+    expect(btn).toContain('>JW</span>');
+    expect(btn).toContain('aria-label="Account menu"');
+  });
+
+  it('keeps .acct-hamburger a real <button> with a >=44x44 tap target and stable aria wiring regardless of content', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu" onclick="toggleAcctMobileMenu()">',
+    );
+    expect(DASHBOARD_HTML).toContain('.acct-hamburger {\n    width:44px; height:44px;');
   });
 });
