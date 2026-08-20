@@ -234,7 +234,7 @@ describe('admin diagnostics API', () => {
             if (key === 'apns:fanout:last_error') {
               return JSON.stringify({
                 message: 'no such column: f.id',
-                at: '2026-08-19T12:00:00.000Z',
+                at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
               });
             }
             return null;
@@ -270,6 +270,67 @@ describe('admin diagnostics API', () => {
         }),
       ]),
     );
+    expect(JSON.stringify(body)).not.toContain('BEGIN PRIVATE KEY');
+  });
+
+  it('does not count a stored APNs lane error older than 24h', async () => {
+    const res = await app.request(
+      '/diagnostics',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        DB: {
+          prepare(sql: string) {
+            return {
+              params: [] as unknown[],
+              bind(...params: unknown[]) {
+                this.params = params;
+                return this;
+              },
+              async all<T>() {
+                return { results: [] as T[] };
+              },
+              async first<T>() {
+                if (/FROM push_devices/i.test(sql)) return { n: 1 } as T;
+                return null as T | null;
+              },
+              async run() {
+                return { success: true, meta: { changes: 0 } };
+              },
+              sql,
+            };
+          },
+        },
+        CONFIG_KV: {
+          async get(key: string) {
+            if (key === 'apns:fanout:last_error') {
+              return JSON.stringify({
+                message: 'stale join error',
+                at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(),
+              });
+            }
+            return null;
+          },
+          async put() {
+            return undefined;
+          },
+        },
+      } as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      connections: Array<{ id: string; status: string; errorsLast24h: number; note: string }>;
+      errors: Array<{ area: string; subject: string; message: string }>;
+    };
+    const card = body.connections.find((c) => c.id === 'delivery:apns');
+    expect(card).toMatchObject({
+      id: 'delivery:apns',
+      errorsLast24h: 0,
+    });
+    expect(card?.status).not.toBe('error');
+    expect(card?.note).toContain('older than 24h');
+    expect(body.errors.filter((e) => e.subject === 'apns_fanout' && e.message === 'stale join error')).toEqual([]);
     expect(JSON.stringify(body)).not.toContain('BEGIN PRIVATE KEY');
   });
 

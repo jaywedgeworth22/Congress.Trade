@@ -73,8 +73,8 @@ import {
   webhookTargetLengthError,
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
-import { inspectApnsFanoutDiagnostics } from '../delivery/apnsFanout.ts';
-import { apnsConfigured, loadApnsConfig } from '../shared/apns.ts';
+import { apnsLaneErrorIsRecent, inspectApnsFanoutDiagnostics, resolveApnsConfig } from '../delivery/apnsFanout.ts';
+import { apnsConfigured } from '../shared/apns.ts';
 import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
 import { runFmpSenateRecovery } from '../backfill/fmpSenateRecovery.ts';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
@@ -3624,12 +3624,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'USAGE_MONITOR_INGEST_URL',
       'USAGE_MONITOR_INGEST_TOKEN',
       'USAGE_MONITOR_ENVIRONMENT',
-      'APNS_KEY_ID',
-      'APNS_TEAM_ID',
-      'APNS_BUNDLE_ID',
-      'APNS_P8',
-      'APNS_PRIVATE_KEY',
-      'APNS_PRIVATE_KEY_B64',
     ]);
     const secretStatus = getSecretResolverStatus(c.env);
     const adminConfig = await adminRuntimeConfig(c.env);
@@ -4210,26 +4204,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY is not available to this Worker runtime',
     });
 
-    const apnsConfig = loadApnsConfig({
-      APNS_KEY_ID: runtimeSecrets.APNS_KEY_ID ?? c.env.APNS_KEY_ID,
-      APNS_TEAM_ID: runtimeSecrets.APNS_TEAM_ID ?? c.env.APNS_TEAM_ID,
-      APNS_BUNDLE_ID: runtimeSecrets.APNS_BUNDLE_ID ?? c.env.APNS_BUNDLE_ID,
-      APNS_P8: runtimeSecrets.APNS_P8 ?? c.env.APNS_P8,
-      APNS_PRIVATE_KEY: runtimeSecrets.APNS_PRIVATE_KEY ?? c.env.APNS_PRIVATE_KEY,
-      APNS_PRIVATE_KEY_B64: runtimeSecrets.APNS_PRIVATE_KEY_B64 ?? c.env.APNS_PRIVATE_KEY_B64,
-    });
+    const apnsConfig = await resolveApnsConfig(c.env);
     const apnsReady = apnsConfigured(apnsConfig);
     const apnsFanout = await inspectApnsFanoutDiagnostics(c.env).catch(() => null);
     const apnsLaneError = apnsFanout?.lastLaneError ?? null;
+    const apnsLaneErrorRecent = apnsLaneErrorIsRecent(apnsLaneError?.at, now);
     const apnsQueryError = apnsFanout && !apnsFanout.queryOk ? apnsFanout.queryError : null;
-    const apnsErrorCount = (apnsLaneError ? 1 : 0) + (apnsQueryError ? 1 : 0);
+    const apnsErrorCount = (apnsLaneErrorRecent ? 1 : 0) + (apnsQueryError ? 1 : 0);
     const apnsNoteParts = [
       apnsReady ? 'APNs credentials present' : 'APNs credentials are not available to this runtime',
       `${apnsFanout?.activeDevices ?? 0} active device${(apnsFanout?.activeDevices ?? 0) === 1 ? '' : 's'}`,
     ];
     if (apnsQueryError) apnsNoteParts.push(`trade query failed: ${apnsQueryError}`);
     else if (apnsFanout) apnsNoteParts.push('trade query ok');
-    if (apnsLaneError) apnsNoteParts.push(`last lane error: ${apnsLaneError.message}`);
+    if (apnsLaneErrorRecent) apnsNoteParts.push(`last lane error: ${apnsLaneError.message}`);
+    else if (apnsLaneError) apnsNoteParts.push(`last lane error (older than 24h): ${apnsLaneError.message}`);
     connections.push({
       id: 'delivery:apns',
       label: 'APNs Fan-out',
@@ -4296,7 +4285,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         message: apnsQueryError,
       });
     }
-    if (apnsLaneError) {
+    if (apnsLaneErrorRecent && apnsLaneError) {
       errors.push({
         at: apnsLaneError.at,
         area: 'APNs Fan-out',

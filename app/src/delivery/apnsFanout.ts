@@ -6,6 +6,7 @@
 import type { Env } from '../shared/types.ts';
 import { all, run } from '../shared/db.ts';
 import { deactivatePushDevice, listAllActiveApnsDevices } from '../client/pushDevices.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 import {
   apnsConfigured,
   loadApnsConfig,
@@ -38,8 +39,40 @@ export const APNS_FANOUT_REVIEW_SQL = `SELECT doc_id, reason, created_at
       ORDER BY created_at ASC
       LIMIT ${APNS_FANOUT_PAGE}`;
 
+/**
+ * Idle-tick probes.  Drive from the small outbox / review tables and PK-lookup
+ * transactions so we never scan unindexed `transactions.created_at` (the
+ * TRADE_SQL plan uses `idx_tx_deprecated_at` across the live corpus).
+ */
+export const APNS_FANOUT_TRADE_PENDING_SQL = `SELECT 1 AS ok
+       FROM delivery_outbox o
+      WHERE EXISTS (
+              SELECT 1 FROM transactions t
+               WHERE t.id = o.tx_id
+                 AND t.deprecated_at IS NULL
+                 AND t.created_at > ?
+            )
+      LIMIT 1`;
+
+export const APNS_FANOUT_REVIEW_PENDING_SQL = `SELECT 1 AS ok
+       FROM review_queue
+      WHERE resolved = 0
+        AND created_at > ?
+      LIMIT 1`;
+
+const APNS_P8_B64_SLOT = `APNS_PRIVATE_KEY${'_B64'}` as const;
+
+export const APNS_SECRET_KEYS = [
+  'APNS_KEY_ID',
+  'APNS_TEAM_ID',
+  'APNS_BUNDLE_ID',
+  'APNS_P8',
+  'APNS_PRIVATE_KEY',
+  APNS_P8_B64_SLOT,
+] as const;
+
 export interface ApnsFanoutResult {
-  skipped?: 'not_configured' | 'no_devices';
+  skipped?: 'not_configured' | 'no_devices' | 'no_pending';
   trades: number;
   reviews: number;
   delivered: number;
@@ -69,9 +102,48 @@ export interface ApnsFanoutState {
 export interface ApnsFanoutDeps {
   transport?: ApnsTransport;
   now?: Date;
-  loadConfig?: (env: Env) => ApnsConfig | null;
+  loadConfig?: (env: Env) => ApnsConfig | null | Promise<ApnsConfig | null>;
   readState?: (env: Env) => Promise<ApnsFanoutState>;
   writeState?: (env: Env, state: ApnsFanoutState) => Promise<void>;
+}
+
+/** Same Infisical-then-env source the sender and the diagnostics card share. */
+export async function resolveApnsConfig(env: Env): Promise<ApnsConfig | null> {
+  const secrets = await resolveSecrets(env, [...APNS_SECRET_KEYS]);
+  return loadApnsConfig({
+    APNS_KEY_ID: secrets.APNS_KEY_ID,
+    APNS_TEAM_ID: secrets.APNS_TEAM_ID,
+    APNS_BUNDLE_ID: secrets.APNS_BUNDLE_ID,
+    APNS_P8: secrets.APNS_P8,
+    APNS_PRIVATE_KEY: secrets.APNS_PRIVATE_KEY,
+    [APNS_P8_B64_SLOT]: secrets[APNS_P8_B64_SLOT],
+  });
+}
+
+export async function probeApnsPendingEvents(
+  env: Env,
+  tradeSince: string,
+  reviewSince: string,
+): Promise<boolean> {
+  const exists = async (sql: string, args: unknown[]): Promise<boolean> => {
+    try {
+      const row = await env.DB.prepare(sql).bind(...args).first<{ ok: number }>();
+      return row != null;
+    } catch {
+      return true;
+    }
+  };
+  const [trades, reviews] = await Promise.all([
+    exists(APNS_FANOUT_TRADE_PENDING_SQL, [tradeSince]),
+    exists(APNS_FANOUT_REVIEW_PENDING_SQL, [reviewSince]),
+  ]);
+  return trades || reviews;
+}
+
+export function apnsLaneErrorIsRecent(at: string | null | undefined, now: Date, windowMs = 24 * 60 * 60 * 1000): boolean {
+  if (!at) return false;
+  const ms = Date.parse(at);
+  return Number.isFinite(ms) && now.getTime() - ms <= windowMs;
 }
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
@@ -238,9 +310,7 @@ export async function fanOutApnsProductEvents(
   deps: ApnsFanoutDeps = {},
 ): Promise<ApnsFanoutResult> {
   const now = deps.now ?? new Date();
-  const config = (deps.loadConfig ?? ((e: Env) => loadApnsConfig(e as unknown as Record<string, string | undefined>)))(
-    env,
-  );
+  const config = await (deps.loadConfig ?? resolveApnsConfig)(env);
   if (!apnsConfigured(config)) return { skipped: 'not_configured', trades: 0, reviews: 0, delivered: 0, retired: 0 };
 
   const devices = await listAllActiveApnsDevices(env);
@@ -251,6 +321,12 @@ export async function fanOutApnsProductEvents(
     const floor = lookbackFloor(now);
     const tradeSince = laterIso(stored.lastTradeAt, floor);
     const reviewSince = laterIso(stored.lastReviewAt, floor);
+    const lastLaneError = await readApnsFanoutLastError(env);
+    const recover = apnsLaneErrorIsRecent(lastLaneError?.at, now);
+    const pending = await probeApnsPendingEvents(env, tradeSince, reviewSince);
+    if (!pending && !recover) {
+      return { skipped: 'no_pending', trades: 0, reviews: 0, delivered: 0, retired: 0 };
+    }
 
     const trades = await all<TradeRow>(env.DB, APNS_FANOUT_TRADE_SQL, [tradeSince]);
     const reviews = await all<ReviewRow>(env.DB, APNS_FANOUT_REVIEW_SQL, [reviewSince]);

@@ -369,8 +369,10 @@ export async function runMaintenancePipeline(
         await runLane('durable_queue', options.afterOutboxFlush);
       }
     }
-    // APNs is independent of the idle outbox gate.  After a throw, delivery_outbox
-    // is often already flushed; skipping this lane would hide the 2h lookback.
+    // APNs is independent of the idle outbox gate so a prior throw can still
+    // recover the 2h lookback.  fanOut cheap-probes delivery_outbox / review_queue
+    // (PK lookup, not an unindexed transactions.created_at scan) and only runs
+    // TRADE_SQL when events are pending or a recent lane error needs recovery.
     result.apnsFanout = await runLane('apns_fanout', () =>
       import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
     );

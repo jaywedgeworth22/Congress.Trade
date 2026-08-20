@@ -10,10 +10,10 @@ Existing `apnsFanout.test.ts` stubbed `env.DB.prepare`, so CI stayed green.
 
 ## Files changed
 
-- `app/src/delivery/apnsFanout.ts` — join is `f.bioguide_id = t.filer_id`; COALESCE(display_name, full_name) unchanged.  Lane errors persist to CONFIG_KV.  Diagnostics inspector probes the real SQL.
+- `app/src/delivery/apnsFanout.ts` — join is `f.bioguide_id = t.filer_id`; COALESCE(display_name, full_name) unchanged.  Lane errors persist to CONFIG_KV.  Diagnostics inspector probes the real SQL.  Default config comes from `resolveApnsConfig` (Infisical cache, same as the card).  Idle ticks cheap-probe `delivery_outbox` / `review_queue` and skip `APNS_FANOUT_TRADE_SQL` unless events are pending or a lane error is still inside 24h.
 - `app/src/delivery/__tests__/apnsFanout.test.ts` — real-SQL test against migrated in-memory SQLite (fails on `f.id`, passes on `bioguide_id`) plus an end-to-end send through the real query.
-- `app/src/admin/routes.ts` — `GET /api/admin/diagnostics` connection `delivery:apns` plus `errors[]` rows for query/lane failures.
-- `app/src/deno/scheduledTick.ts` — `apns_fanout` runs even when the idle outbox probe skips flush, so a prior throw can recover the 2h lookback.
+- `app/src/admin/routes.ts` — `GET /api/admin/diagnostics` connection `delivery:apns` plus `errors[]` rows for query/lane failures.  Card uses `resolveApnsConfig`.  Stored lane errors older than 24h do not set `errorsLast24h` / `error`.
+- `app/src/deno/scheduledTick.ts` — `apns_fanout` still runs when the idle outbox probe skips flush; the expensive trade scan is gated inside fan-out.
 
 ## Verification
 
