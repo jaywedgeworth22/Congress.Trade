@@ -551,7 +551,8 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   const year = Number(
     new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' }).format(now),
   );
-  const all = await fetchHouseIndex(year);
+  const houseRelayUrl = env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL;
+  const all = await fetchHouseIndex(year, { relayUrl: houseRelayUrl });
   const ptrs = all.filter((f) => f.isPtr);
 
   const byDoc = new Map<string, DiscoveredFiling>();
@@ -576,7 +577,7 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
       const lastIso = env.CONFIG_KV ? await env.CONFIG_KV.get(HOUSE_PRIOR_YEAR_KV_KEY) : null;
       const lastMs = lastIso ? Date.parse(lastIso) : NaN;
       if (!Number.isFinite(lastMs) || now.getTime() - lastMs >= HOUSE_PRIOR_YEAR_FETCH_INTERVAL_MS) {
-        const prior = (await fetchHouseIndex(year - 1)).filter((f) => f.isPtr);
+        const prior = (await fetchHouseIndex(year - 1, { relayUrl: houseRelayUrl })).filter((f) => f.isPtr);
         for (const f of prior) {
           if (!byDoc.has(f.pipelineDocId)) byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
@@ -977,7 +978,7 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   // EXECUTIVE (OGE 278-T) ---------------------------------------------------
   // Same decideSourcePoll + last_attempt failure skip as House/Senate.
   // Fail-soft: an OGE outage must never affect House/Senate polling above.
-  // Server fetches extapps2.oge.gov directly; relay is tried first when set.
+  // Server-first: direct extapps2.oge.gov, then Mac/scout relay if direct fails.
   try {
     const lastExec = await getLastPollAt(env, 'oge');
     const execDecision = decideSourcePoll({

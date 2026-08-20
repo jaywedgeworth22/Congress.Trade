@@ -24,9 +24,10 @@
  *    Filings can still land weeks after the trades (STOCK Act 45-day clock,
  *    often exceeded with late fees) — that is filing latency, not a reason
  *    to poll slowly.
- *  - Fetch: if OGE_RELAY_URL or INGEST_RELAY_URL is set, try Mac/scout
- *    POST /fetch-oge first, then fall back to direct extapps2.oge.gov.
- *    The server can fetch OGE without the Mac.  Not Mac-only.
+ *  - Fetch: server-first.  Direct extapps2.oge.gov, then Mac/scout
+ *    POST /fetch-oge if OGE_RELAY_URL or INGEST_RELAY_URL is set and
+ *    direct fails.  The server can reach OGE.  Senate is the exception
+ *    that stays relay-first (Imperva 403s the box).
  *  - EIGA §105(c) restricts certain uses of these reports; congress.trade
  *    disseminates them to the general public in the site's existing
  *    educational framing, mirroring its House/Senate STOCK Act posture.
@@ -255,32 +256,41 @@ export async function fetchOgeExecutiveFilings(
 
   for (const url of urls) {
     let htmlText: string | null = null;
+    let directError: Error | null = null;
 
-    if (relayUrl) {
-      try {
-        const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-oge`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ url, responseType: 'text' }),
-        }, { service: 'filing-discovery', operation: 'fetch-executive-index-relay' }, fetchImpl);
-        if (relayRes.ok) {
-          const json = (await relayRes.json()) as { body?: string };
-          if (json.body) htmlText = json.body;
-        }
-      } catch {
-        /* Fall back to direct fetch if relay attempt fails */
-      }
-    }
-
-    if (!htmlText) {
+    try {
       const res = await trackedFetch(url, {
         headers: {
           'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
           accept: 'text/html',
         },
       }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
-      if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
-      htmlText = await res.text();
+      if (res.ok) {
+        htmlText = await res.text();
+      } else {
+        directError = new Error(`OGE index HTTP ${res.status}`);
+      }
+    } catch (err) {
+      directError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (htmlText == null && relayUrl) {
+      const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-oge`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url, responseType: 'text' }),
+      }, { service: 'filing-discovery', operation: 'fetch-executive-index-relay' }, fetchImpl);
+      if (relayRes.ok) {
+        const json = (await relayRes.json()) as { body?: string };
+        if (json.body) htmlText = json.body;
+      }
+      if (htmlText == null) {
+        throw directError ?? new Error(`OGE relay HTTP ${relayRes.status}`);
+      }
+    }
+
+    if (htmlText == null) {
+      throw directError ?? new Error('OGE index fetch failed');
     }
 
     const filings = parseOgeIndex(htmlText);

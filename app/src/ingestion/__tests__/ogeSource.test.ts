@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fetchOgeExecutiveFilings,
   ogeDocId,
   ogeFiledDateFromName,
   parseOgeIndex,
@@ -134,5 +135,52 @@ describe('pollOgeExecutive enablement (cadence lives in decideSourcePoll)', () =
 
     expect(out).toEqual([]);
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe('OGE fetch order (server-first, relay fallback)', () => {
+  const INDEX = 'https://extapps2.oge.gov/201/Presiden.nsf/index';
+  const RELAY = 'https://scout.jays.services';
+
+  function env(): any {
+    return {
+      OGE_INDEX_URL: INDEX,
+      OGE_RELAY_URL: RELAY,
+    };
+  }
+
+  it('attempts direct extapps2 before the Mac relay', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      if (String(input).includes('/fetch-oge')) throw new Error('relay should not run when direct succeeds');
+      return new Response('<html>no matching filings</html>', { status: 200 });
+    }) as typeof fetch;
+
+    const out = await fetchOgeExecutiveFilings(env(), fetchImpl);
+
+    expect(out).toEqual([]);
+    expect(calls).toEqual([INDEX]);
+  });
+
+  it('falls back to the relay when direct fails', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/fetch-oge')) {
+        return new Response(JSON.stringify({ body: '<html>no matching filings</html>' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('blocked', { status: 403 });
+    }) as typeof fetch;
+
+    const out = await fetchOgeExecutiveFilings(env(), fetchImpl);
+
+    expect(out).toEqual([]);
+    expect(calls[0]).toBe(INDEX);
+    expect(calls[1]).toBe(`${RELAY}/fetch-oge`);
   });
 });

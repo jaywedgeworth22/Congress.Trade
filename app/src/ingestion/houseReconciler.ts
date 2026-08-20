@@ -8,7 +8,9 @@ export async function runHouseReconciler(env: Env, now: Date): Promise<void> {
     new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' }).format(now),
   );
   
-  const bulkFilings = (await fetchHouseIndex(year)).filter((f) => f.isPtr);
+  const bulkFilings = (await fetchHouseIndex(year, {
+    relayUrl: env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL,
+  })).filter((f) => f.isPtr);
   const bulkByDocId = new Map(bulkFilings.map((f) => [f.pipelineDocId, f]));
 
   // Fetch all house filings from the DB for this year

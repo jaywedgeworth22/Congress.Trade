@@ -166,9 +166,12 @@ budget-status polling, see Tunables & flags below)
   `OGE_MAX_VISION_BYTES`.  Cadence is `probeSchedule` / `decideSourcePoll`
   (weekday 15-minute coverage floor, weekend hourly like House; politeness
   floor 60s).  `OGE_POLL_INTERVAL_SEC` is **unused** — a leftover Infisical
-  `21600` must not re-impose 6h.  Fetch is relay-first when
-  `OGE_RELAY_URL` / `INGEST_RELAY_URL` is set, then direct
-  `extapps2.oge.gov`.  Failure skip matches House/Senate `last_attempt`
+  `21600` must not re-impose 6h.  Fetch is **server-first**: direct
+  `extapps2.oge.gov`, then Mac/scout `POST /fetch-oge` if
+  `OGE_RELAY_URL` / `INGEST_RELAY_URL` is set and direct fails.  House
+  bulk index is the same (direct Clerk, then `/fetch-house`).  Senate
+  eFD stays **relay-first** — Imperva 403s the box.  Failure skip
+  matches House/Senate `last_attempt`
   (never a shorter-than-success 10-minute backoff).
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`

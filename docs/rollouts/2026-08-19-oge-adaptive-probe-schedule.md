@@ -19,9 +19,10 @@ House/Senate (`last_attempt` skip).  The skip wait is
 success interval, not a shorter 10-minute backoff, and never retries
 every minute.
 
-Fetch is unchanged: if `OGE_RELAY_URL` or `INGEST_RELAY_URL` is set, try
-Mac/scout `POST /fetch-oge` first, then fall back to direct
-`extapps2.oge.gov`.  The server can fetch OGE without the Mac.
+Fetch order (2026-08-20): **server-first** for OGE and House — direct
+host, then Mac/scout relay if direct fails.  Senate eFD stays
+**relay-first** because Imperva 403s the box datacenter IP.  The server
+can fetch OGE without the Mac.
 
 `OGE_POLL_INTERVAL_SEC` is **unused**.  Adaptive schedule is the
 authority.  Leftover Infisical `OGE_POLL_INTERVAL_SEC=21600` must not
