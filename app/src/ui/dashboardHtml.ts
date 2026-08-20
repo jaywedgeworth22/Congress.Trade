@@ -9347,8 +9347,8 @@ function stampWindowChips() {
    inside the feed's own cadence, so nothing here goes visibly stale. */
 var AGET_CACHE = {};
 var AGET_TTL_MS = 60000;
-/* APICONTRACT-01: never let `?` ride inside a path segment. If a caller
-   percent-encoded `member/id?window=` into the path, peel it back out. */
+/* APICONTRACT-01: never let a query marker ride inside a path segment. If a
+   caller percent-encoded member/id?window= into the path, peel it back out. */
 function analyticsUrl(path) {
   var decoded = path;
   try { decoded = decodeURIComponent(path); } catch (e) { /* keep raw */ }

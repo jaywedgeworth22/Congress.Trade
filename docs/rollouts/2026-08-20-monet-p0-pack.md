@@ -31,6 +31,8 @@ npm run typecheck
 npm test
 ```
 
+2026-08-20: `deno check src/deno/main.ts` clean.  `vitest run` 262 files / 3218 tests.
+
 `POST /api/webhooks/apple` on the production app is 503 (IAP off) or 400/200 — never 404.
 
 ## Follow-ups
