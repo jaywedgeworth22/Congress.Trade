@@ -21,7 +21,7 @@ Key reminders:
   script you add must be listed on `~/apps/MAC-LOCAL-PROCESSES.md` and the
   pinned Apple Note `⭐️ Background Jobs Master List`.  Say
   always-on vs on-demand.  See `AGENTS.md` § Mac local processes.
-- Work from `app/` for the Cloudflare Worker application.
+- Work from `app/` for the Coolify Deno app (production is not a Cloudflare Worker).
 - Treat the backend as the source of truth. The planned SwiftUI
   clients must share one `/api/client/v1/*` contract and one server-side
   command/status model; do not create client-only scraping, provider-secret, or
@@ -50,9 +50,9 @@ Key reminders:
 - **Always commit + land finished work** (owner preference): commit → push
   branch → open/update PR → merge when CI green. Do not leave finished work
   only local. Canonical: `/Users/jay/apps/AGENT-SYNC.md`.
-- Still require production intent for: remote D1/schema traps, production
+- Still require production intent for: production schema/migrate, production
   backfills, queue drains, production ingestion crawlers, `scripts/provision.sh`,
-  and any force-push / data wipe. For finished safe app code, follow PR →
+  and any force-push / data wipe.  For finished safe app code, follow PR →
   `main` → `bash app/scripts/ship.sh` (do not park it).
 - If you add a migration, add the SQL under `app/migrations/`, update
   `POST /api/admin/migrate` in `app/src/admin/routes.ts`, and note the
