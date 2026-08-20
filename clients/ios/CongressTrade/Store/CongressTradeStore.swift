@@ -51,6 +51,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var isCreatingDelivery = false
     @Published private(set) var subscriptionIDsInFlight: Set<String> = []
     @Published private(set) var isLoggingOut = false
+    @Published private(set) var isDeletingAccount = false
     @Published private(set) var feedNotice: String?
     @Published private(set) var watchlistNotice: String?
     @Published private(set) var deliveryNotice: String?
@@ -1339,6 +1340,33 @@ final class CongressTradeStore: ObservableObject {
         } catch {
             adminNotice = error.localizedDescription
         }
+    }
+
+    func deleteAccount() async {
+        guard hasStoredSessionToken, !isDeletingAccount, !isLoggingOut else { return }
+        isDeletingAccount = true
+        watchlistNotice = nil
+        do {
+            let response = try await api.deleteAccount()
+            guard response.command.status == .succeeded, response.result?.deleted != false else {
+                throw APIError.server(
+                    status: 400,
+                    message: response.command.error ?? "Could not delete this account",
+                    retryAfterSeconds: nil
+                )
+            }
+            try api.tokenStore.clear()
+            hasStoredSessionToken = false
+            bootstrap = nil
+            subscriptions = []
+            commands = []
+            watchlist = []
+            watchlistNotice = "Account deleted."
+            await refresh()
+        } catch {
+            watchlistNotice = "Could not delete this account.  \(error.localizedDescription)"
+        }
+        isDeletingAccount = false
     }
 
     func signOut() async {
