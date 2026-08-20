@@ -38,7 +38,9 @@ Supersedes the same-day flat 15-minute default in
 
 - `app/src/ingestion/probeSchedule.ts` — `executive` profile + per-source floors
 - `app/src/ingestion/watcher.ts` — `decideSourcePoll` accepts `executive`
-- `app/src/ingestion/ogeSource.ts` — no live interval gate
+- `app/src/ingestion/ogeSource.ts` — no live interval gate; server-first fetch
+- `app/src/ingestion/houseSource.ts` — server-first bulk index (not Mac-only)
+- `app/src/ingestion/senateSource.ts` — stays relay-first (Imperva exception)
 - `app/src/shared/types.ts` — `OGE_POLL_INTERVAL_SEC` marked unused
 - `app/docs/probe-schedule.md`, `app/docs/config-registry.md`, `app/.dev.vars.example`
 
