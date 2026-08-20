@@ -3992,6 +3992,56 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
   });
 
+  it('#2071 keeps the connecting banner out of the header-to-filter gap', () => {
+    expect(DASHBOARD_HTML).not.toContain('Connecting to the live feed');
+    const document = parse(DASHBOARD_HTML);
+    const main = document.querySelector('main');
+    expect(main).not.toBeNull();
+    const mainKids = [...(main?.childNodes ?? [])].filter((n) => n.nodeType === 1);
+    expect(mainKids[0]?.tagName.toLowerCase()).toBe('section');
+    expect(mainKids.some((n) => n.id === 'banner' || /\bbanner\b/.test(n.getAttribute('class') || ''))).toBe(false);
+
+    const tradesFilters = document.querySelector('#tradesToolbars');
+    const trendsFilters = document.querySelector('#trendsSharedFilters');
+    const tradesBanner = tradesFilters?.nextElementSibling;
+    const trendsBanner = trendsFilters?.nextElementSibling;
+    expect(tradesBanner?.classList.contains('feed-banner')).toBe(true);
+    expect(tradesBanner?.getAttribute('hidden')).not.toBeNull();
+    expect(tradesBanner?.textContent ?? '').toBe('');
+    expect(trendsBanner?.id).toBe('banner');
+    expect(trendsBanner?.classList.contains('feed-banner')).toBe(true);
+    expect(trendsBanner?.getAttribute('hidden')).not.toBeNull();
+    expect(trendsBanner?.textContent ?? '').toBe('');
+
+    // DO-NOT-BREAK: moving the banner must not rewrite the mobile extras grid.
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
+    expect(DASHBOARD_HTML).toContain('#tradesExtraFilters #qSearchField { grid-column: 1;');
+  });
+
+  it('#2071 setBanner still paints a real error on both feed-banner slots', () => {
+    const match = DASHBOARD_HTML.match(/function setBanner\(text, isErr\) \{[\s\S]*?\n\}/);
+    expect(match).not.toBeNull();
+    const nodes = [
+      { hidden: true, textContent: '', style: { display: 'none' }, className: 'banner feed-banner', id: 'banner' },
+      { hidden: true, textContent: '', style: { display: 'none' }, className: 'banner feed-banner', id: '' },
+    ];
+    const setBanner = new Function(
+      'document',
+      `${match![0]}\nreturn setBanner;`,
+    )({ querySelectorAll: () => nodes }) as (text: string, isErr?: boolean) => void;
+
+    setBanner('');
+    expect(nodes.every((n) => n.hidden && n.textContent === '' && n.style.display === 'none')).toBe(true);
+
+    setBanner('Could not load the live feed: HTTP 500', true);
+    expect(nodes[0].hidden).toBe(false);
+    expect(nodes[0].style.display).toBe('block');
+    expect(nodes[0].className).toBe('banner feed-banner err');
+    expect(nodes[0].textContent).toBe('Could not load the live feed: HTTP 500');
+    expect(nodes[1].textContent).toBe(nodes[0].textContent);
+    expect(nodes[1].className).toBe('banner feed-banner err');
+  });
+
   it('#10 keeps the timeframe pill as the first control on both the Trades and Trends shared filter rows', () => {
     const feedRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters" id="tradesSharedFilters">([\s\S]*?)<div class="filter-groups">/);
     const trendsRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">([\s\S]*?)<div class="filter-groups">/);
