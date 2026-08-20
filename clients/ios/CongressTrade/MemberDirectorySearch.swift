@@ -514,6 +514,6 @@ private struct AssetSearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

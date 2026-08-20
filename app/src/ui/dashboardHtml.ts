@@ -126,21 +126,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be light|dark|system.
+  // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be
+  // light|sepia|dark|system.  Sepia is a complete warm palette, not a mix.
   (function () {
     var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
-      if (s === 'light' || s === 'dark' || s === 'system') pref = s;
+      if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') pref = s;
     } catch (e) {}
     var effective = pref;
     if (pref === 'system') {
       effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
-    document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
+    var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-pref', pref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', effective === 'dark' ? '#08111f' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
   })();
 </script>
 <style>
@@ -204,6 +206,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   html[data-theme="light"] header.top {
     background: #fff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* Sepia is a complete warm paper palette (owner 2026-08-20): page, header,
+     cards, filters, and drawers all share these tokens — never mix with cool
+     light chrome. */
+  html[data-theme="sepia"] {
+    --bg:        #f3e6d0;
+    --bg-2:      #ead9bc;
+    --panel:     #fbf4e8;
+    --panel-2:   #f0e4cc;
+    --border:    #d4b896;
+    --text:      #3b2714;
+    --text-dim:  #6b4e32;
+    --accent:    #9a5a24;
+    --buy:       #3f6b2a;
+    --sell:      #b42318;
+    --exch:      #9a5a24;
+    --warn:      #9a5a24;
+    --good:      #3f6b2a;
+    --rival:     #8a7058;
+  }
+  html[data-theme="sepia"] header.top {
+    background: var(--panel);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -312,13 +338,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
-  :root { --ct-header-h: 68px; --ct-main-pad: 35px; }
+  :root { --ct-header-h: 68px; --ct-main-pad: 35px; --trends-gap: 24px; }
   html { overflow-x: clip; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
+    width: 100%; box-sizing: border-box;
   }
   /* Zilla Slab (Typotheque/Mozilla), SIL OFL 1.1 — latin 700 subset via @fontsource, embedded so no external font request. */
   @font-face { font-family:'Zilla Slab'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/zilla-slab-700.woff2) format('woff2'); }
@@ -401,6 +428,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 19px; margin-bottom: 32px; }
+  #view-trends #trKpis.grid-cards {
+    margin-top: var(--trends-gap);
+    margin-bottom: var(--trends-gap);
+  }
   /* Owner follow-up batch #4 (+ #12, which shares this class): .v already
      declared flex:1 but .card was never a flex container, so it silently did
      nothing — grid row-stretch (the default align-items:stretch on
@@ -409,10 +440,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      display:flex;flex-direction:column makes flex:1 actually apply, and
      align-content:center on .v centers the (possibly-wrapping) value line
      within whatever height the row stretches it to. */
-  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }
+  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; container-type: inline-size; }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
-  .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 0; flex-wrap: nowrap; text-align: center; line-height: 1.2; min-width: 0; overflow: hidden; }
+  .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 0; }
+  .card .v .net, .card .v .kpi-money { white-space: nowrap; max-width: 100%; overflow: hidden; font-size: clamp(12px, 16cqi, 28px); }
+  .card .v .bp { display: inline-flex; align-items: baseline; white-space: nowrap; line-height: 1; }
+  .card .v .bp-n { font-size: 28px; font-weight: 700; }
+  .card .v .bp-pct { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: 0; }
+  .card .v .bp-w { font-size: 16px; font-weight: 600; margin-left: 0.12em; color: var(--text-dim); }
+  .kpi-note { font-size: 10px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
@@ -597,6 +634,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html[data-theme="light"] .trades-card .tkr-logo.transparent,
   html[data-theme="light"] .trades-card .tkr-logo.mono,
   html[data-theme="light"] .trades-card .tkr-logo.glyph { background:#fff; }
+  html[data-theme="sepia"] .trades-card .tkr-logo.transparent,
+  html[data-theme="sepia"] .trades-card .tkr-logo.mono,
+  html[data-theme="sepia"] .trades-card .tkr-logo.glyph { background: var(--panel); }
   /* Asset-cell ticker→name spacing (the user asked for a clear gap). */
   .tkr-gap { display: inline-block; width: .65em; }
   /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
@@ -873,7 +913,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
   .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 29px; }
-  .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 29px; }
+  .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: var(--trends-gap, 24px); }
   .trend-grid-split > *, .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
   @media (max-width: 760px) {
     .trend-grid2 { grid-template-columns: 1fr; }
@@ -1373,7 +1413,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-mobile-menu .who { display:flex; align-items:center; gap:8px; padding:2px 2px 4px; }
   .acct-mobile-menu .footer-disclaimer { font-size:11px; line-height:1.45; color:var(--text-dim); padding:8px 2px 2px; border-top:1px solid var(--border); margin-top:2px; }
   html[data-theme="dark"] { color-scheme: dark; }
-  html[data-theme="light"] { color-scheme: light; }
+  html[data-theme="light"], html[data-theme="sepia"] { color-scheme: light; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:80; padding:18px; }
   .overlay.open { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:520px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
@@ -1504,7 +1544,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     display: inline-flex; align-items: center; gap: 6px;
     height: var(--control-h, 34px); padding: 0 10px;
     border: 1px solid var(--border); border-radius: 999px;
-    background: var(--panel-2); color: var(--text);
+    background: var(--panel); color: var(--text);
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   }
   .ios-filter-btn::after {
@@ -1515,18 +1555,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
      pill on the default chrome even when a filter is active.  The label
      already shows House / D / Buys. */
-  .ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+  .ios-filter.has-sel .ios-filter-btn { background: var(--panel); color: var(--text); border-color: var(--border); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
     padding: 6px; border-radius: 16px;
-    background: color-mix(in srgb, var(--panel) 78%, transparent);
-    -webkit-backdrop-filter: saturate(180%) blur(22px);
-    backdrop-filter: saturate(180%) blur(22px);
-    border: 1px solid color-mix(in srgb, #fff 40%, var(--border));
-    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+    background: var(--panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 40px rgba(0,0,0,.12);
     display: flex; flex-direction: column; gap: 2px;
   }
   .ios-filter-pop[hidden] { display: none; }
@@ -1647,10 +1687,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      same 35px inset as the header wordmark. */
   .trades-toolbars, #trendsSharedFilters {
     position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
-    width: 100vw; max-width: 100vw; box-sizing: border-box;
-    margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw);
+    box-sizing: border-box;
+    width: calc(100% + 2 * var(--ct-main-pad, 35px));
+    max-width: none;
+    margin-left: calc(-1 * var(--ct-main-pad, 35px));
+    margin-right: calc(-1 * var(--ct-main-pad, 35px));
     margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
-    padding: 10px 35px 12px;
+    padding: 10px var(--ct-main-pad, 35px) 12px;
     background: var(--panel);
     border-bottom: none;
     overflow: visible;
@@ -1660,6 +1703,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #trendsSharedFilters.toolbar { margin-bottom: 0; }
   html[data-theme="light"] .trades-toolbars,
   html[data-theme="light"] #trendsSharedFilters { background: #fff; }
+  html[data-theme="sepia"] .trades-toolbars,
+  html[data-theme="sepia"] #trendsSharedFilters { background: var(--panel); }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
      toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
      search fields + Search button. display:contents on both toolbar divs
@@ -1887,12 +1932,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: color-mix(in srgb, #fff 94%, transparent);
       border-top-color: rgba(23, 32, 46, 0.2);
     }
+    html[data-theme="sepia"] nav.tabs {
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border-top-color: color-mix(in srgb, var(--border) 80%, transparent);
+    }
     html[data-theme="dark"] nav.tabs {
       background: color-mix(in srgb, #1c1c1e 94%, transparent);
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       nav.tabs { background: var(--panel); }
       html[data-theme="light"] nav.tabs { background: #fff; }
+      html[data-theme="sepia"] nav.tabs { background: var(--panel); }
     }
     nav.tabs a {
       padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;
@@ -2616,7 +2666,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ---- 16. Desktop/tablet spacing + numeric edge alignment -------------- */
 @media (min-width: 721px) {
   #view-trends .section { padding: 19px 20px; }
-  #view-trends .trend-grid2, #view-trends .trend-grid-split { gap: 18px; }
+  #view-trends .trend-grid2, #view-trends .trend-grid-split { gap: var(--trends-gap, 24px); }
   /* Hang the standalone Est-Volume figures on a shared right edge. Identity
      and split-mix cells keep their left flow. (#trTickers td.est is hidden
      on phones by the base 720px query — this guard never undoes that.) */
@@ -2666,6 +2716,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
+    html[data-theme="sepia"] header.top { background: var(--panel); }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -2729,14 +2780,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
   /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
-     generic toolbar-select width:100% mobile shorthand. */
+     generic toolbar-select width:100% mobile shorthand.  Do not set
+     width/max-width here — that used to beat the padding-based full-bleed
+     (calc(100% + 2*pad)) and left a gap on the right of the filter bar. */
   #view-trends #trendsSharedFilters,
   #view-trades #tradesSharedFilters {
     display: flex !important;
     flex-wrap: nowrap !important;
     align-items: center;
-    width: auto;
-    max-width: 100%;
   }
   #view-trends #trendsSharedFilters > .pill-select.pill-cal,
   #view-trades #tradesSharedFilters > .pill-select.pill-cal {
@@ -3007,7 +3058,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </table>
         </div>
       </details>
-      <details class="section trends-fold" open>
+      <details class="section trends-fold" id="trRisingFold" open>
         <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap">
           <table id="tableTrTrending">
@@ -3490,8 +3541,7 @@ ${speedProofSectionHtml(true)}
   </section>
 
   <footer class="site-footer">
-    <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
-    <span>Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.</span>
+    <span>Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency</span>
     <span class="footer-links">
       <a href="/privacy-policy">Privacy</a>
       <a href="/terms-of-service">Terms</a>
@@ -4201,12 +4251,12 @@ function fmtMs(ms) {
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
-    if (s === 'light' || s === 'dark' || s === 'system') return s;
+    if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
   return 'light';
 }
 function resolveTheme(pref) {
-  if (pref === 'dark' || pref === 'light') return pref;
+  if (pref === 'dark' || pref === 'light' || pref === 'sepia') return pref;
   try {
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
   } catch (e) {}
@@ -4220,12 +4270,16 @@ function themeIconSvg(kind) {
   if (kind === 'system') {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
   }
+  if (kind === 'sepia') {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><path d="M4 20h16" opacity=".45"/></svg>';
+  }
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
 }
 function themeSegHtml(pref) {
   pref = pref || readThemePref();
   var opts = [
     { id: 'light', label: 'Light' },
+    { id: 'sepia', label: 'Sepia' },
     { id: 'dark', label: 'Dark' },
     { id: 'system', label: 'System' }
   ];
@@ -4243,15 +4297,15 @@ function themeRowHtml(pref, hideLabel) {
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
 function applyTheme(effective) {
-  effective = effective === 'dark' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', effective);
+  var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
   var logo = document.getElementById('brandLogo');
   if (logo) {
-    var next = effective === 'light' ? logo.getAttribute('data-src-light') : logo.getAttribute('data-src-dark');
+    var next = theme === 'dark' ? logo.getAttribute('data-src-dark') : logo.getAttribute('data-src-light');
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', effective === 'light' ? '#eff3f8' : '#08111f');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
   syncThemeSegUI();
 }
 function syncThemeSegUI() {
@@ -4263,7 +4317,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+  if (pref !== 'light' && pref !== 'sepia' && pref !== 'dark' && pref !== 'system') pref = 'light';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -4272,9 +4326,9 @@ function setThemePref(pref) {
 }
 /* Keep applyTheme(t) usable for callers that pass effective light|dark. */
 function toggleTheme() {
-  /* legacy: cycle light → dark → system → light */
+  /* legacy: cycle light → sepia → dark → system → light */
   var pref = readThemePref();
-  var next = pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
+  var next = pref === 'light' ? 'sepia' : pref === 'sepia' ? 'dark' : pref === 'dark' ? 'system' : 'light';
   setThemePref(next);
 }
 (function bindSystemThemeListener() {
@@ -6339,6 +6393,7 @@ function consensusFieldDisplay(value) {
 }
 /* True iff a field's vote reached a strict majority (unanimous counts). */
 function consensusHasMajority(fc) { return Boolean(fc && fc.total > 0 && fc.votes * 2 > fc.total); }
+function consensusHasPlurality(fc) { return Boolean(fc && fc.value != null && fc.votes >= 2); }
 /* Green (every present model agreed), amber (a majority agreed, some
    dissent), or red (no majority — contested) — reuses the file's existing
    .conf hi/mid/lo confidence-color classes rather than new ones. */
@@ -6612,7 +6667,8 @@ function consensusQueuedRowKey(t) {
 /* Missing/null consensus values never erase a queued value. Contested rows are
    handled as a whole below and do not call this helper. */
 function consensusFieldValueForEdit(fc, queuedValue, rowAuthoritative) {
-  return (rowAuthoritative && consensusHasMajority(fc) && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
+  var usable = consensusHasMajority(fc) || consensusHasPlurality(fc);
+  return (rowAuthoritative && usable && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
 }
 function consensusApplyField(target, row, consensusField, editField, rowAuthoritative) {
   var fc = row.fields && row.fields[consensusField];
@@ -9564,7 +9620,7 @@ function trParams() {
   if (ty) p += '&type=' + encodeURIComponent(ty);
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
+var TR_WINDOW_LABELS = { '1d': 'Day', '7d': 'Week', '30d': 'Month', '90d': '3 Months', '180d': '6 Months', '365d': 'Year', '1825d': '5 Years', 'this_cy': 'This Year', 'last_cy': 'Last Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Headings no longer stamp the
@@ -9626,7 +9682,8 @@ function usdC(n) {
 function netHtml(n) {
   n = Number(n || 0);
   var cls = n > 0 ? 'pos' : n < 0 ? 'neg' : '';
-  return '<span class="net ' + cls + '">' + (n > 0 ? '+' : '') + usdC(n) + '</span>';
+  var sign = n > 0 ? '+' : n < 0 ? '\u2212' : '';
+  return '<span class="net kpi-money ' + cls + '">' + sign + usdC(Math.abs(n)) + '</span>';
 }
 function splitBar(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
@@ -9807,10 +9864,17 @@ function timeChartHtml(series, labelStep, metric) {
 
 function loadTrends() {
   stampWindowChips();
+  syncRisingActivityVisibility();
   loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
   loadTrConflicts();
+}
+function syncRisingActivityVisibility() {
+  var fold = el('trRisingFold');
+  if (!fold) return;
+  var hide = getTrWindow() === 'all';
+  fold.hidden = hide;
 }
 
 /* Committee sector conflicts for the current Trends window. */
@@ -10823,7 +10887,7 @@ function loadTrSummary() {
   ]).then(function (res) {
     var d = res[0];
     var s = res[1].series || [];
-    var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    var sent = d.netSentiment == null ? '—' : '<span class="bp"><span class="bp-n">' + Math.round(d.netSentiment * 100) + '</span><span class="bp-pct">%</span><span class="bp-w">buys</span></span>';
     var sparkNetFlow = sparklineHtml(s, 'netflow');
     var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
@@ -10862,6 +10926,12 @@ function loadTrTickers() {
 }
 
 function loadTrTrending() {
+  syncRisingActivityVisibility();
+  if (getTrWindow() === 'all') {
+    var empty = el('trTrending');
+    if (empty) empty.innerHTML = '';
+    return;
+  }
   var body = el('trTrending');
   body.innerHTML = skRows(4, 6);
   var queryParams = trParams() + '&limit=12';
@@ -11422,7 +11492,7 @@ function openAsset(ticker) {
   aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
     var s = d.summary || {};
     var companyName = (d.ref && d.ref.companyName) || d.name || '';
-    var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
+    var sent = s.netSentiment == null ? '—' : '<span class="bp"><span class="bp-n">' + Math.round(s.netSentiment * 100) + '</span><span class="bp-pct">%</span><span class="bp-w">buys</span></span>';
     var ser = d.series || [];
     var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
     // Owner punch list #18(b): bars are one bucket wide — say so once when the
@@ -11885,7 +11955,7 @@ function loadMe() {
 /* Owner punch list #3: the short footer disclaimer line, reused verbatim
    inside the hamburger menu (below Sign Out / below Upgrade). Keep this in
    sync with the <footer> markup's own copy of the same sentence. */
-var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets';
+var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
 function acctMobileDisclaimerHtml() {
   return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
 }
