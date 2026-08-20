@@ -4,7 +4,10 @@ import {
   documentPdfGateWantsJson,
   documentPdfUpgradePayload,
 } from '../rest.ts';
+import { issueDeviceEntitlementToken } from '../../billing/deviceEntitlement.ts';
 import type { Env } from '../../shared/types.ts';
+
+const TEST_DEVICE_ENTITLEMENT_SECRET = 'test-device-entitlement-secret';
 
 describe('documentPdfGateWantsJson', () => {
   it('is true for Bearer and for Accept: application/pdf', () => {
@@ -24,9 +27,18 @@ describe('documentPdfGateWantsJson', () => {
   });
 });
 
-function pdfEnv(opts: { plan?: 'premium' | 'free'; stored?: boolean } = {}): Env {
+interface AnonSubOpts {
+  originalTransactionId: string;
+  status: 'active' | 'expired' | 'revoked' | 'grace_period' | 'billing_retry';
+  expiresDate?: string | null;
+}
+
+function pdfEnv(
+  opts: { plan?: 'premium' | 'free'; stored?: boolean; anonSub?: AnonSubOpts | null } = {},
+): Env {
   const stored = opts.stored !== false;
   return {
+    APPLE_DEVICE_ENTITLEMENT_SECRET: TEST_DEVICE_ENTITLEMENT_SECRET,
     CONFIG_KV: {
       get: async (key: string) => {
         if (key === 'sess:free-token') return JSON.stringify({ userId: 'user_free' });
@@ -69,7 +81,29 @@ function pdfEnv(opts: { plan?: 'premium' | 'free'; stored?: boolean } = {}): Env
               plan: isPremium ? 'monthly' : null,
             };
           }
-          if (/FROM apple_subscriptions/i.test(sql)) return null;
+          if (/FROM apple_subscriptions/i.test(sql)) {
+            const { anonSub } = opts;
+            if (!anonSub || String(this.params[0] ?? '') !== anonSub.originalTransactionId) return null;
+            return {
+              original_transaction_id: anonSub.originalTransactionId,
+              user_id: null,
+              product_id: 'trade.congress.premium.monthly',
+              plan: 'monthly',
+              status: anonSub.status,
+              environment: 'Production',
+              latest_transaction_id: anonSub.originalTransactionId,
+              purchase_date: '2026-01-01T00:00:00.000Z',
+              expires_date: anonSub.expiresDate === undefined ? '2099-01-01T00:00:00.000Z' : anonSub.expiresDate,
+              auto_renew_status: 1,
+              auto_renew_product_id: null,
+              revoked_at: null,
+              revocation_reason: null,
+              last_notification_type: null,
+              last_notification_subtype: null,
+              created_at: '2026-01-01T00:00:00.000Z',
+              updated_at: '2026-01-01T00:00:00.000Z',
+            };
+          }
           return null;
         },
         async all() {
@@ -157,5 +191,79 @@ describe('GET /documents/:docId/pdf (APPSTORECOMPLIANCE-01/02)', () => {
     expect(res.headers.get('location')).toBeNull();
     const body = (await res.json()) as { error?: string };
     expect(body.error).toMatch(/not fetched|not found/i);
+  });
+});
+
+describe('GET /documents/:docId/pdf — anonymous device entitlement (Guideline 5.1.1(v))', () => {
+  const anonSub: AnonSubOpts = { originalTransactionId: 'otxn-anon-1', status: 'active' };
+
+  it('serves the PDF to a signed-out device carrying a valid device entitlement token', async () => {
+    const env = pdfEnv({ anonSub });
+    const token = await issueDeviceEntitlementToken(env, anonSub.originalTransactionId, '2099-01-01T00:00:00.000Z');
+    expect(token).toBeTruthy();
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/documents/H-2026-1/pdf',
+      { headers: { accept: 'application/pdf', 'X-Apple-Device-Entitlement': token! } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/pdf');
+  });
+
+  it('refuses a device token whose ledger row was revoked after the token was issued', async () => {
+    const revoked: AnonSubOpts = { ...anonSub, originalTransactionId: 'otxn-anon-revoked', status: 'revoked' };
+    const env = pdfEnv({ anonSub: revoked });
+    const token = await issueDeviceEntitlementToken(env, revoked.originalTransactionId, '2099-01-01T00:00:00.000Z');
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/documents/H-2026-1/pdf',
+      { headers: { accept: 'application/pdf', 'X-Apple-Device-Entitlement': token! } },
+      env,
+    );
+    expect(res.status).toBe(402);
+  });
+
+  it('refuses a tampered device entitlement token', async () => {
+    const env = pdfEnv({ anonSub });
+    const token = await issueDeviceEntitlementToken(env, anonSub.originalTransactionId, '2099-01-01T00:00:00.000Z');
+    const tampered = token!.slice(0, -1) + (token!.endsWith('a') ? 'b' : 'a');
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/documents/H-2026-1/pdf',
+      { headers: { accept: 'application/pdf', 'X-Apple-Device-Entitlement': tampered } },
+      env,
+    );
+    expect(res.status).toBe(402);
+  });
+
+  it('refuses a device token for a transaction with no ledger row at all', async () => {
+    const env = pdfEnv({ anonSub: null });
+    const token = await issueDeviceEntitlementToken(env, 'otxn-never-redeemed', '2099-01-01T00:00:00.000Z');
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/documents/H-2026-1/pdf',
+      { headers: { accept: 'application/pdf', 'X-Apple-Device-Entitlement': token! } },
+      env,
+    );
+    expect(res.status).toBe(402);
+  });
+
+  it('a present-but-free SESSION takes priority over a valid device token (never OR the two)', async () => {
+    const env = pdfEnv({ plan: 'free', anonSub });
+    const token = await issueDeviceEntitlementToken(env, anonSub.originalTransactionId, '2099-01-01T00:00:00.000Z');
+    const app = buildRestRouter();
+    const res = await app.request(
+      'http://localhost/documents/H-2026-1/pdf',
+      {
+        headers: {
+          accept: 'application/pdf',
+          authorization: 'Bearer free-token',
+          'X-Apple-Device-Entitlement': token!,
+        },
+      },
+      env,
+    );
+    expect(res.status).toBe(402);
   });
 });
