@@ -1,5 +1,20 @@
 # Current Handoff
 
+## 2026-08-20 CLAUDE — Latency price snapshots repaired (PR pending)
+
+Pipeline recorded 7 prices out of 2955.  Rows were scheduled retrospectively so every
+`due_at` was already past and the 3-minute staleness guard correctly refused; the sole
+price source was FMP, now banned for market data.  Fix: one per-row per-tick decision -
+live quote inside the staleness window, else backfill from ST `/api/market/intraday`.
+A single empty `200 {bars:[]}` does NOT terminate a row (ST collapses every intraday
+failure into that shape until #2959 lands); empty corroborates via `backfill_attempts`.
++15m rung added.  2937 `missed_window` and 11 `fmp_quote_http_402` rows reopened.
+
+Gates: deno check clean; 273 files / 3414 tests; lint 403 = baseline.
+
+AFTER MERGE: run `POST /api/admin/migrate` - auto-deploy ships code, never schema.
+Receipt: `docs/rollouts/2026-08-20-latency-snapshot-repair.md`.
+
 ## 2026-08-20 CLAUDE — Probe-run brackets (PR pending)
 
 Competitor "lead" numbers were an artifact of our own polling.
