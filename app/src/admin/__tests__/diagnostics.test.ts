@@ -171,6 +171,12 @@ describe('admin diagnostics API', () => {
         expect.objectContaining({ id: 'cache:spx', status: 'ok', configured: true, callsToday: 0 }),
         expect.objectContaining({ id: 'cache:performance', status: 'ok', configured: true, callsToday: 0 }),
         expect.objectContaining({ id: 'telemetry:usage-monitor', status: 'error', configured: false }),
+        expect.objectContaining({
+          id: 'delivery:apns',
+          status: 'warn',
+          configured: false,
+          note: expect.stringContaining('APNs credentials are not available'),
+        }),
       ]),
     );
     expect(body.usageTelemetry).toMatchObject({
@@ -190,6 +196,81 @@ describe('admin diagnostics API', () => {
         }),
       ]),
     );
+  });
+
+  it('surfaces apns_fanout lane errors and a failed trade-query probe', async () => {
+    const res = await app.request(
+      '/diagnostics',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        DB: {
+          prepare(sql: string) {
+            return {
+              params: [] as unknown[],
+              bind(...params: unknown[]) {
+                this.params = params;
+                return this;
+              },
+              async all<T>() {
+                if (/FROM delivery_outbox o/i.test(sql) && /LEFT JOIN filers f ON f\.bioguide_id/i.test(sql)) {
+                  throw new Error('no such column: f.id');
+                }
+                return { results: [] as T[] };
+              },
+              async first<T>() {
+                if (/FROM push_devices/i.test(sql)) return { n: 1 } as T;
+                return null as T | null;
+              },
+              async run() {
+                return { success: true, meta: { changes: 0 } };
+              },
+              sql,
+            };
+          },
+        },
+        CONFIG_KV: {
+          async get(key: string) {
+            if (key === 'apns:fanout:last_error') {
+              return JSON.stringify({
+                message: 'no such column: f.id',
+                at: '2026-08-19T12:00:00.000Z',
+              });
+            }
+            return null;
+          },
+          async put() {
+            return undefined;
+          },
+        },
+      } as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      connections: Array<{ id: string; status: string; errorsLast24h: number; note: string }>;
+      errors: Array<{ area: string; subject: string; message: string }>;
+    };
+    expect(body.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'delivery:apns',
+          status: 'error',
+          errorsLast24h: 2,
+          note: expect.stringContaining('trade query failed'),
+        }),
+      ]),
+    );
+    expect(body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          area: 'APNs Fan-out',
+          subject: 'apns_fanout',
+          message: 'no such column: f.id',
+        }),
+      ]),
+    );
+    expect(JSON.stringify(body)).not.toContain('BEGIN PRIVATE KEY');
   });
 
   it('blocks Infisical secret mutation in preview before resolving credentials', async () => {

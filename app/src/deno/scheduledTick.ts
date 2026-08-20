@@ -365,13 +365,15 @@ export async function runMaintenancePipeline(
         'delivery_outbox',
         () => flushDeliveryOutbox(env, { limit: options.outboxLimit, now }),
       );
-      result.apnsFanout = await runLane('apns_fanout', () =>
-        import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
-      );
       if (options.afterOutboxFlush) {
         await runLane('durable_queue', options.afterOutboxFlush);
       }
     }
+    // APNs is independent of the idle outbox gate.  After a throw, delivery_outbox
+    // is often already flushed; skipping this lane would hide the 2h lookback.
+    result.apnsFanout = await runLane('apns_fanout', () =>
+      import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
+    );
     if (options.parkedDeliveryLimit !== undefined) {
       const limit = options.parkedDeliveryLimit;
       await runLane('parked_deliveries', () => flushParkedDeliveries(env, { limit }));
