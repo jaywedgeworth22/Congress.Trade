@@ -10,12 +10,13 @@ import SwiftUI
 /// two copies of the pricing/trial line, and they drifted (the info sheet still
 /// said "1-month free trial" months after the trial became two weeks).
 ///
-/// Every benefit line is a gate that exists in the backend today — source PDFs
-/// (`serveDocumentPdf` redirects non-premium to `/pricing`), full-history CSV
+/// Every benefit line is a gate that exists in the backend today — archived
+/// filing PDFs (`serveDocumentPdf` returns 402 JSON for Bearer / Accept: pdf;
+/// web browsers without those still 302 to `/pricing`), full-history CSV
 /// export (`/api/export/transactions.csv` → 401/402 with `feature: 'export'`),
 /// and webhook/SSE delivery (402 with `feature: 'alerts'`, capped at
 /// `MAX_SUBSCRIPTIONS_PER_USER = 2`). No scarcity, no countdown, nothing the
-/// server does not enforce.
+/// server does not enforce.  Filing PDF on iOS never opens Safari checkout.
 ///
 /// It renders in full when signed out, too: hiding what Premium is until after
 /// sign-in leaves the price and the benefits invisible to exactly the people

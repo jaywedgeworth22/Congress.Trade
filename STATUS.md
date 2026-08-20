@@ -13,7 +13,9 @@ Apple webhook is on the production Hono app.  APNs fan-out joins
 `filers.bioguide_id`.  Politician detail peels an encoded query out of the
 path.  Delivery shows the one-time secret on inline create.  Apple REFUND
 revokes; Sandbox does not grant live Premium unless `APPLE_ALLOW_SANDBOX`;
-Stripe `livemode` must match the key prefix.  Receipt:
+Stripe `livemode` must match the key prefix.  Archived Filing PDF is Premium:
+iOS fetches with Bearer + QuickLook; free/anon opens StoreKit; backend 402 JSON
+for Bearer / Accept: pdf; government Source Filing stays ungated.  Receipt:
 `docs/rollouts/2026-08-20-monet-p0-pack.md`.
 
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
