@@ -3188,7 +3188,9 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
     expect(DASHBOARD_HTML).toContain('class="acct-desktop"');
-    expect(DASHBOARD_HTML).toContain('class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu"');
+    // "Account menu" (not "Menu") — a truer accessible name once the button
+    // can render the signed-in user's avatar instead of the ☰ glyph.
+    expect(DASHBOARD_HTML).toContain('class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu"');
     expect(DASHBOARD_HTML).toContain('id="acctMobileMenu"');
     expect(DASHBOARD_HTML).toContain('function toggleAcctMobileMenu()');
     // Mobile dropdown reuses the exact same theme handlers (themeRowHtml()),
@@ -3414,9 +3416,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(fn).not.toMatch(/fc-trail[^"]*"[^>]*data-(asset|member|txid)/);
   });
 
-  it('keeps .acct-hamburger a capsule tap target but with NO ring/circle at rest (owner punch list #1)', () => {
+  it('keeps .acct-hamburger a >=44x44 capsule tap target but with NO ring/circle at rest (owner punch list #1)', () => {
+    // 44x44 (not 38x38) so the tap target stays a11y-sized even when the
+    // button renders a smaller (28x28) avatar photo instead of the glyph.
     expect(DASHBOARD_HTML).toContain(
-      '.acct-hamburger {\n    width:38px; height:38px; border:none; border-radius: var(--radius-pill);',
+      '.acct-hamburger {\n    width:44px; height:44px; border:none; border-radius: var(--radius-pill);',
     );
     // No border color at all (was var(--border), a blue-tinted gray that read
     // as a stray blue circle) — background stays transparent until hover/open.
@@ -3723,10 +3727,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (initialView === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });
@@ -4659,7 +4663,8 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
   it('verifies admin token on Save and reports accepted vs rejected in Admin Access', () => {
     expect(DASHBOARD_HTML).toContain('function setAdminTokenMsg(');
     expect(DASHBOARD_HTML).toContain('function saveAdminToken(');
-    expect(DASHBOARD_HTML).toContain("setAdminTokenMsg('Checking token…'");
+    expect(DASHBOARD_HTML).toContain('function verifyAdminToken(v, onMsg, onAccepted)');
+    expect(DASHBOARD_HTML).toContain("onMsg('Checking token…'");
     expect(DASHBOARD_HTML).toContain("Token rejected — wrong value");
     expect(DASHBOARD_HTML).toContain("Token accepted — saved in this browser.");
     expect(DASHBOARD_HTML).toContain("Cleared — no admin token stored in this browser.");
@@ -4667,6 +4672,30 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('role="status"');
     // Still uses the actionable 401 copy on other admin probes.
     expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin token in the Admin tab access box.");
+  });
+
+  it('exposes a standalone Admin Sign-In dialog so token bootstrap never requires the gated Admin tab', () => {
+    expect(DASHBOARD_HTML).toContain('function openAdminTokenDialog()');
+    expect(DASHBOARD_HTML).toContain('function saveAdminTokenFromDialog()');
+    expect(DASHBOARD_HTML).toContain('function clearAdminTokenFromDialog()');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialog"');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialogInput"');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialogMsg"');
+    expect(DASHBOARD_HTML).toContain('openAdminTokenDialog()">Admin Sign-In');
+  });
+
+  it('renders an Admin Access Control section to grant/revoke admin emails, with ADMIN_EMAILS read-only', () => {
+    expect(DASHBOARD_HTML).toContain('<h3>Admin Access Control</h3>');
+    expect(DASHBOARD_HTML).toContain('id="adminGrantEmail"');
+    expect(DASHBOARD_HTML).toContain('onclick="grantAdminEmail()"');
+    expect(DASHBOARD_HTML).toContain('id="adminListBody"');
+    expect(DASHBOARD_HTML).toContain('not editable here');
+    expect(DASHBOARD_HTML).toContain('function loadAdminList()');
+    expect(DASHBOARD_HTML).toContain('function grantAdminEmail()');
+    expect(DASHBOARD_HTML).toContain('function revokeAdminEmail(email)');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins/grant'");
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins/revoke'");
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins', { headers: adminHeaders() })");
   });
 
 
@@ -5305,10 +5334,38 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);');
   });
 
-  it('lists Admin + Review in the account menu even before canUseAdmin()', () => {
-    expect(DASHBOARD_HTML).toContain('if (!ME.user && !hasAdminToken()) return \'\'');
+  it('lists Admin + Review in the account menu only when canUseAdmin() is true', () => {
+    // Premium alone must never grant Admin / Review Queue (owner directive).
+    // A signed-in non-admin instead gets a lightweight "Admin Sign-In" entry
+    // that opens the standalone token dialog — canUseAdmin() is the gate for
+    // the real tabs, matching applyAdminVisibility().
+    expect(DASHBOARD_HTML).toContain('function adminMenuHtml(closeCall) {\n  // Premium alone never grants Admin / Review Queue');
+    expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) {');
     expect(DASHBOARD_HTML).toContain('showView(\\\'admin\\\')">Admin');
     expect(DASHBOARD_HTML).toContain('showView(\\\'review\\\')">Review Queue');
+    expect(DASHBOARD_HTML).toContain('openAdminTokenDialog()">Admin Sign-In');
+    expect(DASHBOARD_HTML).not.toContain('if (!ME.user && !hasAdminToken()) return \'\'');
+  });
+
+  it('never force-unhides an admin-gated tab for a non-admin caller of showView()', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "if (btn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n    showToast('Admin access required.', true);\n    return;\n  }",
+    );
+  });
+
+  it('blocks a signed-in non-admin from activating an admin-gated tab, not just a signed-out visitor', () => {
+    expect(DASHBOARD_HTML).not.toContain(
+      "if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin() && !ME.user && !hasAdminToken())",
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      if (ME.user) { showToast('Admin access required.', true); } else { openLogin(); }\n      return;\n    }",
+    );
+  });
+
+  it('falls back a direct ?view=admin/?view=review boot navigation to Trends for a non-admin', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      initialView = 'trends';\n    }",
+    );
   });
 
   it('uses fat mask arrows with green up and red down on the side filter', () => {
@@ -5639,5 +5696,191 @@ describe('remove Largest Buys/Sells from Trends (issue #2019)', () => {
     expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
     expect(DASHBOARD_HTML).toContain('function loadTrends()');
     expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
+  });
+});
+
+/**
+ * Regression cover for the LIVE mobile tab bar bug: PR #2075 swapped the
+ * view tabs from <button> to <a href> for crawlability, which silently
+ * dropped the UA button's auto-centered label (an <a> inherits
+ * text-align:start), leaving every icon/label flush left in its fixed-dock
+ * grid cell on mobile.  Also covers the two owner-requested chrome fixes
+ * that shipped alongside the fix: the six-tab (signed-in admin) dock
+ * shrinking to fit instead of assuming four tabs, and the mobile hamburger
+ * button becoming the account avatar for signed-in users with a photo.
+ */
+describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar hamburger', () => {
+  it('gives nav.tabs a a real text-align:center in the base (all-widths) rule, not just the mobile media query', () => {
+    expect(DASHBOARD_HTML).toContain(
+      'A <button> centers its label via the UA stylesheet; an <a> inherits',
+    );
+    const navTabsA = DASHBOARD_HTML.slice(
+      DASHBOARD_HTML.indexOf('nav.tabs a {'),
+      DASHBOARD_HTML.indexOf('nav.tabs a:hover'),
+    );
+    expect(navTabsA).toContain('text-align: center;');
+  });
+
+  it('shrinks the six-tab (signed-in admin) mobile dock via :has() rather than assuming four tabs', () => {
+    // :has() reacts to the same [hidden] toggle the admin-tab JS already
+    // flips, so six-tab detection needs no dedicated class or extra JS.
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a {');
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {');
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {');
+    expect(DASHBOARD_HTML).toContain('font-size: clamp(8px, 2.3vw, 9px);');
+    // The default badge offset (right: max(4px, calc(50% - 22px))) assumes
+    // the four-tab ~97.5px cell and crowds the centered icon on six ~53-65px
+    // cells, so the six-tab case pins it to a fixed corner inset instead.
+    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,');
+    expect(DASHBOARD_HTML).toContain('right: 3px;');
+    // Measured live at 390px and 320px (Chrome DevTools MCP, six tabs
+    // visible, see .review-shots/tabbar/after-{390,320}-6tab.png): the
+    // longest data-mobile label ("Directory", 9 chars) renders at ~40.6px
+    // (390px viewport, 63px available) and ~36.7px (320px viewport, 51.3px
+    // available) — comfortably one line at the clamp's own floor, so
+    // text-overflow:ellipsis on nav.tabs a::after stays a last resort for
+    // pathological cases, not the normal six-tab render path.
+    expect(DASHBOARD_HTML).toContain(
+      'nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+    );
+  });
+
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+
+  function loadAccountSandbox(): (me: unknown) => string {
+    const html = DASHBOARD_HTML;
+    const src = [
+      'var CAPTURED_HTML = "";',
+      'function el(id) { if (id !== "acct") return null; return { set innerHTML(v) { CAPTURED_HTML = v; }, get innerHTML() { return CAPTURED_HTML; } }; }',
+      'var ME = { user: null, entitlement: {} };',
+      'function checkoutConfigured() { return false; }',
+      'function themeRowHtml() { return ""; }',
+      'function adminMenuHtml() { return ""; }',
+      'function acctMobileDisclaimerHtml() { return ""; }',
+      'function canManageSubscription() { return false; }',
+      extractFn(html, 'esc'),
+      extractFn(html, 'initials'),
+      extractFn(html, 'renderAccount'),
+      'return function (me) { ME.user = me; ME.entitlement = (me && me.entitlement) || {}; renderAccount(); return CAPTURED_HTML; };',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source, see comment above
+    const factory = new Function(src);
+    return factory() as (me: unknown) => string;
+  }
+
+  // Isolate just the <button id="acctHamburgerBtn">...</button> markup so
+  // assertions can't accidentally match the desktop avatar menu button,
+  // which renders the same avatar markup elsewhere in the signed-in case.
+  function hamburgerButtonHtml(fullHtml: string): string {
+    const idIdx = fullHtml.indexOf('id="acctHamburgerBtn"');
+    const btnStart = fullHtml.lastIndexOf('<button', idIdx);
+    const btnEnd = fullHtml.indexOf('</button>', idIdx) + '</button>'.length;
+    return fullHtml.slice(btnStart, btnEnd);
+  }
+
+  function loadAdminMenuSandbox(): (me: { email?: string; admin?: { allowed: boolean } } | null, hasToken: boolean) => string {
+    const html = DASHBOARD_HTML;
+    const src = [
+      'var ME = { user: null, admin: { allowed: false } };',
+      'var STORED_TOKEN = "";',
+      'function getAdminToken() { return STORED_TOKEN; }',
+      extractFn(html, 'hasAdminToken'),
+      extractFn(html, 'canUseAdmin'),
+      extractFn(html, 'adminMenuHtml'),
+      'return function (me, hasToken) { ME.user = me; ME.admin = (me && me.admin) || { allowed: false }; STORED_TOKEN = hasToken ? "tok" : ""; return adminMenuHtml(""); };',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source, see comment above
+    const factory = new Function(src);
+    return factory() as (me: { email?: string; admin?: { allowed: boolean } } | null, hasToken: boolean) => string;
+  }
+
+  it('shows Admin + Review Queue only for a real admin — Premium alone never grants them', () => {
+    const render = loadAdminMenuSandbox();
+
+    // Signed-in Premium, non-admin: no Admin / Review Queue buttons, only
+    // the lightweight token-bootstrap entry.
+    const premiumNonAdmin = render({ email: 'premium@example.com', admin: { allowed: false } }, false);
+    expect(premiumNonAdmin).not.toContain('>Admin</button>');
+    expect(premiumNonAdmin).not.toContain('>Review Queue</button>');
+    expect(premiumNonAdmin).toContain('>Admin Sign-In</button>');
+    expect(premiumNonAdmin).toContain('openAdminTokenDialog()');
+
+    // A real admin session (ME.admin.allowed): full Admin + Review Queue.
+    const admin = render({ email: 'admin@example.com', admin: { allowed: true } }, false);
+    expect(admin).toContain('>Admin</button>');
+    expect(admin).toContain('>Review Queue</button>');
+    expect(admin).not.toContain('Admin Sign-In');
+
+    // Signed-out with no stored token: nothing at all (no bootstrap entry
+    // for anonymous visitors).
+    expect(render(null, false)).toBe('');
+
+    // Signed-out but a previously-saved ADMIN_TOKEN already unlocks
+    // canUseAdmin(): full menu, same as a real admin session.
+    const tokenOnly = render(null, true);
+    expect(tokenOnly).toContain('>Admin</button>');
+    expect(tokenOnly).toContain('>Review Queue</button>');
+  });
+
+  it('renders the ☰ glyph on the mobile hamburger button for signed-out visitors', () => {
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(render(null));
+    expect(btn).toContain('>&#9776;</button>');
+    expect(btn).not.toContain('<img');
+    expect(btn).toContain('aria-label="Account menu"');
+    expect(btn).toContain('aria-expanded="false"');
+    expect(btn).toContain('aria-controls="acctMobileMenu"');
+  });
+
+  it('renders the account avatar <img> on the hamburger button for a signed-in user with a picture', () => {
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(
+      render({ name: 'Jay Wedgeworth', email: 'jay@example.com', picture: 'https://example.com/photo.jpg' }),
+    );
+    expect(btn).not.toContain('&#9776;');
+    expect(btn).toContain('<img src="https://example.com/photo.jpg" alt="" onerror="this.remove()"');
+    // Initials render underneath the photo (same DOM as the desktop avatar),
+    // so the existing onerror="this.remove()" degrades to initials, not an
+    // empty circle, if the photo URL ever 404s.
+    expect(btn).toContain('>JW<img');
+    expect(btn).toContain('aria-label="Account menu"');
+  });
+
+  it('falls back to the initials avatar (not the glyph) on the hamburger button for a signed-in user with no picture', () => {
+    // Chosen fallback for signed-in + no ME.user.picture: reuse the same
+    // initials avatar as the photo case (not the ☰ glyph) for a consistent
+    // "you are signed in" affordance on mobile.
+    const render = loadAccountSandbox();
+    const btn = hamburgerButtonHtml(render({ name: 'Jay Wedgeworth', email: 'jay@example.com' }));
+    expect(btn).not.toContain('&#9776;');
+    expect(btn).not.toContain('<img');
+    expect(btn).toContain('class="avatar lg"');
+    expect(btn).toContain('>JW</span>');
+    expect(btn).toContain('aria-label="Account menu"');
+  });
+
+  it('keeps .acct-hamburger a real <button> with a >=44x44 tap target and stable aria wiring regardless of content', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu" onclick="toggleAcctMobileMenu()">',
+    );
+    expect(DASHBOARD_HTML).toContain('.acct-hamburger {\n    width:44px; height:44px;');
   });
 });

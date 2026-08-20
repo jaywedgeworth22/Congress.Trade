@@ -1171,13 +1171,36 @@ export const PROBE_RUN_BRACKET_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * 0090_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v): App Store
+ * 0090_admin_allowlist.sql — persisted admin grant/revoke allowlist + audit
+ * trail, consulted ADDITIONALLY to the ADMIN_EMAILS environment bootstrap
+ * list (see admin/identity.ts's adminRuntimeConfig, admin/adminAccess.ts for
+ * the grant/revoke logic).  ADMIN_EMAILS itself is never written to this
+ * table — it stays the un-editable root escape hatch.
+ */
+export const ADMIN_ALLOWLIST_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS admin_allowlist (
+     email       TEXT PRIMARY KEY,
+     granted_by  TEXT NOT NULL,
+     granted_at  TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS admin_access_audit (
+     id         TEXT PRIMARY KEY,
+     action     TEXT NOT NULL,
+     email      TEXT NOT NULL,
+     actor      TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_admin_access_audit_created ON admin_access_audit (created_at DESC)',
+] as const;
+
+/**
+ * 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v): App Store
  * review rejected submission b61e2a4a for requiring account registration
  * before an In-App Purchase that is not itself account-based. Anonymous
  * device purchases (`POST /api/client/v1/entitlements/apple/redeem`) write a
  * `apple_subscriptions` row with `user_id = NULL`; SQLite cannot ALTER COLUMN
  * to drop a NOT NULL constraint, so this rebuilds the table. Keep in exact
- * lockstep with migrations/0090_apple_subscriptions_nullable_user.sql. Safe
+ * lockstep with migrations/0091_apple_subscriptions_nullable_user.sql. Safe
  * to replay: each run copies the CURRENT table (already migrated after the
  * first run) into a fresh shadow, drops, and renames back — a no-op in
  * effect, not just idempotent-without-erroring, at the cost of a full-table
@@ -1336,7 +1359,9 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
   // 0089_probe_run_brackets.sql
   ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
-  // 0090_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v).
+  // 0090_admin_allowlist.sql
+  ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
+  // 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v).
   ...APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
 ] as const;
 

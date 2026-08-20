@@ -33,7 +33,7 @@
  *   ACCESS_AUD + ACCESS_TEAM_DOMAIN (with an Access app in front), to lock down.
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   AnalystRowSchema,
   FundamentalRowSchema,
@@ -251,6 +251,12 @@ import {
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
 import { runFilingsHygiene } from '../ingestion/reviewStatusReconcile.ts';
+import {
+  grantAdmin,
+  revokeAdmin,
+  listGrantedAdmins,
+  normalizeAdminEmail,
+} from './adminAccess.ts';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -343,6 +349,27 @@ function adminActor(c: { req: { header(name: string): string | undefined } }): s
 }
 
 /**
+ * Best-effort real email for the admin-allowlist audit trail and the
+ * last-admin/self-revoke check.  Prefers a verified identity (Cloudflare
+ * Access header, first-party session) over the generic adminActor()
+ * fallback ('admin-token'/'admin'), which carries no email to compare
+ * against a revoke target.
+ */
+async function resolveAdminActor(c: Context<{ Bindings: Env }>): Promise<string> {
+  const accessEmail =
+    c.req.header('Cf-Access-Authenticated-User-Email') ||
+    c.req.header('cf-access-authenticated-user-email');
+  if (accessEmail) return accessEmail.trim().toLowerCase();
+  try {
+    const user = await getCurrentUserFromRequest(c);
+    if (user?.email) return user.email.trim().toLowerCase();
+  } catch {
+    /* fall through to the generic actor label */
+  }
+  return adminActor(c);
+}
+
+/**
  * Admin auth — authorized if a valid bearer token OR an allowlisted, verified
  * Cloudflare Access identity is presented. Open only when neither is configured.
  */
@@ -351,11 +378,21 @@ async function isAuthorized(
   headers: { authorization?: string; accessJwt?: string; sessionEmail?: string },
 ): Promise<boolean> {
   const token = (await resolveSecret(env, 'ADMIN_TOKEN')).value;
+  const tokenConfigured = !!token;
+
+  // Fast path: a correct bearer ADMIN_TOKEN authorizes without ever needing
+  // the merged allowlist (ADMIN_EMAILS + persisted grants) — skips an extra
+  // DB round trip on the overwhelmingly common automation/curl/CI path.  A
+  // wrong or missing bearer falls through to the full check below exactly
+  // as before.
+  if (tokenConfigured && (await constantTimeEqual(headers.authorization ?? '', `Bearer ${token}`))) {
+    return true;
+  }
+
   const adminConfig = await adminRuntimeConfig(env);
   const allow = adminConfig.allow;
   const aud = adminConfig.accessAud;
   const teamDomain = adminConfig.accessTeamDomain;
-  const tokenConfigured = !!token;
   const accessConfigured = !!(aud && teamDomain && allow.size > 0);
   const sessionConfigured = allow.size > 0;
 
@@ -382,16 +419,11 @@ async function isAuthorized(
     return false;
   }
 
-  // 1) Bearer token (automation / curl).
-  if (
-    tokenConfigured &&
-    (await constantTimeEqual(headers.authorization ?? '', `Bearer ${token}`))
-  ) {
-    return true;
-  }
+  // 1) Bearer token (automation / curl) — already tried above via the fast
+  // path; reaching here means it was absent or wrong, so fall through.
 
   // 2) First-party Google session identity (browser). The session itself is an
-  // opaque KV token; admin authorization is the ADMIN_EMAILS allowlist.
+  // opaque KV token; admin authorization is the ADMIN_EMAILS + granted allowlist.
   const sessionEmail = headers.sessionEmail?.trim().toLowerCase();
   if (sessionConfigured && sessionEmail && allow.has(sessionEmail)) {
     return true;
@@ -4596,6 +4628,90 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const logoDisplay = await setLogoDisplay(c.env, body.logoDisplay);
     return c.json({ logoDisplay });
+  });
+
+  // --- GET /admins ----------------------------------------------------------
+  // List admins: the env-configured root allowlist (read-only bootstrap —
+  // "configured in the environment, not editable here") and every
+  // additionally-granted email, with who granted it and when.  This route
+  // sits behind the same admin-only auth gate as every other /api/admin/*
+  // route (see r.use('*', ...) above) — there is no separate unauthenticated
+  // read path, so a non-admin can never enumerate the admin list.
+  r.get('/admins', async (c) => {
+    const cfg = await adminRuntimeConfig(c.env);
+    const granted = await listGrantedAdmins(c.env.DB);
+    return c.json({
+      adminEmails: [...cfg.envAllow].sort(),
+      granted,
+      total: cfg.allow.size,
+    });
+  });
+
+  // --- POST /admins/grant ----------------------------------------------------
+  // Body: { email }.  Grants admin access to an email IN ADDITION to
+  // ADMIN_EMAILS, which stays the env-configured root bootstrap escape hatch
+  // and is never written here.  Emails are trimmed + lowercased on write.
+  r.post('/admins/grant', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const rawEmail = typeof body.email === 'string' ? body.email : '';
+    if (!rawEmail.trim()) return c.json({ error: 'email is required' }, 400);
+
+    const cfg = await adminRuntimeConfig(c.env);
+    const actor = await resolveAdminActor(c);
+    const result = await grantAdmin(c.env.DB, { email: rawEmail, actor, envAllow: cfg.envAllow });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    try {
+      console.log(
+        'admin allowlist audit:',
+        JSON.stringify({ action: 'grant', email: normalizeAdminEmail(rawEmail), actor, at: new Date().toISOString() }),
+      );
+    } catch {
+      /* console logging is best-effort; the DB audit row above already landed */
+    }
+    return c.json({ ok: true, granted: await listGrantedAdmins(c.env.DB) });
+  });
+
+  // --- POST /admins/revoke ---------------------------------------------------
+  // Body: { email }.  Revokes a previously-granted admin.  Refuses to touch an
+  // ADMIN_EMAILS address (edit the environment instead — this table never
+  // overrides it) and refuses to remove the last remaining admin, whether
+  // that's someone else's only access or the caller's own — a clear 400
+  // error either way, never a silent no-op.
+  r.post('/admins/revoke', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const rawEmail = typeof body.email === 'string' ? body.email : '';
+    if (!rawEmail.trim()) return c.json({ error: 'email is required' }, 400);
+
+    const cfg = await adminRuntimeConfig(c.env);
+    const actor = await resolveAdminActor(c);
+    const result = await revokeAdmin(c.env.DB, {
+      email: rawEmail,
+      actor,
+      actorEmail: actor,
+      envAllow: cfg.envAllow,
+    });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    try {
+      console.log(
+        'admin allowlist audit:',
+        JSON.stringify({ action: 'revoke', email: normalizeAdminEmail(rawEmail), actor, at: new Date().toISOString() }),
+      );
+    } catch {
+      /* console logging is best-effort; the DB audit row above already landed */
+    }
+    return c.json({ ok: true, granted: await listGrantedAdmins(c.env.DB) });
   });
 
   // --- POST /backfill -----------------------------------------------------

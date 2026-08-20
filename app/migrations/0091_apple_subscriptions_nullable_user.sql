@@ -1,4 +1,4 @@
--- 0090_apple_subscriptions_nullable_user.sql
+-- 0091_apple_subscriptions_nullable_user.sql
 -- Guideline 5.1.1(v) fix: Apple rejected submission b61e2a4a because the app
 -- required account registration before purchasing an In-App Purchase that is
 -- not itself account-based (PDF / CSV export are content, not per-account
