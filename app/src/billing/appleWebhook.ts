@@ -22,7 +22,13 @@ import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { verifyAppleSignedJws, AppleJwsVerificationError } from './appleJws.ts';
-import { planFromConfiguredAppleProductId, resolveAppleProductIds, type AppleTransactionPayload } from './apple.ts';
+import {
+  appleSandboxPurchasesAllowed,
+  isAppleSandboxEnvironment,
+  planFromConfiguredAppleProductId,
+  resolveAppleProductIds,
+  type AppleTransactionPayload,
+} from './apple.ts';
 import { getAppleSubscription, upsertAppleSubscription } from './appleSubscriptions.ts';
 import {
   claimAppleWebhookEvent,
@@ -59,9 +65,12 @@ const HANDLED_NOTIFICATION_TYPES = new Set([
   'EXPIRED',
   'DID_CHANGE_RENEWAL_STATUS',
   'REVOKE',
+  'REFUND',
   'DID_FAIL_TO_RENEW',
   'GRACE_PERIOD_EXPIRED',
 ]);
+
+const ACCESS_ENDING_NOTIFICATION_TYPES = new Set(['REVOKE', 'REFUND', 'EXPIRED']);
 
 export function buildAppleWebhookRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
@@ -104,10 +113,9 @@ export function buildAppleWebhookRouter(): Hono<{ Bindings: Env }> {
       if (HANDLED_NOTIFICATION_TYPES.has(notificationType)) {
         await applyNotification(c.env, notificationType, notification);
       }
-      // Unhandled types (SUBSCRIBED, REFUND, PRICE_INCREASE, ...) are
-      // acknowledged but not applied yet.  DID_FAIL_TO_RENEW and
-      // GRACE_PERIOD_EXPIRED are handled so Billing Grace Period keeps
-      // Premium live for the configured window.
+      // Unhandled types (SUBSCRIBED, PRICE_INCREASE, ...) are acknowledged
+      // but not applied. REFUND is applied like REVOKE. DID_FAIL_TO_RENEW and
+      // GRACE_PERIOD_EXPIRED keep Premium live for the configured window.
 
       if (!(await markAppleWebhookEventProcessed(c.env, notificationUUID, claimToken))) {
         throw new Error('webhook claim was lost before completion');
@@ -150,6 +158,14 @@ async function applyNotification(
   const expectedBundle = (await resolveSecret(env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
   if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
     console.warn(`apple webhook ${notificationType}: bundleId mismatch, ignoring`);
+    return;
+  }
+
+  const sandbox = isAppleSandboxEnvironment(notification.data?.environment)
+    || isAppleSandboxEnvironment(transaction.environment);
+  if (sandbox && !ACCESS_ENDING_NOTIFICATION_TYPES.has(notificationType)
+    && !(await appleSandboxPurchasesAllowed(env))) {
+    console.warn(`apple webhook ${notificationType}: Sandbox environment rejected (APPLE_ALLOW_SANDBOX is not true)`);
     return;
   }
 
@@ -206,7 +222,7 @@ async function applyNotification(
     await upsertAppleSubscription(env, { ...base, status: 'expired' });
     return;
   }
-  if (notificationType === 'REVOKE') {
+  if (notificationType === 'REVOKE' || notificationType === 'REFUND') {
     await upsertAppleSubscription(env, {
       ...base,
       status: 'revoked',
