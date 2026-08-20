@@ -44,10 +44,19 @@ describe('legalHtml pricing copy', () => {
 describe('LEGALCOMPLIANCE-04: not-affiliated-with-government disclaimer', () => {
   const SENTENCE =
     'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.';
+  const FOOTER =
+    'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
 
-  it('appears verbatim in both the legal-page footer and Terms of Service §1', () => {
+  it('keeps the long non-affiliation sentence in Terms of Service §1', () => {
     expect(TOS_HTML).toContain(SENTENCE);
-    expect(PRIVACY_HTML).toContain(SENTENCE);
+  });
+
+  it('uses one combined footer line with two spaces around each dot and no trailing period', () => {
+    expect(TOS_HTML).toContain(FOOTER);
+    expect(PRIVACY_HTML).toContain(FOOTER);
+    expect(FOOTER.endsWith('agency')).toBe(true);
+    expect(FOOTER).toContain('  ·  ');
+    expect(FOOTER).not.toMatch(/agency\./);
   });
 });
 
@@ -121,15 +130,18 @@ describe('shared legal chrome and theme path', () => {
     expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 19, 2026</p>');
   });
 
-  it('honors the site Light / Dark / System switch on both pages', () => {
+  it('honors the site Light / Sepia / Dark / System switch on both pages', () => {
     expect(themeBoot(TOS_HTML)).toBe(themeBoot(PRIVACY_HTML));
     for (const html of [TOS_HTML, PRIVACY_HTML]) {
       expect(html).toContain('localStorage.getItem(\'ui-theme\')');
       expect(html).toContain('html[data-theme="light"]');
+      expect(html).toContain('html[data-theme="sepia"]');
       expect(html).toContain('html[data-theme="dark"]');
       expect(html).toContain('--bg:#0b1120');
       expect(html).toContain('--bg:#eff3f8');
+      expect(html).toContain('--bg:#f3e6d0');
       expect(html).toContain('data-theme-opt="light"');
+      expect(html).toContain('data-theme-opt="sepia"');
       expect(html).toContain('data-theme-opt="dark"');
       expect(html).toContain('data-theme-opt="system"');
       expect(html).toContain('aria-label="Theme"');
