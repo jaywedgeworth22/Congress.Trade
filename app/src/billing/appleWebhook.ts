@@ -168,7 +168,7 @@ async function applyNotification(
     || isAppleSandboxEnvironment(transaction.environment);
   if (sandbox && !ACCESS_ENDING_NOTIFICATION_TYPES.has(notificationType)
     && !(await appleSandboxPurchasesAllowed(env))) {
-    console.warn(`apple webhook ${notificationType}: Sandbox environment rejected (APPLE_ALLOW_SANDBOX is not true)`);
+    console.warn(`apple webhook ${notificationType}: Sandbox environment rejected (APPLE_ALLOW_SANDBOX is false)`);
     return;
   }
 
