@@ -17,20 +17,6 @@ import {
 
 export const APNS_FANOUT_LOOKBACK_MS = 2 * 60 * 60 * 1000;
 export const APNS_FANOUT_PAGE = 40;
-
-/** Official-trade fan-out SQL. filers PK is bioguide_id — there is no f.id. */
-export function officialTradeFanoutSql(limit: number): string {
-  const page = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : APNS_FANOUT_PAGE;
-  return `SELECT t.id, t.ticker, t.tx_type, t.asset_name, t.created_at,
-            COALESCE(f.display_name, f.full_name) AS filer_name
-       FROM delivery_outbox o
-       JOIN transactions t ON t.id = o.tx_id
-       LEFT JOIN filers f ON f.bioguide_id = t.filer_id
-      WHERE t.deprecated_at IS NULL
-        AND t.created_at > ?
-      ORDER BY t.created_at ASC
-      LIMIT ${page}`;
-}
 const STATE_ID = 'default';
 
 export interface ApnsFanoutResult {
@@ -165,7 +151,15 @@ export async function fanOutApnsProductEvents(
 
   const trades = await all<TradeRow>(
     env.DB,
-    officialTradeFanoutSql(APNS_FANOUT_PAGE),
+    `SELECT t.id, t.ticker, t.tx_type, t.asset_name, t.created_at,
+            COALESCE(f.display_name, f.full_name) AS filer_name
+       FROM delivery_outbox o
+       JOIN transactions t ON t.id = o.tx_id
+       LEFT JOIN filers f ON f.id = t.filer_id
+      WHERE t.deprecated_at IS NULL
+        AND t.created_at > ?
+      ORDER BY t.created_at ASC
+      LIMIT ${APNS_FANOUT_PAGE}`,
     [tradeSince],
   );
 

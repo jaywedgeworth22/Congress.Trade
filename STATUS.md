@@ -9,13 +9,13 @@ install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
 ## 2026-08-20 CURSOR — Monet P0/P1 pack (#2029)
 
-Apple webhook is on the production Hono app.  APNs fan-out joins
-`filers.bioguide_id`.  Politician detail peels an encoded query out of the
-path.  Delivery shows the one-time secret on inline create.  Apple REFUND
-revokes; Sandbox does not grant live Premium unless `APPLE_ALLOW_SANDBOX`;
-Stripe `livemode` must match the key prefix.  Archived Filing PDF is Premium:
-iOS fetches with Bearer + QuickLook; free/anon opens StoreKit; backend 402 JSON
-for Bearer / Accept: pdf; government Source Filing stays ungated.  Receipt:
+Apple webhook is on the production Hono app.  Politician detail peels an
+encoded query out of the path.  Delivery shows the one-time secret on inline
+create.  Apple REFUND revokes; Sandbox does not grant live Premium unless
+`APPLE_ALLOW_SANDBOX`; Stripe `livemode` must match the key prefix.  Archived
+Filing PDF is Premium: iOS fetches with Bearer + QuickLook; free/anon opens
+StoreKit; backend 402 JSON for Bearer / Accept: pdf; government Source Filing
+stays ungated.  APNs join is #2028, not this pack.  Receipt:
 `docs/rollouts/2026-08-20-monet-p0-pack.md`.
 
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
