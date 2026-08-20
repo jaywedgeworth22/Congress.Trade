@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ship.sh — one-command production deploy for Congress.Trade.
+# ship.sh — wait for Coolify, then migrate Congress.Trade.
 #
-# Deploys the Worker (uses your saved `wrangler login` — no API key needed),
-# then applies schema + optional data steps through the Worker's own database
-# binding via the admin API. This deliberately AVOIDS `wrangler d1 ... --remote`,
-# which has OAuth auth issues on this account; the Worker binding works fine.
+# Coolify rebuilds the Deno-in-Docker app on push to main.  This script does
+# not wrangler-deploy and does not talk to Deno Deploy or Turso.  It waits
+# until /api/health build.sha matches HEAD, then applies schema via
+# POST /api/admin/migrate against the live SQLite file.
 #
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh                  # deploy + ensure schema
 #   bash scripts/ship.sh --deploy-only                    # deploy + health only

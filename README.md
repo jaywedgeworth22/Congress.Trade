@@ -1,17 +1,22 @@
 # Congress.Trade
 
-Congress.Trade is a Cloudflare Workers app that ingests US congressional STOCK
-Act trade disclosures, stores normalized transactions in D1, serves a public
-dashboard and APIs, and supports admin, auth, billing, enrichment, backfill,
-webhook, and SSE workflows.
+Congress.Trade is a Deno-in-Docker app (Coolify on the Hetzner fleet) that
+ingests US STOCK Act disclosures (House, Senate, and Executive / OGE 278-T),
+stores normalized transactions in local SQLite (Litestream-replicated), serves
+a public dashboard and APIs, and supports admin, auth, billing, enrichment,
+backfill, webhook, SSE, and APNs workflows.
+
+**Deno Deploy and Turso are retired.**  Production is Coolify Docker +
+`file:/data/congress-trade/db.sqlite` + Infisical.  See `AGENTS.md` "Current
+Shape" and `app/DEPLOY.md`.
 
 ## Repository Layout
 
 | Path | Purpose |
 |------|---------|
-| `app/` | The production Worker app. Run almost all commands from here. |
+| `app/` | The production Deno app (compose root for Coolify). Run almost all commands from here. |
 | `app/src/` | TypeScript source for ingestion, extraction, delivery, admin, auth, billing, analytics, enrichment, prices, and UI. |
-| `app/migrations/` | D1 schema migrations. Production migrations are not automatic. |
+| `app/migrations/` | Local-dev schema files. Production schema is `POST /api/admin/migrate`. |
 | `app/docs/` | Runbooks for auth/billing and cross-app FMP data sharing. |
 | `app/scripts/` | Operational scripts. Some target production, so read headers before running. |
 | `congress-trade-feed-design.md` | Historical design context and product rationale. |
@@ -32,10 +37,10 @@ npm test
 npm run dev
 ```
 
-The default `npm run deploy` uses `app/wrangler.toml`, which currently points at
-the `congress-trade` Worker, the real `congress.trade` custom domains, and
-production Cloudflare resources. The preview Worker is `congress-trade-preview`.
-Do not deploy or run production scripts unless that is explicitly intended.
+Production deploys via Coolify docker-compose on push to `main`.  `npm run
+deploy` only prints that fact.  `bash app/scripts/ship.sh` waits for the new
+SHA then runs `POST /api/admin/migrate`.  Do not `wrangler deploy`, do not
+deploy to Deno Deploy, and do not point the DB at Turso.
 
 ## Coordination
 

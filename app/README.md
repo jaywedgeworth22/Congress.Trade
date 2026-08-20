@@ -1,23 +1,18 @@
 # Congress.Trade
 
-Cloudflare Workers service that ingests US congressional **STOCK Act** stock-trade
-disclosures (House + Senate), extracts structured trade events, and pushes them to
-clients via webhook / SSE / REST.
+Deno-in-Docker service that ingests US **STOCK Act** disclosures (House +
+Senate + Executive / OGE 278-T), extracts structured trade events, and pushes
+them to clients via webhook / SSE / REST / APNs.
 
-> This is the production Worker app. The original scaffold has grown into
-> implemented ingestion, extraction, delivery, admin, auth, billing, analytics,
-> enrichment, price-refresh, backfill, and UI surfaces. See `../AGENTS.md` for
-> branch/worktree coordination rules before continuing work.
+> This is the production Coolify app.  See `../AGENTS.md` "Current Shape" and
+> `DEPLOY.md` before deploying.  **Deno Deploy and Turso are retired.**
+> Production is Coolify on Hetzner, local SQLite + Litestream, Infisical
+> secrets, paid cron `* * * * *`.
 >
 > iOS planning lives in `docs/mobile-app-roadmap.md`. It treats the planned
 > SwiftUI app as peer clients over one backend client API and
 > command/status model, not as places to run scraping, provider credentials, or
 > MCP orchestration.
->
-> Cloudflare Worker service names: production is `congress-trade`; preview is
-> `congress-trade-preview`. Some backing D1/R2/queue resources still use legacy
-> `congress-feed-*` names and should not be renamed without a coordinated
-> resource migration.
 
 ---
 

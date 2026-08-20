@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { costProfilePublicSummary, resolveDenoCostProfile } from '../costProfile.ts';
 
 describe('resolveDenoCostProfile', () => {
-  it('defaults to free (Aug free-tier survival)', () => {
+  it('defaults to free when unset (not the live Coolify paid profile)', () => {
     const p = resolveDenoCostProfile({});
     expect(p.name).toBe('free');
     expect(p.cronSchedule).toBe('*/15 * * * *');
@@ -13,7 +13,7 @@ describe('resolveDenoCostProfile', () => {
     expect(p.idleShortCircuit).toBe(true);
   });
 
-  it('prefers Deploy-safe CT_* names over legacy DENO_*', () => {
+  it('prefers CT_* names over legacy DENO_*', () => {
     const p = resolveDenoCostProfile({
       CT_COST_PROFILE: 'free',
       DENO_COST_PROFILE: 'paid',

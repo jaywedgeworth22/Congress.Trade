@@ -1,24 +1,25 @@
 /**
- * Deno Deploy cost profile.
+ * Runtime cost profile (Coolify Deno-in-Docker).
  *
- * Free-tier quotas (Deno Deploy Free, 2026) are tight for an always-on ingestion
- * worker: ~1M requests, 20GB egress, 450k KV reads / 300k KV writes, and on the
- * current (non-Classic) product 15h CPU / 350 GB-h memory. We burned a full
- * month in ~4 days largely because the Deno cron fired every minute and each
- * tick could claim + process heavy extraction work.
+ * Deno Deploy is retired.  Production is Coolify on Hetzner with
+ * `CT_COST_PROFILE=paid` (cron `* * * * *` on `/api/health`).  Do not set
+ * these knobs "in Deno Deploy" and do not size live ops around Deploy
+ * free-tier quotas (~1M requests / 20GB egress / 15h CPU).  Those limits
+ * were why the `free` profile existed (2026-07); they are not the live
+ * cost model.
  *
- * NOTE: Deno Deploy forbids custom env var names starting with `DENO_`. Use the
- * `CT_*` names below (congress.trade). Legacy `DENO_*` names are still read for
- * local tests only; they cannot be set on Deploy.
+ * `CT_*` names are the operator knobs.  Legacy `DENO_*` aliases remain for
+ * local tests only (Deploy used to reject custom `DENO_*` keys).
  *
- * Profiles trade discovery/queue latency for billable wall-clock. Set via
- * `CT_COST_PROFILE=free|balanced|paid` (default: free). Optional overrides:
+ * Profiles trade discovery/queue latency for tick frequency. Set via
+ * `CT_COST_PROFILE=free|balanced|paid` in Infisical / Coolify (code default
+ * is still `free` if unset). Optional overrides:
  *   CT_CRON_SCHEDULE           — crontab expression for Deno.cron
  *   CT_DRAIN_LIMIT             — max durable-queue messages completed per tick
  *   CT_DRAIN_CLAIM_SIZE        — messages claimed per SQL batch
  *   CT_OUTBOX_LIMIT            — max outbox rows flushed per tick (each outbox)
  *   CT_DISABLE_INTERNAL_CRON=true — skip Deno.cron; drive ticks externally
- *     (e.g. Coolify/GitHub Actions calling POST /api/admin/runtime-tick)
+ *     (POST /api/admin/runtime-tick).  Not the production path.
  */
 
 export type DenoCostProfileName = 'free' | 'balanced' | 'paid';
@@ -43,7 +44,7 @@ export interface DenoCostProfile {
 }
 
 const PROFILES: Record<DenoCostProfileName, Omit<DenoCostProfile, 'disableInternalCron'>> = {
-  // Survive free tier: ~2.9k cron ticks/mo, tiny per-tick extract budget.
+  // Leftover Deno Deploy free-tier survival profile.  Not production.
   free: {
     name: 'free',
     cronSchedule: '*/15 * * * *',
@@ -61,7 +62,7 @@ const PROFILES: Record<DenoCostProfileName, Omit<DenoCostProfile, 'disableIntern
     outboxLimit: 40,
     idleShortCircuit: true,
   },
-  // Prior behavior: every minute, larger batches (paid / Pro headroom).
+  // Live Coolify production: every minute, larger batches.
   // idleShortCircuit stays on; probePendingWork includes eligible-due
   // review rows so a quiet tick cannot skip claimable extract work.
   paid: {
@@ -96,8 +97,9 @@ function truthy(raw: string | undefined): boolean {
 
 /**
  * Resolve the active cost profile from environment values (Deno.env or Env).
- * Defaults to **free**. Prefer CT_* names (Deploy-safe). Legacy DENO_* aliases
- * are accepted for local tests only.
+ * Code default is **free** if unset.  Production must set `CT_COST_PROFILE=paid`
+ * in Infisical / Coolify.  Prefer CT_* names.  Legacy DENO_* aliases are
+ * accepted for local tests only.
  */
 export function resolveDenoCostProfile(
   env: Record<string, string | undefined> | { get?: (k: string) => string | undefined } = {},
@@ -109,7 +111,7 @@ export function resolveDenoCostProfile(
     return (env as Record<string, string | undefined>)[key];
   };
 
-  // Prefer Deploy-safe CT_* keys; fall back to legacy DENO_* for local tests.
+  // Prefer CT_* keys; fall back to legacy DENO_* for local tests.
   const pick = (...keys: string[]): string | undefined => {
     for (const key of keys) {
       const v = read(key);
