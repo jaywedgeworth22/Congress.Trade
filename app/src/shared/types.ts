@@ -310,7 +310,8 @@ export type ClientCommandType =
   | 'unregister_device'
   | 'start_checkout'
   | 'request_export'
-  | 'redeem_apple_purchase';
+  | 'redeem_apple_purchase'
+  | 'delete_account';
 
 export type ClientCommandStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 

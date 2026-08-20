@@ -4,6 +4,7 @@
  *
  *   GET  /auth/me               -> { user: {id,email,name,picture} | null }
  *   POST /auth/logout           -> destroy session + clear cookie
+ *   POST /auth/account/delete   -> delete the signed-in account + PII, then sign out
  *   GET  /auth/google/start     -> redirect to Google consent screen
  *   GET  /auth/google/callback  -> verify state, exchange code, create session
  *   POST /auth/magic/request    -> { email } : email a single-use sign-in link
@@ -33,6 +34,7 @@ import {
 } from './session.ts';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google.ts';
 import { upsertUserFromGoogle, upsertUserByEmail, upsertUserFromApple } from './users.ts';
+import { deleteUserAccount } from './deleteAccount.ts';
 import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic.ts';
 import { sendEmail } from './email.ts';
 import { constantTimeEqual, randomToken } from './tokens.ts';
@@ -127,6 +129,20 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     await Promise.all(getSessionTokensFromRequest(c).map((token) => destroySession(c.env, token)));
     await clearSessionCookie(c);
     return c.json({ ok: true });
+  });
+
+  // --- POST /auth/account/delete ------------------------------------------
+  // Guideline 5.1.1(v) / Privacy §6.  Same deletion as the delete_account
+  // client command; this route also clears the request cookies.
+  r.post('/account/delete', async (c) => {
+    const user = await getCurrentUserFromRequest(c);
+    if (!user) return c.json({ error: 'sign in required' }, 401);
+    const limited = await rateLimit(c.env, 'account-delete', user.id, 5, 3600);
+    if (!limited.ok) return c.json({ error: 'too many account deletion requests' }, 429);
+    const result = await deleteUserAccount(c.env, user);
+    await Promise.all(getSessionTokensFromRequest(c).map((token) => destroySession(c.env, token)));
+    await clearSessionCookie(c);
+    return c.json({ ok: true, ...result });
   });
 
   // --- GET /auth/google/start ---------------------------------------------

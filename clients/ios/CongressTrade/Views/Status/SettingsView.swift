@@ -52,6 +52,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @AppStorage("app_color_scheme") private var appColorScheme = "light"
     @State private var showPremiumInfo = false
+    @State private var showDeleteAccountConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -121,6 +122,14 @@ struct SettingsView: View {
                 PremiumSheet()
                     .environmentObject(store)
             }
+            .confirmationDialog("Delete Account?", isPresented: $showDeleteAccountConfirm, titleVisibility: .visible) {
+                Button("Delete Account", role: .destructive) {
+                    Task { await store.deleteAccount() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in Settings → Apple ID → Subscriptions.  This cannot be undone.")
+            }
         }
     }
 
@@ -167,7 +176,16 @@ struct SettingsView: View {
                     systemImage: "rectangle.portrait.and.arrow.right"
                 )
             }
-            .disabled(store.isLoggingOut)
+            .disabled(store.isLoggingOut || store.isDeletingAccount)
+            Button(role: .destructive) {
+                showDeleteAccountConfirm = true
+            } label: {
+                Label(
+                    store.isDeletingAccount ? "Deleting Account…" : "Delete Account",
+                    systemImage: "trash"
+                )
+            }
+            .disabled(store.isLoggingOut || store.isDeletingAccount)
         } else if store.hasStoredSessionToken && !store.signedIn {
             // Token present but bootstrap hasn't resolved a user yet
             // (offline / expired). Offer retry + clear.

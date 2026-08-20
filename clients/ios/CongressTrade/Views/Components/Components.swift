@@ -846,6 +846,7 @@ struct AccountQuickMenu: View {
     @Binding var isPresented: Bool
     @State private var showPremiumInfo = false
     @State private var showExportSheet = false
+    @State private var showDeleteAccountConfirm = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
 
@@ -895,7 +896,16 @@ struct AccountQuickMenu: View {
                                 systemImage: "rectangle.portrait.and.arrow.right"
                             )
                         }
-                        .disabled(store.isLoggingOut)
+                        .disabled(store.isLoggingOut || store.isDeletingAccount)
+                        Button(role: .destructive) {
+                            showDeleteAccountConfirm = true
+                        } label: {
+                            Label(
+                                store.isDeletingAccount ? "Deleting Account…" : "Delete Account",
+                                systemImage: "trash"
+                            )
+                        }
+                        .disabled(store.isLoggingOut || store.isDeletingAccount)
                     }
                 }
 
@@ -942,6 +952,14 @@ struct AccountQuickMenu: View {
                 .environmentObject(store)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("Delete Account?", isPresented: $showDeleteAccountConfirm, titleVisibility: .visible) {
+            Button("Delete Account", role: .destructive) {
+                Task { await store.deleteAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in Settings → Apple ID → Subscriptions.  This cannot be undone.")
         }
     }
 
