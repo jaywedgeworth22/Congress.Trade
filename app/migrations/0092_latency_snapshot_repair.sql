@@ -1,4 +1,4 @@
--- 0091_latency_snapshot_repair.sql
+-- 0092_latency_snapshot_repair.sql
 -- Repairs the latency-price-snapshot pipeline (2937/2955 stuck at missed_window,
 -- 11 at a paid-quote-provider HTTP 402). No PK change: `event` is free text, so the
 -- +15m rung is additive in code only (see LATENCY_PRICE_EVENTS). New columns record

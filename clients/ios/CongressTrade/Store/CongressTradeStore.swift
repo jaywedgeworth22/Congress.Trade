@@ -61,6 +61,15 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
+    /// UI-only local check (`Transaction.currentEntitlements`, never a network
+    /// call): does THIS device currently hold a verified, unexpired Apple
+    /// subscription — regardless of sign-in state? Guideline 5.1.1(v): a
+    /// signed-out person can buy Premium, and this is what lets the Premium
+    /// sheet / CSV export / filing PDF recognize that without a session. Never
+    /// treated as authorization on its own — every server request still
+    /// carries a real signed JWS or a server-issued device entitlement token
+    /// (see `Store/AppleIAP.swift`). Set by `refreshLocalAppleEntitlement()`.
+    @Published var hasLocalAppleEntitlement = false
     /// Page size for the visible feed snapshot (newest first). Not a multi-page
     /// crawl. `private(set)` with `setPageSize(_:)` as the only mutator: the old
     /// `didSet` fired a detached `Task { await refresh() }`, so nobody could
@@ -1135,11 +1144,14 @@ final class CongressTradeStore: ObservableObject {
 
     /// Premium CSV export using explicit From/To (export popup) plus active
     /// feed filters. Returns raw CSV bytes for share-sheet handoff.
+    ///
+    /// Guideline 5.1.1(v): CSV export is content, not account-specific
+    /// functionality, so it is not sign-in-gated — `isPremium` (session) OR
+    /// `hasLocalAppleEntitlement` (this device's own Apple purchase) both
+    /// qualify; `APIClient.exportTransactionsCSV` attaches the cached device
+    /// entitlement token automatically when there is no session.
     func exportCSV(from: String?, to: String?) async throws -> Data {
-        guard signedIn else {
-            throw APIError.server(status: 401, message: "Sign in required for CSV export", retryAfterSeconds: nil)
-        }
-        guard isPremium else {
+        guard isPremium || hasLocalAppleEntitlement else {
             throw APIError.server(status: 402, message: "CSV export requires Premium", retryAfterSeconds: nil)
         }
         let chamberParam = Self.chamberQueryValue(for: selectedChambers)
@@ -1175,6 +1187,10 @@ final class CongressTradeStore: ObservableObject {
             watchlistNotice = "Signed in."
             Task {
                 await refresh()
+                // Claim any purchase this device already made anonymously
+                // (Guideline 5.1.1(v)) under the account that just signed in.
+                // Silent by design — see linkAppleEntitlementIfNeeded.
+                await linkAppleEntitlementIfNeeded()
             }
             return true
         } catch {

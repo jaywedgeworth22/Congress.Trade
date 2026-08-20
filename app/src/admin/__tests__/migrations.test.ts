@@ -62,6 +62,7 @@ import {
   REVIEW_QUEUE_RESOLUTION_REASON_SCHEMA_STATEMENTS,
   FILERS_DISPLAY_NAME_SCHEMA_STATEMENTS,
   ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
+  APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
 } from '../migrations.ts';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema.ts';
 import {
@@ -281,6 +282,7 @@ describe('admin migration bootstrap', () => {
       ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
       ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
       ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
+      ...APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
       ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
     ]);
   });
@@ -293,7 +295,7 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('idx_admin_access_audit_created');
   });
 
-  it('reopens missed_window snapshots and adds confidence/session/backfill columns (0091)', () => {
+  it('reopens missed_window snapshots and adds confidence/session/backfill columns (0092)', () => {
     const sql = LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS.join('\n');
     expect(sql).toContain('ADD COLUMN capture_mode TEXT');
     expect(sql).toContain('ADD COLUMN confidence TEXT');
@@ -304,7 +306,7 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain("WHERE error IN ('missed_window', 'fmp_quote_http_402')");
   });
 
-  it('reopens missed_window rows on real SQLite and stays idempotent on replay (0091)', async () => {
+  it('reopens missed_window rows on real SQLite and stays idempotent on replay (0092)', async () => {
     const db = await sqliteDatabase();
     applyMigrationFiles(db, migrationFiles());
 

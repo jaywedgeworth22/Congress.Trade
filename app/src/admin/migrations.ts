@@ -1194,7 +1194,53 @@ export const ADMIN_ALLOWLIST_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * 0091_latency_snapshot_repair.sql
+ * 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v): App Store
+ * review rejected submission b61e2a4a for requiring account registration
+ * before an In-App Purchase that is not itself account-based. Anonymous
+ * device purchases (`POST /api/client/v1/entitlements/apple/redeem`) write a
+ * `apple_subscriptions` row with `user_id = NULL`; SQLite cannot ALTER COLUMN
+ * to drop a NOT NULL constraint, so this rebuilds the table. Keep in exact
+ * lockstep with migrations/0091_apple_subscriptions_nullable_user.sql. Safe
+ * to replay: each run copies the CURRENT table (already migrated after the
+ * first run) into a fresh shadow, drops, and renames back — a no-op in
+ * effect, not just idempotent-without-erroring, at the cost of a full-table
+ * copy on every deploy. apple_subscriptions is small (one row per
+ * subscriber/device, not per trade), so that cost is accepted rather than
+ * building one-shot migration scripting this route doesn't otherwise have —
+ * same tradeoff already made for the `deliveries` dedupe statement above
+ * (see its comment under 0008_idempotency_keys.sql in routes.ts).
+ */
+export const APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS apple_subscriptions_new (
+     original_transaction_id   TEXT PRIMARY KEY,
+     user_id                   TEXT,
+     product_id                TEXT NOT NULL,
+     plan                      TEXT NOT NULL CHECK (plan IN ('monthly', 'annual')),
+     status                    TEXT NOT NULL DEFAULT 'active'
+                                  CHECK (status IN ('active', 'expired', 'revoked', 'grace_period', 'billing_retry')),
+     environment               TEXT,
+     latest_transaction_id     TEXT,
+     purchase_date              TEXT,
+     expires_date               TEXT,
+     auto_renew_status          INTEGER,
+     auto_renew_product_id      TEXT,
+     revoked_at                 TEXT,
+     revocation_reason          INTEGER,
+     last_notification_type     TEXT,
+     last_notification_subtype  TEXT,
+     created_at                 TEXT NOT NULL,
+     updated_at                 TEXT NOT NULL
+   )`,
+  'INSERT INTO apple_subscriptions_new SELECT * FROM apple_subscriptions',
+  'DROP TABLE apple_subscriptions',
+  'ALTER TABLE apple_subscriptions_new RENAME TO apple_subscriptions',
+  'CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user ON apple_subscriptions (user_id)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user_active
+     ON apple_subscriptions (user_id, status, expires_date)`,
+] as const;
+
+/**
+ * 0092_latency_snapshot_repair.sql
  *
  * Repairs the latency-price-snapshot pipeline: 2937/2955 scheduled rows were
  * stuck at `missed_window` because snapshots are scheduled RETROSPECTIVELY
@@ -1355,7 +1401,9 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
   // 0090_admin_allowlist.sql
   ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
-  // 0091_latency_snapshot_repair.sql
+  // 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v).
+  ...APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
+  // 0092_latency_snapshot_repair.sql
   ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
 ] as const;
 
