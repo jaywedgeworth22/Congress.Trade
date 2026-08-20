@@ -50,11 +50,13 @@ Touched:
 
 ```bash
 node scripts/check-shared-package-pin.mjs
-cd app && npx vitest run src/prices/__tests__/fallback.test.ts \
-  src/prices/__tests__/pricesRefresh.test.ts src/prices/__tests__/peerClient.test.ts
+# Provenance: v2.5.2 @ b2847eb9… matches ST + UM lock refs
+
+cd app && npm test
+# 262 files / 3209 tests passed
 ```
 
-Full `cd app && npm test` / `npm run typecheck` if `node_modules` is present.
+`npm run typecheck` is `deno check` and was skipped: Deno is not installed in this cloud VM.  Pin-check and vitest ran on Node 22.
 
 ## Next Steps & Blockers
 
