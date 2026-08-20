@@ -60,8 +60,9 @@ struct SettingsView: View {
                 Section {
                     accountSection
                 } footer: {
-                    // Signed-out notices are rendered by SignInPanel itself.
-                    if store.signedIn, let notice = store.watchlistNotice, !notice.isEmpty {
+                    // Keep the notice after delete/sign-out so "Account deleted."
+                    // is not hidden by the signed-out SignInPanel.
+                    if let notice = store.watchlistNotice, !notice.isEmpty {
                         Text(notice)
                     }
                 }

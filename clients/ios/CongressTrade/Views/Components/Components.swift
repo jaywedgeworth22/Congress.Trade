@@ -855,6 +855,10 @@ struct AccountQuickMenu: View {
             Form {
                 Section {
                     accountSection
+                } footer: {
+                    if let notice = store.watchlistNotice, !notice.isEmpty {
+                        Text(notice)
+                    }
                 }
 
                 if store.showsAdminRow {
@@ -897,15 +901,17 @@ struct AccountQuickMenu: View {
                             )
                         }
                         .disabled(store.isLoggingOut || store.isDeletingAccount)
-                        Button(role: .destructive) {
-                            showDeleteAccountConfirm = true
-                        } label: {
-                            Label(
-                                store.isDeletingAccount ? "Deleting Account…" : "Delete Account",
-                                systemImage: "trash"
-                            )
+                        if store.signedIn {
+                            Button(role: .destructive) {
+                                showDeleteAccountConfirm = true
+                            } label: {
+                                Label(
+                                    store.isDeletingAccount ? "Deleting Account…" : "Delete Account",
+                                    systemImage: "trash"
+                                )
+                            }
+                            .disabled(store.isLoggingOut || store.isDeletingAccount)
                         }
-                        .disabled(store.isLoggingOut || store.isDeletingAccount)
                     }
                 }
 
@@ -955,7 +961,12 @@ struct AccountQuickMenu: View {
         }
         .confirmationDialog("Delete Account?", isPresented: $showDeleteAccountConfirm, titleVisibility: .visible) {
             Button("Delete Account", role: .destructive) {
-                Task { await store.deleteAccount() }
+                Task {
+                    await store.deleteAccount()
+                    if !store.signedIn && !store.hasStoredSessionToken {
+                        isPresented = false
+                    }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

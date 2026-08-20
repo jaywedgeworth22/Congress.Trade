@@ -16,7 +16,7 @@ Congress.Trade is a live feed of publicly disclosed U.S. stock trades from the H
 No login is required for the core product.  Launch the app.  Trends, Trades, and Directory are public.
 
 To create an account (optional, for Delivery / Premium / alerts):
-- Tap Menu (top right) and use Sign in with Apple (recommended for review), Sign in with Google, or Email Link.
+- Tap Menu (top right) and use Sign in with Apple (recommended for review) or Sign in with Google.
 There is no password.  demoAccountRequired is false because Sign in with Apple with the reviewer's own Apple ID is the intended path.
 
 After sign-in: Menu → Premium shows trade.congress.premium.monthly ($5/mo after a 2-week free trial) and trade.congress.premium.annual ($50/yr after a 2-week free trial), Restore Purchases, Terms of Use, and Privacy Policy.  Use a sandbox Apple ID to complete a purchase.  Sign Out is on the Account sheet.
