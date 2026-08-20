@@ -608,6 +608,12 @@ export async function runAutonomySweeps(
     result.deterministicDrain = await maybeRunDeterministicReviewDrain(env, {
       signal: opts.signal,
     });
+    try {
+      const { maybePublishFromStoredRuns } = await import('../extraction/storedRunPublish.ts');
+      await maybePublishFromStoredRuns(env, { signal: opts.signal });
+    } catch (storedErr) {
+      errors.push(`storedRunPublish: ${(storedErr as Error).message}`);
+    }
   } catch (err) {
     errors.push(`deterministicDrain: ${(err as Error).message}`);
   }
