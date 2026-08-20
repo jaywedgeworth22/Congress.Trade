@@ -379,6 +379,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
+  /* #2071: empty / hidden banners are not chrome. They must take no space so
+     the sticky filter row can sit flush under header.top. */
+  .banner[hidden],
+  .banner:empty { display: none; margin: 0; padding: 0; border: 0; }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
   .view { display: none; }
   .view.active { display: block; }
@@ -2729,7 +2733,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 </header>
 
 <main>
-  <div class="banner" id="banner">Connecting to the live feed…</div>
+  <!-- #2071: do not put #banner here. A first-child status strip sits
+       between header.top and the sticky filter rows. Feed status lives
+       inside each filtered view, after that view's filter row, and stays
+       hidden until setBanner() has a real error. -->
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -2805,6 +2812,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input type="hidden" id="qTicker" value="" />
     </div>
     </div>
+    <div class="banner feed-banner" hidden></div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
@@ -2931,6 +2939,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
+    <div class="banner feed-banner" id="banner" hidden></div>
     <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
@@ -4295,11 +4304,21 @@ function memberAvatarHtml(name, photoUrl, party) {
   return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
-  var b = el('banner');
-  if (!text) { b.style.display = 'none'; return; }
-  b.style.display = 'block';
-  b.className = 'banner' + (isErr ? ' err' : '');
-  b.textContent = text;
+  var nodes = document.querySelectorAll('#banner, .feed-banner');
+  for (var i = 0; i < nodes.length; i++) {
+    var b = nodes[i];
+    if (!text) {
+      b.hidden = true;
+      b.textContent = '';
+      b.style.display = 'none';
+      b.className = 'banner feed-banner';
+      continue;
+    }
+    b.hidden = false;
+    b.style.display = 'block';
+    b.className = 'banner feed-banner' + (isErr ? ' err' : '');
+    b.textContent = text;
+  }
 }
 function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
@@ -5361,7 +5380,7 @@ function fetchPage() {
       tradesGated = !!data.gated;             // freemium: limited recent window
       updateGateRow();
       realDataLoaded = true;
-      setBanner('');                       // drop the illustrative banner
+      setBanner('');                       // hide feed-status until a real error
       setTradesKpis();
       renderTrades();
       return txs.length;
