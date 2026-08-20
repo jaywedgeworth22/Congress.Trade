@@ -4373,7 +4373,7 @@ function amountBarsHtml(tier) {
   return '<span class="amount-bars tier-' + tier + '" aria-hidden="true">' + bars + '</span>';
 }
 function amountCellHtml(r) {
-  if (!r || (r.min == null && r.max == null)) return '<span class="muted">—</span>';
+  if (!r || (r.min == null && r.max == null)) return '<span class="muted">bracket unavailable</span>';
   var tier = amountTier(r.min, r.max);
   var text = amountText(r.min, r.max);
   if (!tier) return '<span class="amount-range fc-amt-val">' + esc(text) + '</span>';
@@ -4442,6 +4442,7 @@ function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
 function lagDays(r) { return daysBetween(r.txdate, lagBasisDate(r)); }
 function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
+  if (r && r.source === 'competitor_backfill') return 'Filing date was not supplied by the provider.';
   return 'Official filing date is not available for this row.';
 }
 /* Owner punch list #17 — timestamp semantics: this was labeled "Published"
@@ -9283,10 +9284,10 @@ function runMarketBackfill(dryRun) {
 /* ============================ TRENDS / ANALYTICS ============================ */
 /* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
 	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
-	var EST_VOLUME_TIP = 'Approximate, from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor. Treat as a rough order of magnitude, not an exact figure.';
-	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
-	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
-	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
+	var EST_VOLUME_TIP = 'Approximate stock volume from STOCK Act amount ranges.  Option premiums are excluded.  Closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor.  Treat as a rough order of magnitude, not an exact figure.';
+	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)).  A simple trade-count tilt, not dollar-weighted.';
+	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints on common stock only ($50M+ uses its floor).  Option premiums are excluded.  A very rough estimate of net direction, not an exact figure.';
+	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across this asset\u2019s disclosed common-stock trades, using STOCK Act bracket midpoints.  Option premiums are excluded.  A very rough estimate of net direction, not exact.';
 	// Trends "Trades" answers a different question than the Trades tab's own
 	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party/side
 	// chips above (default: past 90 days, all parties, all sides), while the Trades tab
@@ -10535,7 +10536,7 @@ function loadTrSummary() {
     var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
       kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(d.optionCount)) + 
       kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
       kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
@@ -10921,8 +10922,13 @@ function actionBadge(type) {
   return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
 }
 function amountText(min, max) {
-  if (min == null && max == null) return '—';
+  if (min == null && max == null) return 'bracket unavailable';
   return fmtBracketAmount(min) + ' - ' + (max == null ? '+' : fmtBracketAmount(max));
+}
+function optionFootnote(n) {
+  n = Number(n || 0);
+  if (n <= 0) return '';
+  return '<div class="kpi-note muted">incl. ' + fmtCount(n) + ' option trade' + (n === 1 ? '' : 's') + '</div>';
 }
 function daysBetween(aIso, bIso) {
   var a = Date.parse(aIso), b = Date.parse(bIso);
@@ -11154,7 +11160,7 @@ function openAsset(ticker) {
 	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  ' + esc(tickerWindowLabel) + '</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
-	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
+	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(s.optionCount)) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + chartCaption + '</div>' +
       '<div class="drawer-section"><h3>Performance After Buys</h3><div id="assetPerf"><div class="note">Loading performance…</div></div></div>' +

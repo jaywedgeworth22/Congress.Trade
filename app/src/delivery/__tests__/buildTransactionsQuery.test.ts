@@ -39,8 +39,10 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain("t.source = 'competitor_backfill'");
     expect(q.sql).toContain("t.filer_id LIKE 'EXEC-%'");
     expect(q.sql).toContain("t.doc_id LIKE 'COMPETITOR%'");
+    expect(q.sql).toContain('NOT EXISTS');
     const count = buildTransactionsCountQuery({});
     expect(count.sql).toContain("t.source = 'competitor_backfill'");
+    expect(count.sql).toContain('NOT EXISTS');
   });
 
   it('uses the supplied since cursor as the first bound param', () => {
@@ -433,22 +435,54 @@ describe('mapFeedTransaction', () => {
   it('falls back to the transaction row\'s own filed_date/first_seen_at when there is no matching filings row (competitor_backfill)', () => {
     // competitor_backfill rows (doc_id LIKE 'COMPETITOR-%') have no OGE/clerk
     // filing behind them, so the `filings` LEFT JOIN never matches and
-    // filing_filed_date/filing_first_seen_at come back null — but
-    // persistTransactions() still wrote a real filedDate/firstSeenAt onto the
-    // transaction row itself (see scripts/inject_competitor_data.ts). The
-    // mapper must recover that value instead of reporting it as unknown.
+    // filing_filed_date/filing_first_seen_at come back null — but a real
+    // provider-supplied filedDate (distinct from tx_date) still publishes.
     const tx = mapFeedTransaction(
       feedRow({
+        source: 'competitor_backfill',
         doc_id: 'COMPETITOR-abc123',
         filing_filed_date: null,
         filing_first_seen_at: null,
         filing_source_url: undefined,
         filed_date: '2026-07-20',
         first_seen_at: '2026-07-20T09:00:00.000Z',
+        amount_min: 50001,
+        amount_max: 100000,
+        est_value: 75000.5,
+        confidence: 0.4,
       }),
     );
     expect(tx.filedDate).toBe('2026-07-20');
     expect(tx.firstSeenAt).toBe('2026-07-20T09:00:00.000Z');
+    expect(tx.amountMin).toBe(50001);
+    expect(tx.amountMax).toBe(100000);
+  });
+
+  it('does not publish fabricated competitor $1,001–$15,000 or filed_date=tx_date', () => {
+    const tx = mapFeedTransaction(
+      feedRow({
+        source: 'competitor_backfill',
+        doc_id: 'COMPETITOR-fleischmann_TSCO_2026-06-09_sell',
+        tx_date: '2026-06-09',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filed_date: '2026-06-09',
+        first_seen_at: '2026-06-09T00:00:00.000Z',
+        amount_min: 1001,
+        amount_max: 15000,
+        est_value: 8000.5,
+        confidence: 100,
+        disclosure_lag_days: 0,
+        stock_act_status: 'on_time',
+      }),
+    );
+    expect(tx.amountMin).toBeNull();
+    expect(tx.amountMax).toBeNull();
+    expect(tx.filedDate).toBeNull();
+    expect(tx.disclosureLagDays).toBeNull();
+    expect(tx.stockActStatus).toBeNull();
+    expect(tx.confidence).toBe(0);
+    expect((tx as typeof tx & { estValue: number | null }).estValue).toBeNull();
   });
 
   it('stays honestly null when neither the filing join nor the transaction row has a value (seed_dataset)', () => {
