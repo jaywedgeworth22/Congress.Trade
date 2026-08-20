@@ -29,6 +29,7 @@ import {
 import { runAutonomySweeps } from '../ingestion/autonomySweeps.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
+import { captureException } from '#sentry';
 
 
 export interface DailyLaneCron {
@@ -146,6 +147,7 @@ export async function runDailyLane(
       return { status: 'aborted', durationMs: Date.now() - started };
     }
     console.error(`daily lane ${lane.name} caught error:`, err);
+    captureException(err, { tags: { cron: lane.name } });
     return { status: 'error', durationMs: Date.now() - started };
   } finally {
     clearTimeout(timer);

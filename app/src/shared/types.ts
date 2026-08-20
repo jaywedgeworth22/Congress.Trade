@@ -748,7 +748,7 @@ export interface Env {
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
-  /** Sentry DSN for error monitoring (Cloudflare Workers SDK). */
+  /** Sentry DSN for error monitoring (Deno SDK via `#sentry`). */
   SENTRY_DSN?: string;
   /** Sentry event/log environment tag, e.g. "production" | "preview". */
   SENTRY_ENVIRONMENT?: string;

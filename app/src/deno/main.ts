@@ -11,6 +11,8 @@ import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
 import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
+import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
+import { captureException, initProductionSentry } from '#sentry';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -55,6 +57,13 @@ const secretEnv = {
 
 // 2. Resolve Infisical secrets at boot
 await refreshSecrets(secretEnv);
+const sentryResolved = await resolveProductionSentryEnv(secretEnv, resolveSecret);
+const sentryBoot = initProductionSentry(sentryResolved);
+console.log(
+  sentryBoot.initialized
+    ? `Sentry initialized (${sentryResolved.SENTRY_ENVIRONMENT || 'production'})`
+    : `Sentry disabled (${sentryBoot.reason})`,
+);
 const tursoUrlRes = await resolveSecret(secretEnv, 'TURSO_DATABASE_URL');
 const tursoTokenRes = await resolveSecret(secretEnv, 'TURSO_AUTH_TOKEN');
 
@@ -125,6 +134,7 @@ const s3Shim = new S3BucketShim(s3Client, awsS3BucketName);
 function buildEnv(): Env {
   return {
     ...buildEnvironmentValues(),
+    ...sentryResolved,
     CONFIG_KV: configKvShim as any,
     DB: dbShim as any,
     RAW_FILES: s3Shim as any,
@@ -208,6 +218,7 @@ if (!costProfile.disableInternalCron) {
       }
     } catch (err) {
       console.error('Deno cron tick caught error:', err);
+      captureException(err, { tags: { cron: 'deno-tick' } });
     } finally {
       tickInFlight = false;
     }
