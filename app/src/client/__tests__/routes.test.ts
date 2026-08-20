@@ -218,7 +218,9 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     } else if (/ORDER BY[^]*t\.cursor_seq ASC/i.test(sql)) {
       rows.sort((a, b) => Number(a.cursor_seq ?? 0) - Number(b.cursor_seq ?? 0));
     }
-    const limit = Number(sql.match(/LIMIT\s+(\d+)/i)?.[1] ?? rows.length);
+    // Page LIMIT is last; an earlier LIMIT is the cheap twin-candidate window (#2062).
+    const limitMatches = [...sql.matchAll(/LIMIT\s+(\d+)/gi)];
+    const limit = Number(limitMatches.at(-1)?.[1] ?? rows.length);
     const offsetMatch = sql.match(/OFFSET\s+(\d+)/i);
     const offset = offsetMatch ? Number(offsetMatch[1]) : 0;
     return rows.slice(offset, offset + limit);
