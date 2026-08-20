@@ -81,28 +81,156 @@ export const AASA_JSON = JSON.stringify(buildAasaDocument());
 const AASA_CACHE_CONTROL = 'public, max-age=3600';
 
 /**
- * Build the Smart App Banner meta tag, or `null` when no App Store id is
- * configured yet.
+ * Single source of truth for "is there a real App Store id configured".
+ * Both the native `apple-itunes-app` meta tag (`appStoreBannerTag`, shipped
+ * in PR #2076) and the custom banner below (`appStoreBannerMarkup` /
+ * `appStoreBannerHeadExtras`) gate on this ONE switch — there must never be
+ * a second env var or a second validity check that could drift from it.
  *
  * Reads `env.IOS_APP_STORE_ID` — a plain optional var, the same
  * absent-by-default shape every other optional integration in
- * `shared/types.ts` already uses (e.g. `LOGODEV_PUBLISHABLE_KEY`). The app is
- * NOT in the public App Store yet — `itunes.apple.com/lookup?bundleId=trade.congress.ios`
- * returned zero results as of 2026-08-20 — so there is no real id to put
- * here, and this function must never invent one. Leaving the var unset is
- * exactly what keeps the banner correctly absent; setting it once the app is
- * Approved lights the banner up with no code change.
+ * `shared/types.ts` already uses (e.g. `LOGODEV_PUBLISHABLE_KEY`). The app
+ * record exists (App Store id 6798076688, bundle `trade.congress.ios`) but
+ * version 1.0.0 is REJECTED and the app is not downloadable today, so there
+ * is no id this function should invent or default to — leaving the var
+ * unset is exactly what keeps both banners correctly dark; setting it once
+ * a version is Approved lights them both up with no code change.
  */
-export function appStoreBannerTag(env: Env): string | null {
+function validAppStoreId(env: Env): string | null {
   const id = (env.IOS_APP_STORE_ID || '').trim();
-  if (!/^\d+$/.test(id)) return null;
-  return `<meta name="apple-itunes-app" content="app-id=${id}" />`;
+  return /^\d+$/.test(id) ? id : null;
 }
 
 /**
- * Post-process an already-rendered HTML response to splice in the Smart App
- * Banner tag right after `<head>`. Runs on both `/` and `/admin` (the same
- * `DASHBOARD_HTML` document, per `renderDashboard` in `routes.ts`).
+ * Build the native Smart App Banner meta tag, or `null` when no App Store id
+ * is configured yet. Honored only by Mobile Safari on iOS/iPadOS.
+ */
+export function appStoreBannerTag(env: Env): string | null {
+  const id = validAppStoreId(env);
+  return id ? `<meta name="apple-itunes-app" content="app-id=${id}" />` : null;
+}
+
+/**
+ * CSS + a before-paint detection script for the CUSTOM banner (below), or
+ * `null` when dark. Lives in `<head>` for two reasons:
+ *
+ * 1. CSS-in-`<head>` means the banner's layout is resolved by the FIRST
+ *    layout pass of `<body>` — there is no client-side height change after
+ *    paint, so no CLS, matching the "reserve height before paint" bar.
+ * 2. The detection script mirrors the existing `ui-theme` pre-paint IIFE a
+ *    few lines above this file's other `<head>` injection point (see
+ *    `dashboardHtml.ts` around the `data-theme` attribute): it runs
+ *    synchronously, before `<body>` is parsed, and stamps two data
+ *    attributes on `<html>` that the CSS below reads. By the time the
+ *    browser lays out `#app-store-banner`, both attributes already reflect
+ *    their final state — nothing toggles visibility after the fact.
+ *
+ *    - `data-asb-dismissed="1"` — this visitor already closed the banner
+ *      (localStorage, versioned key so a future relaunch can re-show it).
+ *    - `data-asb-native-context="1"` — Apple's OWN Smart App Banner (driven
+ *      by the `apple-itunes-app` meta tag above) can render here, so showing
+ *      ours too would stack two banners. That tag is honored ONLY by Mobile
+ *      Safari on iOS/iPadOS — not Chrome/Firefox/Edge/etc. on iOS (all of
+ *      which are WebKit wrappers that still say "Safari" in their UA string,
+ *      so they need to be told apart by their OWN app token, not by
+ *      "Safari"'s presence), and not desktop Safari (no touch, so it never
+ *      matches `isIOSDevice` below). The check fails safe TOWARD suppressing
+ *      the custom banner: any iOS-shaped device (`iPad|iPhone|iPod`, or
+ *      iPadOS reporting as `MacIntel` with `maxTouchPoints > 1`) is treated
+ *      as native-banner context UNLESS its UA carries a token proving it is
+ *      one of the specific browsers known NOT to honor the meta tag; an
+ *      unrecognized iOS browser, or any error reading `navigator` at all,
+ *      also resolves to "native context" (suppressed), never to "show ours".
+ */
+export function appStoreBannerHeadExtras(env: Env): string | null {
+  if (!validAppStoreId(env)) return null;
+  return `<style>
+  #app-store-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; background: var(--panel); color: var(--text);
+    border-bottom: 1px solid var(--border); position: relative; z-index: 11;
+  }
+  #app-store-banner .asb-close {
+    flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--text-dim); font-size: 20px; line-height: 1; cursor: pointer;
+  }
+  #app-store-banner .asb-close:hover { background: var(--panel-2); color: var(--text); }
+  #app-store-banner .asb-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #app-store-banner .asb-icon { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 9px; border: 1px solid var(--border); }
+  #app-store-banner .asb-copy { flex: 1 1 auto; min-width: 0; }
+  #app-store-banner .asb-name { font-weight: 700; font-size: 13px; color: var(--text); }
+  #app-store-banner .asb-sub { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #app-store-banner .asb-cta {
+    flex: 0 0 auto; padding: 7px 16px; border-radius: var(--radius-pill);
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 13px; text-decoration: none;
+  }
+  #app-store-banner .asb-cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Custom banner is a mobile affordance (matches the site's own
+     max-width:768px mobile breakpoint used for header.top elsewhere) — it
+     never renders on desktop widths, where there is no App Store app to
+     hand off to anyway. */
+  @media (min-width: 769px) { #app-store-banner { display: none; } }
+  html[data-asb-dismissed="1"] #app-store-banner,
+  html[data-asb-native-context="1"] #app-store-banner { display: none; }
+</style>
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem('asb-dismissed-v1')) {
+        document.documentElement.setAttribute('data-asb-dismissed', '1');
+      }
+    } catch (e) {}
+    try {
+      var ua = navigator.userAgent || '';
+      var isIOSDevice = /iPad|iPhone|iPod/.test(ua) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOSDevice) {
+        var knownNonSafariOnIOS = /CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|GSA|Firefox|OPR\\//i.test(ua);
+        if (!knownNonSafariOnIOS) {
+          document.documentElement.setAttribute('data-asb-native-context', '1');
+        }
+      }
+    } catch (e) {
+      // Can't read navigator --- assume native-banner context and stay dark
+      // rather than risk stacking a duplicate banner.
+      document.documentElement.setAttribute('data-asb-native-context', '1');
+    }
+  })();
+</script>`;
+}
+
+/**
+ * The custom banner's markup, or `null` when dark. Spliced in as the very
+ * first child of `<body>` (see `appStoreBannerMiddleware`) — before
+ * `<header class="top">` — so it sits above the site header in normal
+ * document flow (not `position:sticky`/`fixed`), matching the familiar iOS
+ * Smart App Banner shape: close control, icon, name + one supporting line,
+ * CTA on the right. Reuses the already-served `/icon-192.png` (see
+ * `assets.ts` / `routes.ts`) rather than inventing new artwork.
+ */
+export function appStoreBannerMarkup(env: Env): string | null {
+  const id = validAppStoreId(env);
+  if (!id) return null;
+  return `<div id="app-store-banner">
+  <button type="button" class="asb-close" aria-label="Dismiss App Store banner" onclick="try{localStorage.setItem('asb-dismissed-v1','1')}catch(e){};document.documentElement.setAttribute('data-asb-dismissed','1')">&times;</button>
+  <img class="asb-icon" src="/icon-192.png?v=10" width="40" height="40" alt="" decoding="async" />
+  <div class="asb-copy">
+    <div class="asb-name">Congress.Trade</div>
+    <div class="asb-sub">Live Trades tab, alerts &amp; more.&nbsp; Get it on the App Store.</div>
+  </div>
+  <a class="asb-cta" href="https://apps.apple.com/app/id${id}" target="_blank" rel="noopener noreferrer">View</a>
+</div>`;
+}
+
+/**
+ * Post-process an already-rendered HTML response to splice in BOTH the
+ * native Smart App Banner meta tag (right after `<head>`) and the custom
+ * banner's CSS/script (also in `<head>`, immediately after that same meta
+ * tag) and markup (as the first child of `<body>`, right after `<body>`).
+ * Runs on both `/` and `/admin` (the same `DASHBOARD_HTML` document, per
+ * `renderDashboard` in `routes.ts`).
  *
  * MUST be registered with `r.use(...)` BEFORE `routes.ts` registers
  * `r.get('/', …)` / `r.get('/admin', …)` — `mountAppLinks` is called at the
@@ -117,8 +245,12 @@ const appStoreBannerMiddleware: MiddlewareHandler<{ Bindings: Env }> = async (c,
   if (!tag || !c.res) return;
   const contentType = c.res.headers.get('content-type') || '';
   if (!contentType.includes('text/html')) return;
-  const html = await c.res.text();
-  c.res = new Response(html.replace('<head>', `<head>\n${tag}`), c.res);
+  let html = await c.res.text();
+  const headExtras = appStoreBannerHeadExtras(c.env) || '';
+  html = html.replace('<head>', `<head>\n${tag}\n${headExtras}`);
+  const bodyMarkup = appStoreBannerMarkup(c.env);
+  if (bodyMarkup) html = html.replace('<body>', `<body>\n${bodyMarkup}`);
+  c.res = new Response(html, c.res);
 };
 
 /**
