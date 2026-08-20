@@ -356,6 +356,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
     padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
     text-decoration: none; display: inline-block;
+    /* PR #2075 swapped these from <button> to <a href> for crawlability.
+       A <button> centers its label via the UA stylesheet; an <a> inherits
+       text-align:start, so without this the fixed mobile dock (grid cells,
+       see the 768px query below) renders every icon/label flush left in
+       its cell instead of centered.  Keep this explicit or the next pass
+       over nav.tabs will re-break mobile alignment. */
+    text-align: center;
   }
   nav.tabs a:hover { color: var(--text); background: var(--panel); }
   nav.tabs a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
@@ -1336,13 +1343,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      the mobile breakpoint (see the 720px media query near the bottom nav). */
   .acct-mobile { display:none; position:relative; }
   /* Owner punch list #1: the hamburger glyph sits on its own — no ring/circle
-     at rest. A soft hover/open background is still fine as an affordance. */
+     at rest. A soft hover/open background is still fine as an affordance.
+     Signed-in users with a Google/Apple profile photo get that photo here
+     instead of the glyph (renderAccount()); the button stays >=44x44 as a
+     tap target even though the avatar drawn inside it is only 28x28. */
   .acct-hamburger {
-    width:38px; height:38px; border:none; border-radius: var(--radius-pill);
+    width:44px; height:44px; border:none; border-radius: var(--radius-pill);
     background:transparent; color:var(--text); font-size:18px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
   .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }
+  .acct-hamburger .avatar.lg { cursor:pointer; pointer-events:none; }
   .acct-mobile-menu {
     position:absolute; right:0; top:46px; z-index:60; min-width:220px;
     max-width:min(300px, calc(100vw - 24px)); background:var(--panel);
@@ -1884,7 +1895,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       html[data-theme="light"] nav.tabs { background: #fff; }
     }
     nav.tabs a {
-      padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
+      padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;
       border-radius: 0; border: 0; background: transparent;
     }
     nav.tabs a.active {
@@ -1907,6 +1918,36 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       line-height: 16px;
       font-size: 10px;
       z-index: 1;
+    }
+    /* Signed-in admins unhide two extra tabs (Review, Admin) alongside the
+       default four (renderAdminTabs() toggles [hidden] on data-admin-tab
+       anchors), so the dock goes from four ~97.5px columns at 390px to six
+       ~65px columns (~53px at 320px).  The sizes above were tuned for four;
+       :has() reacts to that same [hidden] toggle to shrink icon/label and
+       tighten padding for six, with no extra class or JS needed.  The
+       label clamp keeps "Directory" / "Delivery" on one line down to
+       320px so ellipsis stays a last resort, not the normal render. */
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a {
+      padding-left: 1px;
+      padding-right: 1px;
+    }
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {
+      font-size: clamp(8px, 2.3vw, 9px);
+    }
+    /* right:max(4px, calc(50% - 22px)) on .tab-count-badge above assumes the
+       ~97.5px four-tab cell; on ~53-65px six-tab cells that offset crowds
+       the centered icon, so pin the badge to the corner instead. */
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge.is-on {
+      right: 3px;
+      min-width: 14px;
+      height: 14px;
+      line-height: 14px;
+      font-size: 9px;
     }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
@@ -11712,6 +11753,10 @@ function canManageSubscription() {
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   var desktopHtml, mobileHtml;
+  // Mobile hamburger button content: the ☰ glyph for signed-out visitors,
+  // swapped below for the account avatar (photo, or initials fallback when
+  // there is no ME.user.picture) once we know the visitor is signed in.
+  var hamburgerHtml = '&#9776;';
   if (!ME.user) {
     // Sign In + Upgrade as one joined control so they read as a pair, not two orphans.
     // Theme stays out of the signed-out top bar (owner: it dumped Light/Dark/System
@@ -11739,6 +11784,10 @@ function renderAccount() {
     var avatarHtml = '<span class="avatar lg" title="' + esc(label) + '">' + esc(initials(label)) +
       (ME.user.picture ? '<img src="' + esc(ME.user.picture) + '" alt="" onerror="this.remove()"/>' : '') +
       '</span>';
+    // Signed-in mobile visitors get their account avatar on the hamburger
+    // button instead of the glyph — the same markup as the desktop avatar,
+    // so a dead photo URL degrades to initials via the existing onerror.
+    hamburgerHtml = avatarHtml;
     desktopHtml = badge + upgrade +
       '<div class="menu">' +
         '<button class="acct-menu-btn" id="acctMenuBtn" title="Account menu" onclick="toggleAcctMenu()">' +
@@ -11779,7 +11828,7 @@ function renderAccount() {
   box.innerHTML =
     '<div class="acct-desktop">' + desktopHtml + '</div>' +
     '<div class="acct-mobile">' +
-      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu" onclick="toggleAcctMobileMenu()">&#9776;</button>' +
+      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu" onclick="toggleAcctMobileMenu()">' + hamburgerHtml + '</button>' +
       '<div class="acct-mobile-menu" id="acctMobileMenu">' + mobileHtml + '</div>' +
     '</div>';
 }
