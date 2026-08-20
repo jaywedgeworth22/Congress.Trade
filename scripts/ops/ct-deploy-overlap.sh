@@ -52,7 +52,11 @@ STATE_DIR="${STATE_DIR:-/var/lib/ct-deploy-overlap}"
 REATTACH="${REATTACH:-/usr/local/bin/ct-reattach-proxy.sh}"
 LOG_TAG="${LOG_TAG:-ct-deploy-overlap}"
 LOOP_SLEEP_SEC="${LOOP_SLEEP_SEC:-3}"
-OVERLAP_EARLY="${OVERLAP_EARLY:-0}"
+# Default ON: a 3s poll after the builder exits often misses Coolify's
+# immediate stop_running_container.  Start hold when the deploy begins so
+# it is already serving before the in-project container is deleted.
+# Set OVERLAP_EARLY=0 to wait until builders exit (saves RAM, races the swap).
+OVERLAP_EARLY="${OVERLAP_EARLY:-1}"
 HOLD_MEMORY="${HOLD_MEMORY:-1g}"
 HOLD_CPUS="${HOLD_CPUS:-1.0}"
 HEALTH_PATH="${HEALTH_PATH:-/health}"
@@ -124,8 +128,10 @@ def mine(x):
     return (x.get("application_id") == app_uuid
             or x.get("application_uuid") == app_uuid
             or x.get("application_name") == "congress-trade")
+# Queued is not in-flight.  Starting hold on a queued webhook would pin a
+# second SQLite writer for the whole coalesce window.
 active = [x for x in rows if mine(x) and x.get("status") in
-          ("in_progress", "building", "running", "queued")]
+          ("in_progress", "building", "running")]
 raise SystemExit(0 if active else 1)
 '
 }
@@ -137,7 +143,7 @@ if [[ "${1:-}" == "--decide" ]]; then
     "${APP_RUNNING:-0}" \
     "${HOLD_RUNNING:-0}" \
     "${APP_HEALTHY:-0}" \
-    "${OVERLAP_EARLY:-0}" \
+    "${OVERLAP_EARLY:-1}" \
     "${HAVE_IMAGE:-0}"
   exit 0
 fi

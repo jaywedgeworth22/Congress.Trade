@@ -48,9 +48,10 @@ decide() {
     bash "$OVERLAP" --decide
 }
 
-assert_eq "$(decide 1 1 1 0 1 0 1)" "noop" "wait while builder still running"
+assert_eq "$(decide 1 1 1 0 1 0 1)" "noop" "late mode waits while builder still running"
 assert_eq "$(decide 1 0 1 0 1 0 1)" "start-hold" "start hold after builder exits"
-assert_eq "$(decide 1 1 1 0 1 1 1)" "start-hold" "early start during build"
+assert_eq "$(decide 1 1 1 0 1 1 1)" "start-hold" "early start during build (default)"
+assert_eq "$(DEPLOY_ACTIVE=1 BUILDER_ACTIVE=1 APP_RUNNING=1 HOLD_RUNNING=0 APP_HEALTHY=1 HAVE_IMAGE=1 bash "$OVERLAP" --decide)" "start-hold" "script default OVERLAP_EARLY=1"
 assert_eq "$(decide 1 0 0 0 0 0 1)" "start-hold" "late start from remembered image"
 assert_eq "$(decide 1 0 0 0 0 0 0)" "noop" "cannot start without image"
 assert_eq "$(decide 1 0 1 1 1 0 1)" "keep-hold" "hold already up during deploy"
@@ -72,10 +73,10 @@ else
 fi
 
 if parse_ok '{"data":[{"application_name":"congress-trade","status":"queued"}]}'; then
-  echo "ok   parse queued by name"
-else
-  echo "FAIL parse queued by name"
+  echo "FAIL parse queued should not start hold"
   fail=1
+else
+  echo "ok   parse ignores queued (no hold until in-flight)"
 fi
 
 if parse_ok '{"0":{"application_uuid":"other","status":"in_progress"}}'; then

@@ -6,7 +6,9 @@ Every Coolify deploy of `congress-trade` still has a window with **zero
 in-project app containers**.  Clients that land in that window see Traefik's
 bare `no available server` (HTTP 503) or a 502.  Issue #1537 asked for a
 health-gated rolling update or an overlap path.  This change adds the overlap
-path.  It does **not** change live Coolify routing from the agent VM.
+path.  It does **not** change live Coolify routing from the agent VM, and it
+does **not** edit `app/docker-compose.yml` (live `watch_paths` is `app/**` +
+`services/**`; a compose comment would 502 the origin on merge).
 
 ## Coolify constraint (still true on current v4.x source)
 
@@ -68,7 +70,7 @@ If hold is not running, standby (if installed) is still the fallback.
 | `scripts/ops/ct-deploy-overlap.service` | Always-on host loop (3s) |
 | `scripts/ops/ct-reattach-proxy.sh` | Failover prefers hold, then standby; `--render` for tests |
 | `scripts/ops/test-deploy-overlap.sh` | Offline decide + render pins |
-| `app/docker-compose.yml` | Comment only: why compose cannot roll |
+| `docs/rollouts/2026-08-12-deploy-downtime-gap.md` | Pointer + do not re-enable `ct-deploy-guard.timer` |
 
 ## Host install (does not take the site down)
 
@@ -131,5 +133,7 @@ Coolify's own log will still say `Removing old containers.` before
   health check `/api/health`.  That changes live routing.  Do not do it
   from an agent VM.  Steps remain in
   `docs/rollouts/2026-08-12-deploy-downtime-gap.md`.
-- Re-enable / keep `fleet-deploy-guard@congress-trade.timer` so N merges
-  do not become N swap windows.
+- Keep `fleet-deploy-guard@congress-trade.timer` enabled.  Do not re-enable
+  the superseded `ct-deploy-guard.timer`.
+- Docs-only skip (`watch_paths`) is a separate lane (#2033 / PR #2038).
+  This PR is the remaining path for **code** merges.

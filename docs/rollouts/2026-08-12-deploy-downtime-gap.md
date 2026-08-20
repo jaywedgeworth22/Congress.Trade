@@ -265,14 +265,12 @@ above is still set.
 
 ## Immediate actions, cheapest first
 
-1. **Re-enable the deploy guard** (one command, biggest single win, no code):
-   ```bash
-   ssh coolify 'systemctl enable --now ct-deploy-guard.timer'
-   ```
-   Six windows collapse back to one per 30 minutes.  If it was disabled on
-   purpose because 30-minute merge latency was painful, lower
-   `MIN_DEPLOY_INTERVAL_SEC` rather than leaving the guard off — an unguarded
-   burst is what the owner just experienced.
+1. **Keep `fleet-deploy-guard@congress-trade.timer` enabled.**  Do **not**
+   re-enable the superseded `ct-deploy-guard.timer` (see
+   `docs/rollouts/2026-08-13-deploy-guard-post.md`).  If merge latency is
+   painful, lower `MIN_DEPLOY_INTERVAL_SEC` on the fleet unit rather than
+   leaving the guard off — an unguarded burst is what the owner just
+   experienced.
 2. **Install the fixed reattach script** (removes the `no available server`
    race; the script is idempotent and reverts cleanly):
    ```bash

@@ -1,14 +1,13 @@
 # Current Handoff
 
-## 2026-08-17 CURSOR — #1537 Coolify deploy overlap
+## 2026-08-20 CURSOR — #1537 Coolify deploy overlap (PR #1964)
 
 Compose deploys still stop every in-project container before start.  Repo
-now has `ct-deploy-overlap.sh` (clone `congress-hold` outside Coolify) and
-Traefik failover in `ct-reattach-proxy.sh`.  PR #1964.  Host install is
-required; this VM did not touch prod.  Receipt:
+has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
+failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
+install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
 
-# Current Handoff
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
 
 Guideline 3.1.1.  Delivery and the empty StoreKit catalog no longer offer
