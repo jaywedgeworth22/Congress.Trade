@@ -95,6 +95,11 @@ final class ClientTrade: Decodable, Identifiable {
         var party: String?
         var state: String?
         var photoUrl: String?
+        /// Curated executive-branch position ("President", "Treasury
+        /// Secretary"; `shared/executiveTitles.ts` server-side). Present on
+        /// `/member/:id`'s `member` object; `nil` on the lighter member embed
+        /// inside each trade row, and for House/Senate filers everywhere.
+        var title: String?
     }
 
     struct Asset: Codable {
@@ -421,6 +426,10 @@ struct MemberDirectoryEntry: Decodable, Identifiable, Hashable {
     /// Same-columns addition to the roster query (2026-08-09); `nil` when the
     /// filer has no `filers.photo_url` — falls back to the party-emoji tile.
     let photoUrl: String?
+    /// Curated executive-branch position ("President", "Treasury
+    /// Secretary"); `nil` for House/Senate filers and for executive filers
+    /// with no curated title yet (`shared/executiveTitles.ts` server-side).
+    let title: String?
 
     var id: String { filerId }
 }

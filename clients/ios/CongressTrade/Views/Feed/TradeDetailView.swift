@@ -142,6 +142,13 @@ struct TradeDetailView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        // Without this, a drag starting inside the body `ScrollView` never
+        // reaches the detent-resize recognizer, so dragging the grabber up
+        // to `.large` silently does nothing (iPad audit P2-1) — this makes
+        // the same upward drag resize the sheet once its scroll view is
+        // already at the top, matching Apple's own apps.
+        .presentationContentInteraction(.resizes)
+        .iPadFullWidthSheet()
         .task {
             // The feed never re-announces a row it already served once it's
             // retracted (see app/docs/client-mobile-api.md); reconcile this

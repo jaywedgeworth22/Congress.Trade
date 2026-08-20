@@ -1594,7 +1594,7 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
-    func testFilingPDFNeverOpensSafariCheckout() {
+    func testFilingPDFNeverOpensSafariCheckout() throws {
         XCTAssertEqual(FilingPDFAccess.action(isPremium: false), .showPremiumSheet)
         XCTAssertEqual(FilingPDFAccess.action(isPremium: true), .fetchInApp)
 
