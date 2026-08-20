@@ -28,6 +28,11 @@ describe('legalHtml pricing copy', () => {
     expect(PRIVACY_HTML).not.toContain('$140.00');
   });
 
+  it('offers in-app account deletion in Privacy §6', () => {
+    expect(PRIVACY_HTML).toContain('Delete Account');
+    expect(PRIVACY_HTML).toContain('iOS Account sheet');
+  });
+
   it('mails support@congress.trade, not the old jays.services inbox', () => {
     expect(TOS_HTML).toContain('mailto:support@congress.trade');
     expect(PRIVACY_HTML).toContain('mailto:support@congress.trade');

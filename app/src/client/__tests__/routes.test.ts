@@ -111,6 +111,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
   };
   const pushDevices = new Map<string, PushDeviceRow>();
   const feedRows: FeedTransactionRow[] = [];
+  const deletedUsers = new Set<string>();
   let duplicateRaceTriggered = false;
 
   const filterFeedRows = (sql: string, params: unknown[]) => {
@@ -263,7 +264,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
       return this;
     },
     async first<T>() {
-      if (/FROM users WHERE id = \?/i.test(sql) && this.params[0] === 'user_1') {
+      if (/FROM users WHERE id = \?/i.test(sql) && this.params[0] === 'user_1' && !deletedUsers.has('user_1')) {
         return userRow() as T;
       }
       if (/FROM user_preferences WHERE user_id = \?/i.test(sql)) {
@@ -571,6 +572,41 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
           row.active = 0;
           row.updated_at = String(updatedAt);
         }
+      } else if (/DELETE FROM users WHERE id = \?/i.test(sql)) {
+        deletedUsers.add(String(this.params[0]));
+        return { success: true, meta: { changes: 1 } };
+      } else if (/DELETE FROM push_devices WHERE user_id = \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of pushDevices) {
+          if (row.user_id === this.params[0]) {
+            pushDevices.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
+      } else if (/DELETE FROM user_preferences WHERE user_id = \?/i.test(sql)) {
+        const existed = preferences.delete(String(this.params[0]));
+        return { success: true, meta: { changes: existed ? 1 : 0 } };
+      } else if (/DELETE FROM apple_subscriptions WHERE user_id = \?/i.test(sql)) {
+        return { success: true, meta: { changes: 0 } };
+      } else if (/DELETE FROM client_commands WHERE user_id = \? AND id != \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of commands) {
+          if (row.user_id === this.params[0] && id !== this.params[1]) {
+            commands.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
+      } else if (/DELETE FROM client_commands WHERE user_id = \?/i.test(sql)) {
+        let changes = 0;
+        for (const [id, row] of commands) {
+          if (row.user_id === this.params[0]) {
+            commands.delete(id);
+            changes += 1;
+          }
+        }
+        return { success: true, meta: { changes } };
       } else if (
         /UPDATE push_devices SET active = 0, updated_at = \?\s+WHERE user_id = \? AND platform = \? AND token = \?/i
           .test(sql)
@@ -616,7 +652,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
-  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages, pushDevices };
+  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages, pushDevices, deletedUsers };
 }
 
 /** Simulate the queue worker: run every captured command.execute message. */
@@ -1617,6 +1653,49 @@ describe('client API routes', () => {
     await drainQueuedCommands(env, queuedMessages);
     expect(Array.from(commands.values()).at(-1)?.status).toBe('succeeded');
     expect(subscriptions.get('sub_toggle')?.active).toBe(1);
+  });
+
+  it('deletes the signed-in account via delete_account', async () => {
+    const { env, subscriptions, commands, pushDevices, deletedUsers, queuedMessages } = makeEnv();
+    subscriptions.set('sub_mine', {
+      id: 'sub_mine',
+      client_id: 'user:user_1',
+      delivery: 'sse',
+      target_url: null,
+      secret: 'whsec_mine',
+      filters: '{}',
+      cursor: 0,
+      active: 1,
+      created_at: '2026-08-01T00:00:00.000Z',
+    });
+    pushDevices.set('dev_1', {
+      id: 'dev_1',
+      user_id: 'user_1',
+      platform: 'apns',
+      token: 'a'.repeat(64),
+      app_bundle: 'trade.congress.ios',
+      env: 'production',
+      active: 1,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const ok = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'delete_account', payload: {} }),
+    }, env);
+    expect(ok.status).toBe(200);
+    await drainQueuedCommands(env, queuedMessages);
+    const command = Array.from(commands.values()).find((row) => row.type === 'delete_account');
+    expect(command?.status).toBe('succeeded');
+    expect(command?.result && JSON.parse(String(command.result))).toMatchObject({
+      deleted: true,
+      userId: 'user_1',
+    });
+    expect(deletedUsers.has('user_1')).toBe(true);
+    expect(subscriptions.has('sub_mine')).toBe(false);
+    expect(pushDevices.has('dev_1')).toBe(false);
   });
 
   it('fails unsupported client command types on the command row', async () => {
