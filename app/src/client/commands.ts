@@ -27,17 +27,8 @@ import {
   publicPushDevice,
   upsertPushDevice,
 } from './pushDevices.ts';
-import { verifyAppleSignedJws, AppleJwsVerificationError } from '../billing/appleJws.ts';
-import {
-  appleSandboxPurchasesAllowed,
-  appleTransactionIsActive,
-  isAppleSandboxEnvironment,
-  planFromConfiguredAppleProductId,
-  resolveAppleProductIds,
-  type AppleTransactionPayload,
-} from '../billing/apple.ts';
+import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
 import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
-import { resolveSecret } from '../secrets/infisical.ts';
 import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
@@ -52,6 +43,7 @@ export function commandType(value: unknown): ClientCommandType {
     type === 'start_checkout' ||
     type === 'request_export' ||
     type === 'redeem_apple_purchase' ||
+    type === 'link_apple_entitlement' ||
     type === 'delete_account'
   ) {
     return type;
@@ -125,6 +117,63 @@ export function mergeClaimedSecret(result: unknown, claimed: unknown): unknown {
 
 function subscriptionIdForCommand(commandId: string | undefined): string | undefined {
   return commandId?.startsWith('cmd_') ? `sub_${commandId.slice(4)}` : undefined;
+}
+
+/**
+ * Shared body of `redeem_apple_purchase` and `link_apple_entitlement` — both
+ * verify the same JWS the same way and attach the transaction to `user.id`.
+ * The only difference between the two commands is client-side: iOS calls
+ * `redeem_apple_purchase` from an explicit user action (Subscribe, Restore
+ * Purchases) and surfaces its errors; it calls `link_apple_entitlement`
+ * silently right after sign-in to claim a purchase this device already made
+ * anonymously, and swallows a 409 there (see `PremiumSheet` /
+ * `Store/AppleIAP.swift` `linkAppleEntitlementIfNeeded`). Reusing one server
+ * code path keeps that distinction purely presentational, never a second
+ * place the verify-and-ledger logic could drift.
+ */
+async function redeemAppleTransactionForUser(
+  env: Env,
+  user: User,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  await requireAppleIapEnabled(env);
+  const jws = jwsFromInput(input);
+  let verified;
+  try {
+    verified = await verifyAppleRedemption(env, jws);
+  } catch (err) {
+    if (err instanceof AppleRedeemError) throw new ClientInputError(err.message, err.status);
+    throw err;
+  }
+  const { transaction, plan, originalTransactionId } = verified;
+
+  const upserted = await upsertAppleSubscription(env, {
+    originalTransactionId,
+    userId: user.id,
+    productId: transaction.productId ?? '',
+    plan,
+    status: 'active',
+    environment: transaction.environment ?? null,
+    latestTransactionId: transaction.transactionId ?? null,
+    purchaseDate: transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : null,
+    expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
+  });
+  if (!upserted.ok) {
+    // Never silently reassign a subscription's Premium grant to a new
+    // account — restore-purchases (or claiming an anonymous device purchase)
+    // on a shared/second Apple ID or account must surface as a conflict, not
+    // a takeover of the original owner's Premium.
+    throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
+  }
+
+  const refreshedUser = await getUserById(env, user.id);
+  const entitlement = await resolveEntitlementAsync(env, refreshedUser);
+  return {
+    entitlement,
+    plan: upserted.record.plan,
+    expiresAt: upserted.record.expiresDate,
+    originalTransactionId: upserted.record.originalTransactionId,
+  };
 }
 
 export async function executeCommand(
@@ -294,66 +343,8 @@ export async function executeCommand(
       throw new ClientInputError(err instanceof Error ? err.message : String(err));
     }
   }
-  if (type === 'redeem_apple_purchase') {
-    const enabled = (await resolveSecret(env, 'APPLE_IAP_ENABLED')).value === 'true';
-    if (!enabled) throw new ClientInputError('Apple in-app purchases are not enabled yet', 503);
-
-    const jws =
-      (typeof input.signedTransaction === 'string' && input.signedTransaction) ||
-      (typeof input.jwsRepresentation === 'string' && input.jwsRepresentation) ||
-      '';
-    if (!jws) throw new ClientInputError('signedTransaction is required');
-
-    let transaction: AppleTransactionPayload;
-    try {
-      transaction = await verifyAppleSignedJws<AppleTransactionPayload>(jws);
-    } catch (err) {
-      const message = err instanceof AppleJwsVerificationError ? err.message : 'invalid Apple transaction';
-      throw new ClientInputError(message);
-    }
-
-    const expectedBundle = (await resolveSecret(env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
-    if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
-      throw new ClientInputError('bundleId mismatch');
-    }
-    if (isAppleSandboxEnvironment(transaction.environment) && !(await appleSandboxPurchasesAllowed(env))) {
-      throw new ClientInputError('Sandbox Apple purchases are not accepted');
-    }
-    const configuredProducts = await resolveAppleProductIds(env);
-    const plan = planFromConfiguredAppleProductId(transaction.productId, configuredProducts);
-    if (!plan) throw new ClientInputError('unrecognized Apple product id');
-    if (!appleTransactionIsActive(transaction)) {
-      throw new ClientInputError('this Apple transaction is not an active subscription');
-    }
-    const originalTransactionId = transaction.originalTransactionId || transaction.transactionId;
-    if (!originalTransactionId) throw new ClientInputError('missing Apple transaction id');
-
-    const upserted = await upsertAppleSubscription(env, {
-      originalTransactionId,
-      userId: user.id,
-      productId: transaction.productId ?? '',
-      plan,
-      status: 'active',
-      environment: transaction.environment ?? null,
-      latestTransactionId: transaction.transactionId ?? null,
-      purchaseDate: transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : null,
-      expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
-    });
-    if (!upserted.ok) {
-      // Never silently reassign a subscription's Premium grant to a new
-      // account — restore-purchases on a shared/second Apple ID should
-      // surface as a conflict, not a takeover of the original owner's Premium.
-      throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
-    }
-
-    const refreshedUser = await getUserById(env, user.id);
-    const entitlement = await resolveEntitlementAsync(env, refreshedUser);
-    return {
-      entitlement,
-      plan: upserted.record.plan,
-      expiresAt: upserted.record.expiresDate,
-      originalTransactionId: upserted.record.originalTransactionId,
-    };
+  if (type === 'redeem_apple_purchase' || type === 'link_apple_entitlement') {
+    return redeemAppleTransactionForUser(env, user, input);
   }
   if (type === 'delete_account') {
     return deleteUserAccount(env, user, { keepCommandId: opts.commandId });
