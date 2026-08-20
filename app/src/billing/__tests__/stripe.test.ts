@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   encodeForm,
   verifyStripeSignature,
+  stripeEventLivemodeMatchesKey,
   billingCapabilities,
   billingCapabilitiesAsync,
   checkoutConfigured,
@@ -251,5 +252,24 @@ describe('Stripe write idempotency', () => {
     });
     expect(body).toContain('configuration=bpc_live_premium');
     expect(body).toContain('customer=cus_1');
+  });
+});
+
+describe('stripeEventLivemodeMatchesKey', () => {
+  it('requires livemode to match a live or test key prefix', () => {
+    expect(stripeEventLivemodeMatchesKey(true, 'sk_live_abc')).toBe(true);
+    expect(stripeEventLivemodeMatchesKey(false, 'sk_test_abc')).toBe(true);
+    expect(stripeEventLivemodeMatchesKey(false, 'sk_live_abc')).toBe(false);
+    expect(stripeEventLivemodeMatchesKey(true, 'sk_test_abc')).toBe(false);
+  });
+
+  it('rejects a missing livemode when the key prefix is checkable', () => {
+    expect(stripeEventLivemodeMatchesKey(undefined, 'sk_live_abc')).toBe(false);
+    expect(stripeEventLivemodeMatchesKey('true', 'sk_test_abc')).toBe(false);
+  });
+
+  it('skips the check when the key has no live/test prefix', () => {
+    expect(stripeEventLivemodeMatchesKey(undefined, 'sk_abc')).toBe(true);
+    expect(stripeEventLivemodeMatchesKey(true, undefined)).toBe(true);
   });
 });

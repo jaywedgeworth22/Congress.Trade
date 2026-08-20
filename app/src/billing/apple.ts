@@ -10,7 +10,7 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { resolveSecrets } from '../secrets/infisical.ts';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
 
 export const APPLE_PRODUCT_MONTHLY = 'trade.congress.premium.monthly';
 export const APPLE_PRODUCT_ANNUAL = 'trade.congress.premium.annual';
@@ -84,6 +84,15 @@ export async function resolveAppleProductIds(env: Env): Promise<{ monthly: strin
     monthly: configured.APPLE_PRODUCT_MONTHLY?.trim() || APPLE_PRODUCT_MONTHLY,
     annual: configured.APPLE_PRODUCT_ANNUAL?.trim() || APPLE_PRODUCT_ANNUAL,
   };
+}
+
+export function isAppleSandboxEnvironment(value: string | undefined | null): boolean {
+  return (value ?? '').trim().toLowerCase() === 'sandbox';
+}
+
+/** Sandbox / TestFlight JWS must not grant live Premium unless this flag is on. */
+export async function appleSandboxPurchasesAllowed(env: Env): Promise<boolean> {
+  return (await resolveSecret(env, 'APPLE_ALLOW_SANDBOX')).value === 'true';
 }
 
 /** Map a StoreKit product id to a plan using the CONFIGURED product ids (env-overridable), unlike {@link planFromAppleProductId}'s hardcoded suffix match. */
