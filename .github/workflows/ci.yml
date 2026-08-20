@@ -199,6 +199,12 @@ jobs:
         working-directory: .
         run: node scripts/check-actions-runner-policy.mjs
 
+      # Offline policy table for Coolify compose overlap (#1537 / PR #1964).
+      # Does not talk to Docker, Coolify, or the origin.
+      - name: Deploy overlap policy tests
+        working-directory: .
+        run: bash scripts/ops/test-deploy-overlap.sh
+
       # Static guard for the class of defect behind the sqlite-web finding: a
       # security-relevant variable given a fail-open default, or a password
       # literal committed to source. Both existed on main until 2026-08-02 —
