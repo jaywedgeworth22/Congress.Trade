@@ -18,7 +18,7 @@ import type { Context } from 'hono';
 import type { BillingPlan, Env } from '../shared/types.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import { getUserById } from '../auth/users.ts';
-import { entitlementOf, resolveEntitlementAsync } from './entitlement.ts';
+import { resolveEntitlementAsync } from './entitlement.ts';
 import {
   billingCapabilitiesAsync,
   checkoutConfiguredAsync,
@@ -41,13 +41,8 @@ import {
   markStripeWebhookEventProcessed,
   releaseStripeWebhookEvent,
 } from './webhookEvents.ts';
-import {
-  appleTransactionIsActive,
-  planFromAppleProductId,
-  type AppleTransactionPayload,
-} from './apple.ts';
-import { verifyAppleSignedJws } from './appleJws.ts';
-import { run } from '../shared/db.ts';
+import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from './appleRedeem.ts';
+import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSubscription } from './appleSubscriptions.ts';
 
 /** Default free trial when STRIPE_TRIAL_DAYS is unset: 14 days (2 weeks). */
 const DEFAULT_TRIAL_DAYS = 14;
@@ -160,77 +155,66 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /billing/apple/confirm ----------------------------------------
-  // DEPRECATED + LOCKED DOWN (2026-08-09 security fix). This legacy #1345 route
-  // granted Premium from an UNVERIFIED token: assertAppleJwsShape only checked
-  // the JWS shape (no signature), so any signed-in user could forge an active
-  // subscription and self-grant Premium. It also had no APPLE_IAP_ENABLED gate,
-  // so it was live in production. It is now fail-closed: it does real signed-JWS
-  // verification (verifyAppleSignedJws → X.509 chain to the pinned Apple root)
-  // AND requires APPLE_IAP_ENABLED, matching the webhook + redeem_apple_purchase
-  // command. The canonical purchase path is the redeem_apple_purchase client
-  // command; this endpoint remains only for any old client still calling it.
+  // DEPRECATED. Old iOS clients still hit this instead of redeem_apple_purchase.
+  // It used to write Premium onto users.subscription_status / plan /
+  // stripe_subscription_id. entitlementOf reads those columns first and never
+  // consults apple_subscriptions, so a REFUND/REVOKE webhook (which only
+  // updates the ledger) could not take access away — and replaying the original
+  // StoreKit JWS (no revocationDate) minted a permanent users-table grant that
+  // #2088/#2092 cannot see. Same path also skipped the Sandbox gate.
+  // Grant through the ledger only, with the same verify + revoke-resurrect
+  // checks as redeem_apple_purchase / anonymous redeem.
   r.post('/apple/confirm', async (c) => {
     const user = await getCurrentUser(c);
     if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
-    const iapEnabled = (await resolveSecret(c.env, 'APPLE_IAP_ENABLED')).value === 'true';
-    if (!iapEnabled) return c.json({ error: 'Apple in-app purchase is not enabled' }, 503);
-    let body: { signedTransaction?: unknown; jwsRepresentation?: unknown };
+    let body: Record<string, unknown>;
     try {
-      body = (await c.req.json()) as typeof body;
+      body = (await c.req.json()) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'invalid JSON' }, 400);
     }
-    const jws =
-      (typeof body.signedTransaction === 'string' && body.signedTransaction) ||
-      (typeof body.jwsRepresentation === 'string' && body.jwsRepresentation) ||
-      '';
-    if (!jws) return c.json({ error: 'signedTransaction required' }, 400);
-    let payload;
     try {
-      // Real cryptographic verification: signature + X.509 chain to Apple's
-      // pinned root. Replaces the shape-only assertAppleJwsShape.
-      payload = await verifyAppleSignedJws<AppleTransactionPayload>(jws);
+      await requireAppleIapEnabled(c.env);
+      const verified = await verifyAppleRedemption(c.env, jwsFromInput(body));
+      const { transaction, plan, originalTransactionId } = verified;
+      const existing = await getAppleSubscription(c.env, originalTransactionId);
+      if (
+        clientRedeemWouldResurrectRevoked(existing, {
+          transactionId: transaction.transactionId,
+          purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
+        })
+      ) {
+        return c.json({ error: 'this Apple subscription was refunded or revoked' }, 400);
+      }
+      const upserted = await upsertAppleSubscription(c.env, {
+        originalTransactionId,
+        userId: user.id,
+        productId: transaction.productId ?? '',
+        plan,
+        status: 'active',
+        environment: transaction.environment ?? null,
+        latestTransactionId: transaction.transactionId ?? null,
+        purchaseDate: transaction.purchaseDate != null ? new Date(Number(transaction.purchaseDate)).toISOString() : null,
+        expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
+      });
+      if (!upserted.ok) {
+        return c.json({ error: 'this Apple subscription is already linked to a different account' }, 409);
+      }
+      const refreshed = await getUserById(c.env, user.id);
+      return c.json({
+        ok: true,
+        entitlement: await resolveEntitlementAsync(c.env, refreshed),
+        plan: upserted.record.plan,
+        expiresAt: upserted.record.expiresDate,
+        originalTransactionId: upserted.record.originalTransactionId,
+      });
     } catch (err) {
-      return c.json({ error: (err as Error).message || 'invalid Apple transaction' }, 401);
+      if (err instanceof AppleRedeemError) {
+        const status = err.status === 503 ? 503 : 400;
+        return c.json({ error: err.message }, status);
+      }
+      throw err;
     }
-    const expectedBundle = (await resolveSecret(c.env, 'APPLE_BUNDLE_ID')).value?.trim() || 'trade.congress.ios';
-    if (payload.bundleId && payload.bundleId !== expectedBundle) {
-      return c.json({ error: 'bundleId mismatch' }, 400);
-    }
-    const plan = planFromAppleProductId(payload.productId);
-    if (!plan) return c.json({ error: 'unknown productId' }, 400);
-    if (!appleTransactionIsActive(payload)) {
-      return c.json({ error: 'transaction is not an active subscription' }, 400);
-    }
-    const originalId = payload.originalTransactionId || payload.transactionId;
-    if (!originalId) return c.json({ error: 'missing transaction id' }, 400);
-    const expiresIso =
-      payload.expiresDate != null
-        ? new Date(Number(payload.expiresDate)).toISOString()
-        : new Date(Date.now() + 30 * 86400000).toISOString();
-    // Store Apple original transaction id in stripe_subscription_id with a
-    // distinctive prefix so Stripe webhooks never clobber it without intent.
-    const appleSubId = `apple:${originalId}`;
-    await run(
-      c.env.DB,
-      `UPDATE users
-          SET subscription_status = 'active',
-              plan = ?,
-              stripe_subscription_id = ?,
-              current_period_end = ?,
-              trial_end = NULL,
-              cancel_at_period_end = 0
-        WHERE id = ?`,
-      [plan, appleSubId, expiresIso, user.id],
-    );
-    const refreshed = await getUserById(c.env, user.id);
-    return c.json({
-      ok: true,
-      entitlement: entitlementOf(refreshed),
-      plan,
-      expiresAt: expiresIso,
-      originalTransactionId: originalId,
-    });
   });
 
   // --- POST /billing/portal -----------------------------------------------
