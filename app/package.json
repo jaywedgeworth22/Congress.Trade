@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "main": "src/deno/main.ts",
-  "description": "Cloudflare Workers service ingesting US congressional STOCK Act stock-trade disclosures (House + Senate) and pushing structured trade events to clients.",
+  "description": "Congress.Trade app: public STOCK Act disclosures (House, Senate, Executive) served from Coolify Deno-in-Docker at congress.trade.",
   "scripts": {
     "start": "deno run --allow-net --allow-env --allow-read src/deno/main.ts",
     "deploy": "echo 'Production deployment is handled by Coolify on push to main'",
