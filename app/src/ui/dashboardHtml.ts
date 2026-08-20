@@ -11744,7 +11744,8 @@ function renderAccount() {
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
             : '') +
           adminMenuHtml('closeAcctMenu();') +
-          '<button onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
       '</div>';
     mobileHtml = badge +
@@ -11759,7 +11760,8 @@ function renderAccount() {
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
         : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
-      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();
   }
   box.innerHTML =
@@ -11843,6 +11845,19 @@ function logout() {
   fetch('/auth/logout', { method: 'POST' })
     .then(function () { window.location.reload(); })
     .catch(function () { window.location.reload(); });
+}
+function deleteAccount() {
+  if (!window.confirm('Delete Account? This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in the App Store.  This cannot be undone.')) {
+    return;
+  }
+  fetch('/auth/account/delete', { method: 'POST' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('delete failed');
+      window.location.reload();
+    })
+    .catch(function () {
+      window.alert('Could not delete the account.  Try again or email support@congress.trade.');
+    });
 }
 
 /* ---- pricing / checkout ---- */

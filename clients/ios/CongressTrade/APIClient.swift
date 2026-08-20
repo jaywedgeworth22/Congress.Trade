@@ -693,6 +693,22 @@ final class CongressTradeAPIClient {
         )
     }
 
+    /// Permanently delete the signed-in account (`delete_account` command).
+    /// The backend revokes sessions, push devices, delivery subscriptions, and
+    /// PII.  Callers must clear the local token after success — a follow-up
+    /// logout is unnecessary because the session is already dead.
+    func deleteAccount(
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<DeleteAccountResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "delete_account",
+                "payload": [:] as [String: Any]
+            ]
+        )
+    }
+
     func logout() async throws {
         var request = try makeRequest(originURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"

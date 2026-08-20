@@ -512,6 +512,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('white-space:nowrap; overflow:hidden; text-overflow:ellipsis;');
     expect(DASHBOARD_HTML).toContain('Sign Out');
     expect(DASHBOARD_HTML).toContain('function logout()');
+    expect(DASHBOARD_HTML).toContain('Delete Account');
+    expect(DASHBOARD_HTML).toContain("function deleteAccount()");
+    expect(DASHBOARD_HTML).toContain("/auth/account/delete");
   });
 
   it('offers Google and Apple sign-in without email magic-link', () => {

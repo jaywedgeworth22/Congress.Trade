@@ -311,7 +311,7 @@ export const PRIVACY_HTML = shell(
 <p>We retain account and billing records for as long as your account is active and as needed for legal, accounting, and dispute-resolution purposes.&nbsp; You can request deletion as described below.</p>
 
 <h2>6. Your rights</h2>
-<p>Depending on where you live (e.g., under GDPR or the CCPA/CPRA), you may have rights to access, correct, delete, or port your personal information, and to object to or restrict certain processing.&nbsp; To exercise these rights, email <a href="mailto:${CONTACT}">${CONTACT}</a>.&nbsp; We will not discriminate against you for exercising them.&nbsp; Note that some payment records held by Stripe are retained by Stripe under its own policies and legal obligations.</p>
+<p>Depending on where you live (e.g., under GDPR or the CCPA/CPRA), you may have rights to access, correct, delete, or port your personal information, and to object to or restrict certain processing.&nbsp; Signed-in users can delete their account in the iOS Account sheet or the website account menu (Delete Account).&nbsp; You may also email <a href="mailto:${CONTACT}">${CONTACT}</a>.&nbsp; We will not discriminate against you for exercising them.&nbsp; Note that some payment records held by Stripe or Apple are retained by those processors under their own policies and legal obligations.&nbsp; Apple In-App Purchase subscriptions must also be cancelled in the App Store.</p>
 
 <h2>7. Security</h2>
 <p>We use reasonable technical and organizational measures to protect personal information.&nbsp; No method of transmission or storage is 100% secure, and we cannot guarantee absolute security.</p>
