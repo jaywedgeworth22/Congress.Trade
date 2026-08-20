@@ -1516,6 +1516,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML.toLowerCase()).toContain('educational');
   });
 
+  it('LEGALCOMPLIANCE-04: site footer states Congress.Trade is not affiliated with any government agency', () => {
+    expect(DASHBOARD_HTML).toContain(
+      'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.',
+    );
+  });
+
   it('formats trade amount brackets compactly', () => {
     expect(DASHBOARD_HTML).toContain('function fmtBracketAmount(');
     expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
