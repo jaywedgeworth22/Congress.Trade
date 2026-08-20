@@ -339,3 +339,12 @@ jobs:
       # TestFlight build. It runs solely on the Mac runner, so test it here.
       - name: Scheduled ship gate tests
         run: bash scripts/ios-fleet/test-scheduled-ship-gate.sh
+
+      # Docs-only main merges must not rebuild congress-app.  Same matcher
+      # Coolify watch_paths / fleet-deploy-guard use.
+      - name: Coolify deploy-relevance tests
+        run: |
+          bash -n scripts/ops/coolify-watch-paths.sh
+          bash -n scripts/ops/test-deploy-relevance.sh
+          python3 -m py_compile scripts/ops/deploy_relevance.py
+          bash scripts/ops/test-deploy-relevance.sh
