@@ -59,16 +59,34 @@ async function tryPublishStoredPayload(
   const reason = (row.reason || '').toLowerCase();
   if (reason.includes('form_chrome') || reason.includes('ocr_unusable')) return 'skip';
   if (!isDeterministicExtractor(row.extractor, row.doc_kind)) return 'skip';
-  let payload: { transactions?: unknown[] } | null = null;
+  let payload: {
+    transactions?: unknown[];
+    truncated?: boolean;
+    transactionCount?: number;
+  } | null = null;
   if (row.payload) {
     try {
-      payload = JSON.parse(row.payload) as { transactions?: unknown[] };
+      payload = JSON.parse(row.payload) as {
+        transactions?: unknown[];
+        truncated?: boolean;
+        transactionCount?: number;
+      };
     } catch {
       return 'still';
     }
   }
   const txs = Array.isArray(payload?.transactions) ? payload!.transactions! : [];
   if (txs.length === 0) return 'still';
+  // routeToReview slices at MAX_PUBLISH and sets truncated/transactionCount.
+  // After the 200→2000 lift, publishing that slice would persist a partial
+  // filing (McCaul-class 219 munis shipped as 200) and leave the rest unrecoverable.
+  const claimedCount = payload?.transactionCount;
+  if (
+    payload?.truncated === true
+    || (typeof claimedCount === 'number' && claimedCount > txs.length)
+  ) {
+    return 'still';
+  }
   const filing = await get<Filing>(
     env.DB,
     `SELECT doc_id as docId, chamber, filer_id as filerId, filing_type as filingType,
