@@ -213,12 +213,12 @@ describe('admin diagnostics API', () => {
                 return this;
               },
               async all<T>() {
-                if (/FROM delivery_outbox o/i.test(sql) && /LEFT JOIN filers f ON f\.bioguide_id/i.test(sql)) {
-                  throw new Error('no such column: f.id');
-                }
                 return { results: [] as T[] };
               },
               async first<T>() {
+                if (/FROM delivery_outbox o/i.test(sql) && /LEFT JOIN filers f ON f\.bioguide_id/i.test(sql)) {
+                  throw new Error('no such column: f.id');
+                }
                 if (/FROM push_devices/i.test(sql)) return { n: 1 } as T;
                 return null as T | null;
               },

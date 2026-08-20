@@ -6,6 +6,7 @@ import { openMigratedD1, type SqliteDatabase } from '../../prices/__tests__/sqli
 import * as infisical from '../../secrets/infisical.ts';
 import {
   APNS_FANOUT_TRADE_PENDING_SQL,
+  APNS_FANOUT_TRADE_SCHEMA_SQL,
   APNS_FANOUT_TRADE_SQL,
   apnsLaneErrorIsRecent,
   fanOutApnsProductEvents,
@@ -229,6 +230,96 @@ describe('fanOutApnsProductEvents', () => {
     expect(result.skipped).toBe('no_pending');
     expect(prepared.some((sql) => sql === APNS_FANOUT_TRADE_SQL)).toBe(false);
     expect(prepared.some((sql) => sql === APNS_FANOUT_TRADE_PENDING_SQL)).toBe(true);
+  });
+
+  it('persists a device-list throw as the lane error', async () => {
+    const kv = new Map<string, string>();
+    const env = mockEnv({});
+    const originalPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/FROM push_devices\s+WHERE platform = 'apns' AND active = 1/i.test(sql) && !/COUNT/i.test(sql)) {
+        return {
+          bind() {
+            return this;
+          },
+          async all() {
+            throw new Error('no such table: push_devices');
+          },
+          async first() {
+            throw new Error('no such table: push_devices');
+          },
+          async run() {
+            return { meta: { changes: 0 } };
+          },
+        };
+      }
+      return originalPrepare(sql);
+    }) as Env['DB']['prepare'];
+    env.CONFIG_KV = {
+      async get(key: string) {
+        return kv.get(key) ?? null;
+      },
+      async put(key: string, value: string) {
+        kv.set(key, value);
+      },
+    } as unknown as Env['CONFIG_KV'];
+
+    await expect(
+      fanOutApnsProductEvents(env, {
+        loadConfig: () => config,
+        now: new Date('2026-08-13T18:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/no such table: push_devices/);
+    await expect(readApnsFanoutLastError(env)).resolves.toMatchObject({
+      message: 'no such table: push_devices',
+      at: '2026-08-13T18:00:00.000Z',
+    });
+  });
+
+  it('does not advance the cursor when APNs returns a retryable or auth error', async () => {
+    const state = {
+      lastTradeAt: '2026-08-13T16:00:00.000Z',
+      lastReviewAt: '2026-08-13T16:00:00.000Z',
+    };
+    const kv = new Map<string, string>();
+    const env = mockEnv({
+      devices: [{ token: liveToken }],
+      trades: [
+        {
+          id: 'tx_1',
+          ticker: 'NVDA',
+          tx_type: 'P',
+          asset_name: 'NVIDIA Corp',
+          created_at: '2026-08-13T17:30:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+      ],
+    });
+    env.CONFIG_KV = {
+      async get(key: string) {
+        return kv.get(key) ?? null;
+      },
+      async put(key: string, value: string) {
+        kv.set(key, value);
+      },
+    } as unknown as Env['CONFIG_KV'];
+    const written: Array<{ lastTradeAt: string; lastReviewAt: string }> = [];
+    const result = await fanOutApnsProductEvents(env, {
+      loadConfig: () => config,
+      now: new Date('2026-08-13T18:00:00.000Z'),
+      readState: async () => ({ ...state }),
+      writeState: async (_env, next) => {
+        written.push({ ...next });
+      },
+      transport: async () => ({ status: 403, body: JSON.stringify({ reason: 'Forbidden' }) }),
+    });
+    expect(result.delivered).toBe(0);
+    expect(written).toEqual([
+      { lastTradeAt: '2026-08-13T16:00:00.000Z', lastReviewAt: '2026-08-13T16:00:00.000Z' },
+    ]);
+    await expect(readApnsFanoutLastError(env)).resolves.toMatchObject({
+      message: expect.stringMatching(/403|Forbidden|auth/i),
+    });
   });
 
   it('does not recover on a lane error older than 24h when nothing is pending', async () => {
@@ -470,6 +561,9 @@ describe('APNS_FANOUT_TRADE_SQL against real migrations', () => {
     expect(inspect.queryOk).toBe(true);
     expect(inspect.queryError).toBeNull();
     expect(inspect.activeDevices).toBe(1);
+    expect(APNS_FANOUT_TRADE_SCHEMA_SQL).toContain('LEFT JOIN filers f ON f.bioguide_id = t.filer_id');
+    expect(APNS_FANOUT_TRADE_SCHEMA_SQL).not.toMatch(/created_at >/i);
+    expect(APNS_FANOUT_TRADE_SCHEMA_SQL).not.toMatch(/ORDER BY/i);
 
     const calls: ApnsHttpRequest[] = [];
     const result = await fanOutApnsProductEvents(env, {

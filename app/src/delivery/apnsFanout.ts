@@ -13,6 +13,7 @@ import {
   resolveApnsEnvironment,
   sendApnsPush,
   type ApnsConfig,
+  type ApnsDisposition,
   type ApnsTransport,
 } from '../shared/apns.ts';
 
@@ -58,6 +59,13 @@ export const APNS_FANOUT_REVIEW_PENDING_SQL = `SELECT 1 AS ok
        FROM review_queue
       WHERE resolved = 0
         AND created_at > ?
+      LIMIT 1`;
+
+/** Schema/join probe only — no created_at filter, no ORDER BY, LIMIT 1. */
+export const APNS_FANOUT_TRADE_SCHEMA_SQL = `SELECT COALESCE(f.display_name, f.full_name) AS filer_name
+       FROM delivery_outbox o
+       JOIN transactions t ON t.id = o.tx_id
+       LEFT JOIN filers f ON f.bioguide_id = t.filer_id
       LIMIT 1`;
 
 const APNS_P8_B64_SLOT = `APNS_PRIVATE_KEY${'_B64'}` as const;
@@ -146,8 +154,23 @@ export function apnsLaneErrorIsRecent(at: string | null | undefined, now: Date, 
   return Number.isFinite(ms) && now.getTime() - ms <= windowMs;
 }
 
+function isRetryableApnsDisposition(disposition: ApnsDisposition): boolean {
+  switch (disposition) {
+    case 'delivered':
+    case 'token_dead':
+      return false;
+    case 'auth_error':
+    case 'retryable':
+    case 'permanent':
+      return true;
+    default: {
+      const _never: never = disposition;
+      throw new Error(`unhandled APNs disposition: ${String(_never)}`);
+    }
+  }
+}
+
 const EPOCH = '1970-01-01T00:00:00.000Z';
-const PROBE_SINCE = '9999-12-31T00:00:00.000Z';
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -203,7 +226,7 @@ export async function inspectApnsFanoutDiagnostics(env: Env): Promise<ApnsFanout
   let queryOk = true;
   let queryError: string | null = null;
   try {
-    await all(env.DB, APNS_FANOUT_TRADE_SQL, [PROBE_SINCE]);
+    await env.DB.prepare(APNS_FANOUT_TRADE_SCHEMA_SQL).first();
   } catch (err) {
     queryOk = false;
     queryError = errorText(err);
@@ -215,8 +238,9 @@ export async function inspectApnsFanoutDiagnostics(env: Env): Promise<ApnsFanout
       `SELECT COUNT(*) AS n FROM push_devices WHERE platform = 'apns' AND active = 1`,
     ).first<{ n: number }>();
     activeDevices = Number(row?.n ?? 0);
-  } catch {
-    activeDevices = 0;
+  } catch (err) {
+    queryOk = false;
+    queryError = queryError ?? `push_devices: ${errorText(err)}`;
   }
 
   const stored = await readApnsFanoutState(env).catch(() => ({ lastTradeAt: EPOCH, lastReviewAt: EPOCH }));
@@ -313,10 +337,10 @@ export async function fanOutApnsProductEvents(
   const config = await (deps.loadConfig ?? resolveApnsConfig)(env);
   if (!apnsConfigured(config)) return { skipped: 'not_configured', trades: 0, reviews: 0, delivered: 0, retired: 0 };
 
-  const devices = await listAllActiveApnsDevices(env);
-  if (devices.length === 0) return { skipped: 'no_devices', trades: 0, reviews: 0, delivered: 0, retired: 0 };
-
   try {
+    const devices = await listAllActiveApnsDevices(env);
+    if (devices.length === 0) return { skipped: 'no_devices', trades: 0, reviews: 0, delivered: 0, retired: 0 };
+
     const stored = await (deps.readState ?? readApnsFanoutState)(env);
     const floor = lookbackFloor(now);
     const tradeSince = laterIso(stored.lastTradeAt, floor);
@@ -341,7 +365,8 @@ export async function fanOutApnsProductEvents(
       body: string;
       collapseId: string;
       data: Record<string, unknown>;
-    }) => {
+    }): Promise<string | null> => {
+      let laneError: string | null = null;
       for (const device of devices) {
         const result = await sendApnsPush(
           {
@@ -361,32 +386,42 @@ export async function fanOutApnsProductEvents(
         if (result.disposition === 'token_dead') {
           retired += 1;
           await deactivatePushDevice(env, { userId: device.userId, token: device.token, platform: 'apns' });
+          continue;
+        }
+        if (isRetryableApnsDisposition(result.disposition)) {
+          laneError = result.error ?? `APNs ${result.disposition}`;
         }
       }
+      return laneError;
     };
 
+    let sendError: string | null = null;
     for (const trade of trades) {
-      await sendAll({
+      sendError = await sendAll({
         title: tradeTitle(trade),
         body: tradeBody(trade),
         collapseId: `trade-${trade.id}`.slice(0, 64),
         data: { kind: 'official_trade', txId: trade.id, ticker: trade.ticker },
       });
+      if (sendError) break;
       if (trade.created_at > lastTradeAt) lastTradeAt = trade.created_at;
     }
 
-    for (const review of reviews) {
-      await sendAll({
-        title: 'Review needed',
-        body: review.reason?.trim() || `Filing ${review.doc_id} needs review.`,
-        collapseId: `review-${review.doc_id}`.slice(0, 64),
-        data: { kind: 'review_needed', docId: review.doc_id },
-      });
-      if (review.created_at > lastReviewAt) lastReviewAt = review.created_at;
+    if (!sendError) {
+      for (const review of reviews) {
+        sendError = await sendAll({
+          title: 'Review needed',
+          body: review.reason?.trim() || `Filing ${review.doc_id} needs review.`,
+          collapseId: `review-${review.doc_id}`.slice(0, 64),
+          data: { kind: 'review_needed', docId: review.doc_id },
+        });
+        if (sendError) break;
+        if (review.created_at > lastReviewAt) lastReviewAt = review.created_at;
+      }
     }
 
     await (deps.writeState ?? writeApnsFanoutState)(env, { lastTradeAt, lastReviewAt });
-    await writeApnsFanoutLastError(env, null, now.toISOString());
+    await writeApnsFanoutLastError(env, sendError, now.toISOString());
     return { trades: trades.length, reviews: reviews.length, delivered, retired };
   } catch (err) {
     await writeApnsFanoutLastError(env, errorText(err), now.toISOString());
