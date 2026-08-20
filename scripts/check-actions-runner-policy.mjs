@@ -53,6 +53,29 @@ for (const name of workflowNames) {
     errors.push(`${name}: macos-26 is only allowed on ios-appstore-gm.yml`);
   }
 
+  // IOSENGINEERING-14: iOS compile + XCTest must fail the job.  Advisory
+  // continue-on-error let red Mac builds merge.  Do not skip tests.
+  if (name === "ios-build.yml") {
+    if (/\bcontinue-on-error\s*:/.test(text)) {
+      errors.push(`${name}: iOS compile+test must fail the job (no continue-on-error)`);
+    }
+    if (!/\bxcodebuild\s+test\b/.test(text)) {
+      errors.push(`${name}: must run xcodebuild test (do not only build)`);
+    }
+    if (!text.includes("-only-testing:CongressTradeTests")) {
+      errors.push(`${name}: must target CongressTradeTests (do not skip XCTest)`);
+    }
+    if (!text.includes("Executed [0-9]+ tests") || !text.includes("-lt 71")) {
+      errors.push(`${name}: must assert at least 71 XCTest cases ran`);
+    }
+    if (!text.includes("name: xcodebuild (unsigned)")) {
+      errors.push(`${name}: required-check job must keep name 'xcodebuild (unsigned)'`);
+    }
+    if (!text.includes("always() && !cancelled()")) {
+      errors.push(`${name}: required-check wrapper must always report (not skip on Mac failure)`);
+    }
+  }
+
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
     if (runner) {
