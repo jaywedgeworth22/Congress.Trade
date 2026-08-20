@@ -15,14 +15,15 @@ tests and refuses a green result that executed fewer than 71 cases.
 
 ## Files changed
 
-- `.github/workflows/ios-build.yml` — keep unsigned device compile; add
-  `xcodebuild test -only-testing:CongressTradeTests` on an iPhone 17 Pro
-  (fallback iPhone 16 Pro) simulator; fail if fewer than 71 cases run;
-  upload `.xcresult`; scope `cancel-in-progress` to pull requests only.
-  `pull_request` has no `paths:` filter.  An ubuntu wrapper job named
-  `xcodebuild (unsigned)` always reports, so it can be a required check
-  without blocking backend-only PRs.  The Mac job runs only when
-  `clients/ios/**` or this workflow file changed.
+- `.github/workflows/ios-build.yml` — keep unsigned device compile; call
+  `scripts/ios-ci-xctest.sh`; upload `.xcresult`; scope `cancel-in-progress`
+  to pull requests only.  `pull_request` has no `paths:` filter.  An ubuntu
+  wrapper job named `xcodebuild (unsigned)` always reports, so it can be a
+  required check without blocking backend-only PRs.  The Mac job runs only
+  when `clients/ios/**`, this workflow, or the XCTest script changed.
+- `scripts/ios-ci-xctest.sh` — `xcodebuild test -only-testing:CongressTradeTests`;
+  fail if fewer than 71 cases run; skip ghost sims and create a fresh
+  iPhone 17 Pro / 16 Pro when needed.
 - `scripts/check-actions-runner-policy.mjs` — pin: no `continue-on-error`,
   must run `xcodebuild test` against `CongressTradeTests`, wrapper must
   always report.
@@ -42,16 +43,22 @@ node scripts/check-actions-runner-policy.mjs
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ios-build.yml'))"
 ```
 
-The Mac runner is the first place `xcodebuild test` actually compiles and
-runs XCTest.  This Linux workspace cannot execute that.  A broken compile or
-a failing case must paint the PR check `xcodebuild (unsigned)` red.
+Verified on the Mac runner (workflow_dispatch run 32318653886, sha
+`fac8f748`): unsigned device compile succeeded; a fresh iPhone 17 Pro
+simulator was created after ghost UDID `27C2C925-…` failed boot; **71
+XCTest cases ran**; 4 failures made `xcodebuild-mac` and the wrapper
+`xcodebuild (unsigned)` red.  That is the success condition.
 
-PR #2036's first Mac run compiled, then failed before any XCTest case:
-`Failed to clone device named 'iPhone 17 Pro'` / stuck in creation.  The
-listed UDID then failed boot (`cannot be located on disk`).  The wrapper
-correctly went red both times.  `scripts/ios-ci-xctest.sh` now skips
-ghost devices, creates a fresh iPhone 17 Pro / 16 Pro if needed, disables
-parallel clone destinations, and retries that clone fault once.
+Pre-existing failures on current `main` (not this PR; keepout is app
+product code):
+
+- `testActiveOnlySubscriptionCommandPreservesFilters` — `XCTUnwrap` Data nil
+- `testDeleteSubscriptionCommandPayload` — `XCTUnwrap` Data nil
+- `testGoToNextPageSendsOffsetAndTotalPagesReflectsAPITotal` — page size
+  50 vs expected 100 (two asserts)
+
+Ticking the check required will block iOS-touching PRs until those three
+tests are fixed in a separate slice.
 
 ## Required check (Jay / ASC)
 
