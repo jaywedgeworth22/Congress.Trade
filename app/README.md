@@ -5,9 +5,14 @@ Deno / Hono app that ingests public US **STOCK Act** trade disclosures
 events, and pushes them to clients via webhook / SSE / REST.  Live site:
 [congress.trade](https://congress.trade).
 
-> This is the production app in `app/`.  It runs as a Deno process in the
-> Coolify `congress-app` container on `fleet-hetzner-nbg1`, not as a
-> Cloudflare Worker.  See `../AGENTS.md` for branch/worktree coordination
+> This is the production app in `app/`.  It runs as **Deno** (not Node) in
+> the Coolify `congress-app` container on Hetzner `fleet-hetzner-nbg1` /
+> `host.jays.services`, not as a Cloudflare Worker.  Proof:
+> `../AGENTS.md` Current Shape, `Dockerfile`, `docker-compose.yml`,
+> `src/deno/main.ts`.  `wrangler.toml` is gone.  Leftover only:
+> `wrangler.preview.example.toml`, `@sentry/cloudflare`,
+> `@cloudflare/workers-types`.  Do not reintroduce Worker deploy as
+> production.  See `../AGENTS.md` for branch/worktree coordination
 > rules before continuing work.
 >
 > iOS planning lives in `docs/mobile-app-roadmap.md`.  It treats the planned
