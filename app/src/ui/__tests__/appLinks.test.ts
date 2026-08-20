@@ -11,7 +11,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildUiRouter } from '../routes.ts';
-import { AASA_JSON, appStoreBannerTag } from '../appLinks.ts';
+import {
+  AASA_JSON,
+  appStoreBannerTag,
+  appStoreBannerHeadExtras,
+  appStoreBannerMarkup,
+} from '../appLinks.ts';
 
 describe('apple-app-site-association route', () => {
   it('serves the AASA manifest with no redirect, no auth, application/json', async () => {
@@ -112,5 +117,93 @@ describe('Smart App Banner meta tag', () => {
       await app.request('http://localhost/admin', {}, { IOS_APP_STORE_ID: '1234567890' } as never)
     ).text();
     expect(html).toContain('<meta name="apple-itunes-app" content="app-id=1234567890" />');
+  });
+});
+
+describe('custom App Store banner (reuses the same IOS_APP_STORE_ID switch)', () => {
+  it('appStoreBannerHeadExtras returns null when IOS_APP_STORE_ID is unset', () => {
+    expect(appStoreBannerHeadExtras({} as never)).toBeNull();
+  });
+
+  it('appStoreBannerHeadExtras returns null for a non-numeric value', () => {
+    expect(appStoreBannerHeadExtras({ IOS_APP_STORE_ID: 'not-a-real-id' } as never)).toBeNull();
+  });
+
+  it('appStoreBannerMarkup returns null when IOS_APP_STORE_ID is unset', () => {
+    expect(appStoreBannerMarkup({} as never)).toBeNull();
+  });
+
+  it('appStoreBannerMarkup returns null for a non-numeric value', () => {
+    expect(appStoreBannerMarkup({ IOS_APP_STORE_ID: 'not-a-real-id' } as never)).toBeNull();
+  });
+
+  it('the served dashboard HTML has NO custom-banner markup, CSS, or JS when no id is configured', async () => {
+    const app = buildUiRouter();
+    const html = await (await app.request('http://localhost/', {}, {} as never)).text();
+    expect(html).not.toContain('app-store-banner');
+    expect(html).not.toContain('asb-dismissed-v1');
+    expect(html).not.toContain('asb-native-context');
+  });
+
+  it('the served dashboard HTML includes the custom banner markup once an id is configured', async () => {
+    const app = buildUiRouter();
+    const html = await (
+      await app.request('http://localhost/', {}, { IOS_APP_STORE_ID: '1234567890' } as never)
+    ).text();
+    expect(html).toContain('id="app-store-banner"');
+    expect(html).toContain('Congress.Trade');
+  });
+
+  it('the CTA href contains the configured App Store id', () => {
+    const markup = appStoreBannerMarkup({ IOS_APP_STORE_ID: '1234567890' } as never)!;
+    expect(markup).toContain('href="https://apps.apple.com/app/id1234567890"');
+  });
+
+  it('the close control is a real <button> with an accessible name', () => {
+    const markup = appStoreBannerMarkup({ IOS_APP_STORE_ID: '1234567890' } as never)!;
+    expect(markup).toMatch(/<button[^>]*aria-label="Dismiss App Store banner"/);
+  });
+
+  it('nothing is hardcoded to the real App Store id 6798076688', () => {
+    expect(appStoreBannerTag({} as never)).toBeNull();
+    expect(appStoreBannerHeadExtras({} as never)).toBeNull();
+    expect(appStoreBannerMarkup({} as never)).toBeNull();
+    // The literal id must never appear in the module's own source — it is
+    // read from env.IOS_APP_STORE_ID at request time, never a default.
+    const markup = appStoreBannerMarkup({ IOS_APP_STORE_ID: '1111111111' } as never)!;
+    expect(markup).not.toContain('6798076688');
+  });
+
+  it('reuses appStoreBannerTag\'s exact id validation --- no second switch', () => {
+    // Same malformed input must be rejected identically by all three gates.
+    const env = { IOS_APP_STORE_ID: '123abc' } as never;
+    expect(appStoreBannerTag(env)).toBeNull();
+    expect(appStoreBannerHeadExtras(env)).toBeNull();
+    expect(appStoreBannerMarkup(env)).toBeNull();
+  });
+
+  it('the CTA is a real <a href> link, not a script-driven navigation', () => {
+    const markup = appStoreBannerMarkup({ IOS_APP_STORE_ID: '1234567890' } as never)!;
+    expect(markup).toMatch(/<a class="asb-cta" href="https:\/\/apps\.apple\.com\/app\/id1234567890"[^>]*>View<\/a>/);
+  });
+
+  it('the /admin entry point also gets the custom banner once configured', async () => {
+    const app = buildUiRouter();
+    const html = await (
+      await app.request('http://localhost/admin', {}, { IOS_APP_STORE_ID: '1234567890' } as never)
+    ).text();
+    expect(html).toContain('id="app-store-banner"');
+  });
+
+  it('the custom banner markup precedes <header class="top"> so it renders above the header', async () => {
+    const app = buildUiRouter();
+    const html = await (
+      await app.request('http://localhost/', {}, { IOS_APP_STORE_ID: '1234567890' } as never)
+    ).text();
+    const bannerIdx = html.indexOf('id="app-store-banner"');
+    const headerIdx = html.indexOf('<header class="top">');
+    expect(bannerIdx).toBeGreaterThan(-1);
+    expect(headerIdx).toBeGreaterThan(-1);
+    expect(bannerIdx).toBeLessThan(headerIdx);
   });
 });
