@@ -258,14 +258,16 @@ STRIPE_TRIAL_DAYS="7"
 SCRAPE_GUARD_ENABLED="true"
 
 # Executive-branch (OGE Form 278-T) filings watcher — Presidential trades.
-# Product cadence is 15 min so we beat other sources to new 278-T filings.
-# After success wait 15 min.  After failure wait 15 min too
-# (OGE_FAILURE_BACKOFF_SEC = 900).  last_poll does not advance on failure, so
-# without this a down OGE is hit every cron tick.  Rows land as
+# Cadence is the same adaptive probeSchedule / decideSourcePoll path as
+# House/Senate (weekday 15-minute coverage floor, weekend hourly like House).
+# OGE_POLL_INTERVAL_SEC is unused — leftover Infisical 21600 must not
+# re-impose a 6h gate.  Server fetches extapps2.oge.gov directly; relay
+# first if OGE_RELAY_URL or INGEST_RELAY_URL is set.  Rows land as
 # chamber='executive' and stay OUT of the default feed/analytics until the
 # Executive chip / chamber filter opts in.  Filings over OGE_MAX_VISION_BYTES
 # (default 6MB) route straight to review instead of vision extraction.
 OGE_WATCH_ENABLED="true"
 OGE_INDEX_URL=""
-OGE_POLL_INTERVAL_SEC="900"
+# Unused. Adaptive probe schedule is the authority.
+OGE_POLL_INTERVAL_SEC=""
 OGE_MAX_VISION_BYTES="6000000"

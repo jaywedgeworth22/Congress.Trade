@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_POLL_INTERVAL_SEC,
-  OGE_FAILURE_BACKOFF_SEC,
   ogeDocId,
   ogeFiledDateFromName,
   parseOgeIndex,
@@ -82,27 +80,18 @@ describe('filename helpers', () => {
   });
 });
 
-describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
+describe('pollOgeExecutive enablement (cadence lives in decideSourcePoll)', () => {
   const NOW = new Date('2026-07-18T12:00:00.000Z');
 
-  function envWithKv(
-    kvSeed: Record<string, string>,
-    envVars: Record<string, string> = {},
-  ): { env: any; kv: Map<string, string> } {
-    const kv = new Map(Object.entries(kvSeed));
-    const env = {
+  function envWith(envVars: Record<string, string> = {}): any {
+    return {
       ...envVars,
       OGE_WATCH_ENABLED: envVars.OGE_WATCH_ENABLED ?? 'true',
       CONFIG_KV: {
-        async get(key: string) {
-          return kv.get(key) ?? null;
-        },
-        async put(key: string, value: string) {
-          kv.set(key, value);
-        },
+        async get() { return null; },
+        async put() {},
       },
     };
-    return { env, kv };
   }
 
   function countingFetch(): { fetchImpl: typeof fetch; calls: string[] } {
@@ -117,32 +106,18 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     return { fetchImpl, calls };
   }
 
-  it('pins 15 min after success and 15 min after failure', () => {
-    expect(DEFAULT_POLL_INTERVAL_SEC).toBe(900);
-    expect(OGE_FAILURE_BACKOFF_SEC).toBe(900);
-    expect(OGE_FAILURE_BACKOFF_SEC).toBe(DEFAULT_POLL_INTERVAL_SEC);
-  });
-
-  it('honors the env-configured interval (1h) instead of the 15 min fallback', async () => {
-    const { env } = envWithKv(
-      { 'last_poll:oge': new Date(NOW.getTime() - 2 * 3600_000).toISOString() },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
+  it('does not apply a flat 6h or 15m interval gate — leftover Infisical 21600 is unused', async () => {
+    const env = envWith({ OGE_POLL_INTERVAL_SEC: '21600' });
     const { fetchImpl, calls } = countingFetch();
 
     const out = await pollOgeExecutive(env, NOW, fetchImpl);
 
-    // 2h since last success >= the configured 1h -> polls (the old code sat on
-    // a 6h default whenever no value resolved and would have returned null).
     expect(out).toEqual([]);
-    // Default OGE indexes: President/VP + PAS cabinet collection.
     expect(calls).toHaveLength(2);
   });
 
-  it('stays inside the 15 min default when no interval is configured', async () => {
-    const { env } = envWithKv({
-      'last_poll:oge': new Date(NOW.getTime() - 5 * 60_000).toISOString(),
-    });
+  it('skips when the watcher is disabled', async () => {
+    const env = envWith({ OGE_WATCH_ENABLED: 'false' });
     const { fetchImpl, calls } = countingFetch();
 
     const out = await pollOgeExecutive(env, NOW, fetchImpl);
@@ -151,88 +126,8 @@ describe('pollOgeExecutive gating (cadence + failure backoff)', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('polls after the 15 min default when no interval is configured', async () => {
-    const { env } = envWithKv({
-      'last_poll:oge': new Date(NOW.getTime() - 16 * 60_000).toISOString(),
-    });
-    const { fetchImpl, calls } = countingFetch();
-
-    const out = await pollOgeExecutive(env, NOW, fetchImpl);
-
-    expect(out).toEqual([]);
-    expect(calls).toHaveLength(2);
-  });
-
-  it('backs off after a failed attempt instead of retrying every cron tick', async () => {
-    // Attempt 2 minutes ago with NO success since -> the previous poll failed.
-    const { env, kv } = envWithKv(
-      { 'last_attempt:oge': new Date(NOW.getTime() - 120_000).toISOString() },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
-    const { fetchImpl, calls } = countingFetch();
-
-    const out = await pollOgeExecutive(env, NOW, fetchImpl);
-
-    expect(out).toBeNull();
-    expect(calls).toHaveLength(0);
-    // The skipped tick must not advance the attempt stamp (that would extend
-    // the backoff forever).
-    expect(kv.get('last_attempt:oge')).toBe(new Date(NOW.getTime() - 120_000).toISOString());
-  });
-
-  it('still waits 15 min after failure — 10 min is not enough', async () => {
-    const tenMinAgo = new Date(NOW.getTime() - 10 * 60_000).toISOString();
-    const { env, kv } = envWithKv(
-      { 'last_attempt:oge': tenMinAgo },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
-    const { fetchImpl, calls } = countingFetch();
-
-    const out = await pollOgeExecutive(env, NOW, fetchImpl);
-
-    expect(out).toBeNull();
-    expect(calls).toHaveLength(0);
-    expect(kv.get('last_attempt:oge')).toBe(tenMinAgo);
-  });
-
-  it('retries once the 15 min failure backoff has elapsed, stamping the new attempt', async () => {
-    const { env, kv } = envWithKv(
-      { 'last_attempt:oge': new Date(NOW.getTime() - 16 * 60_000).toISOString() },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
-    const { fetchImpl, calls } = countingFetch();
-
-    const out = await pollOgeExecutive(env, NOW, fetchImpl);
-
-    expect(out).toEqual([]);
-    expect(calls).toHaveLength(2);
-    expect(kv.get('last_attempt:oge')).toBe(NOW.toISOString());
-  });
-
-  it('does not treat a successful last poll as a failed attempt', async () => {
-    // Success and attempt stamped at the same instant (the normal success
-    // shape) 2h ago with a 1h interval -> due, polls.
-    const twoHoursAgo = new Date(NOW.getTime() - 2 * 3600_000).toISOString();
-    const { env } = envWithKv(
-      { 'last_poll:oge': twoHoursAgo, 'last_attempt:oge': twoHoursAgo },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
-    const { fetchImpl, calls } = countingFetch();
-
-    const out = await pollOgeExecutive(env, NOW, fetchImpl);
-
-    expect(out).toEqual([]);
-    expect(calls).toHaveLength(2);
-  });
-
-  it('force bypasses both the interval gate and the failure backoff', async () => {
-    const { env } = envWithKv(
-      {
-        'last_poll:oge': new Date(NOW.getTime() - 60_000).toISOString(),
-        'last_attempt:oge': new Date(NOW.getTime() - 30_000).toISOString(),
-      },
-      { OGE_POLL_INTERVAL_SEC: '3600' },
-    );
+  it('force fetches even when the watcher is disabled', async () => {
+    const env = envWith({ OGE_WATCH_ENABLED: 'false' });
     const { fetchImpl, calls } = countingFetch();
 
     const out = await pollOgeExecutive(env, NOW, fetchImpl, { force: true });

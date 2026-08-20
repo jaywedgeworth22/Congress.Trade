@@ -15,15 +15,18 @@
  *    detected by diffing doc ids (INSERT OR IGNORE in the shared watcher path).
  *  - Only known executive filers are ingested (currently the President).
  *    Additional filers (VP, cabinet) are one FILERS entry away.
- *  - Product cadence is 15 minutes so we beat other sources to new 278-T
- *    filings.  After success wait 15 min.  After failure wait 15 min too
- *    (not 10 min, not every minutely cron tick) — last_poll:oge only advances
- *    on success, so without this a down OGE would be hit every minute.  A
- *    down OGE must not be polled more often than a healthy one.  The watcher
- *    stays fail-soft: an OGE outage must never affect House/Senate polling.
+ *  - Cadence is the same adaptive probeSchedule / decideSourcePoll path as
+ *    House and Senate.  There is no measured OGE arrival-hour sample in-repo,
+ *    so the executive profile is a flat weekday window at a 15-minute
+ *    coverage floor (never 6 hours) and a 60s politeness floor.  Weekend is
+ *    hourly like House.  Do not invent peak weights.  The watcher is
+ *    fail-soft: an OGE outage must never affect House/Senate polling.
  *    Filings can still land weeks after the trades (STOCK Act 45-day clock,
  *    often exceeded with late fees) — that is filing latency, not a reason
  *    to poll slowly.
+ *  - Fetch: if OGE_RELAY_URL or INGEST_RELAY_URL is set, try Mac/scout
+ *    POST /fetch-oge first, then fall back to direct extapps2.oge.gov.
+ *    The server can fetch OGE without the Mac.  Not Mac-only.
  *  - EIGA §105(c) restricts certain uses of these reports; congress.trade
  *    disseminates them to the general public in the site's existing
  *    educational framing, mirroring its House/Senate STOCK Act posture.
@@ -31,7 +34,6 @@
 
 import type { Env } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
-import { getLastAttemptAt, getLastPollAt, setLastAttemptAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { CURATED_EXECUTIVES } from '../shared/executiveIdentity.ts';
@@ -53,13 +55,6 @@ export const OGE_PAS_INDEX_URL =
 export const OGE_DEFAULT_INDEX_URL = `${OGE_PRESIDENT_INDEX_URL},${OGE_PAS_INDEX_URL}`;
 
 const OGE_ORIGIN = 'https://extapps2.oge.gov';
-/** 15 min product cadence so we beat other sources. Not a politeness default. */
-export const DEFAULT_POLL_INTERVAL_SEC = 900;
-/** Same 15 min as success. last_poll:oge only advances on success, so without
- *  this a down OGE is hit every minutely cron tick. Matching the success
- *  interval means a down OGE is not polled more often than a healthy one. */
-export const OGE_FAILURE_BACKOFF_SEC = 900;
-const POLL_SOURCE = 'oge';
 
 /** Known executive filers we pin to stable EXEC-* ids (filename match).
  *  party/photoUrl are curated (the OGE index carries neither). */
@@ -248,28 +243,6 @@ async function indexUrls(env: Env): Promise<string[]> {
   }
 }
 
-/** Parse a configured interval string; >= 60s or the 15 min product default. */
-function parseIntervalSec(raw: string | undefined): number {
-  const n = parseInt(raw || '', 10);
-  return Number.isFinite(n) && n >= 60 ? n : DEFAULT_POLL_INTERVAL_SEC;
-}
-
-/**
- * Effective OGE poll interval: Infisical value, else the OGE_POLL_INTERVAL_SEC
- * env var, else 15 min (900s). Infisical wins — a leftover prod secret of
- * 21600 keeps the old 6h cadence even after this default ships. The catch
- * path previously returned the default WITHOUT consulting the env var, so any
- * secrets-resolution failure silently ignored a configured cadence.
- */
-async function pollIntervalSec(env: Env): Promise<number> {
-  try {
-    const raw = (await resolveSecret(env, 'OGE_POLL_INTERVAL_SEC')).value ?? env.OGE_POLL_INTERVAL_SEC;
-    return parseIntervalSec(raw);
-  } catch {
-    return parseIntervalSec(env.OGE_POLL_INTERVAL_SEC);
-  }
-}
-
 /** Fetch + parse the OGE index(es). Throws on HTTP failure (caller guards). */
 export async function fetchOgeExecutiveFilings(
   env: Env,
@@ -323,29 +296,18 @@ export async function fetchOgeExecutiveFilings(
 }
 
 /**
- * Cadence-gated poll for the cron watcher. Returns the discovered filings, or
- * null when disabled / not yet due — the caller only persists on non-null.
+ * Fetch the OGE indexes when the watcher is enabled (or force). Cadence is
+ * NOT decided here — runWatcher calls decideSourcePoll first, same as
+ * House/Senate. A leftover Infisical OGE_POLL_INTERVAL_SEC=21600 is unused
+ * and cannot re-impose a 6h gate.
  */
 export async function pollOgeExecutive(
   env: Env,
-  now: Date,
+  _now: Date,
   fetchImpl: typeof fetch = fetch,
   opts: { force?: boolean } = {},
 ): Promise<DiscoveredFiling[] | null> {
   if (!(await ogeWatchEnabled(env)) && !opts.force) return null;
-  if (!opts.force) {
-    const last = await getLastPollAt(env, POLL_SOURCE);
-    if (last && now.getTime() - last.getTime() < (await pollIntervalSec(env)) * 1000) return null;
-    // FAILURE BACKOFF: last_poll:oge only advances on success, so a failed
-    // fetch would otherwise retry on every minutely cron tick. Wait the same
-    // 15 min as a healthy poll — not 10 min, not every minute.
-    const lastAttempt = await getLastAttemptAt(env, POLL_SOURCE);
-    const lastAttemptFailed = lastAttempt && (!last || last.getTime() < lastAttempt.getTime());
-    if (lastAttemptFailed && now.getTime() - lastAttempt.getTime() < OGE_FAILURE_BACKOFF_SEC * 1000) {
-      return null;
-    }
-    await setLastAttemptAt(env, POLL_SOURCE, now);
-  }
   // Checkpoint is written by the caller (pollExecutive) only after
   // persistence succeeds, matching the House/Senate ordering — a failed
   // persist must not advance last_poll:oge and skip the next cycles.

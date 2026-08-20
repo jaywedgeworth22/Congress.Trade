@@ -3225,9 +3225,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
-      // Executive (OGE 278-T) product cadence is 15 min (beat other sources).
-      // Staleness is 3 missed cycles, same multiplier as House/Senate.
-      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 900 * 3 : staleAfterSec;
+      // Executive weekday floor is 15 min; weekend is hourly like House.
+      // Staleness uses 3× the weekend floor so a healthy weekend poller is
+      // not marked stale between hourly ticks.
+      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 3600 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
         || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'
