@@ -96,8 +96,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 %GA_SCRIPT%
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade</title>
-<meta name="description" content="First-party House &amp; Senate STOCK Act ingestion — not a third-party API reskin. Congress.Trade runs its own pipeline to parse official disclosures into a live, filterable feed with member/ticker analytics and premium webhooks." />
+<title>%TITLE%</title>
+<meta name="description" content="%META_DESCRIPTION%" />
 <link rel="canonical" href="%CANONICAL_URL%" />
 <meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph — placeholders filled server-side from deep-link query
@@ -351,13 +351,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav.tabs button {
+  nav.tabs a {
     position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
     padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
+    text-decoration: none; display: inline-block;
   }
-  nav.tabs button:hover { color: var(--text); background: var(--panel); }
-  nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  nav.tabs a:hover { color: var(--text); background: var(--panel); }
+  nav.tabs a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
   .tab-count-badge {
     display: none;
     min-width: 18px;
@@ -1232,7 +1233,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
   .feature-list { margin:0 0 16px; padding-left:18px; color:var(--text-dim); font-size:13px; line-height:1.55; }
-  .clickable { cursor: pointer; }
+  /* text-decoration/color resets only matter for the entity cells that are
+     real <a href> now (SEOSOCIAL-02) — no-op on the (still more numerous)
+     non-anchor .clickable elements. */
+  .clickable { cursor: pointer; text-decoration: none; color: inherit; }
   /* Generic focus-visible ring for every keyboard-focusable entity target
      (member/asset/ticker/trade). More specific selectors elsewhere (e.g.
      #view-trends tr.clickable:focus-visible) intentionally win over this via
@@ -1890,19 +1894,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       nav.tabs { background: var(--panel); }
       html[data-theme="light"] nav.tabs { background: #fff; }
     }
-    nav.tabs button {
+    nav.tabs a {
       padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
       border-radius: 0; border: 0; background: transparent;
     }
-    nav.tabs button.active {
+    nav.tabs a.active {
       background: transparent;
       box-shadow: none;
     }
-    html[data-theme="dark"] nav.tabs button.active {
+    html[data-theme="dark"] nav.tabs a.active {
       background: transparent;
     }
-    nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
-    nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    nav.tabs a::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+    nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tab-count-badge,
     .tab-count-badge.is-on {
       position: absolute;
@@ -2111,7 +2115,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 420px) {
     .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
     .toolbar #qMember { grid-column:1 / -1; }
-    nav.tabs button::after { font-size: 9px; }
+    nav.tabs a::after { font-size: 9px; }
     th, td { padding: 9px 10px; }
     /* Rising Activity: tighter cells so all four headings fit on phones. */
     #tableTrTrending th, #tableTrTrending td { padding: 9px 6px; }
@@ -2722,12 +2726,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="brand" aria-label="Congress.Trade">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <button data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
-    <button data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
-    <button data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</button>
-    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></button>
-    <button data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></button>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</a>
+    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
+    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
 </header>
@@ -4032,6 +4036,27 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
   });
 }
+/* SEOSOCIAL-02: crawlable deep-link href for an entity cell — a real
+   "/?member=…"/"/?ticker=…" URL, not just a data-* attribute a JS click
+   handler reads. Callers still render data-member/data-asset for the
+   existing delegated click handling (handleEntityOpenEvent), which already
+   preventDefault()s before opening the drawer, so navigation never fires. */
+function entityHref(param, value) {
+  return '/?' + param + '=' + encodeURIComponent(value);
+}
+/* SEOSOCIAL-04: server-side OgMeta only covers the FIRST paint's <title> —
+   this keeps it honest through client-side navigation (tab switches, drawer
+   opens) that never re-request the document. Mirrors resolveOgMeta's
+   pageTitle convention (ogMeta.ts): every non-default label gets a
+   " — Congress.Trade" suffix; the bare default is just the site name. */
+function setDocumentTitle(label) {
+  try { document.title = label ? (label + ' — Congress.Trade') : 'Congress.Trade'; } catch (e) {}
+}
+/* Mirrors resolveOgMeta's trades/people/subs titles (ogMeta.ts) — kept in
+   sync by ogMeta.test.ts's SEOSOCIAL-04 cases. Review/Admin are gated
+   internal tools, not public entities, so they're left off (falls back to
+   whatever title was already showing). */
+var TAB_PAGE_TITLES = { trends: 'Trends', trades: 'Trades', people: 'Directory', subs: 'Delivery' };
 function el(id) { return document.getElementById(id); }
 function clipTextHtml(value, fallback, title) {
   var text = String(value == null || value === '' ? (fallback || '—') : value);
@@ -9878,8 +9903,12 @@ function renderPeopleDirectory(all) {
   }
   body.innerHTML = rows.map(function (m) {
     var name = fmtName(m.fullName || m.filerId || 'Unknown');
+    // Real <a href> (SEOSOCIAL-02) when the row resolves to a filer id, so
+    // the Directory table is a page of genuine, crawlable politician links —
+    // not just click targets a script has to intercept to be useful at all.
+    var memberTag = m.filerId ? 'a' : 'div';
     var memberAttr = m.filerId
-      ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
+      ? ' class="member-cell clickable" href="' + esc(entityHref('member', m.filerId)) + '" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
     var parts = [];
     if (isExecutiveFiler(m.chamber, m.filerId)) {
@@ -9900,7 +9929,7 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td class="col-fill"><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
+      '<td class="col-fill"><' + memberTag + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></' + memberTag + '></td>' +
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
@@ -10069,9 +10098,13 @@ function renderAssetsDirectory(all) {
       : (' title="' + esc(title) + '"');
     var cellClass = tkr ? 'dir-asset-cell clickable' : 'dir-asset-cell';
     var dataAttr = tkr ? (' data-asset="' + esc(tkr) + '"') : '';
+    // Real <a href> (SEOSOCIAL-02) only when there's an actual ticker to link
+    // to — a fund/asset with no symbol has nowhere crawlable to point.
+    var assetTag = tkr ? 'a' : 'div';
+    var hrefAttr = tkr ? (' href="' + esc(entityHref('ticker', tkr)) + '"') : '';
     return '<tr class="row"' + openAttr + '>' +
-      '<td class="col-fill"><div class="' + cellClass + '"' + dataAttr + '>' + logo +
-        '<div class="dir-asset-text cell-clip" title="' + esc(title) + '">' + labelHtml + '</div></div></td>' +
+      '<td class="col-fill"><' + assetTag + ' class="' + cellClass + '"' + hrefAttr + dataAttr + '>' + logo +
+        '<div class="dir-asset-text cell-clip" title="' + esc(title) + '">' + labelHtml + '</div></' + assetTag + '></td>' +
       '<td class="col-num muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
       '<td class="col-num muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
   }).join('');
@@ -10968,15 +11001,28 @@ function closeDrawer() {
   var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawer').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
+  // SEOSOCIAL-04: undo the drawer-open title change back to whatever the
+  // active tab's title is (or the bare site name for Trends/no tab active).
+  if (wasOpen) {
+    var activeTab = document.querySelector('nav.tabs a.active');
+    var activeView = activeTab ? activeTab.getAttribute('data-view') : null;
+    setDocumentTitle(activeView ? TAB_PAGE_TITLES[activeView] : null);
+  }
 }
 /* Deep links: every drawer gets a shareable URL (?ticker= / ?member= / ?trade=)
    via a "Copy link" action; openDeepLink() below restores the drawer on boot. */
 function copyLinkHtml(param, value, label) {
-  return '<a class="drawer-all-link clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
+  // Real href (SEOSOCIAL-02) so "Copy link" is also a genuine, crawlable,
+  // right-clickable/middle-clickable permalink — not just a JS clipboard
+  // trick. The click handler below still preventDefault()s and copies, so
+  // clicking it keeps the existing "copied!" toast behaviour.
+  var href = '/?' + encodeURIComponent(param) + '=' + encodeURIComponent(value);
+  return '<a class="drawer-all-link clickable" href="' + esc(href) + '" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
 }
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-copy-param]') : null;
   if (!b) return;
+  if (e.preventDefault) e.preventDefault();
   var u = new URL(window.location.origin + '/');
   u.searchParams.set(b.getAttribute('data-copy-param'), b.getAttribute('data-copy-value') || '');
   copyText(u.toString());
@@ -11263,6 +11309,7 @@ function openAsset(ticker) {
     }).join('');
     // Owner punch list #13(f): sticky-header summary for the ticker drawer.
     var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class="dot-sep">  |  </span>' + esc(companyName) : '');
+    setDocumentTitle(d.ticker); // SEOSOCIAL-04: drawer-open path
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
 	      // These come from the windowed stats block, same as the KPI strip below —
@@ -11371,6 +11418,7 @@ function openMember(filerId) {
         '<td>' + actionCell + '</td><td>' + assetCell + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
+    setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path
     openDrawer(
       '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
@@ -11644,9 +11692,9 @@ function applyAdminVisibility() {
   // section on the Alerts tab). Default hidden in markup so anon never
   // flashes them before /auth/me resolves.
   document.querySelectorAll('[data-admin-only]').forEach(function (n) { n.hidden = !allowed; });
-  var active = document.querySelector('nav.tabs button.active');
+  var active = document.querySelector('nav.tabs a.active');
   if (!allowed && active && active.getAttribute('data-admin-tab') === 'true') {
-    var trends = document.querySelector('nav.tabs button[data-view="trends"]');
+    var trends = document.querySelector('nav.tabs a[data-view="trends"]');
     if (trends) trends.click();
   }
   if (!allowed) {
@@ -12179,7 +12227,7 @@ function handleAuthQueryParams() {
 function showView(name, scrollId) {
   var aliases = { feed: 'trades', delivery: 'subs', alerts: 'subs', push: 'subs' };
   var view = aliases.hasOwnProperty(name) ? aliases[name] : name;
-  var btn = document.querySelector('nav.tabs button[data-view="' + view + '"]');
+  var btn = document.querySelector('nav.tabs a[data-view="' + view + '"]');
   if (!btn) return;
   if (btn.getAttribute('data-admin-tab') === 'true') btn.hidden = false;
   if (typeof btn.click === 'function') btn.click();
@@ -12190,16 +12238,21 @@ function showView(name, scrollId) {
     }
   }
 }
-document.querySelectorAll('nav.tabs button').forEach(function (b) {
-  b.onclick = function () {
+document.querySelectorAll('nav.tabs a').forEach(function (b) {
+  b.onclick = function (e) {
+    // Tabs are real <a href="/?view=..."> now (SEOSOCIAL-02) so crawlers and
+    // ctrl/cmd-click "open in new tab" work; preventDefault keeps the SPA
+    // click-to-switch behaviour instead of a full navigation.
+    if (e && e.preventDefault) e.preventDefault();
     if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin() && !ME.user && !hasAdminToken()) {
       openLogin();
       return;
     }
-    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
     b.setAttribute('aria-selected', 'true');
+    if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);
     try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
     try {
       var u = new URL(window.location.href);
@@ -12901,7 +12954,7 @@ loadMe().then(function () {
       var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
       // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
       // or stale ?view= should never silently resurrect an old session.
-      initialView = document.querySelector('nav.tabs button[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
+      initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
       // Same legacy-alias resolution applies to a stored last-viewed tab —
@@ -12909,7 +12962,7 @@ loadMe().then(function () {
       // on the Trades tab, and the stored value is migrated to the canonical
       // id in place so every later load reads it directly.
       var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;
-      if (canonicalSaved && document.querySelector('nav.tabs button[data-view="' + canonicalSaved + '"]')) {
+      if (canonicalSaved && document.querySelector('nav.tabs a[data-view="' + canonicalSaved + '"]')) {
         initialView = canonicalSaved;
         if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }
       }
@@ -12923,12 +12976,17 @@ loadMe().then(function () {
     }
   } catch (e) {}
 
-  var initialBtn = document.querySelector('nav.tabs button[data-view="' + initialView + '"]');
+  var initialBtn = document.querySelector('nav.tabs a[data-view="' + initialView + '"]');
   if (initialBtn && initialView !== 'trends') {
-    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     initialBtn.classList.add('active');
     initialBtn.setAttribute('aria-selected', 'true');
+    // Restoring a non-Trends tab that wasn't in the request URL (e.g. from
+    // localStorage) — the server-rendered <title> only knows about ?view=,
+    // so it's still the plain default here and needs the same fix-up the
+    // click handler applies (SEOSOCIAL-04).
+    if (TAB_PAGE_TITLES[initialView]) setDocumentTitle(TAB_PAGE_TITLES[initialView]);
     var view = el('view-' + initialView);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     
