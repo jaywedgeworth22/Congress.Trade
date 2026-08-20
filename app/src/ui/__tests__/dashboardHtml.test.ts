@@ -3543,7 +3543,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("var publicBox = el('trLatencySection');");
       expect(DASHBOARD_HTML).toContain("var publicLink = el('trLatencyLink');");
       expect(DASHBOARD_HTML).toContain("var adminBox = el('adminLatencySection');");
-      expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasData;');
+      expect(DASHBOARD_HTML).toContain('adminBox.hidden = !hasAdminData;');
       expect(DASHBOARD_HTML).toContain('var ahead = hasPublicData && isLatencyAhead({ providers: publicProvs });');
       expect(DASHBOARD_HTML).toContain('publicBox.hidden = !ahead;');
       expect(DASHBOARD_HTML).toContain('publicLink.hidden = !ahead;');
