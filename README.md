@@ -5,12 +5,21 @@ that ingests public US STOCK Act trade disclosures (House, Senate, and
 Executive Branch OGE 278-T), extracts and normalizes trades, and serves a
 public dashboard plus REST, webhook, and SSE delivery.
 
-Production is not a Cloudflare Worker.  The runnable app lives in `app/` and
-runs as a Deno process inside the Coolify `congress-app` Docker container on
-the Hetzner host `fleet-hetzner-nbg1`.  Structured data is a host SQLite file
-at `/data/congress-trade/db.sqlite`.  Filing PDFs live in Cloudflare R2.
-Cloudflare is used for DNS and the edge in front of the host; it is not the
-application runtime.
+Production is not a Cloudflare Worker and is not Node.  The runnable app
+lives in `app/` and runs as **Deno** inside the Coolify `congress-app`
+Docker container on Hetzner `fleet-hetzner-nbg1` (same box as
+`host.jays.services`).  Structured data is host SQLite at
+`/data/congress-trade/db.sqlite`.  Filing PDFs live in Cloudflare R2.
+Cloudflare DNS routes `https://congress.trade`; it is not the application
+runtime.
+
+Proof (do not treat leftover Worker packages as the live host):
+`AGENTS.md` Current Shape, `app/Dockerfile` (`FROM denoland/deno:alpine`,
+`src/deno/main.ts`), `app/docker-compose.yml` (`congress-app`),
+`app/src/deno/main.ts`.  `app/wrangler.toml` is gone.  Leftover only:
+`app/wrangler.preview.example.toml`, `@sentry/cloudflare`,
+`@cloudflare/workers-types`.  Do not reintroduce `wrangler deploy` as the
+production path.
 
 ## Repository Layout
 

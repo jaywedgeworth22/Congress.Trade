@@ -5,16 +5,22 @@ Executive Branch), extracts/normalizes trades, and pushes them to clients via
 webhook + SSE, with a dashboard and admin panel.  Live site:
 [https://congress.trade](https://congress.trade).
 
-Production is **not** a Cloudflare Worker and does **not** use D1.  The app
-in this directory is a Deno process in the Coolify `congress-app` container
-on `fleet-hetzner-nbg1`.  Coolify builds `app/docker-compose.yml` on push to
-`main`.  Structured data is the host SQLite file at
-`/data/congress-trade/db.sqlite`.  Deno KV is `/data/congress-trade/kv.sqlite`.
-Filing PDFs are Cloudflare R2.  Cloudflare DNS/edge sit in front of the host.
+Production is **not** a Cloudflare Worker, **not** D1, and **not** Node.
+The app in this directory is **Deno** in the Coolify `congress-app`
+container on Hetzner `fleet-hetzner-nbg1` (same box as `host.jays.services`).
+Coolify builds `app/docker-compose.yml` on push to `main`.  Structured data
+is the host SQLite file at `/data/congress-trade/db.sqlite`.  Deno KV is
+`/data/congress-trade/kv.sqlite`.  Filing PDFs are Cloudflare R2.
+Cloudflare DNS routes `https://congress.trade`.
 
-There is no production `wrangler.toml`.  Treat `scripts/ship.sh` and
-`POST /api/admin/migrate` as production operations.  `npm run deploy` only
-prints that Coolify owns the publish step.
+Proof: `../AGENTS.md` Current Shape, `Dockerfile`
+(`FROM denoland/deno:alpine`), `docker-compose.yml` (`congress-app`),
+`src/deno/main.ts`.  `wrangler.toml` is gone (404).  Leftover only:
+`wrangler.preview.example.toml`, `@sentry/cloudflare`,
+`@cloudflare/workers-types`.  Do not reintroduce `wrangler deploy` as the
+production path.  Treat `scripts/ship.sh` and `POST /api/admin/migrate` as
+production operations.  `npm run deploy` only prints that Coolify owns the
+publish step.
 
 `app/scripts/deploy-preview.sh` is leftover isolated Wrangler preview
 tooling.  It is not the live site and must not be pointed at
