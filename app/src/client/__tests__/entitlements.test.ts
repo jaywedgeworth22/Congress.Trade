@@ -238,4 +238,63 @@ describe('POST /entitlements/apple/redeem — no session required', () => {
       .get('otxn-anon-1') as { user_id: string | null };
     expect(row.user_id).toBe('user_owner');
   });
+
+  it('refuses to resurrect a REFUND/REVOKE ledger row by replaying the original still-valid JWS', async () => {
+    // Concrete trigger: buy anonymously, Apple refunds, webhook marks revoked,
+    // then replay the purchase-time JWS (no revocationDate, expiresDate still
+    // in the future).  Before the guard this flipped status back to active
+    // and minted a new device token.
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({
+      transactionId: 'txn-1',
+      purchaseDate: Date.parse('2026-08-01T00:00:00.000Z'),
+    }));
+    const env = await fakeEnv();
+    env.__db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status,
+        latest_transaction_id, purchase_date, expires_date, revoked_at, created_at, updated_at
+      ) VALUES (
+        'otxn-anon-1', NULL, 'trade.congress.premium.monthly', 'monthly', 'revoked',
+        'txn-1', '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z',
+        '2026-08-20T12:00:00.000Z', '2026-08-01T00:00:00Z', '2026-08-20T12:00:00Z'
+      );
+    `);
+    const res = await post(buildApp(), env, { signedTransaction: 'a.b.c' });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/refunded or is no longer active/);
+    const row = env.__db
+      .prepare('SELECT status, revoked_at FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-anon-1') as { status: string; revoked_at: string | null };
+    expect(row.status).toBe('revoked');
+    expect(row.revoked_at).toBe('2026-08-20T12:00:00.000Z');
+  });
+
+  it('allows a newer Apple transaction to reactivate after refund (real re-subscribe)', async () => {
+    const laterPurchase = Date.parse('2026-08-21T00:00:00.000Z');
+    const laterExpiry = laterPurchase + 30 * 86_400_000;
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({
+      transactionId: 'txn-resubscribe',
+      purchaseDate: laterPurchase,
+      expiresDate: laterExpiry,
+    }));
+    const env = await fakeEnv();
+    env.__db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status,
+        latest_transaction_id, purchase_date, expires_date, revoked_at, created_at, updated_at
+      ) VALUES (
+        'otxn-anon-1', NULL, 'trade.congress.premium.monthly', 'monthly', 'revoked',
+        'txn-1', '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z',
+        '2026-08-20T12:00:00.000Z', '2026-08-01T00:00:00Z', '2026-08-20T12:00:00Z'
+      );
+    `);
+    const res = await post(buildApp(), env, { signedTransaction: 'a.b.c' });
+    expect(res.status).toBe(200);
+    const row = env.__db
+      .prepare('SELECT status, latest_transaction_id FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-anon-1') as { status: string; latest_transaction_id: string };
+    expect(row.status).toBe('active');
+    expect(row.latest_transaction_id).toBe('txn-resubscribe');
+  });
 });

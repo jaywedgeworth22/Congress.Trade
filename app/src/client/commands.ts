@@ -28,7 +28,12 @@ import {
   upsertPushDevice,
 } from './pushDevices.ts';
 import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
-import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import {
+  getAppleSubscription,
+  isStaleLedgerReactivation,
+  STALE_LEDGER_REACTIVATION_MESSAGE,
+  upsertAppleSubscription,
+} from '../billing/appleSubscriptions.ts';
 import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
@@ -147,6 +152,11 @@ async function redeemAppleTransactionForUser(
   }
   const { transaction, plan, originalTransactionId } = verified;
 
+  const existing = await getAppleSubscription(env, originalTransactionId);
+  if (existing && isStaleLedgerReactivation(existing, transaction)) {
+    throw new ClientInputError(STALE_LEDGER_REACTIVATION_MESSAGE, 409);
+  }
+
   const upserted = await upsertAppleSubscription(env, {
     originalTransactionId,
     userId: user.id,
@@ -159,11 +169,18 @@ async function redeemAppleTransactionForUser(
     expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
   });
   if (!upserted.ok) {
-    // Never silently reassign a subscription's Premium grant to a new
-    // account — restore-purchases (or claiming an anonymous device purchase)
-    // on a shared/second Apple ID or account must surface as a conflict, not
-    // a takeover of the original owner's Premium.
-    throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
+    switch (upserted.reason) {
+      case 'owner_mismatch':
+        // Never silently reassign a subscription's Premium grant to a new
+        // account — restore-purchases (or claiming an anonymous device purchase)
+        // on a shared/second Apple ID or account must surface as a conflict, not
+        // a takeover of the original owner's Premium.
+        throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
+      default: {
+        const _never: never = upserted.reason;
+        return _never;
+      }
+    }
   }
 
   const refreshedUser = await getUserById(env, user.id);

@@ -93,6 +93,49 @@ export function appleStatusGrantsAccess(status: AppleSubscriptionStatus): boolea
   return status === 'active' || status === 'grace_period';
 }
 
+export const STALE_LEDGER_REACTIVATION_MESSAGE =
+  'this Apple subscription has been refunded or is no longer active';
+
+/**
+ * The purchase-time StoreKit JWS stays cryptographically valid after Apple
+ * sends REFUND/REVOKE.  Replaying it through redeem must not flip the ledger
+ * back to `active`.  A later Apple transaction (new transactionId and a
+ * later purchase/expiry) is a real re-subscribe and is allowed through.
+ */
+export function isStaleLedgerReactivation(
+  existing: AppleSubscriptionRecord,
+  incoming: { transactionId?: string | null; purchaseDate?: number | null; expiresDate?: number | null },
+): boolean {
+  switch (existing.status) {
+    case 'active':
+    case 'grace_period':
+      return false;
+    case 'revoked':
+    case 'expired':
+    case 'billing_retry':
+      break;
+    default: {
+      const _never: never = existing.status;
+      return _never;
+    }
+  }
+
+  const incomingTxn = incoming.transactionId ?? null;
+  if (!incomingTxn || incomingTxn === existing.latestTransactionId) return true;
+
+  const incomingPurchaseMs = incoming.purchaseDate != null ? Number(incoming.purchaseDate) : Number.NaN;
+  if (existing.revokedAt) {
+    const revokedMs = Date.parse(existing.revokedAt);
+    if (Number.isFinite(revokedMs) && (!Number.isFinite(incomingPurchaseMs) || incomingPurchaseMs <= revokedMs)) {
+      return true;
+    }
+  }
+
+  const incomingExpMs = incoming.expiresDate != null ? Number(incoming.expiresDate) : Number.NaN;
+  const existingExpMs = existing.expiresDate ? Date.parse(existing.expiresDate) : 0;
+  return Number.isFinite(incomingExpMs) && incomingExpMs <= existingExpMs;
+}
+
 export async function getAppleSubscription(
   env: Env,
   originalTransactionId: string,

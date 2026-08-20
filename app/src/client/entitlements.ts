@@ -25,7 +25,12 @@
 import type { Context } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
-import { upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import {
+  getAppleSubscription,
+  isStaleLedgerReactivation,
+  STALE_LEDGER_REACTIVATION_MESSAGE,
+  upsertAppleSubscription,
+} from '../billing/appleSubscriptions.ts';
 import { issueDeviceEntitlementToken } from '../billing/deviceEntitlement.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 
@@ -71,6 +76,11 @@ export async function redeemAppleEntitlementAnonymously(c: Context<{ Bindings: E
   }
   const { transaction, plan, originalTransactionId } = verified;
 
+  const existing = await getAppleSubscription(c.env, originalTransactionId);
+  if (existing && isStaleLedgerReactivation(existing, transaction)) {
+    return c.json({ error: STALE_LEDGER_REACTIVATION_MESSAGE, upgradeRequired: false }, 409);
+  }
+
   const txnLimited = await rateLimit(c.env, 'apple-anon-redeem-txn', originalTransactionId, TXN_LIMIT, TXN_WINDOW_SEC);
   if (!txnLimited.ok) {
     return c.json({ error: 'too many redeem attempts for this transaction' }, 429, {
@@ -95,10 +105,17 @@ export async function redeemAppleEntitlementAnonymously(c: Context<{ Bindings: E
     expiresDate: transaction.expiresDate != null ? new Date(Number(transaction.expiresDate)).toISOString() : null,
   });
   if (!upserted.ok) {
-    return c.json(
-      { error: 'this Apple subscription is already linked to a different account', upgradeRequired: false },
-      409,
-    );
+    switch (upserted.reason) {
+      case 'owner_mismatch':
+        return c.json(
+          { error: 'this Apple subscription is already linked to a different account', upgradeRequired: false },
+          409,
+        );
+      default: {
+        const _never: never = upserted.reason;
+        return _never;
+      }
+    }
   }
 
   const deviceEntitlementToken = await issueDeviceEntitlementToken(
