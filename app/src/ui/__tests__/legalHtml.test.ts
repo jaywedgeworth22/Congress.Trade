@@ -36,6 +36,57 @@ describe('legalHtml pricing copy', () => {
   });
 });
 
+describe('LEGALCOMPLIANCE-04: not-affiliated-with-government disclaimer', () => {
+  const SENTENCE =
+    'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.';
+
+  it('appears verbatim in both the legal-page footer and Terms of Service §1', () => {
+    expect(TOS_HTML).toContain(SENTENCE);
+    expect(PRIVACY_HTML).toContain(SENTENCE);
+  });
+});
+
+describe('LEGALCOMPLIANCE-05: ToS §1 scope covers Executive Branch OGE 278-T filings', () => {
+  it('describes House, Senate, AND Executive Branch filings, not Congress-only', () => {
+    expect(TOS_HTML).toContain('U.S. House of Representatives and U.S. Senate under the STOCK Act (2012)');
+    expect(TOS_HTML).toContain('U.S. Executive Branch officials under the Ethics in Government Act of 1978');
+    expect(TOS_HTML).toContain('Periodic Transaction Reports (OGE Form 278-T)');
+    expect(TOS_HTML).not.toContain('filed by politicians serving in the U.S. Congress under the STOCK Act (2012)');
+  });
+
+  it('names the public-record source agencies and the EIGA use restriction on Executive Branch reports', () => {
+    expect(TOS_HTML).toContain('U.S. House Clerk, the U.S. Senate, and the Office of Government Ethics');
+    expect(TOS_HTML).toContain('5 U.S.C. &sect;13107(c)');
+  });
+});
+
+describe('LEGALCOMPLIANCE-03: Apple In-App Purchase path in ToS §3-5', () => {
+  it('addresses Apple as merchant of record and App Store cancellation/refunds separately from Stripe', () => {
+    expect(TOS_HTML).toContain('billed by Apple as an In-App Purchase');
+    expect(TOS_HTML).toContain('iOS Settings');
+    expect(TOS_HTML).toContain('reportaproblem.apple.com');
+    expect(TOS_HTML).toContain('Apple, not Congress.Trade, is the merchant of record');
+  });
+});
+
+describe('LEGALCOMPLIANCE-02: Privacy Policy discloses Apple, Sentry, and LLM extraction providers', () => {
+  it('lists Apple (Sign in, IAP, APNs) as a sub-processor and identifier source', () => {
+    expect(PRIVACY_HTML).toContain('Apple-assigned user identifier');
+    expect(PRIVACY_HTML).toContain('Apple Push Notification service (APNs) token');
+    expect(PRIVACY_HTML).toContain('<strong>Apple</strong> — "Sign in with Apple" authentication');
+  });
+
+  it('lists Sentry and the OpenRouter/Mistral/LlamaParse extraction pipeline', () => {
+    expect(PRIVACY_HTML).toContain('Sentry (Functional Software, Inc.)');
+    expect(PRIVACY_HTML).toContain('OpenRouter, Mistral, and LlamaParse');
+  });
+
+  it('discloses webhook destination URLs and the Cloudflare Web Analytics beacon', () => {
+    expect(PRIVACY_HTML).toContain('webhook delivery, the destination URL you provide');
+    expect(PRIVACY_HTML).toContain('Web Analytics" beacon');
+  });
+});
+
 describe('shared legal chrome and theme path', () => {
   function styleBlock(html: string): string {
     const match = html.match(/<style>[\s\S]*?<\/style>/);
@@ -60,9 +111,9 @@ describe('shared legal chrome and theme path', () => {
       expect(html).toContain('Congress<span class="dot">.</span>Trade');
     }
     expect(TOS_HTML).toContain('<h1>Terms of Service</h1>');
-    expect(TOS_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+    expect(TOS_HTML).toContain('<p class="eff">Effective August 19, 2026</p>');
     expect(PRIVACY_HTML).toContain('<h1>Privacy Policy</h1>');
-    expect(PRIVACY_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+    expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 19, 2026</p>');
   });
 
   it('honors the site Light / Dark / System switch on both pages', () => {
