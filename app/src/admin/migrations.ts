@@ -1140,6 +1140,36 @@ export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   "INSERT OR IGNORE INTO securities_ref (ticker, company_name, asset_class) VALUES ('ETH', 'Ethereum', 'Crypto'), ('BTC', 'Bitcoin', 'Crypto'), ('SOL', 'Solana', 'Crypto'), ('DOGE', 'Dogecoin', 'Crypto'), ('XRP', 'XRP', 'Crypto'), ('ADA', 'Cardano', 'Crypto'), ('AVAX', 'Avalanche', 'Crypto'), ('DOT', 'Polkadot', 'Crypto'), ('MATIC', 'Polygon', 'Crypto'), ('LINK', 'Chainlink', 'Crypto'), ('LTC', 'Litecoin', 'Crypto')",
 ] as const;
 
+/**
+ * 0089_probe_run_brackets.sql
+ *
+ * Durable record of EVERY competitor probe, including probes that found
+ * nothing — those are what establish the lower bound of a publication window.
+ * See src/ingestion/probeRunLog.ts for why a point-in-time
+ * `first_observed_at` is not a publication timestamp.
+ *
+ * `prev_probe_at` / `provider_window_*` are added as nullable columns: every
+ * pre-existing row keeps a NULL window and is therefore reported as
+ * UNBOUNDED confidence rather than being retroactively credited with a
+ * precision it never had.
+ */
+export const PROBE_RUN_BRACKET_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS provider_probe_runs (
+     provider TEXT NOT NULL,
+     chamber TEXT NOT NULL,
+     ran_at TEXT NOT NULL,
+     ok INTEGER NOT NULL DEFAULT 0,
+     rows_seen INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     PRIMARY KEY (provider, chamber, ran_at)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_provider_probe_runs_lookup
+     ON provider_probe_runs (provider, chamber, ok, ran_at DESC)`,
+  'ALTER TABLE trade_provider_observations ADD COLUMN prev_probe_at TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_window_start TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_window_end TEXT',
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1258,6 +1288,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
   // 0088_tx_twin_seek_index.sql
   ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
+  // 0089_probe_run_brackets.sql
+  ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
