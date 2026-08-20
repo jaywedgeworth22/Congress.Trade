@@ -555,6 +555,12 @@ privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
 (OGE 278-T).  Store listing copy must say so — never Congress-only.  Premium
 trial is **2 weeks** (live ASC intro), never a leftover 1-month.
 
+**Strengthened 2026-08-19 (owner, in-conversation):** not limited to product copy —
+covers every paragraph an agent writes anywhere, including **chat replies to the
+owner**, PR titles/bodies, commit messages, Slack posts to #agent-sync, Apple Notes,
+effort-board rows, rollout notes, review reports, and design docs.  If it's prose a
+human reads, it gets two spaces.
+
 Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and
 `/Users/jay/apps/FLEET-UI-COPY.md`.
 
