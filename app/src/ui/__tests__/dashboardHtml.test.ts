@@ -2084,6 +2084,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       extractFn(html, 'reviewMoney'),
       extractFn(html, 'reviewBracketLabel'),
       extractFn(html, 'consensusHasMajority'),
+      extractFn(html, 'consensusHasPlurality'),
       extractFn(html, 'consensusFieldClass'),
       extractFn(html, 'consensusFieldDisplay'),
       extractFn(html, 'consensusModelFieldValue'),

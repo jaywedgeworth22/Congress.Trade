@@ -6339,6 +6339,7 @@ function consensusFieldDisplay(value) {
 }
 /* True iff a field's vote reached a strict majority (unanimous counts). */
 function consensusHasMajority(fc) { return Boolean(fc && fc.total > 0 && fc.votes * 2 > fc.total); }
+function consensusHasPlurality(fc) { return Boolean(fc && fc.value != null && fc.votes >= 2); }
 /* Green (every present model agreed), amber (a majority agreed, some
    dissent), or red (no majority — contested) — reuses the file's existing
    .conf hi/mid/lo confidence-color classes rather than new ones. */
@@ -6612,7 +6613,8 @@ function consensusQueuedRowKey(t) {
 /* Missing/null consensus values never erase a queued value. Contested rows are
    handled as a whole below and do not call this helper. */
 function consensusFieldValueForEdit(fc, queuedValue, rowAuthoritative) {
-  return (rowAuthoritative && consensusHasMajority(fc) && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
+  var usable = consensusHasMajority(fc) || consensusHasPlurality(fc);
+  return (rowAuthoritative && usable && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
 }
 function consensusApplyField(target, row, consensusField, editField, rowAuthoritative) {
   var fc = row.fields && row.fields[consensusField];
