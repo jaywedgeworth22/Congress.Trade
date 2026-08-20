@@ -20,7 +20,7 @@ vi.mock('../appleJws', () => ({
 
 import { buildAppleWebhookRouter } from '../appleWebhook.ts';
 import { AppleJwsVerificationError } from '../appleJws.ts';
-import { getAppleSubscription, upsertAppleSubscription } from '../appleSubscriptions.ts';
+import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSubscription } from '../appleSubscriptions.ts';
 import type { Env } from '../../shared/types.ts';
 
 interface SqliteRunResult {
@@ -43,7 +43,7 @@ async function freshDb(): Promise<SqliteDatabase> {
   const db = new sqlite.DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE apple_subscriptions (
-      original_transaction_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, product_id TEXT NOT NULL,
+      original_transaction_id TEXT PRIMARY KEY, user_id TEXT, product_id TEXT NOT NULL,
       plan TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', environment TEXT,
       latest_transaction_id TEXT, purchase_date TEXT, expires_date TEXT,
       auto_renew_status INTEGER, auto_renew_product_id TEXT, revoked_at TEXT, revocation_reason INTEGER,
@@ -311,6 +311,47 @@ describe('POST /api/webhooks/apple', () => {
     const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
     expect(res.status).toBe(200);
     expect(await getAppleSubscription(env, 'otxn-never-redeemed')).toBeNull();
+  });
+
+  it('REFUND before first redeem writes a revoked tombstone so a later original-JWS replay cannot mint Premium', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-first' }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({ originalTransactionId: 'otxn-never-redeemed', revocationReason: 1 }),
+    );
+    const { env } = await fakeEnv();
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-never-redeemed');
+    expect(row?.status).toBe('revoked');
+    expect(row?.userId).toBeNull();
+    expect(row?.revokedAt).not.toBeNull();
+    expect(
+      clientRedeemWouldResurrectRevoked(row, {
+        transactionId: 'txn-original-cached',
+        purchaseDateMs: Date.now() - 60_000,
+      }),
+    ).toBe(true);
+  });
+
+  it('REVOKE before first redeem writes a revoked tombstone', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({ notificationType: 'REVOKE', notificationUUID: 'notif-revoke-first' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ originalTransactionId: 'otxn-never-redeemed', revocationReason: 0 }));
+    const { env } = await fakeEnv();
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-never-redeemed');
+    expect(row?.status).toBe('revoked');
+    expect(row?.userId).toBeNull();
+    expect(row?.revokedAt).not.toBeNull();
   });
 
   it('DID_FAIL_TO_RENEW with a future gracePeriodExpiresDate keeps Premium (grace_period)', async () => {
