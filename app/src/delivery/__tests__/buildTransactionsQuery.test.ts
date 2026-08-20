@@ -17,12 +17,27 @@ import {
   escapeLikePattern,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
+  twinCandidateLimit,
   type TxQueryParams,
   type FeedTransactionRow,
   type TransactionRow,
 } from '../rows.ts';
 import { TWIN_DEDUPE_SQL } from '../../shared/tradeIdentity.ts';
 import type { Filing } from '../../shared/types.ts';
+
+describe('twinCandidateLimit', () => {
+  it('over-fetches a bounded slack so OFFSET still covers the unique page', () => {
+    expect(twinCandidateLimit(5, 0)).toBe(37);
+    expect(twinCandidateLimit(100, 0)).toBe(400);
+    expect(twinCandidateLimit(25, 50)).toBe(300);
+  });
+
+  it('never returns fewer rows than offset+limit (public pager ceiling is 2000)', () => {
+    const deep = twinCandidateLimit(250, 2000);
+    expect(deep).toBeGreaterThanOrEqual(2250);
+    expect(deep).toBe(4250);
+  });
+});
 
 describe('buildTransactionsQuery', () => {
   it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {
@@ -112,12 +127,14 @@ describe('buildTransactionsQuery', () => {
 
   it('resolves chamber via the filers table (authoritative for seed data)', () => {
     const q = buildTransactionsQuery({ chamber: 'senate' });
-    // Chamber filters need the join BEFORE limit, so this path stays flat.
+    // Chamber filters need the join BEFORE the cheap LIMIT; twin-collapse
+    // still waits until after that candidate window (#2062).
     expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
     expect(q.sql).toContain('LEFT JOIN filings f ON f.doc_id = t.doc_id');
     expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
     expect(q.params).toEqual([0, 'senate']);
-    expect(q.sql).not.toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toContain(`LIMIT ${twinCandidateLimit(DEFAULT_TX_LIMIT, 0)}`);
   });
 
   it('filters by party bucket via the filers table (same bucketing as the Trends analytics endpoints)', () => {
@@ -131,7 +148,8 @@ describe('buildTransactionsQuery', () => {
         'ELSE NULL END) IN (?)',
     );
     expect(q.params).toEqual([0, 'D']);
-    expect(q.sql).not.toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toContain(`LIMIT ${twinCandidateLimit(DEFAULT_TX_LIMIT, 0)}`);
     const count = buildTransactionsCountQuery({ partyBuckets: ['D', 'R'] });
     expect(count.sql).toContain('IN (?, ?)');
     expect(count.params).toEqual(['D', 'R']);
@@ -153,10 +171,11 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([9, 'AAPL']);
   });
 
-  it('keeps flat joins when memberName requires filers', () => {
+  it('nests a cheap candidate window when memberName requires filers', () => {
     const q = buildTransactionsQuery({ memberName: 'Pelo' });
     expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
-    expect(q.sql).not.toMatch(/FROM \(SELECT t\.\* FROM transactions t/);
+    expect(q.sql).toMatch(/FROM \(SELECT t\.\* FROM transactions t/);
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
   });
 
   it('selects the resolved chamber + politician name alongside t.*', () => {
@@ -302,6 +321,21 @@ describe('buildTransactionsQuery', () => {
     const q = buildTransactionsQuery({ sort: 'published', order: 'desc', limit: 25 });
     expect(q.sql).toContain('ORDER BY COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq) DESC, t.cursor_seq DESC');
     expect(q.params).toEqual([0]);
+  });
+
+  it('collapses twins after a cheap candidate LIMIT (live first-page shape)', () => {
+    const q = buildTransactionsQuery({ order: 'desc', limit: 5, offset: 0 });
+    const candidate = twinCandidateLimit(5, 0);
+    expect(q.sql).toContain(`LIMIT ${candidate}`);
+    expect(q.sql).toContain('LIMIT 5');
+    expect(q.sql).toContain(TWIN_DEDUPE_SQL);
+    const innerWhere = q.sql.match(
+      /SELECT t\.\* FROM transactions t WHERE ([\s\S]+?) ORDER BY t\.cursor_seq DESC LIMIT /,
+    )?.[1];
+    expect(innerWhere).toBeTruthy();
+    expect(innerWhere).not.toContain('NOT EXISTS');
+    expect(innerWhere).not.toContain('FROM transactions d');
+    expect(q.sql.indexOf(`LIMIT ${candidate}`)).toBeLessThan(q.sql.indexOf(TWIN_DEDUPE_SQL));
   });
 
   it('does not interpolate untrusted values directly (ticker/member-filer are bound, not inlined)', () => {
