@@ -204,18 +204,25 @@ describe('executeCommand redeem_apple_purchase', () => {
     ).rejects.toThrow(ClientInputError);
   });
 
-  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('grants a Sandbox transaction by default (TestFlight / Mac / App Review) and records environment', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
-    await expect(
-      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
-    ).rejects.toThrow(/Sandbox/);
-
-    const allowed = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'true' });
-    const result = (await executeCommand(allowed, baseUser(), 'redeem_apple_purchase', {
+    const result = (await executeCommand(env, baseUser(), 'redeem_apple_purchase', {
       signedTransaction: 'a.b.c',
     })) as { entitlement: { premium: boolean } };
     expect(result.entitlement.premium).toBe(true);
+    const row = env.__db
+      .prepare('SELECT environment FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { environment: string | null };
+    expect(row.environment).toBe('Sandbox');
+  });
+
+  it('rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
+    await expect(
+      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/Sandbox/);
   });
 
   it('rejects a bundle id mismatch', async () => {
@@ -413,9 +420,18 @@ describe('executeCommand link_apple_entitlement (Guideline 5.1.1(v) — claiming
     ).rejects.toThrow(ClientInputError);
   });
 
-  it('still rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('links a Sandbox transaction by default', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
+    const result = (await executeCommand(env, baseUser(), 'link_apple_entitlement', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean } };
+    expect(result.entitlement.premium).toBe(true);
+  });
+
+  it('still rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     await expect(
       executeCommand(env, baseUser(), 'link_apple_entitlement', { signedTransaction: 'a.b.c' }),
     ).rejects.toThrow(/Sandbox/);

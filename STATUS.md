@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-08-20 GROK — Mac/TestFlight IAP Sandbox grants (#2095)
+
+Owner screenshot on Mac: StoreKit success then `(Sandbox Apple purchases are
+not accepted)`.  `#2030` required Infisical `APPLE_ALLOW_SANDBOX=true`; the key
+was missing.  TestFlight, App Review, and Designed-for-iPad on Mac all send
+Apple-signed `environment=Sandbox` JWS to production.  Code now allows those
+unless the flag is explicitly `false`.  Infisical prod is `true` (len=4) and
+the secret cache was refreshed, so Restore Purchases works on current main
+before this deploy.  Receipt:
+`docs/rollouts/2026-08-20-mac-iap-sandbox-allow.md`.
+
 ## 2026-08-20 CLAUDE — Latency price snapshots repaired (PR pending)
 
 Pipeline recorded 7 prices out of 2955.  Rows were scheduled retrospectively so every

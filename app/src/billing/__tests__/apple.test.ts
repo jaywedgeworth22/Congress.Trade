@@ -60,8 +60,14 @@ describe('apple IAP helpers', () => {
     expect(isAppleSandboxEnvironment(undefined)).toBe(false);
   });
 
-  it('allows Sandbox purchases only when APPLE_ALLOW_SANDBOX is true', async () => {
-    expect(await appleSandboxPurchasesAllowed({} as Env)).toBe(false);
+  it('allows Apple-signed Sandbox JWS unless APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    // Unset is the production default: TestFlight, App Review, and Designed-for-iPad
+    // on Mac all send environment=Sandbox to congress.trade.
+    expect(await appleSandboxPurchasesAllowed({} as Env)).toBe(true);
     expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: 'true' } as Env)).toBe(true);
+    expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: 'TRUE' } as Env)).toBe(true);
+    expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: 'false' } as Env)).toBe(false);
+    expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: '0' } as Env)).toBe(false);
+    expect(await appleSandboxPurchasesAllowed({ APPLE_ALLOW_SANDBOX: 'no' } as Env)).toBe(false);
   });
 });
