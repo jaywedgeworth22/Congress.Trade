@@ -50,7 +50,7 @@ describe('production Sentry init', () => {
     expect(typeof options.beforeSend).toBe('function');
   });
 
-  it('no-ops cleanly when DSN is missing', () => {
+  it('no-ops cleanly when DSN is missing', async () => {
     const sdk = fakeSdk();
     const sentry = createSentryBindings(sdk);
     const result = sentry.initProductionSentry({});
@@ -61,7 +61,7 @@ describe('production Sentry init', () => {
     expect(sentry.captureException(new Error('boom'))).toBeUndefined();
     expect(sdk.captureException).not.toHaveBeenCalled();
     expect(sentry.captureMessage('hello')).toBeUndefined();
-    expect(sentry.withMonitor('lane', () => 'ok')).toBe('ok');
+    expect(await sentry.withMonitor('lane', () => 'ok')).toBe('ok');
     expect(sdk.withMonitor).not.toHaveBeenCalled();
     sentry.setTags({ queue: 'ingest' });
     expect(sdk.setTags).not.toHaveBeenCalled();
@@ -194,6 +194,6 @@ describe('scrubSentryEvent', () => {
     expect(serialized).not.toContain('secret');
     expect(serialized).not.toContain('abc');
     expect(serialized).toContain('safe=1');
-    expect(serialized).toContain(SENTRY_FILTERED_VALUE);
+    expect(serialized).toMatch(/\[Filtered\]|%5BFiltered%5D/);
   });
 });

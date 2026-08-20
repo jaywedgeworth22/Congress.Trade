@@ -38,7 +38,7 @@ export interface ProductionSentryBindings {
     optionsFactory: ((env: Env) => Record<string, unknown>) | Record<string, unknown>,
     worker: T,
   ) => T;
-  withMonitor: (name: string, fn: unknown, options?: unknown) => unknown;
+  withMonitor: (name: string, fn: unknown, options?: unknown) => Promise<unknown>;
   captureException: (err: unknown, options?: unknown) => unknown;
   captureMessage: (msg: string, level?: string) => unknown;
   setTags: (tags: Record<string, unknown>) => void;
@@ -90,7 +90,7 @@ function extractEnvFromHandlerArgs(args: unknown[]): Env | undefined {
         || 'DB' in candidate
         || 'CONFIG_KV' in candidate
       ) {
-        return candidate as Env;
+        return candidate as unknown as Env;
       }
     }
   }
@@ -158,16 +158,16 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
     return wrapped;
   };
 
-  const withMonitor = (name: string, fn: unknown, options?: unknown): unknown => {
-    const run = typeof fn === 'function' ? () => fn() : () => fn;
+  const withMonitor = (name: string, fn: unknown, options?: unknown): Promise<unknown> => {
+    const run = () => (typeof fn === 'function' ? fn() : fn);
     if (initialized && typeof sdk.withMonitor === 'function') {
       try {
-        return sdk.withMonitor(name, run, options);
+        return Promise.resolve(sdk.withMonitor(name, run, options));
       } catch {
-        return run();
+        return Promise.resolve(run());
       }
     }
-    return run();
+    return Promise.resolve(run());
   };
 
   const captureException = (err: unknown, options?: unknown): unknown => {
