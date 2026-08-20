@@ -18,6 +18,10 @@
  * A revoked row is not overwritten by a stale pre-refund retry of any other
  * handled type — upsert would otherwise clear revokedAt and, for EXPIRED /
  * billing_retry, drop status off 'revoked' so redeem/confirm would re-grant.
+ * DID_CHANGE_RENEWAL_STATUS never advances purchase identity or clears
+ * revokedAt: a resubscribe's AUTO_RENEW_ENABLED carries the new
+ * transactionId, and writing that id (or nulling revokedAt) makes
+ * clientRedeemWouldResurrectRevoked treat the later Restore as a replay.
  * Idempotent on Apple's `notificationUUID`
  * via the same claim/release/processed ledger pattern the Stripe webhook uses
  * (appleWebhookEvents.ts), so an at-least-once redelivery never double-applies
@@ -271,8 +275,19 @@ async function applyNotification(
   if (!existing) return;
   if (notificationType === 'DID_CHANGE_RENEWAL_STATUS') {
     // Entitlement is unaffected by this event alone — only the renewal-info
-    // fields change; keep the subscription's current access status as-is.
-    await upsertAppleSubscription(env, { ...base, status: existing.status });
+    // fields change. Keep access status, revokedAt, and the purchase
+    // identity as-is. A resubscribe's AUTO_RENEW_ENABLED is a newer
+    // transactionId; writing it (or defaulting revokedAt to null) makes
+    // clientRedeemWouldResurrectRevoked fail the newer-purchase check
+    // (same id, or purchaseDate > NaN) and bricks Restore / DID_RENEW.
+    await upsertAppleSubscription(env, {
+      ...base,
+      status: existing.status,
+      latestTransactionId: existing.latestTransactionId,
+      purchaseDate: existing.purchaseDate,
+      revokedAt: existing.revokedAt,
+      revocationReason: existing.revocationReason,
+    });
     return;
   }
   if (notificationType === 'DID_FAIL_TO_RENEW') {
