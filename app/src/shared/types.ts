@@ -918,6 +918,8 @@ export interface Env {
   APPLE_SIGNIN_ENABLED?: string;
   /** "true" to enable the redeem_apple_purchase command + POST /api/webhooks/apple. Off until the App Store Connect subscription products exist. */
   APPLE_IAP_ENABLED?: string;
+  /** "true" to accept App Store Sandbox / TestFlight JWS against live Premium. Off unless explicitly allowed. */
+  APPLE_ALLOW_SANDBOX?: string;
   /** App Store Connect product id for the monthly Premium subscription (default trade.congress.premium.monthly). */
   APPLE_PRODUCT_MONTHLY?: string;
   /** App Store Connect product id for the annual Premium subscription (default trade.congress.premium.annual). */

@@ -1406,9 +1406,42 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   return r;
 }
 
+/**
+ * App Store 3.1.1: native clients send Bearer and/or Accept: application/pdf.
+ * Those must get 402 JSON, never a 302 to /pricing (Safari would open Stripe).
+ * Browser HTML navigations without Bearer still 302 to the web paywall.
+ */
+export function documentPdfGateWantsJson(headers: {
+  authorization?: string | null;
+  accept?: string | null;
+}): boolean {
+  const auth = headers.authorization ?? '';
+  if (/^bearer\s+\S+/i.test(auth)) return true;
+  const accept = (headers.accept ?? '').toLowerCase();
+  return accept.includes('application/pdf');
+}
+
+export function documentPdfUpgradePayload(): {
+  error: string;
+  upgradeRequired: true;
+  feature: 'pdf';
+} {
+  return {
+    error: 'Archived filing PDF requires a Premium account',
+    upgradeRequired: true,
+    feature: 'pdf',
+  };
+}
+
 export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   const user = await getCurrentUserFromRequest(c);
   if (!user || !(await isPremiumUserAsync(c.env, user))) {
+    if (documentPdfGateWantsJson({
+      authorization: c.req.header('authorization'),
+      accept: c.req.header('accept'),
+    })) {
+      return c.json(documentPdfUpgradePayload(), 402);
+    }
     return c.redirect('/pricing?feature=pdf', 302);
   }
 
