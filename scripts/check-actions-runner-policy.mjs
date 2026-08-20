@@ -1,5 +1,4 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 const workflowsDir = new URL("../.github/workflows/", import.meta.url);
 const workflowNames = (await readdir(workflowsDir))
@@ -8,28 +7,15 @@ const workflowNames = (await readdir(workflowsDir))
 
 const errors = [];
 const allowedRunners = new Set([
-  "[self-hosted, oracle-ci]",
-  "[self-hosted, congress-ci]",
-  // Owned Mac runner (mac-xcode26-congress on the owner's Mac) — Xcode builds
-  // ONLY. It exists so App Store binaries are always compiled by stable
-  // Xcode 26.x, never the side-by-side beta (beta-SDK builds pass TestFlight
-  // but are rejected at submission as INVALID_BINARY). Do not schedule
-  // non-Xcode jobs onto it.
+  // Owned Mac runner (mac-xcode26-congress) — day-to-day xcodebuild compile
+  // and TestFlight ship only. Do not move ios-build.yml / ios-ship.yml onto
+  // GitHub-hosted macos. Do not schedule non-Xcode jobs onto these labels.
   "[self-hosted, macOS, ARM64, xcode26]",
-  // GitHub-hosted Tahoe GM.  The owned Mac is macOS 27 beta; App Store
-  // review rejects those IPAs as INVALID_BINARY.  Only the App Store GM
-  // ship workflow may use this label.  macos-latest stays forbidden.
+  // GitHub-hosted Tahoe GM. The owned Mac is macOS 27 beta; App Store
+  // review rejects those IPAs as INVALID_BINARY. Only the App Store GM
+  // ship workflow may use this label. macos-latest stays forbidden.
   "macos-26",
-  "self-hosted",
   "ubuntu-latest",
-]);
-// Dynamic expressions: self-hosted when repo is private (and, in the gated
-// form, only while the CT_CI_RUNNER repo variable is set — clearing the
-// variable is the documented instant fallback to GitHub-hosted runners when
-// the owned runner host is down; see docs/rollouts/2026-08-08-runners-hetzner-migration.md).
-const allowedRunnerExpressions = new Set([
-  '${{ github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
-  '${{ vars.CT_CI_RUNNER != \'\' && github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
 ]);
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
@@ -69,8 +55,17 @@ for (const name of workflowNames) {
 
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
-    if (runner && !allowedRunners.has(runner[1]) && !allowedRunnerExpressions.has(runner[1])) {
-      errors.push(`${name}:${index + 1}: runner must be an owned literal label set or the approved fallback expression`);
+    if (runner) {
+      const value = runner[1];
+      if (!allowedRunners.has(value)) {
+        errors.push(`${name}:${index + 1}: runner must be ubuntu-latest, macos-26 (GM ship only), or the Mac xcode26 label set`);
+      }
+      if (
+        value.includes("oracle-ci") ||
+        (/self-hosted/.test(value) && value !== "[self-hosted, macOS, ARM64, xcode26]")
+      ) {
+        errors.push(`${name}:${index + 1}: leftover Linux self-hosted / oracle-ci selector`);
+      }
     }
 
     const action = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/);
@@ -97,4 +92,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log(`Actions policy OK: ${workflowNames.length} workflows use owned runners only.`);
+console.log(`Actions policy OK: ${workflowNames.length} workflows use hosted Linux or the owned Mac xcodebuild runner.`);
