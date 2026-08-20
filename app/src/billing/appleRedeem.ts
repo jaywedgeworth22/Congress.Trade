@@ -72,6 +72,8 @@ export async function verifyAppleRedemption(env: Env, jws: string): Promise<Veri
   if (transaction.bundleId && transaction.bundleId !== expectedBundle) {
     throw new AppleRedeemError('bundleId mismatch');
   }
+  // Sandbox is allowed by default (TestFlight / App Review / Mac Designed-for-iPad).
+  // Only APPLE_ALLOW_SANDBOX=false refuses. See appleSandboxPurchasesAllowed.
   if (isAppleSandboxEnvironment(transaction.environment) && !(await appleSandboxPurchasesAllowed(env))) {
     throw new AppleRedeemError('Sandbox Apple purchases are not accepted');
   }
