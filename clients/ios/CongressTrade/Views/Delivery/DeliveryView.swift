@@ -73,7 +73,7 @@ struct DeliveryView: View {
                             Label("Premium Feature", systemImage: "star.fill")
                                 .font(.headline)
                                 .foregroundStyle(.orange)
-                            Text("2-week free trial, then $5/month or $50/year.  Upgrade with In‑App Purchase or on the website to create SSE/webhook deliveries.  Existing deliveries still appear below.")
+                            Text(PremiumPricing.deliveryUpgradeMessage)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Button {
@@ -86,14 +86,6 @@ struct DeliveryView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
-                            if let url = store.api.upgradeURL {
-                                Link(destination: url) {
-                                    Label("Or subscribe on Congress.Trade", systemImage: "safari")
-                                        .font(.subheadline.weight(.semibold))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
-                                }
-                            }
                         }
                         .padding(.vertical, 4)
                     } else {

@@ -100,6 +100,17 @@ final class AuthHeaderInterceptor: RequestInterceptor {
     }
 }
 
+/// Native iOS never starts web Stripe Checkout for Congress.Trade Premium
+/// (App Store Guideline 3.1.1).  Website checkout stays on congress.trade.
+/// Existing Stripe subscribers still manage via `billingPortalURL()`.
+enum DigitalGoodsCheckout {
+    static let allowsWebCheckout = false
+
+    static func webCheckoutURL(relativeTo _: URL) -> URL? {
+        nil
+    }
+}
+
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
@@ -152,16 +163,8 @@ final class CongressTradeAPIClient {
         return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
     }
 
-    /// Web dashboard URL for the Premium upgrade flow. Checkout itself is
-    /// cookie-session based (`POST /billing/checkout` in
-    /// `app/src/billing/routes.ts` reads the web session cookie, not the
-    /// bearer token), so the app links out to the site's pricing modal
-    /// instead of replaying that call.
-    var upgradeURL: URL? {
-        URL(string: "/", relativeTo: originURL)?.absoluteURL
-    }
-
     /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
+    /// Not a purchase path — do not point this at pricing or hosted checkout.
     func shareURL(queryItem: URLQueryItem) -> URL? {
         var components = URLComponents(url: originURL, resolvingAgainstBaseURL: false)
         components?.path = "/"
@@ -182,7 +185,15 @@ final class CongressTradeAPIClient {
         return try await request(url)
     }
 
-    func member(id: String) async throws -> ClientMemberResponse {
+    func member(
+        id: String,
+        window: String? = nil,
+        from: String? = nil,
+        to: String? = nil,
+        chamber: String? = nil,
+        party: String? = nil,
+        type: String? = nil
+    ) async throws -> ClientMemberResponse {
         // Query items must stay on the URL, not in the path.  `get("member/x?sort=")`
         // went through `appendingPathComponent`, which encoded `?` and made the
         // server look up `C001047?sort=tx_date` → 404 "member not found".
@@ -190,10 +201,17 @@ final class CongressTradeAPIClient {
             url: endpointURL("member").appendingPathComponent(id),
             resolvingAgainstBaseURL: false
         )
-        components?.queryItems = [
+        var items = [
             URLQueryItem(name: "sort", value: "tx_date"),
             URLQueryItem(name: "order", value: "desc"),
         ]
+        if let window, !window.isEmpty { items.append(URLQueryItem(name: "window", value: window)) }
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        components?.queryItems = items
         guard let url = components?.url else { throw APIError.invalidResponse }
         return try await request(url)
     }
@@ -216,33 +234,30 @@ final class CongressTradeAPIClient {
         try await request(originURL.appendingPathComponent("api/assets"))
     }
 
-    func ticker(_ ticker: String) async throws -> ClientTickerResponse {
+    func ticker(
+        _ ticker: String,
+        window: String? = nil,
+        from: String? = nil,
+        to: String? = nil,
+        chamber: String? = nil,
+        party: String? = nil,
+        type: String? = nil
+    ) async throws -> ClientTickerResponse {
         let encoded = ticker.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ticker
-        return try await get("ticker/\(encoded)")
-    }
-
-    /// Sends a magic-link sign-in email. The `client=ios` query makes the
-    /// backend build a `congresstrade://auth` verify redirect
-    /// (`app/src/auth/routes.ts` POST /auth/magic/request). Always resolves on
-    /// the backend's anti-enumeration `ok:true` response.
-    func requestMagicLink(email: String) async throws {
         guard var components = URLComponents(
-            url: originURL.appendingPathComponent("auth/magic/request"),
+            url: endpointURL("ticker").appendingPathComponent(encoded),
             resolvingAgainstBaseURL: false
         ) else { throw APIError.invalidResponse }
-        components.queryItems = [URLQueryItem(name: "client", value: "ios")]
+        var items: [URLQueryItem] = []
+        if let window, !window.isEmpty { items.append(URLQueryItem(name: "window", value: window)) }
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
-        var request = try makeRequest(url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email], options: [])
-        let (data, response) = try await perform(request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            let error = try? decoder.decode(APIErrorResponse.self, from: data)
-            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
-            throw APIError.server(status: http.statusCode, message: error?.error ?? "Could not send sign-in link", retryAfterSeconds: retryAfter)
-        }
+        return try await request(url)
     }
 
     func subscriptions() async throws -> SubscriptionListResponse {
@@ -257,63 +272,70 @@ final class CongressTradeAPIClient {
         try await analyticsGet("latency-summary")
     }
 
-    private func makeQueryItems(window: String, party: String? = nil, chamber: String? = nil, extra: [URLQueryItem] = []) -> [URLQueryItem] {
+    private func makeQueryItems(
+        window: String,
+        party: String? = nil,
+        chamber: String? = nil,
+        type: String? = nil,
+        extra: [URLQueryItem] = []
+    ) -> [URLQueryItem] {
         var items = [URLQueryItem(name: "window", value: window)]
         if let party = party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
         if let chamber = chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let type = type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
         items.append(contentsOf: extra)
         return items
     }
 
-    func analyticsSummary(window: String, party: String? = nil, chamber: String? = nil) async throws -> AnalyticsSummary {
-        try await analyticsGet("summary", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func analyticsSummary(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> AnalyticsSummary {
+        try await analyticsGet("summary", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func tickerLeaderboard(window: String, party: String? = nil, chamber: String? = nil, rankBy: String = "volume") async throws -> TickerLeaderboardResponse {
+    func tickerLeaderboard(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil, sort: String = "volume") async throws -> TickerLeaderboardResponse {
         try await analyticsGet(
             "ticker-leaderboard",
-            query: makeQueryItems(window: window, party: party, chamber: chamber, extra: [URLQueryItem(name: "rankBy", value: rankBy)])
+            query: makeQueryItems(window: window, party: party, chamber: chamber, type: type, extra: [URLQueryItem(name: "sort", value: sort)])
         )
     }
 
-    func volumeOverTime(window: String, party: String? = nil, chamber: String? = nil) async throws -> VolumeOverTimeResponse {
-        try await analyticsGet("volume-over-time", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func volumeOverTime(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> VolumeOverTimeResponse {
+        try await analyticsGet("volume-over-time", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func sectorFlow(window: String, party: String? = nil, chamber: String? = nil) async throws -> SectorFlowResponse {
-        try await analyticsGet("sector-flow", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func sectorFlow(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> SectorFlowResponse {
+        try await analyticsGet("sector-flow", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func memberLeaderboard(window: String, party: String? = nil, chamber: String? = nil) async throws -> MemberLeaderboardResponse {
-        try await analyticsGet("member-leaderboard", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func memberLeaderboard(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> MemberLeaderboardResponse {
+        try await analyticsGet("member-leaderboard", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func clusterBuys(window: String, party: String? = nil, chamber: String? = nil) async throws -> ClusterBuysResponse {
-        try await analyticsGet("cluster-buys", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func clusterBuys(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> ClusterBuysResponse {
+        try await analyticsGet("cluster-buys", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func trending(window: String, party: String? = nil, chamber: String? = nil) async throws -> TrendingResponse {
-        try await analyticsGet("trending", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func trending(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> TrendingResponse {
+        try await analyticsGet("trending", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func topPerformers(window: String, party: String? = nil, chamber: String? = nil) async throws -> TopPerformersResponse {
-        try await analyticsGet("member-performance", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func topPerformers(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> TopPerformersResponse {
+        try await analyticsGet("member-performance", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func marketCapBreakdown(window: String, party: String? = nil, chamber: String? = nil) async throws -> MarketCapResponse {
-        try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func marketCapBreakdown(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> MarketCapResponse {
+        try await analyticsGet("market-cap-breakdown", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func partySplit(window: String, chamber: String? = nil) async throws -> PartySplitResponse {
-        try await analyticsGet("party-split", query: makeQueryItems(window: window, chamber: chamber))
+    func partySplit(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> PartySplitResponse {
+        try await analyticsGet("party-split", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func filingLag(window: String, party: String? = nil, chamber: String? = nil) async throws -> FilingLagResponse {
-        try await analyticsGet("filing-lag", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func filingLag(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> FilingLagResponse {
+        try await analyticsGet("filing-lag", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
-    func conflicts(window: String, party: String? = nil, chamber: String? = nil) async throws -> ConflictCandidateResponse {
-        try await analyticsGet("conflicts", query: makeQueryItems(window: window, party: party, chamber: chamber))
+    func conflicts(window: String, party: String? = nil, chamber: String? = nil, type: String? = nil) async throws -> ConflictCandidateResponse {
+        try await analyticsGet("conflicts", query: makeQueryItems(window: window, party: party, chamber: chamber, type: type))
     }
 
     private func analyticsGet<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
@@ -532,6 +554,85 @@ final class CongressTradeAPIClient {
         return try await send(request)
     }
 
+    // MARK: - Admin (origin-level `/api/admin/*`, `/api/health*`)
+
+    /// `GET /auth/me` — native admin gate is `admin.allowed`, not a pasted token.
+    func authMe() async throws -> AuthMeResponse {
+        try await request(originURL.appendingPathComponent("auth/me"))
+    }
+
+    /// `true` when the current session Bearer is on `ADMIN_EMAILS`.
+    func probeAdminAccess() async throws -> Bool {
+        try await authMe().adminAllowed
+    }
+
+    func publicHealth() async throws -> PublicHealthResponse {
+        try await request(originURL.appendingPathComponent("api/health"))
+    }
+
+    func pollingHealth() async throws -> PollingHealthResponse {
+        try await request(originURL.appendingPathComponent("api/health/polling"))
+    }
+
+    func autopilotStatus() async throws -> AutopilotStatusResponse {
+        try await sendAdmin(makeAdminRequest(adminURL(["autopilot", "status"])))
+    }
+
+    func acknowledgeAutopilotHalt(runId: String? = nil) async throws -> AutopilotAcknowledgeResponse {
+        var body: [String: Any] = [:]
+        if let runId, !runId.isEmpty { body["runId"] = runId }
+        return try await sendAdmin(makeAdminRequest(adminURL(["autopilot", "acknowledge"]), method: "POST", body: body))
+    }
+
+    func reviewQueue(resolved: Bool = false, limit: Int = 50, cursor: String? = nil) async throws -> ReviewQueueResponse {
+        guard var components = URLComponents(url: adminURL(["review-queue"]), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
+        var items = [
+            URLQueryItem(name: "resolved", value: resolved ? "1" : "0"),
+            URLQueryItem(name: "limit", value: String(min(max(limit, 1), 200))),
+        ]
+        if let cursor, !cursor.isEmpty {
+            items.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = items
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await sendAdmin(makeAdminRequest(url))
+    }
+
+    func reviewExtractions(docId: String) async throws -> ReviewExtractionsResponse {
+        try await sendAdmin(makeAdminRequest(adminURL(["review", docId, "extractions"])))
+    }
+
+    func reviewDecision(docId: String, decision: String, reviewRevision: Int, edits: [[String: Any]]? = nil) async throws -> ReviewMutationResponse {
+        var body: [String: Any] = [
+            "decision": decision,
+            "reviewRevision": reviewRevision,
+        ]
+        if let edits { body["edits"] = edits }
+        return try await sendAdmin(makeAdminRequest(adminURL(["review", docId]), method: "POST", body: body))
+    }
+
+    func unpublishReview(docId: String, reviewRevision: Int, reason: String) async throws -> ReviewUnpublishResponse {
+        try await sendAdmin(
+            makeAdminRequest(
+                adminURL(["review", docId, "unpublish"]),
+                method: "POST",
+                body: ["reviewRevision": reviewRevision, "reason": reason]
+            )
+        )
+    }
+
+    func retryReviewAuto(docId: String, reviewRevision: Int) async throws -> ReviewRetryAutoResponse {
+        try await sendAdmin(
+            makeAdminRequest(
+                adminURL(["review", docId, "retry-auto"]),
+                method: "POST",
+                body: ["reviewRevision": reviewRevision]
+            )
+        )
+    }
+
     func logout() async throws {
         var request = try makeRequest(originURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"
@@ -711,6 +812,44 @@ final class CongressTradeAPIClient {
         )
         try interceptor.intercept(&request)
         return request
+    }
+
+    /// Same session Bearer as `/api/client/v1`.  Native iOS does not store or
+    /// send `ADMIN_TOKEN`.
+    private func makeAdminRequest(_ url: URL, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
+        var request = try makeRequest(url)
+        request.httpMethod = method
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        }
+        return request
+    }
+
+    private func adminURL(_ parts: [String]) -> URL {
+        parts.reduce(originURL.appendingPathComponent("api/admin")) { url, part in
+            url.appendingPathComponent(part)
+        }
+    }
+
+    private func sendAdmin<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let (data, http) = try await performAdmin(request)
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) }
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Request failed",
+                retryAfterSeconds: retryAfter
+            )
+        }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    private func performAdmin(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        return (data, http)
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {

@@ -22,8 +22,11 @@ describe('resolveDenoCostProfile', () => {
   });
 
   it('maps pro/full aliases to paid', () => {
-    expect(resolveDenoCostProfile({ CT_COST_PROFILE: 'pro' }).name).toBe('paid');
+    const paid = resolveDenoCostProfile({ CT_COST_PROFILE: 'pro' });
+    expect(paid.name).toBe('paid');
     expect(resolveDenoCostProfile({ CT_COST_PROFILE: 'full' }).cronSchedule).toBe('* * * * *');
+    // Quiet ticks still short-circuit; probePendingWork includes eligible review.
+    expect(paid.idleShortCircuit).toBe(true);
   });
 
   it('honors balanced profile', () => {

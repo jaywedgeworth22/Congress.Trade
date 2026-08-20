@@ -184,6 +184,38 @@ describe('senate document fetch via relay (2026-08-10 regression)', () => {
     expect(fetchMock.mock.calls.every(([u]) => u === SENATE_DOC)).toBe(true);
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'HEAD')).toBe(true);
   });
+
+  it('falls back to direct eFD when /fetch-doc is a Cloudflare 502', async () => {
+    const { env, put } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC, relayUrl: RELAY });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url) === `${RELAY}/fetch-doc`) {
+        return new Response('error code: 502', { status: 502 });
+      }
+      return new Response('<html>Periodic Transaction Report</html>', {
+        status: 200, headers: { 'content-type': 'text/html' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFiling(env, 'S-doc_1');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${RELAY}/fetch-doc`);
+    expect(fetchMock.mock.calls.some(([u]) => u === SENATE_DOC)).toBe(true);
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back on a mirrored upstream 404 from /fetch-doc', async () => {
+    const { env, put } = envForFetch({ chamber: 'senate', sourceUrl: SENATE_DOC, relayUrl: RELAY });
+    const fetchMock = vi.fn(async () => new Response('{"error":"x"}', {
+      status: 404, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchFiling(env, 'S-doc_1')).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${RELAY}/fetch-doc`);
+    expect(put).not.toHaveBeenCalled();
+  });
 });
 
 describe('shouldRetryFetchStatus (transient 403/404 handling)', () => {

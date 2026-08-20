@@ -14,11 +14,15 @@
  *   POST  /subscriptions            -> operator-provisioned subscription
  *   POST  /subscriptions/:id/rotate-secret -> rotate signing secret (shown-once if generated)
  *   POST  /subscriptions/:id/deactivate    -> deactivate (drops from fanout, frees creation quota)
+ *   POST  /filings-hygiene              -> dry-run (default) / apply probe delete + review desync (#1576/#1574)
  *
- * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
+ * AUTH (deny-by-default once provisioned). A request is authorized if:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
  *      `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation); OR
- *   2. Cloudflare Access — an Access application fronts /api/admin/* and the
+ *   2. First-party session — cookie `ct_session` or `Authorization: Bearer
+ *      <session>` for an ADMIN_EMAILS user (website cookie; native iOS Bearer);
+ *      OR
+ *   3. Cloudflare Access — an Access application fronts /api/admin/* and the
  *      `Cf-Access-Jwt-Assertion` JWT verifies against the team keys with an
  *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
  *      (good for humans signing in with Google/SSO — no token to paste).
@@ -107,7 +111,7 @@ import {
 } from '../shared/memberIdentity.ts';
 import { dedupeSplitFilerIdentities } from './filerIdentityDedupe.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { getCurrentUser } from '../auth/session.ts';
+import { getCurrentUserFromRequest } from '../auth/session.ts';
 import {
   DEFAULT_CANDIDATES,
   EXTRACTION_SCHEMA_VERSION,
@@ -153,6 +157,10 @@ import {
 } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
+
+function isObjectStoreAuthError(message: string): boolean {
+  return /\bunauthorized\b|\baccessdenied\b|\binvalidaccesskeyid\b|\bsignaturedoesnotmatch\b/i.test(message);
+}
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import {
   requeueTransientFailedDurableJobs,
@@ -240,6 +248,7 @@ import {
   CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
+import { runFilingsHygiene } from '../ingestion/reviewStatusReconcile.ts';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -2095,15 +2104,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
     if (await isAuthorizedMaintenance(env, c.req.path, authorization)) return next();
-    // Always resolve the browser session email, even when an Authorization
-    // header is present. A stale/wrong ADMIN_TOKEN in localStorage used to
-    // skip this path (only looked up when !authorization), so allowlisted
-    // Google sessions got 401 on Review Queue and other admin routes while
-    // the UI still showed the admin tabs. isAuthorized still prefers a valid
-    // bearer ADMIN_TOKEN; a bad bearer falls through to session / Access.
+    // Always resolve the session email, even when an Authorization header is
+    // present. Cookie `ct_session` covers the website; native iOS sends the
+    // same opaque session as `Authorization: Bearer <session>`. A stale
+    // ADMIN_TOKEN in web localStorage used to skip this path (only looked up
+    // when !authorization), so allowlisted Google sessions got 401 on Review
+    // Queue while the UI still showed the admin tabs. isAuthorized still
+    // prefers a valid bearer ADMIN_TOKEN; a bad bearer falls through to
+    // session / Access. Native session bearers are not ADMIN_TOKEN — they
+    // resolve here via getCurrentUserFromRequest.
     let sessionEmail: string | undefined;
     try {
-      sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
+      sessionEmail = (await getCurrentUserFromRequest(c))?.email ?? undefined;
     } catch {
       sessionEmail = undefined;
     }
@@ -3213,8 +3225,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
-      // Executive (OGE 278-T) polls on a ~6h cadence, so it needs a much longer staleness window
-      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 21600 * 3 : staleAfterSec;
+      // Executive weekday floor is 15 min; weekend is hourly like House.
+      // Staleness uses 3× the weekend floor so a healthy weekend poller is
+      // not marked stale between hourly ticks.
+      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 3600 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
         || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'
@@ -5159,6 +5173,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: true, matched: rows.length, enqueued, skipped, errors });
   });
 
+  // --- POST /filings-hygiene ------------------------------------------------
+  // #1576 + #1574.  Default is dry-run.  Writes require apply:true AND
+  // dryRun !== true.  Probe delete is exact-doc_id and refuses if any
+  // transaction rows exist.  Never deletes a real filing.
+  // Body (all optional):
+  //   { apply?: boolean, dryRun?: boolean, deleteProbe?: boolean,
+  //     reconcileDesync?: boolean, limit?: number }
+  r.post('/filings-hygiene', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const apply = body.apply === true && body.dryRun !== true;
+    let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 600;
+    if (limit > 2000) limit = 2000;
+    const result = await runFilingsHygiene(c.env, {
+      apply,
+      deleteProbe: body.deleteProbe !== false,
+      reconcileDesync: body.reconcileDesync !== false,
+      limit,
+    });
+    return c.json({ ok: true, dryRun: !apply, ...result });
+  });
+
   // --- GET /scanned-filings/pending ---------------------------------------
   // Returns pending scanned_pdf filings for local vision worker processing.
   // Includes:
@@ -5311,7 +5352,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       return new Response(obj.body, { headers });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      const message = err instanceof Error ? err.message : String(err);
+      if (isObjectStoreAuthError(message)) {
+        return c.json({
+          error: 'stored copy unavailable',
+          detail: 'object store rejected credentials',
+        }, 503);
+      }
+      return c.json({ error: 'stored copy read failed' }, 500);
     }
   });
 
@@ -5469,6 +5517,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         // decisions table may lag in some local fixtures — park still lands.
       }
 
+      // local_mac_1 is supplemental only.  After local exhaustion, hand the
+      // doc to the hosted extraction path instead of leaving it parked.
+      let hostedFallbackEnqueued = false;
+      try {
+        await c.env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
+        hostedFallbackEnqueued = true;
+      } catch (err) {
+        console.warn('local-vision-park: hosted fallback enqueue failed', docId, (err as Error).message);
+      }
+
       return c.json({
         ok: true,
         docId,
@@ -5477,6 +5535,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         lastError,
         previousStatus: filingRow.ingest_status,
         ingestStatus: 'needs_review',
+        hostedFallbackEnqueued,
       });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);

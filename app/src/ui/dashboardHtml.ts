@@ -96,7 +96,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 %GA_SCRIPT%
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;600;700&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
@@ -319,7 +319,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html { overflow-x: clip; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
-    border-bottom: 1px solid var(--border); background: var(--panel);
+    border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
   }
@@ -341,11 +341,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
   nav.tabs button {
+    position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
     padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
   }
   nav.tabs button:hover { color: var(--text); background: var(--panel); }
   nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  .tab-count-badge {
+    display: none;
+    min-width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .tab-count-badge.is-on { display: inline-block; }
   main { padding: var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
@@ -492,6 +509,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
+  /* Party-colored rings on politician photos (not account avatars). */
+  .avatar.party-D { box-shadow: 0 0 0 2px var(--party-d); border-color: transparent; }
+  .avatar.party-R { box-shadow: 0 0 0 2px var(--party-r); border-color: transparent; }
+  .avatar.party-O { box-shadow: 0 0 0 2px var(--party-o); border-color: transparent; }
   .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
   .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
@@ -504,7 +525,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mobile-only { display: none; }
   .trades-cards { display: none; gap: 16px; min-width: 0; max-width: 100%; }
   /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
-  .trades-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 19px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
+  .trades-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,.08); }
   .trades-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .trades-card:active { background: var(--panel-2); }
   .fc-main { grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -512,9 +533,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-row1 .asset-cell { flex: 1 1 auto; min-width: 0; }
   .fc-amt { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
   .fc-amt-val { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
-  .fc-row2 { font-size: 12px; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fc-row2 { font-size: 12px; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+  .fc-row2 .avatar { width: 22px; height: 22px; font-size: 8px; }
   .fc-sep { opacity: .5; margin: 0 1px; }
   .fc-member { color: var(--text); }
+  .fc-owner { display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
@@ -606,7 +629,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
   /* Timeframe chips on section headers + the KPI-strip caption. */
   .tf-chip { font-weight: 400; font-size: .8em; color: var(--text-dim); white-space: nowrap; }
-  .tf-cap  { font-size: 12px; color: var(--text-dim); margin: 0 0 6px; }
   /* Skeleton shimmer loaders (GPU-composited background animation, no layout shift). */
   @keyframes tr-shimmer { 100% { background-position: -200% 0; } }
   .sk { display: inline-block; border-radius: 6px; background: linear-gradient(90deg, var(--panel-2) 25%, color-mix(in srgb, var(--text-dim) 18%, var(--panel-2)) 37%, var(--panel-2) 63%); background-size: 200% 100%; animation: tr-shimmer 1.25s ease-in-out infinite; }
@@ -644,7 +666,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
-  .btn:disabled { opacity: .5; cursor: default; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
   .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 24px; margin-bottom: 29px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
@@ -779,10 +801,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table tbody tr[data-member]:hover td, .people-table tbody tr[data-asset]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .people-table th:first-child, .people-table td:first-child { text-align: left; }
   .people-table td { vertical-align: middle; }
-  .pager { margin-top:14px; justify-content:space-between; }
+  .pager { margin-top:14px; justify-content:space-between; gap:12px; }
   .pager.pager-top { margin-top:0; margin-bottom:12px; }
   .pager.pager-bottom { margin-top:14px; }
-  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width:auto; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -790,10 +812,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      off-center inside the pager control box (align-items:center centers the
      margin box, not the text) — zero it out here so the text itself centers. */
   .pager-controls .note { margin-top: 0; }
-  .pager select { padding:5px 9px; font-size:12px; }
-  /* Rows-per-page + Options menu live at the end of each pager bar
-     (toolbar stays filter-only; Export/Columns live under Options). */
-  .pager-tools { display:flex; align-items:center; gap:8px; }
+  .pager select { padding:5px 9px; font-size:12px; width:auto; }
+  /* Rows + Export live in the top control band.  Bottom pager is range +
+     page buttons only — do not park tools at the end of the list. */
+  .pager-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+  .pager-bottom .pager-tools { display: none; }
+  .pager .trades-count-msg { flex:0 0 auto; }
+  .pager-top .trades-sort-mobile { margin: 0; }
   .feed-options { position:relative; }
   .feed-options .menu-pop { min-width:200px; top:36px; }
   .feed-options .menu-pop .prem-hint { font-size:11px; color:var(--text-dim); margin-left:6px; }
@@ -1254,7 +1279,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu-pop .theme-row {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
-    margin:4px 2px 6px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;
+    margin:4px 2px 6px; padding:8px 10px; border:none; border-radius:0;
   }
   .menu-pop .theme-row-label { font-size:12px; color:var(--text-dim); flex:0 0 auto; }
   .theme-seg {
@@ -1262,7 +1287,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border:1px solid var(--border); border-radius:9px; background:var(--bg);
   }
   .theme-seg-btn {
-    display:inline-flex !important; align-items:center; gap:5px; width:auto !important;
+    display:inline-flex !important; align-items:center; justify-content:center; gap:5px; width:auto !important;
     border:1px solid transparent !important; background:transparent !important;
     color:var(--text-dim) !important; padding:5px 9px !important; border-radius:7px !important;
     cursor:pointer; font-size:11px !important; font-family:var(--sans); font-weight:500;
@@ -1275,6 +1300,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     box-shadow:0 1px 2px rgba(0,0,0,.12);
   }
   .theme-seg-btn svg { width:13px; height:13px; flex:0 0 auto; }
+  .acct-mobile-menu .theme-row {
+    display:block; margin:0; padding:0; border:none;
+  }
+  .acct-mobile-menu .theme-seg { display:flex; width:100%; background:var(--bg-2); }
+  .acct-mobile-menu .theme-seg-btn { flex:1 1 0; min-width:0; }
   /* Guest header theme control (signed-out) */
   .theme-guest { display:inline-flex; align-items:center; }
   .theme-guest .theme-seg { background:var(--panel-2); }
@@ -1395,7 +1425,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Fat iOS-like arrows (mask, not thin unicode). Compact filter icon
      and dropdown rows share these so color always shows — the old
      .side-chip-only rules left the toolbar trio uncolored. Buy = green
-     up, sell = blue down (owner), exchange = ink left-right. */
+     up, sell = red down, exchange = ink left-right. */
   .side-up, .side-dn, .side-ex {
     display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
     font-size: 0 !important; line-height: 0; overflow: hidden;
@@ -1409,7 +1439,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 13.2V2.8M3.4 7.4 8 2.8l4.6 4.6'/%3E%3C/svg%3E");
   }
   .side-dn {
-    color: var(--accent);
+    color: var(--sell);
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M8 2.8v10.4M3.4 8.6 8 13.2l4.6-4.6'/%3E%3C/svg%3E");
   }
@@ -1418,9 +1448,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M2.2 8h11.6M5.2 5 2.2 8l3 3M10.8 5l3 3-3 3'/%3E%3C/svg%3E");
   }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: #86efac; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: #93c5fd; }
-  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: #fff; }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-up { color: var(--buy); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-dn { color: var(--sell); }
+  .ios-filter.has-sel .ios-filter-ico.sides .side-ex { color: var(--text); }
   .side-chip.on[data-side="B"] { background:color-mix(in srgb, var(--buy) 14%, transparent); box-shadow:inset 0 0 0 1px var(--buy); }
   .side-chip.on[data-side="S"] { background:color-mix(in srgb, var(--sell) 14%, transparent); box-shadow:inset 0 0 0 1px var(--sell); }
   .side-chip.on[data-side="E"] { background:color-mix(in srgb, var(--exch) 14%, transparent); box-shadow:inset 0 0 0 1px var(--exch); }
@@ -1447,7 +1477,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: var(--panel-2); color: var(--text);
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   }
-  .ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .ios-filter-btn::after {
+    content: ""; width: 0; height: 0; margin-left: 2px;
+    border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+    border-top: 4px solid currentColor; opacity: .55;
+  }
+  /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
+     pill on the default chrome even when a filter is active.  The label
+     already shows House / D / Buys. */
+  .ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
@@ -1468,9 +1506,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
     border-radius: 10px; cursor: pointer;
   }
-  .ios-filter-item:hover, .ios-filter-clear:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
+  .ios-filter-item:hover, .ios-filter-clear:hover { background: var(--panel-2); }
+  .ios-filter-item.on { background: transparent; font-weight: 600; }
+  .ios-filter-item.on::after { content: "✓"; margin-left: auto; font-weight: 700; color: var(--text); }
   .ios-filter-clear { color: var(--text-dim); font-size: 13px; }
+  /* The outer wrappers reuse .party-chips / .side-chips / .branch-filters
+     so the existing delegated listeners keep working.  Those class names
+     still carry the old joined-segment chrome (overflow:hidden, pill
+     border, chip height) which clipped Parties/Sides menus and painted
+     House/Senate/Executive as leftover chips inside Branches. */
+  .ios-filter.party-chips,
+  .ios-filter.side-chips,
+  .ios-filter.branch-filters {
+    display: block; overflow: visible; border: none; border-radius: 0;
+    background: transparent; margin: 0; gap: 0;
+  }
+  .ios-filter .ios-filter-item.branch-toggle,
+  .ios-filter .ios-filter-item.party-chip,
+  .ios-filter .ios-filter-item.side-chip {
+    min-width: 0; height: auto; min-height: 0; justify-content: flex-start;
+    border: 0; border-left: 0; border-radius: 10px; padding: 9px 10px;
+    background: transparent; box-shadow: none; color: var(--text);
+    font-weight: 500; font-size: 14px;
+  }
+  .ios-filter .ios-filter-item.branch-toggle + .ios-filter-item.branch-toggle,
+  .ios-filter .ios-filter-item.party-chip + .ios-filter-item.party-chip,
+  .ios-filter .ios-filter-item.side-chip + .ios-filter-item.side-chip {
+    border-left: 0;
+  }
+  .ios-filter .ios-filter-item.branch-toggle.on,
+  .ios-filter .ios-filter-item.party-chip.on,
+  .ios-filter .ios-filter-item.party-chip.on[data-party="D"],
+  .ios-filter .ios-filter-item.party-chip.on[data-party="R"],
+  .ios-filter .ios-filter-item.party-chip.on[data-party="O"],
+  .ios-filter .ios-filter-item.side-chip.on,
+  .ios-filter .ios-filter-item.side-chip.on[data-side="B"],
+  .ios-filter .ios-filter-item.side-chip.on[data-side="S"],
+  .ios-filter .ios-filter-item.side-chip.on[data-side="E"] {
+    background: transparent;
+    color: var(--text); box-shadow: none;
+  }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="B"] .side-up { color: var(--buy); }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="S"] .side-dn { color: var(--sell); }
+  .ios-filter .ios-filter-item.side-chip.on[data-side="E"] .side-ex { color: var(--text); }
   .side-chip.on[data-side="B"] { background: var(--buy); box-shadow: none; }
   .side-chip.on[data-side="B"] .side-up { color:#fff; }
   .side-chip.on[data-side="S"] { background: var(--sell); box-shadow: none; }
@@ -1510,12 +1588,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      batch #21: the $ Minimum pill/select was removed entirely — no $/size
      dropdown on any platform. The server-side minAmount query param still
      exists for direct API consumers.) */
-  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
+  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); width:max-content; max-width:100%; flex:0 0 auto; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
   .pill-select-el {
     appearance:none; -webkit-appearance:none; -moz-appearance:none;
-    width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
+    width:auto; field-sizing:content; max-width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
     color:var(--text); border-radius:var(--radius-pill); font:600 12px var(--sans);
     padding:0 26px 0 30px; cursor:pointer;
     background-repeat:no-repeat; background-position:right 8px center;
@@ -1544,7 +1622,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
     padding: 10px 35px 12px;
     background: var(--panel);
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
+    overflow: visible;
     -webkit-backdrop-filter: none; backdrop-filter: none;
   }
   .trades-toolbars .toolbar,
@@ -1559,7 +1638,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      #tradesExtraFilters grid (DO-NOT-BREAK) is completely unaffected — this
      whole block simply doesn't apply there. (Owner follow-up batch #21/#23:
      the $ pill that used to close this row is gone — no orphaned auto-margin
-     or trailing gap left behind; #tradesStats is now the last item.) */
+     or trailing gap left behind; search is now the last item.) */
   @media (min-width: 769px) {
     .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
     .trades-toolbars #tradesSharedFilters,
@@ -1567,7 +1646,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #tradesStats { order:4; }
+    .pager-top .trades-sort-mobile { display: none; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1736,10 +1815,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
   .trades-stats .match-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
   .trades-stats .match-label { color: var(--text-dim); font-weight: 500; }
-  /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
-     shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
-  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
-  .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
+  /* Mobile sort lives in the top pager band; hidden on desktop (table headers). */
+  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0; flex: 0 0 auto; }
+  .trades-sort-mobile #mobileSortKey { flex: 0 0 auto; width: auto; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse) {
     /* clip (not hidden): hidden on one axis makes the other compute to auto
        and turns html/body/main into a scrollport, which kills position:sticky
@@ -1795,6 +1873,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab-count-badge,
+    .tab-count-badge.is-on {
+      position: absolute;
+      top: 2px;
+      right: max(4px, calc(50% - 22px));
+      margin: 0;
+      min-width: 16px;
+      height: 16px;
+      line-height: 16px;
+      font-size: 10px;
+      z-index: 1;
+    }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
     /* Owner punch list #5: nav.tabs is ~56px tall before safe-area.  70px
@@ -1835,6 +1925,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        34px --control-h at every width) — tightens mobile-site filter chrome
        toward the app's pill sizing. */
     .toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }
+    .toolbar .ios-filter-item.branch-toggle,
+    .toolbar .ios-filter-item.party-chip,
+    .toolbar .ios-filter-item.side-chip { min-height: 0; }
     /* .pill-select-el keeps an asymmetric left inset for its calendar icon —
        restore it after the generic mobile shorthand above (higher specificity
        than the desktop .pill-select-el rule so it wins, but scoped so it
@@ -1851,48 +1944,58 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #tradesExtraFilters { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+    #tradesExtraFilters { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
     #tradesExtraFilters #qSearchField { grid-column: 1; min-width: 0; flex: 1 1 auto; }
-    .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
-    /* Pagers stay usable on phones: don't force every child full-width. */
-    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 8px; }
+    /* Pagers stay usable on phones: don't force every child full-width.
+       Controls stay intrinsic and right-aligned — no stretched empty bar. */
+    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 10px 12px; justify-content: space-between; }
     .pager.row-flex > * { width: auto; min-height: 0; }
-    .pager .pager-controls { flex: 1 1 auto; }
-    .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
-    .pager-top .pager-tools { display: none; }
+    .pager .pager-controls { flex: 0 0 auto; width: auto; margin-left: auto; }
+    .pager .pager-tools { flex: 0 0 auto; }
+    .pager-top .pager-tools { display: flex; }
+    .pager-top .feed-options { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
-    /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
-       party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
-       (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
-       2 direct children remain: the timeframe pill and .filter-groups. ID
-       selectors (not .toolbar/.shared-filters classes) so this reliably wins
-       regardless of source order against the ≤720px .toolbar re-flex below
-       (the CSS-cascade invariant every mobile rule here must respect). Line
-       1 = timeframe pill; .filter-groups is forced flex-basis:100% so it
-       always wraps to its own line 2, and its own children stay nowrap so
-       the 3 segmented groups + ⓘ never wrap further. */
+    .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
+    /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
+       Timeframe is content-sized (not flex-grown).  ID selectors beat the
+       later 720px toolbar flex-wrap re-flex. */
     #tradesSharedFilters, #trendsSharedFilters {
-      display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+      overflow: visible;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal {
+      flex: 0 0 auto; width: max-content;
+    }
+    #tradesSharedFilters > .pill-select-el, #trendsSharedFilters > .pill-select-el,
+    #tradesSharedFilters .pill-select-el, #trendsSharedFilters .pill-select-el {
+      width: auto; field-sizing: content;
+    }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
-      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
+      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 6px;
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
       padding: 8px 12px 10px;
+      overflow: visible;
+      border-bottom: none;
     }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
     #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
-    #tradesStats { flex: 0 0 auto; white-space: nowrap; }
     #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
       min-width: 30px; padding: 0 6px;
+    }
+    #tradesSharedFilters .ios-filter-item.branch-toggle,
+    #tradesSharedFilters .ios-filter-item.party-chip,
+    #tradesSharedFilters .ios-filter-item.side-chip,
+    #trendsSharedFilters .ios-filter-item.branch-toggle,
+    #trendsSharedFilters .ios-filter-item.party-chip,
+    #trendsSharedFilters .ios-filter-item.side-chip {
+      min-width: 0; padding: 9px 10px;
     }
     #tradesSharedFilters .filters-info-wrap .branch-info, #trendsSharedFilters .filters-info-wrap .branch-info {
       width: 26px; height: 26px; font-size: 15px;
@@ -1905,7 +2008,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
     #view-trades .table-wrap { display: none; }
     #view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-trades .trades-sort-mobile { display: flex; }
+    #view-trades .pager-top .trades-sort-mobile { display: flex; }
     /* The Columns chooser only affects the (hidden) table's field set — tradesCardHtml()
        renders a fixed field set, so hide Columns inside the Options menu on phones.
        Export CSV stays available. */
@@ -1991,6 +2094,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   @media (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     header.top { padding:8px 10px; }
+    :root { --ct-main-pad: 8px; }
     main { padding:8px 10px; padding-bottom:calc(72px + env(safe-area-inset-bottom)); }
     .disclaimer { font-size:10px; line-height:1.35; max-height:78px; overflow:auto; padding:8px 10px; }
     .section p.sub { font-size:11px; line-height:1.35; }
@@ -2137,13 +2241,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: var(--text-dim);
   letter-spacing: .03em;
 }
-/* KPI-strip caption sits in the same rhythm. */
-#view-trends .tf-cap {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
+/* KPI strip sits tight under the filter row — no Snapshot caption. */
+#view-trends #trKpis { margin-top: 0; }
 
 /* ---- 3. Surfaces: one calm material for sections, cards, clusters ------
    Token top-light gradient + 1px inner highlight via ::before (inset:0,
@@ -2533,14 +2632,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        silently clobbering the wider block's safe-area-aware padding-bottom
        for every phone <=720px (the width nearly all phones report in
        portrait) — footer/last content ended up hidden behind the fixed tab
-       bar. Re-assert padding-bottom explicitly so it survives here too. */
+       bar. Re-assert padding-bottom explicitly so it survives here too.
+       Keep --ct-main-pad in lockstep: the sticky filter bar pulls itself
+       up by that token, and a 12px token against 22px padding left a
+       moving gap between the header and the search row. */
+    :root { --ct-main-pad: 22px; }
     main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    .toolbar .trends-filter-row { flex: 1 1 auto; }
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    #view-trends .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    #view-trends .toolbar .trends-filter-row { flex: 1 1 auto; }
+    .toolbar .trends-filter-row { flex: 0 1 auto; }
+    #view-trends .toolbar { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
+    #view-trends .toolbar .time-filter-wrap { flex: 0 0 auto; }
+    #view-trends .toolbar .trends-filter-row { flex: 0 1 auto; width: auto; }
     .grid-cards { gap: 12px; margin-bottom: 20px; }
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
@@ -2561,10 +2664,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        breakpoint's footer rule, scaled to this block's tighter 26px base. */
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
-  @media (max-width: 420px) {
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
-    #view-trends .toolbar .time-filter-wrap,
-    #view-trends .toolbar .trends-filter-row { width: 100%; }
+  /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
+     generic toolbar-select width:100% mobile shorthand. */
+  #view-trends #trendsSharedFilters,
+  #view-trades #tradesSharedFilters {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center;
+    width: auto;
+    max-width: 100%;
+  }
+  #view-trends #trendsSharedFilters > .pill-select.pill-cal,
+  #view-trades #tradesSharedFilters > .pill-select.pill-cal {
+    flex: 0 0 auto;
+    width: max-content;
   }
 
 
@@ -2582,9 +2695,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
     <button data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</button>
-    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
+    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></button>
     <button data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
+    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></button>
   </nav>
   <div id="acct" class="acct"></div>
 </header>
@@ -2605,15 +2718,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
         <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2664,22 +2777,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <!-- The timeframe is named here, not just in the pill to the left: the same
-           politician reads 988 trades in this window and 22,832 all time in the
-           Directory, and an unlabelled count makes those look like a data bug. -->
-      <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">trades</span>
-      </div>
     </div>
-    </div>
-    <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
-         is hidden below the 768px breakpoint along with .table-wrap, so this is
-         the only sort affordance on phones. Shares sortKey/sortDir + the
-         setSort()/tradesQueryParams() refetch path with the desktop headers. -->
-    <div class="trades-sort-mobile" id="tradesSortMobile">
-      <label class="lbl" for="mobileSortKey">Sort</label>
-      <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
-      <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
     </div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
@@ -2688,6 +2786,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </dialog>
     <!-- Pagination top + bottom: same controls, synced in updateTradesCountMsg / setPageSize. -->
     <div class="row-flex pager pager-top" data-pager="top">
+      <div class="trades-sort-mobile" id="tradesSortMobile">
+        <label class="lbl" for="mobileSortKey">Sort</label>
+        <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
+        <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
+      </div>
       <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination top">
         <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
@@ -2751,15 +2854,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
       <span class="pill-select pill-cal">
         <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2803,11 +2906,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
-    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
-
 
     <!-- What is being traded + Heating up -->
     <div class="trend-grid-split">
@@ -2997,7 +3098,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the Admin tab shows a red badge.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -3330,20 +3431,14 @@ ${speedProofSectionHtml(true)}
     <p class="sub">Sign in to manage your account and use Premium research tools.</p>
     <button class="gbtn" onclick="loginGoogle()">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-      Continue with Google
+      Sign In with Google
     </button>
     <a class="abtn" id="appleSignInBtn" href="/auth/apple/start">
       <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
         <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
       </svg>
-      Sign in with Apple
+      Sign In with Apple
     </a>
-    <div class="divider">or</div>
-    <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
-    <div class="field">
-      <input id="magicEmail" type="email" autocomplete="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')sendMagicLink()" />
-      <button class="btn" onclick="sendMagicLink()">Send Link</button>
-    </div>
     <p class="note" id="loginMsg"></p>
   </div>
 </div>
@@ -4031,7 +4126,7 @@ function themeSegHtml(pref) {
   ];
   var btns = opts.map(function (o) {
     var active = pref === o.id ? ' active' : '';
-    return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
+    return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" title="' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
       themeIconSvg(o.id) + o.label + '</button>';
   }).join('');
   return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
@@ -4151,11 +4246,20 @@ function initials(name) {
    photo is sometimes the ONLY identifier on screen (e.g. the cluster-card face
    strip has no adjacent name text), so it always gets a real alt with the
    politician's name rather than alt="". */
-function memberAvatarHtml(name, photoUrl) {
+function partyBucketClass(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^d/i.test(s) || /^dem/i.test(s)) return 'D';
+  if (/^r/i.test(s) || /^rep/i.test(s)) return 'R';
+  return 'O';
+}
+function memberAvatarHtml(name, photoUrl, party) {
   var img = photoUrl
     ? '<img src="' + esc(photoUrl) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="this.remove()" />'
     : '';
-  return '<span class="avatar">' + esc(initials(name)) + img + '</span>';
+  var bucket = partyBucketClass(party);
+  var ring = bucket ? ' party-' + bucket : '';
+  return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
   var b = el('banner');
@@ -4217,7 +4321,7 @@ function isAuthError(e) { return !!(e && e.isAuth); }
    magic "click here for X, there for Y" on the list surface). */
 function memberCellHtml(r) {
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
-  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
+  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
@@ -4269,7 +4373,7 @@ function amountBarsHtml(tier) {
   return '<span class="amount-bars tier-' + tier + '" aria-hidden="true">' + bars + '</span>';
 }
 function amountCellHtml(r) {
-  if (!r || (r.min == null && r.max == null)) return '<span class="muted">—</span>';
+  if (!r || (r.min == null && r.max == null)) return '<span class="muted">bracket unavailable</span>';
   var tier = amountTier(r.min, r.max);
   var text = amountText(r.min, r.max);
   if (!tier) return '<span class="amount-range fc-amt-val">' + esc(text) + '</span>';
@@ -4278,22 +4382,48 @@ function amountCellHtml(r) {
     '<div class="amount-range fc-amt-val">' + esc(text) + '</div>' +
   '</div>';
 }
+function relativeTimeText(s) {
+  if (!s) return '';
+  var raw = String(s);
+  var t = Date.parse(raw);
+  if (!isFinite(t)) return '';
+  var sec = Math.round((Date.now() - t) / 1000);
+  if (sec < 0) sec = 0;
+  var dateOnly = raw.length <= 10 && /^\\d{4}-\\d{2}-\\d{2}$/.test(raw.slice(0, 10));
+  if (dateOnly) {
+    var days = Math.floor(sec / 86400);
+    if (days <= 0) return 'today';
+    if (days < 14) return days + 'd ago';
+    return dateText(raw);
+  }
+  if (sec < 45) return 'just now';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  if (sec < 86400 * 14) return Math.floor(sec / 86400) + 'd ago';
+  return dateText(raw);
+}
 function tradesCardHtml(r) {
   var traded = dateText(r.txdate);
-  var lag = shortLagText(r);
   // Executive filers show their position ("Treasury Sec.") instead of the
   // "Exec" branch word — row 2 is tight, so it asks for the tight budget.
   var chamber = memberBranchLabel(r, EXEC_TITLE_TIGHT);
   var member = fmtName(r.member);
-  // Whole card opens trade details — no nested data-member/data-asset chips.
-  var memberHtml = esc(member) + (r.st ? ', ' + esc(r.st) : '');
-  // Row 2 is identity-first (member, chamber, lag) — the trade date moved
-  // into the trailing amount/date stack on row 1 (see .fc-trail below), so
-  // it's intentionally NOT duplicated here as "Traded <date>" anymore.
+  // iOS TradeCard politician line: "Chamber · Name · D-ST"
+  var partyL = dirPartyLetter(r.party || r.partyBucket);
+  var st = r.st ? String(r.st).toUpperCase() : '';
+  var partyState = partyL && st ? partyL + '-' + st : (partyL || st);
+  var ident = [];
+  if (chamber && member) ident.push(esc(chamber) + ' · ' + esc(member));
+  else if (member) ident.push(esc(member));
+  else if (chamber) ident.push(esc(chamber));
+  if (partyState) ident.push(esc(partyState));
+  var owner = ownerLabel(r.owner);
+  var filedRel = relativeTimeText(r.filed || r.filedDate || r.firstSeenAt);
   var bits = [];
-  if (member) bits.push('<span class="fc-member">' + memberHtml + '</span>');
-  if (chamber) bits.push(esc(chamber));
-  if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
+  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket) +
+    '<span class="fc-member">' + ident.join(' · ') + '</span>');
+  if (owner) bits.push('<span class="fc-owner">' + esc(owner) + '</span>');
+  if (filedRel) bits.push('<span class="fc-filed" title="Official filed time">' + esc(filedRel) + '</span>');
   if (r.stockActStatus === 'late' || r.stockActStatus === 'severely_late') {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
@@ -4303,7 +4433,7 @@ function tradesCardHtml(r) {
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
       '</div>' +
-      '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  |  </span>') + '</div>' +
+      '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  ·  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
   '</article>';
@@ -4312,6 +4442,7 @@ function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
 function lagDays(r) { return daysBetween(r.txdate, lagBasisDate(r)); }
 function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
+  if (r && r.source === 'competitor_backfill') return 'Filing date was not supplied by the provider.';
   return 'Official filing date is not available for this row.';
 }
 /* Owner punch list #17 — timestamp semantics: this was labeled "Published"
@@ -5025,6 +5156,7 @@ function txToRow(tx) {
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
     chamber: tx.chamber || '',
+    party: tx.party || '',
     asset: cleanAsset(tx.assetName || ''),
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
@@ -5250,7 +5382,7 @@ function handleTradesTextFilter() {
 }
 
 /* Mirror the feed filters + Trends window into the URL so a refresh or a
-   shared link restores them. These params (ft/fm/fty/fch/fw) are deliberately
+   shared link restores them. These params (fq/fty/fpa/fch/fw) are deliberately
    distinct from the deep-link params (?ticker=/?member=/?trade=), which open
    drawers instead of setting filters. */
 function syncFilterUrl() {
@@ -5262,6 +5394,7 @@ function syncFilterUrl() {
       ['ft', ''],
       ['fm', ''],
       ['fty', selectedSideParam('qSideGroup')],
+      ['fpa', partyParam('qPartyGroup')],
       ['fch', chamberParam('qChamber')],
       ['fw', getTrWindow()],
     ];
@@ -5280,14 +5413,15 @@ function restoreFiltersFromUrl() {
     else if (fq && el('qMember')) el('qMember').value = fq;
     var fty = sp.get('fty');
     if (fty) {
-      ['qSideGroup', 'trSideGroup'].forEach(function (gid) {
-        var g = el(gid); if (!g) return;
-        g.querySelectorAll('.side-chip').forEach(function (b) {
-          var on = b.getAttribute('data-side') === fty;
-          b.classList.toggle('on', on);
-          b.setAttribute('aria-pressed', on ? 'true' : 'false');
-        });
-      });
+      var sides = fty.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applySideSelection(sides);
+      try { localStorage.setItem('shared-sides-v1', JSON.stringify(sides)); } catch (_e) {}
+    }
+    var fpa = sp.get('fpa');
+    if (fpa) {
+      var parties = fpa.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applyPartySelection(parties);
+      try { localStorage.setItem('shared-parties-v1', JSON.stringify(parties)); } catch (_e2) {}
     }
     var fch = sp.get('fch');
     if (fch) {
@@ -5502,6 +5636,58 @@ document.addEventListener('visibilitychange', function () {
 
 /* ============================ REVIEW ============================ */
 var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
+function setTabBadge(id, value) {
+  var node = el(id);
+  if (!node) return;
+  var n = Number(value) || 0;
+  if (n <= 0) {
+    node.hidden = true;
+    node.textContent = '';
+    node.classList.remove('is-on');
+    return;
+  }
+  node.hidden = false;
+  node.classList.add('is-on');
+  node.textContent = n > 99 ? '99+' : String(n);
+}
+function renderExtractionIncident(health, autopilot) {
+  var admin = canUseAdmin();
+  var checks = (health && health.pipeline && health.pipeline.checks) || [];
+  var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
+  var backlog = checks.filter(function (c) { return c.id === 'extraction_backlog'; })[0];
+  var provider = checks.filter(function (c) { return c.id === 'extraction_provider'; })[0];
+  var halted = !!(halt && halt.status && halt.status !== 'ok');
+  var stalledExtract = !!(provider && provider.status === 'stalled' && halted);
+  var review = (health && health.pipeline && health.pipeline.reviewQueue)
+    || (autopilot && autopilot.reviewQueue)
+    || null;
+  var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
+  // No halt banner or Ack control.  Admins get nav badges only.
+  // Selector due-now drain publishes.
+  setTabBadge('reviewTabBadge', admin ? unresolved : 0);
+  setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
+}
+function loadExtractionIncident() {
+  if (!canUseAdmin()) {
+    renderExtractionIncident(null, null);
+    return Promise.resolve();
+  }
+  return fetch('/api/health')
+    .then(function (r) { return r.json(); })
+    .then(function (health) {
+      return fetch('/api/admin/autopilot/status', { headers: adminHeaders() })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (autopilot) {
+          renderExtractionIncident(health, autopilot);
+          return health;
+        })
+        .catch(function () {
+          renderExtractionIncident(health, null);
+          return health;
+        });
+    })
+    .catch(function () { /* health read is best-effort */ });
+}
 function setReviewTab(resolved) {
   REVIEW_RESOLVED = resolved ? 1 : 0;
   var p = el('revTabPending'), rv = el('revTabReviewed');
@@ -5513,7 +5699,7 @@ function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
     REVIEW_TOTALS = null;
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
   }
@@ -5853,9 +6039,8 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
   var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
-  el('reviewCount').textContent = matchingTotal ? '(' + fmtCount(matchingTotal) + ')' : '';
+  if (canUseAdmin()) setTabBadge('reviewTabBadge', unresolvedTotal);
   if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = fmtCount(unresolvedTotal);
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
@@ -9099,20 +9284,20 @@ function runMarketBackfill(dryRun) {
 /* ============================ TRENDS / ANALYTICS ============================ */
 /* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
 	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
-	var EST_VOLUME_TIP = 'Approximate, from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor. Treat as a rough order of magnitude, not an exact figure.';
-	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
-	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
-	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
+	var EST_VOLUME_TIP = 'Approximate stock volume from STOCK Act amount ranges.  Option premiums are excluded.  Closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor.  Treat as a rough order of magnitude, not an exact figure.';
+	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)).  A simple trade-count tilt, not dollar-weighted.';
+	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints on common stock only ($50M+ uses its floor).  Option premiums are excluded.  A very rough estimate of net direction, not an exact figure.';
+	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across this asset\u2019s disclosed common-stock trades, using STOCK Act bracket midpoints.  Option premiums are excluded.  A very rough estimate of net direction, not exact.';
 	// Trends "Trades" answers a different question than the Trades tab's own
-	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party
-	// chips above (default: past 90 days, all parties), while the Trades tab
+	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party/side
+	// chips above (default: past 90 days, all parties, all sides), while the Trades tab
 	// counts whatever its own ticker/politician/date/chamber/party/side filters
 	// currently say, over its own separately paginated total. Both count the
 	// same underlying "real, disclosed trade" universe (synthetic/placeholder
 	// rows are excluded from both — see delivery/rows.ts + analytics/sql.ts),
 	// so a residual difference here is a scope difference, not a bug — this
 	// tip exists so that's obvious at a glance rather than a support question.
-	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party filters above — a different query than the Trades tab list, which has its own filters and total.';
+	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party/side filters above — a different query than the Trades tab list, which has its own filters and total.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(getTrWindow());
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
@@ -9123,6 +9308,8 @@ function trParams() {
     paGroup.querySelectorAll('.party-chip.on').forEach(function(b) { parties.push(b.getAttribute('data-party')); });
     if (parties.length > 0) p += '&party=' + parties.join(',');
   }
+  var ty = selectedSideParam('trSideGroup');
+  if (ty) p += '&type=' + encodeURIComponent(ty);
   return p;
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
@@ -9622,7 +9809,7 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td class="col-fill"><div' + memberAttr + '><span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
+      '<td class="col-fill"><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
@@ -10325,7 +10512,7 @@ function loadTrPerformers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
@@ -10349,7 +10536,7 @@ function loadTrSummary() {
     var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
       kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(d.optionCount)) + 
       kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
       kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
@@ -10407,7 +10594,7 @@ function loadTrClusters() {
     if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) {
-        var av = memberAvatarHtml(m.fullName, m.photoUrl);
+        var av = memberAvatarHtml(m.fullName, m.photoUrl, m.partyBucket || m.party);
         if (!m.filerId) return av;
         return '<span class="clickable face-member" data-member="' + esc(m.filerId) +
           '" title="Open ' + esc(fmtName(m.fullName || m.filerId)) + '">' + av + '</span>';
@@ -10470,7 +10657,7 @@ function loadTrMembers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
@@ -10571,7 +10758,7 @@ function loadTrLag() {
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
       var maxTip = 'Max: longest single trade-to-filing delay for this filer in the selected window. ' + basis;
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
-      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
+      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<div>' +
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
@@ -10735,8 +10922,13 @@ function actionBadge(type) {
   return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
 }
 function amountText(min, max) {
-  if (min == null && max == null) return '—';
+  if (min == null && max == null) return 'bracket unavailable';
   return fmtBracketAmount(min) + ' - ' + (max == null ? '+' : fmtBracketAmount(max));
+}
+function optionFootnote(n) {
+  n = Number(n || 0);
+  if (n <= 0) return '';
+  return '<div class="kpi-note muted">incl. ' + fmtCount(n) + ' option trade' + (n === 1 ? '' : 's') + '</div>';
 }
 function daysBetween(aIso, bIso) {
   var a = Date.parse(aIso), b = Date.parse(bIso);
@@ -10922,7 +11114,7 @@ function openAsset(ticker) {
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
     : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
-  aGet('ticker/' + encodeURIComponent(ticker) + '?window=' + encodeURIComponent(tickerWindow)).then(function (d) {
+  aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
     var s = d.summary || {};
     var companyName = (d.ref && d.ref.companyName) || d.name || '';
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
@@ -10941,7 +11133,7 @@ function openAsset(ticker) {
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
         return '<div class="hbar ledger" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + '>' +
-          memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          memberAvatarHtml(name, m.photoUrl, m.partyBucket) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
     }
@@ -10968,7 +11160,7 @@ function openAsset(ticker) {
 	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  ' + esc(tickerWindowLabel) + '</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
-	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
+	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(s.optionCount)) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + chartCaption + '</div>' +
       '<div class="drawer-section"><h3>Performance After Buys</h3><div id="assetPerf"><div class="note">Loading performance…</div></div></div>' +
@@ -10980,7 +11172,7 @@ function openAsset(ticker) {
       topbarTitle
     );
     // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
-    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?window=' + encodeURIComponent(tickerWindow)).then(function (bt) {
+    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?' + trParams()).then(function (bt) {
       var pEl = el('assetPerf'); if (pEl) pEl.innerHTML = tickerBacktestHtml(bt);
     }).catch(function () {
       var pEl = el('assetPerf');
@@ -11026,7 +11218,7 @@ function tickerBacktestHtml(d) {
 function openMember(filerId) {
   if (!filerId) return;
   openDrawer('<div class="note">Loading politician…</div>');
-  aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
+  aGet('member/' + encodeURIComponent(filerId) + '?' + trParams()).then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
@@ -11068,12 +11260,10 @@ function openMember(filerId) {
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +
+      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
-      // This drawer is always loaded with window=all, so its figures cover the
-      // whole record — the Trades tab's own count is scoped to the active time
-      // window and will read much smaller for the same politician. Say which.
-      '<div class="drawer-section"><h3>Trade Stats (All Time)</h3><dl class="drawer-kv">' +
+      // Same shared chips as Trends (window/chamber/party/side) via trParams().
+      '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
 	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
@@ -11087,7 +11277,7 @@ function openMember(filerId) {
       esc(name)
     );
     // Lazy-load dual-anchor buy skill (trade-date approx + filing-date copy-trade).
-    aGet('member/' + encodeURIComponent(filerId) + '/performance?window=all').then(function (perf) {
+    aGet('member/' + encodeURIComponent(filerId) + '/performance?' + trParams()).then(function (perf) {
       var pEl = el('memberPerf'); if (pEl) pEl.innerHTML = memberPerfHtml(perf);
     }).catch(function () {
       var pEl = el('memberPerf');
@@ -11170,7 +11360,7 @@ function openTrade(row) {
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -11345,7 +11535,8 @@ function applyAdminVisibility() {
     if (trends) trends.click();
   }
   if (!allowed) {
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
+    setTabBadge('adminTabBadge', 0);
     if (el('kpiReview')) el('kpiReview').textContent = '—';
   }
 }
@@ -11448,7 +11639,7 @@ function renderAccount() {
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery</button>' +
           (canManageSubscription()
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
-            : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+            : '') +
           adminMenuHtml('closeAcctMenu();') +
           '<button onclick="logout()">Sign Out</button>' +
         '</div>' +
@@ -11463,7 +11654,7 @@ function renderAccount() {
       upgrade +
       (canManageSubscription()
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
-        : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+        : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
       '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       acctMobileDisclaimerHtml();
@@ -11505,8 +11696,8 @@ function openLogin() {
   focusTrapReturnEl = document.activeElement;
   el('loginOverlay').classList.add('open');
   el('loginMsg').textContent = '';
-  var i = el('magicEmail');
-  if (i) setTimeout(function () { i.focus(); }, 50);
+  var g = document.querySelector('#loginOverlay .gbtn');
+  if (g) setTimeout(function () { g.focus(); }, 50);
 }
 function closeLogin() {
   var wasOpen = el('loginOverlay').classList.contains('open');
@@ -11534,7 +11725,7 @@ function syncAppleSignInButton() {
   btn.onclick = function (e) {
     if (e && e.preventDefault) e.preventDefault();
     var msg = el('loginMsg');
-    if (msg) msg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
+    if (msg) msg.textContent = 'Sign In with Apple is not configured for this site yet.  Use Google.';
     return false;
   };
 }
@@ -11545,20 +11736,6 @@ function syncAppleSignInButton() {
     if (noHover || coarse) document.documentElement.classList.add('phone-chrome');
   } catch (e) {}
 })();
-function sendMagicLink() {
-  var email = (el('magicEmail').value || '').trim();
-  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { el('loginMsg').textContent = 'Enter a valid email.'; return; }
-  el('loginMsg').textContent = 'Sending…';
-  fetch('/auth/magic/request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email }) })
-    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-    .then(function (res) {
-      if (!res.ok) { el('loginMsg').textContent = (res.j && res.j.error) || 'Could not send link.'; return; }
-      el('loginMsg').textContent = (res.j && res.j.sent === false)
-        ? 'Email isn’t configured yet — try Google sign-in.'
-        : 'Check your inbox for a sign-in link (expires in 15 min).';
-    })
-    .catch(function () { el('loginMsg').textContent = 'Network error — try again.'; });
-}
 function logout() {
   fetch('/auth/logout', { method: 'POST' })
     .then(function () { window.location.reload(); })
@@ -11822,8 +11999,8 @@ function handleAuthQueryParams() {
   var login = p.get('login'), checkout = p.get('checkout');
   if (login === 'ok') showToast('Signed in.');
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
-  else if (login === 'expired') showToast('That sign-in link expired — request a new one.', true);
-  else if (login === 'unverified') showToast('Sign-in failed — verify your email with Google first, or use an email sign-in link.', true);
+  else if (login === 'expired') showToast('That sign-in session expired.  Try Google or Apple again.', true);
+  else if (login === 'unverified') showToast('Sign-in failed.  Verify your email with Google first.', true);
   if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
   else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
   if (login || checkout || p.get('billing')) {
@@ -11910,13 +12087,13 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     }
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'people') loadPeopleDirectory();
-    if (b.dataset.view === 'review') loadReview();
+    if (b.dataset.view === 'review') { loadReview(); loadExtractionIncident(); }
     if (b.dataset.view === 'subs') {
       updateDeliveryGate();
       loadSubs();
       renderSpeedProof();
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   };
 });
 
@@ -12149,6 +12326,8 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+// URL wins over localStorage for party/side (chamber/window already restored above).
+restoreFiltersFromUrl();
 function closeIosFilterMenus(except) {
   document.querySelectorAll('.ios-filter').forEach(function (f) {
     if (except && f === except) return;
@@ -12157,6 +12336,37 @@ function closeIosFilterMenus(except) {
     if (pop) pop.hidden = true;
     if (btn) btn.setAttribute('aria-expanded', 'false');
   });
+}
+function placeIosFilterPop(btn, pop) {
+  if (!btn || !pop) return;
+  pop.style.position = 'fixed';
+  pop.style.visibility = 'hidden';
+  pop.hidden = false;
+  var r = btn.getBoundingClientRect();
+  var w = pop.offsetWidth || 196;
+  var left = r.left;
+  if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - w - 8);
+  pop.style.top = Math.round(r.bottom + 6) + 'px';
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.zIndex = '80';
+  pop.style.visibility = '';
+}
+function repositionOpenIosFilters() {
+  document.querySelectorAll('.ios-filter').forEach(function (f) {
+    var pop = f.querySelector('.ios-filter-pop');
+    var btn = f.querySelector('.ios-filter-btn');
+    if (pop && btn && !pop.hidden) placeIosFilterPop(btn, pop);
+  });
+}
+function syncChromeMetrics() {
+  var header = document.querySelector('header.top');
+  var mainEl = document.querySelector('main');
+  if (header) {
+    document.documentElement.style.setProperty('--ct-header-h', header.getBoundingClientRect().height + 'px');
+  }
+  if (mainEl) {
+    document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingTop);
+  }
 }
 function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
@@ -12219,7 +12429,8 @@ function initIosFilterMenus() {
       var open = pop && pop.hidden;
       closeIosFilterMenus(open ? wrap : null);
       if (pop) {
-        pop.hidden = !open;
+        if (open) placeIosFilterPop(btn, pop);
+        else pop.hidden = true;
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       }
       e.preventDefault();
@@ -12227,9 +12438,22 @@ function initIosFilterMenus() {
     }
     if (!e.target.closest || !e.target.closest('.ios-filter-pop')) closeIosFilterMenus(null);
   });
+  window.addEventListener('scroll', repositionOpenIosFilters, true);
+  window.addEventListener('resize', function () {
+    syncChromeMetrics();
+    repositionOpenIosFilters();
+  });
   refreshIosFilterSummaries();
 }
 initIosFilterMenus();
+syncChromeMetrics();
+if (typeof ResizeObserver !== 'undefined') {
+  var chromeRo = new ResizeObserver(syncChromeMetrics);
+  var chromeHeader = document.querySelector('header.top');
+  var chromeMain = document.querySelector('main');
+  if (chromeHeader) chromeRo.observe(chromeHeader);
+  if (chromeMain) chromeRo.observe(chromeMain);
+}
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 /* Trends fold cards (mobile-only show/hide): CSS alone can't force a
    <details> open, so on desktop widths (above this file's 768px mobile
@@ -12334,13 +12558,13 @@ function openDeepLink() {
     if (authError === 'google_not_configured') {
       openLogin();
       var msg = el('loginMsg');
-      if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
+      if (msg) msg.textContent = 'Google Sign-In is not configured on this server.  Use Sign In with Apple.';
       return;
     }
     if (authError === 'apple_not_configured' || authError === 'apple_web_not_configured') {
       openLogin();
       var amsg = el('loginMsg');
-      if (amsg) amsg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
+      if (amsg) amsg.textContent = 'Sign In with Apple is not configured for this site yet.  Use Google.';
       return;
     }
     if (pricing === '1' || pricing === 'true' || pricing === 'alerts' || pricing === 'export') {
@@ -12529,6 +12753,7 @@ var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };
 loadMe().then(function () {
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
   if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
+  loadExtractionIncident();
   var initialView = 'trends';
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
@@ -12585,7 +12810,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }

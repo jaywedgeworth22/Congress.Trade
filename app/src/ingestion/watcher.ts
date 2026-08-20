@@ -4,8 +4,8 @@
  *
  * Cron entrypoint logic. Runs every minute; decides via decideSourcePoll (which
  * consults the measured cadence in probeSchedule.ts, falling back to the legacy
- * poll_config windows) whether to actually poll House + Senate disclosure
- * indexes. For each NEW filing,
+ * poll_config windows) whether to actually poll House, Senate, and Executive
+ * (OGE) disclosure indexes. For each NEW filing,
  * inserts a 'new' filings row (INSERT OR IGNORE) and enqueues a
  * {type:'filing.new'} INGEST_QUEUE message. Records cadence in ingest_log and
  * updates last-poll via setLastPollAt after successful source polls.
@@ -37,6 +37,7 @@ import {
 import { logProbeCadence, type ProbeCadenceAuthority } from './probeCadenceLog.ts';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource.ts';
 import { fetchSenatePtrFilings } from './senateSource.ts';
+import { refreshSenateRelayHealth } from './senateRelayHealth.ts';
 import { recordDisclosureLatencyCandidate, storageMissing } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
@@ -550,7 +551,8 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   const year = Number(
     new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' }).format(now),
   );
-  const all = await fetchHouseIndex(year);
+  const houseRelayUrl = env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL;
+  const all = await fetchHouseIndex(year, { relayUrl: houseRelayUrl });
   const ptrs = all.filter((f) => f.isPtr);
 
   const byDoc = new Map<string, DiscoveredFiling>();
@@ -575,7 +577,7 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
       const lastIso = env.CONFIG_KV ? await env.CONFIG_KV.get(HOUSE_PRIOR_YEAR_KV_KEY) : null;
       const lastMs = lastIso ? Date.parse(lastIso) : NaN;
       if (!Number.isFinite(lastMs) || now.getTime() - lastMs >= HOUSE_PRIOR_YEAR_FETCH_INTERVAL_MS) {
-        const prior = (await fetchHouseIndex(year - 1)).filter((f) => f.isPtr);
+        const prior = (await fetchHouseIndex(year - 1, { relayUrl: houseRelayUrl })).filter((f) => f.isPtr);
         for (const f of prior) {
           if (!byDoc.has(f.pipelineDocId)) byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
@@ -756,12 +758,13 @@ export interface WatcherResult {
    *  Optional so existing structural consumers of WatcherResult are unaffected. */
   houseCadence?: SourcePollDecision;
   senateCadence?: SourcePollDecision;
+  executiveCadence?: SourcePollDecision;
 }
 
 /**
- * Poll the OGE President/VP index for new executive 278-T filings. Self-gated
- * to a slow cadence inside pollOgeExecutive (filings land every few weeks);
- * returns the count of genuinely-new filings, or null when disabled/not due.
+ * Poll the OGE President/VP index for new executive 278-T filings. Cadence is
+ * decided by decideSourcePoll (same adaptive probeSchedule as House/Senate).
+ * Returns the count of genuinely-new filings, or null when disabled/not due.
  */
 export async function pollExecutive(
   env: Env,
@@ -823,7 +826,7 @@ export interface SourcePollDecision {
 }
 
 export function decideSourcePoll(args: {
-  source: 'house' | 'senate';
+  source: 'house' | 'senate' | 'executive';
   now: Date;
   cfg: PollConfig;
   lastPollAt: Date | null;
@@ -973,17 +976,64 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   }
 
   // EXECUTIVE (OGE 278-T) ---------------------------------------------------
-  // Entirely fail-soft and self-gated to a slow cadence; an OGE outage must
-  // never affect House/Senate polling above.
+  // Same decideSourcePoll + last_attempt failure skip as House/Senate.
+  // Fail-soft: an OGE outage must never affect House/Senate polling above.
+  // Server-first: direct extapps2.oge.gov, then Mac/scout relay if direct fails.
   try {
-    const polled = await pollExecutive(env, now);
-    if (polled !== null) result.executive = 'success';
+    const lastExec = await getLastPollAt(env, 'oge');
+    const execDecision = decideSourcePoll({
+      source: 'executive',
+      now,
+      cfg,
+      lastPollAt: lastExec,
+      schedule,
+    });
+    logProbeCadence(
+      {
+        lane: 'executive',
+        source: 'executive',
+        probe: execDecision.poll,
+        tier: execDecision.tier,
+        dayType: execDecision.dayType,
+        intervalSec: execDecision.intervalSec,
+        elapsedSec: execDecision.elapsedSec,
+        authority: execDecision.authority,
+        reason: execDecision.reason,
+      },
+      now,
+    );
+    result.executiveCadence = execDecision;
+    if (execDecision.poll) {
+      const lastAttempt = await getLastAttemptAt(env, 'oge');
+      const elapsedSec = lastAttempt ? (now.getTime() - lastAttempt.getTime()) / 1000 : Infinity;
+      const lastAttemptFailed = lastAttempt && (!lastExec || lastExec.getTime() < lastAttempt.getTime());
+      // Match House/Senate last_attempt skip. Do not invent a 10-minute
+      // backoff shorter than the current success interval (weekday floor is
+      // 15 min). House/Senate keep their own hardcoded 600.
+      const failureBackoffSec = Math.max(600, execDecision.intervalSec);
+      if (lastAttemptFailed && elapsedSec < failureBackoffSec) {
+        // Skip this poll tick to respect failure backoff
+      } else {
+        await setLastAttemptAt(env, 'oge', now);
+        const polled = await pollExecutive(env, now);
+        if (polled !== null) result.executive = 'success';
+      }
+    }
   } catch (err) {
     console.warn('watcher: executive (OGE) source failed:', (err as Error).message);
     // Durable failure receipt so the polling_executive liveness check sees
     // "attempts running, successes stale" instead of silence.
     await recordSourceError(env, 'executive', now.toISOString(), err);
     result.executive = 'failure';
+  }
+
+  // Cheap GET /health against the named Senate tunnel.  Fail-soft: a probe
+  // error must never fail the watcher tick.  Writes CONFIG_KV so pipelineHealth
+  // can surface a dead Mac without adding an outbound hop to /api/health.
+  try {
+    await refreshSenateRelayHealth(env, now);
+  } catch (err) {
+    console.warn('watcher: senate relay health probe failed:', (err as Error).message);
   }
   return result;
 }

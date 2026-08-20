@@ -23,6 +23,10 @@
 import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, TxType } from '../shared/types.ts';
 import type { SqlParam } from '../shared/db.ts';
+import {
+  fabricatedCompetitorAmountSql,
+  TWIN_DEDUPE_SQL,
+} from '../shared/tradeIdentity.ts';
 
 // ---------------------------------------------------------------------------
 // Enumerations + validators (closed sets → safe to interpolate as literals)
@@ -112,6 +116,34 @@ export function asChambers(v: unknown): Chamber[] | undefined {
   return parsed.length ? parsed : undefined;
 }
 
+/** Canonical B|S|E. Legacy form letter P (Purchase) → Buy. */
+export function asTxType(v: unknown): TxType | undefined {
+  if (typeof v !== 'string') return undefined;
+  if (v === 'P' || v === 'p' || v === 'B' || v === 'b') return 'B';
+  return v === 'S' || v === 'E' ? v : undefined;
+}
+
+/** CSV multi-type selection (e.g. "B,S"). Undefined = no type filter. */
+export function asTxTypes(v: unknown): TxType[] | undefined {
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asTxType(part.trim())).filter((t): t is TxType => !!t)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
+}
+
+/**
+ * Narrow a caller-requested type set to an endpoint's allowed universe
+ * (cluster/conviction are directional B/S only). Absent request → allowed.
+ * Empty intersection keeps a no-row bind so we do not silently widen.
+ */
+export function constrainTxTypes(requested: TxType[] | undefined, allowed: TxType[]): TxType[] {
+  if (!requested?.length) return [...allowed];
+  const allow = new Set(allowed);
+  const next = requested.filter((t) => allow.has(t));
+  return next.length ? next : (['__none__'] as unknown as TxType[]);
+}
+
 /**
  * Map a window to the SQLite date modifier used in `date('now', ?)`. `all` and
  * calendar-year presets return null (calendar years use absolute date bounds in
@@ -154,13 +186,35 @@ export function granularityFormat(g: Granularity): string {
  * floor (amount_min); a fully-missing amount contributes 0. THE single source
  * of truth for "$" — every dollar metric interpolates this exact expression.
  */
-export const BRACKET_MIDPOINT_SQL =
+const RAW_BRACKET_MIDPOINT_SQL =
   '(CASE WHEN t.amount_max IS NOT NULL THEN (t.amount_min + t.amount_max) / 2.0 ' +
   'WHEN t.amount_min IS NOT NULL THEN t.amount_min ELSE 0 END)';
+
+/**
+ * Estimated dollar value of one transaction from its STOCK Act bracket.
+ * Fabricated competitor_backfill $1,001–$15,000 defaults contribute 0
+ * (DATACORRECTNESS-02) until a real bracket exists.
+ */
+export const BRACKET_MIDPOINT_SQL =
+  `(CASE WHEN ${fabricatedCompetitorAmountSql('t')} THEN 0 ELSE ${RAW_BRACKET_MIDPOINT_SQL} END)`;
 
 /** Signed midpoint: +mid for purchases, -mid for sales, 0 otherwise (net flow). */
 export const SIGNED_MIDPOINT_SQL =
   "(CASE WHEN t.tx_type IN ('B', 'P') THEN " +
+  BRACKET_MIDPOINT_SQL +
+  " WHEN t.tx_type = 'S' THEN -" +
+  BRACKET_MIDPOINT_SQL +
+  ' ELSE 0 END)';
+
+/**
+ * Stock-only dollars for headline Net Flow / Approx. Volume / ticker
+ * net-flow (DATACORRECTNESS-10). Option premiums stay out of the $ KPIs
+ * even when the request does not pass excludeOptions.
+ */
+export const STOCK_MIDPOINT_SQL =
+  `(CASE WHEN t.is_option = 1 THEN 0 ELSE ${BRACKET_MIDPOINT_SQL} END)`;
+export const STOCK_SIGNED_MIDPOINT_SQL =
+  "(CASE WHEN t.is_option = 1 THEN 0 WHEN t.tx_type IN ('B', 'P') THEN " +
   BRACKET_MIDPOINT_SQL +
   " WHEN t.tx_type = 'S' THEN -" +
   BRACKET_MIDPOINT_SQL +
@@ -260,6 +314,9 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   where.push(
     "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
   );
+  // Same real-world trade must count once (DATACORRECTNESS-01). Twin
+  // guard lives in shared/tradeIdentity.ts so the feed uses the same rule.
+  where.push(TWIN_DEDUPE_SQL);
 
   const win = p.window ?? '30d';
   if (win === 'this_cy') {

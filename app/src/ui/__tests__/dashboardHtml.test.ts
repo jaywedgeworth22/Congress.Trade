@@ -419,7 +419,7 @@ describe('DASHBOARD_HTML', () => {
     // already call, so the mobile control resyncs from state restored/changed elsewhere.
     expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
     expect(DASHBOARD_HTML).toContain('.trades-sort-mobile { display: none;');
-    expect(DASHBOARD_HTML).toContain('#view-trades .trades-sort-mobile { display: flex; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-sort-mobile { display: flex; }');
     // Columns chooser lives in the Options (⋯) menu; hidden on mobile because
     // tradesCardHtml() renders a fixed field set on phones.
     expect(DASHBOARD_HTML).toContain('feed-options-item-cols');
@@ -485,6 +485,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('white-space:nowrap; overflow:hidden; text-overflow:ellipsis;');
     expect(DASHBOARD_HTML).toContain('Sign Out');
     expect(DASHBOARD_HTML).toContain('function logout()');
+  });
+
+  it('offers Google and Apple sign-in without email magic-link', () => {
+    expect(DASHBOARD_HTML).toContain('id="loginOverlay"');
+    expect(DASHBOARD_HTML).toContain('Sign In with Google');
+    expect(DASHBOARD_HTML).toContain('id="appleSignInBtn"');
+    expect(DASHBOARD_HTML).toContain('Sign In with Apple');
+    expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/google/start'");
+    expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/apple/start'");
+    expect(DASHBOARD_HTML).not.toContain('id="magicEmail"');
+    expect(DASHBOARD_HTML).not.toContain('function sendMagicLink(');
+    expect(DASHBOARD_HTML).not.toContain('/auth/magic/request');
+    expect(DASHBOARD_HTML).not.toContain('Send Link');
+    expect(DASHBOARD_HTML).not.toContain('Email me a one-click sign-in link');
   });
 
   it('owner follow-up batch #6: removes the "pols" abbreviation — bare numbers in Politicians-headed table columns, full word only in prose', () => {
@@ -592,7 +606,7 @@ describe('DASHBOARD_HTML', () => {
   it('wires politician dual performance (trade-date skill + filing-date copy-trade)', () => {
     expect(DASHBOARD_HTML).toContain('function memberPerfHtml(');
     expect(DASHBOARD_HTML).toContain("aGet('member/'");
-    expect(DASHBOARD_HTML).toContain("/performance?window=all'");
+    expect(DASHBOARD_HTML).toContain("/performance?' + trParams()");
     expect(DASHBOARD_HTML).toContain('id="memberPerf"');
     expect(DASHBOARD_HTML).toContain('Their timing (approx.)');
     expect(DASHBOARD_HTML).toContain('If you bought at filing');
@@ -1570,6 +1584,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
     expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');
     expect(DASHBOARD_HTML).toContain('cell: amountCellHtml');
+    expect(DASHBOARD_HTML).toContain('bracket unavailable');
+    expect(DASHBOARD_HTML).toContain('function optionFootnote(');
+    expect(DASHBOARD_HTML).toContain("incl. ' + fmtCount(n) + ' option trade");
+    expect(DASHBOARD_HTML).toContain('Option premiums are excluded');
     expect(DASHBOARD_HTML).not.toContain("label: 'Tier I'");
     expect(DASHBOARD_HTML).not.toContain('<span>\' + esc(tier.label)');
   });
@@ -2497,6 +2515,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     const src = [
       extractFn(DASHBOARD_HTML, 'esc'),
       extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'partyBucketClass'),
       extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
       'return memberAvatarHtml;',
     ].join('\n');
@@ -2871,8 +2890,24 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("ty = selectedSideParam('qSideGroup')");
     expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
     expect(DASHBOARD_HTML).toContain("['fty', selectedSideParam('qSideGroup')]");
+    expect(DASHBOARD_HTML).toContain("['fpa', partyParam('qPartyGroup')]");
+    expect(DASHBOARD_HTML).toContain('applySideSelection(sides)');
+    expect(DASHBOARD_HTML).toContain('applyPartySelection(parties)');
+    expect(DASHBOARD_HTML).not.toContain("b.getAttribute('data-side') === fty");
     expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('qSideGroup');");
     expect(DASHBOARD_HTML).toContain("if (ty) p.set('type', ty);");
+  });
+
+  it('forwards the Trends side chips as type= on every analytics request', () => {
+    expect(DASHBOARD_HTML).toContain("var ty = selectedSideParam('trSideGroup');");
+    expect(DASHBOARD_HTML).toContain("if (ty) p += '&type=' + encodeURIComponent(ty);");
+  });
+
+  it('opens ticker and politician drawers with the same shared filter params', () => {
+    expect(DASHBOARD_HTML).toContain("'ticker/' + encodeURIComponent(ticker) + '?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'/backtest?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'member/' + encodeURIComponent(filerId) + '?' + trParams()");
+    expect(DASHBOARD_HTML).toContain("'/performance?' + trParams()");
   });
 
   it('joins the H/S/P, party, and buy/sell/exchange groups into one segmented cluster', () => {
@@ -2932,8 +2967,8 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(extraFilters![0]).not.toContain('id="qAssetClass"');
     expect(extraFilters![0]).not.toContain('value="equities_funds"');
     expect(extraFilters![0]).not.toContain('All Assets');
-    expect(extraFilters![0]).toContain('id="tradesStats"');
-    expect(extraFilters![0]).toContain('trades');
+    expect(extraFilters![0]).not.toContain('id="tradesStats"');
+    expect(extraFilters![0]).not.toContain('kpiTotal');
     // Top + bottom pagers with shared data-* hooks.
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-top"');
     expect(DASHBOARD_HTML).toContain('class="row-flex pager pager-bottom"');
@@ -3193,10 +3228,10 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     // Row 2 no longer duplicates the trade date as a "Traded <date>" fragment.
     expect(fn).not.toContain("bits.push('Traded '");
     expect(fn).not.toContain("'Traded ' + esc(traded)");
-    // Member/chamber/lag/late-filing bits are untouched.
-    expect(fn).toContain("if (member) bits.push('<span class=\"fc-member\">' + memberHtml + '</span>');");
-    expect(fn).toContain('if (chamber) bits.push(esc(chamber));');
-    expect(fn).toContain("if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));");
+    // iOS politician line + Capitol Ledger owner / relative filed time.
+    expect(fn).toContain("ident.push(esc(chamber) + ' · ' + esc(member))");
+    expect(fn).toContain("bits.push('<span class=\"fc-owner\">' + esc(owner) + '</span>')");
+    expect(fn).toContain('relativeTimeText(');
     expect(fn).toContain("r.stockActStatus === 'late' || r.stockActStatus === 'severely_late'");
     // Click-scoping: the trailing amount/date block carries no data-asset/
     // data-member/data-txid of its own — it falls through to the card's own
@@ -3221,11 +3256,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     );
   });
 
-  it('right-aligns the desktop "N trades" count and compacts it (total only) on mobile', () => {
-    expect(DASHBOARD_HTML).toContain('.trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }');
-    expect(DASHBOARD_HTML).toContain('.trades-stats .stat-today { display: none; }');
-    // Regression (#1533 verifier): grid must be declared on the ID selector so
-    // the later ≤720px `.toolbar { display:flex }` rule can't override it.
+  it('keeps the filtered trade count on the pager only (not next to search)', () => {
+    expect(DASHBOARD_HTML).toContain('data-trades-count');
+    expect(DASHBOARD_HTML).toContain('id="tradesCountMsgTop"');
+    expect(DASHBOARD_HTML).not.toContain('id="tradesStats"');
+    expect(DASHBOARD_HTML).not.toContain('id="kpiTotal"');
     expect(DASHBOARD_HTML).toContain('#tradesExtraFilters { display: grid;');
 
     // #1551 verifier fix-forwards: no reserved right gutter on table wraps,
@@ -3233,11 +3268,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).not.toMatch(/\.table-wrap \{[^}]*padding-right: 60px/);
     expect(DASHBOARD_HTML).toMatch(/\.late-filers-wrap table \{[^}]*overflow: visible/);
     const document = parse(DASHBOARD_HTML);
-    const stats = document.querySelector('#tradesStats');
-    expect(stats).not.toBeNull();
-    expect(stats!.querySelector('#kpiTotal')).not.toBeNull();
-    expect(stats!.querySelector('.stat-today')).toBeNull();
-    expect(stats!.textContent).not.toContain('Past 3 Months');
+    expect(document.querySelector('#tradesStats')).toBeNull();
+    expect(document.querySelector('#kpiTotal')).toBeNull();
+    expect(document.querySelector('#tradesCountMsgTop')).not.toBeNull();
   });
 
   it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
@@ -3489,10 +3522,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); }",
+        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });
@@ -3504,9 +3537,9 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("var authGroup = '<span class=\"acct-auth-group\">'");
     });
 
-    it('shows filtered matching trades count (not page size) upper-right', () => {
-      expect(DASHBOARD_HTML).toContain('id="kpiTotal"');
-      expect(DASHBOARD_HTML).toContain("totalEl.textContent = realDataLoaded ? fmtCount(typeof totalRows === 'number' ? totalRows : 0) : '—';");
+    it('shows filtered matching trades count on the pager (not page size)', () => {
+      expect(DASHBOARD_HTML).toContain('data-trades-count');
+      expect(DASHBOARD_HTML).toContain("var total = typeof totalRows === 'number' ? totalRows : (shown || 0);");
       expect(DASHBOARD_HTML).not.toContain("el('kpiTotal').textContent = fmtCount(totalRows || TRADES.length);");
     });
 
@@ -3515,7 +3548,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("openTradeById(feedHit.getAttribute('data-txid'));");
       // Feed cell helpers no longer emit nested entity targets.
       expect(DASHBOARD_HTML).toContain('/* Feed cells are NOT nested entity links');
-      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl) +');
+      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +');
       expect(DASHBOARD_HTML).toContain('// No data-asset on the feed cell');
       expect(DASHBOARD_HTML).toContain('Politician Details');
       expect(DASHBOARD_HTML).toContain('Company Details');
@@ -3872,7 +3905,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #qSearchField { order:3;');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #qAssetClassWrap');
     expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #searchToggle');
-    expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesStats { order:4; }');
+    expect(DASHBOARD_HTML).not.toContain('.trades-toolbars #tradesStats { order:4; }');
     expect(DASHBOARD_HTML).not.toContain('pill-amt');
     // DO-NOT-BREAK: the <=768px ID-scoped #tradesExtraFilters grid —
     // display:contents only ever fires at >=769px, never overlapping it.
@@ -3885,7 +3918,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(extras).toContain('qSearchField');
     expect(extras).not.toContain('qAssetClassWrap');
     expect(extras).not.toContain('searchToggle');
-    expect(extras).toContain('tradesStats');
+    expect(extras).not.toContain('tradesStats');
     // Mobile pill-chip touch sizing nudged toward the app (owner punch list
     // #9's "tighten to match the app" mobile sub-clause).
     expect(DASHBOARD_HTML).toContain('.toolbar .branch-toggle, .toolbar .party-chip, .toolbar .side-chip { min-height: 40px; }');
@@ -3911,13 +3944,13 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).not.toContain('<option value="">Any $</option>');
   });
 
-  it('#12 uses "  |  " (two spaces + pipe) for feed row/card separators', () => {
-    // Feed surfaces: desktop table cells (member state, asset title, amount
-    // title) and the mobile feed card's meta row.
+  it('#12 uses "  |  " (two spaces + pipe) for feed table separators; cards use the iOS middle-dot line', () => {
+    // Desktop table cells keep the owner-approved pipe pairing.
     expect(DASHBOARD_HTML).toContain("(r.st ? '<span class=\"muted\">  |  ' + esc(r.st) + '</span>' : '')");
     expect(DASHBOARD_HTML).toContain("esc((r.ticker ? r.ticker + '  |  ' : '') + (nm || ''))");
     expect(DASHBOARD_HTML).toContain("esc(tier.title + '  |  ' + text)");
-    expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  |  </span>')");
+    // Mobile cards follow iOS TradeCard: "Chamber · Name · D-ST".
+    expect(DASHBOARD_HTML).toContain("bits.join('<span class=\"fc-sep\">  ·  </span>')");
   });
 
   it('#14 uses "  |  " (two spaces + pipe) for drawer separators (ticker/company, stats row, Market Cap)', () => {
@@ -3955,14 +3988,14 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
       "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';"
     );
     expect(DASHBOARD_HTML).toContain(
-      "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
     );
     // Structural check: inside the generated personCard markup, the name div
     // (which carries the ellipsis) must fully close with </div> BEFORE the
     // <span class="drawer-trade-owner ...> badge opens — i.e. the badge is
     // outside, not nested inside, the ellipsized div.
     const personCardMatch = DASHBOARD_HTML.match(
-      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
+      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl, row\.party\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
     );
     expect(personCardMatch).toBeTruthy();
     const nameDivCloseIdx = DASHBOARD_HTML.indexOf("memberVal + '</div>'");
@@ -4304,8 +4337,6 @@ describe('Trades-tab count correctness (LANE: trades-count-fix)', () => {
   it('Trends "Trades" KPI carries a scope tooltip so a residual difference from the Trades tab total is self-explanatory, not confusing (owner report #3)', () => {
     expect(DASHBOARD_HTML).toContain("kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP)");
     expect(DASHBOARD_HTML).toMatch(/var TRENDS_TRADES_TIP = '[^']*Trades tab[^']*';/);
-    // The Trades-tab total gets the reciprocal explanation.
-    expect(DASHBOARD_HTML).toContain('id="tradesStats" class="trades-stats muted" title=');
     expect(DASHBOARD_HTML).toContain('Trends tab');
   });
 
@@ -4484,20 +4515,18 @@ describe('web blocking defects (audited)', () => {
   });
 
   it('labels what every trade count counts (this filter vs all time)', () => {
-    // Trades tab: the active timeframe sits next to the match count.
-    expect(DASHBOARD_HTML).toContain('<span class="match-label">trades</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="match-window">');
     expect(DASHBOARD_HTML).toContain("if (typeof stampWindowChips === 'function') stampWindowChips();");
-    // Trends KPI strip is just the heading — window lives in the filter row.
-    expect(DASHBOARD_HTML).toContain('<div class="tf-cap">Snapshot</div>');
+    // Trends KPI strip has no Snapshot caption — window lives in the filter row.
+    expect(DASHBOARD_HTML).not.toContain('<div class="tf-cap">Snapshot</div>');
     expect(DASHBOARD_HTML).not.toContain('# Trades');
     expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\">#</button>");
     // Directory: whole-record scope on the counts, the sub copy and the headers.
     expect(DASHBOARD_HTML).toContain('trade counts are all time');
     expect(DASHBOARD_HTML).toContain('Trade counts cover the full record, not the timeframe set on Trades or Trends.');
     expect(DASHBOARD_HTML).toContain('title="Sort by trade count (all time)"');
-    // Politician drawer loads window=all, so it says so.
-    expect(DASHBOARD_HTML).toContain('<h3>Trade Stats (All Time)</h3>');
+    // Politician drawer follows the shared window/chamber/party/side chips.
+    expect(DASHBOARD_HTML).toContain("'member/' + encodeURIComponent(filerId) + '?' + trParams()");
     // Asset drawer subtitle carries the same window as its KPI section.
     expect(DASHBOARD_HTML).toContain("' approx. volume  |  ' + esc(tickerWindowLabel)");
     // Company drawer + Trends card: executive is in the default corpus, so
@@ -4981,6 +5010,12 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
     expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
     expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
+    expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');
+    expect(DASHBOARD_HTML).toContain(':root { --ct-main-pad: 22px; }');
+    expect(DASHBOARD_HTML).toContain('function syncChromeMetrics()');
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-header-h'");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-main-pad'");
   });
 
   it('defines showView so account-menu Delivery / Admin / Review actually switch tabs', () => {
@@ -5005,10 +5040,333 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('showView(\\\'review\\\')">Review Queue');
   });
 
-  it('uses fat mask arrows with green up and blue down on the side filter', () => {
+  it('uses fat mask arrows with green up and red down on the side filter', () => {
     expect(DASHBOARD_HTML).toContain('.side-up, .side-dn, .side-ex {');
     expect(DASHBOARD_HTML).toContain('.side-up {\n    color: var(--buy);');
-    expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--accent);');
+    expect(DASHBOARD_HTML).toContain('.side-dn {\n    color: var(--sell);');
     expect(DASHBOARD_HTML).toContain('mask-image: url("data:image/svg+xml');
+  });
+});
+
+describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
+  it('clears leftover chip overflow so Parties and Trade Type can open', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter.party-chips,\n  .ios-filter.side-chips,\n  .ios-filter.branch-filters {');
+    expect(DASHBOARD_HTML).toContain('display: block; overflow: visible; border: none; border-radius: 0;');
+    expect(DASHBOARD_HTML).toContain('function placeIosFilterPop(btn, pop)');
+    expect(DASHBOARD_HTML).toContain("pop.style.position = 'fixed'");
+  });
+
+  it('paints Branches / Parties / Sides menu rows as a list, not leftover chips', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter .ios-filter-item.branch-toggle,\n  .ios-filter .ios-filter-item.party-chip,\n  .ios-filter .ios-filter-item.side-chip {');
+    expect(DASHBOARD_HTML).toContain('min-width: 0; height: auto; min-height: 0; justify-content: flex-start;');
+    expect(DASHBOARD_HTML).toContain('.ios-filter .ios-filter-item.branch-toggle + .ios-filter-item.branch-toggle');
+  });
+
+  it('does not fill dropdown rows or the closed pill with toggle-blue', () => {
+    expect(DASHBOARD_HTML).toContain('.ios-filter-item.on { background: transparent; font-weight: 600; }');
+    expect(DASHBOARD_HTML).toContain('.ios-filter-item.on::after { content: "✓";');
+    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }');
+    expect(DASHBOARD_HTML).not.toContain('.ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }');
+    expect(DASHBOARD_HTML).not.toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }');
+  });
+});
+
+/**
+ * Issues #1529 + #1459 — web adopts remaining iOS language.
+ * Capitol Ledger (#1459 style option) was removed in #2016.
+ */
+describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) return html.slice(start, i + 1);
+      }
+    }
+    throw new Error('unbalanced braces for ' + name);
+  }
+
+  it('drops the Capitol Ledger style option and does not leave a Standard-only toggle', () => {
+    expect(DASHBOARD_HTML).not.toContain("localStorage.getItem('ui-style')");
+    expect(DASHBOARD_HTML).not.toContain('function styleRowHtml()');
+    expect(DASHBOARD_HTML).not.toContain("id: 'ledger', label: 'Capitol Ledger'");
+    expect(DASHBOARD_HTML).not.toContain('styleRowHtml() +');
+    expect(DASHBOARD_HTML).not.toContain('html[data-style="ledger"]');
+    expect(DASHBOARD_HTML).not.toContain('Capitol Ledger');
+    expect(DASHBOARD_HTML).toContain('themeRowHtml() +');
+  });
+
+  it('restores Light/Dark/System as a labeled segmented control', () => {
+    expect(DASHBOARD_HTML).toContain("themeIconSvg(o.id) + o.label + '</button>'");
+    expect(DASHBOARD_HTML).not.toContain("themeIconSvg(o.id) + '</button>'");
+    expect(DASHBOARD_HTML).toContain("aria-label=\"Set theme to ' + o.label + '\" title=\"' + o.label + '\"");
+    expect(DASHBOARD_HTML).toContain('.ios-filter-btn::after {');
+  });
+
+  it('paints party-colored rings on politician avatars without touching the account photo', () => {
+    expect(DASHBOARD_HTML).toContain('.avatar.party-D { box-shadow: 0 0 0 2px var(--party-d);');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-R { box-shadow: 0 0 0 2px var(--party-r);');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-O { box-shadow: 0 0 0 2px var(--party-o);');
+    expect(DASHBOARD_HTML).toContain('function partyBucketClass(raw)');
+    expect(DASHBOARD_HTML).toContain('function memberAvatarHtml(name, photoUrl, party)');
+    expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
+    const src = [
+      extractFn(DASHBOARD_HTML, 'esc'),
+      extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'partyBucketClass'),
+      extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
+      'return memberAvatarHtml;',
+    ].join('\n');
+    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string, party?: string) => string;
+    expect(memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'Democrat')).toContain('party-D');
+    expect(memberAvatarHtml('Some Republican', '', 'R')).toContain('party-R');
+    expect(memberAvatarHtml('Guest', '', '')).not.toMatch(/party-[DRO]/);
+  });
+
+  it('surfaces owner, relative filed time, and the iOS politician line on mobile trade cards', () => {
+    const fn = extractFn(DASHBOARD_HTML, 'tradesCardHtml');
+    expect(fn).toContain("ident.push(esc(chamber) + ' · ' + esc(member))");
+    expect(fn).toContain('fc-owner');
+    expect(fn).toContain('relativeTimeText');
+    expect(fn).toContain('memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket)');
+    expect(DASHBOARD_HTML).toContain('party: tx.party || \'\'');
+    const relSrc = [
+      'function dateText(s) { return String(s || ""); }',
+      extractFn(DASHBOARD_HTML, 'relativeTimeText'),
+      'return relativeTimeText;',
+    ].join('\n');
+    const relativeTimeText = new Function(relSrc)() as (s: string) => string;
+    expect(relativeTimeText(new Date().toISOString())).toMatch(/just now|m ago|h ago/);
+    expect(relativeTimeText('1999-01-01')).toBe('1999-01-01');
+  });
+
+  it('keeps halt and review chrome off Trends and Trades', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentBanner"');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Review Backlog');
+    expect(DASHBOARD_HTML).not.toContain('Extraction Halted');
+    expect(DASHBOARD_HTML).not.toContain('Acknowledge Halt');
+    expect(DASHBOARD_HTML).not.toContain('function acknowledgeExtractionHalt()');
+    expect(DASHBOARD_HTML).not.toContain('/api/admin/autopilot/acknowledge');
+    expect(DASHBOARD_HTML).not.toContain('id="extractIncidentAck"');
+    const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
+    const tradesStart = DASHBOARD_HTML.indexOf('id="view-trades"');
+    const adminStart = DASHBOARD_HTML.indexOf('id="view-admin"');
+    expect(adminStart).toBeGreaterThan(tradesStart);
+    expect(DASHBOARD_HTML.slice(trendsStart, peopleStart)).not.toContain('extractHaltDetail');
+    expect(DASHBOARD_HTML.slice(tradesStart, trendsStart)).not.toContain('extractHaltDetail');
+    expect(DASHBOARD_HTML).toContain('id="reviewTabBadge"');
+    expect(DASHBOARD_HTML).toContain('id="adminTabBadge"');
+  });
+
+  it('shows Review and Admin nav badges without an Acknowledge Halt control', () => {
+    function extractFn(html: string, name: string): string {
+      const marker = 'function ' + name + '(';
+      const start = html.indexOf(marker);
+      if (start < 0) throw new Error('function not found: ' + name);
+      const braceStart = html.indexOf('{', start);
+      let depth = 0;
+      let i = braceStart;
+      for (; i < html.length; i++) {
+        if (html[i] === '{') depth++;
+        else if (html[i] === '}') {
+          depth--;
+          if (depth === 0) return html.slice(start, i + 1);
+        }
+      }
+      throw new Error('unbalanced braces for ' + name);
+    }
+    type BadgeNode = {
+      hidden: boolean;
+      disabled: boolean;
+      textContent: string;
+      classList: {
+        toggle: (name: string, on?: boolean) => void;
+        add: (name: string) => void;
+        remove: (name: string) => void;
+        _on: Record<string, boolean>;
+      };
+      setAttribute: (k: string, v: string) => void;
+      attrs: Record<string, string>;
+    };
+    const makeNodes = (): Record<string, BadgeNode> => {
+      const node = (): BadgeNode => ({
+        hidden: true,
+        disabled: true,
+        textContent: '',
+        classList: {
+          _on: {},
+          toggle(name: string, on?: boolean) {
+            this._on[name] = !!on;
+          },
+          add(name: string) {
+            this._on[name] = true;
+          },
+          remove(name: string) {
+            this._on[name] = false;
+          },
+        },
+        attrs: {},
+        setAttribute(k: string, v: string) {
+          this.attrs[k] = v;
+        },
+      });
+      return {
+        reviewTabBadge: node(),
+        adminTabBadge: node(),
+      };
+    };
+    const factory = new Function(
+      'nodes',
+      'admin',
+      [
+        'function canUseAdmin() { return !!admin; }',
+        'function el(id) { return nodes[id] || null; }',
+        extractFn(DASHBOARD_HTML, 'setTabBadge'),
+        extractFn(DASHBOARD_HTML, 'renderExtractionIncident'),
+        'return renderExtractionIncident;',
+      ].join('\n'),
+    ) as (nodes: Record<string, BadgeNode>, admin: boolean) => (
+      health: unknown,
+      autopilot: unknown,
+    ) => void;
+
+    const backlogHealth = {
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'ok', detail: 'ok' },
+          { id: 'extraction_backlog', status: 'error', value: 151, detail: '151 unresolved' },
+        ],
+        reviewQueue: { unresolved: 151, eligible: 24, suppressed: 76, terminal: 51 },
+      },
+    };
+    const haltHealth = {
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'error', detail: 'Autopilot is halted on error_class:auth.' },
+        ],
+        reviewQueue: { unresolved: 12, eligible: 4, suppressed: 4, terminal: 4 },
+      },
+    };
+
+    const publicNodes = makeNodes();
+    factory(publicNodes, false)(backlogHealth, null);
+    expect(publicNodes.reviewTabBadge.hidden).toBe(true);
+    expect(publicNodes.adminTabBadge.hidden).toBe(true);
+
+    const adminBacklog = makeNodes();
+    factory(adminBacklog, true)(backlogHealth, null);
+    expect(adminBacklog.reviewTabBadge.hidden).toBe(false);
+    expect(adminBacklog.reviewTabBadge.textContent).toBe('99+');
+    expect(adminBacklog.adminTabBadge.hidden).toBe(true);
+
+    const stalledBacklogNodes = makeNodes();
+    factory(stalledBacklogNodes, true)({
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'ok', detail: 'ok' },
+          { id: 'extraction_provider', status: 'stalled', detail: 'No extraction attempts in 24h while review backlog is 151' },
+          { id: 'extraction_backlog', status: 'error', value: 151, detail: '151 unresolved' },
+        ],
+        reviewQueue: { unresolved: 151, eligible: 24, suppressed: 76, terminal: 51 },
+      },
+    }, null);
+    expect(stalledBacklogNodes.adminTabBadge.hidden).toBe(true);
+
+    const stalledHalt = makeNodes();
+    factory(stalledHalt, true)({
+      pipeline: {
+        checks: [
+          { id: 'autopilot_halt', status: 'error', detail: 'Autopilot runs halted: stalled' },
+        ],
+        reviewQueue: { unresolved: 3, eligible: 1, suppressed: 1, terminal: 1 },
+      },
+    }, null);
+    expect(stalledHalt.adminTabBadge.hidden).toBe(false);
+
+    const adminHalt = makeNodes();
+    factory(adminHalt, true)(haltHealth, null);
+    expect(adminHalt.reviewTabBadge.textContent).toBe('12');
+    expect(adminHalt.adminTabBadge.hidden).toBe(false);
+    expect(adminHalt.adminTabBadge.textContent).toBe('1');
+  });
+
+  it('puts member photos on the People directory and does not add Largest Buys/Sells on Trends', () => {
+    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party) + '<span class=\"cell-clip\"");
+    expect(DASHBOARD_HTML).not.toContain('id="trLargestBuys"');
+    expect(DASHBOARD_HTML).not.toContain('id="trLargestSells"');
+    expect(DASHBOARD_HTML).not.toContain('id="trExtremes"');
+    expect(DASHBOARD_HTML).not.toContain('Largest Buys');
+    expect(DASHBOARD_HTML).not.toContain('Largest Sells');
+    expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
+    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
+    expect(DASHBOARD_HTML).not.toContain('loadTrExtremes()');
+  });
+});
+
+describe('mobile web chrome polish (issue #2016)', () => {
+  it('keeps Trends and Trades filters on one nowrap row with a content-sized timeframe', () => {
+    expect(DASHBOARD_HTML).toContain('#view-trends #trendsSharedFilters');
+    expect(DASHBOARD_HTML).toContain('flex-wrap: nowrap !important;');
+    expect(DASHBOARD_HTML).toContain('field-sizing:content');
+    expect(DASHBOARD_HTML).toContain('>3 Months</option>');
+    expect(DASHBOARD_HTML).not.toContain('>Past 3 Months</option>');
+    expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
+  });
+
+  it('removes Snapshot and the Largest Buys/Sells sections', () => {
+    expect(DASHBOARD_HTML).not.toContain('>Snapshot<');
+    expect(DASHBOARD_HTML).not.toContain('class="tf-cap"');
+    expect(DASHBOARD_HTML).not.toContain('Largest Buys');
+    expect(DASHBOARD_HTML).not.toContain('Largest Sells');
+    expect(DASHBOARD_HTML).toContain('fold-cue');
+    expect(DASHBOARD_HTML).not.toContain('Not an exact figure.');
+    expect(DASHBOARD_HTML).toContain('id="trKpis"');
+  });
+
+  it('compacts Sort, right-aligns the pager, and parks Rows/Export in the top band', () => {
+    expect(DASHBOARD_HTML).toContain('.trades-sort-mobile #mobileSortKey { flex: 0 0 auto; width: auto;');
+    expect(DASHBOARD_HTML).toContain('.pager-controls { display:flex; flex:0 0 auto;');
+    expect(DASHBOARD_HTML).toContain('margin-left:auto;');
+    expect(DASHBOARD_HTML).toContain('.pager-bottom .pager-tools { display: none; }');
+    expect(DASHBOARD_HTML).toContain('.pager-top .feed-options { display: none; }');
+    const topPager = DASHBOARD_HTML.match(/<div class="row-flex pager pager-top"[\s\S]*?<div class="row-flex pager pager-bottom"/);
+    expect(topPager).not.toBeNull();
+    expect(topPager![0]).toContain('id="tradesSortMobile"');
+    expect(topPager![0]).toContain('id="mobileSortKey"');
+    expect(topPager![0]).toContain('data-page-size');
+    expect(topPager![0]).toContain('Export CSV');
+  });
+
+  it('keeps a single Upgrade control and no Style row in the account menus', () => {
+    expect(DASHBOARD_HTML).toContain("onclick=\"openPricing()\">Upgrade</button>");
+    expect(DASHBOARD_HTML).not.toContain('Upgrade to Premium</button>');
+    expect(DASHBOARD_HTML).not.toContain('style-row');
+    expect(DASHBOARD_HTML).not.toContain('data-style-opt');
+  });
+});
+
+describe('remove Largest Buys/Sells from Trends (issue #2019)', () => {
+  it('drops the extremes sections and loader, and keeps metric cards plus side filters', () => {
+    const trendsStart = DASHBOARD_HTML.indexOf('id="view-trends"');
+    const peopleStart = DASHBOARD_HTML.indexOf('id="view-people"');
+    const trends = DASHBOARD_HTML.slice(trendsStart, peopleStart);
+    expect(trends).not.toContain('Largest Buys');
+    expect(trends).not.toContain('Largest Sells');
+    expect(trends).not.toContain('id="trExtremes"');
+    expect(trends).toContain('id="trKpis"');
+    expect(trends).toContain('id="trSideGroup"');
+    expect(trends).toContain('data-side="B"');
+    expect(trends).toContain('data-side="S"');
+    expect(DASHBOARD_HTML).not.toContain('function loadTrExtremes()');
+    expect(DASHBOARD_HTML).toContain('function loadTrends()');
+    expect(DASHBOARD_HTML).toContain('loadTrSummary(); loadTrTickers();');
   });
 });

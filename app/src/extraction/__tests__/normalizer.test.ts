@@ -3,6 +3,8 @@ import {
   normalize,
   CONFIDENCE_THRESHOLD,
   DETERMINISTIC_CONFIDENCE_THRESHOLD,
+  isDeterministicExtractor,
+  confidenceThresholdFor,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
   persistTransactions,
   TransactionPublishLimitError,
@@ -637,6 +639,29 @@ describe('normalize', () => {
     expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
     expect(cap.insertedTx).toHaveLength(1);
     expect(cap.reviewRows).toHaveLength(0);
+  });
+
+  it('treats cheap openRouterText on typed PTRs as deterministic', () => {
+    expect(isDeterministicExtractor('openRouterText', 'text_pdf')).toBe(true);
+    expect(isDeterministicExtractor('openRouterText', 'senate_html')).toBe(true);
+    expect(isDeterministicExtractor('openRouterText', 'scanned_pdf')).toBe(false);
+    expect(isDeterministicExtractor('openRouterVision', 'text_pdf')).toBe(false);
+    expect(confidenceThresholdFor('openRouterText', 'text_pdf')).toBe(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+  });
+
+  it('autopublishes cheap openRouterText rows at 0.6 on electronic House PTRs', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-2026-20034898', chamber: 'house', docKind: 'text_pdf', extractor: 'openRouterText' }),
+      [tx({ confidence: 0.6, rawText: 'AAPL Apple Inc B $1,001 - $15,000' })],
+      { extractor: 'openRouterText' },
+    );
+    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
   });
 
   it('autopublishes deterministic textPdf rows below vision conf threshold when clean', async () => {

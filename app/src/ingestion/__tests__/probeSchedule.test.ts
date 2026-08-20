@@ -14,6 +14,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PROBE_SCHEDULE_CONFIG,
   DEFAULT_PROBE_TUNING,
+  EXECUTIVE_PROFILE,
+  EXECUTIVE_WEEKDAY_MAX_INTERVAL_SEC,
   HOUSE_PROFILE,
   PROVIDER_PROFILE,
   SENATE_PROFILE,
@@ -103,6 +105,7 @@ const PROFILES: Record<ProbeSource, ProbeProfile> = {
   house: HOUSE_PROFILE,
   senate: SENATE_PROFILE,
   provider: PROVIDER_PROFILE,
+  executive: EXECUTIVE_PROFILE,
 };
 
 // Reference ET dates. 2026-08-05 is a Wednesday, 2026-08-08 a Saturday.
@@ -115,7 +118,7 @@ const FALL_BACK = '2026-11-01'; //      25-hour ET day
 // ---------------------------------------------------------------------------
 
 describe('probeSchedule — budget conservation (the cap must hold)', () => {
-  for (const source of ['house', 'senate', 'provider'] as const) {
+  for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
     it(`${source}: a simulated weekday never exceeds the daily cap`, () => {
       const profile = PROFILES[source];
       const { probes } = simulateDay(WEEKDAY, source);
@@ -140,14 +143,14 @@ describe('probeSchedule — budget conservation (the cap must hold)', () => {
   });
 
   it('DST spring-forward (23h ET day) stays under cap', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       const { probes } = simulateDay(SPRING_FORWARD, source);
       expect(probes).toBeLessThanOrEqual(PROFILES[source].weekendBudget);
     }
   });
 
   it('DST fall-back (25h ET day) stays under cap — this is what retry headroom absorbs', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       const profile = PROFILES[source];
       const { probes } = simulateDay(FALL_BACK, source);
       // The 25th hour pushes past the post-headroom allocation, which is
@@ -158,7 +161,7 @@ describe('probeSchedule — budget conservation (the cap must hold)', () => {
   });
 
   it('allocation sum never exceeds the effective budget, which never exceeds the cap', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       for (const dayType of ['weekday', 'weekend'] as DayType[]) {
         const a = allocateProbes(PROFILES[source], dayType, DEFAULT_PROBE_SCHEDULE_CONFIG);
         expect(a.allocatedProbes).toBeLessThanOrEqual(a.effectiveBudget);
@@ -171,7 +174,7 @@ describe('probeSchedule — budget conservation (the cap must hold)', () => {
   });
 
   it('no shipped profile lands on the degraded (floors-relaxed) path', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       for (const dayType of ['weekday', 'weekend'] as DayType[]) {
         expect(allocateProbes(PROFILES[source], dayType, DEFAULT_PROBE_SCHEDULE_CONFIG).degraded).toBe(false);
       }
@@ -269,7 +272,7 @@ describe('probeSchedule — peak/trough shape', () => {
   });
 
   it('no window is ever starved to zero, on any profile or day type', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       for (const dayType of ['weekday', 'weekend'] as DayType[]) {
         for (const w of allocateProbes(PROFILES[source], dayType, DEFAULT_PROBE_SCHEDULE_CONFIG).windows) {
           expect(w.probes, `${source}/${dayType}/${w.tier}`).toBeGreaterThanOrEqual(1);
@@ -340,19 +343,78 @@ describe('probeSchedule — measured windows drive the tiers', () => {
 
   it('weekends collapse to the flat low tier for every source', () => {
     const sat = new Date('2026-08-08T17:00:00.000Z');
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       expect(probeTierAt(source, sat)).toBe('low');
     }
   });
 
   it('window tables tile the full day with no gaps or double-cover', () => {
-    for (const source of ['house', 'senate', 'provider'] as const) {
+    for (const source of ['house', 'senate', 'provider', 'executive'] as const) {
       for (const dayType of ['weekday', 'weekend'] as DayType[]) {
         const specs = dayType === 'weekday' ? PROFILES[source].weekday : PROFILES[source].weekend;
         const total = specs.reduce((sum, w) => sum + coveredSecOf(w.ranges), 0);
         expect(total, `${source}/${dayType}`).toBe(86400);
       }
     }
+  });
+});
+
+describe('probeSchedule — executive (no measured OGE arrival-hour sample)', () => {
+  const weekdayNoon = new Date('2026-08-05T16:00:00.000Z'); // Wed 12:00 EDT
+  const weekendNoon = new Date('2026-08-08T16:00:00.000Z'); // Sat 12:00 EDT
+
+  it('uses a flat weekday window at the 15-minute coverage floor, not invented peaks', () => {
+    expect(EXECUTIVE_PROFILE.weekday).toHaveLength(1);
+    expect(EXECUTIVE_PROFILE.weekday[0]?.tier).toBe('low');
+    expect(EXECUTIVE_PROFILE.weekday[0]?.events).toBe(0);
+    expect(EXECUTIVE_WEEKDAY_MAX_INTERVAL_SEC).toBe(15 * 60);
+    expect(EXECUTIVE_PROFILE.maxIntervalSec).toBe(15 * 60);
+    expect(EXECUTIVE_PROFILE.minIntervalSec).toBe(60);
+    expect(EXECUTIVE_PROFILE.weekendMaxIntervalSec).toBe(60 * 60);
+
+    const weekday = allocateProbes(EXECUTIVE_PROFILE, 'weekday', DEFAULT_PROBE_SCHEDULE_CONFIG);
+    expect(weekday.peakIntervalSec).toBe(900);
+    expect(weekday.troughIntervalSec).toBe(900);
+    expect(weekday.windows.every((w) => w.events === 0)).toBe(true);
+    expect(probeIntervalSecAt('executive', weekdayNoon)).toBe(900);
+    expect(probeTierAt('executive', weekdayNoon)).toBe('low');
+  });
+
+  it('weekends stay hourly like House, not a 6-hour gate', () => {
+    const weekend = allocateProbes(EXECUTIVE_PROFILE, 'weekend', DEFAULT_PROBE_SCHEDULE_CONFIG);
+    const houseWeekend = allocateProbes(HOUSE_PROFILE, 'weekend', DEFAULT_PROBE_SCHEDULE_CONFIG);
+    expect(probeIntervalSecAt('executive', weekendNoon)).toBe(3600);
+    expect(weekend.peakIntervalSec).toBe(3600);
+    expect(houseWeekend.peakIntervalSec).toBe(3600);
+  });
+
+  it('per-source floors win so a global 6h maxInterval cannot re-impose the old gate', () => {
+    const forced = allocateProbes(EXECUTIVE_PROFILE, 'weekday', {
+      ...DEFAULT_PROBE_SCHEDULE_CONFIG,
+      maxIntervalSec: 6 * 3600,
+    });
+    expect(forced.peakIntervalSec).toBe(900);
+    expect(forced.troughIntervalSec).toBe(900);
+  });
+
+  it('is due after the weekday floor and too-soon inside it', () => {
+    const due = shouldProbeNow({
+      source: 'executive',
+      now: weekdayNoon,
+      lastProbeAt: new Date(weekdayNoon.getTime() - 901_000),
+    });
+    expect(due.probe).toBe(true);
+    expect(due.reason).toBe('interval-elapsed');
+    expect(due.intervalSec).toBe(900);
+
+    const hold = shouldProbeNow({
+      source: 'executive',
+      now: weekdayNoon,
+      lastProbeAt: new Date(weekdayNoon.getTime() - 5 * 60_000),
+    });
+    expect(hold.probe).toBe(false);
+    expect(hold.reason).toBe('too-soon');
+    expect(hold.intervalSec).toBe(900);
   });
 });
 

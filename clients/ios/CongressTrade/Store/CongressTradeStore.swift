@@ -98,6 +98,22 @@ final class CongressTradeStore: ObservableObject {
 
     @Published var isLoadingMore = false
 
+    /// Last successful `GET /auth/me` with `admin.allowed`.
+    @Published private(set) var adminAccessGranted = false
+    @Published private(set) var isProbingAdmin = false
+    @Published private(set) var isLoadingAdmin = false
+    @Published private(set) var isLoadingReviewQueue = false
+    @Published private(set) var adminNotice: String?
+    @Published private(set) var publicHealth: PublicHealthResponse?
+    @Published private(set) var pollingHealth: PollingHealthResponse?
+    @Published private(set) var autopilotStatus: AutopilotStatusResponse?
+    @Published private(set) var reviewQueueItems: [ReviewQueueItem] = []
+    @Published private(set) var reviewQueueTotals: ReviewQueueTotals?
+    @Published private(set) var reviewQueueNextCursor: String?
+    @Published private(set) var reviewQueueShowsResolved = false
+    @Published private(set) var reviewExtractions: [String: ReviewExtractionsResponse] = [:]
+    @Published private(set) var reviewActionDocId: String?
+
     var modelContext: ModelContext?
 
     internal let api: CongressTradeAPIClient
@@ -170,6 +186,9 @@ final class CongressTradeStore: ObservableObject {
         let storedToken = try? api.tokenStore.load()
         self.hasStoredSessionToken = storedToken?.isEmpty == false
     }
+
+    /// Admin hamburger row — hidden unless `GET /auth/me` reports `admin.allowed`.
+    var showsAdminRow: Bool { adminAccessGranted }
 
     var signedIn: Bool {
         bootstrap?.auth.user != nil
@@ -647,10 +666,12 @@ final class CongressTradeStore: ObservableObject {
             if signedIn {
                 await refreshSignedInState()
                 await PushNotificationManager.shared.syncTokenWithBackend(api: api)
+                await probeAdminAccess()
             } else {
                 subscriptions = []
                 commands = []
                 watchlist = []
+                adminAccessGranted = false
             }
         } catch {
             if Task.isCancelled { /* superseding refresh / view teardown */ }
@@ -748,20 +769,21 @@ final class CongressTradeStore: ObservableObject {
         let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
+        let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
 
         do {
-            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, rankBy: "volume")
-            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam)
-            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, sort: "volume")
+            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             // Latency is independent of trends filters; load it fail-soft so a
             // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
@@ -891,6 +913,32 @@ final class CongressTradeStore: ObservableObject {
         let all = Set(PartyFilter.allCases)
         if parties.isEmpty || parties == all { return nil }
         return parties.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// Shared chips (window/chamber/party/side) forwarded onto ticker and
+    /// politician sheets so those functions honor the same filters as Trends.
+    func fetchTicker(_ symbol: String) async throws -> ClientTickerResponse {
+        try await api.ticker(
+            symbol,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
+    }
+
+    func fetchMember(id: String) async throws -> ClientMemberResponse {
+        try await api.member(
+            id: id,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
     }
 
     private func trimCache(in context: ModelContext) throws {
@@ -1134,20 +1182,162 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    /// Sends a magic-link sign-in email (`POST /auth/magic/request?client=ios`).
-    /// The emailed link deep-links back into the app as
-    /// `congresstrade://auth?token=…` (handled by `onOpenURL` in the app root).
-    func requestMagicLink(email: String) async {
-        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else {
-            watchlistNotice = "Enter your email address."
+    func probeAdminAccess() async {
+        if isProbingAdmin { return }
+        isProbingAdmin = true
+        defer { isProbingAdmin = false }
+        do {
+            let granted = try await api.probeAdminAccess()
+            adminAccessGranted = granted
+            if !granted {
+                publicHealth = nil
+                pollingHealth = nil
+                autopilotStatus = nil
+                reviewQueueItems = []
+                reviewQueueTotals = nil
+                reviewQueueNextCursor = nil
+                reviewExtractions = [:]
+            }
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminAccessGranted = false
+        }
+    }
+
+    func refreshAdminSurface() async {
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingAdmin = true
+        defer { isLoadingAdmin = false }
+        adminNotice = nil
+        do {
+            async let healthTask = api.publicHealth()
+            async let pollingTask = api.pollingHealth()
+            async let autopilotTask = api.autopilotStatus()
+            publicHealth = try await healthTask
+            pollingHealth = try await pollingTask
+            autopilotStatus = try await autopilotTask
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func refreshReviewQueue(resolved: Bool? = nil) async {
+        if let resolved { reviewQueueShowsResolved = resolved }
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(resolved: reviewQueueShowsResolved, limit: 50)
+            reviewQueueItems = response.items
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadMoreReviewQueue() async {
+        guard adminAccessGranted, let cursor = reviewQueueNextCursor, !cursor.isEmpty else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(
+                resolved: reviewQueueShowsResolved,
+                limit: 50,
+                cursor: cursor
+            )
+            let existing = Set(reviewQueueItems.map(\.docId))
+            reviewQueueItems.append(contentsOf: response.items.filter { !existing.contains($0.docId) })
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadReviewExtractions(docId: String) async {
+        guard adminAccessGranted, !docId.isEmpty else { return }
+        do {
+            reviewExtractions[docId] = try await api.reviewExtractions(docId: docId)
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func acknowledgeAutopilotHalt() async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = "autopilot-halt"
+        defer { reviewActionDocId = nil }
+        do {
+            _ = try await api.acknowledgeAutopilotHalt()
+            adminNotice = "Halt acknowledged.  A new run can start on the next cron tick."
+            await refreshAdminSurface()
+        } catch {
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func rejectReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "reject",
+                reviewRevision: item.reviewRevision
+            )
+            adminNotice = "Rejected \(item.docId)."
+        }
+    }
+
+    func confirmReviewItem(_ item: ReviewQueueItem, edits: [[String: Any]], modelName: String) async {
+        guard !edits.isEmpty else {
+            adminNotice = "Confirm needs at least one extracted row.  Use Reject to discard this filing."
             return
         }
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "confirm",
+                reviewRevision: item.reviewRevision,
+                edits: edits
+            )
+            adminNotice = "Confirmed \(item.docId) from \(modelName)."
+        }
+    }
+
+    func unpublishReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.unpublishReview(
+                docId: item.docId,
+                reviewRevision: item.reviewRevision,
+                reason: "unpublished from iOS admin"
+            )
+            adminNotice = "Unpublished \(item.docId).  It is back in the pending queue."
+        }
+    }
+
+    func retryReviewAuto(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.retryReviewAuto(docId: item.docId, reviewRevision: item.reviewRevision)
+            adminNotice = "Released the automation hold on \(item.docId)."
+        }
+    }
+
+    private func mutateReview(docId: String, _ work: () async throws -> Void) async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = docId
+        defer { reviewActionDocId = nil }
         do {
-            try await api.requestMagicLink(email: trimmed)
-            watchlistNotice = "If that email is registered, a sign-in link is on its way."
+            try await work()
+            await refreshReviewQueue()
+            await refreshAdminSurface()
         } catch {
-            watchlistNotice = error.localizedDescription
+            adminNotice = error.localizedDescription
         }
     }
 
@@ -1174,6 +1364,7 @@ final class CongressTradeStore: ObservableObject {
             commands = []
             watchlist = []
             watchlistNotice = "Signed out locally. Server revoke may have failed: \(error.localizedDescription)"
+            await probeAdminAccess()
         }
         isLoggingOut = false
     }

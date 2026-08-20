@@ -8,6 +8,7 @@
  * (YYYY-MM-DD), and filtering by ticker / member / chamber / type.
  *
  * Routes (all relative to /api):
+ *   GET   /health/senate-relay  live probe of the named Senate tunnel origin (#1604)
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
  *   GET   /feed.xml          RSS 2.0 feed of recent trades (same filters as /transactions)
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
@@ -28,6 +29,7 @@ import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import { readBuildInfo } from '../shared/buildInfo.ts';
 import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
+import { probeSenateRelay } from '../ingestion/senateRelayHealth.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -578,6 +580,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok, check }, ok ? 200 : 503);
   });
 
+  // --- GET /health/senate-relay --------------------------------------------
+  // Issue #1604: the named tunnel hostname is permanent; the Mac origin is
+  // not.  Live-probes GET {SENATE_RELAY_URL}/health (5s budget) so a sleeping
+  // laptop pages in minutes.  Does not call checkPipelineHealth — that path
+  // is already the uptime-monitor target and must not grow an outbound hop.
+  r.get('/health/senate-relay', async (c) => {
+    const check = await probeSenateRelay(c.env);
+    c.header('Cache-Control', 'no-store');
+    return c.json(check, check.ok ? 200 : 503);
+  });
+
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
@@ -655,18 +668,20 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       }
     }
     const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + politician name alongside the feed
-    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
-    // mapFeedTransaction maps the filer/filing columns (fullName, state,
-    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
-    // which aren't part of the base Transaction type.
+    // The query SELECTs the resolved chamber + politician name + party
+    // alongside the feed columns via `__chamber` / `__member_name` / `__party`
+    // (see buildTransactionsQuery). mapFeedTransaction maps the filer/filing
+    // columns (fullName, state, photoUrl, dates); we then attach the resolved
+    // `chamber` / `memberName` / `party`, which aren't part of the base
+    // Transaction type on webhook/normalizer paths.
     const rows = await all<
-      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }
     >(c.env.DB, built.sql, built.params);
     const transactions = rows.map((row) => ({
       ...mapFeedTransaction(row),
       chamber: (row.__chamber as Chamber | null) ?? null,
       memberName: row.__member_name ?? null,
+      party: row.__party ?? null,
     }));
     const maxCursor = transactions.reduce(
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),

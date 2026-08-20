@@ -296,9 +296,8 @@ struct MainTabView: View {
             store.setAutoRefreshPaused(phase != .active)
         }
         // congresstrade:// deep links. The auth callback
-        // (congresstrade://auth?token=…) arrives here on cold opens —
-        // e.g. tapping a magic link in Mail — while
-        // ASWebAuthenticationSession intercepts it for in-app OAuth.
+        // (congresstrade://auth?token=…) arrives here on cold opens
+        // while ASWebAuthenticationSession intercepts it for in-app OAuth.
         .onOpenURL { url in
             // Only accept session handoff on congresstrade://auth?token=…
             // (never any arbitrary deep link that happens to carry ?token=).

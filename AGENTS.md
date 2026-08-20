@@ -200,6 +200,14 @@ reporting the tunnel "online" throughout.  If the Senate path is down now, the
 cause is the relay, the tunnel process, or upstream — not the URL.  See
 `scout/README.md` "Senate relay tunnel".
 
+When the named-tunnel origin is down (Cloudflare 502/5xx), search and
+`/fetch-doc` fall back to the box's own eFD egress instead of failing closed
+on a sleeping Mac.  `#1610`'s `/fetch-doc` contract is unchanged when the
+relay answers.  `GET /api/health/senate-relay` live-probes the origin so a
+dead laptop pages in minutes.  Remaining host dependency and the always-on
+residential fix: `docs/rollouts/2026-08-17-senate-relay-host-dependency.md`
+(issue #1604).
+
 ## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
 
 Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
@@ -546,6 +554,24 @@ privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
 **Accuracy:** this app's corpus is House, Senate, **and Executive Branch**
 (OGE 278-T).  Store listing copy must say so — never Congress-only.  Premium
 trial is **2 weeks** (live ASC intro), never a leftover 1-month.
+
+**Strengthened 2026-08-19 (owner, in-conversation):** not limited to product copy —
+covers every paragraph an agent writes anywhere, including **chat replies to the
+owner**, PR titles/bodies, commit messages, Slack posts to #agent-sync, Apple Notes,
+effort-board rows, rollout notes, review reports, and design docs.  If it's prose a
+human reads, it gets two spaces.
+
+**HOW to emit it so it's actually visible (verified 2026-08-19, Socratic.Trade
+PR #2893):** intent is not enough, the gap has to survive the renderer.  In a
+**chat reply** (Claude Code terminal/desktop transcript, any agent chat UI), type
+the literal HTML entity text `&nbsp;` right after the period, then a normal space
+— `Sentence one.&nbsp; Sentence two.` — the markdown renderer expands the entity
+into a visibly wider gap.  Tested and confirmed NOT to work in chat: two literal
+spaces (collapsed by GitHub-flavored markdown); a raw U+00A0 character typed
+directly (normalized away in the transcript view even though copy-paste out of it
+can look right).  In a **file** (read as source, never through that renderer),
+literal two ASCII spaces stays correct — do not switch file content to NBSP or
+`&nbsp;`.
 
 Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and
 `/Users/jay/apps/FLEET-UI-COPY.md`.

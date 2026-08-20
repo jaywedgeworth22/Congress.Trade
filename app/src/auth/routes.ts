@@ -23,7 +23,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { isSecureRequest } from '../security/requestProtocol.ts';
 import type { Env, User } from '../shared/types.ts';
 import {
-  getCurrentUser,
+  getCurrentUserFromRequest,
   createSession,
   destroySession,
   setSessionCookie,
@@ -79,7 +79,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- GET /auth/me -------------------------------------------------------
   // One bootstrap call for the client: identity + derived access level.
   r.get('/me', async (c) => {
-    const user = await getCurrentUser(c);
+    const user = await getCurrentUserFromRequest(c);
     let adminAllowed = user ? await isAdminSessionEmail(c.env, user.email) : false;
 
     // Check Cloudflare Access JWT assertion if present (when requesting via admin.congress.trade)

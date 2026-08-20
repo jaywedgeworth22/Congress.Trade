@@ -502,9 +502,9 @@ struct FeedControlBar: View {
                     )
                 }
 
-                // Party Filter — multi-select, entirely client-side on the
-                // Trades feed (server has no `party=` feed param at all); see
-                // `CongressTradeStore.selectedParties`.
+                // Party Filter — multi-select. Server `party=` is CSV
+                // (`asPartyBuckets`); Trends and detail sheets get the same
+                // value. See `CongressTradeStore.selectedParties`.
                 Menu {
                     Button {
                         Task { await store.setPartySelection([]) }

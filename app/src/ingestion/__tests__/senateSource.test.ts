@@ -243,7 +243,7 @@ describe('fetchSenatePtrFilings', () => {
     expect(out.map((f) => f.pipelineDocId)).toEqual(['S-a', 'S-b', 'S-c']);
   });
 
-  it('routes requests to relayUrl microservice endpoint when provided', async () => {
+  it('prefers the Mac relay over direct eFD (Imperva 403s the box)', async () => {
     const urls: string[] = [];
     const bodies: any[] = [];
     const fetchImpl = async (
@@ -269,5 +269,57 @@ describe('fetchSenatePtrFilings', () => {
     expect(bodies[0].pageSize).toBe(100);
     expect(out).toHaveLength(1);
     expect(out[0].pipelineDocId).toBe('S-relay-1');
+  });
+
+  it('falls back to direct eFD when the named-tunnel relay returns 502', async () => {
+    const urls: string[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith('/fetch-ptr')) {
+        return new Response('error code: 502', { status: 502, headers: { 'content-type': 'text/plain' } });
+      }
+      if (url.endsWith('/search/')) {
+        return new Response(
+          `<form><input type="hidden" name="csrfmiddlewaretoken" value="csrf-hidden"></form>`,
+          { headers: { 'set-cookie': 'csrftoken=csrf-cookie; Path=/' } },
+        );
+      }
+      if (url.endsWith('/search/home/')) {
+        return new Response('', { status: 302, headers: { 'set-cookie': 'sessionid=sess; Path=/' } });
+      }
+      if (url.endsWith('/search/report/data/')) {
+        return new Response(JSON.stringify({ data: [senateRow('direct-1')], recordsFiltered: 1 }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    };
+
+    const out = await fetchSenatePtrFilings(
+      {
+        relayUrl: 'https://scout.jays.services',
+        since: new Date('2026-06-30T00:00:00.000Z'),
+        now: new Date('2026-06-30T23:59:59.000Z'),
+        politeDelayMs: 0,
+      },
+      fetchImpl,
+    );
+
+    expect(urls[0]).toBe('https://scout.jays.services/fetch-ptr');
+    expect(urls.some((u) => u.endsWith('/search/report/data/'))).toBe(true);
+    expect(out.map((f) => f.pipelineDocId)).toEqual(['S-direct-1']);
+  });
+
+  it('does not fall back on a mirrored upstream 404 from the relay', async () => {
+    const fetchImpl = async (): Promise<Response> =>
+      new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+
+    await expect(
+      fetchSenatePtrFilings({ relayUrl: 'https://scout.jays.services', politeDelayMs: 0 }, fetchImpl),
+    ).rejects.toThrow(/senate relay POST \/fetch-ptr -> HTTP 404/);
   });
 });

@@ -8,7 +8,7 @@
  * sector mix, disclosure timeliness, and per-ticker deep dives.
  *
  * Every endpoint:
- *   - accepts the shared params window / chamber / party / source / minConf
+ *   - accepts the shared params window / chamber / party / type / source / minConf
  *     (+ endpoint-specific limit / sort / granularity / minMembers),
  *   - reports dollars as ESTIMATES from STOCK Act bracket midpoints
  *     (estimatedAmounts: true in the envelope),
@@ -29,8 +29,10 @@ import {
   asPartyBucket,
   asPartyBuckets,
   asSourceFilter,
+  asTxTypes,
   asWindow,
   autoGranularity,
+  constrainTxTypes,
   isGranularity,
   type CommonFilters,
   type Granularity,
@@ -87,6 +89,7 @@ import { latestSpxClose } from '../prices/service.ts';
 import { getDisclosureLatencySummary } from '../ingestion/tradeLatency.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { executiveTitleFor } from '../shared/executiveTitles.ts';
+import { sanitizeCompetitorPublication } from '../shared/tradeIdentity.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -171,6 +174,7 @@ function commonFromQuery(q: Record<string, string>): CommonQuery {
     chambers,
     party: asPartyBucket(q.party),
     parties: asPartyBuckets(q.party),
+    txTypes: asTxTypes(q.type),
     source: asSourceFilter(q.source),
     minConf: minConf !== undefined && Number.isFinite(minConf) ? minConf : undefined,
     excludeOptions: q.excludeOptions === 'true',
@@ -186,7 +190,8 @@ function meta(f: CommonQuery, extra: Record<string, unknown> = {}): Record<strin
   return {
     window: f.window,
     chamber: f.chambers ? f.chambers.join(',') : f.chamber ?? null,
-    party: f.party ?? null,
+    party: f.parties && f.parties.length ? f.parties.join(',') : (f.party ?? null),
+    type: f.txTypes?.join(',') ?? null,
     source: f.source ?? 'all',
     estimatedAmounts: true,
     asOf: new Date().toISOString(),
@@ -220,6 +225,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         estimatedVolumeUsd: usd(row.est_volume),
         estimatedNetFlowUsd: usd(row.est_net_flow),
         optionCount: num(row.option_count),
+        dollarsExcludeOptions: true,
         resolvedTickerPct:
           totalTrades > 0 ? round(num(row.resolved_ticker_count) / totalTrades, 4) : null,
         netSentiment: netSentiment(buyCount, sellCount),
@@ -288,7 +294,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
       // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
       // ranking) directional, and a ticker with no P/S simply isn't a candidate.
-      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['B', 'S'], sort: 'trades', limit: pool });
+      const lbQ = buildTickerLeaderboardQuery({
+        ...fStock,
+        txTypes: constrainTxTypes(fStock.txTypes, ['B', 'S']),
+        sort: 'trades',
+        limit: pool,
+      });
       const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
       // Fetch the party + momentum + skill-link aggregates restricted to THIS
       // candidate set, so every ranked candidate's resolved side is present (a
@@ -306,7 +317,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const clQ = buildClusterBuysQuery({ ...fStock, tickers: batch, minMembers: 2, limit: 200 });
           // Momentum is PER SIDE (bySide) and directional (P/S) only — rising
           // purchases must not feed a SELL signal, and 'E'/option rows never count.
-          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['B', 'S'], bySide: true, limit: 200 });
+          const trQ = buildTrendingQuery({
+            ...fStock,
+            tickers: batch,
+            txTypes: constrainTxTypes(fStock.txTypes, ['B', 'S']),
+            bySide: true,
+            limit: 200,
+          });
           // Who traded each candidate, by side (for the realized-skill rollup).
           const lkQ = buildConvictionMemberLinksQuery(batch, fStock);
           return [
@@ -932,6 +949,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           memberCount: num(s.member_count),
           estVolumeUsd: usd(s.est_volume),
           estNetFlowUsd: usd(s.est_net_flow),
+          optionCount: num(s.option_count),
+          dollarsExcludeOptions: true,
           netSentiment: netSentiment(buyCount, sellCount),
           firstTrade: str(s.first_trade),
           lastTrade: str(s.last_trade),
@@ -945,7 +964,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         })),
         topBuyers: buyerRows.map(mapTrader),
         topSellers: sellerRows.map(mapTrader),
-        recentTrades: recentRows.map((row) => ({
+        recentTrades: recentRows.map((row) => {
+          const published = sanitizeCompetitorPublication({
+            source: str(row.source),
+            amountMin: row.amount_min == null ? null : num(row.amount_min),
+            amountMax: row.amount_max == null ? null : num(row.amount_max),
+            filedDate: str(row.filed_date),
+            txDate: str(row.tx_date),
+          });
+          return {
           id: str(row.id),
           docId: str(row.doc_id),
           ticker: str(row.ticker),
@@ -956,25 +983,25 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           txType: str(row.tx_type),
           owner: str(row.owner),
           isOption: num(row.is_option) === 1,
-          amountMin: row.amount_min == null ? null : num(row.amount_min),
-          amountMax: row.amount_max == null ? null : num(row.amount_max),
-          estValueUsd: Math.round(
-            bracketMidpoint(
-              row.amount_min == null ? null : num(row.amount_min),
-              row.amount_max == null ? null : num(row.amount_max),
-            ),
-          ),
+          amountMin: published.amountMin ?? null,
+          amountMax: published.amountMax ?? null,
+          estValueUsd: published.amountMin == null && published.amountMax == null
+            ? null
+            : Math.round(
+                bracketMidpoint(published.amountMin ?? null, published.amountMax ?? null),
+              ),
           filerId: str(row.filer_id),
           fullName: filerName(row.full_name),
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
-          filedDate: str(row.filed_date),
+          filedDate: published.filedDate ?? null,
           firstSeenAt: str(row.first_seen_at),
           sourceUrl: str(row.source_url),
           createdAt: str(row.created_at),
           source: str(row.source),
           rawText: str(row.raw_text),
-        })),
+        };
+        }),
       });
     });
     return c.json(data);
@@ -1107,7 +1134,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           sellCount: num(row.sell_count),
           estVolumeUsd: usd(row.est_volume),
         })),
-        recentTrades: recentRows.map((row) => ({
+        recentTrades: recentRows.map((row) => {
+          const published = sanitizeCompetitorPublication({
+            source: str(row.source),
+            amountMin: row.amount_min == null ? null : num(row.amount_min),
+            amountMax: row.amount_max == null ? null : num(row.amount_max),
+            filedDate: str(row.filed_date),
+            txDate: str(row.tx_date),
+          });
+          return {
           id: str(row.id),
           docId: str(row.doc_id),
           ticker: str(row.ticker),
@@ -1115,7 +1150,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           assetName: str(row.asset_name),
           txType: str(row.tx_type),
           txDate: str(row.tx_date),
-          filedDate: str(row.filed_date),
+          filedDate: published.filedDate ?? null,
           firstSeenAt: str(row.first_seen_at),
           createdAt: str(row.created_at),
           sourceUrl: str(row.source_url),
@@ -1123,17 +1158,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           isOption: num(row.is_option) === 1,
           assetType: str(row.asset_type),
           assetTypeName: str(row.asset_type_name),
-          amountMin: row.amount_min == null ? null : num(row.amount_min),
-          amountMax: row.amount_max == null ? null : num(row.amount_max),
+          amountMin: published.amountMin ?? null,
+          amountMax: published.amountMax ?? null,
           source: str(row.source),
           rawText: str(row.raw_text),
-          estValueUsd: Math.round(
-            bracketMidpoint(
-              row.amount_min == null ? null : num(row.amount_min),
-              row.amount_max == null ? null : num(row.amount_max),
-            ),
-          ),
-        })),
+          estValueUsd: published.amountMin == null && published.amountMax == null
+            ? null
+            : Math.round(
+                bracketMidpoint(published.amountMin ?? null, published.amountMax ?? null),
+              ),
+        };
+        }),
       });
     });
     return c.json(data);

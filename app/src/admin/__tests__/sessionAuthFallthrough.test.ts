@@ -6,6 +6,10 @@
  * rejects the bearer — but a valid ct_session cookie for an ADMIN_EMAILS user
  * must still authorize. Regression for the middleware that only resolved
  * sessionEmail when no Authorization header was present.
+ *
+ * Native iOS sends the same opaque session as Authorization: Bearer <session>
+ * (no cookie). Admin middleware + GET /auth/me must resolve that via
+ * getCurrentUserFromRequest, not cookie-only getCurrentUser.
  */
 import { describe, expect, it } from 'vitest';
 import { buildAdminRouter } from '../routes.ts';
@@ -113,5 +117,25 @@ describe('admin auth: stale bearer falls through to session', () => {
       sessionEnv('admin@example.com'),
     );
     expect(res.status).toBe(200);
+  });
+
+  it('accepts an allowlisted native session as Authorization Bearer', async () => {
+    const res = await app.request(
+      '/config-sources',
+      { headers: { Authorization: 'Bearer admin-sess' } },
+      sessionEnv('admin@example.com'),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a non-allowlisted native session bearer', async () => {
+    const env = sessionEnv('not-on-list@example.com') as Record<string, unknown>;
+    env.ADMIN_EMAILS = 'admin@example.com';
+    const res = await app.request(
+      '/config-sources',
+      { headers: { Authorization: 'Bearer admin-sess' } },
+      env as never,
+    );
+    expect(res.status).toBe(401);
   });
 });

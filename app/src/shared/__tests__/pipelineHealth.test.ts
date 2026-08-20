@@ -12,7 +12,10 @@ describe('evaluatePipelineSignals', () => {
     outboxPending: 0,
     outboxOldestAt: null,
     outboxFailed: 0,
-    reviewBacklog: 5,
+    reviewBacklog: 0,
+    reviewEligible: 0,
+    reviewSuppressed: 0,
+    reviewTerminal: 0,
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
@@ -30,6 +33,10 @@ describe('evaluatePipelineSignals', () => {
       { provider: 'quiver', lastObservedAt: new Date(nowMs - 2 * 3_600_000).toISOString() },
       { provider: 'unusual_whales', lastObservedAt: new Date(nowMs - 3 * 3_600_000).toISOString() },
     ],
+    senateRelay: {
+      configured: true,
+      probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 60_000).toISOString(), host: 'scout.jays.services' },
+    },
   };
 
   it('returns ok status for clean pipeline signals', () => {
@@ -44,6 +51,9 @@ describe('evaluatePipelineSignals', () => {
       outboxOldestAt: null,
       outboxFailed: null,
       reviewBacklog: null,
+      reviewEligible: null,
+      reviewSuppressed: null,
+      reviewTerminal: null,
       extractionAttempts24h: null,
       extractionOk24h: null,
       lastExtractionSuccessAt: null,
@@ -54,6 +64,7 @@ describe('evaluatePipelineSignals', () => {
       strandedFilings: null,
       pollSources: null,
       latencyProviders: null,
+      senateRelay: null,
     };
     const res = evaluatePipelineSignals(nullSignals, nowMs);
     expect(res.status).toBe('unknown');
@@ -88,6 +99,9 @@ describe('evaluatePipelineSignals', () => {
     const backlogStallSignals: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 200,
+      reviewEligible: 9,
+      reviewSuppressed: 0,
+      reviewTerminal: 191,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
     };
@@ -95,14 +109,35 @@ describe('evaluatePipelineSignals', () => {
     expect(res.status).toBe('stalled');
     const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
     expect(backlogCheck?.status).toBe('stalled');
+    expect(backlogCheck?.detail).toContain('eligible 9');
+    expect(backlogCheck?.detail).toContain('terminal 191');
     const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
     expect(providerCheck?.status).toBe('stalled');
+  });
+
+  it('marks any unresolved review item unhealthy, split by bucket', () => {
+    const oneItem: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 1,
+      reviewEligible: 0,
+      reviewSuppressed: 0,
+      reviewTerminal: 1,
+    };
+    const res = evaluatePipelineSignals(oneItem, nowMs);
+    const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
+    expect(backlogCheck?.status).toBe('degraded');
+    expect(backlogCheck?.detail).toContain('1 unresolved');
+    expect(backlogCheck?.detail).toContain('terminal 1');
+    expect(res.status).toBe('degraded');
   });
 
   it('does not mark extraction_provider ok when attempts=0 and autopilot is halted', () => {
     const haltedIdle: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 0,
+      reviewEligible: 0,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
       autopilotHaltReason: 'error_class:billing (OpenRouter files-endpoint prepaid minimum, not account quota)',
@@ -117,6 +152,9 @@ describe('evaluatePipelineSignals', () => {
     const idleBacklog: PipelineSignals = {
       ...cleanSignals,
       reviewBacklog: 5,
+      reviewEligible: 5,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
       extractionAttempts24h: 0,
       extractionOk24h: 0,
     };
@@ -220,7 +258,10 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     outboxPending: 0,
     outboxOldestAt: null,
     outboxFailed: 0,
-    reviewBacklog: 5,
+    reviewBacklog: 0,
+    reviewEligible: 0,
+    reviewSuppressed: 0,
+    reviewTerminal: 0,
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
@@ -237,6 +278,10 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     latencyProviders: [
       { provider: 'quiver', lastObservedAt: new Date(nowMs - 2 * 3_600_000).toISOString() },
     ],
+    senateRelay: {
+      configured: true,
+      probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 60_000).toISOString(), host: 'scout.jays.services' },
+    },
   };
 
   it('config-disabled executive polling is stalled and says so (the OGE_WATCH_ENABLED incident)', () => {
@@ -339,5 +384,43 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     const check = res.checks.find((c) => c.id === 'latency_probes')!;
     expect(check.status).toBe('degraded');
     expect(check.detail).toContain('unusual_whales');
+  });
+
+  it('a dead Senate relay probe is stalled even when polling_senate is ok', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: {
+        configured: true,
+        probe: { ok: false, status: 502, checkedAt: new Date(nowMs - 30_000).toISOString(), host: 'scout.jays.services' },
+      },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('stalled');
+    expect(check.detail).toContain('DOWN');
+    expect(check.detail).toContain('scout.jays.services');
+    expect(res.checks.find((c) => c.id === 'polling_senate')!.status).toBe('ok');
+  });
+
+  it('an unset Senate relay URL is degraded, not silent', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: { configured: false, probe: null },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('SENATE_RELAY_URL unset');
+  });
+
+  it('a stale ok Senate relay probe is degraded', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: {
+        configured: true,
+        probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 45 * 60_000).toISOString(), host: 'scout.jays.services' },
+      },
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('stale');
   });
 });

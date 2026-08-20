@@ -155,6 +155,8 @@ export interface Transaction {
   fullName?: string | null;
   /** Filer's state (e.g. 'CA') resolved from the filers table. */
   state?: string | null;
+  /** Filer party from the filers table (feed only; used for D/R/I rings and the iOS politician line). */
+  party?: string | null;
   /** Filer's headshot URL (unitedstates/images CDN); null = show initials. */
   photoUrl?: string | null;
   /**
@@ -690,7 +692,10 @@ export interface Env {
   OGE_INDEX_URL?: string;
   /** CSV list of override URLs for OGE filings index views. */
   OGE_INDEX_URLS?: string;
-  /** Minimum seconds between OGE index polls (default 21600 = 6h). */
+  /**
+   * UNUSED live gate. Adaptive `probeSchedule` / `decideSourcePoll` owns
+   * executive cadence. A leftover Infisical 21600 must not re-impose 6h.
+   */
   OGE_POLL_INTERVAL_SEC?: string;
   /** Max raw PDF bytes sent to vision extraction for executive filings (default 6MB). */
   OGE_MAX_VISION_BYTES?: string;

@@ -101,6 +101,19 @@ describe('maybeRunDeterministicReviewDrain', () => {
     expect(mocks.extractAndNormalize).not.toHaveBeenCalled();
     expect(r.skipped).toBe(1);
   });
+
+  it('re-extracts cheap openRouterText rows on typed House PTRs', async () => {
+    const { env } = makeEnv(
+      [{ doc_id: 'H-2024-20025959', raw_object_key: 'raw/h.pdf', doc_kind: 'text_pdf', extractor: 'openRouterText' }],
+      { liveTx: 1 },
+    );
+    mocks.extractAndNormalize.mockResolvedValue(undefined);
+    const r = await maybeRunDeterministicReviewDrain(env, { limit: 5 });
+    expect(mocks.extractAndNormalize).toHaveBeenCalledWith(env, 'H-2024-20025959');
+    expect(r.scanned).toBe(1);
+    expect(r.published).toBe(1);
+    expect(r.skipped).toBe(0);
+  });
 });
 
 describe('sweepRejectedScannedForLocalVision', () => {

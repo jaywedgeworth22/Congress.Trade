@@ -19,6 +19,7 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType, TxSource } from '../shared/types.ts';
+import { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
 import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
@@ -85,6 +86,14 @@ export function isDeterministicExtractor(
     ) {
       return true;
     }
+    // Cheap OpenRouter text fallback on typed PTRs is not vision.  Default
+    // model confidence is 0.55 — same publish bar as textPdf.  Live 2026-08-18:
+    // 14 electronic House PTRs sat in review at 0.6 solely because
+    // "openrouter" in the extractor name inherited the 0.95 vision gate.
+    if (compact === 'openroutertext' || compact === 'open_router_text') {
+      const kind = (docKind || '').trim().toLowerCase();
+      return kind === 'text_pdf' || kind === 'senate_html' || kind === 'oge_html' || kind === 'oge_text';
+    }
     // Explicit vision/OCR extractors must never inherit the deterministic
     // threshold from a text/html doc_kind (scanned reclassifications, etc.).
     if (
@@ -135,6 +144,8 @@ export interface NormalizeResult {
   needsReview: boolean;
   /** True only when this invocation won the persistence/review-state CAS. */
   published: boolean;
+  /** Review-queue reason when needsReview is true (agreement hard-stop input). */
+  reviewReason?: string;
 }
 
 interface ReviewSnapshot {
@@ -395,6 +406,7 @@ export async function normalize(
       minConfidence: ocrUnusable ? 0 : minConfidence,
       needsReview: routed,
       published: false,
+      reviewReason: reason,
     };
   }
 
@@ -712,19 +724,7 @@ export function scoreFields(
   return { confidence: clamp01(confidence), flags, ticker, amountMin, amountMax, txType };
 }
 
-/**
- * True when the "asset name" is PTR form chrome (letterhead / column headers),
- * not a tradeable security. Used to drop rows before review parking and by the
- * server_cpu scan worker before submit.
- */
-export function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
-  if (!assetName) return false;
-  // Expanded 2026-08-10 after server_cpu_v1 review flood: letterhead, member
-  // certification chrome, y-box OCR placeholders, office telephone lines.
-  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:|\bMember of the U\.?S\.?\s+House\b|\bOfficer or Employee\b|\bOffice Telephone\b|\bEmploying Off(?:ice)?\b|\bunreadable asset\b|HOUSE OF\s+REP|\bCfficar\b|\bDiotict\b|Use oSucem|I certify that|Signature of Reporting)/i.test(
-    assetName,
-  );
-}
+export { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
 
 /**
  * True when an OCR extraction is mostly form chrome / unreadable placeholders

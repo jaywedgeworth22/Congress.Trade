@@ -9,6 +9,30 @@ required; this VM did not touch prod.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
 
 # Current Handoff
+## 2026-08-17 CURSOR — iOS does not take web payments for Premium
+
+Guideline 3.1.1.  Delivery and the empty StoreKit catalog no longer offer
+website Stripe checkout.  StoreKit / Restore stay.  Existing Stripe
+subscribers still manage via the billing portal.  Receipt:
+`docs/rollouts/2026-08-17-ios-no-web-checkout.md`.
+
+## 2026-08-17 CURSOR — House FD ZIP is healthy (#1577)
+
+Live Clerk `{YEAR}FD.ZIP` is reachable and complete.  Official persisted
+House rows already have `filed_date`.  Remaining NULLs are `not_found`
+frontier-probe ids and Quiver `provider-missing-*` stubs, both absent
+from the Clerk index.  NULL is honest; do not invent dates.  Sweep
+skips `not_found` so it stops hourly no-op ZIP fetches.  Receipt:
+`docs/rollouts/2026-08-17-house-fd-zip-1577.md`.
+
+## 2026-08-17 CURSOR — Senate relay no longer fail-closes on a sleeping Mac (#1604)
+
+Named tunnel `scout.jays.services` is already permanent (#1779).  `#1610`
+`/fetch-doc` is unchanged when the relay answers.  Search and document fetch
+now fall back to direct eFD on Cloudflare 502/5xx so one laptop sleeping does
+not zero Senate coverage while Imperva allows the box.  `GET /api/health/senate-relay`
+live-probes the origin.  Remaining always-on residential host:
+`docs/rollouts/2026-08-17-senate-relay-host-dependency.md`.
 
 ## 2026-08-17 GROK — Effort-board hygiene
 
