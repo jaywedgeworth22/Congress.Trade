@@ -3728,10 +3728,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (b.dataset.view === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (initialView === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });
@@ -4700,7 +4700,8 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
   it('verifies admin token on Save and reports accepted vs rejected in Admin Access', () => {
     expect(DASHBOARD_HTML).toContain('function setAdminTokenMsg(');
     expect(DASHBOARD_HTML).toContain('function saveAdminToken(');
-    expect(DASHBOARD_HTML).toContain("setAdminTokenMsg('Checking token…'");
+    expect(DASHBOARD_HTML).toContain('function verifyAdminToken(v, onMsg, onAccepted)');
+    expect(DASHBOARD_HTML).toContain("onMsg('Checking token…'");
     expect(DASHBOARD_HTML).toContain("Token rejected — wrong value");
     expect(DASHBOARD_HTML).toContain("Token accepted — saved in this browser.");
     expect(DASHBOARD_HTML).toContain("Cleared — no admin token stored in this browser.");
@@ -4708,6 +4709,30 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('role="status"');
     // Still uses the actionable 401 copy on other admin probes.
     expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin token in the Admin tab access box.");
+  });
+
+  it('exposes a standalone Admin Sign-In dialog so token bootstrap never requires the gated Admin tab', () => {
+    expect(DASHBOARD_HTML).toContain('function openAdminTokenDialog()');
+    expect(DASHBOARD_HTML).toContain('function saveAdminTokenFromDialog()');
+    expect(DASHBOARD_HTML).toContain('function clearAdminTokenFromDialog()');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialog"');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialogInput"');
+    expect(DASHBOARD_HTML).toContain('id="adminTokenDialogMsg"');
+    expect(DASHBOARD_HTML).toContain('openAdminTokenDialog()">Admin Sign-In');
+  });
+
+  it('renders an Admin Access Control section to grant/revoke admin emails, with ADMIN_EMAILS read-only', () => {
+    expect(DASHBOARD_HTML).toContain('<h3>Admin Access Control</h3>');
+    expect(DASHBOARD_HTML).toContain('id="adminGrantEmail"');
+    expect(DASHBOARD_HTML).toContain('onclick="grantAdminEmail()"');
+    expect(DASHBOARD_HTML).toContain('id="adminListBody"');
+    expect(DASHBOARD_HTML).toContain('not editable here');
+    expect(DASHBOARD_HTML).toContain('function loadAdminList()');
+    expect(DASHBOARD_HTML).toContain('function grantAdminEmail()');
+    expect(DASHBOARD_HTML).toContain('function revokeAdminEmail(email)');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins/grant'");
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins/revoke'");
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/admins', { headers: adminHeaders() })");
   });
 
 
@@ -5346,10 +5371,38 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);');
   });
 
-  it('lists Admin + Review in the account menu even before canUseAdmin()', () => {
-    expect(DASHBOARD_HTML).toContain('if (!ME.user && !hasAdminToken()) return \'\'');
+  it('lists Admin + Review in the account menu only when canUseAdmin() is true', () => {
+    // Premium alone must never grant Admin / Review Queue (owner directive).
+    // A signed-in non-admin instead gets a lightweight "Admin Sign-In" entry
+    // that opens the standalone token dialog — canUseAdmin() is the gate for
+    // the real tabs, matching applyAdminVisibility().
+    expect(DASHBOARD_HTML).toContain('function adminMenuHtml(closeCall) {\n  // Premium alone never grants Admin / Review Queue');
+    expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) {');
     expect(DASHBOARD_HTML).toContain('showView(\\\'admin\\\')">Admin');
     expect(DASHBOARD_HTML).toContain('showView(\\\'review\\\')">Review Queue');
+    expect(DASHBOARD_HTML).toContain('openAdminTokenDialog()">Admin Sign-In');
+    expect(DASHBOARD_HTML).not.toContain('if (!ME.user && !hasAdminToken()) return \'\'');
+  });
+
+  it('never force-unhides an admin-gated tab for a non-admin caller of showView()', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "if (btn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n    showToast('Admin access required.', true);\n    return;\n  }",
+    );
+  });
+
+  it('blocks a signed-in non-admin from activating an admin-gated tab, not just a signed-out visitor', () => {
+    expect(DASHBOARD_HTML).not.toContain(
+      "if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin() && !ME.user && !hasAdminToken())",
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      if (ME.user) { showToast('Admin access required.', true); } else { openLogin(); }\n      return;\n    }",
+    );
+  });
+
+  it('falls back a direct ?view=admin/?view=review boot navigation to Trends for a non-admin', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      initialView = 'trends';\n    }",
+    );
   });
 
   it('uses fat mask arrows with green up and red down on the side filter', () => {
@@ -5779,6 +5832,50 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     const btnEnd = fullHtml.indexOf('</button>', idIdx) + '</button>'.length;
     return fullHtml.slice(btnStart, btnEnd);
   }
+
+  function loadAdminMenuSandbox(): (me: { email?: string; admin?: { allowed: boolean } } | null, hasToken: boolean) => string {
+    const html = DASHBOARD_HTML;
+    const src = [
+      'var ME = { user: null, admin: { allowed: false } };',
+      'var STORED_TOKEN = "";',
+      'function getAdminToken() { return STORED_TOKEN; }',
+      extractFn(html, 'hasAdminToken'),
+      extractFn(html, 'canUseAdmin'),
+      extractFn(html, 'adminMenuHtml'),
+      'return function (me, hasToken) { ME.user = me; ME.admin = (me && me.admin) || { allowed: false }; STORED_TOKEN = hasToken ? "tok" : ""; return adminMenuHtml(""); };',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source, see comment above
+    const factory = new Function(src);
+    return factory() as (me: { email?: string; admin?: { allowed: boolean } } | null, hasToken: boolean) => string;
+  }
+
+  it('shows Admin + Review Queue only for a real admin — Premium alone never grants them', () => {
+    const render = loadAdminMenuSandbox();
+
+    // Signed-in Premium, non-admin: no Admin / Review Queue buttons, only
+    // the lightweight token-bootstrap entry.
+    const premiumNonAdmin = render({ email: 'premium@example.com', admin: { allowed: false } }, false);
+    expect(premiumNonAdmin).not.toContain('>Admin</button>');
+    expect(premiumNonAdmin).not.toContain('>Review Queue</button>');
+    expect(premiumNonAdmin).toContain('>Admin Sign-In</button>');
+    expect(premiumNonAdmin).toContain('openAdminTokenDialog()');
+
+    // A real admin session (ME.admin.allowed): full Admin + Review Queue.
+    const admin = render({ email: 'admin@example.com', admin: { allowed: true } }, false);
+    expect(admin).toContain('>Admin</button>');
+    expect(admin).toContain('>Review Queue</button>');
+    expect(admin).not.toContain('Admin Sign-In');
+
+    // Signed-out with no stored token: nothing at all (no bootstrap entry
+    // for anonymous visitors).
+    expect(render(null, false)).toBe('');
+
+    // Signed-out but a previously-saved ADMIN_TOKEN already unlocks
+    // canUseAdmin(): full menu, same as a real admin session.
+    const tokenOnly = render(null, true);
+    expect(tokenOnly).toContain('>Admin</button>');
+    expect(tokenOnly).toContain('>Review Queue</button>');
+  });
 
   it('renders the ☰ glyph on the mobile hamburger button for signed-out visitors', () => {
     const render = loadAccountSandbox();
