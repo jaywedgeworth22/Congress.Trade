@@ -23,6 +23,21 @@ export interface DeterministicDrainResult {
 
 const DEFAULT_LIMIT = 40;
 
+/** True when the parked review payload is a sliced stump, not the full extract. */
+export function storedReviewPayloadIsIncomplete(
+  payload: {
+    transactions?: unknown[];
+    truncated?: boolean;
+    transactionCount?: number;
+  } | null,
+): boolean {
+  if (!payload) return true;
+  const txs = Array.isArray(payload.transactions) ? payload.transactions : [];
+  if (txs.length === 0) return true;
+  if (payload.truncated === true) return true;
+  return typeof payload.transactionCount === 'number' && payload.transactionCount > txs.length;
+}
+
 function payloadToParsedTx(row: Record<string, unknown>): ParsedTx {
   return {
     txDate: typeof row.txDate === 'string' ? row.txDate : null,
@@ -59,16 +74,30 @@ async function tryPublishStoredPayload(
   const reason = (row.reason || '').toLowerCase();
   if (reason.includes('form_chrome') || reason.includes('ocr_unusable')) return 'skip';
   if (!isDeterministicExtractor(row.extractor, row.doc_kind)) return 'skip';
-  let payload: { transactions?: unknown[] } | null = null;
+  // Filings held for the old 200-row cap stored a sliced payload (`truncated:
+  // true`, 200 of 219). Publishing that stump marks the filing persisted and
+  // skips re-extract — the rest of the trades never land.
+  if (reason.includes('extraction_row_limit') || reason.includes('row_limit_exceeded')) {
+    return 'still';
+  }
+  let payload: {
+    transactions?: unknown[];
+    truncated?: boolean;
+    transactionCount?: number;
+  } | null = null;
   if (row.payload) {
     try {
-      payload = JSON.parse(row.payload) as { transactions?: unknown[] };
+      payload = JSON.parse(row.payload) as {
+        transactions?: unknown[];
+        truncated?: boolean;
+        transactionCount?: number;
+      };
     } catch {
       return 'still';
     }
   }
-  const txs = Array.isArray(payload?.transactions) ? payload!.transactions! : [];
-  if (txs.length === 0) return 'still';
+  if (storedReviewPayloadIsIncomplete(payload) || !payload?.transactions) return 'still';
+  const txs = payload.transactions;
   const filing = await get<Filing>(
     env.DB,
     `SELECT doc_id as docId, chamber, filer_id as filerId, filing_type as filingType,
