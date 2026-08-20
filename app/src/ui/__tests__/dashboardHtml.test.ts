@@ -86,11 +86,13 @@ function loadBenchmarkPresentationHelpers() {
 }
 
 describe('DASHBOARD_HTML', () => {
-  it('uses the descriptive product name as the document title', () => {
-    expect(DASHBOARD_HTML).toContain(
-      '<title>Congress.Trade</title>',
-    );
-    expect(DASHBOARD_HTML).toContain('name="description"');
+  it('fills <title>/meta description from server-side OgMeta, per view/entity (SEOSOCIAL-04)', () => {
+    // %TITLE%/%META_DESCRIPTION% are filled by applyOgMeta from the same
+    // OgMeta the og:/twitter: tags use — no more hardcoded "Congress.Trade"
+    // literal identical on every page.
+    expect(DASHBOARD_HTML).toContain('<title>%TITLE%</title>');
+    expect(DASHBOARD_HTML).toContain('<meta name="description" content="%META_DESCRIPTION%" />');
+    expect(DASHBOARD_HTML).not.toContain('<title>Congress.Trade</title>');
     // OG tags are server-filled placeholders (deep-link context cards).
     expect(DASHBOARD_HTML).toContain('property="og:image" content="%OG_IMAGE%"');
     expect(DASHBOARD_HTML).toContain('name="twitter:card" content="summary_large_image"');
@@ -232,18 +234,101 @@ describe('DASHBOARD_HTML', () => {
     // The former "Live Feed" tab is now labelled "Trades" — canonical id is
     // now "trades" too (owner follow-up batch #25), not the pre-rename "feed".
     expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</button>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</a>');
     // People tab is Directory (owner rename); view id stays "people" for deep links.
     expect(DASHBOARD_HTML).toContain('data-view="people" data-mobile="Directory"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</button>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</a>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
 
+  it('renders the primary view tabs as real crawlable <a href> links (SEOSOCIAL-02)', () => {
+    // Progressive enhancement: search engines and ctrl/cmd-click can follow
+    // these; the click handler still preventDefault()s to keep SPA routing.
+    expect(DASHBOARD_HTML).toContain('<a href="/?view=trends" data-view="trends"');
+    expect(DASHBOARD_HTML).toContain('<a href="/?view=trades" data-view="trades"');
+    expect(DASHBOARD_HTML).toContain('<a href="/?view=people" data-view="people"');
+    expect(DASHBOARD_HTML).toContain('<a href="/?view=subs" data-view="subs"');
+    expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view=/);
+    expect(DASHBOARD_HTML).toContain("if (e && e.preventDefault) e.preventDefault();");
+  });
+
+  it('gives entity deep links (drawer "Copy link", Directory member/ticker cells) real hrefs (SEOSOCIAL-02)', () => {
+    const sources = loadDashboardFunctions(['esc', 'entityHref', 'copyLinkHtml']);
+    const helpers = new Function(
+      sources.join('\n\n') + '\nreturn { entityHref, copyLinkHtml };',
+    )() as {
+      entityHref: (param: string, value: string) => string;
+      copyLinkHtml: (param: string, value: string, label: string) => string;
+    };
+
+    expect(helpers.entityHref('member', 'P000197')).toBe('/?member=P000197');
+    expect(helpers.entityHref('ticker', 'NVDA')).toBe('/?ticker=NVDA');
+    // Values are percent-encoded — a filer id or ticker can never break out
+    // of the query string.
+    expect(helpers.entityHref('member', 'a&b=c')).toBe('/?member=a%26b%3Dc');
+
+    const link = helpers.copyLinkHtml('ticker', 'NVDA', 'Copy link to NVDA');
+    expect(link).toContain('<a class="drawer-all-link clickable" href="/?ticker=NVDA"');
+    expect(link).toContain('data-copy-param="ticker"');
+    expect(link).toContain('data-copy-value="NVDA"');
+
+    // The click handler now preventDefault()s before building the clipboard
+    // URL, since the anchor carries a real href that would otherwise navigate.
+    const clickHandlerMatch = DASHBOARD_HTML.match(
+      /document\.addEventListener\('click', function \(e\) \{\n {2}var b = e\.target[\s\S]*?copyText\(u\.toString\(\)\);\n\}\);/,
+    );
+    expect(clickHandlerMatch).not.toBeNull();
+    expect(clickHandlerMatch![0]).toContain('if (e.preventDefault) e.preventDefault();');
+  });
+
+  it('links Directory table rows to real crawlable /?member= and /?ticker= hrefs (SEOSOCIAL-02)', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "var memberAttr = m.filerId\n      ? ' class=\"member-cell clickable\" href=\"' + esc(entityHref('member', m.filerId)) + '\" data-member=\"' + esc(m.filerId) + '\" title=\"Open ' + esc(name) + '\"'",
+    );
+    expect(DASHBOARD_HTML).toContain("var memberTag = m.filerId ? 'a' : 'div';");
+    expect(DASHBOARD_HTML).toContain("var assetTag = tkr ? 'a' : 'div';");
+    expect(DASHBOARD_HTML).toContain("var hrefAttr = tkr ? (' href=\"' + esc(entityHref('ticker', tkr)) + '\"') : '';");
+  });
+
+  it('setDocumentTitle appends " — Congress.Trade" to a label, or restores the bare site name (SEOSOCIAL-04)', () => {
+    const [src] = loadDashboardFunctions(['setDocumentTitle']);
+    const stubDoc = { title: 'stale' };
+    const setDocumentTitle = new Function('document', src + '\nreturn setDocumentTitle;')(stubDoc) as (
+      label: string | null,
+    ) => void;
+
+    setDocumentTitle('Trends');
+    expect(stubDoc.title).toBe('Trends — Congress.Trade');
+    setDocumentTitle('NVDA');
+    expect(stubDoc.title).toBe('NVDA — Congress.Trade');
+    setDocumentTitle(null);
+    expect(stubDoc.title).toBe('Congress.Trade');
+  });
+
+  it('keeps document.title in sync with the active tab and open drawer (SEOSOCIAL-04)', () => {
+    // Tab-switch path: sets the title right after marking the clicked tab active.
+    expect(DASHBOARD_HTML).toContain(
+      "b.setAttribute('aria-selected', 'true');\n    if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);",
+    );
+    // Boot-time restore-from-localStorage path (no ?view= in the request URL,
+    // so the server-rendered <title> couldn't have known which tab this is).
+    expect(DASHBOARD_HTML).toContain('if (TAB_PAGE_TITLES[initialView]) setDocumentTitle(TAB_PAGE_TITLES[initialView]);');
+    // Drawer-open paths.
+    expect(DASHBOARD_HTML).toContain('setDocumentTitle(d.ticker); // SEOSOCIAL-04: drawer-open path');
+    expect(DASHBOARD_HTML).toContain('setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path');
+    // Drawer-close path restores whatever the active tab's title should be.
+    expect(DASHBOARD_HTML).toContain("setDocumentTitle(activeView ? TAB_PAGE_TITLES[activeView] : null);");
+    // The map mirrors resolveOgMeta's trades/people/subs titles (ogMeta.ts).
+    expect(DASHBOARD_HTML).toContain(
+      "var TAB_PAGE_TITLES = { trends: 'Trends', trades: 'Trades', people: 'Directory', subs: 'Delivery' };",
+    );
+  });
+
   it('exposes a public Delivery tab with account-gated management', () => {
-    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]*>Delivery<\/button>/);
+    expect(DASHBOARD_HTML).toMatch(/<a[^>]+data-view="subs"[^>]*>Delivery<\/a>/);
     expect(DASHBOARD_HTML).toMatch(/data-mobile="Delivery"/);
-    expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab/);
+    expect(DASHBOARD_HTML).not.toMatch(/<a[^>]+data-view="subs"[^>]+data-admin-tab/);
     expect(DASHBOARD_HTML).toContain('id="subsManage"');
     expect(DASHBOARD_HTML).toContain('id="subsGate"');
     expect(DASHBOARD_HTML).toContain('<h3>Delivery</h3>');
@@ -2782,21 +2867,69 @@ describe('served HTML matches the Content-Security-Policy (CT-AUD-P1-15)', () =>
 
     const { OG_IMAGE_VERSION: v } = await import('../assets.ts');
 
-    const trends = await (await app.request('http://localhost/?view=trends', {}, { } as never)).text();
+    // SEOSOCIAL-06: the company/politician cards now require a DB-resolved
+    // match, so this fixture stands in for a filer + a traded ticker.
+    const dbEnv = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind() {
+            return this;
+          },
+          async first() {
+            if (/FROM filers/i.test(sql)) {
+              return { full_name: 'Nancy Pelosi', chamber: 'house', party: 'Democrat', state: 'CA', district: '11' };
+            }
+            if (/FROM transactions/i.test(sql)) return { 1: 1 };
+            return null;
+          },
+        }),
+      },
+    } as never;
+
+    const trends = await (await app.request('http://localhost/?view=trends', {}, dbEnv)).text();
     expect(trends).toContain(`og-image-trends.png?v=${v}`);
     expect(trends).toContain('content="Trends"');
 
-    const company = await (await app.request('http://localhost/?ticker=AAPL', {}, { } as never)).text();
+    const company = await (await app.request('http://localhost/?ticker=AAPL', {}, dbEnv)).text();
     expect(company).toContain(`og-image-company.png?v=${v}`);
     expect(company).toContain('content="AAPL"');
 
-    const pol = await (await app.request('http://localhost/?member=P000197', {}, { } as never)).text();
+    const pol = await (await app.request('http://localhost/?member=P000197', {}, dbEnv)).text();
     expect(pol).toContain(`og-image-politician.png?v=${v}`);
-    expect(pol).toContain('content="P000197"');
+    expect(pol).toContain('content="Nancy Pelosi (D-CA-11)"');
 
-    const home = await (await app.request('http://localhost/', {}, { } as never)).text();
+    const home = await (await app.request('http://localhost/', {}, dbEnv)).text();
     expect(home).toContain(`og-image.png?v=${v}`);
     expect(home).not.toContain('og-image-trends.png');
+  });
+
+  it('SEOSOCIAL-06: falls back to the default card for an unresolved member/ticker instead of a 500 or an echoed card', async () => {
+    const { buildUiRouter } = await import('../routes.ts');
+    const app = buildUiRouter();
+    const emptyDbEnv = {
+      DB: {
+        prepare: () => ({
+          bind() {
+            return this;
+          },
+          async first() {
+            return null;
+          },
+        }),
+      },
+    } as never;
+
+    const company = await app.request('http://localhost/?ticker=evil-tricker', {}, emptyDbEnv);
+    expect(company.status).toBe(200);
+    const companyHtml = await company.text();
+    expect(companyHtml).toContain('content="Congress.Trade"');
+    expect(companyHtml).not.toContain('EVIL-TRICKER');
+
+    const pol = await app.request('http://localhost/?member=Claim free BTC', {}, emptyDbEnv);
+    expect(pol.status).toBe(200);
+    const polHtml = await pol.text();
+    expect(polHtml).toContain('content="Congress.Trade"');
+    expect(polHtml).not.toContain('Claim free BTC');
   });
 });
 
@@ -3096,7 +3229,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     // branch that handles ?view= — never falling through to localStorage's
     // last-viewed tab (issue #1458).
     expect(DASHBOARD_HTML).toContain(
-      "initialView = document.querySelector('nav.tabs button[data-view=\"' + canonicalView + '\"]') ? canonicalView : 'trends';",
+      "initialView = document.querySelector('nav.tabs a[data-view=\"' + canonicalView + '\"]') ? canonicalView : 'trends';",
     );
     // The URL is rewritten to the canonical id, not the alias.
     expect(DASHBOARD_HTML).toContain("u0.searchParams.set('view', initialView);");
