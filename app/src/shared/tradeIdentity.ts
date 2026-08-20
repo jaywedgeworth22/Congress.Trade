@@ -95,17 +95,27 @@ export function fabricatedCompetitorFiledDateSql(alias = 't'): string {
 }
 
 /**
+ * Covering seek for the twin-guard subquery. Equality on (filer_id, tx_date)
+ * must be able to SEARCH this index; a SCAN of transactions per outer row is
+ * what hung GET /transactions and Trends after PR 2037 (issue #2062).
+ */
+export const TWIN_SEEK_INDEX = 'idx_tx_twin_seek';
+
+/**
  * Keep the highest-precedence live twin. Same-rank ties keep the stable
  * smaller id — never confidence, because competitor rows were stamped 100.
+ *
+ * Indexed predicates (filer_id, tx_date, live) come first so SQLite can
+ * SEARCH {@link TWIN_SEEK_INDEX} instead of scanning the corpus per row.
  */
 export const TWIN_DEDUPE_SQL =
   'NOT EXISTS (' +
   'SELECT 1 FROM transactions d ' +
-  'WHERE d.deprecated_at IS NULL ' +
+  'WHERE d.filer_id = t.filer_id ' +
+  'AND d.tx_date = t.tx_date ' +
+  'AND d.deprecated_at IS NULL ' +
   'AND d.id != t.id ' +
   'AND d.filer_id IS NOT NULL ' +
-  'AND d.filer_id = t.filer_id ' +
-  'AND d.tx_date = t.tx_date ' +
   `AND ${canonicalAssetSql('d')} = ${canonicalAssetSql('t')} ` +
   `AND ${canonicalSideSql('d')} = ${canonicalSideSql('t')} ` +
   `AND (${canonicalOwnerSql('d')} = ${canonicalOwnerSql('t')} ` +

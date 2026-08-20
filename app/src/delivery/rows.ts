@@ -615,6 +615,17 @@ export async function readCursorHighWater(env: Env): Promise<number> {
   return Number(row?.hwm ?? 0);
 }
 
+export interface TxFilterOptions {
+  /**
+   * When true (default), collapse source-twins so one real-world trade
+   * publishes once. Unbounded COUNT / today-filings must pass false: the
+   * correlated NOT EXISTS is O(live rows) index seeks and was the 2026-08-19
+   * first-page hang (issue #2062). Published page / CSV / client summaries
+   * keep the guard.
+   */
+  twinDedupe?: boolean;
+}
+
 /**
  * Build the shared WHERE clauses + bound params for the transactions feed.
  * `includeCursor` controls whether the `cursor_seq > since` backstop clause is
@@ -624,6 +635,7 @@ export async function readCursorHighWater(env: Env): Promise<number> {
 export function buildTxFilters(
   p: TxQueryParams,
   includeCursor: boolean,
+  opts: TxFilterOptions = {},
 ): { where: string[]; params: Array<string | number> } {
   const where: string[] = [];
   const params: Array<string | number> = [];
@@ -639,7 +651,9 @@ export function buildTxFilters(
   where.push(
     "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
   );
-  where.push(TWIN_DEDUPE_SQL);
+  if (opts.twinDedupe !== false) {
+    where.push(TWIN_DEDUPE_SQL);
+  }
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;
@@ -843,11 +857,15 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
  * ticker/member/type/chamber filters as {@link buildTransactionsQuery} but
  * deliberately drops the cursor backstop so the total reflects every matching
  * row, not just the unseen tail. Returned as `total` in the API response.
+ *
+ * Twin-dedupe stays off this unbounded COUNT (issue #2062). `total` is the
+ * live-row count before source-twin collapse; the page itself still publishes
+ * one row per real-world trade.
  */
 export function buildTransactionsCountQuery(
   p: TxQueryParams,
 ): { sql: string; params: Array<string | number> } {
-  const { where, params } = buildTxFilters(p, false);
+  const { where, params } = buildTxFilters(p, false, { twinDedupe: false });
   const sql =
     'SELECT COUNT(*) AS total ' +
     TX_FROM_JOINS_LITE +
@@ -860,7 +878,7 @@ export function buildTransactionsTodayFilingsQuery(
   p: TxQueryParams,
   todayIso: string,
 ): { sql: string; params: Array<string | number> } {
-  const { where, params } = buildTxFilters(p, false);
+  const { where, params } = buildTxFilters(p, false, { twinDedupe: false });
   const allWhere = [...where, 'substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?'];
   const sql =
     'SELECT COUNT(DISTINCT t.doc_id) AS total ' +

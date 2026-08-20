@@ -11,8 +11,8 @@
 import { describe, expect, it } from 'vitest';
 import { BASE_SCHEMA_STATEMENTS } from '../../admin/migrations.ts';
 import { buildSummaryQuery, buildTickerSummaryQuery } from '../builders.ts';
-import { buildTransactionsCountQuery } from '../../delivery/rows.ts';
-import { first } from '../../shared/db.ts';
+import { buildTransactionsCountQuery, buildTransactionsQuery } from '../../delivery/rows.ts';
+import { all, first } from '../../shared/db.ts';
 
 interface SqliteStatement {
   get(...params: unknown[]): unknown;
@@ -163,9 +163,14 @@ describe('DATACORRECTNESS-01/02/10 trade identity', () => {
     expect(Number(ticker.est_volume)).toBe(8000.5);
     expect(Number(ticker.est_net_flow)).toBe(-8000.5);
 
+    // Unbounded COUNT is the live-row total (issue #2062); published page
+    // and analytics still collapse the triple to the primary row.
     const countQ = buildTransactionsCountQuery({ ticker: 'TSCO' });
     const feed = (await first<{ total: number }>(db, countQ.sql, countQ.params)) ?? { total: 0 };
-    expect(Number(feed.total)).toBe(1);
+    expect(Number(feed.total)).toBe(3);
+    const pageQ = buildTransactionsQuery({ ticker: 'TSCO', since: 0, sort: 'tx_date', order: 'desc' });
+    const page = await all<{ id: string }>(db, pageQ.sql, pageQ.params);
+    expect(page.map((row) => row.id)).toEqual(['primary-tsco']);
   });
 
   it('counts a doc that carries both manual and primary rows once', async () => {

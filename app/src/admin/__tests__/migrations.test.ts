@@ -40,6 +40,7 @@ import {
   ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS,
   APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
   LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
+  TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
   RETENTION_INDEX_SCHEMA_STATEMENTS,
@@ -274,7 +275,15 @@ describe('admin migration bootstrap', () => {
       ...ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS,
       ...APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
       ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
+      ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('includes the twin-seek covering index (0088 / #2062)', () => {
+    const sql = TWIN_SEEK_INDEX_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('idx_tx_twin_seek');
+    expect(sql).toContain('(filer_id, tx_date)');
+    expect(sql).toContain('deprecated_at IS NULL');
   });
 
   it('includes immutable LLM and autopilot spend settlements (0053)', () => {

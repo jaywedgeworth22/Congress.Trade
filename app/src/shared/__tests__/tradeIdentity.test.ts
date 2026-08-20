@@ -13,11 +13,19 @@ import {
   isFabricatedCompetitorFiledDate,
   sanitizeCompetitorPublication,
   TWIN_DEDUPE_SQL,
+  TWIN_SEEK_INDEX,
 } from '../tradeIdentity.ts';
 
 describe('tradeIdentity SQL', () => {
   it('builds a correlated twin guard with source precedence and wildcard competitor fields', () => {
+    expect(TWIN_SEEK_INDEX).toBe('idx_tx_twin_seek');
     expect(TWIN_DEDUPE_SQL).toContain('NOT EXISTS');
+    expect(TWIN_DEDUPE_SQL.indexOf('d.filer_id = t.filer_id')).toBeLessThan(
+      TWIN_DEDUPE_SQL.indexOf('d.deprecated_at IS NULL'),
+    );
+    expect(TWIN_DEDUPE_SQL.indexOf('d.tx_date = t.tx_date')).toBeLessThan(
+      TWIN_DEDUPE_SQL.indexOf('UPPER(TRIM'),
+    );
     expect(TWIN_DEDUPE_SQL).toContain("WHEN 'primary' THEN 1");
     expect(TWIN_DEDUPE_SQL).toContain("WHEN 'manual' THEN 2");
     expect(TWIN_DEDUPE_SQL).toContain("WHEN 'local_mac' THEN 3");

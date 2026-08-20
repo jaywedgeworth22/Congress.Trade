@@ -10,6 +10,7 @@ import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
   buildTransactionsTodayFilingsQuery,
+  buildTransactionsExportQuery,
   mapFeedTransaction,
   mapTransaction,
   toPublicFiling,
@@ -20,6 +21,7 @@ import {
   type FeedTransactionRow,
   type TransactionRow,
 } from '../rows.ts';
+import { TWIN_DEDUPE_SQL } from '../../shared/tradeIdentity.ts';
 import type { Filing } from '../../shared/types.ts';
 
 describe('buildTransactionsQuery', () => {
@@ -42,7 +44,8 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('NOT EXISTS');
     const count = buildTransactionsCountQuery({});
     expect(count.sql).toContain("t.source = 'competitor_backfill'");
-    expect(count.sql).toContain('NOT EXISTS');
+    // Unbounded COUNT must not carry the correlated twin guard (#2062).
+    expect(count.sql).not.toContain('NOT EXISTS');
   });
 
   it('uses the supplied since cursor as the first bound param', () => {
@@ -310,6 +313,15 @@ describe('buildTransactionsQuery', () => {
 });
 
 describe('buildTransactionsCountQuery', () => {
+  it('does not run the correlated twin-dedupe subquery on the unbounded COUNT', () => {
+    const q = buildTransactionsCountQuery({});
+    expect(q.sql).not.toContain(TWIN_DEDUPE_SQL);
+    expect(q.sql).not.toContain('FROM transactions d');
+    expect(buildTransactionsTodayFilingsQuery({}, '2026-08-19').sql).not.toContain(TWIN_DEDUPE_SQL);
+    expect(buildTransactionsQuery({}).sql).toContain(TWIN_DEDUPE_SQL);
+    expect(buildTransactionsExportQuery({}).sql).toContain(TWIN_DEDUPE_SQL);
+  });
+
   it('counts ALL rows ignoring the cursor backstop', () => {
     const q = buildTransactionsCountQuery({ since: 1234 });
     expect(q.sql).toContain('SELECT COUNT(*) AS total');
