@@ -45,7 +45,7 @@ async function freshDb(): Promise<SqliteDatabase> {
       plan TEXT, current_period_end TEXT, cancel_at_period_end INTEGER NOT NULL DEFAULT 0, trial_end TEXT
     );
     CREATE TABLE apple_subscriptions (
-      original_transaction_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, product_id TEXT NOT NULL,
+      original_transaction_id TEXT PRIMARY KEY, user_id TEXT, product_id TEXT NOT NULL,
       plan TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', environment TEXT,
       latest_transaction_id TEXT, purchase_date TEXT, expires_date TEXT,
       auto_renew_status INTEGER, auto_renew_product_id TEXT, revoked_at TEXT, revocation_reason INTEGER,
@@ -165,6 +165,10 @@ function activeTransaction(overrides: Record<string, unknown> = {}) {
 describe('commandType', () => {
   it('accepts redeem_apple_purchase', () => {
     expect(commandType('redeem_apple_purchase')).toBe('redeem_apple_purchase');
+  });
+
+  it('accepts link_apple_entitlement', () => {
+    expect(commandType('link_apple_entitlement')).toBe('link_apple_entitlement');
   });
 
   it('accepts delete_account', () => {
@@ -302,6 +306,33 @@ describe('executeCommand redeem_apple_purchase', () => {
     ).rejects.toThrow(/already linked/);
   });
 
+  it('refuses to flip a webhook-revoked row back to active by replaying the original JWS', async () => {
+    verifyAppleSignedJws.mockResolvedValue(
+      activeTransaction({
+        transactionId: 'txn-1',
+        purchaseDate: Date.parse('2026-01-01T00:00:00.000Z'),
+      }),
+    );
+    const env = await fakeEnv();
+    env.__db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status, latest_transaction_id,
+        revoked_at, created_at, updated_at
+      ) VALUES (
+        'otxn-1', 'user_1', 'trade.congress.premium.monthly', 'monthly', 'revoked', 'txn-refund',
+        '2026-01-15T00:00:00.000Z', '2026-01-01T00:00:00Z', '2026-01-15T00:00:00Z'
+      );
+    `);
+    await expect(
+      executeCommand(env, baseUser('user_1'), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/refunded or revoked/);
+    const row = env.__db
+      .prepare('SELECT status, revoked_at FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { status: string; revoked_at: string | null };
+    expect(row.status).toBe('revoked');
+    expect(row.revoked_at).toBe('2026-01-15T00:00:00.000Z');
+  });
+
   it('a renewal transaction with a newer expiry updates the same ledger row', async () => {
     verifyAppleSignedJws.mockResolvedValueOnce(activeTransaction({ transactionId: 'txn-1', expiresDate: FUTURE_MS }));
     const env = await fakeEnv();
@@ -318,6 +349,76 @@ describe('executeCommand redeem_apple_purchase', () => {
     })) as { expiresAt: string };
 
     expect(new Date(second.expiresAt).getTime()).toBeGreaterThan(new Date(first.expiresAt).getTime());
+  });
+});
+
+describe('executeCommand link_apple_entitlement (Guideline 5.1.1(v) — claiming an anonymous purchase on sign-in)', () => {
+  beforeEach(() => {
+    verifyAppleSignedJws.mockReset();
+  });
+
+  it('claims a null-owner ledger row (an anonymous device purchase) for the signed-in user', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    const db = (env as Env & { __db: SqliteDatabase }).__db;
+    db.exec(`
+      INSERT INTO apple_subscriptions (
+        original_transaction_id, user_id, product_id, plan, status,
+        created_at, updated_at
+      ) VALUES (
+        'otxn-1', NULL, 'trade.congress.premium.monthly', 'monthly', 'active',
+        '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+      );
+    `);
+    const result = (await executeCommand(env, baseUser('user_1'), 'link_apple_entitlement', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean }; originalTransactionId: string };
+    expect(result.entitlement.premium).toBe(true);
+    expect(result.originalTransactionId).toBe('otxn-1');
+    const row = db
+      .prepare('SELECT user_id FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { user_id: string | null } | undefined;
+    expect(row?.user_id).toBe('user_1');
+  });
+
+  it('is idempotent: linking a row already owned by the SAME user is a no-op success', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser('user_1'), 'link_apple_entitlement', { signedTransaction: 'a.b.c' });
+    const result = (await executeCommand(env, baseUser('user_1'), 'link_apple_entitlement', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean } };
+    expect(result.entitlement.premium).toBe(true);
+  });
+
+  it('refuses (409) to claim a row already owned by a DIFFERENT account — never reassigns Premium', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser('user_1'), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+    await expect(
+      executeCommand(env, baseUser('user_2'), 'link_apple_entitlement', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/already linked/);
+    const db = (env as Env & { __db: SqliteDatabase }).__db;
+    const row = db
+      .prepare('SELECT user_id FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { user_id: string | null } | undefined;
+    expect(row?.user_id).toBe('user_1');
+  });
+
+  it('still chain-verifies the JWS — a forged/unverifiable transaction is rejected, not silently linked', async () => {
+    verifyAppleSignedJws.mockRejectedValue(new AppleJwsVerificationError('invalid JWS signature'));
+    const env = await fakeEnv();
+    await expect(
+      executeCommand(env, baseUser(), 'link_apple_entitlement', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(ClientInputError);
+  });
+
+  it('still rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv();
+    await expect(
+      executeCommand(env, baseUser(), 'link_apple_entitlement', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/Sandbox/);
   });
 });
 

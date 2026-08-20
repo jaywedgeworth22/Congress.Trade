@@ -1,20 +1,29 @@
 import Foundation
 import Security
 
+/// Generic Keychain-backed `SessionTokenStore`. `service` distinguishes what is
+/// stored: the default is the session Bearer token; a second instance with a
+/// different service (e.g. `"trade.congress.appleDeviceEntitlement"`) stores
+/// the anonymous-purchase device entitlement token (Guideline 5.1.1(v)) in a
+/// separate Keychain item that is never conflated with the session token.
 final class KeychainTokenStore: SessionTokenStore {
-    private let sessionService = "trade.congress.session"
+    private let service: String
     private let account = "default"
 
+    init(service: String = "trade.congress.session") {
+        self.service = service
+    }
+
     func load() throws -> String? {
-        try loadSecret(service: sessionService)
+        try loadSecret(service: service)
     }
 
     func save(_ token: String) throws {
-        try saveSecret(token, service: sessionService)
+        try saveSecret(token, service: service)
     }
 
     func clear() throws {
-        try clearSecret(service: sessionService)
+        try clearSecret(service: service)
     }
 
     private func loadSecret(service: String) throws -> String? {

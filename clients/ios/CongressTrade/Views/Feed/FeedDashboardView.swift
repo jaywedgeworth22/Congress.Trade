@@ -1236,12 +1236,15 @@ struct ExportCSVSheet: View {
                 }
 
                 Section {
-                    if !store.signedIn {
-                        Text("Sign in with a Premium account to export CSV.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    } else if !store.isPremium {
-                        Text("CSV export is a Premium feature ($5/mo or $50/yr, 2-week free trial).")
+                    // Guideline 5.1.1(v): CSV export is content, not
+                    // account-specific functionality, so it is never
+                    // sign-in-gated — only Premium-gated. A signed-out device
+                    // with its own Apple purchase (store.hasLocalAppleEntitlement)
+                    // exports the same way a signed-in Premium account does;
+                    // APIClient attaches the cached device entitlement token.
+                    if !(store.isPremium || store.hasLocalAppleEntitlement) {
+                        Text("CSV export is a Premium feature ($5/mo or $50/yr, 2-week free trial).  "
+                            + "No account needed to buy.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Button {

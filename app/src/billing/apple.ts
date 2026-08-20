@@ -1,12 +1,10 @@
 /**
  * Apple In-App Purchase (StoreKit 2) confirmation helpers.
  *
- * iOS sends the transaction's `jwsRepresentation`. The legacy
- * POST /billing/apple/confirm route below decodes the payload without
- * verifying its signature. The current, recommended path is the
- * `redeem_apple_purchase` client command (client/commands.ts), which uses
- * appleJws.ts's full x5c chain verification against the pinned Apple root —
- * see that module for the "why" behind the two paths coexisting.
+ * iOS sends the transaction's `jwsRepresentation`. The current grant path
+ * is `redeem_apple_purchase` (and the leftover POST /billing/apple/confirm
+ * wrapper). Both verify via appleJws.ts (x5c chain to the pinned Apple root)
+ * and write `apple_subscriptions`, not the Stripe-shaped users columns.
  */
 
 import type { Env } from '../shared/types.ts';

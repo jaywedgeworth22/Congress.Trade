@@ -311,6 +311,7 @@ export type ClientCommandType =
   | 'start_checkout'
   | 'request_export'
   | 'redeem_apple_purchase'
+  | 'link_apple_entitlement'
   | 'delete_account';
 
 export type ClientCommandStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -393,8 +394,14 @@ export interface Entitlement {
    * resolveEntitlementAsync) that also checks the Apple IAP ledger; the pure
    * sync `entitlementOf` leaves this undefined. Additive/optional so it is
    * always backward-compatible for existing Decodable clients.
+   *
+   * `'apple_anonymous'` is the device-scoped grant issued by `POST
+   * /api/client/v1/entitlements/apple/redeem` (Guideline 5.1.1(v) — no
+   * Congress.Trade account) — it is never present on a `User`-keyed
+   * `resolveEntitlementAsync` response (which only ever resolves 'stripe' |
+   * 'apple' | null), only on the anonymous route's own response body.
    */
-  source?: 'stripe' | 'apple' | null;
+  source?: 'stripe' | 'apple' | 'apple_anonymous' | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,6 +932,15 @@ export interface Env {
   APPLE_PRODUCT_MONTHLY?: string;
   /** App Store Connect product id for the annual Premium subscription (default trade.congress.premium.annual). */
   APPLE_PRODUCT_ANNUAL?: string;
+  /**
+   * HMAC key for the anonymous-purchase device entitlement token
+   * (`billing/deviceEntitlement.ts`) — the short-lived proof a signed-out
+   * device presents on PDF/CSV requests after `POST
+   * /api/client/v1/entitlements/apple/redeem`. Independent of every other
+   * signing key in this file; rotating it just expires outstanding tokens
+   * early (every one re-mints on the device's next reconcile pass).
+   */
+  APPLE_DEVICE_ENTITLEMENT_SECRET?: string;
 
   // --- Infisical runtime secret resolver ---
   /** Optional Infisical API origin. Defaults to https://app.infisical.com. */
