@@ -38,6 +38,9 @@ struct PremiumSheet: View {
     @State private var isRestoring = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
+    /// Sign-in stays a way IN, never a gate (Guideline 5.1.1(v)) — tapping
+    /// "Sign in" opens this sheet without interrupting an in-flight purchase.
+    @State private var showSignIn = false
 
     private struct Benefit: Identifiable {
         let id = UUID()
@@ -123,21 +126,52 @@ struct PremiumSheet: View {
             .inlineNavigationTitle()
         }
         .task { await loadProducts() }
+        .sheet(isPresented: $showSignIn) {
+            NavigationStack {
+                ScrollView {
+                    SignInPanel(onSignedIn: { showSignIn = false })
+                        .padding(20)
+                }
+                .background(AppTheme.background)
+                .navigationTitle("Sign In")
+                .inlineNavigationTitle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { showSignIn = false }
+                    }
+                }
+            }
+            .environmentObject(store)
+        }
     }
 
     // MARK: - Sections
 
+    /// Guideline 5.1.1(v): purchasing must work with zero prior sign-in, so
+    /// this no longer branches on `store.signedIn` at all — only on whether
+    /// Premium is already active (signed-in account, or this device's own
+    /// anonymous Apple purchase) versus still needing a plan choice. Signing
+    /// in is offered underneath as an optional way to extend access to other
+    /// devices, never a gate on the purchase itself.
     @ViewBuilder
     private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            primaryActionContent
+            if !store.signedIn && !store.hasLocalAppleEntitlement {
+                signInOptionalNotice(
+                    "No account needed to buy.  It's optional — sign in to use Premium on your "
+                        + "other devices, and to set up Delivery alerts, which are tied to your account."
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var primaryActionContent: some View {
         if store.isPremium {
             subscribedSection
-        } else if !store.signedIn {
-            // Honest, not a dead end: the purchase has to attach to an account,
-            // and the sign-in stack is one sheet behind this one.
-            Text("sign in first — Premium is tied to your account")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        } else if !store.signedIn && store.hasLocalAppleEntitlement {
+            anonymousSubscribedSection
         } else if isLoadingProducts {
             HStack(spacing: 10) {
                 ProgressView()
@@ -161,6 +195,55 @@ struct PremiumSheet: View {
                 }
                 restoreButton
             }
+        }
+    }
+
+    /// Signed out, but `Transaction.currentEntitlements` already shows an
+    /// active purchase on this device (Guideline 5.1.1(v) anonymous path) —
+    /// the same "you're subscribed" treatment as a signed-in Premium account,
+    /// routed straight to the App Store (no billing-portal call, which would
+    /// need a session this device does not have).
+    @ViewBuilder
+    private var anonymousSubscribedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("You're subscribed to Premium on this device through the App Store.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                openURL(CongressTradeAPIClient.appStoreManageSubscriptionsURL)
+            } label: {
+                Text("Manage on App Store")
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint("Opens the App Store subscriptions page")
+
+            signInOptionalNotice(
+                "It's optional — sign in to use Premium on your other devices, and to set up "
+                    + "Delivery alerts, which are tied to your account."
+            )
+        }
+    }
+
+    /// Apple's own suggested framing from the Guideline 5.1.1(v) rejection:
+    /// explain what sign-in adds without ever implying it is required. A
+    /// tappable link, not a primary action — it opens the sign-in sheet and
+    /// never interrupts an in-flight purchase.
+    @ViewBuilder
+    private func signInOptionalNotice(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Sign in") {
+                showSignIn = true
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
         }
     }
 
@@ -291,8 +374,19 @@ struct PremiumSheet: View {
                 let transaction = try checkVerified(verification)
                 notice = "Purchase confirmed.  Unlocking Premium…"
                 // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
-                try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
-                notice = "Premium unlocked.  You can create Delivery alerts now."
+                // Guideline 5.1.1(v): no account required to buy — signed in,
+                // this attaches to the account; signed out, it records the
+                // purchase against this device and the transaction is finished
+                // here (redeemAppleTransaction finishes the signed-in path
+                // itself; the anonymous path does not, so it is finished here).
+                if store.signedIn {
+                    try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
+                    notice = "Premium unlocked.  You can create Delivery alerts now."
+                } else {
+                    try await store.redeemAppleTransactionAnonymously(jws: verification.jwsRepresentation)
+                    await transaction.finish()
+                    notice = "Premium unlocked on this device.  Sign in any time to use it on your other devices too."
+                }
                 try? await Task.sleep(for: .seconds(1.2))
                 dismiss()
             case .userCancelled:

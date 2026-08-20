@@ -875,6 +875,22 @@ struct RedeemAppleResult: Decodable {
     let originalTransactionId: String?
 }
 
+/// Result of `POST /api/client/v1/entitlements/apple/redeem` — the
+/// unauthenticated, device-scoped purchase path (Guideline 5.1.1(v): no
+/// Congress.Trade account required to buy). `entitlement.source` is
+/// `"apple_anonymous"` here specifically. `deviceEntitlementToken` is a
+/// short-lived, opaque proof of purchase — cache it
+/// (`api.deviceEntitlementStore`) and attach it as `X-Apple-Device-
+/// Entitlement` on PDF / CSV requests; it is never a session replacement and
+/// grants nothing beyond those two routes.
+struct AnonymousAppleRedeemResult: Decodable {
+    let entitlement: Entitlement?
+    let plan: String?
+    let expiresAt: String?
+    let originalTransactionId: String?
+    let deviceEntitlementToken: String?
+}
+
 /// `POST /billing/portal` response (`app/src/billing/routes.ts`) — a
 /// short-lived Stripe-hosted Billing Portal URL for the signed-in user's
 /// Stripe customer. Used for `entitlement.source == "stripe"` (or `nil`)

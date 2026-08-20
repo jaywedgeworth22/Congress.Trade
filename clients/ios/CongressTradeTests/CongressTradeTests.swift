@@ -1595,7 +1595,7 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
-    func testFilingPDFNeverOpensSafariCheckout() {
+    func testFilingPDFNeverOpensSafariCheckout() throws {
         XCTAssertEqual(FilingPDFAccess.action(isPremium: false), .showPremiumSheet)
         XCTAssertEqual(FilingPDFAccess.action(isPremium: true), .fetchInApp)
 
@@ -1610,11 +1610,127 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertFalse(url?.absoluteString.contains("checkout") == true)
         XCTAssertFalse(url?.absoluteString.contains("stripe") == true)
 
-        let request = try XCTUnwrap(try? client.documentPDFRequest(docId: "H-2026-1"))
+        let request = try client.documentPDFRequest(docId: "H-2026-1")
         XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "application/pdf")
         XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer sess-token")
 
         XCTAssertNil(DigitalGoodsCheckout.webCheckoutURL(relativeTo: URL(string: "https://congress.trade")!))
+    }
+
+    // MARK: - Guideline 5.1.1(v): no account required to buy Premium
+
+    /// `FilingPDFAccess.action` itself only ever sees one `isPremium` bool —
+    /// the call site (`TradeDetailView.openArchivedFilingPDF`) is what OR's
+    /// in `store.hasLocalAppleEntitlement`. This locks the boolean logic
+    /// callers depend on: a signed-out device with its own Apple purchase
+    /// must resolve exactly like a signed-in Premium session.
+    func testFilingPDFAccessTreatsLocalAppleEntitlementAsPremium() {
+        let isPremiumSession = true
+        let hasLocalAppleEntitlementSignedOut = true
+        XCTAssertEqual(
+            FilingPDFAccess.action(isPremium: isPremiumSession || hasLocalAppleEntitlementSignedOut),
+            .fetchInApp
+        )
+        XCTAssertEqual(
+            FilingPDFAccess.action(isPremium: false || hasLocalAppleEntitlementSignedOut),
+            .fetchInApp
+        )
+        XCTAssertEqual(FilingPDFAccess.action(isPremium: false || false), .showPremiumSheet)
+    }
+
+    /// `documentPDFRequest` (used by the in-app filing PDF fetch, never a
+    /// plain `openURL` deep link) attaches the cached device entitlement
+    /// token so a signed-out device's anonymous purchase (Guideline
+    /// 5.1.1(v)) can reach the PDF route without a session.
+    func testFilingPDFRequestAttachesCachedDeviceEntitlementTokenWhenSignedOut() throws {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: nil),
+            deviceEntitlementStore: MemoryTokenStore(token: "device-entitlement-abc")
+        )
+        let request = try client.documentPDFRequest(docId: "H-2026-1")
+        XCTAssertNil(request.value(forHTTPHeaderField: "authorization"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Apple-Device-Entitlement"), "device-entitlement-abc")
+    }
+
+    /// No cached device token, no session: neither header is sent — the
+    /// server correctly falls through to its 402 upgrade payload.
+    func testFilingPDFRequestOmitsDeviceEntitlementHeaderWhenNoneCached() throws {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: nil),
+            deviceEntitlementStore: MemoryTokenStore(token: nil)
+        )
+        let request = try client.documentPDFRequest(docId: "H-2026-1")
+        XCTAssertNil(request.value(forHTTPHeaderField: "authorization"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Apple-Device-Entitlement"))
+    }
+
+    /// A signed-in session's Bearer is sent alongside whatever device token
+    /// happens to be cached — the SERVER decides priority (session wins);
+    /// the client's only job is to send what it has.
+    func testFilingPDFRequestSendsBothHeadersWhenBothPresent() throws {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: "sess-token"),
+            deviceEntitlementStore: MemoryTokenStore(token: "device-entitlement-abc")
+        )
+        let request = try client.documentPDFRequest(docId: "H-2026-1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer sess-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Apple-Device-Entitlement"), "device-entitlement-abc")
+    }
+
+    /// CSV export (`GET /api/export/transactions.csv`) is the other route
+    /// that accepts the device entitlement token (Guideline 5.1.1(v)) — this
+    /// exercises the actual network request, not just request construction.
+    func testCSVExportAttachesCachedDeviceEntitlementTokenWhenSignedOut() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            deviceEntitlementStore: MemoryTokenStore(token: "device-entitlement-abc"),
+            session: session
+        )
+        let sawExpectedHeader = XCTestExpectation(description: "CSV request carried the device entitlement header")
+        MockURLProtocol.handler = { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "authorization"))
+            if request.value(forHTTPHeaderField: "X-Apple-Device-Entitlement") == "device-entitlement-abc" {
+                sawExpectedHeader.fulfill()
+            }
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["content-type": "text/csv"]
+            )!
+            return (response, Data("filed_at,tx_date\n".utf8))
+        }
+        _ = try await client.exportTransactionsCSV()
+        await fulfillment(of: [sawExpectedHeader], timeout: 1)
+    }
+
+    /// `CongressTradeStore.exportCSV` must not demand sign-in — only Premium
+    /// (session OR this device's own anonymous Apple purchase). A signed-out,
+    /// non-premium, non-locally-entitled attempt still fails, but with 402
+    /// ("subscribe"), never 401 ("sign in").
+    @MainActor
+    func testExportCSVRefusesWithPremiumRequiredNeverSignInRequired() async {
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession())
+        )
+        do {
+            _ = try await store.exportCSV(from: nil, to: nil)
+            XCTFail("expected exportCSV to throw when neither Premium nor a local entitlement is present")
+        } catch let error as APIError {
+            guard case .server(let status, let message, _) = error else {
+                XCTFail("expected .server, got \(error)")
+                return
+            }
+            XCTAssertEqual(status, 402)
+            XCTAssertTrue(message.contains("Premium"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
     }
 
     func testShareURLIsNotADigitalGoodsCheckoutPath() {
