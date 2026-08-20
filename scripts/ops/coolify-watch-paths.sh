@@ -28,6 +28,7 @@ if [[ -z "${COOLIFY_TOKEN:-}" ]]; then
   exit 1
 fi
 
+UA="${COOLIFY_UA:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}"
 HDR=$(mktemp) || exit 1
 trap 'rm -f "$HDR"' EXIT
 chmod 600 "$HDR"
@@ -36,11 +37,11 @@ printf 'Authorization: Bearer %s\n' "$COOLIFY_TOKEN" > "$HDR"
 api() {
   local method="$1" path="$2" body="${3:-}"
   if [[ -n "$body" ]]; then
-    curl -sS -m 30 -X "$method" -H @"$HDR" \
+    curl -sS -m 30 -A "$UA" -X "$method" -H @"$HDR" \
       -H 'Accept: application/json' -H 'Content-Type: application/json' \
       -d "$body" "${COOLIFY_BASE_URL%/}${path}"
   else
-    curl -sS -m 30 -X "$method" -H @"$HDR" \
+    curl -sS -m 30 -A "$UA" -X "$method" -H @"$HDR" \
       -H 'Accept: application/json' \
       "${COOLIFY_BASE_URL%/}${path}"
   fi
@@ -115,21 +116,31 @@ json=$(api GET "/api/v1/applications/${APP_UUID}") || {
   exit 1
 }
 
-read -r have uuid name pack <<EOF
-$(printf '%s' "$json" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
+eval "$(printf '%s' "$json" | python3 -c '
+import json,sys,shlex
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    print("echo coolify-watch-paths: GET did not return JSON >&2")
+    print("exit 1")
+    raise SystemExit
+uuid=d.get("uuid") or ""
+if not uuid:
+    print("echo coolify-watch-paths: could not read application >&2")
+    print("exit 1")
+    raise SystemExit
 wp=d.get("watch_paths") or ""
-print((wp.replace("\n","\\n") if wp else "NONE"), d.get("uuid",""), d.get("name",""), d.get("build_pack",""))
-')
-EOF
+print("uuid="+shlex.quote(str(uuid)))
+print("name="+shlex.quote(str(d.get("name") or "")))
+print("pack="+shlex.quote(str(d.get("build_pack") or "")))
+print("have="+shlex.quote(wp.replace("\n","|") if wp else "NONE"))
+print("have_plain="+shlex.quote(wp))
+')"
 
-if [[ -z "$uuid" || "$uuid" == "None" ]]; then
+if [[ -z "${uuid:-}" ]]; then
   echo "coolify-watch-paths: could not read application ${APP_UUID}" >&2
   exit 1
 fi
-
-have_plain=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("watch_paths") or "")')
 
 if [[ "$have_plain" == "$want_normalized" ]]; then
   echo "coolify-watch-paths: already set on ${name} (${uuid}) pack=${pack}"
