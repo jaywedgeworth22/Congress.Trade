@@ -18,7 +18,8 @@ import type { Context } from 'hono';
 import type { BillingPlan, Env } from '../shared/types.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import { getUserById } from '../auth/users.ts';
-import { entitlementOf, resolveEntitlementAsync } from './entitlement.ts';
+import { entitlementOf, PREMIUM_STATUSES, resolveEntitlementAsync } from './entitlement.ts';
+import { notifyPremiumActivation } from './premiumActivationAlert.ts';
 import {
   billingCapabilitiesAsync,
   checkoutConfiguredAsync,
@@ -312,11 +313,38 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
         case 'customer.subscription.updated': {
           const sub = parseSubscription(obj ?? {});
           if (!sub) throw new Error(`malformed ${event.type} payload`);
-          await applySubscription(c.env, sub, {
+          const affectedUserId = await applySubscription(c.env, sub, {
             id: event.id,
             created: event.created,
             type: event.type,
           });
+          // Notify only on the event type Stripe fires exactly once per
+          // subscription's lifetime.  Renewals, a trial converting to paid,
+          // and any other change to this SAME subscription id arrive as
+          // customer.subscription.updated and are deliberately not checked
+          // here — this is what keeps "genuine new activation" from
+          // double-firing.  Re-confirm the persisted row (rather than
+          // trusting applySubscription's return, which can be non-null even
+          // when its guarded UPDATE lost an out-of-order-webhook race) before
+          // notifying: the ledger claim below is the actual idempotency
+          // guard, but this keeps the notified state truthful.
+          if (event.type === 'customer.subscription.created' && affectedUserId) {
+            const activatedUser = await getUserById(c.env, affectedUserId);
+            if (
+              activatedUser?.stripeSubscriptionId === sub.id
+              && activatedUser.subscriptionStatus != null
+              && PREMIUM_STATUSES.has(activatedUser.subscriptionStatus)
+            ) {
+              await notifyPremiumActivation(c.env, {
+                activationKey: sub.id,
+                userId: activatedUser.id,
+                userEmail: activatedUser.email,
+                source: 'stripe',
+                plan: activatedUser.plan ?? 'monthly',
+                trialing: activatedUser.subscriptionStatus === 'trialing',
+              });
+            }
+          }
           break;
         }
         case 'customer.subscription.deleted': {

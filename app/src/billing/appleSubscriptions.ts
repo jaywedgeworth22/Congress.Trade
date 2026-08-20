@@ -197,11 +197,18 @@ export interface UpsertAppleSubscriptionInput {
 export async function upsertAppleSubscription(
   env: Env,
   input: UpsertAppleSubscriptionInput,
-): Promise<{ ok: true; record: AppleSubscriptionRecord } | { ok: false; reason: 'owner_mismatch'; ownerId: string }> {
+): Promise<
+  | { ok: true; record: AppleSubscriptionRecord; isNew: boolean }
+  | { ok: false; reason: 'owner_mismatch'; ownerId: string }
+> {
   const existing = await getAppleSubscription(env, input.originalTransactionId);
   if (existing && existing.userId != null && existing.userId !== input.userId) {
     return { ok: false, reason: 'owner_mismatch', ownerId: existing.userId };
   }
+  // No ledger row existed yet for this originalTransactionId before this
+  // call — i.e. this is the first time we've ever seen this Apple
+  // subscription, not a renewal/refresh of one we already knew about.
+  const isNew = !existing;
   const now = new Date().toISOString();
   await run(
     env.DB,
@@ -256,5 +263,5 @@ export async function upsertAppleSubscription(
   );
   const record = await getAppleSubscription(env, input.originalTransactionId);
   if (!record) throw new Error('apple subscription upsert failed');
-  return { ok: true, record };
+  return { ok: true, record, isNew };
 }
