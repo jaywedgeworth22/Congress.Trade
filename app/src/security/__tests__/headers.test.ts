@@ -28,6 +28,14 @@ describe('browserSecurityHeaders', () => {
     expect(csp).not.toContain('*');
   });
 
+  it('no longer carries the Google Fonts exceptions now that fonts are self-hosted (QABUGHUNT-01 / WEBPERF-01)', () => {
+    const csp = browserSecurityHeaders('https://congress.trade/').get('content-security-policy') ?? '';
+    expect(csp).not.toContain('fonts.googleapis.com');
+    expect(csp).not.toContain('fonts.gstatic.com');
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("font-src 'self' data:");
+  });
+
   it('attaches headers to a completed Hono response', async () => {
     const app = new Hono();
     app.use('*', browserSecurityHeadersMiddleware);

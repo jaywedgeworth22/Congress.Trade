@@ -25,6 +25,11 @@ import {
   FAVICON_PNG,
   ICON_192_PNG,
   ICON_512_PNG,
+  INTER_400_WOFF2,
+  INTER_500_WOFF2,
+  INTER_600_WOFF2,
+  INTER_700_WOFF2,
+  INTER_800_WOFF2,
   OG_IMAGE_COMPANY_PNG,
   OG_IMAGE_PNG,
   OG_IMAGE_POLITICIAN_PNG,
@@ -193,6 +198,11 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   const IMMUTABLE = 'public, max-age=31536000, immutable';
   const LONG = 'public, max-age=86400';
   r.get('/assets/zilla-slab-700.woff2', serveAsset(ZILLA_SLAB_WOFF2, IMMUTABLE));
+  r.get('/assets/inter-400.woff2', serveAsset(INTER_400_WOFF2, IMMUTABLE));
+  r.get('/assets/inter-500.woff2', serveAsset(INTER_500_WOFF2, IMMUTABLE));
+  r.get('/assets/inter-600.woff2', serveAsset(INTER_600_WOFF2, IMMUTABLE));
+  r.get('/assets/inter-700.woff2', serveAsset(INTER_700_WOFF2, IMMUTABLE));
+  r.get('/assets/inter-800.woff2', serveAsset(INTER_800_WOFF2, IMMUTABLE));
   r.get('/assets/eagle-splash.png', serveAsset(EAGLE_SPLASH_PNG, IMMUTABLE));
   r.get('/assets/brand-logo.png', serveAsset(BRAND_LOGO_PNG, IMMUTABLE));
   r.get('/assets/brand-logo-dark.png', serveAsset(BRAND_LOGO_DARK_PNG, IMMUTABLE));
