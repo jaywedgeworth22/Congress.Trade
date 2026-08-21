@@ -136,7 +136,8 @@ old failure mode, and it is gone.  Debug the tunnel or the relay instead.
 |---|---|
 | pm2 entry | `senate-tunnel` (`scout/run-senate-tunnel.sh`) |
 | tunnel | Jay's Tunnel (launchd system service), id `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6` |
-| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` |
+| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` (same named tunnel as `mac.jays.services`) |
+| liveness | GET and HEAD on `/` and `/health` return `{"ok":true,"service":"senate-relay",...}` |
 | ingress | configured **in Cloudflare** (`config_src=cloudflare`), pushed to cloudflared at connect |
 | credentials | `~/.cloudflared/<tunnel-id>.json`, mode 600, not in the repo |
 
@@ -176,6 +177,12 @@ hostname-recording and rotation-alerting machinery built around it is gone too.
 The hostname is durable.  The **origin is not**: `senate-relay` still runs on
 one residential Mac.  If that Mac sleeps, the named tunnel stays at
 `scout.jays.services` and Cloudflare answers `error code: 502`.
+
+`scout.jays.services` and `mac.jays.services` are the same Jay's Tunnel
+(proxied CNAMEs to `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6.cfargotunnel.com`).
+A 404 on GET `/` is the origin handler, not a missing hostname: the relay
+used to answer only GET `/health`.  GET and HEAD on `/` and `/health` are
+now the same liveness probe so a browser or HEAD-only monitor matches mac.
 
 The app now falls back to a direct eFD session when the relay is unreachable
 (502/503/504/521–524 or a connect error).  `/fetch-doc` is unchanged when the
