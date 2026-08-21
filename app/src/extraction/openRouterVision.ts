@@ -54,6 +54,11 @@ import {
   noteOpenRouterBudgetFailure,
   noteOpenRouterBudgetSuccess,
 } from '../shared/openRouterBudgetCircuit.ts';
+import {
+  classifyOpenRouterReply,
+  docScopedOpenRouterError,
+  isDocScopedOpenRouterReply,
+} from './openRouterReply.ts';
 import { IngestRetryError } from '../ingestion/fetcher.ts';
 
 /** Live default (verified against the OpenRouter catalog 2026-08-14). */
@@ -600,6 +605,14 @@ export class OpenRouterVisionExtractor implements Extractor {
               trip.delaySeconds,
             );
           }
+          const kind = classifyOpenRouterReply({
+            httpStatus: res.status,
+            statusText: res.statusText,
+            bodyText: detail,
+          });
+          if (isDocScopedOpenRouterReply(kind)) {
+            throw docScopedOpenRouterError(kind, `${res.status} ${res.statusText} ${detail}`);
+          }
           throw new Error(`${this.name}: OpenRouter API ${res.status} ${res.statusText} ${detail}`);
         }
 
@@ -661,6 +674,13 @@ export class OpenRouterVisionExtractor implements Extractor {
         costUsd: providerCostUsd ?? null,
       }));
 
+      const replyKind = classifyOpenRouterReply({
+        httpStatus: 200,
+        completionText: text,
+      });
+      if (isDocScopedOpenRouterReply(replyKind)) {
+        throw docScopedOpenRouterError(replyKind, text || 'empty completion');
+      }
       if (!text) {
         throw new Error(`${this.name}: OpenRouter returned no text block`);
       }
