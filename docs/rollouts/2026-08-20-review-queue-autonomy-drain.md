@@ -60,17 +60,30 @@ distinct causes, three of which were blocking the queue from draining at all:
 - Mac vision worker: reset the local attempt ledger for the 74 queued docs (the Aug 10–12
   exhaustion window was a broken Grok CLI — a live end-to-end transcription test on
   H-2024-20025111 recovered 6 real U.S. Treasury purchases), synced the fixed worker,
-  restarted pm2 `vision-worker`.  The queue drained 74 → 64 within the hour and the
-  worker continues through the scanned backlog (free subscription path, no OpenRouter).
+  restarted pm2 `vision-worker`.  The queue drained 74 → 59 within the hour and the
+  worker continued through the scanned backlog (free subscription path, no OpenRouter);
+  after the `?worker=local` deploy it reclaimed the cascade and row-limit-garbage docs
+  too (50-doc reclaim set) and kept publishing.
+- Manual review (DEEPSEEK): vision-confirmed and published H-2025-8220828 (AT&T sale,
+  2024-11-13) and H-2025-8220770 (U.S. Treasury bond purchase, 2025-02-19) whose CPU
+  payloads were pure OCR garbage; reclassified 5 image-only `text_pdf` scans to
+  `scanned_pdf` so the worker reclaims them.  H-2025-20033330 (Pete Sessions) left in
+  review for the owner: the form prints tx date 2025-10-24 while the Clerk index filed
+  it 10/22/2025, and the confirm validator refuses tx date > filing date — a human
+  override decision is needed (candidate follow-up: allow an explicit future-date
+  override on human confirm).
 
 ## Verification
 
 - Full gate: `npm run typecheck` + 3502/3502 tests green.
-- Prod live on `4b9694d1` (plurality + cap-lift + truncated-payload guard).
+- Prod live on `13f392d1` (includes #2107; plurality + cap-lift + truncated-payload
+  guard).
 - 6 ticker-mismatch docs auto-published at 03:00Z via `deterministic_drain_stored_payload`
-  right after the deploy (the target behavior, live).
-- H-2024-20025111 review_revision stopped climbing once the drain fix lands (post-deploy
-  check).
+  right after the first deploy (the target behavior, live).
+- H-2024-20025111 review_revision stopped climbing once the drain fix landed (frozen at
+  2,850 post-deploy; was ~1/min before).
+- Landed as PR #2107 (`08a22005`) + follow-up #2110 (future_tx_date churn skip); peer
+  lane PRs #2108/#2109/#2111 landed alongside.
 
 ## Follow-ups
 
