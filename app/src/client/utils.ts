@@ -1,6 +1,6 @@
 import type { Chamber, TxType, DeliveryChannel, SubscriptionFilters, Subscription, ClientTrade, User } from '../shared/types.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
-import { asAssetCategories, mapFeedTransaction } from '../delivery/rows.ts';
+import { asAssetCategories, asTxSource, mapFeedTransaction } from '../delivery/rows.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
 import type { ClientTradeRow, TradeSummaryRow, SecurityRefRow, MemberProfileRow } from './types.ts';
 import { parseCommitteeNames } from '../shared/committeeNames.ts';
@@ -197,6 +197,7 @@ export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     // 8). Mirrors `/api/transactions`' own `offset=` param; guarded by the
     // same `MAX_PUBLIC_TX_OFFSET` depth cap in the `/feed` route below.
     offset: parseIntOrUndef(q.offset),
+    source: asTxSource(q.source),
   };
 }
 
