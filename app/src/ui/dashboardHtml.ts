@@ -564,11 +564,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
-  /* Party-colored rings on politician photos (not account avatars). */
-  .avatar.party-D { box-shadow: 0 0 0 2px var(--party-d); border-color: transparent; }
-  .avatar.party-R { box-shadow: 0 0 0 2px var(--party-r); border-color: transparent; }
-  .avatar.party-O { box-shadow: 0 0 0 2px var(--party-o); border-color: transparent; }
-  .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
+  /* iOS-parity: party-colored rings on politician photos (not account avatars).
+     The ring is an inset overlay, not an outer box-shadow.  Outer shadows sit
+     outside the 24px layout box and get sliced by overflow:hidden on this chip
+     and on .member-cell / table td / .fc-row2 / .trades-card parents, so the
+     color stopped at the cell edge instead of closing the circle. */
+  .avatar.party-D,
+  .avatar.party-R,
+  .avatar.party-O { border-color: transparent; }
+  .avatar.party-D::after,
+  .avatar.party-R::after,
+  .avatar.party-O::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .avatar.party-D::after { border: 2px solid var(--party-d); }
+  .avatar.party-R::after { border: 2px solid var(--party-r); }
+  .avatar.party-O::after { border: 2px solid var(--party-o); }  .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
   .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
   .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }

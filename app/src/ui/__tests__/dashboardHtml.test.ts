@@ -5813,9 +5813,15 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
   });
 
   it('paints party-colored rings on politician avatars without touching the account photo', () => {
-    expect(DASHBOARD_HTML).toContain('.avatar.party-D { box-shadow: 0 0 0 2px var(--party-d);');
-    expect(DASHBOARD_HTML).toContain('.avatar.party-R { box-shadow: 0 0 0 2px var(--party-r);');
-    expect(DASHBOARD_HTML).toContain('.avatar.party-O { box-shadow: 0 0 0 2px var(--party-o);');
+    // Inset ::after, not outer box-shadow — parent overflow:hidden was
+    // slicing the 2px spread so the ring never closed the circle.
+    expect(DASHBOARD_HTML).toContain('.avatar.party-D::after { border: 2px solid var(--party-d); }');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-R::after { border: 2px solid var(--party-r); }');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-O::after { border: 2px solid var(--party-o); }');
+    expect(DASHBOARD_HTML).toContain('.avatar.party-D::after,');
+    expect(DASHBOARD_HTML).not.toContain('.avatar.party-D { box-shadow: 0 0 0 2px var(--party-d);');
+    expect(DASHBOARD_HTML).not.toContain('.avatar.party-R { box-shadow: 0 0 0 2px var(--party-r);');
+    expect(DASHBOARD_HTML).not.toContain('.avatar.party-O { box-shadow: 0 0 0 2px var(--party-o);');
     expect(DASHBOARD_HTML).toContain('function partyBucketClass(raw)');
     expect(DASHBOARD_HTML).toContain('function memberAvatarHtml(name, photoUrl, party, decorative)');
     expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
