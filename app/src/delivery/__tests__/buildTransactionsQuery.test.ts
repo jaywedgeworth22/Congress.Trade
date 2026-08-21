@@ -495,6 +495,7 @@ describe('mapFeedTransaction', () => {
     // filing timestamps for the per-row latency column
     expect(tx.filedDate).toBe('2024-01-01');
     expect(tx.firstSeenAt).toBe('2024-01-02T12:00:00Z');
+    // first-seen after the trade date stays the filing listing stamp.
     expect(tx.sourceUrl).toBe('https://disclosures.example/doc.pdf');
     // base transaction mapping still applies
     expect(tx.ticker).toBe('ACME');
@@ -571,6 +572,32 @@ describe('mapFeedTransaction', () => {
       }),
     );
     expect(tx.filedDate).toBeNull();
+    expect(tx.firstSeenAt).toBeNull();
+  });
+
+  it('does not report filing first-seen when that stamp predates this trade', () => {
+    // Live Hern shape: House live search listed the DocID on July 30;
+    // this trade is Aug 5; we persisted the row on Aug 11.
+    const tx = mapFeedTransaction(
+      feedRow({
+        tx_date: '2026-08-05',
+        created_at: '2026-08-11T13:06:49.836Z',
+        filing_filed_date: '2026-08-10',
+        filing_first_seen_at: '2026-07-30T15:32:12.565Z',
+      }),
+    );
+    expect(tx.filedDate).toBe('2026-08-10');
+    expect(tx.firstSeenAt).toBe('2026-08-11T13:06:49.836Z');
+  });
+
+  it('omits firstSeenAt rather than inventing when persist time also predates the trade', () => {
+    const tx = mapFeedTransaction(
+      feedRow({
+        tx_date: '2026-08-05',
+        created_at: '2026-07-31T00:00:00.000Z',
+        filing_first_seen_at: '2026-07-30T15:32:12.565Z',
+      }),
+    );
     expect(tx.firstSeenAt).toBeNull();
   });
 

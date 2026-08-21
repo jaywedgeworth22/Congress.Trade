@@ -170,7 +170,11 @@ export interface Transaction {
   pdfUrl?: string;
   /** Filing's official disclosure date (date-only) from the source. Feed only. */
   filedDate?: string | null;
-  /** When our watcher first saw the filing (timestamp). Feed only. */
+  /**
+   * When we first learned about this trade (feed only). Filing-index
+   * first-seen is used only when it does not predate the trade date;
+   * otherwise the persist time. Never a date before txDate.
+   */
   firstSeenAt?: string | null;
   /** Original public disclosure document URL. Feed only. */
   sourceUrl?: string | null;

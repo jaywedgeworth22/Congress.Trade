@@ -4698,7 +4698,8 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   });
 
   it('#17 renames "Published" to "Seen" and keeps it alongside "Imported"/"Official Filed"', () => {
-    expect(DASHBOARD_HTML).toContain("function seenRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }");
+    expect(DASHBOARD_HTML).toContain('function seenRaw(r) {');
+    expect(DASHBOARD_HTML).toContain('if (tx && toISODate(s) && toISODate(s) < tx) continue;');
     expect(DASHBOARD_HTML).toContain('function seenDetailText(r) {');
     expect(DASHBOARD_HTML).toContain('function seenCellHtml(r) {');
     expect(DASHBOARD_HTML).not.toContain('function publishedRaw(');
