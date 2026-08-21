@@ -53,7 +53,7 @@ function speedProofSectionHtml(admin: boolean): string {
   // SPEED_SCOPE_NOTE_DEFAULT contract block in the client script).
   const scopeNoteId = admin ? 'spScopeNoteAdmin' : 'spScopeNote';
   const infoTip = admin
-    ? 'Full operator scorecard: every configured provider, including where we are behind. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
+    ? 'Full operator scorecard: every configured provider, including where we are behind. Each card is marked Shown Publicly or Hidden From Public. Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator.'
     : 'Lead and win stats use live new imports only (seed and historical backfills are excluded). We match each live trade to provider feeds even if the gap is minutes or up to about two weeks either way. Provider-only rows stay in the coverage denominator, and no overall speed claim appears until coverage is adequate in both directions.';
   return `  <!-- Provider speed scorecard (filter-independent live latency proof). ${admin ? 'Admin: always full comparison, incl. BEHIND.' : "Delivery: only when we are not behind on most providers."} -->
   <div class="section speed-proof" id="${sectionId}"${admin ? '' : ' hidden'} style="margin-top:24px; padding:24px 20px;">
@@ -81,7 +81,7 @@ function speedProofSectionHtml(admin: boolean): string {
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <thead><tr><th>Provider</th>${admin ? '<th>Public</th>' : ''}<th>Concurrent /<br>strong / CT</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="${tableBodyId}"></tbody>
       </table></div>
     </details>
@@ -94,13 +94,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 %GA_SCRIPT%
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;600;700&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade</title>
-<meta name="description" content="First-party House &amp; Senate STOCK Act ingestion — not a third-party API reskin. Congress.Trade runs its own pipeline to parse official disclosures into a live, filterable feed with member/ticker analytics and premium webhooks." />
+<title>%TITLE%</title>
+<meta name="description" content="%META_DESCRIPTION%" />
 <link rel="canonical" href="%CANONICAL_URL%" />
 <meta name="theme-color" content="#eff3f8" />
 <!-- Open Graph — placeholders filled server-side from deep-link query
@@ -129,30 +126,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
-  // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be light|dark|system.
+  // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be
+  // light|dark|system.  Sepia was removed (owner 2026-08-21: "too dark of a
+  // color that doesn't look like old fashioned paper", only half-themed) —
+  // any stored 'sepia' value is migrated to 'light' here so a returning
+  // visitor never gets stuck failing validation.
   (function () {
     var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
+      if (s === 'sepia') {
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        s = 'light';
+      }
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
     } catch (e) {}
     var effective = pref;
     if (pref === 'system') {
       effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
-    document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
+    var theme = effective === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-pref', pref);
-    var stylePref = 'standard';
-    try {
-      var st = localStorage.getItem('ui-style');
-      if (st === 'ledger' || st === 'standard') stylePref = st;
-    } catch (e2) {}
-    document.documentElement.setAttribute('data-style', stylePref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      var ledger = stylePref === 'ledger';
-      meta.setAttribute('content', effective === 'dark' ? '#08111f' : (ledger ? '#f4efe4' : '#eff3f8'));
-    }
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -218,34 +215,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background: #fff;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-  }
-  /* Capitol Ledger (#1459): editorial paper / serif / mono, opt-in via Style. */
-  html[data-style="ledger"] {
-    --sans: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  html[data-style="ledger"][data-theme="light"] {
-    --bg:        #f4efe4;
-    --bg-2:      #ebe4d4;
-    --panel:     #fffaf0;
-    --panel-2:   #f3ead8;
-    --border:    #d4c4a8;
-    --text:      #2a2118;
-    --text-dim:  #6b5c48;
-    --accent:    #8a4b1f;
-  }
-  html[data-style="ledger"][data-theme="light"] header.top,
-  html[data-style="ledger"][data-theme="light"] .trades-toolbars,
-  html[data-style="ledger"][data-theme="light"] #trendsSharedFilters {
-    background: #fffaf0;
-  }
-  html[data-style="ledger"] h1, html[data-style="ledger"] h2, html[data-style="ledger"] h3,
-  html[data-style="ledger"] .tf-h, html[data-style="ledger"] .tf-cap, html[data-style="ledger"] .tkr {
-    font-family: "Source Serif 4", Iowan Old Style, Palatino, Georgia, serif;
-  }
-  html[data-style="ledger"] .amount-range, html[data-style="ledger"] .est, html[data-style="ledger"] .fc-amt-val,
-  html[data-style="ledger"] .trades-stats, html[data-style="ledger"] .k {
-    font-family: var(--mono);
   }
   /* The hidden attribute must always win, even over class display rules
      (e.g. .row-flex/.plan-grid set display and would otherwise override the
@@ -352,16 +321,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
-  :root { --ct-header-h: 68px; --ct-main-pad: 35px; }
+  :root { --ct-header-h: 68px; --ct-main-pad: 35px; --trends-gap: 24px; }
   html { overflow-x: clip; }
   header.top {
     display: flex; align-items: center; gap: 16px; padding: 14px 35px;
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
+    width: 100%; box-sizing: border-box;
   }
   /* Zilla Slab (Typotheque/Mozilla), SIL OFL 1.1 — latin 700 subset via @fontsource, embedded so no external font request. */
   @font-face { font-family:'Zilla Slab'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/zilla-slab-700.woff2) format('woff2'); }
+  /* Inter (Rasmus Andersson), SIL OFL 1.1 — self-hosted latin subset, the
+     weights the CSS below actually uses (QABUGHUNT-01 / WEBPERF-01): the
+     Google Fonts <link> this replaced had an invalid axis tuple for the
+     Source Serif 4 family, so the whole combined stylesheet 400'd and Inter
+     never loaded on production. IBM Plex Mono and Source Serif 4 were also
+     requested but never referenced by any rule here, so both are dropped
+     rather than fixed. Self-hosting removes the third-party render-blocking
+     Google Fonts request (and the CSP exceptions it required) the same way
+     Zilla Slab is handled above. */
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url(/assets/inter-400.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url(/assets/inter-500.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url(/assets/inter-600.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/inter-700.woff2) format('woff2'); }
+  @font-face { font-family:'Inter'; font-style:normal; font-weight:800; font-display:swap; src:url(/assets/inter-800.woff2) format('woff2'); }
   /* Wordmark face (owner-chosen typewriter slab), self-hosted Zilla Slab first
      with a local typewriter-slab fallback stack. */
   .brand { display:inline-flex; align-items:center; gap:0; min-width:0; flex:0 1 auto; }
@@ -377,31 +361,47 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav.tabs button {
+  nav.tabs a {
+    position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
     padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
+    text-decoration: none; display: inline-block;
+    /* PR #2075 swapped these from <button> to <a href> for crawlability.
+       A <button> centers its label via the UA stylesheet; an <a> inherits
+       text-align:start, so without this the fixed mobile dock (grid cells,
+       see the 768px query below) renders every icon/label flush left in
+       its cell instead of centered.  Keep this explicit or the next pass
+       over nav.tabs will re-break mobile alignment. */
+    text-align: center;
   }
-  nav.tabs button:hover { color: var(--text); background: var(--panel); }
-  nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  nav.tabs a:hover { color: var(--text); background: var(--panel); }
+  nav.tabs a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  .tab-count-badge {
+    display: none;
+    min-width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .tab-count-badge.is-on { display: inline-block; }
   main { padding: var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
   }
+  /* #2071: empty / hidden banners are not chrome. They must take no space so
+     the sticky filter row can sit flush under header.top. */
+  .banner[hidden],
+  .banner:empty { display: none; margin: 0; padding: 0; border: 0; }
   .banner.err { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 45%, transparent); background: color-mix(in srgb, var(--sell) 8%, transparent); }
-  .extract-incident {
-    display: none;
-    border: 2px solid var(--sell);
-    background: color-mix(in srgb, var(--sell) 10%, var(--panel));
-    color: var(--text);
-    padding: 14px 16px;
-    border-radius: 12px;
-    margin: 0 0 22px;
-  }
-  .extract-incident.is-on { display: block; }
-  .extract-incident h3 { margin: 0 0 6px; font-size: 16px; color: var(--sell); }
-  .extract-incident p { margin: 0 0 8px; font-size: 13px; }
-  .extract-incident .row-flex { gap: 10px; align-items: center; flex-wrap: wrap; }
   .view { display: none; }
   .view.active { display: block; }
   .toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
@@ -411,6 +411,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 19px; margin-bottom: 32px; }
+  #view-trends #trKpis.grid-cards {
+    margin-top: var(--trends-gap);
+    margin-bottom: var(--trends-gap);
+  }
   /* Owner follow-up batch #4 (+ #12, which shares this class): .v already
      declared flex:1 but .card was never a flex container, so it silently did
      nothing — grid row-stretch (the default align-items:stretch on
@@ -419,10 +423,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      display:flex;flex-direction:column makes flex:1 actually apply, and
      align-content:center on .v centers the (possibly-wrapping) value line
      within whatever height the row stretches it to. */
-  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }
+  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 22px 26px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; container-type: inline-size; }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 4px; flex-wrap: wrap; text-align: center; line-height: 1.2; }
-  .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 0; flex-wrap: nowrap; text-align: center; line-height: 1.2; min-width: 0; overflow: hidden; }
+  .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 0; }
+  .card .v .net, .card .v .kpi-money { white-space: nowrap; max-width: 100%; overflow: hidden; font-size: clamp(12px, 16cqi, 28px); }
+  .card .v .bp { display: inline-flex; align-items: baseline; white-space: nowrap; line-height: 1; }
+  .card .v .bp-n { font-size: 28px; font-weight: 700; }
+  .card .v .bp-pct { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: 0; }
+  .card .v .bp-w { font-size: 16px; font-weight: 600; margin-left: 0.12em; color: var(--text-dim); }
+  .kpi-note { font-size: 10px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
@@ -432,13 +442,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
   tr:last-child td { border-bottom: none; }
   tr.row:hover td { background: var(--panel-2); }
-  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable { user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
-  th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   th.sortable .arr { display: none; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable:hover .arr { display: inline; opacity: .18; }
   th.sortable.active .arr { display: inline; opacity: 1; color: var(--accent); }
+  /* Real, named control inside every sortable <th> (WEBA11Y P2 findings on
+     PR #2072): a bare tabindex+aria-sort <th> is announced only as a column
+     header, with no indication Enter/Space does anything. The <th> itself
+     keeps its native columnheader role and carries aria-sort (WEBA11Y-01);
+     .th-sort-btn is the actual focusable, named control, reset to look like
+     the plain-text label it replaces so the table doesn't shift size.  Shared by the
+     Trades feed, Trends leaderboard, and People directory headers. */
+  .th-sort-btn {
+    display: inline-block; background: none; border: 0; margin: -6px -4px; padding: 6px 4px;
+    font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
+    text-align: inherit; white-space: inherit; cursor: pointer;
+  }
+  .th-sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   #benchmarkResults { display: block; }
   .bench-table { min-width: 800px; margin-top: 16px; table-layout: fixed; }
   .bench-table th { font-size: 10px; padding: 10px 8px; line-height: 1.3; white-space: normal; }
@@ -542,7 +564,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
-  /* Capitol Ledger / iOS: party-colored rings on politician photos (not account avatars). */
+  /* Party-colored rings on politician photos (not account avatars). */
   .avatar.party-D { box-shadow: 0 0 0 2px var(--party-d); border-color: transparent; }
   .avatar.party-R { box-shadow: 0 0 0 2px var(--party-r); border-color: transparent; }
   .avatar.party-O { box-shadow: 0 0 0 2px var(--party-o); border-color: transparent; }
@@ -573,6 +595,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-owner { display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
+  /* Visually hidden but still readable by AT — folded into the card's
+     accessible name after the visible content (WEBA11Y-02). */
+  .fc-hint { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  /* Real, named control for a whole-row-click table row (WEBA11Y P2 follow-up
+     to WEBA11Y-01): a <tr> that keeps its native row role (correctly, per
+     WEBA11Y-01) but exposes no link/button of its own is announced only as
+     "row", with no indication Enter/Space does anything. rowOpenBtnHtml()
+     below renders a real <button data-txid>/<button data-asset> into the
+     row's first cell. It stays visually hidden (same clip technique as
+     .fc-hint above) so it adds zero footprint to the table's layout at
+     rest — column widths and the resizable colgroup are unaffected — but
+     :focus-visible pops it into a real, visible, focus-ringed control the
+     moment a keyboard user tabs onto it (the standard "skip link" pattern).
+     Mouse clicks anywhere in the row keep working via the existing
+     delegated click handler; this button only adds the missing keyboard/AT
+     affordance. */
+  .row-open-btn { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; background: none; cursor: pointer; }
+  .row-open-btn:focus-visible {
+    position: relative; width: auto; height: auto; margin: 0 6px 0 0; padding: 2px 8px; overflow: visible; clip: auto;
+    display: inline-block; font: inherit; font-size: 11px; color: var(--accent); background: var(--panel-2);
+    border: 1px solid var(--accent); border-radius: 6px; outline: 2px solid var(--accent); outline-offset: 2px;
+  }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
      bold trailing amount+date stack, tighter identity-first meta line.
      Replaces .fc-row1 (kept above, unused, harmless) as tradesCardHtml()'s
@@ -662,7 +706,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
   /* Timeframe chips on section headers + the KPI-strip caption. */
   .tf-chip { font-weight: 400; font-size: .8em; color: var(--text-dim); white-space: nowrap; }
-  .tf-cap  { font-size: 12px; color: var(--text-dim); margin: 0 0 6px; }
   /* Skeleton shimmer loaders (GPU-composited background animation, no layout shift). */
   @keyframes tr-shimmer { 100% { background-position: -200% 0; } }
   .sk { display: inline-block; border-radius: 6px; background: linear-gradient(90deg, var(--panel-2) 25%, color-mix(in srgb, var(--text-dim) 18%, var(--panel-2)) 37%, var(--panel-2) 63%); background-size: 200% 100%; animation: tr-shimmer 1.25s ease-in-out infinite; }
@@ -700,7 +743,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
-  .btn:disabled { opacity: .5; cursor: default; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
   .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 24px; margin-bottom: 29px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
@@ -835,10 +878,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .people-table tbody tr[data-member]:hover td, .people-table tbody tr[data-asset]:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .people-table th:first-child, .people-table td:first-child { text-align: left; }
   .people-table td { vertical-align: middle; }
-  .pager { margin-top:14px; justify-content:space-between; }
+  .pager { margin-top:14px; justify-content:space-between; gap:12px; }
   .pager.pager-top { margin-top:0; margin-bottom:12px; }
   .pager.pager-bottom { margin-top:14px; }
-  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width:auto; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -846,10 +889,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      off-center inside the pager control box (align-items:center centers the
      margin box, not the text) — zero it out here so the text itself centers. */
   .pager-controls .note { margin-top: 0; }
-  .pager select { padding:5px 9px; font-size:12px; }
-  /* Rows-per-page + Options menu live at the end of each pager bar
-     (toolbar stays filter-only; Export/Columns live under Options). */
-  .pager-tools { display:flex; align-items:center; gap:8px; }
+  .pager select { padding:5px 9px; font-size:12px; width:auto; }
+  /* Rows + Export live in the top control band.  Bottom pager is range +
+     page buttons only — do not park tools at the end of the list. */
+  .pager-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+  .pager-bottom .pager-tools { display: none; }
+  .pager .trades-count-msg { flex:0 0 auto; }
+  .pager-top .trades-sort-mobile { margin: 0; }
   .feed-options { position:relative; }
   .feed-options .menu-pop { min-width:200px; top:36px; }
   .feed-options .menu-pop .prem-hint { font-size:11px; color:var(--text-dim); margin-left:6px; }
@@ -881,7 +927,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
   .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 29px; }
-  .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 29px; }
+  .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: var(--trends-gap, 24px); }
   .trend-grid-split > *, .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
   @media (max-width: 760px) {
     .trend-grid2 { grid-template-columns: 1fr; }
@@ -1190,7 +1236,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      drawer for no reason. ID-scoped so it always wins. */
   #detailDrawerBody .table-wrap { padding-right:0; }
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
-  .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
+  /* copyLinkHtml() splits the old single "Copy link" element into a real <a>
+     (navigates, SEOSOCIAL-02) and a real <button> (copies, WEBA11Y-08) placed
+     side by side; drawer-link-row carries the row layout + spacing that used
+     to live on drawer-all-link alone so both controls still read as one
+     compact affordance, just two of them now. */
+  .drawer-link-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:9px; }
+  .drawer-all-link, .drawer-copy-link-btn { display:inline-block; margin:0; font-size:13px; background:none; border:0; padding:0; color:var(--accent); text-decoration:none; cursor:pointer; text-align:left; font-family:inherit; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
   .review-doc-link { display:block; margin-top:5px; font-size:12px; font-family:var(--sans); font-weight:600; white-space:nowrap; }
   .review-doc-link.inline { display:inline-block; margin:0 0 0 10px; }
@@ -1237,7 +1289,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
   .feature-list { margin:0 0 16px; padding-left:18px; color:var(--text-dim); font-size:13px; line-height:1.55; }
-  .clickable { cursor: pointer; }
+  /* text-decoration/color resets only matter for the entity cells that are
+     real <a href> now (SEOSOCIAL-02) — no-op on the (still more numerous)
+     non-anchor .clickable elements. */
+  .clickable { cursor: pointer; text-decoration: none; color: inherit; }
   /* Generic focus-visible ring for every keyboard-focusable entity target
      (member/asset/ticker/trade). More specific selectors elsewhere (e.g.
      #view-trends tr.clickable:focus-visible) intentionally win over this via
@@ -1251,6 +1306,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-party.clickable { transition: border-color 0.15s ease, background 0.15s ease; }
   .drawer-trade-party.clickable:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
   .subs-msg { flex-basis: 100%; margin-top: 10px; }
+  /* Programmatic labels for the Delivery create-form controls (WEBA11Y-04):
+     absolutely positioned so they never occupy layout space or participate
+     in flex sizing, and stay a sibling (not a wrapper) so the existing
+     .row-flex > select/input responsive rules keep matching. */
+  .field-vh-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .secret-panel { display:grid; gap:16px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:19px; color:var(--text); max-width:100%; }
   .secret-panel strong { font-size:13px; }
   .secret-panel code { display:block; overflow:auto; white-space:nowrap; padding:8px; }
@@ -1310,7 +1370,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu-pop .theme-row {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
-    margin:4px 2px 6px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;
+    margin:4px 2px 6px; padding:8px 10px; border:none; border-radius:0;
   }
   .menu-pop .theme-row-label { font-size:12px; color:var(--text-dim); flex:0 0 auto; }
   .theme-seg {
@@ -1318,9 +1378,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     border:1px solid var(--border); border-radius:9px; background:var(--bg);
   }
   .theme-seg-btn {
-    display:inline-flex !important; align-items:center; justify-content:center; gap:0; width:auto !important;
+    display:inline-flex !important; align-items:center; justify-content:center; gap:5px; width:auto !important;
     border:1px solid transparent !important; background:transparent !important;
-    color:var(--text-dim) !important; padding:6px 8px !important; border-radius:7px !important;
+    color:var(--text-dim) !important; padding:5px 9px !important; border-radius:7px !important;
     cursor:pointer; font-size:11px !important; font-family:var(--sans); font-weight:500;
     line-height:1.1; white-space:nowrap;
   }
@@ -1331,6 +1391,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     box-shadow:0 1px 2px rgba(0,0,0,.12);
   }
   .theme-seg-btn svg { width:13px; height:13px; flex:0 0 auto; }
+  .acct-mobile-menu .theme-row {
+    display:block; margin:0; padding:0; border:none;
+  }
+  .acct-mobile-menu .theme-seg { display:flex; width:100%; background:var(--bg-2); }
+  .acct-mobile-menu .theme-seg-btn { flex:1 1 0; min-width:0; }
   /* Guest header theme control (signed-out) */
   .theme-guest { display:inline-flex; align-items:center; }
   .theme-guest .theme-seg { background:var(--panel-2); }
@@ -1343,13 +1408,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      the mobile breakpoint (see the 720px media query near the bottom nav). */
   .acct-mobile { display:none; position:relative; }
   /* Owner punch list #1: the hamburger glyph sits on its own — no ring/circle
-     at rest. A soft hover/open background is still fine as an affordance. */
+     at rest. A soft hover/open background is still fine as an affordance.
+     Signed-in users with a Google/Apple profile photo get that photo here
+     instead of the glyph (renderAccount()); the button stays >=44x44 as a
+     tap target even though the avatar drawn inside it is only 28x28. */
   .acct-hamburger {
-    width:38px; height:38px; border:none; border-radius: var(--radius-pill);
+    width:44px; height:44px; border:none; border-radius: var(--radius-pill);
     background:transparent; color:var(--text); font-size:18px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
   .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }
+  .acct-hamburger .avatar.lg { cursor:pointer; pointer-events:none; }
   .acct-mobile-menu {
     position:absolute; right:0; top:46px; z-index:60; min-width:220px;
     max-width:min(300px, calc(100vw - 24px)); background:var(--panel);
@@ -1387,12 +1456,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .field { display:flex; gap:8px; margin-top:6px; }
   .field input { flex:1; }
   .plan-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
-  .plan { border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
+  .plan { display:block; border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
   .plan:hover, .plan.sel { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 7%,transparent); }
+  .plan:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .plan .price { font-size:23px; font-weight:800; }
   .plan .per { font-size:12px; color:var(--text-dim); }
   .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
   .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:800; color:#ffffff; background:#15803d; padding:2px 7px; border-radius:999px; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
+  .plan-radio-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
   .toast.show { display:block; }
@@ -1500,7 +1571,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     display: inline-flex; align-items: center; gap: 6px;
     height: var(--control-h, 34px); padding: 0 10px;
     border: 1px solid var(--border); border-radius: 999px;
-    background: var(--panel-2); color: var(--text);
+    background: var(--panel); color: var(--text);
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   }
   .ios-filter-btn::after {
@@ -1511,18 +1582,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
      pill on the default chrome even when a filter is active.  The label
      already shows House / D / Buys. */
-  .ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+  .ios-filter.has-sel .ios-filter-btn { background: var(--panel); color: var(--text); border-color: var(--border); }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
     padding: 6px; border-radius: 16px;
-    background: color-mix(in srgb, var(--panel) 78%, transparent);
-    -webkit-backdrop-filter: saturate(180%) blur(22px);
-    backdrop-filter: saturate(180%) blur(22px);
-    border: 1px solid color-mix(in srgb, #fff 40%, var(--border));
-    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+    background: var(--panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 40px rgba(0,0,0,.12);
     display: flex; flex-direction: column; gap: 2px;
   }
   .ios-filter-pop[hidden] { display: none; }
@@ -1614,12 +1685,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      batch #21: the $ Minimum pill/select was removed entirely — no $/size
      dropdown on any platform. The server-side minAmount query param still
      exists for direct API consumers.) */
-  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); }
+  .pill-select { position:relative; display:inline-flex; align-items:center; height:var(--control-h); width:max-content; max-width:100%; flex:0 0 auto; }
   .pill-select::before { position:absolute; left:12px; font-size:11px; color:var(--text-dim); pointer-events:none; line-height:1; }
   .pill-select.pill-cal::before { content:"📅"; }
   .pill-select-el {
     appearance:none; -webkit-appearance:none; -moz-appearance:none;
-    width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
+    width:auto; field-sizing:content; max-width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
     color:var(--text); border-radius:var(--radius-pill); font:600 12px var(--sans);
     padding:0 26px 0 30px; cursor:pointer;
     background-repeat:no-repeat; background-position:right 8px center;
@@ -1643,10 +1714,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      same 35px inset as the header wordmark. */
   .trades-toolbars, #trendsSharedFilters {
     position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
-    width: 100vw; max-width: 100vw; box-sizing: border-box;
-    margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw);
+    box-sizing: border-box;
+    width: calc(100% + 2 * var(--ct-main-pad, 35px));
+    max-width: none;
+    margin-left: calc(-1 * var(--ct-main-pad, 35px));
+    margin-right: calc(-1 * var(--ct-main-pad, 35px));
     margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
-    padding: 10px 35px 12px;
+    padding: 10px var(--ct-main-pad, 35px) 12px;
     background: var(--panel);
     border-bottom: none;
     overflow: visible;
@@ -1664,7 +1738,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      #tradesExtraFilters grid (DO-NOT-BREAK) is completely unaffected — this
      whole block simply doesn't apply there. (Owner follow-up batch #21/#23:
      the $ pill that used to close this row is gone — no orphaned auto-margin
-     or trailing gap left behind; #tradesStats is now the last item.) */
+     or trailing gap left behind; search is now the last item.) */
   @media (min-width: 769px) {
     .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
     .trades-toolbars #tradesSharedFilters,
@@ -1672,7 +1746,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
     .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
-    .trades-toolbars #tradesStats { order:4; }
+    .pager-top .trades-sort-mobile { display: none; }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -1762,6 +1836,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
   .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
   .sp-badge.off { background:color-mix(in srgb,var(--text-dim) 10%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--text-dim) 30%,transparent); }
+  .sp-badge.shown, .sp-badge.hidden-public { text-transform:none; letter-spacing:0.2px; }
+  .sp-badge.shown { background:color-mix(in srgb,var(--good) 14%,transparent); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 35%,transparent); }
+  .sp-badge.hidden-public { background:color-mix(in srgb,var(--text-dim) 10%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--text-dim) 30%,transparent); }
+  .sp-header-end { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; align-items:center; }
   .sp-card.sp-off { opacity: 0.72; border-color: color-mix(in srgb, var(--text-dim) 25%, var(--border)); }
   /* Win-rate bar */
   .sp-bar-wrap { display:flex; flex-direction:column; gap:5px; }
@@ -1841,10 +1919,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-stats { font-size: 11.5px; white-space: nowrap; margin-left: auto; }
   .trades-stats .match-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
   .trades-stats .match-label { color: var(--text-dim); font-weight: 500; }
-  /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
-     shown under the mobile breakpoint via the higher-specificity #view-trades rule. */
-  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
-  .trades-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
+  /* Mobile sort lives in the top pager band; hidden on desktop (table headers). */
+  .trades-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0; flex: 0 0 auto; }
+  .trades-sort-mobile #mobileSortKey { flex: 0 0 auto; width: auto; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse) {
     /* clip (not hidden): hidden on one axis makes the other compute to auto
        and turns html/body/main into a scrollport, which kills position:sticky
@@ -1887,19 +1964,61 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       nav.tabs { background: var(--panel); }
       html[data-theme="light"] nav.tabs { background: #fff; }
     }
-    nav.tabs button {
-      padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0;
+    nav.tabs a {
+      padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;
       border-radius: 0; border: 0; background: transparent;
     }
-    nav.tabs button.active {
+    nav.tabs a.active {
       background: transparent;
       box-shadow: none;
     }
-    html[data-theme="dark"] nav.tabs button.active {
+    html[data-theme="dark"] nav.tabs a.active {
       background: transparent;
     }
-    nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
-    nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    nav.tabs a::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+    nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab-count-badge,
+    .tab-count-badge.is-on {
+      position: absolute;
+      top: 2px;
+      right: max(4px, calc(50% - 22px));
+      margin: 0;
+      min-width: 16px;
+      height: 16px;
+      line-height: 16px;
+      font-size: 10px;
+      z-index: 1;
+    }
+    /* Signed-in admins unhide two extra tabs (Review, Admin) alongside the
+       default four (renderAdminTabs() toggles [hidden] on data-admin-tab
+       anchors), so the dock goes from four ~97.5px columns at 390px to six
+       ~65px columns (~53px at 320px).  The sizes above were tuned for four;
+       :has() reacts to that same [hidden] toggle to shrink icon/label and
+       tighten padding for six, with no extra class or JS needed.  The
+       label clamp keeps "Directory" / "Delivery" on one line down to
+       320px so ellipsis stays a last resort, not the normal render. */
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a {
+      padding-left: 1px;
+      padding-right: 1px;
+    }
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {
+      font-size: clamp(8px, 2.3vw, 9px);
+    }
+    /* right:max(4px, calc(50% - 22px)) on .tab-count-badge above assumes the
+       ~97.5px four-tab cell; on ~53-65px six-tab cells that offset crowds
+       the centered icon, so pin the badge to the corner instead. */
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,
+    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge.is-on {
+      right: 3px;
+      min-width: 14px;
+      height: 14px;
+      line-height: 14px;
+      font-size: 9px;
+    }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
     /* Owner punch list #5: nav.tabs is ~56px tall before safe-area.  70px
@@ -1959,34 +2078,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        order wins), which silently killed this row's grid placement on real
        phone widths — found by the #1533 design-QA verifier via computed
        layout. The ID rule outranks any .toolbar class rule at every width. */
-    #tradesExtraFilters { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+    #tradesExtraFilters { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
     #tradesExtraFilters #qSearchField { grid-column: 1; min-width: 0; flex: 1 1 auto; }
-    .trades-stats { display: block; grid-column: 2; justify-self: end; font-size: 11px; margin-left: 0; }
     .trades-stats .stat-today { display: none; }
-    /* Pagers stay usable on phones: don't force every child full-width. */
-    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 8px; }
+    /* Pagers stay usable on phones: don't force every child full-width.
+       Controls stay intrinsic and right-aligned — no stretched empty bar. */
+    .pager.row-flex { align-items: center; flex-wrap: wrap; gap: 10px 12px; justify-content: space-between; }
     .pager.row-flex > * { width: auto; min-height: 0; }
-    .pager .pager-controls { flex: 1 1 auto; }
-    .pager .pager-tools { flex: 0 0 auto; margin-left: auto; }
-    .pager-top .pager-tools { display: none; }
+    .pager .pager-controls { flex: 0 0 auto; width: auto; margin-left: auto; }
+    .pager .pager-tools { flex: 0 0 auto; }
+    .pager-top .pager-tools { display: flex; }
+    .pager-top .feed-options { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
-    /* Owner follow-up batch #3: the shared filter row (timeframe + branch/
-       party/side groups + ⓘ) must hold to exactly 2 lines at mobile widths
-       (375px AND 390px) — it was 3 with the (now-deleted, #21) $ pill. Only
-       2 direct children remain: the timeframe pill and .filter-groups. ID
-       selectors (not .toolbar/.shared-filters classes) so this reliably wins
-       regardless of source order against the ≤720px .toolbar re-flex below
-       (the CSS-cascade invariant every mobile rule here must respect). Line
-       1 = timeframe pill; .filter-groups is forced flex-basis:100% so it
-       always wraps to its own line 2, and its own children stay nowrap so
-       the 3 segmented groups + ⓘ never wrap further. */
+    .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
+    /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
+       Timeframe is content-sized (not flex-grown).  ID selectors beat the
+       later 720px toolbar flex-wrap re-flex. */
     #tradesSharedFilters, #trendsSharedFilters {
-      display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
       overflow: visible;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; }
+    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal {
+      flex: 0 0 auto; width: max-content;
+    }
+    #tradesSharedFilters > .pill-select-el, #trendsSharedFilters > .pill-select-el,
+    #tradesSharedFilters .pill-select-el, #trendsSharedFilters .pill-select-el {
+      width: auto; field-sizing: content;
+    }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
-      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px;
+      flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 6px;
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
@@ -1998,7 +2118,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
     #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
-    #tradesStats { flex: 0 0 auto; white-space: nowrap; }
     #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
     #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
     #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
@@ -2023,7 +2142,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
     #view-trades .table-wrap { display: none; }
     #view-trades .trades-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-trades .trades-sort-mobile { display: flex; }
+    #view-trades .pager-top .trades-sort-mobile { display: flex; }
     /* The Columns chooser only affects the (hidden) table's field set — tradesCardHtml()
        renders a fixed field set, so hide Columns inside the Options menu on phones.
        Export CSV stays available. */
@@ -2096,7 +2215,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 420px) {
     .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
     .toolbar #qMember { grid-column:1 / -1; }
-    nav.tabs button::after { font-size: 9px; }
+    nav.tabs a::after { font-size: 9px; }
     th, td { padding: 9px 10px; }
     /* Rising Activity: tighter cells so all four headings fit on phones. */
     #tableTrTrending th, #tableTrTrending td { padding: 9px 6px; }
@@ -2256,13 +2375,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   color: var(--text-dim);
   letter-spacing: .03em;
 }
-/* KPI-strip caption sits in the same rhythm. */
-#view-trends .tf-cap {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
+/* KPI strip sits tight under the filter row — no Snapshot caption. */
+#view-trends #trKpis { margin-top: 0; }
 
 /* ---- 3. Surfaces: one calm material for sections, cards, clusters ------
    Token top-light gradient + 1px inner highlight via ::before (inset:0,
@@ -2572,7 +2686,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ---- 16. Desktop/tablet spacing + numeric edge alignment -------------- */
 @media (min-width: 721px) {
   #view-trends .section { padding: 19px 20px; }
-  #view-trends .trend-grid2, #view-trends .trend-grid-split { gap: 18px; }
+  #view-trends .trend-grid2, #view-trends .trend-grid-split { gap: var(--trends-gap, 24px); }
   /* Hang the standalone Est-Volume figures on a shared right edge. Identity
      and split-mix cells keep their left flow. (#trTickers td.est is hidden
      on phones by the base 720px query — this guard never undoes that.) */
@@ -2660,15 +2774,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    .toolbar .trends-filter-row { flex: 1 1 auto; }
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    #view-trends .toolbar .time-filter-wrap { flex: 0 1 auto; }
-    #view-trends .toolbar .trends-filter-row { flex: 1 1 auto; }
+    .toolbar .trends-filter-row { flex: 0 1 auto; }
+    #view-trends .toolbar { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
+    #view-trends .toolbar .time-filter-wrap { flex: 0 0 auto; }
+    #view-trends .toolbar .trends-filter-row { flex: 0 1 auto; width: auto; }
     .grid-cards { gap: 12px; margin-bottom: 20px; }
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
     .banner { margin-bottom: 18px; }
-    .extract-incident { margin-bottom: 18px; }
     .trend-grid2, .trend-grid-split, .trend-members-grid, .trend-side-stack { gap: 18px; }
     .timeliness-grid { gap: 24px; }
     .cluster-grid { gap: 12px; }
@@ -2685,10 +2798,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        breakpoint's footer rule, scaled to this block's tighter 26px base. */
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
-  @media (max-width: 420px) {
-    #view-trends .toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
-    #view-trends .toolbar .time-filter-wrap,
-    #view-trends .toolbar .trends-filter-row { width: 100%; }
+  /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
+     generic toolbar-select width:100% mobile shorthand.  Do not set
+     width/max-width here — that used to beat the padding-based full-bleed
+     (calc(100% + 2*pad)) and left a gap on the right of the filter bar. */
+  #view-trends #trendsSharedFilters,
+  #view-trades #tradesSharedFilters {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center;
+  }
+  #view-trends #trendsSharedFilters > .pill-select.pill-cal,
+  #view-trades #tradesSharedFilters > .pill-select.pill-cal {
+    flex: 0 0 auto;
+    width: max-content;
   }
 
 
@@ -2703,28 +2826,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="brand" aria-label="Congress.Trade">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" height="40" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <button data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
-    <button data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</button>
-    <button data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</button>
-    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</a>
+    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
+    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
 </header>
 
 <main>
-  <div class="banner" id="banner">Connecting to the live feed…</div>
-  <div class="extract-incident" id="extractIncidentBanner" role="alert" hidden>
-    <h3>Extraction Halted</h3>
-    <p id="extractIncidentDetail">The extraction loop is stopped.&nbsp; Review the reason, then acknowledge to resume when it is safe.</p>
-    <p id="extractIncidentCounts" class="note"></p>
-    <div class="row-flex">
-      <button class="btn" type="button" id="extractIncidentAck" onclick="acknowledgeExtractionHalt()">Acknowledge Halt</button>
-      <button class="btn ghost sm" type="button" onclick="showView('review')">Open Review Queue</button>
-      <span id="extractIncidentAckMsg" class="note" role="status"></span>
-    </div>
-  </div>
+  <!-- #2071: do not put #banner here. A first-child status strip sits
+       between header.top and the sticky filter rows. Feed status lives
+       inside each filtered view, after that view's filter row, and stays
+       hidden until setBanner() has a real error. -->
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -2739,15 +2855,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
         <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2798,23 +2914,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
-      <!-- The timeframe is named here, not just in the pill to the left: the same
-           politician reads 988 trades in this window and 22,832 all time in the
-           Directory, and an unlabelled count makes those look like a data bug. -->
-      <div id="tradesStats" class="trades-stats muted" title="Count of trades matching the active filters (time window, branch, party, side, search). Not the page size.">
-        <span class="match-count" id="kpiTotal">—</span> <span class="match-label">trades</span>
-      </div>
     </div>
     </div>
-    <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
-         is hidden below the 768px breakpoint along with .table-wrap, so this is
-         the only sort affordance on phones. Shares sortKey/sortDir + the
-         setSort()/tradesQueryParams() refetch path with the desktop headers. -->
-    <div class="trades-sort-mobile" id="tradesSortMobile">
-      <label class="lbl" for="mobileSortKey">Sort</label>
-      <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
-      <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
-    </div>
+    <div class="banner feed-banner" hidden></div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
@@ -2822,6 +2924,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </dialog>
     <!-- Pagination top + bottom: same controls, synced in updateTradesCountMsg / setPageSize. -->
     <div class="row-flex pager pager-top" data-pager="top">
+      <div class="trades-sort-mobile" id="tradesSortMobile">
+        <label class="lbl" for="mobileSortKey">Sort</label>
+        <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
+        <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
+      </div>
       <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination top">
         <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
@@ -2885,15 +2992,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
       <span class="pill-select pill-cal">
         <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Past Day</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="90d" selected>Past 3 Months</option>
-          <option value="180d">Past 6 Months</option>
-          <option value="365d">Past Year</option>
-          <option value="1825d">Past 5 Years</option>
-          <option value="this_cy">This Calendar Year</option>
-          <option value="last_cy">Last Calendar Year</option>
+          <option value="1d">Day</option>
+          <option value="7d">Week</option>
+          <option value="30d">Month</option>
+          <option value="90d" selected>3 Months</option>
+          <option value="180d">6 Months</option>
+          <option value="365d">Year</option>
+          <option value="1825d">5 Years</option>
+          <option value="this_cy">This Year</option>
+          <option value="last_cy">Last Year</option>
           <option value="all">All Time</option>
         </select>
       </span>
@@ -2936,24 +3043,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
+    <div class="banner feed-banner" id="banner" hidden></div>
     <!-- KPI strip. Timeframe lives in the sticky filter row, not after headings. -->
-    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
-    </div>
-
-    <!-- Capitol Ledger structural win (#1459): scannable largest buy/sell assets. -->
-    <div class="trend-grid-split" id="trExtremes">
-      <details class="section trends-fold" open>
-        <summary class="tf-h">Largest Buys<span class="fold-cue" aria-hidden="true"></span></summary>
-        <p class="sub">Estimated buy-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
-        <div class="table-wrap"><table><tbody id="trLargestBuys"><tr><td class="state">Loading…</td></tr></tbody></table></div>
-      </details>
-      <details class="section trends-fold" open>
-        <summary class="tf-h">Largest Sells<span class="fold-cue" aria-hidden="true"></span></summary>
-        <p class="sub">Estimated sell-side volume from STOCK Act bracket midpoints.  Not an exact figure.</p>
-        <div class="table-wrap"><table><tbody id="trLargestSells"><tr><td class="state">Loading…</td></tr></tbody></table></div>
-      </details>
     </div>
 
     <!-- What is being traded + Heating up -->
@@ -2973,18 +3066,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTickers">
             <thead>
               <tr>
-                <th class="sortable" style="min-width: 140px;" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
-                <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable" style="min-width: 140px;"><button type="button" class="th-sort-btn" onclick="setTickerSort('trades')">Asset</button></th>
+                <th class="sortable" data-sort="trades" aria-sort="descending"><button type="button" class="th-sort-btn" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades" aria-hidden="true"></span></button></th>
+                <th class="sortable r" data-sort="members" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members" aria-hidden="true"></span></button></th>
+                <th class="sortable r est" data-sort="volume" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume" aria-hidden="true"></span></button></th>
+                <th class="sortable r" data-sort="netflow" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('netflow')">Net Flow <span class="sort-icon" data-sort="netflow" aria-hidden="true"></span></button></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
           </table>
         </div>
       </details>
-      <details class="section trends-fold" open>
+      <details class="section trends-fold" id="trRisingFold" open>
         <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap">
           <table id="tableTrTrending">
@@ -3121,9 +3214,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th class="col-fill" data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
-          <th class="col-fit" data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
+          <th class="col-fill" data-sort="name" aria-sort="none" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th class="col-fit" data-sort="chamber" aria-sort="none" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th class="col-num" data-sort="trades" aria-sort="none" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -3144,7 +3237,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the red <strong>Extraction Halted</strong> banner above this page is the acknowledge control.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts.&nbsp; Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified.&nbsp; The <strong>All Filing Decisions</strong> table below includes auto-published filings too.&nbsp; If extraction is halted, the Admin tab shows a red badge.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
         <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
@@ -3207,12 +3300,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
+        <label class="field-vh-label" for="newDelivery">Channel</label>
         <select id="newDelivery" disabled onchange="updateNewTargetVisibility()">
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
+        <label class="field-vh-label" for="newTarget">Target URL</label>
         <input id="newTarget" placeholder="target URL (webhook only)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newTickers">Tickers</label>
         <input id="newTickers" placeholder="tickers (CSV, optional)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newMembers">Members</label>
         <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated filer ids or names" />
+        <label class="field-vh-label" for="newChambers">Branches</label>
         <select id="newChambers" disabled>
           <option value="">House + Senate + Executive</option>
           <option value="house">House</option>
@@ -3220,6 +3318,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="house,senate">House + Senate</option>
           <option value="executive">Executive</option>
         </select>
+        <label class="field-vh-label" for="newSides">Trade side</label>
         <select id="newSides" disabled title="Trade side filter (B buy / S sell / E exchange)">
           <option value="">Buys + Sells + Exchanges</option>
           <option value="B">Buys</option>
@@ -3266,6 +3365,20 @@ ${speedProofSectionHtml(true)}
         <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
         <span id="adminTokenMsg" class="note" role="status" aria-live="polite"></span>
       </div>
+    </div>
+    <div class="section">
+      <h3>Admin Access Control</h3>
+      <p class="sub">Grant or revoke admin access for a specific email.&nbsp; Premium never grants Admin or Review Queue by itself — only an email listed below, or one configured via <code>ADMIN_EMAILS</code> in the environment, can see them.</p>
+      <div class="row-flex">
+        <input id="adminGrantEmail" type="email" autocomplete="off" placeholder="name@example.com" style="flex:1;min-width:240px" />
+        <button class="btn" onclick="grantAdminEmail()">Grant Admin</button>
+        <span id="adminGrantMsg" class="note" role="status" aria-live="polite"></span>
+      </div>
+      <table style="margin-top:14px">
+        <thead><tr><th>Email</th><th>Granted By</th><th>Granted At</th><th style="text-align:right">Action</th></tr></thead>
+        <tbody id="adminListBody"><tr><td class="state" colspan="4">Loading…</td></tr></tbody>
+      </table>
+      <p class="note">API HOOK: <code>GET /api/admin/admins</code>, <code>POST /api/admin/admins/grant</code>, <code>POST /api/admin/admins/revoke</code>.&nbsp; <code>ADMIN_EMAILS</code> is configured in the environment — not editable here; it's the lockout escape hatch.</p>
     </div>
     <div class="section">
       <h3>Logos</h3>
@@ -3453,7 +3566,7 @@ ${speedProofSectionHtml(true)}
   </section>
 
   <footer class="site-footer">
-    <span>Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets</span>
+    <span>Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency</span>
     <span class="footer-links">
       <a href="/privacy-policy">Privacy</a>
       <a href="/terms-of-service">Terms</a>
@@ -3466,7 +3579,7 @@ ${speedProofSectionHtml(true)}
 
 <div class="drawer" id="detailDrawer">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-  <div class="drawer-panel"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTopbarTitle"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
@@ -3477,20 +3590,14 @@ ${speedProofSectionHtml(true)}
     <p class="sub">Sign in to manage your account and use Premium research tools.</p>
     <button class="gbtn" onclick="loginGoogle()">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-      Continue with Google
+      Sign In with Google
     </button>
     <a class="abtn" id="appleSignInBtn" href="/auth/apple/start">
       <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
         <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
       </svg>
-      Sign in with Apple
+      Sign In with Apple
     </a>
-    <div class="divider">or</div>
-    <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
-    <div class="field">
-      <input id="magicEmail" type="email" autocomplete="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')sendMagicLink()" />
-      <button class="btn" onclick="sendMagicLink()">Send Link</button>
-    </div>
     <p class="note" id="loginMsg"></p>
   </div>
 </div>
@@ -3510,16 +3617,18 @@ ${speedProofSectionHtml(true)}
       <li style="opacity:0.8; font-size:0.9em; margin-top:0.5rem">Note: Users can add up to 2 delivery methods (webhooks or SSE streams).</li>
     </ul>
 
-    <div class="plan-grid" id="pricingPlans">
-      <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
+    <div class="plan-grid" id="pricingPlans" role="radiogroup" aria-label="Plan">
+      <label class="plan sel" id="planMonthly" for="planMonthlyRadio">
+        <input type="radio" class="plan-radio-input" id="planMonthlyRadio" name="plan" value="monthly" checked onchange="selectPlan('monthly')">
         <div class="cad">Monthly</div>
         <div class="price">$5<span class="per">/mo</span></div>
-      </div>
-      <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
+      </label>
+      <label class="plan" id="planAnnual" for="planAnnualRadio">
+        <input type="radio" class="plan-radio-input" id="planAnnualRadio" name="plan" value="annual" onchange="selectPlan('annual')">
         <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
         <div class="price">$50<span class="per">/yr</span></div>
-      </div>
+      </label>
     </div>
     <p class="trial-note" id="pricingTrialNote">2-week free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
@@ -4042,6 +4151,27 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
   });
 }
+/* SEOSOCIAL-02: crawlable deep-link href for an entity cell — a real
+   "/?member=…"/"/?ticker=…" URL, not just a data-* attribute a JS click
+   handler reads. Callers still render data-member/data-asset for the
+   existing delegated click handling (handleEntityOpenEvent), which already
+   preventDefault()s before opening the drawer, so navigation never fires. */
+function entityHref(param, value) {
+  return '/?' + param + '=' + encodeURIComponent(value);
+}
+/* SEOSOCIAL-04: server-side OgMeta only covers the FIRST paint's <title> —
+   this keeps it honest through client-side navigation (tab switches, drawer
+   opens) that never re-request the document. Mirrors resolveOgMeta's
+   pageTitle convention (ogMeta.ts): every non-default label gets a
+   " — Congress.Trade" suffix; the bare default is just the site name. */
+function setDocumentTitle(label) {
+  try { document.title = label ? (label + ' — Congress.Trade') : 'Congress.Trade'; } catch (e) {}
+}
+/* Mirrors resolveOgMeta's trades/people/subs titles (ogMeta.ts) — kept in
+   sync by ogMeta.test.ts's SEOSOCIAL-04 cases. Review/Admin are gated
+   internal tools, not public entities, so they're left off (falls back to
+   whatever title was already showing). */
+var TAB_PAGE_TITLES = { trends: 'Trends', trades: 'Trades', people: 'Directory', subs: 'Delivery' };
 function el(id) { return document.getElementById(id); }
 function clipTextHtml(value, fallback, title) {
   var text = String(value == null || value === '' ? (fallback || '—') : value);
@@ -4148,6 +4278,13 @@ function fmtMs(ms) {
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
+    if (s === 'sepia') {
+      /* Sepia was removed (owner 2026-08-21) — migrate a returning visitor's
+         stored Sepia preference to Light so it stops failing validation on
+         every load. */
+      try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+      return 'light';
+    }
     if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
   return 'light';
@@ -4179,7 +4316,7 @@ function themeSegHtml(pref) {
   var btns = opts.map(function (o) {
     var active = pref === o.id ? ' active' : '';
     return '<button type="button" class="theme-seg-btn' + active + '" data-theme-opt="' + o.id + '" aria-label="Set theme to ' + o.label + '" title="' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
-      themeIconSvg(o.id) + '</button>';
+      themeIconSvg(o.id) + o.label + '</button>';
   }).join('');
   return '<div class="theme-seg" role="group" aria-label="Theme">' + btns + '</div>';
 }
@@ -4189,60 +4326,16 @@ function themeRowHtml(pref, hideLabel) {
   // keeps the label (unchanged), so hideLabel is opt-in per call site.
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
-function readStylePref() {
-  try {
-    var s = localStorage.getItem('ui-style');
-    if (s === 'ledger' || s === 'standard') return s;
-  } catch (e) {}
-  return 'standard';
-}
-function styleSegHtml(pref) {
-  pref = pref || readStylePref();
-  var opts = [
-    { id: 'standard', label: 'Standard' },
-    { id: 'ledger', label: 'Capitol Ledger' }
-  ];
-  var btns = opts.map(function (o) {
-    var active = pref === o.id ? ' active' : '';
-    return '<button type="button" class="style-seg-btn theme-seg-btn' + active + '" data-style-opt="' + o.id + '" aria-label="Set style to ' + o.label + '" aria-pressed="' + (pref === o.id ? 'true' : 'false') + '">' +
-      o.label + '</button>';
-  }).join('');
-  return '<div class="theme-seg" role="group" aria-label="Style">' + btns + '</div>';
-}
-function styleRowHtml() {
-  return '<div class="theme-row style-row"><span class="theme-row-label">Style</span>' + styleSegHtml() + '</div>';
-}
-function applyStyle(pref) {
-  pref = pref === 'ledger' ? 'ledger' : 'standard';
-  document.documentElement.setAttribute('data-style', pref);
-  var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta && document.documentElement.getAttribute('data-theme') !== 'dark') {
-    meta.setAttribute('content', pref === 'ledger' ? '#f4efe4' : '#eff3f8');
-  }
-  document.querySelectorAll('.style-seg-btn[data-style-opt]').forEach(function (btn) {
-    var on = btn.getAttribute('data-style-opt') === pref;
-    btn.classList.toggle('active', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-function setStylePref(pref) {
-  pref = pref === 'ledger' ? 'ledger' : 'standard';
-  try { localStorage.setItem('ui-style', pref); } catch (e) {}
-  applyStyle(pref);
-}
 function applyTheme(effective) {
-  effective = effective === 'dark' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', effective);
+  var theme = effective === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
   var logo = document.getElementById('brandLogo');
   if (logo) {
-    var next = effective === 'light' ? logo.getAttribute('data-src-light') : logo.getAttribute('data-src-dark');
+    var next = theme === 'dark' ? logo.getAttribute('data-src-dark') : logo.getAttribute('data-src-light');
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) {
-    var ledgerOn = document.documentElement.getAttribute('data-style') === 'ledger';
-    meta.setAttribute('content', effective === 'light' ? (ledgerOn ? '#f4efe4' : '#eff3f8') : '#08111f');
-  }
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   syncThemeSegUI();
 }
 function syncThemeSegUI() {
@@ -4254,7 +4347,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -4281,12 +4374,6 @@ function toggleTheme() {
 })();
 document.addEventListener('click', function (e) {
   var t = e.target;
-  var styleBtn = t && t.closest ? t.closest('.style-seg-btn[data-style-opt]') : null;
-  if (styleBtn) {
-    var stylePref = styleBtn.getAttribute('data-style-opt');
-    if (stylePref) setStylePref(stylePref);
-    return;
-  }
   var btn = t && t.closest ? t.closest('.theme-seg-btn[data-theme-opt]') : null;
   if (!btn) return;
   var pref = btn.getAttribute('data-theme-opt');
@@ -4346,8 +4433,18 @@ function initials(name) {
    revealing the initials underneath — mirrors the ticker-logo onerror pattern.
    Unlike the ticker logo (decorative next to a visible ticker string), this
    photo is sometimes the ONLY identifier on screen (e.g. the cluster-card face
-   strip has no adjacent name text), so it always gets a real alt with the
-   politician's name rather than alt="". */
+   strip has no adjacent name text), so by default it gets a real alt with the
+   politician's name rather than alt="".
+   WEBA11Y P2 (mobile trade cards, tradesCardHtml()): most call sites DO have
+   an adjacent name — memberAvatarHtml() is immediately followed by a sibling
+   name element. When the whole thing sits inside one accessible-name-bearing
+   container (a role="button" row/card/link with no aria-label of its own),
+   the avatar's own text — fallback initials, plus the <img alt> when a photo
+   loaded — gets concatenated into that name RIGHT ALONGSIDE the sibling name
+   text, so AT users hear e.g. "JS John Smith John Smith" once for the
+   initials/alt and again for the visible name. Pass decorative=true from any
+   call site that already has its own adjacent, visible name text so the
+   avatar contributes nothing to the accessible name and the name reads once. */
 function partyBucketClass(raw) {
   var s = String(raw || '').trim();
   if (!s) return '';
@@ -4355,20 +4452,32 @@ function partyBucketClass(raw) {
   if (/^r/i.test(s) || /^rep/i.test(s)) return 'R';
   return 'O';
 }
-function memberAvatarHtml(name, photoUrl, party) {
+function memberAvatarHtml(name, photoUrl, party, decorative) {
+  var altText = decorative ? '' : esc(name || '');
   var img = photoUrl
-    ? '<img src="' + esc(photoUrl) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="this.remove()" />'
+    ? '<img src="' + esc(photoUrl) + '" alt="' + altText + '" loading="lazy" decoding="async" onerror="this.remove()" />'
     : '';
   var bucket = partyBucketClass(party);
   var ring = bucket ? ' party-' + bucket : '';
-  return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
+  var hidden = decorative ? ' aria-hidden="true"' : '';
+  return '<span class="avatar' + ring + '"' + hidden + '>' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
-  var b = el('banner');
-  if (!text) { b.style.display = 'none'; return; }
-  b.style.display = 'block';
-  b.className = 'banner' + (isErr ? ' err' : '');
-  b.textContent = text;
+  var nodes = document.querySelectorAll('#banner, .feed-banner');
+  for (var i = 0; i < nodes.length; i++) {
+    var b = nodes[i];
+    if (!text) {
+      b.hidden = true;
+      b.textContent = '';
+      b.style.display = 'none';
+      b.className = 'banner feed-banner';
+      continue;
+    }
+    b.hidden = false;
+    b.style.display = 'block';
+    b.className = 'banner feed-banner' + (isErr ? ' err' : '');
+    b.textContent = text;
+  }
 }
 function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
@@ -4423,7 +4532,7 @@ function isAuthError(e) { return !!(e && e.isAuth); }
    magic "click here for X, there for Y" on the list surface). */
 function memberCellHtml(r) {
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
-  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +
+  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket, true) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
@@ -4475,7 +4584,7 @@ function amountBarsHtml(tier) {
   return '<span class="amount-bars tier-' + tier + '" aria-hidden="true">' + bars + '</span>';
 }
 function amountCellHtml(r) {
-  if (!r || (r.min == null && r.max == null)) return '<span class="muted">—</span>';
+  if (!r || (r.min == null && r.max == null)) return '<span class="muted">bracket unavailable</span>';
   var tier = amountTier(r.min, r.max);
   var text = amountText(r.min, r.max);
   if (!tier) return '<span class="amount-range fc-amt-val">' + esc(text) + '</span>';
@@ -4522,7 +4631,7 @@ function tradesCardHtml(r) {
   var owner = ownerLabel(r.owner);
   var filedRel = relativeTimeText(r.filed || r.filedDate || r.firstSeenAt);
   var bits = [];
-  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket) +
+  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket, true) +
     '<span class="fc-member">' + ident.join(' · ') + '</span>');
   if (owner) bits.push('<span class="fc-owner">' + esc(owner) + '</span>');
   if (filedRel) bits.push('<span class="fc-filed" title="Official filed time">' + esc(filedRel) + '</span>');
@@ -4530,7 +4639,13 @@ function tradesCardHtml(r) {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
   }
-  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+  // No aria-label here (WEBA11Y-02): it used to replace the accessible name
+  // with just "TICKER by NAME", hiding Buy/Sell, the amount bracket and the
+  // date from screen-reader users.  Dropping it lets the card's own visible
+  // content (ticker, Buy/Sell badge, amount, date, member line) become the
+  // name, matching what a sighted user sees; the action hint is appended as
+  // a visually-hidden suffix instead of replacing the name.
+  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details">' +
     '<div class="fc-main">' +
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
@@ -4538,12 +4653,14 @@ function tradesCardHtml(r) {
       '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  ·  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
+    '<span class="fc-hint">Open trade details</span>' +
   '</article>';
 }
 function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
 function lagDays(r) { return daysBetween(r.txdate, lagBasisDate(r)); }
 function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
+  if (r && r.source === 'competitor_backfill') return 'Filing date was not supplied by the provider.';
   return 'Official filing date is not available for this row.';
 }
 /* Owner punch list #17 — timestamp semantics: this was labeled "Published"
@@ -4703,21 +4820,24 @@ function renderTradesHeader() {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    var sortAttrs = c.sort ? ' tabindex="0" role="button" aria-sort="none"' : '';
-    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
+    // No role="button" here: a <th> keeps its native columnheader role so
+    // aria-sort (set by updateSortIndicators()) stays valid ARIA (WEBA11Y-01).
+    // The actual interactive control is the real named <button> inside —
+    // native <button> semantics give Enter/Space activation for free, so no
+    // custom keydown handler is needed here anymore (WEBA11Y P2 follow-up:
+    // a bare tabindex'd <th> was announced only as a column header, with no
+    // indication that Enter/Space did anything).
+    var sortAttrs = c.sort ? ' aria-sort="none"' : '';
+    var inner = c.sort
+      ? '<button type="button" class="th-sort-btn" data-sort="' + c.sort + '">' + esc(c.label) + '<span class="arr" aria-hidden="true"></span></button>'
+      : esc(c.label);
+    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + inner + '</th>';
   }).join('');
-  var ths = head.querySelectorAll('th.sortable');
-  for (var i = 0; i < ths.length; i++) {
-    (function (th) {
-      th.onclick = function () { setSort(th.dataset.sort); };
-      // Sort headers are keyboard-focusable (tabindex+role=button above); Enter/Space
-      // activates them the same as a click, matching the trades-card keyboard pattern.
-      th.onkeydown = function (e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        setSort(th.dataset.sort);
-      };
-    })(ths[i]);
+  var btns = head.querySelectorAll('.th-sort-btn');
+  for (var i = 0; i < btns.length; i++) {
+    (function (btn) {
+      btn.onclick = function () { setSort(btn.dataset.sort); };
+    })(btns[i]);
   }
   // Re-init the resizable columns for the new header.
   var table = el('tradesTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
@@ -4878,6 +4998,12 @@ function makeTradesFilterMatcher() {
     return tradeRowMatchesSearch(r, q);
   };
 }
+// See the .row-open-btn CSS comment above for why this exists: a real,
+// named control dropped into a clickable table row's first cell, invisible
+// at rest and popped into view on keyboard focus.
+function rowOpenBtnHtml(attrName, attrValue, label) {
+  return '<button type="button" class="row-open-btn" ' + attrName + '="' + esc(attrValue) + '">' + esc(label) + '</button>';
+}
 function renderTrades() {
   var matchesActiveFilters = makeTradesFilterMatcher();
   var body = el('tradesBody');
@@ -4907,8 +5033,10 @@ function renderTrades() {
     updateTradesCountMsg(0); maybeInitResize(); syncTradesTableWidth(); return;
   }
   body.innerHTML = rows.map(function (r) {
-    var tds = cols.map(function (c) {
-      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + c.cell(r) + '</td>';
+    var tds = cols.map(function (c, i) {
+      var cell = c.cell(r);
+      if (i === 0) cell = rowOpenBtnHtml('data-txid', r.id, 'Open trade details') + cell;
+      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + cell + '</td>';
     }).join('');
     return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
@@ -5428,7 +5556,7 @@ function fetchPage() {
       tradesGated = !!data.gated;             // freemium: limited recent window
       updateGateRow();
       realDataLoaded = true;
-      setBanner('');                       // drop the illustrative banner
+      setBanner('');                       // hide feed-status until a real error
       setTradesKpis();
       renderTrades();
       return txs.length;
@@ -5483,7 +5611,7 @@ function handleTradesTextFilter() {
 }
 
 /* Mirror the feed filters + Trends window into the URL so a refresh or a
-   shared link restores them. These params (ft/fm/fty/fch/fw) are deliberately
+   shared link restores them. These params (fq/fty/fpa/fch/fw) are deliberately
    distinct from the deep-link params (?ticker=/?member=/?trade=), which open
    drawers instead of setting filters. */
 function syncFilterUrl() {
@@ -5495,6 +5623,7 @@ function syncFilterUrl() {
       ['ft', ''],
       ['fm', ''],
       ['fty', selectedSideParam('qSideGroup')],
+      ['fpa', partyParam('qPartyGroup')],
       ['fch', chamberParam('qChamber')],
       ['fw', getTrWindow()],
     ];
@@ -5513,14 +5642,15 @@ function restoreFiltersFromUrl() {
     else if (fq && el('qMember')) el('qMember').value = fq;
     var fty = sp.get('fty');
     if (fty) {
-      ['qSideGroup', 'trSideGroup'].forEach(function (gid) {
-        var g = el(gid); if (!g) return;
-        g.querySelectorAll('.side-chip').forEach(function (b) {
-          var on = b.getAttribute('data-side') === fty;
-          b.classList.toggle('on', on);
-          b.setAttribute('aria-pressed', on ? 'true' : 'false');
-        });
-      });
+      var sides = fty.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applySideSelection(sides);
+      try { localStorage.setItem('shared-sides-v1', JSON.stringify(sides)); } catch (_e) {}
+    }
+    var fpa = sp.get('fpa');
+    if (fpa) {
+      var parties = fpa.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      applyPartySelection(parties);
+      try { localStorage.setItem('shared-parties-v1', JSON.stringify(parties)); } catch (_e2) {}
     }
     var fch = sp.get('fch');
     if (fch) {
@@ -5735,47 +5865,45 @@ document.addEventListener('visibilitychange', function () {
 
 /* ============================ REVIEW ============================ */
 var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
+function setTabBadge(id, value) {
+  var node = el(id);
+  if (!node) return;
+  var n = Number(value) || 0;
+  if (n <= 0) {
+    node.hidden = true;
+    node.textContent = '';
+    node.classList.remove('is-on');
+    return;
+  }
+  node.hidden = false;
+  node.classList.add('is-on');
+  node.textContent = n > 99 ? '99+' : String(n);
+}
 function renderExtractionIncident(health, autopilot) {
-  var banner = el('extractIncidentBanner');
-  if (!banner) return;
+  var admin = canUseAdmin();
   var checks = (health && health.pipeline && health.pipeline.checks) || [];
   var halt = checks.filter(function (c) { return c.id === 'autopilot_halt'; })[0];
   var backlog = checks.filter(function (c) { return c.id === 'extraction_backlog'; })[0];
   var provider = checks.filter(function (c) { return c.id === 'extraction_provider'; })[0];
   var halted = !!(halt && halt.status && halt.status !== 'ok');
+  var stalledExtract = !!(provider && provider.status === 'stalled' && halted);
   var review = (health && health.pipeline && health.pipeline.reviewQueue)
     || (autopilot && autopilot.reviewQueue)
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
-  var show = halted || unresolved > 0;
-  banner.hidden = !show;
-  banner.classList.toggle('is-on', show);
-  var detail = el('extractIncidentDetail');
-  if (detail) {
-    var parts = [];
-    if (halted) parts.push(halt.detail || 'Autopilot is halted.');
-    else parts.push('Extraction is not halted.');
-    if (provider && provider.status && provider.status !== 'ok') parts.push(provider.detail);
-    detail.textContent = parts.filter(Boolean).join('  ');
-  }
-  var counts = el('extractIncidentCounts');
-  if (counts) {
-    counts.textContent = review
-      ? ('Unresolved ' + review.unresolved + '  ·  eligible ' + review.eligible
-        + '  ·  suppressed ' + review.suppressed + '  ·  terminal ' + review.terminal)
-      : (backlog && backlog.detail ? backlog.detail : '');
-  }
-  var ack = el('extractIncidentAck');
-  if (ack) ack.disabled = !halted || !canUseAdmin();
+  // No halt banner or Ack control.  Admins get nav badges only.
+  // Selector due-now drain publishes.
+  setTabBadge('reviewTabBadge', admin ? unresolved : 0);
+  setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
 }
 function loadExtractionIncident() {
+  if (!canUseAdmin()) {
+    renderExtractionIncident(null, null);
+    return Promise.resolve();
+  }
   return fetch('/api/health')
     .then(function (r) { return r.json(); })
     .then(function (health) {
-      if (!canUseAdmin()) {
-        renderExtractionIncident(health, null);
-        return health;
-      }
       return fetch('/api/admin/autopilot/status', { headers: adminHeaders() })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (autopilot) {
@@ -5789,23 +5917,6 @@ function loadExtractionIncident() {
     })
     .catch(function () { /* health read is best-effort */ });
 }
-function acknowledgeExtractionHalt() {
-  var msg = el('extractIncidentAckMsg');
-  if (msg) msg.textContent = 'Acknowledging…';
-  return fetch('/api/admin/autopilot/acknowledge', {
-    method: 'POST',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()),
-    body: '{}',
-  })
-    .then(okOrThrow)
-    .then(function () {
-      if (msg) msg.textContent = 'Halt acknowledged.  A new run can start on the next cron tick.';
-      return loadExtractionIncident();
-    })
-    .catch(function (e) {
-      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not acknowledge: ' + e.message);
-    });
-}
 function setReviewTab(resolved) {
   REVIEW_RESOLVED = resolved ? 1 : 0;
   var p = el('revTabPending'), rv = el('revTabReviewed');
@@ -5817,7 +5928,7 @@ function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
     REVIEW_TOTALS = null;
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
   }
@@ -6157,9 +6268,8 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
   var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
-  el('reviewCount').textContent = matchingTotal ? '(' + fmtCount(matchingTotal) + ')' : '';
+  if (canUseAdmin()) setTabBadge('reviewTabBadge', unresolvedTotal);
   if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = fmtCount(unresolvedTotal);
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
@@ -6343,6 +6453,7 @@ function consensusFieldDisplay(value) {
 }
 /* True iff a field's vote reached a strict majority (unanimous counts). */
 function consensusHasMajority(fc) { return Boolean(fc && fc.total > 0 && fc.votes * 2 > fc.total); }
+function consensusHasPlurality(fc) { return Boolean(fc && fc.value != null && fc.votes >= 2); }
 /* Green (every present model agreed), amber (a majority agreed, some
    dissent), or red (no majority — contested) — reuses the file's existing
    .conf hi/mid/lo confidence-color classes rather than new ones. */
@@ -6616,7 +6727,8 @@ function consensusQueuedRowKey(t) {
 /* Missing/null consensus values never erase a queued value. Contested rows are
    handled as a whole below and do not call this helper. */
 function consensusFieldValueForEdit(fc, queuedValue, rowAuthoritative) {
-  return (rowAuthoritative && consensusHasMajority(fc) && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
+  var usable = consensusHasMajority(fc) || consensusHasPlurality(fc);
+  return (rowAuthoritative && usable && fc.value != null && fc.value !== '') ? fc.value : queuedValue;
 }
 function consensusApplyField(target, row, consensusField, editField, rowAuthoritative) {
   var fc = row.fields && row.fields[consensusField];
@@ -7229,52 +7341,189 @@ function setAdminTokenMsg(text, kind) {
   // kind: 'ok' | 'err' | '' (neutral)
   msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
 }
-/* Persist the token, then probe a cheap admin GET so a wrong/missing value is
-   reported in Admin Access instead of only failing later on a random panel. */
-function saveAdminToken() {
-  var v = el('adminToken').value.trim();
+/* Shared core: persist the token (or clear it) and refresh every UI surface
+   that depends on admin visibility.  Used by BOTH the Admin tab's own box
+   and the standalone Admin Sign-In dialog (openAdminTokenDialog) below —
+   the dialog is how a signed-in, non-admin user reaches token bootstrap
+   WITHOUT the Admin tab ever becoming visible first (see adminMenuHtml). */
+function persistAdminToken(raw) {
+  var v = (raw || '').trim();
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   applyAdminVisibility();
   renderAccount();
   renderTradesHeader(); renderColChooser(); renderTrades();
+  return v;
+}
+/* Probe a cheap admin GET so a wrong/missing value is reported right where
+   it was pasted, instead of only failing later on a random panel. onMsg
+   is either setAdminTokenMsg or setAdminTokenDialogMsg; onAccepted is an
+   optional extra callback (the dialog uses it to auto-close). */
+function verifyAdminToken(v, onMsg, onAccepted) {
   if (!v) {
-    setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
-    setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
+    onMsg('Cleared — no admin token stored in this browser.', '');
+    setTimeout(function () { onMsg('', ''); }, 3500);
     return;
   }
-  setAdminTokenMsg('Checking token…', '');
+  onMsg('Checking token…', '');
   // API HOOK: GET /api/admin/poll-config — lightweight auth probe (same gate as other admin reads).
   fetch('/api/admin/poll-config', { headers: adminHeaders() })
     .then(function (r) {
       if (r.status === 401 || r.status === 403) {
-        setAdminTokenMsg('Token rejected — wrong value, expired, or server has no matching ADMIN_TOKEN / Access allowlist.', 'err');
+        onMsg('Token rejected — wrong value, expired, or server has no matching ADMIN_TOKEN / Access allowlist.', 'err');
         return null;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      setAdminTokenMsg('Token accepted — saved in this browser.', 'ok');
-      setTimeout(function () { setAdminTokenMsg('', ''); }, 4000);
+      onMsg('Token accepted — saved in this browser.', 'ok');
+      setTimeout(function () { onMsg('', ''); }, 4000);
+      if (typeof onAccepted === 'function') onAccepted();
       loadReview();
       loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
       loadLogoSetting();
+      loadAdminList();
       return r;
     })
     .catch(function (e) {
-      setAdminTokenMsg('Could not verify token: ' + (e && e.message ? e.message : 'network error'), 'err');
+      onMsg('Could not verify token: ' + (e && e.message ? e.message : 'network error'), 'err');
     });
 }
+function saveAdminToken() {
+  var v = persistAdminToken(el('adminToken') ? el('adminToken').value : '');
+  verifyAdminToken(v, setAdminTokenMsg);
+}
 function clearAdminToken() {
-  try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
+  persistAdminToken('');
   if (el('adminToken')) el('adminToken').value = '';
   setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
   setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
-  applyAdminVisibility();
-  renderAccount();
-  renderTradesHeader(); renderColChooser(); renderTrades();
 }
 // Populate the field from storage when the Admin tab opens.
 function initAdminToken() {
   var t = getAdminToken();
   if (t && el('adminToken')) el('adminToken').value = t;
+}
+
+/* ---- Standalone "Admin Sign-In" dialog (token bootstrap) ----
+   Reachable from the account menu for ANY signed-in user (adminMenuHtml),
+   independent of the gated Admin tab — pasting ADMIN_TOKEN here is the only
+   way a legitimate operator can unlock Admin/Review Queue without already
+   being one, now that those tabs no longer show for a non-admin. */
+function openAdminTokenDialog() {
+  var d = el('adminTokenDialog');
+  if (!d) return;
+  var input = el('adminTokenDialogInput');
+  if (input) input.value = getAdminToken();
+  setAdminTokenDialogMsg('', '');
+  if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);
+  try { if (d.showModal) d.showModal(); } catch (e) {}
+}
+function setAdminTokenDialogMsg(text, kind) {
+  var msg = el('adminTokenDialogMsg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
+}
+function saveAdminTokenFromDialog() {
+  var v = persistAdminToken(el('adminTokenDialogInput') ? el('adminTokenDialogInput').value : '');
+  if (el('adminToken')) el('adminToken').value = v; // keep the Admin tab's own box in sync once it's reachable
+  verifyAdminToken(v, setAdminTokenDialogMsg, function () {
+    var d = el('adminTokenDialog');
+    if (d && d.close) setTimeout(function () { d.close(); }, 900);
+  });
+}
+function clearAdminTokenFromDialog() {
+  persistAdminToken('');
+  if (el('adminTokenDialogInput')) el('adminTokenDialogInput').value = '';
+  if (el('adminToken')) el('adminToken').value = '';
+  setAdminTokenDialogMsg('Cleared — no admin token stored in this browser.', '');
+  setTimeout(function () { setAdminTokenDialogMsg('', ''); }, 3500);
+}
+
+/* ============================ ADMIN · ACCESS CONTROL ============================
+   Grant/revoke admin access for a user's email — in addition to ADMIN_EMAILS,
+   which stays the env-configured root bootstrap and is read-only here.
+   API HOOK: GET/POST /api/admin/admins, /api/admin/admins/grant|revoke. */
+function setAdminGrantMsg(text, kind) {
+  var msg = el('adminGrantMsg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
+}
+// Like okOrThrow, but parses the JSON body on non-2xx too so a validation
+// message from the server ("already an admin via ADMIN_EMAILS…", "cannot
+// revoke the last remaining admin") reaches the UI instead of a bare "HTTP 400".
+function adminMutationOk(r) {
+  if (r.status === 401 || r.status === 403) { var e = new Error(ADMIN_MOVED_MSG); e.isAuth = true; throw e; }
+  return r.json().catch(function () { return {}; }).then(function (data) {
+    if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+    return data;
+  });
+}
+function adminListRowHtml(email, grantedBy, grantedAt, revocable) {
+  var emailAttr = esc(email);
+  return '<tr>' +
+    '<td>' + emailAttr + '</td>' +
+    '<td class="muted">' + (revocable ? esc(grantedBy || '—') : 'ADMIN_EMAILS (environment)') + '</td>' +
+    '<td class="muted">' + (revocable ? esc(dateTimeText(grantedAt)) : '—') + '</td>' +
+    '<td style="text-align:right">' + (revocable
+      ? '<button class="btn ghost sm" type="button" data-revoke-admin-email="' + emailAttr + '" onclick="revokeAdminEmail(this.getAttribute(\\'data-revoke-admin-email\\'))">Revoke</button>'
+      : '<span class="note">not editable here</span>') +
+    '</td>' +
+  '</tr>';
+}
+function loadAdminList() {
+  var body = el('adminListBody');
+  if (!body) return Promise.resolve();
+  body.innerHTML = '<tr><td class="state" colspan="4">Loading…</td></tr>';
+  return fetch('/api/admin/admins', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var rows = (data.adminEmails || []).map(function (email) { return adminListRowHtml(email, null, null, false); })
+        .concat((data.granted || []).map(function (g) { return adminListRowHtml(g.email, g.grantedBy, g.grantedAt, true); }));
+      body.innerHTML = rows.length ? rows.join('') : '<tr><td class="state" colspan="4">No admins configured.</td></tr>';
+    })
+    .catch(function (e) {
+      body.innerHTML = '<tr><td class="state" colspan="4">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed to load: ' + e.message)) + '</td></tr>';
+    });
+}
+function grantAdminEmail() {
+  var input = el('adminGrantEmail');
+  var email = input ? input.value.trim() : '';
+  if (!email) { setAdminGrantMsg('Enter an email first.', 'err'); return; }
+  setAdminGrantMsg('Granting…', '');
+  fetch('/api/admin/admins/grant', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ email: email }),
+  })
+    .then(adminMutationOk)
+    .then(function () {
+      setAdminGrantMsg('Granted admin access to ' + email + '.', 'ok');
+      setTimeout(function () { setAdminGrantMsg('', ''); }, 4000);
+      if (input) input.value = '';
+      loadAdminList();
+    })
+    .catch(function (e) {
+      setAdminGrantMsg(isAuthError(e) ? ADMIN_MOVED_MSG : e.message, 'err');
+    });
+}
+function revokeAdminEmail(email) {
+  if (!email) return;
+  if (!window.confirm('Revoke admin access for ' + email + '?')) return;
+  setAdminGrantMsg('Revoking…', '');
+  fetch('/api/admin/admins/revoke', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ email: email }),
+  })
+    .then(adminMutationOk)
+    .then(function () {
+      setAdminGrantMsg('Revoked admin access for ' + email + '.', 'ok');
+      setTimeout(function () { setAdminGrantMsg('', ''); }, 4000);
+      loadAdminList();
+    })
+    .catch(function (e) {
+      setAdminGrantMsg(isAuthError(e) ? ADMIN_MOVED_MSG : e.message, 'err');
+    });
 }
 
 /* ============================ ADMIN · LOGOS (site-wide) ============================ */
@@ -9403,20 +9652,20 @@ function runMarketBackfill(dryRun) {
 /* ============================ TRENDS / ANALYTICS ============================ */
 /* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
 	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
-	var EST_VOLUME_TIP = 'Approximate, from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor. Treat as a rough order of magnitude, not an exact figure.';
-	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
-	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
-	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
+	var EST_VOLUME_TIP = 'Approximate stock volume from STOCK Act amount ranges.  Option premiums are excluded.  Closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor.  Treat as a rough order of magnitude, not an exact figure.';
+	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)).  A simple trade-count tilt, not dollar-weighted.';
+	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints on common stock only ($50M+ uses its floor).  Option premiums are excluded.  A very rough estimate of net direction, not an exact figure.';
+	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across this asset\u2019s disclosed common-stock trades, using STOCK Act bracket midpoints.  Option premiums are excluded.  A very rough estimate of net direction, not exact.';
 	// Trends "Trades" answers a different question than the Trades tab's own
-	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party
-	// chips above (default: past 90 days, all parties), while the Trades tab
+	// "N total": this counts trades in the Trends TIME WINDOW + chamber/party/side
+	// chips above (default: past 90 days, all parties, all sides), while the Trades tab
 	// counts whatever its own ticker/politician/date/chamber/party/side filters
 	// currently say, over its own separately paginated total. Both count the
 	// same underlying "real, disclosed trade" universe (synthetic/placeholder
 	// rows are excluded from both — see delivery/rows.ts + analytics/sql.ts),
 	// so a residual difference here is a scope difference, not a bug — this
 	// tip exists so that's obvious at a glance rather than a support question.
-	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party filters above — a different query than the Trades tab list, which has its own filters and total.';
+	var TRENDS_TRADES_TIP = 'Trades matching the time window + chamber/party/side filters above — a different query than the Trades tab list, which has its own filters and total.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(getTrWindow());
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
@@ -9427,9 +9676,11 @@ function trParams() {
     paGroup.querySelectorAll('.party-chip.on').forEach(function(b) { parties.push(b.getAttribute('data-party')); });
     if (parties.length > 0) p += '&party=' + parties.join(',');
   }
+  var ty = selectedSideParam('trSideGroup');
+  if (ty) p += '&type=' + encodeURIComponent(ty);
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'this_cy': 'This Calendar Year', 'last_cy': 'Last Calendar Year', 'all': 'All Time' };
+var TR_WINDOW_LABELS = { '1d': 'Day', '7d': 'Week', '30d': 'Month', '90d': '3 Months', '180d': '6 Months', '365d': 'Year', '1825d': '5 Years', 'this_cy': 'This Year', 'last_cy': 'Last Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Headings no longer stamp the
@@ -9448,18 +9699,31 @@ function stampWindowChips() {
    inside the feed's own cadence, so nothing here goes visibly stale. */
 var AGET_CACHE = {};
 var AGET_TTL_MS = 60000;
+/* APICONTRACT-01: never let a query marker ride inside a path segment. If a
+   caller percent-encoded member/id?window= into the path, peel it back out. */
+function analyticsUrl(path) {
+  var decoded = path;
+  try { decoded = decodeURIComponent(path); } catch (e) { /* keep raw */ }
+  var q = decoded.indexOf('?');
+  var pathname = q >= 0 ? decoded.slice(0, q) : decoded;
+  var search = q >= 0 ? decoded.slice(q + 1) : '';
+  var url = '/api/analytics/' + pathname;
+  if (search) url += '?' + search;
+  return url;
+}
 function aGet(path) {
   var now = Date.now();
-  var hit = AGET_CACHE[path];
+  var url = analyticsUrl(path);
+  var hit = AGET_CACHE[url];
   if (hit && hit.data !== undefined && now - hit.at < AGET_TTL_MS) return Promise.resolve(hit.data);
   if (hit && hit.promise) return hit.promise;
-  var entry = AGET_CACHE[path] = { data: undefined, at: 0, promise: null };
-  entry.promise = fetch('/api/analytics/' + path)
+  var entry = AGET_CACHE[url] = { data: undefined, at: 0, promise: null };
+  entry.promise = fetch(url)
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     })
     .then(function (d) { entry.data = d; entry.at = Date.now(); entry.promise = null; return d; })
-    .catch(function (e) { delete AGET_CACHE[path]; throw e; });
+    .catch(function (e) { delete AGET_CACHE[url]; throw e; });
   return entry.promise;
 }
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
@@ -9478,7 +9742,8 @@ function usdC(n) {
 function netHtml(n) {
   n = Number(n || 0);
   var cls = n > 0 ? 'pos' : n < 0 ? 'neg' : '';
-  return '<span class="net ' + cls + '">' + (n > 0 ? '+' : '') + usdC(n) + '</span>';
+  var sign = n > 0 ? '+' : n < 0 ? '\u2212' : '';
+  return '<span class="net kpi-money ' + cls + '">' + sign + usdC(Math.abs(n)) + '</span>';
 }
 function splitBar(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
@@ -9659,49 +9924,17 @@ function timeChartHtml(series, labelStep, metric) {
 
 function loadTrends() {
   stampWindowChips();
-  loadTrSummary(); loadTrExtremes(); loadTrTickers(); loadTrTrending(); loadTrClusters();
+  syncRisingActivityVisibility();
+  loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
   loadTrConflicts();
 }
-function loadTrExtremes() {
-  var buyBox = el('trLargestBuys');
-  var sellBox = el('trLargestSells');
-  if (!buyBox || !sellBox) return;
-  buyBox.innerHTML = skRows(5, 2);
-  sellBox.innerHTML = skRows(5, 2);
-  aGet('ticker-leaderboard?' + trParams() + '&sort=volume&limit=40').then(function (d) {
-    var rows = d.tickers || [];
-    function sideVol(r, side) {
-      var vol = Number(r.estVolumeUsd) || 0;
-      var net = Number(r.estNetFlowUsd) || 0;
-      var buy = Math.max(0, (vol + net) / 2);
-      var sell = Math.max(0, (vol - net) / 2);
-      return side === 'B' ? buy : sell;
-    }
-    function paint(box, side) {
-      var list = rows.slice().filter(function (r) { return sideVol(r, side) > 0; })
-        .sort(function (a, b) { return sideVol(b, side) - sideVol(a, side); })
-        .slice(0, 8);
-      if (!list.length) {
-        box.innerHTML = stateRow(2, 'No ' + (side === 'B' ? 'buys' : 'sells') + ' in this window.');
-        return;
-      }
-      box.innerHTML = list.map(function (r) {
-        return '<tr class="row clickable" data-asset="' + esc(r.ticker) + '" title="Open company">' +
-          '<td><div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) +
-            '<div><span class="tkr">' + esc(r.ticker) + '</span>' +
-            (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') +
-            '</div></div></td>' +
-          '<td class="est">' + estUsd(sideVol(r, side)) + '</td></tr>';
-      }).join('');
-    }
-    paint(buyBox, 'B');
-    paint(sellBox, 'S');
-  }).catch(function (e) {
-    buyBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
-    sellBox.innerHTML = stateRow(2, 'Could not load: ' + e.message);
-  });
+function syncRisingActivityVisibility() {
+  var fold = el('trRisingFold');
+  if (!fold) return;
+  var hide = getTrWindow() === 'all';
+  fold.hidden = hide;
 }
 
 /* Committee sector conflicts for the current Trends window. */
@@ -9900,6 +10133,9 @@ function syncPeopleSortIndicators() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.getAttribute('data-sort') === PEOPLE_SORT.key) {
       th.classList.add(PEOPLE_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+      th.setAttribute('aria-sort', PEOPLE_SORT.dir > 0 ? 'ascending' : 'descending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
     }
   }
 }
@@ -9943,8 +10179,12 @@ function renderPeopleDirectory(all) {
   }
   body.innerHTML = rows.map(function (m) {
     var name = fmtName(m.fullName || m.filerId || 'Unknown');
+    // Real <a href> (SEOSOCIAL-02) when the row resolves to a filer id, so
+    // the Directory table is a page of genuine, crawlable politician links —
+    // not just click targets a script has to intercept to be useful at all.
+    var memberTag = m.filerId ? 'a' : 'div';
     var memberAttr = m.filerId
-      ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
+      ? ' class="member-cell clickable" href="' + esc(entityHref('member', m.filerId)) + '" data-member="' + esc(m.filerId) + '" title="Open ' + esc(name) + '"'
       : ' class="member-cell"';
     var parts = [];
     if (isExecutiveFiler(m.chamber, m.filerId)) {
@@ -9965,7 +10205,7 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td class="col-fill"><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></div></td>' +
+      '<td class="col-fill"><' + memberTag + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party, true) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></' + memberTag + '></td>' +
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
@@ -10134,9 +10374,13 @@ function renderAssetsDirectory(all) {
       : (' title="' + esc(title) + '"');
     var cellClass = tkr ? 'dir-asset-cell clickable' : 'dir-asset-cell';
     var dataAttr = tkr ? (' data-asset="' + esc(tkr) + '"') : '';
+    // Real <a href> (SEOSOCIAL-02) only when there's an actual ticker to link
+    // to — a fund/asset with no symbol has nowhere crawlable to point.
+    var assetTag = tkr ? 'a' : 'div';
+    var hrefAttr = tkr ? (' href="' + esc(entityHref('ticker', tkr)) + '"') : '';
     return '<tr class="row"' + openAttr + '>' +
-      '<td class="col-fill"><div class="' + cellClass + '"' + dataAttr + '>' + logo +
-        '<div class="dir-asset-text cell-clip" title="' + esc(title) + '">' + labelHtml + '</div></div></td>' +
+      '<td class="col-fill"><' + assetTag + ' class="' + cellClass + '"' + hrefAttr + dataAttr + '>' + logo +
+        '<div class="dir-asset-text cell-clip" title="' + esc(title) + '">' + labelHtml + '</div></' + assetTag + '></td>' +
       '<td class="col-num muted">' + (a.txCount != null ? fmtCount(a.txCount) : '—') + '</td>' +
       '<td class="col-num muted">' + (a.memberCount != null ? fmtCount(a.memberCount) : '—') + '</td></tr>';
   }).join('');
@@ -10242,11 +10486,21 @@ function leadFigureHtml(secs, opts) {
     '<span class="lead-word">' + esc(leadWord(dir)) + '</span>' +
     '</span>';
 }
+/* Public lanes only: probe running and coverage join not known-broken. */
+function isLatencyComparisonPublic(p) {
+  if (!p) return false;
+  if (p.publiclyShown === true) return true;
+  if (p.publiclyShown === false) return false;
+  if ((p.operationalStatus || 'unknown') !== 'running') return false;
+  if (p.coverageIntegrity === 'contradiction') return false;
+  return true;
+}
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
   var best = null;
   (d.providers || []).filter(function (p) {
-    return p.matched >= SPEED_LANE_MIN_MATCHED && p.comparisonStatus === 'usable' &&
+    return isLatencyComparisonPublic(p) &&
+      p.matched >= SPEED_LANE_MIN_MATCHED && p.comparisonStatus === 'usable' &&
       Number(p.ctCoveragePct) >= SPEED_MIN_COVERAGE_PCT && Number(p.providerCoveragePct) >= SPEED_MIN_COVERAGE_PCT;
   })
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
@@ -10263,7 +10517,7 @@ function isLatencyAhead(summary) {
   if (!summary || !summary.providers) return false;
   var ahead = 0, behind = 0;
   (summary.providers || []).forEach(function (p) {
-    if (!p || p.operationalStatus === 'off') return;
+    if (!isLatencyComparisonPublic(p)) return;
     var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0, ties = p.tieCount || 0;
     var deltaSample = wins + losses + ties;
     var hasLead = p.avgLeadSec != null || p.medianLeadSec != null;
@@ -10338,13 +10592,19 @@ function spScopeNoteHtml(totals) {
   var note = (totals && totals.scopeLabel) ? esc(String(totals.scopeLabel)) : SPEED_SCOPE_NOTE_DEFAULT;
   return spScopeCountHtml(c) + '.&nbsp; ' + note;
 }
-/* Build a single provider scorecard card. */
-function spCardHtml(p) {
+function spVisibilityBadgeHtml(p) {
+  return isLatencyComparisonPublic(p)
+    ? '<span class="sp-badge shown">Shown Publicly</span>'
+    : '<span class="sp-badge hidden-public">Hidden From Public</span>';
+}
+/* Build a single provider scorecard card. admin=true adds Shown/Hidden chips. */
+function spCardHtml(p, admin) {
+  var vis = admin ? spVisibilityBadgeHtml(p) : '';
   /* Intentional OFF (grey) — FMP family default until operator enables probes. */
   if (p.operationalStatus === 'off') {
     return '<div class="sp-card sp-off">' +
       '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
-      '<span class="sp-badge off">OFF</span></div>' +
+      '<span class="sp-header-end">' + vis + '<span class="sp-badge off">OFF</span></span></div>' +
       '<div class="sp-gathering">Intentionally disabled (no API spend). Enable with <code>FMP_LATENCY_PROBE_ENABLED=true</code>.</div>' +
       '</div>';
   }
@@ -10386,7 +10646,7 @@ function spCardHtml(p) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
-    '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
+    '<span class="sp-header-end">' + vis + '<span class="' + badgeCls + '">' + badgeTxt + '</span></span></div>';
 
   /* Win-rate bar */
   var barHtml = '';
@@ -10470,11 +10730,12 @@ function spCardHtml(p) {
   return '<div class="' + cardCls + '">' + header + spScopeHtml(p) + barHtml + leadHtml + wlt + '</div>';
 }
 /* Raw data table rows shared by both placements (inside their <details>). */
-function speedTableRowsHtml(provs) {
+function speedTableRowsHtml(provs, admin) {
   return provs.map(function (p) {
     function td(v) { return '<td>' + v + '</td>'; }
     var strong = p.strongMatched != null ? p.strongMatched : p.matched;
-    return '<tr>' + td(esc(p.label)) + td(fmtCount(p.matched) + ' / ' + fmtCount(strong) + ' / ' + fmtCount(p.candidates)) +
+    var publicCell = admin ? td(isLatencyComparisonPublic(p) ? 'Shown' : 'Hidden') : '';
+    return '<tr>' + td(esc(p.label)) + publicCell + td(fmtCount(p.matched) + ' / ' + fmtCount(strong) + ' / ' + fmtCount(p.candidates)) +
       td(fmtCount(p.maturedMatched || 0) + ' / ' + fmtCount(p.maturedProviderObserved || 0)) +
       td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
       td(fmtCount(p.unmatchedProvider || 0)) + td(p.comparisonStatus || 'insufficient') +
@@ -10492,7 +10753,7 @@ function priceEdgeHtml(edge) {
   for (var i = 0; i < edge.length; i++) {
     var b = edge[i];
     if (!b || !b.n || b.medianBps == null) continue;
-    var label = b.event === 'provider_plus_5m' ? '5 min' : b.event === 'provider_plus_30m' ? '30 min' : '60 min';
+    var label = b.event === 'provider_plus_5m' ? '5 min' : b.event === 'provider_plus_15m' ? '15 min' : b.event === 'provider_plus_30m' ? '30 min' : '60 min';
     var dir = b.medianBps > 0 ? 'up' : (b.medianBps < 0 ? 'down' : 'flat');
     bits.push(label + ' ' + dir + ' ' + Math.abs(Number(b.medianBps)).toFixed(1) + ' bps (n=' + b.n + ')');
   }
@@ -10508,11 +10769,11 @@ function speedScopeFromSummary(d) {
     scopeLabel: t.scopeLabel || s.label || null,
   };
 }
-function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge) {
+function paintSpeedSection(gridId, tableBodyId, noteId, provs, totals, priceEdge, admin) {
   var grid = el(gridId);
-  if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+  if (grid) grid.innerHTML = provs.map(function (p) { return spCardHtml(p, admin); }).join('');
   var tb = el(tableBodyId);
-  if (tb) tb.innerHTML = speedTableRowsHtml(provs);
+  if (tb) tb.innerHTML = speedTableRowsHtml(provs, admin);
   var note = el(noteId);
   if (note) {
     var html = (spScopeNoteHtml(totals) || '') + priceEdgeHtml(priceEdge);
@@ -10534,18 +10795,20 @@ function renderSpeedProof() {
   var adminBox = el('adminLatencySection');
   if (!publicBox && !adminBox && !publicLink) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).slice()
-      .sort(function (a, b) { return b.matched - a.matched; });
-    var hasData = !!(d.totals && d.totals.racedDisclosures && provs.length);
+    function byMatched(a, b) { return b.matched - a.matched; }
+    var adminProvs = (d.adminProviders && d.adminProviders.length ? d.adminProviders : (d.providers || [])).slice().sort(byMatched);
+    var publicProvs = (d.providers || []).filter(isLatencyComparisonPublic).slice().sort(byMatched);
+    var hasAdminData = !!(d.totals && d.totals.racedDisclosures && adminProvs.length);
+    var hasPublicData = !!(d.totals && d.totals.racedDisclosures && publicProvs.length);
 
     if (adminBox) {
-      adminBox.hidden = !hasData;
-      if (hasData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', provs, speedScopeFromSummary(d), d.priceEdge);
+      adminBox.hidden = !hasAdminData;
+      if (hasAdminData) paintSpeedSection('spGridAdmin', 'speedTableBodyAdmin', 'spScopeNoteAdmin', adminProvs, speedScopeFromSummary(d), d.priceEdge, true);
     }
-    var ahead = hasData && isLatencyAhead(d);
+    var ahead = hasPublicData && isLatencyAhead({ providers: publicProvs });
     if (publicBox) {
       publicBox.hidden = !ahead;
-      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', provs, speedScopeFromSummary(d), d.priceEdge);
+      if (ahead) paintSpeedSection('spGrid', 'speedTableBody', 'spScopeNote', publicProvs, speedScopeFromSummary(d), d.priceEdge, false);
     }
     if (publicLink) publicLink.hidden = !ahead;
 
@@ -10668,7 +10931,7 @@ function loadTrPerformers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
@@ -10687,12 +10950,12 @@ function loadTrSummary() {
   ]).then(function (res) {
     var d = res[0];
     var s = res[1].series || [];
-    var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    var sent = d.netSentiment == null ? '—' : '<span class="bp"><span class="bp-n">' + Math.round(d.netSentiment * 100) + '</span><span class="bp-pct">%</span><span class="bp-w">buys</span></span>';
     var sparkNetFlow = sparklineHtml(s, 'netflow');
     var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
       kpi('Trades', d.totalTrades, TRENDS_TRADES_TIP) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(d.optionCount)) + 
       kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
       kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
@@ -10704,10 +10967,18 @@ function loadTrTickers() {
   var sortVal = trTickerSortVal || 'trades';
   var queryParams = trParams() + '&sort=' + sortVal + '&limit=15';
 
-  // Update header sort icons
+  // Update header sort icons + aria-sort together (WEBA11Y P2: this table
+  // never exposed aria-sort before — only the visual .sort-icon updated —
+  // so a screen-reader user got no indication which column, or direction,
+  // the leaderboard was sorted by).  Always descending: there is no asc/desc
+  // toggle for this table, only a choice of metric.
   var icons = document.querySelectorAll('#tableTrTickers .sort-icon');
   for (var i = 0; i < icons.length; i++) {
     icons[i].innerHTML = icons[i].getAttribute('data-sort') === sortVal ? ' ▼' : '';
+  }
+  var sortThs = document.querySelectorAll('#tableTrTickers th[data-sort]');
+  for (var j = 0; j < sortThs.length; j++) {
+    sortThs[j].setAttribute('aria-sort', sortThs[j].getAttribute('data-sort') === sortVal ? 'descending' : 'none');
   }
 
   aGet('ticker-leaderboard?' + queryParams).then(function (d) {
@@ -10726,6 +10997,12 @@ function loadTrTickers() {
 }
 
 function loadTrTrending() {
+  syncRisingActivityVisibility();
+  if (getTrWindow() === 'all') {
+    var empty = el('trTrending');
+    if (empty) empty.innerHTML = '';
+    return;
+  }
   var body = el('trTrending');
   body.innerHTML = skRows(4, 6);
   var queryParams = trParams() + '&limit=12';
@@ -10813,7 +11090,7 @@ function loadTrMembers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
@@ -10914,7 +11191,7 @@ function loadTrLag() {
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
       var maxTip = 'Max: longest single trade-to-filing delay for this filer in the selected window. ' + basis;
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
-      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<div>' +
+      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party, true) + '<div>' +
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
@@ -10977,6 +11254,9 @@ document.addEventListener('keydown', function (e) {
 /* One reusable right-side drawer, filled per type: trade / asset / politician.
    Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
    quiet note until a market-data key is configured. */
+// Last-resort accessible name for the drawer dialog (see openDrawer() below) —
+// every current call site passes its own state-specific title instead.
+var DRAWER_DEFAULT_TITLE = 'Details';
 function openDrawer(html, topbarTitle) {
   closePanels();
   // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
@@ -10987,11 +11267,19 @@ function openDrawer(html, topbarTitle) {
   var wasOpen = drawer.classList.contains('open');
   el('detailDrawerBody').innerHTML = html;
   // Owner punch list #13(f): the sticky topbar reads like "SOLD $1k-$15k of
-  // ARCC | Ares Capital Corporation" instead of sitting empty. Callers that
-  // pass nothing (loading/error states, or a drawer type with nothing
-  // meaningful to summarize) leave it blank rather than showing a stale title.
+  // ARCC | Ares Capital Corporation" instead of a stale title held over from
+  // whatever was open before.
+  // WEBA11Y P2: #drawerTopbarTitle is also the dialog's aria-labelledby
+  // target (see the .drawer-panel markup below), so leaving it empty here —
+  // as every loading/error caller used to, by simply not passing a second
+  // argument — pointed the dialog's accessible name at nothing: a screen
+  // reader landing in the dialog while a trade/asset/politician was loading,
+  // or after a fetch failed, heard an unnamed dialog.  Every call site now
+  // passes a real, state-specific title (e.g. "Loading trade…", "Trade not
+  // found"); DRAWER_DEFAULT_TITLE is only a last-resort safety net for a
+  // caller that forgets to, so the name is never blank in ANY state.
   var titleEl = el('drawerTopbarTitle');
-  if (titleEl) titleEl.innerHTML = topbarTitle || '';
+  if (titleEl) titleEl.innerHTML = topbarTitle || DRAWER_DEFAULT_TITLE;
   var p = document.querySelector('#detailDrawer .drawer-panel');
   // Start off-screen, then open on the next frame so CSS transitions/animations
   // actually run (display:none → block alone does not interpolate transform).
@@ -11014,18 +11302,52 @@ function closeDrawer() {
   var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawer').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
+  // SEOSOCIAL-04: undo the drawer-open title change back to whatever the
+  // active tab's title is (or the bare site name for Trends/no tab active).
+  if (wasOpen) {
+    var activeTab = document.querySelector('nav.tabs a.active');
+    var activeView = activeTab ? activeTab.getAttribute('data-view') : null;
+    setDocumentTitle(activeView ? TAB_PAGE_TITLES[activeView] : null);
+  }
 }
 /* Deep links: every drawer gets a shareable URL (?ticker= / ?member= / ?trade=)
-   via a "Copy link" action; openDeepLink() below restores the drawer on boot. */
-function copyLinkHtml(param, value, label) {
-  return '<a class="drawer-all-link clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
+   as TWO separate controls — a real navigable link and a copy-to-clipboard
+   button; openDeepLink() below restores the drawer on boot.
+   SEOSOCIAL-02 (crawlable permalink) and WEBA11Y-08 (a real, focusable copy
+   control) both landed as changes to this ONE "Copy link" element, which
+   made them mutually exclusive: a href-less <a> is a real link with no
+   working navigation (fails SEOSOCIAL-02), while a <button> alone has no
+   href for crawlers, right-click "open in new tab", or middle-click (fails
+   WEBA11Y-08's intent — a control shouldn't lie about what it is). Splitting
+   into an <a href> that only navigates and a <button> that only copies keeps
+   both properties true at once, each on the control that actually has it. */
+function copyLinkHtml(param, value, entityLabel) {
+  // SEOSOCIAL-02: reuses the same entityHref() the Directory member/ticker
+  // cells and drawer-open links use — one URL builder, not a second copy of
+  // the '/?param=value' construction.  A genuine <a href>, left to navigate
+  // normally (no click-time preventDefault/SPA takeover): landing back on
+  // '/' with this same query re-opens this exact drawer on boot via
+  // openDeepLink(), so a full navigation still ends up in the right place,
+  // and open-in-new-tab / middle-click / crawler-follow all just work.
+  var href = entityHref(param, value);
+  // WEBA11Y-08: copying is a SEPARATE real <button>, not the href-less <a>
+  // that used to double as both — that was unfocusable via Tab and announced
+  // to assistive tech as a link that goes nowhere, when activating it
+  // actually copied to the clipboard.  aria-label spells out what gets
+  // copied; the visible text is a prefix of it (WCAG 2.5.3 Label in Name).
+  // A successful copy announces through the existing polite toast live
+  // region (#toast, role="status" aria-live="polite") with "Link copied."
+  return '<span class="drawer-link-row">' +
+    '<a class="drawer-all-link clickable" href="' + esc(href) + '">🔗 ' + esc(entityLabel) + '</a>' +
+    '<button type="button" class="drawer-copy-link-btn clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '" aria-label="Copy Link to ' + esc(entityLabel) + '’s page">📋 Copy Link</button>' +
+    '</span>';
 }
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-copy-param]') : null;
   if (!b) return;
   var u = new URL(window.location.origin + '/');
   u.searchParams.set(b.getAttribute('data-copy-param'), b.getAttribute('data-copy-value') || '');
-  copyText(u.toString());
+  copyText(u.toString(), 'Link copied.');
 });
 /* Client-side mirror of TICKER_RESOLVED_SQL (src/analytics/sql.ts): the server
    only treats a ticker as resolved when it is non-empty and not one of the
@@ -11078,8 +11400,13 @@ function actionBadge(type) {
   return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
 }
 function amountText(min, max) {
-  if (min == null && max == null) return '—';
+  if (min == null && max == null) return 'bracket unavailable';
   return fmtBracketAmount(min) + ' - ' + (max == null ? '+' : fmtBracketAmount(max));
+}
+function optionFootnote(n) {
+  n = Number(n || 0);
+  if (n <= 0) return '';
+  return '<div class="kpi-note muted">incl. ' + fmtCount(n) + ' option trade' + (n === 1 ? '' : 's') + '</div>';
 }
 function daysBetween(aIso, bIso) {
   var a = Date.parse(aIso), b = Date.parse(bIso);
@@ -11257,7 +11584,7 @@ function analyticsTradeRow(t, ctx) {
 /* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
 function openAsset(ticker) {
   if (!ticker) return;
-  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
+  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>', 'Loading ' + esc(ticker) + '…');
   // Follow the Trends window if it's on the page; fall back to all-time when the
   // drawer is opened from a context without the window selector (feed, search).
   var tickerWindow = document.querySelector('.tr-window-select') ? getTrWindow() : 'all';
@@ -11265,10 +11592,10 @@ function openAsset(ticker) {
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
     : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
-  aGet('ticker/' + encodeURIComponent(ticker) + '?window=' + encodeURIComponent(tickerWindow)).then(function (d) {
+  aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
     var s = d.summary || {};
     var companyName = (d.ref && d.ref.companyName) || d.name || '';
-    var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
+    var sent = s.netSentiment == null ? '—' : '<span class="bp"><span class="bp-n">' + Math.round(s.netSentiment * 100) + '</span><span class="bp-pct">%</span><span class="bp-w">buys</span></span>';
     var ser = d.series || [];
     var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
     // Owner punch list #18(b): bars are one bucket wide — say so once when the
@@ -11284,7 +11611,7 @@ function openAsset(ticker) {
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
         return '<div class="hbar ledger" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + '>' +
-          memberAvatarHtml(name, m.photoUrl, m.partyBucket) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          memberAvatarHtml(name, m.photoUrl, m.partyBucket, true) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
     }
@@ -11297,13 +11624,14 @@ function openAsset(ticker) {
       // Owner punch list #18(d): the "M" manual-entry badge is dropped from
       // this table — the note stays put inside the trade drawer's own details.
       var actionCell = actionBadge(t.txType);
-      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
+      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + rowOpenBtnHtml('data-txid', tradeRow.id, 'Open trade details') + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionCell + '</td>' +
         '<td>' + member + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     // Owner punch list #13(f): sticky-header summary for the ticker drawer.
     var topbarTitle = esc(d.ticker) + ((companyName && companyName !== d.ticker) ? '<span class="dot-sep">  |  </span>' + esc(companyName) : '');
+    setDocumentTitle(d.ticker); // SEOSOCIAL-04: drawer-open path
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
 	      // These come from the windowed stats block, same as the KPI strip below —
@@ -11311,7 +11639,7 @@ function openAsset(ticker) {
 	      '<p class="dsub">' + fmtCount(s.totalTrades || 0) + ' trades  |  ' + fmtCount(s.memberCount || 0) + ' politicians  |  ' + estUsd(s.estVolumeUsd) + ' approx. volume  |  ' + esc(tickerWindowLabel) + '</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
-	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
+	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP, null, optionFootnote(s.optionCount)) +
         kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + chartCaption + '</div>' +
       '<div class="drawer-section"><h3>Performance After Buys</h3><div id="assetPerf"><div class="note">Loading performance…</div></div></div>' +
@@ -11319,17 +11647,17 @@ function openAsset(ticker) {
         '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>',
+      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, d.ticker) + '</div>',
       topbarTitle
     );
     // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
-    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?window=' + encodeURIComponent(tickerWindow)).then(function (bt) {
+    aGet('ticker/' + encodeURIComponent(ticker) + '/backtest?' + trParams()).then(function (bt) {
       var pEl = el('assetPerf'); if (pEl) pEl.innerHTML = tickerBacktestHtml(bt);
     }).catch(function () {
       var pEl = el('assetPerf');
       if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
     });
-  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
+  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>', 'Could not load ' + esc(ticker)); });
 }
 
 /* Buy-cohort backtest summary for the asset drawer. */
@@ -11368,8 +11696,8 @@ function tickerBacktestHtml(d) {
 /* ---- politician drawer (/api/analytics/member/:filerId) ---- */
 function openMember(filerId) {
   if (!filerId) return;
-  openDrawer('<div class="note">Loading politician…</div>');
-  aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
+  openDrawer('<div class="note">Loading politician…</div>', 'Loading politician…');
+  aGet('member/' + encodeURIComponent(filerId) + '?' + trParams()).then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
@@ -11406,17 +11734,16 @@ function openMember(filerId) {
         ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
       var actionCell = actionBadge(t.txType) + (t.source === 'manual' ? '<span class="badge sm ghost" style="margin-left:4px" title="Manual Entry">M</span>' : '');
-      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateOnlyHtml(t) + '</td>' +
+      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + rowOpenBtnHtml('data-txid', tradeRow.id, 'Open trade details') + miniTradeDateOnlyHtml(t) + '</td>' +
         '<td>' + actionCell + '</td><td>' + assetCell + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
+    setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
+      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
-      // This drawer is always loaded with window=all, so its figures cover the
-      // whole record — the Trades tab's own count is scoped to the active time
-      // window and will read much smaller for the same politician. Say which.
-      '<div class="drawer-section"><h3>Trade Stats (All Time)</h3><dl class="drawer-kv">' +
+      // Same shared chips as Trends (window/chamber/party/side) via trParams().
+      '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', fmtCount(st.totalTrades || 0)) + kvRow('Buys / Sells', fmtCount(st.buyCount || 0) + ' / ' + fmtCount(st.sellCount || 0)) +
 	        kvRow('Distinct Assets', fmtCount(st.uniqueAssets || st.uniqueTickers || 0)) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
@@ -11425,18 +11752,18 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>',
+      '<div class="drawer-section">' + copyLinkHtml('member', filerId, name) + '</div>',
       // Owner punch list #13(f): sticky-header summary — the politician's name.
       esc(name)
     );
     // Lazy-load dual-anchor buy skill (trade-date approx + filing-date copy-trade).
-    aGet('member/' + encodeURIComponent(filerId) + '/performance?window=all').then(function (perf) {
+    aGet('member/' + encodeURIComponent(filerId) + '/performance?' + trParams()).then(function (perf) {
       var pEl = el('memberPerf'); if (pEl) pEl.innerHTML = memberPerfHtml(perf);
     }).catch(function () {
       var pEl = el('memberPerf');
       if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
     });
-  }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>'); });
+  }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>', 'Could not load politician'); });
 }
 
 /* Dual-anchor politician skill: trade-date (their timing) + filing-date (copy-trade). Buys only. */
@@ -11513,7 +11840,7 @@ function openTrade(row) {
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party, true) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -11581,7 +11908,7 @@ function openTrade(row) {
   // drawer as the Company Details / Politician Details buttons in the header —
   // one destination, two controls, and another restatement of both names. The
   // header buttons win; only the share link stays here.
-  var links = row.id ? '<div class="drawer-section">' + copyLinkHtml('trade', row.id, 'Copy link to this trade') + '</div>' : '';
+  var links = row.id ? '<div class="drawer-section">' + copyLinkHtml('trade', row.id, 'this trade') + '</div>' : '';
   // Owner punch list #13(f): sticky-header one-liner instead of an empty bar,
   // e.g. "SOLD  $1k - $15k  of  ARCC". One entity token only: the ticker when
   // there is one, the asset name when there isn't — the hero identity card
@@ -11682,13 +12009,14 @@ function applyAdminVisibility() {
   // section on the Alerts tab). Default hidden in markup so anon never
   // flashes them before /auth/me resolves.
   document.querySelectorAll('[data-admin-only]').forEach(function (n) { n.hidden = !allowed; });
-  var active = document.querySelector('nav.tabs button.active');
+  var active = document.querySelector('nav.tabs a.active');
   if (!allowed && active && active.getAttribute('data-admin-tab') === 'true') {
-    var trends = document.querySelector('nav.tabs button[data-view="trends"]');
+    var trends = document.querySelector('nav.tabs a[data-view="trends"]');
     if (trends) trends.click();
   }
   if (!allowed) {
-    if (el('reviewCount')) el('reviewCount').textContent = '';
+    if (el('reviewTabBadge')) { el('reviewTabBadge').hidden = true; el('reviewTabBadge').textContent = ''; el('reviewTabBadge').classList.remove('is-on'); }
+    setTabBadge('adminTabBadge', 0);
     if (el('kpiReview')) el('kpiReview').textContent = '—';
   }
 }
@@ -11730,18 +12058,27 @@ function loadMe() {
 /* Owner punch list #3: the short footer disclaimer line, reused verbatim
    inside the hamburger menu (below Sign Out / below Upgrade). Keep this in
    sync with the <footer> markup's own copy of the same sentence. */
-var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets';
+var FOOTER_DISCLAIMER_TEXT = 'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
 function acctMobileDisclaimerHtml() {
   return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
 }
 function adminMenuHtml(closeCall) {
-  // Always list Admin + Review for signed-in users (and guests with a stored
-  // token) so the Admin Access box stays reachable.  Hiding these until
-  // canUseAdmin() made token paste impossible after the tabs left the bar.
-  if (!ME.user && !hasAdminToken()) return '';
+  // Premium alone never grants Admin / Review Queue — only a real admin
+  // (ME.admin.allowed, i.e. ADMIN_EMAILS or a granted email) or a valid
+  // stored ADMIN_TOKEN does (canUseAdmin()).
+  if (canUseAdmin()) {
+    return '<div class="menu-section-label">Admin</div>' +
+      '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
+      '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
+  }
+  // Not an admin: never show the Admin / Review Queue entries.  Signed-in
+  // users still get a lightweight bootstrap entry so a legitimate operator
+  // can paste ADMIN_TOKEN — the token box itself lives in a standalone
+  // dialog (openAdminTokenDialog), not inside the gated Admin view, so
+  // pasting a token never requires the Admin tab to be visible first.
+  if (!ME.user) return '';
   return '<div class="menu-section-label">Admin</div>' +
-    '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
-    '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
+    '<button type="button" onclick="' + closeCall + 'openAdminTokenDialog()">Admin Sign-In</button>';
 }
 function canManageSubscription() {
   return !!(ME.user && (hasBillingAccount() || isPremium() || (ME.entitlement && ME.entitlement.source)));
@@ -11749,6 +12086,10 @@ function canManageSubscription() {
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   var desktopHtml, mobileHtml;
+  // Mobile hamburger button content: the ☰ glyph for signed-out visitors,
+  // swapped below for the account avatar (photo, or initials fallback when
+  // there is no ME.user.picture) once we know the visitor is signed in.
+  var hamburgerHtml = '&#9776;';
   if (!ME.user) {
     // Sign In + Upgrade as one joined control so they read as a pair, not two orphans.
     // Theme stays out of the signed-out top bar (owner: it dumped Light/Dark/System
@@ -11764,7 +12105,6 @@ function renderAccount() {
       '</span>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
-      styleRowHtml() +
       adminMenuHtml('closeAcctMobileMenu();') +
       acctMobileDisclaimerHtml();
   } else {
@@ -11777,6 +12117,10 @@ function renderAccount() {
     var avatarHtml = '<span class="avatar lg" title="' + esc(label) + '">' + esc(initials(label)) +
       (ME.user.picture ? '<img src="' + esc(ME.user.picture) + '" alt="" onerror="this.remove()"/>' : '') +
       '</span>';
+    // Signed-in mobile visitors get their account avatar on the hamburger
+    // button instead of the glyph — the same markup as the desktop avatar,
+    // so a dead photo URL degrades to initials via the existing onerror.
+    hamburgerHtml = avatarHtml;
     desktopHtml = badge + upgrade +
       '<div class="menu">' +
         '<button class="acct-menu-btn" id="acctMenuBtn" title="Account menu" onclick="toggleAcctMenu()">' +
@@ -11787,37 +12131,37 @@ function renderAccount() {
           '<div class="who">' + esc(ME.user.email || '') + '</div>' +
           '<div class="menu-section-label">Appearance</div>' +
           themeRowHtml() +
-          styleRowHtml() +
           '<div class="menu-section-label">Account</div>' +
           '<button type="button" onclick="closeAcctMenu();openExportCsvDialog()">Export CSV</button>' +
           '<button type="button" onclick="closeAcctMenu();showView(\\'subs\\')">Delivery</button>' +
           (canManageSubscription()
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
-            : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+            : '') +
           adminMenuHtml('closeAcctMenu();') +
-          '<button onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="logout()">Sign Out</button>' +
+          '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
       '</div>';
     mobileHtml = badge +
       '<div class="who">' + avatarHtml + '<span>' + esc(ME.user.email || label) + '</span></div>' +
       '<div class="menu-section-label">Appearance</div>' +
       themeRowHtml(null, true) +
-      styleRowHtml() +
       '<div class="menu-section-label">Account</div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openExportCsvDialog()">Export CSV</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();showView(\\'subs\\')">Delivery</button>' +
       upgrade +
       (canManageSubscription()
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
-        : (!ent.premium && checkoutConfigured() ? '<button type="button" onclick="closeAcctMobileMenu();openPricing()">Upgrade to Premium</button>' : '')) +
+        : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
-      '<button onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
+      '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();
   }
   box.innerHTML =
     '<div class="acct-desktop">' + desktopHtml + '</div>' +
     '<div class="acct-mobile">' +
-      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Menu" onclick="toggleAcctMobileMenu()">&#9776;</button>' +
+      '<button type="button" class="acct-hamburger" id="acctHamburgerBtn" aria-expanded="false" aria-controls="acctMobileMenu" aria-label="Account menu" onclick="toggleAcctMobileMenu()">' + hamburgerHtml + '</button>' +
       '<div class="acct-mobile-menu" id="acctMobileMenu">' + mobileHtml + '</div>' +
     '</div>';
 }
@@ -11851,8 +12195,8 @@ function openLogin() {
   focusTrapReturnEl = document.activeElement;
   el('loginOverlay').classList.add('open');
   el('loginMsg').textContent = '';
-  var i = el('magicEmail');
-  if (i) setTimeout(function () { i.focus(); }, 50);
+  var g = document.querySelector('#loginOverlay .gbtn');
+  if (g) setTimeout(function () { g.focus(); }, 50);
 }
 function closeLogin() {
   var wasOpen = el('loginOverlay').classList.contains('open');
@@ -11880,7 +12224,7 @@ function syncAppleSignInButton() {
   btn.onclick = function (e) {
     if (e && e.preventDefault) e.preventDefault();
     var msg = el('loginMsg');
-    if (msg) msg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
+    if (msg) msg.textContent = 'Sign In with Apple is not configured for this site yet.  Use Google.';
     return false;
   };
 }
@@ -11891,24 +12235,23 @@ function syncAppleSignInButton() {
     if (noHover || coarse) document.documentElement.classList.add('phone-chrome');
   } catch (e) {}
 })();
-function sendMagicLink() {
-  var email = (el('magicEmail').value || '').trim();
-  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { el('loginMsg').textContent = 'Enter a valid email.'; return; }
-  el('loginMsg').textContent = 'Sending…';
-  fetch('/auth/magic/request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email }) })
-    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-    .then(function (res) {
-      if (!res.ok) { el('loginMsg').textContent = (res.j && res.j.error) || 'Could not send link.'; return; }
-      el('loginMsg').textContent = (res.j && res.j.sent === false)
-        ? 'Email isn’t configured yet — try Google sign-in.'
-        : 'Check your inbox for a sign-in link (expires in 15 min).';
-    })
-    .catch(function () { el('loginMsg').textContent = 'Network error — try again.'; });
-}
 function logout() {
   fetch('/auth/logout', { method: 'POST' })
     .then(function () { window.location.reload(); })
     .catch(function () { window.location.reload(); });
+}
+function deleteAccount() {
+  if (!window.confirm('Delete Account? This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in the App Store.  This cannot be undone.')) {
+    return;
+  }
+  fetch('/auth/account/delete', { method: 'POST' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('delete failed');
+      window.location.reload();
+    })
+    .catch(function () {
+      window.alert('Could not delete the account.  Try again or email support@congress.trade.');
+    });
 }
 
 /* ---- pricing / checkout ---- */
@@ -11999,6 +12342,9 @@ function selectPlan(p) {
   var m = el('planMonthly'), a = el('planAnnual');
   if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
   if (a) a.classList.toggle('sel', selectedPlan === 'annual');
+  var mr = el('planMonthlyRadio'), ar = el('planAnnualRadio');
+  if (mr) mr.checked = selectedPlan === 'monthly';
+  if (ar) ar.checked = selectedPlan === 'annual';
 }
 function startCheckout() {
   if (!checkoutConfigured()) {
@@ -12146,11 +12492,11 @@ function showToast(text, isErr) {
   if (TOAST_TIMER) clearTimeout(TOAST_TIMER);
   TOAST_TIMER = setTimeout(function () { t.className = 'toast'; }, 4200);
 }
-function copyText(text) {
+function copyText(text, successMsg) {
   if (!text) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function () {
-      showToast('Copied.');
+      showToast(successMsg || 'Copied.');
     }).catch(function () {
       showToast('Copy failed. Select and copy the value manually.', true);
     });
@@ -12168,8 +12514,8 @@ function handleAuthQueryParams() {
   var login = p.get('login'), checkout = p.get('checkout');
   if (login === 'ok') showToast('Signed in.');
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
-  else if (login === 'expired') showToast('That sign-in link expired — request a new one.', true);
-  else if (login === 'unverified') showToast('Sign-in failed — verify your email with Google first, or use an email sign-in link.', true);
+  else if (login === 'expired') showToast('That sign-in session expired.  Try Google or Apple again.', true);
+  else if (login === 'unverified') showToast('Sign-in failed.  Verify your email with Google first.', true);
   if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
   else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
   if (login || checkout || p.get('billing')) {
@@ -12218,8 +12564,17 @@ function handleAuthQueryParams() {
 function showView(name, scrollId) {
   var aliases = { feed: 'trades', delivery: 'subs', alerts: 'subs', push: 'subs' };
   var view = aliases.hasOwnProperty(name) ? aliases[name] : name;
-  var btn = document.querySelector('nav.tabs button[data-view="' + view + '"]');
+  var btn = document.querySelector('nav.tabs a[data-view="' + view + '"]');
   if (!btn) return;
+  // Premium alone never grants Admin / Review Queue — this is the same
+  // canUseAdmin() gate applyAdminVisibility() uses.  Never force-unhide an
+  // admin-only tab for a caller that isn't one (defense in depth: every
+  // caller of showView('admin'/'review') already checks canUseAdmin() first
+  // via adminMenuHtml, but a hidden <a> in the DOM is still a click away).
+  if (btn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {
+    showToast('Admin access required.', true);
+    return;
+  }
   if (btn.getAttribute('data-admin-tab') === 'true') btn.hidden = false;
   if (typeof btn.click === 'function') btn.click();
   if (scrollId) {
@@ -12229,16 +12584,24 @@ function showView(name, scrollId) {
     }
   }
 }
-document.querySelectorAll('nav.tabs button').forEach(function (b) {
-  b.onclick = function () {
-    if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin() && !ME.user && !hasAdminToken()) {
-      openLogin();
+document.querySelectorAll('nav.tabs a').forEach(function (b) {
+  b.onclick = function (e) {
+    // Tabs are real <a href="/?view=..."> now (SEOSOCIAL-02) so crawlers and
+    // ctrl/cmd-click "open in new tab" work; preventDefault keeps the SPA
+    // click-to-switch behaviour instead of a full navigation.
+    if (e && e.preventDefault) e.preventDefault();
+    // Premium alone never grants Admin / Review Queue.  This used to only
+    // block a SIGNED-OUT visitor (the "&& !ME.user" clause) — a signed-in Premium
+    // non-admin fell through and the tab activated anyway.
+    if (b.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {
+      if (ME.user) { showToast('Admin access required.', true); } else { openLogin(); }
       return;
     }
-    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
     b.setAttribute('aria-selected', 'true');
+    if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);
     try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
     try {
       var u = new URL(window.location.href);
@@ -12262,7 +12625,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       loadSubs();
       renderSpeedProof();
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   };
 });
 
@@ -12495,6 +12858,8 @@ function initSideChips() {
 }
 initPartyChips();
 initSideChips();
+// URL wins over localStorage for party/side (chamber/window already restored above).
+restoreFiltersFromUrl();
 function closeIosFilterMenus(except) {
   document.querySelectorAll('.ios-filter').forEach(function (f) {
     if (except && f === except) return;
@@ -12687,7 +13052,7 @@ function openTradeById(id) {
     if (TRADES[i].id === id) { openTrade(TRADES[i]); return; }
   }
   // Deep links and drawer rows outside the current feed page: resolve by id.
-  openDrawer('<div class="note">Loading trade…</div>');
+  openDrawer('<div class="note">Loading trade…</div>', 'Loading trade…');
   fetch('/api/client/v1/trade/' + encodeURIComponent(id), { headers: { accept: 'application/json' } })
     .then(function (r) {
       if (r.status === 404) throw new Error('not_found');
@@ -12698,7 +13063,7 @@ function openTradeById(id) {
       var item = (d && d.item) || (d && d.items && d.items[0]) || null;
       var row = clientTradeToRow(item);
       if (!row || !row.id) {
-        openDrawer('<div class="note">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>');
+        openDrawer('<div class="note">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>', 'Trade unavailable');
         return;
       }
       rememberTradeRow(row);
@@ -12706,9 +13071,9 @@ function openTradeById(id) {
     })
     .catch(function (e) {
       if (e && e.message === 'not_found') {
-        openDrawer('<div class="note">That trade was not found. It may have been retracted or the share link is outdated.</div>');
+        openDrawer('<div class="note">That trade was not found. It may have been retracted or the share link is outdated.</div>', 'Trade not found');
       } else {
-        openDrawer('<div class="note">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>');
+        openDrawer('<div class="note">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>', 'Could not load trade');
       }
     });
 }
@@ -12725,13 +13090,13 @@ function openDeepLink() {
     if (authError === 'google_not_configured') {
       openLogin();
       var msg = el('loginMsg');
-      if (msg) msg.textContent = 'Google Sign-In is not configured on this server. Please enter your email below for a Magic Link.';
+      if (msg) msg.textContent = 'Google Sign-In is not configured on this server.  Use Sign In with Apple.';
       return;
     }
     if (authError === 'apple_not_configured' || authError === 'apple_web_not_configured') {
       openLogin();
       var amsg = el('loginMsg');
-      if (amsg) amsg.textContent = 'Sign in with Apple is not configured for this site yet. Use Google or a magic link.';
+      if (amsg) amsg.textContent = 'Sign In with Apple is not configured for this site yet.  Use Google.';
       return;
     }
     if (pricing === '1' || pricing === 'true' || pricing === 'alerts' || pricing === 'export') {
@@ -12827,7 +13192,17 @@ function makeEntityTargetsFocusable(root) {
   if (root.matches && root.matches(ENTITY_FOCUSABLE_SELECTOR)) nodes.push(root);
   nodes.forEach(function (n) {
     if (n.tagName === 'A' || n.tagName === 'BUTTON') return;
+    // A row that already carries its own real, named open-control (added at
+    // its render site — see rowOpenBtnHtml()) does not need the <tr> itself
+    // to be a second, semantically-empty tab stop for the same action.
+    if (n.tagName === 'TR' && n.querySelector('.row-open-btn')) return;
     if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    // TR/TH/TD keep their native row/columnheader/cell roles (WEBA11Y-01):
+    // role="button" on a table row destroys table semantics for screen
+    // readers (no column-header association, aria-sort becomes invalid).
+    // These stay keyboard-activatable via tabindex + the delegated
+    // Enter/Space handler above, which keys off the .clickable class, not role.
+    if (n.tagName === 'TR' || n.tagName === 'TH' || n.tagName === 'TD') return;
     if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
   });
 }
@@ -12938,7 +13313,7 @@ loadMe().then(function () {
       var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
       // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
       // or stale ?view= should never silently resurrect an old session.
-      initialView = document.querySelector('nav.tabs button[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
+      initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
       // Same legacy-alias resolution applies to a stored last-viewed tab —
@@ -12946,12 +13321,23 @@ loadMe().then(function () {
       // on the Trades tab, and the stored value is migrated to the canonical
       // id in place so every later load reads it directly.
       var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;
-      if (canonicalSaved && document.querySelector('nav.tabs button[data-view="' + canonicalSaved + '"]')) {
+      if (canonicalSaved && document.querySelector('nav.tabs a[data-view="' + canonicalSaved + '"]')) {
         initialView = canonicalSaved;
         if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }
       }
     }
   } catch (e) {}
+  // Admin-gated views (data-admin-tab) must never activate for a non-admin,
+  // even via direct ?view=admin/?view=review navigation or the /admin,
+  // /review paths above — the tab bar hides the button, but until this
+  // check the CONTENT PANE still went active underneath it regardless.
+  // Falls back to Trends, matching the "unknown ?view=" behavior below.
+  if (initialView !== 'trends') {
+    var initialViewBtn = document.querySelector('nav.tabs a[data-view="' + initialView + '"]');
+    if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {
+      initialView = 'trends';
+    }
+  }
   try {
     var u0 = new URL(window.location.href);
     if (u0.searchParams.get('view') !== initialView) {
@@ -12960,12 +13346,17 @@ loadMe().then(function () {
     }
   } catch (e) {}
 
-  var initialBtn = document.querySelector('nav.tabs button[data-view="' + initialView + '"]');
+  var initialBtn = document.querySelector('nav.tabs a[data-view="' + initialView + '"]');
   if (initialBtn && initialView !== 'trends') {
-    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     initialBtn.classList.add('active');
     initialBtn.setAttribute('aria-selected', 'true');
+    // Restoring a non-Trends tab that wasn't in the request URL (e.g. from
+    // localStorage) — the server-rendered <title> only knows about ?view=,
+    // so it's still the plain default here and needs the same fix-up the
+    // click handler applies (SEOSOCIAL-04).
+    if (TAB_PAGE_TITLES[initialView]) setDocumentTitle(TAB_PAGE_TITLES[initialView]);
     var view = el('view-' + initialView);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     
@@ -12977,7 +13368,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (initialView === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }
@@ -13032,6 +13423,16 @@ document.addEventListener('mouseover', function(e) {
   <label class="lbl" for="qTo">To</label>
   <input id="qTo" type="date" aria-label="Trade date to" />
   <button class="btn sm" type="button" onclick="exportCsv()">Download CSV</button>
+</dialog>
+<dialog class="search-panel" id="adminTokenDialog" onclick="if(event.target === this) this.close()">
+  <div class="panel-head"><span class="panel-title">Admin Sign-In</span><button class="panel-close" onclick="el('adminTokenDialog').close()" aria-label="Close">×</button></div>
+  <p class="note" style="margin:0 0 10px">Paste your <code>ADMIN_TOKEN</code> to unlock Admin + Review Queue in this browser.&nbsp; Premium does not grant admin access — only a token, or an email an admin has granted, does.</p>
+  <input id="adminTokenDialogInput" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="width:100%" />
+  <div class="row-flex" style="margin-top:10px">
+    <button class="btn" type="button" onclick="saveAdminTokenFromDialog()">Save Token</button>
+    <button class="btn ghost sm" type="button" onclick="clearAdminTokenFromDialog()">Clear</button>
+    <span id="adminTokenDialogMsg" class="note" role="status" aria-live="polite"></span>
+  </div>
 </dialog>
 </body>
 </html>`;

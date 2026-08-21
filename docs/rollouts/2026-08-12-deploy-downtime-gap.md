@@ -1,5 +1,9 @@
 # 2026-08-12 — Coolify deploy downtime: root cause, why no toggle exists, and the fix [CLAUDE]
 
+> **2026-08-17 follow-up (#1537):** compose still cannot roll.  The overlap
+> path (live `congress-hold` clone + Traefik failover) is in
+> `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+
 ## The observed failure
 
 The owner hit **`no available server`** while signing in with Google.  The scan
@@ -259,16 +263,21 @@ above is still set.
 
 ---
 
+## 2026-08-20 update — docs-only skip is live
+
+`watch_paths` on `c11c5hdhuczureb6w2pg20p0` is now `app/**` + `services/**`.
+A docs-only merge no longer queues a compose swap.  Code merges still take
+the origin down until PR #1964 is installed or this app leaves the compose
+build pack.  Receipt: `docs/rollouts/2026-08-20-docs-only-deploy-skip.md`.
+
 ## Immediate actions, cheapest first
 
-1. **Re-enable the deploy guard** (one command, biggest single win, no code):
-   ```bash
-   ssh coolify 'systemctl enable --now ct-deploy-guard.timer'
-   ```
-   Six windows collapse back to one per 30 minutes.  If it was disabled on
-   purpose because 30-minute merge latency was painful, lower
-   `MIN_DEPLOY_INTERVAL_SEC` rather than leaving the guard off — an unguarded
-   burst is what the owner just experienced.
+1. **Keep `fleet-deploy-guard@congress-trade.timer` enabled.**  Do **not**
+   re-enable the superseded `ct-deploy-guard.timer` (see
+   `docs/rollouts/2026-08-13-deploy-guard-post.md`).  If merge latency is
+   painful, lower `MIN_DEPLOY_INTERVAL_SEC` on the fleet unit rather than
+   leaving the guard off — an unguarded burst is what the owner just
+   experienced.
 2. **Install the fixed reattach script** (removes the `no available server`
    race; the script is idempotent and reverts cleanly):
    ```bash

@@ -125,10 +125,10 @@ describe('evaluatePipelineSignals', () => {
     };
     const res = evaluatePipelineSignals(oneItem, nowMs);
     const backlogCheck = res.checks.find((c) => c.id === 'extraction_backlog');
-    expect(backlogCheck?.status).toBe('stalled');
+    expect(backlogCheck?.status).toBe('degraded');
     expect(backlogCheck?.detail).toContain('1 unresolved');
     expect(backlogCheck?.detail).toContain('terminal 1');
-    expect(res.status).toBe('stalled');
+    expect(res.status).toBe('degraded');
   });
 
   it('does not mark extraction_provider ok when attempts=0 and autopilot is halted', () => {

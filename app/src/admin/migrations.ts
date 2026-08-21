@@ -1108,6 +1108,18 @@ export const LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS = [
      ON latency_price_snapshots (captured_at, due_at)`,
 ] as const;
 
+/**
+ * 0088_tx_twin_seek_index.sql — issue #2062 (PR 2037 twin-dedupe hang).
+ * Partial covering index matching TWIN_DEDUPE_SQL's inner seek
+ * (filer_id, tx_date on live rows) so the correlated NOT EXISTS on the
+ * page / CSV / analytics path is an index SEARCH, not a per-row corpus scan.
+ */
+export const TWIN_SEEK_INDEX_SCHEMA_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS idx_tx_twin_seek
+     ON transactions (filer_id, tx_date)
+     WHERE deprecated_at IS NULL`,
+] as const;
+
 export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_tx_ticker_live ON transactions (ticker) WHERE deprecated_at IS NULL',
   "UPDATE transactions SET ticker = 'ETH' WHERE ticker IN ('ETHUSD', 'ETH-USD', 'ETH/USD', '$ETHUSD', '$ETH')",
@@ -1126,6 +1138,163 @@ export const ASSET_NORMALIZATION_0085_SCHEMA_STATEMENTS = [
   "UPDATE transactions SET asset_name = 'U.S. Treasury Note', ticker = NULL WHERE ticker LIKE '91282C%' OR asset_name LIKE '91282C%'",
   "UPDATE transactions SET ticker = NULL WHERE ticker IN ('1 1', '2 1', '5 1', '1093', '2020', '9201', '9843', '1QY', '3733Z', '559242Z', '5672A', '600690', '7410Z', '8376923Z', '^MWE', '^RGP', '0QZI.IL', '9201:JP', '559242Z:CN', '1494391D', '20030NCU3', '30303M8N5', '37045XCR5', '37045XDS2', '605699PU5', '64110LAS5', '68389XCD5', '713448FM5', '784532JF1', '92343VEU4')",
   "INSERT OR IGNORE INTO securities_ref (ticker, company_name, asset_class) VALUES ('ETH', 'Ethereum', 'Crypto'), ('BTC', 'Bitcoin', 'Crypto'), ('SOL', 'Solana', 'Crypto'), ('DOGE', 'Dogecoin', 'Crypto'), ('XRP', 'XRP', 'Crypto'), ('ADA', 'Cardano', 'Crypto'), ('AVAX', 'Avalanche', 'Crypto'), ('DOT', 'Polkadot', 'Crypto'), ('MATIC', 'Polygon', 'Crypto'), ('LINK', 'Chainlink', 'Crypto'), ('LTC', 'Litecoin', 'Crypto')",
+] as const;
+
+/**
+ * 0089_probe_run_brackets.sql
+ *
+ * Durable record of EVERY competitor probe, including probes that found
+ * nothing — those are what establish the lower bound of a publication window.
+ * See src/ingestion/probeRunLog.ts for why a point-in-time
+ * `first_observed_at` is not a publication timestamp.
+ *
+ * `prev_probe_at` / `provider_window_*` are added as nullable columns: every
+ * pre-existing row keeps a NULL window and is therefore reported as
+ * UNBOUNDED confidence rather than being retroactively credited with a
+ * precision it never had.
+ */
+export const PROBE_RUN_BRACKET_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS provider_probe_runs (
+     provider TEXT NOT NULL,
+     chamber TEXT NOT NULL,
+     ran_at TEXT NOT NULL,
+     ok INTEGER NOT NULL DEFAULT 0,
+     rows_seen INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     PRIMARY KEY (provider, chamber, ran_at)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_provider_probe_runs_lookup
+     ON provider_probe_runs (provider, chamber, ok, ran_at DESC)`,
+  'ALTER TABLE trade_provider_observations ADD COLUMN prev_probe_at TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_window_start TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_window_end TEXT',
+] as const;
+
+/**
+ * 0090_admin_allowlist.sql — persisted admin grant/revoke allowlist + audit
+ * trail, consulted ADDITIONALLY to the ADMIN_EMAILS environment bootstrap
+ * list (see admin/identity.ts's adminRuntimeConfig, admin/adminAccess.ts for
+ * the grant/revoke logic).  ADMIN_EMAILS itself is never written to this
+ * table — it stays the un-editable root escape hatch.
+ */
+export const ADMIN_ALLOWLIST_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS admin_allowlist (
+     email       TEXT PRIMARY KEY,
+     granted_by  TEXT NOT NULL,
+     granted_at  TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS admin_access_audit (
+     id         TEXT PRIMARY KEY,
+     action     TEXT NOT NULL,
+     email      TEXT NOT NULL,
+     actor      TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_admin_access_audit_created ON admin_access_audit (created_at DESC)',
+] as const;
+
+/**
+ * 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v): App Store
+ * review rejected submission b61e2a4a for requiring account registration
+ * before an In-App Purchase that is not itself account-based. Anonymous
+ * device purchases (`POST /api/client/v1/entitlements/apple/redeem`) write a
+ * `apple_subscriptions` row with `user_id = NULL`; SQLite cannot ALTER COLUMN
+ * to drop a NOT NULL constraint, so this rebuilds the table. Keep in exact
+ * lockstep with migrations/0091_apple_subscriptions_nullable_user.sql. Safe
+ * to replay: each run copies the CURRENT table (already migrated after the
+ * first run) into a fresh shadow, drops, and renames back — a no-op in
+ * effect, not just idempotent-without-erroring, at the cost of a full-table
+ * copy on every deploy. apple_subscriptions is small (one row per
+ * subscriber/device, not per trade), so that cost is accepted rather than
+ * building one-shot migration scripting this route doesn't otherwise have —
+ * same tradeoff already made for the `deliveries` dedupe statement above
+ * (see its comment under 0008_idempotency_keys.sql in routes.ts).
+ */
+export const APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS apple_subscriptions_new (
+     original_transaction_id   TEXT PRIMARY KEY,
+     user_id                   TEXT,
+     product_id                TEXT NOT NULL,
+     plan                      TEXT NOT NULL CHECK (plan IN ('monthly', 'annual')),
+     status                    TEXT NOT NULL DEFAULT 'active'
+                                  CHECK (status IN ('active', 'expired', 'revoked', 'grace_period', 'billing_retry')),
+     environment               TEXT,
+     latest_transaction_id     TEXT,
+     purchase_date              TEXT,
+     expires_date               TEXT,
+     auto_renew_status          INTEGER,
+     auto_renew_product_id      TEXT,
+     revoked_at                 TEXT,
+     revocation_reason          INTEGER,
+     last_notification_type     TEXT,
+     last_notification_subtype  TEXT,
+     created_at                 TEXT NOT NULL,
+     updated_at                 TEXT NOT NULL
+   )`,
+  'INSERT INTO apple_subscriptions_new SELECT * FROM apple_subscriptions',
+  'DROP TABLE apple_subscriptions',
+  'ALTER TABLE apple_subscriptions_new RENAME TO apple_subscriptions',
+  'CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user ON apple_subscriptions (user_id)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_user_active
+     ON apple_subscriptions (user_id, status, expires_date)`,
+] as const;
+
+/**
+ * 0092_latency_snapshot_repair.sql
+ *
+ * Repairs the latency-price-snapshot pipeline: 2937/2955 scheduled rows were
+ * stuck at `missed_window` because snapshots are scheduled RETROSPECTIVELY
+ * from already-matched candidates, so `due_at` for ct_publish/provider_publish
+ * is always in the past by the time a row exists — captureDueLatencyPriceSnapshots
+ * correctly refused to stamp a live quote onto it. The other 11 failed on a
+ * paid quote provider's HTTP 402. Owner ruling: that provider is never a
+ * market-data source again.
+ *
+ * New columns record HOW a price was answered (`capture_mode`: 'live' or
+ * 'backfill'), how confident we are in `due_at` itself (`confidence` /
+ * `due_at_uncertainty_sec`, derived from the provider_probe_runs bracket added
+ * in 0089), the market session at the requested instant (`market_session`, so
+ * a print crossing the 16:00 close is labeled rather than silently averaged
+ * into a same-session comparison), and how many backfill attempts a row has
+ * exhausted (`backfill_attempts`) so a persistently unreachable peer
+ * terminates instead of retrying forever.
+ *
+ * The trailing UPDATE reopens every row previously abandoned with
+ * 'missed_window' for capture through the SAME live/backfill pipeline that
+ * answers new rows — never a synthetic "now" price on a past due_at.
+ * Idempotent: after the first replay no row still has this value, so replaying
+ * this statement list on a later deploy is a no-op.
+ */
+export const LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS = [
+  `ALTER TABLE latency_price_snapshots ADD COLUMN capture_mode TEXT`,
+  `ALTER TABLE latency_price_snapshots ADD COLUMN confidence TEXT`,
+  `ALTER TABLE latency_price_snapshots ADD COLUMN due_at_uncertainty_sec INTEGER`,
+  `ALTER TABLE latency_price_snapshots ADD COLUMN market_session TEXT`,
+  `ALTER TABLE latency_price_snapshots ADD COLUMN backfill_attempts INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS idx_latency_price_backfill_due
+     ON latency_price_snapshots (capture_mode, due_at)
+     WHERE captured_at IS NULL`,
+  `UPDATE latency_price_snapshots
+      SET captured_at = NULL, error = NULL
+    WHERE error IN ('missed_window', 'fmp_quote_http_402')`,
+] as const;
+
+/**
+ * 0093_premium_activation_alerts.sql — idempotency ledger for the "someone
+ * became Premium" Pushover notification (billing/premiumActivationAlert.ts),
+ * plus supporting indexes so the totals aggregate it sends stays cheap.
+ * Renumbered off 0090/0091 after those slots landed on main as
+ * admin_allowlist / apple_subscriptions_nullable_user / latency_snapshot_repair.
+ */
+export const PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS premium_activation_notices (
+     activation_key  TEXT PRIMARY KEY,
+     user_id         TEXT NOT NULL,
+     notified_at     TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_users_premium_status ON users (subscription_status, plan)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_status_expires
+     ON apple_subscriptions (status, expires_date)`,
 ] as const;
 
 export const POST_0024_SCHEMA_STATEMENTS = [
@@ -1244,6 +1413,18 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...APNS_FANOUT_STATE_SCHEMA_STATEMENTS,
   // 0087_latency_price_snapshots.sql
   ...LATENCY_PRICE_SNAPSHOT_SCHEMA_STATEMENTS,
+  // 0088_tx_twin_seek_index.sql
+  ...TWIN_SEEK_INDEX_SCHEMA_STATEMENTS,
+  // 0089_probe_run_brackets.sql
+  ...PROBE_RUN_BRACKET_SCHEMA_STATEMENTS,
+  // 0090_admin_allowlist.sql
+  ...ADMIN_ALLOWLIST_SCHEMA_STATEMENTS,
+  // 0091_apple_subscriptions_nullable_user.sql — Guideline 5.1.1(v).
+  ...APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
+  // 0092_latency_snapshot_repair.sql
+  ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
+  // 0093_premium_activation_alerts.sql
+  ...PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

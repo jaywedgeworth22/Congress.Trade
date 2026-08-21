@@ -12,6 +12,8 @@
 //
 // Run: deno run --allow-net senate-relay.ts [port]
 
+import { isLivenessProbe, livenessResponse } from './liveness.ts';
+
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
 const SENATE_HOME = `${SENATE_BASE}/search/home/`;
@@ -259,17 +261,18 @@ const startedAt = Date.now();
 Deno.serve({ port, hostname: '127.0.0.1' }, async (req) => {
   const url = new URL(req.url);
 
-  // Liveness probe. Its absence is why the 2026-08-11 investigation could not
+  // Liveness probe.  Its absence is why the 2026-08-11 investigation could not
   // tell "relay is wedged" from "relay is fine": every probe of /health got a
   // 404 from the catch-all below, which is indistinguishable from a dead
-  // route. A supervisor cannot heal what it cannot measure, so this endpoint
+  // route.  A supervisor cannot heal what it cannot measure, so this endpoint
   // is deliberately dependency-free -- it reports that this process is up and
   // serving, and makes no upstream call of its own.
-  if (req.method === 'GET' && url.pathname === '/health') {
-    return new Response(
-      JSON.stringify({ ok: true, service: 'senate-relay', uptimeSeconds: Math.round((Date.now() - startedAt) / 1000) }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    );
+  //
+  // GET and HEAD on / and /health match mac.jays.services (same tunnel).
+  // Deno.serve does not map HEAD onto the GET handler, so HEAD-only uptime
+  // checks used to 404 while GET /health was 200.
+  if (isLivenessProbe(req.method, url.pathname)) {
+    return livenessResponse(req.method, Math.round((Date.now() - startedAt) / 1000));
   }
 
   // Document proxy: fetch one efdsearch PTR/paper document through the

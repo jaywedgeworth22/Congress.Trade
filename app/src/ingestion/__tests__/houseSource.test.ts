@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+import { zipSync } from 'fflate';
 import {
   parseHouseIndexXml,
   parseHouseSearchHtml,
   buildHouseSearchBody,
   pollHouseLiveSearch,
+  fetchHouseIndex,
   houseBulkZipUrl,
   housePtrPdfUrl,
   houseDocId,
@@ -186,6 +188,49 @@ describe('pollHouseLiveSearch', () => {
     const rows = await pollHouseLiveSearch(2026, fetchMock as unknown as typeof fetch, { delayMs: 0 });
     expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
     expect(callCount).toBe(4);
+  });
+});
+
+describe('House bulk index fetch order (server-first, relay fallback)', () => {
+  const ZIP_URL = 'https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024FD.ZIP';
+  const RELAY = 'https://scout.jays.services';
+  const zipBytes = zipSync({
+    '2024FD.xml': new TextEncoder().encode(
+      `<FinancialDisclosure><Member><FilingType>P</FilingType><DocID>20012345</DocID><Last>Smith</Last><First>Jane</First></Member></FinancialDisclosure>`,
+    ),
+  });
+
+  it('attempts the Clerk ZIP before the Mac relay', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      if (String(input).includes('/fetch-house')) throw new Error('relay should not run when direct succeeds');
+      return new Response(zipBytes, { status: 200 });
+    }) as typeof fetch;
+
+    const rows = await fetchHouseIndex(2024, { relayUrl: RELAY, fetchImpl });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.pipelineDocId).toBe('H-2024-20012345');
+    expect(calls).toEqual([ZIP_URL]);
+  });
+
+  it('falls back to the relay when direct fails', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/fetch-house')) {
+        return new Response(zipBytes, { status: 200 });
+      }
+      return new Response('blocked', { status: 403 });
+    }) as typeof fetch;
+
+    const rows = await fetchHouseIndex(2024, { relayUrl: RELAY, fetchImpl });
+
+    expect(rows).toHaveLength(1);
+    expect(calls[0]).toBe(ZIP_URL);
+    expect(calls[1]).toBe(`${RELAY}/fetch-house`);
   });
 });
 

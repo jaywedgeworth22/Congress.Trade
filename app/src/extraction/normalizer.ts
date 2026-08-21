@@ -23,6 +23,7 @@ import { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
 import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
+import { prepareExtractedTx } from './prepareTx.ts';
 import { uuid } from '../shared/ids.ts';
 import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
@@ -59,7 +60,10 @@ export const CONFIDENCE_THRESHOLD = 0.95;
  * mechanical hard flags are clean.
  */
 export const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.55;
-export const MAX_PUBLISH_TRANSACTIONS_PER_FILING = 200;
+/** Sanity cap only — real PTRs (McCaul munis, Khanna) routinely exceed 200. */
+export const MAX_PUBLISH_TRANSACTIONS_PER_FILING = 2000;
+/** Run the garbage heuristic above this count; do not block clean large filings. */
+const LARGE_FILING_GARBAGE_REVIEW = 200;
 
 /** Extractors / doc kinds that do not require multi-model agreement. */
 const DETERMINISTIC_EXTRACTORS = new Set([
@@ -85,6 +89,14 @@ export function isDeterministicExtractor(
       || compact === 'ogetext'
     ) {
       return true;
+    }
+    // Cheap OpenRouter text fallback on typed PTRs is not vision.  Default
+    // model confidence is 0.55 — same publish bar as textPdf.  Live 2026-08-18:
+    // 14 electronic House PTRs sat in review at 0.6 solely because
+    // "openrouter" in the extractor name inherited the 0.95 vision gate.
+    if (compact === 'openroutertext' || compact === 'open_router_text') {
+      const kind = (docKind || '').trim().toLowerCase();
+      return kind === 'text_pdf' || kind === 'senate_html' || kind === 'oge_html' || kind === 'oge_text';
     }
     // Explicit vision/OCR extractors must never inherit the deterministic
     // threshold from a text/html doc_kind (scanned reclassifications, etc.).
@@ -306,7 +318,10 @@ export async function normalize(
   const hardFailureCount = flagged.filter((f) =>
     f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag)),
   ).length;
-  const exceedsPublishLimit = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
+  const exceedsSanityCap = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
+  const largeAndGarbage =
+    flagged.length > LARGE_FILING_GARBAGE_REVIEW && oversizedLooksLikeGarbage(flagged);
+  const exceedsPublishLimit = exceedsSanityCap || largeAndGarbage;
   const ocrUnusable = isMostlyGarbageOcrExtraction(
     parsed.length,
     flagged.length,
@@ -371,15 +386,29 @@ export async function normalize(
     // so local-vision pending can re-claim the stored raw copy.
     let reviewFlagged = flagged;
     if (ocrUnusable && !exceedsPublishLimit) {
-      reason = `ocr_unusable,extract_empty_failure,no_transactions_extracted`;
-      if (droppedFormChrome > 0) reason = `form_chrome_only,${reason}`;
-      reviewFlagged = [];
+      // Keep dated, non-chrome rows (amendment letters with one real Treasury
+      // line). Only wipe when nothing recoverable remains.
+      const keepable = flagged.filter((f) =>
+        Boolean(f.tx.txDate) && !looksLikeHeaderContaminatedAsset(f.tx.assetName)
+      );
+      if (keepable.length === 0) {
+        reason = `ocr_unusable,extract_empty_failure,no_transactions_extracted`;
+        if (droppedFormChrome > 0) reason = `form_chrome_only,${reason}`;
+        reviewFlagged = [];
+      } else {
+        reviewFlagged = keepable;
+        reason = reviewReason(
+          keepable,
+          Math.min(...keepable.map((f) => f.tx.confidence)),
+          confThreshold,
+        );
+      }
     }
     const routed = await routeToReview(
       env,
       filing,
       reviewFlagged,
-      ocrUnusable ? 0 : minConfidence,
+      ocrUnusable && reviewFlagged.length === 0 ? 0 : minConfidence,
       nowIso,
       {
         extractor: extractorName,
@@ -393,9 +422,10 @@ export async function normalize(
       },
       reviewSnapshot,
     );
+    const wiped = ocrUnusable && reviewFlagged.length === 0;
     return {
-      transactions: ocrUnusable ? [] : transactions,
-      minConfidence: ocrUnusable ? 0 : minConfidence,
+      transactions: wiped ? [] : (ocrUnusable ? reviewFlagged.map((f) => f.tx) : transactions),
+      minConfidence: wiped ? 0 : minConfidence,
       needsReview: routed,
       published: false,
       reviewReason: reason,
@@ -456,14 +486,16 @@ function buildTransaction(
   nameIndex?: NameIndex,
 ): FlaggedTx {
   const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
-  let rawTicker = p.ticker;
+  const prepared = prepareExtractedTx(p);
+  let rawTicker = prepared.ticker;
   if (rawTicker && placeholders.has(rawTicker.toUpperCase())) {
     rawTicker = null;
   }
-  let rawAssetName = p.assetName;
+  let rawAssetName = prepared.assetName;
   if (rawAssetName && placeholders.has(rawAssetName.toUpperCase())) {
     rawAssetName = null;
   }
+  p = { ...prepared, ticker: rawTicker, assetName: rawAssetName ?? prepared.assetName };
 
   // Lift disclosure-form scaffolding (House [GS] codes, footnote markers, the
   // rigid "Rate/Coupon: … Matures: …" suffix, the "(Exchanged) …" second leg)
@@ -640,7 +672,12 @@ export function scoreFields(
     const knownName = nameIndex.get(ticker);
     if (knownName) {
       const simplifiedAsset = simplifyCompanyName(assetName);
-      if (simplifiedAsset && !namesPlausiblyMatch(simplifiedAsset, knownName)) {
+      const tickerAsName = simplifiedAsset === ticker.toLowerCase();
+      if (
+        simplifiedAsset
+        && !tickerAsName
+        && !namesPlausiblyMatch(simplifiedAsset, knownName)
+      ) {
         flags.push('ticker_asset_mismatch');
       }
     }
@@ -671,8 +708,14 @@ export function scoreFields(
     // rawText contains a *different* exact canonical dollar range.
     if (fields.rawText) {
       const parsedRange = parseAmountRange(fields.rawText);
+      const rawAgreesWithStructured = rawTextContainsBracket(
+        fields.rawText,
+        amountMin,
+        amountMax,
+      );
       if (
-        parsedRange.exact
+        !rawAgreesWithStructured
+        && parsedRange.exact
         && parsedRange.min !== null
         && (parsedRange.min !== amountMin
           || (parsedRange.max ?? null) !== (amountMax ?? null))
@@ -1384,9 +1427,9 @@ function reviewReason(
  * under. The 0.5 ratio threshold is a starting heuristic (see docs/rollouts
  * for the pilot that calibrates it), not a proven cutoff.
  */
-function classifyRowLimitReason(flagged: FlaggedTx[]): string {
+function oversizedLooksLikeGarbage(flagged: FlaggedTx[]): boolean {
   const total = flagged.length;
-  if (total === 0) return 'extraction_row_limit_exceeded';
+  if (total === 0) return false;
 
   const rowKeys = flagged.map((f) => transactionRowKey('primary', 0, f.tx));
   const keyCounts = new Map<string, number>();
@@ -1406,11 +1449,32 @@ function classifyRowLimitReason(flagged: FlaggedTx[]): string {
   const mean = confidences.reduce((a, b) => a + b, 0) / confidences.length;
   const variance = confidences.reduce((a, b) => a + (b - mean) ** 2, 0) / confidences.length;
   const confidenceStdev = Math.sqrt(variance);
-  const suspiciouslyUniform = total > 50 && confidenceStdev < 0.01;
+  // Vision/OpenRouter cap every row at 0.6, so uniform 0.6 is a ceiling
+  // artifact, not OCR garble. Only treat a razor-flat LOW score as garbage
+  // (H-2025-8221264: 200+ rows all at 0.189).
+  const suspiciouslyUniformLow = total > 50 && confidenceStdev < 0.01 && mean < 0.45;
 
-  const likelyGarbage = garbageRatio >= 0.5 || suspiciouslyUniform;
+  return garbageRatio >= 0.5 || suspiciouslyUniformLow;
+}
+
+function classifyRowLimitReason(flagged: FlaggedTx[]): string {
+  const total = flagged.length;
+  if (total === 0) return 'extraction_row_limit_exceeded';
+
+  const rowKeys = flagged.map((f) => transactionRowKey('primary', 0, f.tx));
+  const keyCounts = new Map<string, number>();
+  for (const k of rowKeys) keyCounts.set(k, (keyCounts.get(k) ?? 0) + 1);
+  let garbageRows = 0;
+  for (let i = 0; i < flagged.length; i += 1) {
+    const f = flagged[i];
+    const isDuplicate = (keyCounts.get(rowKeys[i]) ?? 0) > 1;
+    const isHardFailure = f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag));
+    const isMismatch = f.flags.includes('ticker_asset_mismatch');
+    if (isDuplicate || isHardFailure || isMismatch) garbageRows += 1;
+  }
+  const garbageRatio = garbageRows / total;
   const ratioLabel = garbageRatio.toFixed(2);
-  return likelyGarbage
+  return oversizedLooksLikeGarbage(flagged)
     ? `extraction_row_limit_exceeded_likely_garbage:${ratioLabel}`
     : `extraction_row_limit_exceeded_needs_reprocess:${ratioLabel}`;
 }
@@ -1418,6 +1482,20 @@ function classifyRowLimitReason(flagged: FlaggedTx[]): string {
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
+
+/** True when rawText already contains the structured canonical dollar range. */
+function rawTextContainsBracket(
+  raw: string,
+  min: number,
+  max: number | null,
+): boolean {
+  const compact = raw.replace(/[$,\s]/g, '');
+  if (max == null) {
+    return compact.includes(`${min}+`) || /over50,?000,?000/i.test(raw);
+  }
+  return compact.includes(`${min}-${max}`)
+    || compact.toLowerCase().includes(`${min}to${max}`);
+}
 
 function isTxType(v: unknown): v is TxType {
   return v === 'B' || v === 'S' || v === 'E';

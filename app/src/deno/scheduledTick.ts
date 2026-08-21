@@ -14,8 +14,9 @@ import { runLeasedLatencyProbe } from '../ingestion/scoutHandoff.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { flushParkedDeliveries } from '../delivery/targetCircuit.ts';
 import { flushIngestionOutbox } from '../ingestion/outbox.ts';
-import { maybeRunAgreementAutopublish } from '../extraction/agreement.ts';
+import { AGREEMENT_CLAIM_LEASE_MS, maybeRunAgreementAutopublish } from '../extraction/agreement.ts';
 import { maybeStartBacklogAutopilot } from '../extraction/autopilot.ts';
+import { TERMINAL_REVIEW_REASON_EXCLUDE_SQL } from '../extraction/reviewQueueHealth.ts';
 import { refreshSecrets } from '../secrets/infisical.ts';
 import { flushUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
 import {
@@ -29,6 +30,8 @@ export interface PendingWorkProbe {
   deliveryQueue: boolean;
   ingestionOutbox: boolean;
   deliveryOutbox: boolean;
+  /** Claimable review-queue docs; a quiet tick must not skip this work. */
+  eligibleReview: boolean;
 }
 
 export interface ScheduledTickResult {
@@ -74,7 +77,17 @@ export async function probePendingWork(env: Env, now = new Date()): Promise<Pend
     }
   };
 
-  const [ingestQueue, deliveryQueue, ingestionOutbox, deliveryOutbox] = await Promise.all([
+  const existsOrFalse = async (sql: string, args: unknown[] = []): Promise<boolean> => {
+    try {
+      const row = await env.DB.prepare(sql).bind(...args).first<{ ok: number }>();
+      return row != null;
+    } catch {
+      return false;
+    }
+  };
+
+  const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  const [ingestQueue, deliveryQueue, ingestionOutbox, deliveryOutbox, eligibleReview] = await Promise.all([
     exists(
       `SELECT 1 AS ok FROM deno_runtime_queue
         WHERE queue_name = 'ingest'
@@ -109,14 +122,38 @@ export async function probePendingWork(env: Env, now = new Date()): Promise<Pend
         LIMIT 1`,
       [nowIso, staleEnqueuedBefore],
     ),
+    // Fail-closed: missing review_queue (tests / pre-migrate) is not work.
+    // Selector due-now, not health `eligible`.  Conservative defaults
+    // (attempt cap 3, skip senate_html) so a quiet paid tick cannot skip
+    // claimable House filings.
+    existsOrFalse(
+      `SELECT 1 AS ok
+         FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE rq.resolved = 0
+          AND rq.agreement_suppressed_at IS NULL
+          AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL}
+          AND COALESCE(rq.agreement_attempts, 0) < 3
+          AND (rq.agreement_next_attempt_at IS NULL OR rq.agreement_next_attempt_at <= ?)
+          AND (rq.agreement_claim_token IS NULL OR rq.agreement_claimed_at IS NULL OR rq.agreement_claimed_at <= ?)
+          AND f.raw_object_key IS NOT NULL
+          AND COALESCE(f.doc_kind, '') NOT IN ('senate_html')
+          AND NOT EXISTS (
+            SELECT 1 FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.source IN ('primary', 'manual')
+               AND t.deprecated_at IS NULL
+          )
+        LIMIT 1`,
+      [nowIso, leaseExpired],
+    ),
   ]);
 
-  return { ingestQueue, deliveryQueue, ingestionOutbox, deliveryOutbox };
+  return { ingestQueue, deliveryQueue, ingestionOutbox, deliveryOutbox, eligibleReview };
 }
 
 export function hasDrainableWork(probe: PendingWorkProbe): boolean {
   return probe.ingestQueue || probe.deliveryQueue
-    || probe.ingestionOutbox || probe.deliveryOutbox;
+    || probe.ingestionOutbox || probe.deliveryOutbox
+    || probe.eligibleReview;
 }
 
 export interface ScheduledTickOptions {
@@ -301,7 +338,12 @@ export async function runMaintenancePipeline(
         const { maybeRunDeterministicReviewDrain } = await import(
           '../extraction/deterministicDrain.ts'
         );
-        return maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const drain = await maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const { maybePublishFromStoredRuns } = await import(
+          '../extraction/storedRunPublish.ts'
+        );
+        await maybePublishFromStoredRuns(env, { signal: options.signal });
+        return drain;
       },
     );
     result.agreementAutopublish = await runLane(
@@ -328,13 +370,17 @@ export async function runMaintenancePipeline(
         'delivery_outbox',
         () => flushDeliveryOutbox(env, { limit: options.outboxLimit, now }),
       );
-      result.apnsFanout = await runLane('apns_fanout', () =>
-        import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
-      );
       if (options.afterOutboxFlush) {
         await runLane('durable_queue', options.afterOutboxFlush);
       }
     }
+    // APNs is independent of the idle outbox gate so a prior throw can still
+    // recover the 2h lookback.  fanOut cheap-probes delivery_outbox / review_queue
+    // (PK lookup, not an unindexed transactions.created_at scan) and only runs
+    // TRADE_SQL when events are pending or a recent lane error needs recovery.
+    result.apnsFanout = await runLane('apns_fanout', () =>
+      import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
+    );
     if (options.parkedDeliveryLimit !== undefined) {
       const limit = options.parkedDeliveryLimit;
       await runLane('parked_deliveries', () => flushParkedDeliveries(env, { limit }));

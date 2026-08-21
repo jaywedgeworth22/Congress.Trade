@@ -12,6 +12,7 @@ import {
   classifyHouseExtractRoute,
   looksLikePlausibleTradeTable,
 } from '../extraction/extractRouting.ts';
+import { isProvenOpenRouterCredentialRejection } from '../extraction/openRouterReply.ts';
 
 // ---------------------------------------------------------------------------
 // Arbitration merge helpers (pure, unit-testable)
@@ -413,7 +414,11 @@ export class HousePdfExtractor implements Extractor {
               extractedText: textResult.raw,
             });
             return cheap;
-          } catch {
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            // Proven dead-key rejections must still fail closed.  Garbage /
+            // Unauthorized replies skip this one doc instead of Files.
+            if (isProvenOpenRouterCredentialRejection(message)) throw err;
             return textResult;
           }
         }

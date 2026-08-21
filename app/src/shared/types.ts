@@ -310,7 +310,9 @@ export type ClientCommandType =
   | 'unregister_device'
   | 'start_checkout'
   | 'request_export'
-  | 'redeem_apple_purchase';
+  | 'redeem_apple_purchase'
+  | 'link_apple_entitlement'
+  | 'delete_account';
 
 export type ClientCommandStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
@@ -392,8 +394,14 @@ export interface Entitlement {
    * resolveEntitlementAsync) that also checks the Apple IAP ledger; the pure
    * sync `entitlementOf` leaves this undefined. Additive/optional so it is
    * always backward-compatible for existing Decodable clients.
+   *
+   * `'apple_anonymous'` is the device-scoped grant issued by `POST
+   * /api/client/v1/entitlements/apple/redeem` (Guideline 5.1.1(v) — no
+   * Congress.Trade account) — it is never present on a `User`-keyed
+   * `resolveEntitlementAsync` response (which only ever resolves 'stripe' |
+   * 'apple' | null), only on the anonymous route's own response body.
    */
-  source?: 'stripe' | 'apple' | null;
+  source?: 'stripe' | 'apple' | 'apple_anonymous' | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -692,7 +700,10 @@ export interface Env {
   OGE_INDEX_URL?: string;
   /** CSV list of override URLs for OGE filings index views. */
   OGE_INDEX_URLS?: string;
-  /** Minimum seconds between OGE index polls (default 21600 = 6h). */
+  /**
+   * UNUSED live gate. Adaptive `probeSchedule` / `decideSourcePoll` owns
+   * executive cadence. A leftover Infisical 21600 must not re-impose 6h.
+   */
   OGE_POLL_INTERVAL_SEC?: string;
   /** Max raw PDF bytes sent to vision extraction for executive filings (default 6MB). */
   OGE_MAX_VISION_BYTES?: string;
@@ -915,10 +926,26 @@ export interface Env {
   APPLE_SIGNIN_ENABLED?: string;
   /** "true" to enable the redeem_apple_purchase command + POST /api/webhooks/apple. Off until the App Store Connect subscription products exist. */
   APPLE_IAP_ENABLED?: string;
+  /**
+   * Kill switch for App Store Sandbox / TestFlight JWS. Default (unset / "true")
+   * allows Apple-signed Sandbox grants because TestFlight, App Review, and
+   * Designed-for-iPad on Mac all talk to this production API with
+   * environment=Sandbox. Set "false" to refuse those grants.
+   */
+  APPLE_ALLOW_SANDBOX?: string;
   /** App Store Connect product id for the monthly Premium subscription (default trade.congress.premium.monthly). */
   APPLE_PRODUCT_MONTHLY?: string;
   /** App Store Connect product id for the annual Premium subscription (default trade.congress.premium.annual). */
   APPLE_PRODUCT_ANNUAL?: string;
+  /**
+   * HMAC key for the anonymous-purchase device entitlement token
+   * (`billing/deviceEntitlement.ts`) — the short-lived proof a signed-out
+   * device presents on PDF/CSV requests after `POST
+   * /api/client/v1/entitlements/apple/redeem`. Independent of every other
+   * signing key in this file; rotating it just expires outstanding tokens
+   * early (every one re-mints on the device's next reconcile pass).
+   */
+  APPLE_DEVICE_ENTITLEMENT_SECRET?: string;
 
   // --- Infisical runtime secret resolver ---
   /** Optional Infisical API origin. Defaults to https://app.infisical.com. */
@@ -946,6 +973,14 @@ export interface Env {
   INFISICAL_SHARED_SECRET_PATH?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
+  /**
+   * Numeric App Store Connect id for the iOS app, e.g. "1234567890" — set
+   * once the app is Approved and has a real id (see src/ui/appLinks.ts).
+   * Unset by default: the app is not in the public App Store yet, so there
+   * is no real id to hardcode, and the Smart App Banner stays absent until
+   * this is configured.
+   */
+  IOS_APP_STORE_ID?: string;
   /** "true" to force arbitration on when configured. */
   ARBITRATION_ENABLED?: string;
   /** Cross-app import guardrails. Tune down for lean/free-compatible runs. */
