@@ -97,3 +97,12 @@ bash scripts/ios-fleet/check-drift.sh
 ```
 
 It exits 0 with a warning (not a failure) when `/Users/jay/apps/ios-fleet/` does not exist on the current machine, since that directory is host-local and won't be present in CI.
+
+## In-app update prompt
+
+Every fleet iOS app copies `AppUpdatePrompt.swift` from this directory (canonical
+runtime: `/Users/jay/apps/ios-fleet/AppUpdatePrompt.swift`) and calls
+`.appUpdatePrompt()` on the root view.  TestFlight versions are published to
+https://raw.githubusercontent.com/jaywedgeworth22/ios-app-versions/main/versions.json
+by `publish-ios-versions.sh` after a successful ship.
+

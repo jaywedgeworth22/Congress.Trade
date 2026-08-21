@@ -1,14 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ArbitratingExtractor,
   arbitrationRowKey,
   buildExtractorPipeline,
   fieldAgreement,
   HousePdfExtractor,
+  OgePdfExtractor,
   mergeResults,
   type Extractor,
   type ExtractorResult,
 } from '../types.ts';
+import { IngestRetryError } from '../../ingestion/fetcher.ts';
 import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 function tx(over: Partial<ParsedTx> = {}): ParsedTx {
@@ -377,6 +379,117 @@ describe('HousePdfExtractor', () => {
   });
 });
 
+describe('OgePdfExtractor', () => {
+  const execScan = () => filing({ chamber: 'executive', docKind: 'scanned_pdf', docId: 'E-1' });
+  const execText = () => filing({ chamber: 'executive', docKind: 'text_pdf', docId: 'E-1' });
+
+  it('uses unpdf/ogeText first for executive scanned PDFs when rows are found', async () => {
+    const ogeText = extractor('ogeText', result([tx({ confidence: 0.97 })], { extractor: 'ogeText' }));
+    const visionExtract = vi.fn(async () => result([tx({ ticker: 'MSFT' })], { extractor: 'vision' }));
+    const vision = { name: 'vision', canHandle: () => true, extract: visionExtract };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(ogePdf.canHandle(execScan())).toBe(true);
+    expect(ogePdf.canHandle(execText())).toBe(true);
+    expect(out.extractor).toBe('ogeText');
+    expect(out.transactions[0].ticker).toBe('AAPL');
+    expect(visionExtract).not.toHaveBeenCalled();
+  });
+
+  it('falls back to OpenRouter vision when a scan yields zero unpdf rows', async () => {
+    const ogeText = extractor('ogeText', result([], { extractor: 'ogeText' }));
+    const vision = extractor('vision', result([tx({ ticker: 'XOM' })], { extractor: 'vision' }));
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.extractor).toBe('vision');
+    expect(out.transactions[0].ticker).toBe('XOM');
+  });
+
+  it('preserves ogeText throws on typed executive PDFs instead of spending vision', async () => {
+    const ogeText = {
+      name: 'ogeText',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('ogeText: no bytes provided on ExtractorInput');
+      },
+    };
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('vision must not run for typed ogeText throws');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    await expect(ogePdf.extract({ filing: execText() })).rejects.toThrow('ogeText: no bytes provided');
+  });
+
+  it('does not charge vision for typed executive PDFs that parse to zero rows', async () => {
+    const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: 'none' }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('vision must not run for typed empty 278-T');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execText() });
+
+    expect(out.extractor).toBe('ogeText');
+    expect(out.transactions).toHaveLength(0);
+  });
+
+  it('rethrows budget/rate-limit IngestRetryError so the queue can back off', async () => {
+    const ogeText = extractor('ogeText', result([], { extractor: 'ogeText' }));
+    const retry = new IngestRetryError('openrouter key budget circuit open', 3600);
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw retry;
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    await expect(ogePdf.extract({ filing: execScan() })).rejects.toBe(retry);
+  });
+
+  it('fail-softs paid vision errors on scans and keeps the empty unpdf result', async () => {
+    const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: 'scan text' }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('OPENROUTER_API_KEY is not configured');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.extractor).toBe('ogeText');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('ogePdf vision fail-soft');
+    expect(out.raw).toContain('OPENROUTER_API_KEY');
+  });
+
+  it('does not claim House or Senate filings', () => {
+    const ogeText = extractor('ogeText', result([]));
+    const vision = extractor('vision', result([]));
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    expect(ogePdf.canHandle(filing({ chamber: 'house', docKind: 'scanned_pdf' }))).toBe(false);
+    expect(ogePdf.canHandle(filing({ chamber: 'senate', docKind: 'scanned_pdf' }))).toBe(false);
+  });
+});
+
 describe('buildExtractorPipeline routing', () => {
   // Construction does no I/O (secrets/keys resolve lazily inside extract()),
   // so a bare fake Env is safe here — this only exercises canHandle() routing.
@@ -385,10 +498,6 @@ describe('buildExtractorPipeline routing', () => {
   function firstMatch(f: Filing): string | undefined {
     return pipeline.find((e) => e.canHandle(f))?.name;
   }
-
-  it('routes executive text_pdf filings to ogeText, not the House-tuned textPdf or vision', () => {
-    expect(firstMatch(filing({ chamber: 'executive', docKind: 'text_pdf' }))).toBe('ogeText');
-  });
 
   it('still routes House text_pdf filings through housePdf (text-first, Files only for real scans)', () => {
     const name = firstMatch(filing({ chamber: 'house', docKind: 'text_pdf' }));
@@ -400,8 +509,13 @@ describe('buildExtractorPipeline routing', () => {
     expect(firstMatch(filing({ chamber: 'senate', docKind: 'senate_html' }))).toBe('senateHtml');
   });
 
-  it('leaves executive scanned_pdf filings on the vision path (ogeText only claims text_pdf)', () => {
+  it('routes executive scanned_pdf filings through ogePdf (unpdf first, fail-soft vision)', () => {
     const name = firstMatch(filing({ chamber: 'executive', docKind: 'scanned_pdf' }));
-    expect(name).toMatch(/^arbitrating\(/);
+    expect(name).toMatch(/^ogePdf\(/);
+  });
+
+  it('routes executive text_pdf filings through ogePdf, not the House-tuned textPdf or raw vision', () => {
+    const name = firstMatch(filing({ chamber: 'executive', docKind: 'text_pdf' }));
+    expect(name).toMatch(/^ogePdf\(/);
   });
 });
