@@ -215,7 +215,10 @@ export async function sweepFiledDateBackfill(
   const filedDateByDocId = new Map<string, string>();
   for (const year of years) {
     try {
-      const index = await fetchHouseIndex(year, { fetchImpl: opts.fetchImpl });
+      const index = await fetchHouseIndex(year, {
+        fetchImpl: opts.fetchImpl,
+        relayUrl: env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL,
+      });
       for (const f of index) {
         if (f.filingDate) filedDateByDocId.set(f.pipelineDocId, f.filingDate);
       }
@@ -605,6 +608,12 @@ export async function runAutonomySweeps(
     result.deterministicDrain = await maybeRunDeterministicReviewDrain(env, {
       signal: opts.signal,
     });
+    try {
+      const { maybePublishFromStoredRuns } = await import('../extraction/storedRunPublish.ts');
+      await maybePublishFromStoredRuns(env, { signal: opts.signal });
+    } catch (storedErr) {
+      errors.push(`storedRunPublish: ${(storedErr as Error).message}`);
+    }
   } catch (err) {
     errors.push(`deterministicDrain: ${(err as Error).message}`);
   }

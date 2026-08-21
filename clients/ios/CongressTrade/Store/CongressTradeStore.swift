@@ -51,6 +51,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var isCreatingDelivery = false
     @Published private(set) var subscriptionIDsInFlight: Set<String> = []
     @Published private(set) var isLoggingOut = false
+    @Published private(set) var isDeletingAccount = false
     @Published private(set) var feedNotice: String?
     @Published private(set) var watchlistNotice: String?
     @Published private(set) var deliveryNotice: String?
@@ -60,6 +61,31 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
+    /// UI-only local check (`Transaction.currentEntitlements`, never a network
+    /// call): does THIS device currently hold a verified, unexpired Apple
+    /// subscription — regardless of sign-in state? Guideline 5.1.1(v): a
+    /// signed-out person can buy Premium, and this is what lets the Premium
+    /// sheet / CSV export / filing PDF recognize that without a session. Never
+    /// treated as authorization on its own — every server request still
+    /// carries a real signed JWS or a server-issued device entitlement token
+    /// (see `Store/AppleIAP.swift`). Set by `refreshLocalAppleEntitlement()`.
+    @Published var hasLocalAppleEntitlement = false
+    /// Row 3 vs row 4 for a signed-in account (see `AppleEntitlementOwnership`
+    /// / `PremiumAccessGate` in `Store/AppleIAP.swift`) — resolved by a
+    /// read-only probe, never by silently linking. `.unknown` until that
+    /// probe completes for the CURRENT account.
+    @Published var appleEntitlementOwnership: AppleEntitlementOwnership = .unknown
+    /// Bookkeeping only (not UI-bound): which account `appleEntitlementOwnership`
+    /// was last resolved for, so a different sign-in resets it instead of
+    /// leaking a stale conflict/offer across accounts. See
+    /// `refreshAppleEntitlementOwnership`.
+    var appleEntitlementOwnershipAccountID: String?
+    /// "Not now" on the row-4 link offer, remembered per account
+    /// (`dismissAppleLinkPrompt`) so it does not nag every launch.
+    @Published var appleLinkPromptDismissedForCurrentAccount = false
+    /// User-facing outcome of the last explicit Link attempt
+    /// (`linkAppleEntitlementToCurrentAccount`) — shown by `PremiumSheet`.
+    @Published var appleLinkNotice: String?
     /// Page size for the visible feed snapshot (newest first). Not a multi-page
     /// crawl. `private(set)` with `setPageSize(_:)` as the only mutator: the old
     /// `didSet` fired a detached `Task { await refresh() }`, so nobody could
@@ -84,7 +110,7 @@ final class CongressTradeStore: ObservableObject {
     /// where nothing selected means all. Non-empty = filter to that subset.
     /// Empty = all branches (website HSP: no chips selected). Non-empty filters to that subset.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
-    /// Time window for the feed + trends (website default = Past 3 Months).
+    /// Time window for the feed + trends (website default = 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Forwarded
     /// as `type=` CSV when a subset is selected (`asTxTypes`).
@@ -200,6 +226,44 @@ final class CongressTradeStore: ObservableObject {
 
     var isPremium: Bool {
         bootstrap?.auth.entitlement.premium == true
+    }
+
+    /// Feature-gating truth (owner directive 2026-08-21): SERVER Premium,
+    /// OR — only when signed out — this device's own unclaimed Apple
+    /// purchase (Guideline 5.1.1(v)), OR — signed in — that same device
+    /// purchase as long as it is not already linked to a DIFFERENT account.
+    /// Use this (never the raw `isPremium || hasLocalAppleEntitlement` OR)
+    /// for archived filing PDF / CSV export gating. See `PremiumAccessGate`
+    /// (`Store/AppleIAP.swift`) for the pure truth table this delegates to.
+    var premiumFeatureAccess: Bool {
+        PremiumAccessGate.granted(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership
+        )
+    }
+
+    /// Row 4: ask before linking — see `PremiumSheet`.
+    var showsAppleLinkOffer: Bool {
+        PremiumAccessGate.showsLinkOffer(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership,
+            dismissedForAccount: appleLinkPromptDismissedForCurrentAccount
+        )
+    }
+
+    /// Row 3: say plainly this Apple purchase belongs to a different
+    /// account — see `PremiumSheet`.
+    var showsAppleEntitlementConflict: Bool {
+        PremiumAccessGate.showsConflict(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership
+        )
     }
 
     var entitlementLabel: String {
@@ -519,6 +583,30 @@ final class CongressTradeStore: ObservableObject {
         term.range(of: #"^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$"#, options: .regularExpression) != nil
     }
 
+    /// Cancels the auto-poll timer, in-flight refresh/trends runners, and the
+    /// filter-intent watchdog.  A live screen must not call this; releasing
+    /// the store (or replacing it) should.  Tests rely on deinit running this
+    /// so a previous case's `refreshTrends()` fan-out and
+    /// `scheduleAutoRefresh()` timer cannot land on `MockURLProtocol` after
+    /// that case niled the handler.
+    func cancelOutstandingWork() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        refreshRunner?.cancel()
+        refreshRunner = nil
+        trendsRunner?.cancel()
+        trendsRunner = nil
+        filterIntentWatchdog?.cancel()
+        filterIntentWatchdog = nil
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
+        refreshRunner?.cancel()
+        trendsRunner?.cancel()
+        filterIntentWatchdog?.cancel()
+    }
+
     /// Pauses/resumes the foreground poll timer (backgrounded scenes must not
     /// keep polling). Resuming schedules from the last feed's
     /// `nextPollAfterSec`; the next successful refresh re-arms it anyway.
@@ -770,6 +858,7 @@ final class CongressTradeStore: ObservableObject {
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
         let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        let skipRising = selectedTimeRange == .all
 
         do {
             async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
@@ -778,7 +867,10 @@ final class CongressTradeStore: ObservableObject {
             async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let trendingTask: [TrendingItem] = {
+                if skipRising { return [] }
+                return (try? await api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam))?.trending ?? []
+            }()
             async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
@@ -794,7 +886,7 @@ final class CongressTradeStore: ObservableObject {
             sectorFlow = try await sectorsTask.sectors
             memberLeaderboard = try await membersTask.members
             clusterBuys = try await clustersTask.clusters
-            trendingAssets = (try? await trendingTask)?.trending ?? []
+            trendingAssets = await trendingTask
             topPerformers = (try? await topPerformersTask)?.members ?? []
             marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
             partySplit = try? await partySplitTask
@@ -1134,11 +1226,15 @@ final class CongressTradeStore: ObservableObject {
 
     /// Premium CSV export using explicit From/To (export popup) plus active
     /// feed filters. Returns raw CSV bytes for share-sheet handoff.
+    ///
+    /// Guideline 5.1.1(v): CSV export is content, not account-specific
+    /// functionality, so it is not sign-in-gated — `premiumFeatureAccess`
+    /// (server Premium, or this device's own Apple purchase as long as it
+    /// is not linked to a DIFFERENT account) is the gate;
+    /// `APIClient.exportTransactionsCSV` attaches the cached device
+    /// entitlement token automatically when there is no session.
     func exportCSV(from: String?, to: String?) async throws -> Data {
-        guard signedIn else {
-            throw APIError.server(status: 401, message: "Sign in required for CSV export", retryAfterSeconds: nil)
-        }
-        guard isPremium else {
+        guard premiumFeatureAccess else {
             throw APIError.server(status: 402, message: "CSV export requires Premium", retryAfterSeconds: nil)
         }
         let chamberParam = Self.chamberQueryValue(for: selectedChambers)
@@ -1174,6 +1270,14 @@ final class CongressTradeStore: ObservableObject {
             watchlistNotice = "Signed in."
             Task {
                 await refresh()
+                // Determine — never silently CLAIM — whether this device's
+                // own Apple purchase is unclaimed (row 4, offer to link) or
+                // already linked to a DIFFERENT account (row 3, surface the
+                // conflict) now that we know who signed in. Linking itself
+                // only ever happens from an explicit Link tap
+                // (`linkAppleEntitlementToCurrentAccount`) or Restore
+                // Purchases.
+                await refreshAppleEntitlementOwnership(force: true)
             }
             return true
         } catch {
@@ -1339,6 +1443,33 @@ final class CongressTradeStore: ObservableObject {
         } catch {
             adminNotice = error.localizedDescription
         }
+    }
+
+    func deleteAccount() async {
+        guard hasStoredSessionToken, !isDeletingAccount, !isLoggingOut else { return }
+        isDeletingAccount = true
+        watchlistNotice = nil
+        do {
+            let response = try await api.deleteAccount()
+            guard response.command.status == .succeeded, response.result?.deleted != false else {
+                throw APIError.server(
+                    status: 400,
+                    message: response.command.error ?? "Could not delete this account",
+                    retryAfterSeconds: nil
+                )
+            }
+            try api.tokenStore.clear()
+            hasStoredSessionToken = false
+            bootstrap = nil
+            subscriptions = []
+            commands = []
+            watchlist = []
+            watchlistNotice = "Account deleted."
+            await refresh()
+        } catch {
+            watchlistNotice = "Could not delete this account.  \(error.localizedDescription)"
+        }
+        isDeletingAccount = false
     }
 
     func signOut() async {

@@ -32,7 +32,7 @@ import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { tradeLearnedAt } from './tradeLearnedAt.ts';
-
+import { sanitizeCompetitorPublication, TWIN_DEDUPE_SQL } from '../shared/tradeIdentity.ts';
 
 // ---------------------------------------------------------------------------
 // Raw row shapes (mirror the D1 column names in migrations/0001_init.sql)
@@ -196,7 +196,10 @@ export function mapTransaction(row: TransactionRow): Transaction {
     stockActStatus: (row.stock_act_status as StockActStatus | null) ?? null,
     cleaningNote: plainCleaningNote(row.cleaning_note ?? null) || null,
   };
-  return transaction;
+  return sanitizeCompetitorPublication({
+    ...transaction,
+    filedDate: row.filed_date ?? null,
+  });
 }
 
 /**
@@ -216,7 +219,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
   transaction.assetName =
     resolveAssetDisplayName(row.asset_name, row.ticker, row.ref_company_name) || transaction.assetName;
 
-  return {
+  return sanitizeCompetitorPublication({
     ...transaction,
     fullName: row.filer_full_name ? (cleanFilerName(row.filer_full_name) || row.filer_full_name) : null,
     state: row.filer_state,
@@ -231,7 +234,8 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     // either way — the source watcher dump the seed backfill reads has no
     // disclosure-date/first-seen equivalent, so `t.filed_date`/
     // `t.first_seen_at` are null there too; this fallback recovers real,
-    // already-persisted data, never fabricates a value.
+    // already-persisted data, never fabricates a value.  Competitor rows
+    // whose only date is filed_date = tx_date are stripped below.
     filedDate: row.filing_filed_date ?? row.filed_date ?? null,
     firstSeenAt: tradeLearnedAt(
       row.filing_first_seen_at ?? row.first_seen_at,
@@ -247,7 +251,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     refCountry: row.ref_country,
     refExchangeShort: row.ref_exchange_short,
     refAssetClass: row.ref_asset_class,
-  };
+  });
 }
 
 export function mapSubscription(row: SubscriptionRow): Subscription {
@@ -488,6 +492,24 @@ export const DEFAULT_TX_LIMIT = 100;
 export const MAX_TX_LIMIT = 250;
 
 /**
+ * Cheap-index candidate window before twin-collapse (issue #2062 follow-up).
+ * The published page still applies {@link TWIN_DEDUPE_SQL}, but only after
+ * SQLite walks ORDER+LIMIT on the live filters. Putting NOT EXISTS in the
+ * same WHERE as the driving LIMIT lets the planner evaluate the correlated
+ * subquery against the full corpus before returning a row — the 20s+
+ * zero-byte hang still seen on SHA c2b6757e after COUNT was fixed.
+ */
+export function twinCandidateLimit(limit: number, offset: number): number {
+  const needed = Math.max(1, offset + limit);
+  // Slack covers source-twins inside the cheap window so OFFSET still
+  // lands on the requested unique page. Cap slack, never the needed
+  // prefix — a hard cap of MAX_TX_LIMIT*8 would empty offset=2000
+  // (the public pager ceiling).
+  const slack = Math.min(MAX_TX_LIMIT * 8, Math.max(needed * 3, 32));
+  return needed + slack;
+}
+
+/**
  * Historical freemium feed constants retained for compatibility. The public
  * transactions feed is not currently gated; Premium is enforced on CSV export
  * and UI enrichment workflows.
@@ -615,6 +637,17 @@ export async function readCursorHighWater(env: Env): Promise<number> {
   return Number(row?.hwm ?? 0);
 }
 
+export interface TxFilterOptions {
+  /**
+   * When true (default), collapse source-twins so one real-world trade
+   * publishes once. Unbounded COUNT / today-filings must pass false: the
+   * correlated NOT EXISTS is O(live rows) index seeks and was the 2026-08-19
+   * first-page hang (issue #2062). Published page / CSV / client summaries
+   * keep the guard.
+   */
+  twinDedupe?: boolean;
+}
+
 /**
  * Build the shared WHERE clauses + bound params for the transactions feed.
  * `includeCursor` controls whether the `cursor_seq > since` backstop clause is
@@ -624,6 +657,7 @@ export async function readCursorHighWater(env: Env): Promise<number> {
 export function buildTxFilters(
   p: TxQueryParams,
   includeCursor: boolean,
+  opts: TxFilterOptions = {},
 ): { where: string[]; params: Array<string | number> } {
   const where: string[] = [];
   const params: Array<string | number> = [];
@@ -639,6 +673,9 @@ export function buildTxFilters(
   where.push(
     "NOT (t.source = 'competitor_backfill' AND t.filer_id LIKE 'EXEC-%' AND t.doc_id LIKE 'COMPETITOR%')",
   );
+  if (opts.twinDedupe !== false) {
+    where.push(TWIN_DEDUPE_SQL);
+  }
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;
@@ -772,7 +809,7 @@ function canNestTransactionKeyset(p: TxQueryParams): boolean {
  * Pure + deterministic so it can be unit-tested without a DB.
  */
 export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
-  const { where, params } = buildTxFilters(p, true);
+  const { where, params } = buildTxFilters(p, true, { twinDedupe: false });
 
   // LIMIT/OFFSET are interpolated directly into the SQL text below (D1/SQLite
   // has no bound-parameter form for them), so a fractional value here isn't
@@ -806,20 +843,29 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
 
-  const limitClause =
+  const pageLimitClause =
     `LIMIT ${limit}` + (offset > 0 ? ` OFFSET ${offset}` : '');
+  const candidateLimit = twinCandidateLimit(limit, offset);
+  const cheapWhere = where.join(' AND ');
 
-  // Nested keyset: apply WHERE/ORDER/LIMIT on transactions alone, then join
-  // enrichment tables. Same result set; far fewer Turso rows read on the hot
-  // unfiltered cursor poll path.
+  // Walk the cheap live filters to a bounded candidate page FIRST, then
+  // collapse source-twins. NOT EXISTS still reads the full table for each
+  // candidate (correct Fleischmann semantics) but only for this window —
+  // not for every live row before LIMIT, and not dependent on idx_tx_twin_seek
+  // existing (Coolify auto-deploy never runs POST /api/admin/migrate).
   if (canNestTransactionKeyset(p)) {
     const sql =
       selectList +
       'FROM (' +
+      'SELECT t.* FROM (' +
       'SELECT t.* FROM transactions t ' +
-      `WHERE ${where.join(' AND ')} ` +
+      `WHERE ${cheapWhere} ` +
       `ORDER BY ${orderClause} ` +
-      limitClause +
+      `LIMIT ${candidateLimit}` +
+      ') t ' +
+      `WHERE ${TWIN_DEDUPE_SQL} ` +
+      `ORDER BY ${orderClause} ` +
+      pageLimitClause +
       ') t ' +
       'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
       'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
@@ -829,10 +875,19 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
 
   const sql =
     selectList +
-    TX_FROM_JOINS +
-    `WHERE ${where.join(' AND ')} ` +
+    'FROM (' +
+    'SELECT t.* ' +
+    TX_FROM_JOINS_LITE +
+    `WHERE ${cheapWhere} ` +
     `ORDER BY ${orderClause} ` +
-    limitClause;
+    `LIMIT ${candidateLimit}` +
+    ') t ' +
+    'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    `WHERE ${TWIN_DEDUPE_SQL} ` +
+    `ORDER BY ${orderClause} ` +
+    pageLimitClause;
 
   return { sql, params, limit, offset };
 }
@@ -842,11 +897,15 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
  * ticker/member/type/chamber filters as {@link buildTransactionsQuery} but
  * deliberately drops the cursor backstop so the total reflects every matching
  * row, not just the unseen tail. Returned as `total` in the API response.
+ *
+ * Twin-dedupe stays off this unbounded COUNT (issue #2062). `total` is the
+ * live-row count before source-twin collapse; the page itself still publishes
+ * one row per real-world trade.
  */
 export function buildTransactionsCountQuery(
   p: TxQueryParams,
 ): { sql: string; params: Array<string | number> } {
-  const { where, params } = buildTxFilters(p, false);
+  const { where, params } = buildTxFilters(p, false, { twinDedupe: false });
   const sql =
     'SELECT COUNT(*) AS total ' +
     TX_FROM_JOINS_LITE +
@@ -859,7 +918,7 @@ export function buildTransactionsTodayFilingsQuery(
   p: TxQueryParams,
   todayIso: string,
 ): { sql: string; params: Array<string | number> } {
-  const { where, params } = buildTxFilters(p, false);
+  const { where, params } = buildTxFilters(p, false, { twinDedupe: false });
   const allWhere = [...where, 'substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?'];
   const sql =
     'SELECT COUNT(DISTINCT t.doc_id) AS total ' +

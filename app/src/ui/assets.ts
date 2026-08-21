@@ -32,6 +32,19 @@ function loadAsset(relativePath: string, contentType: string): StaticAsset {
 
 // Font + brand images (immutable-cache routes under /assets/*).
 export const ZILLA_SLAB_WOFF2 = loadAsset('assets/zilla-slab-700.woff2', 'font/woff2');
+// Self-hosted Inter (QABUGHUNT-01 / WEBPERF-01): the body font used to be
+// pulled from a Google Fonts <link> whose axis tuple 400s the whole
+// stylesheet (see dashboardHtml.ts), so Inter has NEVER actually loaded on
+// production — every visitor silently gets the system fallback stack.  These
+// five static weights (latin subset only, matching the weights the CSS
+// actually uses) are the same gstatic.com woff2 bytes Google Fonts would
+// have served, vendored here so the face can never 400 again and so the
+// third-party request (and the CSP exceptions it required) goes away.
+export const INTER_400_WOFF2 = loadAsset('assets/inter-400.woff2', 'font/woff2');
+export const INTER_500_WOFF2 = loadAsset('assets/inter-500.woff2', 'font/woff2');
+export const INTER_600_WOFF2 = loadAsset('assets/inter-600.woff2', 'font/woff2');
+export const INTER_700_WOFF2 = loadAsset('assets/inter-700.woff2', 'font/woff2');
+export const INTER_800_WOFF2 = loadAsset('assets/inter-800.woff2', 'font/woff2');
 export const EAGLE_SPLASH_PNG = loadAsset('assets/eagle-splash.png', 'image/png');
 export const BRAND_LOGO_PNG = loadAsset('assets/brand-logo.png', 'image/png');
 export const BRAND_LOGO_DARK_PNG = loadAsset('assets/brand-logo-dark.png', 'image/png');

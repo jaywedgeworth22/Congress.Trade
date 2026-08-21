@@ -640,6 +640,19 @@ describe('billing router', () => {
     expect(rows.get('u1')!.plan).toBe('monthly');
   });
 
+  it('POST /webhook rejects a livemode that does not match the Stripe key prefix', async () => {
+    const { env } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec', STRIPE_SECRET_KEY: 'sk_live_prod' });
+    const res = await postWebhook(buildBillingRouter(), env, {
+      id: 'evt_livemode_mismatch',
+      created: 100,
+      type: 'customer.subscription.updated',
+      livemode: false,
+      data: { object: { id: 'sub_1', status: 'active', customer: 'cus_1' } },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'livemode does not match Stripe key' });
+  });
+
   it('POST /webhook ignores duplicate checkout.session.completed events', async () => {
     const seed: URow = {
       id: 'u1', stripe_customer_id: null, subscription_status: null, plan: null,

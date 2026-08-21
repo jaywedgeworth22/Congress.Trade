@@ -28,11 +28,109 @@ describe('legalHtml pricing copy', () => {
     expect(PRIVACY_HTML).not.toContain('$140.00');
   });
 
+  it('offers in-app account deletion in Privacy §6', () => {
+    expect(PRIVACY_HTML).toContain('Delete Account');
+    expect(PRIVACY_HTML).toContain('iOS Account sheet');
+  });
+
   it('mails support@congress.trade, not the old jays.services inbox', () => {
     expect(TOS_HTML).toContain('mailto:support@congress.trade');
     expect(PRIVACY_HTML).toContain('mailto:support@congress.trade');
     expect(TOS_HTML).not.toContain('congress.trade@jays.services');
     expect(PRIVACY_HTML).not.toContain('congress.trade@jays.services');
+  });
+});
+
+describe('LEGALCOMPLIANCE-04: not-affiliated-with-government disclaimer', () => {
+  const SENTENCE =
+    'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.';
+  const FOOTER =
+    'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
+
+  it('keeps the long non-affiliation sentence in Terms of Service §1', () => {
+    expect(TOS_HTML).toContain(SENTENCE);
+  });
+
+  it('uses one combined footer line with two spaces around each dot and no trailing period', () => {
+    expect(TOS_HTML).toContain(FOOTER);
+    expect(PRIVACY_HTML).toContain(FOOTER);
+    expect(FOOTER.endsWith('agency')).toBe(true);
+    expect(FOOTER).toContain('  ·  ');
+    expect(FOOTER).not.toMatch(/agency\./);
+  });
+});
+
+describe('LEGALCOMPLIANCE-05: ToS §1 scope covers Executive Branch OGE 278-T filings', () => {
+  it('describes House, Senate, AND Executive Branch filings, not Congress-only', () => {
+    expect(TOS_HTML).toContain('U.S. House of Representatives and U.S. Senate under the STOCK Act (2012)');
+    expect(TOS_HTML).toContain('U.S. Executive Branch officials under the Ethics in Government Act of 1978');
+    expect(TOS_HTML).toContain('Periodic Transaction Reports (OGE Form 278-T)');
+    expect(TOS_HTML).not.toContain('filed by politicians serving in the U.S. Congress under the STOCK Act (2012)');
+  });
+
+  it('names the public-record source agencies and the EIGA use restriction on Executive Branch reports', () => {
+    expect(TOS_HTML).toContain('U.S. House Clerk, the U.S. Senate, and the Office of Government Ethics');
+    expect(TOS_HTML).toContain('5 U.S.C. &sect;13107(c)');
+  });
+});
+
+describe('LEGALCOMPLIANCE-03: Apple In-App Purchase path in ToS §3-5', () => {
+  it('addresses Apple as merchant of record and App Store cancellation/refunds separately from Stripe', () => {
+    expect(TOS_HTML).toContain('billed by Apple as an In-App Purchase');
+    expect(TOS_HTML).toContain('iOS Settings');
+    expect(TOS_HTML).toContain('reportaproblem.apple.com');
+    expect(TOS_HTML).toContain('Apple, not Congress.Trade, is the merchant of record');
+  });
+});
+
+describe('LEGALCOMPLIANCE-02: Privacy Policy discloses Apple, Sentry, and LLM extraction providers', () => {
+  it('lists Apple (Sign in, IAP, APNs) as a sub-processor and identifier source', () => {
+    expect(PRIVACY_HTML).toContain('Apple-assigned user identifier');
+    expect(PRIVACY_HTML).toContain('Apple Push Notification service (APNs) token');
+    expect(PRIVACY_HTML).toContain('<strong>Apple</strong> — "Sign in with Apple" authentication');
+  });
+
+  it('lists Sentry and the OpenRouter/Mistral/LlamaParse extraction pipeline', () => {
+    expect(PRIVACY_HTML).toContain('Sentry (Functional Software, Inc.)');
+    expect(PRIVACY_HTML).toContain('OpenRouter, Mistral, and LlamaParse');
+  });
+
+  it('discloses webhook destination URLs and the Cloudflare Web Analytics beacon', () => {
+    expect(PRIVACY_HTML).toContain('webhook delivery, the destination URL you provide');
+    expect(PRIVACY_HTML).toContain('Web Analytics" beacon');
+  });
+});
+
+describe('ToS §9-10: no-warranty / no-guarantee protective language', () => {
+  it('disclaims any guarantee that a filing is published at all or on any schedule, and names the upstream sources', () => {
+    expect(TOS_HTML).toContain('No guarantee any filing is published, or published on any schedule.');
+    expect(TOS_HTML).toContain("the U.S. House Clerk's office, the U.S. Senate's electronic financial disclosure (eFD) system, and the Office of Government Ethics (OGE)");
+    expect(TOS_HTML).toContain('do not guarantee that any particular filing will be published on the Service at all, on any schedule, or within any timeframe');
+  });
+
+  it('disclaims any guarantee of being faster than any other source, tying it to historical-only latency comparisons', () => {
+    expect(TOS_HTML).toContain('No guarantee of being faster than any other source.');
+    expect(TOS_HTML).toContain('historical measurement of past filings under the conditions observed at that time');
+    expect(TOS_HTML).toContain('not a representation, promise, or guarantee about the timing of any future filing');
+  });
+
+  it('disclaims delivery of alerts and notifications across every channel', () => {
+    expect(TOS_HTML).toContain('Alerts &amp; notifications may be delayed, duplicated, or fail.');
+    expect(TOS_HTML).toContain('Email, push, webhook, and SSE (real-time) delivery');
+    expect(TOS_HTML).toContain('A paid subscription does not guarantee the delivery, timing, or accuracy of any particular alert.');
+  });
+
+  it('reserves the right to change, suspend, or discontinue any part of the Service', () => {
+    expect(TOS_HTML).toContain('We may add, change, suspend, or discontinue any part of the Service');
+  });
+
+  it('states dollar amounts are bracket-derived estimates, not exact amounts', () => {
+    expect(TOS_HTML).toContain('estimates derived from the disclosure brackets the filings themselves use, not exact amounts');
+  });
+
+  it('carves out jurisdictions that do not allow warranty/liability exclusions', () => {
+    expect(TOS_HTML).toContain('Some jurisdictions do not allow the exclusion of certain warranties');
+    expect(TOS_HTML).toContain('limited to the maximum extent permitted by applicable law');
   });
 });
 
@@ -60,9 +158,9 @@ describe('shared legal chrome and theme path', () => {
       expect(html).toContain('Congress<span class="dot">.</span>Trade');
     }
     expect(TOS_HTML).toContain('<h1>Terms of Service</h1>');
-    expect(TOS_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+    expect(TOS_HTML).toContain('<p class="eff">Effective August 21, 2026</p>');
     expect(PRIVACY_HTML).toContain('<h1>Privacy Policy</h1>');
-    expect(PRIVACY_HTML).toContain('<p class="eff">Effective June 22, 2026</p>');
+    expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 21, 2026</p>');
   });
 
   it('honors the site Light / Dark / System switch on both pages', () => {
@@ -79,10 +177,33 @@ describe('shared legal chrome and theme path', () => {
       expect(html).toContain('aria-label="Theme"');
     }
   });
+
+  // Owner 2026-08-21: "just delete the option" — Sepia was half-implemented
+  // and looked ugly, not like paper.  Assert the palette, the picker entry,
+  // and every html[data-theme="sepia"] CSS rule stay gone on both legal
+  // pages so a future PR can't silently reintroduce it, while the one-time
+  // localStorage migration (stored 'sepia' → 'light') stays present so a
+  // returning visitor with Sepia selected doesn't keep failing validation.
+  it('has fully removed the Sepia theme and migrates any stored preference to Light', () => {
+    for (const html of [TOS_HTML, PRIVACY_HTML]) {
+      expect(html).not.toContain("label: 'Sepia'");
+      expect(html).not.toContain('html[data-theme="sepia"]');
+      expect(html).not.toContain('data-theme-opt="sepia"');
+      expect(html).not.toContain('--bg:#f3e6d0');
+      const sepiaMigrations = html.match(/if \(s === 'sepia'\)/g) || [];
+      // Boot script + runtime readThemePref() each migrate a stored 'sepia' value.
+      expect(sepiaMigrations.length).toBe(2);
+      expect(html).toContain("localStorage.setItem('ui-theme', 'light')");
+    }
+  });
 });
 
 describe('short legal and pricing routes', () => {
-  it('redirects /privacy, /terms, and /pricing to canonical destinations', async () => {
+  // These dynamically import the whole UI router; under cold transform or
+  // parallel-suite load the default 5s per-test budget occasionally trips
+  // (observed 2026-08-20: flaky timeouts on the redirect test). 20s is ample
+  // for the full module graph and still fails fast on a real hang.
+  it('redirects /privacy, /terms, and /pricing to canonical destinations', { timeout: 20_000 }, async () => {
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
     const privacy = await app.request('http://localhost/privacy', {}, {} as never);
@@ -98,7 +219,7 @@ describe('short legal and pricing routes', () => {
     expect(pricing.headers.get('location')).toContain('pricing=1');
   });
 
-  it('serves ToS and Privacy Policy from the same themed shell', async () => {
+  it('serves ToS and Privacy Policy from the same themed shell', { timeout: 20_000 }, async () => {
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
     const tos = await app.request('http://localhost/terms-of-service', {}, {} as never);

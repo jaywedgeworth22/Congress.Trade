@@ -23,6 +23,9 @@ import type { Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes.ts';
 import { parseAmountRange } from './amounts.ts';
 import { detectOption } from './senateHtml.ts';
+import { ptrTailRe } from './ptrTails.ts';
+
+export { countHousePtrTails } from './ptrTails.ts';
 
 /** Penalty per missing core field (date / amount / type / asset). */
 const MISSING_FIELD_PENALTY = 0.12;
@@ -112,13 +115,14 @@ const HOUSE_ASSET_TYPE_CODE_PATTERN = houseAssetTypeCodePattern();
 const ASSET_TYPE_RE = new RegExp(`\\[(${HOUSE_ASSET_TYPE_CODE_PATTERN})\\]`, 'i');
 // A date in MM/DD/YYYY.
 const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
-// An amount bracket like "$1,001 - $15,000" or "$50,000,001 +".
-const AMOUNT_RE = /\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
+// An amount bracket like "$1,001 - $15,000" or "$50,000,001 +" or "Over $1,000,000".
+const AMOUNT_RE = /(?:Over\s+)?\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
 // A transaction-type token (P / S / E / S (partial) ...).
 const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
 const TICKER_PATTERN = String.raw`[A-Z][A-Z0-9.^\/\-]{0,9}`;
 // A ticker in parentheses, e.g. "(AAPL)" or "(JPM^J)" or "(BRK/B)".
 const TICKER_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)`);
+const TICKER_SKIP_RE = /^(PARTIAL|NEW|NONE|N\/A|PURCHASE|SALE|BUY)$/i;
 const HOUSE_TABLE_HEADER_RE =
   /\b(?:Filing ID\s*#?\d+\s+)?ID\s+Owner\s+Asset\s+Transaction\s+Type\s+Date\s+Notification\s+Date\s+Amount(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/i;
 const HOUSE_TABLE_HEADER_GLOBAL_RE =
@@ -134,6 +138,13 @@ const INLINE_RECORD_RE = new RegExp(
  */
 export function parseHousePtrText(text: string): ParsedTx[] {
   const cleaned = cleanPdfText(text);
+  // Electronic PTRs often omit SP/DC/JT on every row after the first. The
+  // owner-required INLINE_RECORD_RE then glues those later rows into one
+  // rawText (wrong ticker, two $ brackets → invalid_amount). Split on every
+  // `[TYPE] P/S/E date date $amount` tail first.
+  const tailRows = parseTailRecords(cleaned);
+  if (tailRows.length > 0) return tailRows;
+
   if (HOUSE_TABLE_HEADER_RE.test(cleaned)) {
     const inlineRows = parseInlineRecords(cleaned);
     if (inlineRows.length > 0) return inlineRows;
@@ -197,6 +208,99 @@ function calculateRowConfidence(row: {
   if (!hasAsset) confidence -= MISSING_FIELD_PENALTY;
   // Incomplete rows stay below the auto-publish threshold.
   return Math.max(0.3, Math.min(0.94, confidence));
+}
+
+function parseTailRecords(text: string): ParsedTx[] {
+  const normalized = stripHouseTableHeaders(cleanPdfText(text)).replace(/\s+/g, ' ').trim();
+  const matches = [...normalized.matchAll(ptrTailRe())];
+  if (matches.length === 0) return [];
+
+  const rows: ParsedTx[] = [];
+  for (let i = 0; i < matches.length; i += 1) {
+    const m = matches[i];
+    const next = matches[i + 1];
+    const start = m.index ?? 0;
+    const end = next?.index ?? normalized.length;
+    const prevEnd = i > 0
+      ? (matches[i - 1].index ?? 0) + matches[i - 1][0].length
+      : 0;
+    const prefix = normalized.slice(prevEnd, start);
+    const rawText = normalized.slice(prevEnd, end).trim();
+    const groups = m.groups ?? {};
+    // Blank Owner is Self on the House form — not "same as the previous row".
+    // Carrying SP/DC/JT forward mis-attributes later unmarked (filer) trades.
+    const identity = identityFromPrefix(prefix);
+    const assetType = groups.assetType?.toUpperCase() ?? null;
+    const txType = parseTxType(groups.txType ?? '') ?? 'B';
+    const txDate = toIsoDate(groups.txDate ?? '');
+    const { min, max } = parseAmountRange(groups.amount ?? '');
+    const details = parseHouseRowDetails(rawText);
+    const confidence = calculateRowConfidence({
+      owner: identity.owner,
+      assetName: identity.assetName,
+      ticker: identity.ticker,
+      txType,
+      txDate,
+      amountMin: min,
+    });
+    rows.push({
+      txDate,
+      owner: identity.owner,
+      assetName: identity.assetName,
+      ticker: identity.ticker,
+      assetType,
+      assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
+      txType,
+      amountMin: min,
+      amountMax: max,
+      isOption: assetType === 'OP' || detectOption(rawText),
+      capGainsOver200: parseCapGainsOver200(rawText),
+      rawText,
+      ...details,
+      confidence,
+    });
+  }
+  return rows;
+}
+
+function identityFromPrefix(
+  prefix: string,
+): { owner: Owner | null; ticker: string | null; assetName: string } {
+  let s = prefix.replace(/\s+/g, ' ').trim();
+  const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)];
+  const ownerTok = ownerMatches.at(-1);
+  const owner = ownerTok
+    ? (OWNER_CODES[ownerTok[1].toUpperCase()] ?? 'self')
+    : 'self';
+  if (ownerTok && ownerTok.index != null) {
+    s = s.slice(ownerTok.index + ownerTok[0].length).trim();
+  }
+
+  const tickerMatches = [...s.matchAll(new RegExp(TICKER_RE.source, 'g'))]
+    .filter((m) => !TICKER_SKIP_RE.test(m[1] ?? ''));
+  const tickerMatch = tickerMatches.at(-1);
+  let ticker = tickerMatch ? normalizeTicker(tickerMatch[1]) : null;
+  let nameSrc = tickerMatch && tickerMatch.index != null
+    ? s.slice(0, tickerMatch.index)
+    : s;
+
+  nameSrc = nameSrc.replace(/^(?:F\s+)?S:\s+New\b/i, '').trim();
+  nameSrc = nameSrc.replace(/^(?:S\s+O|L|D):\s+/i, '');
+  nameSrc = nameSrc.replace(
+    /^.*\b(?:Account(?:\s*#?\s*\d+)?|Trust\s+\d+|Retirement Account\s+\d+|Investment Fund\s+\d+|Active Assets(?:\s*\(\d+\))?|Brokerage Account(?:\s*#?\s*\d+)?)\s+/i,
+    '',
+  );
+
+  if (!ticker) {
+    const hyphen = nameSrc.match(/\s-\s([A-Z]{2,5})\s*$/);
+    if (hyphen) {
+      ticker = hyphen[1];
+      nameSrc = nameSrc.slice(0, hyphen.index).trim();
+    }
+  }
+
+  const assetName = cleanAssetNameString(nameSrc) || ticker || '(unknown)';
+  return { owner, ticker, assetName };
 }
 
 function parseInlineRecords(text: string): ParsedTx[] {
@@ -473,6 +577,10 @@ function parseDates(text: string): string[] {
   let m: RegExpExecArray | null;
   DATE_RE.lastIndex = 0;
   while ((m = DATE_RE.exec(text)) !== null) {
+    const before = text.slice(Math.max(0, m.index - 16), m.index).toLowerCase();
+    // Bond / note maturity in the asset name ("due 1/31/2028", "DUE 05/01/2053")
+    // is not the transaction date. Prod H-2024-20025111 parked as future_tx_date.
+    if (/(?:due|matures?|maturity|coupon)\s+$/.test(before)) continue;
     out.push(toIsoDate(m[1]));
   }
   return out;

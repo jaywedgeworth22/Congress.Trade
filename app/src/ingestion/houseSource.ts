@@ -20,6 +20,10 @@
  *   is backed by a search endpoint that surfaces filings INTRADAY, before the
  *   yearly XML refreshes. pollHouseLiveSearch() uses that endpoint as a
  *   fail-soft overlay on top of the daily bulk XML path.
+ *
+ * FETCH ORDER: server-first.  Direct Clerk host, then Mac/scout
+ * POST /fetch-house if HOUSE_RELAY_URL or INGEST_RELAY_URL is set and
+ * direct fails.  Not Mac-only.  Senate eFD is the exception (relay-first).
  */
 
 import { unzipSync } from 'fflate';
@@ -150,23 +154,9 @@ export async function fetchHouseIndex(
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.HOUSE_RELAY_URL || process.env?.INGEST_RELAY_URL : undefined);
 
   let zipBytes: Uint8Array | null = null;
+  let directError: Error | null = null;
 
-  if (relayUrl) {
-    try {
-      const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-house`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url, responseType: 'bytes' }),
-      }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' }, opts.fetchImpl);
-      if (relayRes.ok) {
-        zipBytes = new Uint8Array(await relayRes.arrayBuffer());
-      }
-    } catch {
-      /* Fall back to direct fetch if relay attempt fails */
-    }
-  }
-
-  if (!zipBytes) {
+  try {
     const res = await trackedFetch(url, {
       headers: {
         // A plain UA avoids occasional WAF challenges on the Clerk host.
@@ -174,10 +164,30 @@ export async function fetchHouseIndex(
         accept: 'application/zip,application/octet-stream,*/*',
       },
     }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' }, opts.fetchImpl);
-    if (!res.ok) {
-      throw new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
+    if (res.ok) {
+      zipBytes = new Uint8Array(await res.arrayBuffer());
+    } else {
+      directError = new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
     }
-    zipBytes = new Uint8Array(await res.arrayBuffer());
+  } catch (err) {
+    directError = err instanceof Error ? err : new Error(String(err));
+  }
+
+  if (!zipBytes && relayUrl) {
+    const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-house`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, responseType: 'bytes' }),
+    }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' }, opts.fetchImpl);
+    if (relayRes.ok) {
+      zipBytes = new Uint8Array(await relayRes.arrayBuffer());
+    } else {
+      throw directError ?? new Error(`house bulk zip ${url} -> HTTP ${relayRes.status}`);
+    }
+  }
+
+  if (!zipBytes) {
+    throw directError ?? new Error(`house bulk zip ${url} -> fetch failed`);
   }
 
   const files = unzipSync(zipBytes);

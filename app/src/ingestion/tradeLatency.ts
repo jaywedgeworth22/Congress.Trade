@@ -29,6 +29,8 @@ import {
   type ProbeScheduleConfig,
 } from './probeSchedule.ts';
 import { logProbeCadence } from './probeCadenceLog.ts';
+import { ALL_CHAMBERS, previousSuccessfulProbeAt, recordProbeRun } from './probeRunLog.ts';
+import { scheduleCtPublishSnapshot } from './latencyPriceSnapshots.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -147,6 +149,11 @@ interface ProviderObservationRow {
   filed_date: string | null;
   filer_name: string | null;
   payload: string | null;
+  /** Last successful probe of this lane strictly before first_observed_at, or
+   *  null when none exists (cold start). Publication window lower bound —
+   *  see probeRunLog.ts. Not selected by every query site; only populated
+   *  where the caller needs it to bracket trade_latency_candidates.provider_window_*. */
+  prev_probe_at?: string | null;
 }
 
 export interface DisclosureProviderRow {
@@ -218,6 +225,8 @@ export interface DisclosureLatencyProviderMetrics {
   label: string;
   /** Lifecycle for scoreboard (FMP family defaults to off). */
   operationalStatus?: LatencySourceStatus;
+  /** Set on publicSummary rows: whether the public scoreboard paints this lane. */
+  publiclyShown?: boolean;
   candidates: number;
   /**
    * Concurrent races only (both first-seen in window, |delta| ≤ max concurrent
@@ -2335,6 +2344,12 @@ export async function recordTradeLatencyCandidates(
 
   const updates: Array<[string, SqlParam[]]> = [];
   const mintedHashes = new Set<string>();
+  // ct_publish is scheduled inline, right here at mint time — the one moment
+  // congress_first_seen_at is actually "now" (raceFirstSeenAt keeps the real
+  // stamp for live imports), so the very next per-minute tick can capture it
+  // LIVE instead of it aging into a backfill before a row even exists. See
+  // latencyPriceSnapshots.ts's module header.
+  const ctPublishRows: Array<{ trade_hash: string; ticker: string | null; provider: ProviderId; congress_first_seen_at: string }> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
     for (const tx of transactions) {
       const ctx = contexts.get(tx.id);
@@ -2358,6 +2373,7 @@ export async function recordTradeLatencyCandidates(
       // Keep the real first_seen for live imports (no clamp-to-now for recent stamps).
       const firstSeen = raceFirstSeenAt(firstSeenRaw, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
       mintedHashes.add(trade_hash);
+      ctPublishRows.push({ trade_hash, ticker: tx.ticker || ctx?.ticker || null, provider, congress_first_seen_at: firstSeen });
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
@@ -2405,6 +2421,19 @@ export async function recordTradeLatencyCandidates(
       if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
       return;
     }
+    // Best-effort ct_publish snapshot scheduling. scheduleCtPublishSnapshot
+    // never throws (its own DB write is internally caught), but this loop is
+    // still wrapped so a future change there can never break candidate
+    // minting — the one thing this function must never fail to do.
+    try {
+      for (const row of ctPublishRows) {
+        await scheduleCtPublishSnapshot(env, row, nowIso);
+      }
+    } catch (err) {
+      if (!storageMissing(err)) {
+        console.warn('trade latency ct_publish snapshot scheduling failed:', (err as Error).message);
+      }
+    }
     // Immediate match against already-stored provider observations so a live
     // publish that a provider already listed becomes a concurrent race now,
     // rather than waiting for the next cron probe.
@@ -2438,7 +2467,7 @@ async function matchJustMintedCandidates(
       const rows = await all<ProviderObservationRow>(
         env.DB,
         `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
-                provider_published_at, source_url, filed_date, filer_name, payload
+                provider_published_at, source_url, filed_date, filer_name, payload, prev_probe_at
            FROM trade_provider_observations
           WHERE provider = ? AND trade_hash IN (${placeholders})`,
         [provider.id, ...chunk],
@@ -2569,13 +2598,21 @@ async function upsertProviderRows(env: Env, provider: ProviderId, rows: Disclosu
       `trade latency: ${provider} produced ${missingFiler}/${rows.length} observations with no filer in the trade hash — these can never match; check the provider's payload field names`,
     );
   }
+  // Publication-window lower bound. Read BEFORE this run is recorded, otherwise
+  // the current probe becomes its own predecessor and every bracket collapses to
+  // zero width — a fictional perfect measurement. See probeRunLog.ts.
+  const prevByChamber = new Map<string, string | null>();
+  for (const chamber of new Set(rows.map((r) => r.chamber))) {
+    prevByChamber.set(chamber, await previousSuccessfulProbeAt(env, provider, chamber, nowIso));
+  }
+
   for (const row of rows) {
     await run(
       env.DB,
       `INSERT INTO trade_provider_observations
          (provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
-          provider_published_at, source_url, filed_date, filer_name, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          prev_probe_at, provider_published_at, source_url, filed_date, filer_name, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(provider, chamber, provider_key, trade_hash) DO UPDATE SET
          last_observed_at=excluded.last_observed_at,
          provider_published_at=COALESCE(trade_provider_observations.provider_published_at, excluded.provider_published_at),
@@ -2590,6 +2627,7 @@ async function upsertProviderRows(env: Env, provider: ProviderId, rows: Disclosu
         row.tradeHash,
         nowIso,
         nowIso,
+        prevByChamber.get(row.chamber) ?? null,
         row.providerPublishedAt,
         row.sourceUrl,
         row.filedDate,
@@ -2641,7 +2679,7 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   return all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
-            trade_hash, source_url, filed_date, filer_name, payload
+            trade_hash, source_url, filed_date, filer_name, payload, prev_probe_at
        FROM trade_provider_observations
       WHERE provider = ? AND first_observed_at >= ?
       ORDER BY first_observed_at DESC
@@ -2876,6 +2914,8 @@ async function matchAndUpdateCandidates(
                 provider_published_at = ?,
                 match_method = ?,
                 payload = ?,
+                provider_window_start = ?,
+                provider_window_end = ?,
                 attempts = attempts + 1,
                 last_checked_at = ?,
                 error = NULL,
@@ -2887,6 +2927,8 @@ async function matchAndUpdateCandidates(
           match.provider_published_at,
           method,
           match.payload,
+          match.prev_probe_at ?? null,
+          match.first_observed_at,
           nowIso,
           nowIso,
           candidate.trade_hash,
@@ -2933,6 +2975,9 @@ async function loadExactPendingHashMatches(
   obs_first_observed_at: string;
   obs_provider_published_at: string | null;
   obs_payload: string | null;
+  /** Publication-window lower bound for the matched observation — see
+   *  probeRunLog.ts. Null for observations recorded before PR #2080 (0089). */
+  obs_prev_probe_at: string | null;
 }>> {
   return all(
     env.DB,
@@ -2941,7 +2986,8 @@ async function loadExactPendingHashMatches(
             o.provider_key AS obs_provider_key,
             o.first_observed_at AS obs_first_observed_at,
             o.provider_published_at AS obs_provider_published_at,
-            o.payload AS obs_payload
+            o.payload AS obs_payload,
+            o.prev_probe_at AS obs_prev_probe_at
        FROM trade_latency_candidates c
        JOIN trade_provider_observations o
          ON o.provider = c.provider
@@ -2983,6 +3029,8 @@ async function applyExactHashMatches(
               provider_published_at = ?,
               match_method = 'trade-hash',
               payload = ?,
+              provider_window_start = ?,
+              provider_window_end = ?,
               attempts = attempts + 1,
               last_checked_at = ?,
               error = NULL,
@@ -2993,6 +3041,8 @@ async function applyExactHashMatches(
         row.obs_first_observed_at,
         row.obs_provider_published_at,
         row.obs_payload,
+        row.obs_prev_probe_at,
+        row.obs_first_observed_at,
         nowIso,
         nowIso,
         row.trade_hash,
@@ -3026,6 +3076,7 @@ async function applyExactHashMatches(
       filed_date: row.filed_date,
       filer_name: row.filer_name,
       payload: row.obs_payload,
+      prev_probe_at: row.obs_prev_probe_at,
     };
     alerts.push(() => alertMatch(env, provider, candidate, obs));
   }
@@ -3363,7 +3414,7 @@ async function loadObservationRowsByKeys(
       ...(await all<ProviderObservationRow>(
         env.DB,
         `SELECT provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at, provider_published_at,
-                source_url, filed_date, filer_name, payload
+                source_url, filed_date, filer_name, payload, prev_probe_at
            FROM trade_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
         [provider, ...chunk],
@@ -3567,6 +3618,21 @@ async function runProviderProbe(
     kind: 'success' | 'error' | 'budget_skip' | 'not_configured' | 'disabled',
     detail?: { error?: string | null; fetchedRows?: number },
   ) => {
+    // Durable probe-run record for EVERY provider and every terminal outcome —
+    // including the ones that found nothing. A probe that looked and saw the
+    // filing absent is what establishes the lower bound of the publication
+    // window; without it the bracket is unbounded. Only 'success' sets ok=1:
+    // a skipped, unconfigured or failed probe never observed the competitor's
+    // state, so it cannot bound anything. See probeRunLog.ts.
+    await recordProbeRun(env, {
+      provider: provider.id,
+      chamber: ALL_CHAMBERS,
+      ranAt: now.toISOString(),
+      ok: kind === 'success',
+      rowsSeen: detail?.fetchedRows ?? 0,
+      error: detail?.error ?? (kind === 'success' ? null : kind),
+    });
+
     if (!isFmpFamilyProvider(provider.id) && provider.id !== 'unusual_whales' && provider.id !== 'quiver') {
       return;
     }
@@ -4525,6 +4591,23 @@ export function mergeFmpOperationalStatus(
   return 'unknown';
 }
 
+/** Public scorecard heading for the merged FMP family lane. */
+export const PUBLIC_FMP_LATENCY_LABEL = 'FinancialModelingPrep.com';
+
+/**
+ * Public scorecards only show a lane whose probe is currently operating
+ * (`running`) and whose coverage join is not known-broken.  error / stopped /
+ * off / unknown stay on the admin scoreboard with a Hidden From Public chip.
+ */
+export function isLatencyComparisonPublic(p: {
+  operationalStatus?: LatencySourceStatus | string | null;
+  coverageIntegrity?: CoverageIntegrity | string | null;
+}): boolean {
+  if ((p.operationalStatus ?? 'unknown') !== 'running') return false;
+  if (p.coverageIntegrity === 'contradiction') return false;
+  return true;
+}
+
 function comparisonStatusFromSample(opts: {
   timingN: number;
   sampleOk: boolean;
@@ -4875,8 +4958,10 @@ export function computeLatencyScope(opts: {
 }
 
 /**
- * Public scoreboard providers: FMP stable + RapidAPI collapse to one "FMP" lane
- * using the earliest path observation per trade. Other direct providers pass through.
+ * Public scoreboard providers: FMP stable + RapidAPI collapse to one
+ * FinancialModelingPrep.com lane using the earliest path observation per trade.
+ * Other direct providers pass through.  Callers still filter with
+ * {@link isLatencyComparisonPublic} before painting the public grid.
  */
 export function buildPublicLatencyProviders(
   pathMetrics: DisclosureLatencyProviderMetrics[],
@@ -4902,7 +4987,7 @@ export function buildPublicLatencyProviders(
   );
   const fmpMetrics = computeProviderMetrics({
     providerId: 'fmp',
-    label: 'FMP',
+    label: PUBLIC_FMP_LATENCY_LABEL,
     timestampKind: 'monitor',
     operationalStatus: fmpStatus,
     mine: fmpCandidates,
@@ -5056,13 +5141,14 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     comparableProviders: PROVIDERS.filter((p) => p.supportsDirectLatest).length,
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
   };
-  // Public totals count scoreboard lanes (FMP merged), not dual FMP paths.
+  // Public totals count functioning scoreboard lanes (FMP merged), not dual FMP paths.
+  const visiblePublicProviders = publicProviders.filter(isLatencyComparisonPublic);
   const publicTotals = {
     ...totals,
-    matched: publicProviders.reduce((sum, p) => sum + p.matched, 0),
-    maturedProviderObserved: publicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
-    unmatchedProvider: publicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
-    comparableProviders: publicProviders.length,
+    matched: visiblePublicProviders.reduce((sum, p) => sum + p.matched, 0),
+    maturedProviderObserved: visiblePublicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
+    unmatchedProvider: visiblePublicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
+    comparableProviders: visiblePublicProviders.length,
     configuredComparableProviders: statuses.filter(
       (p) =>
         p.supportsDirectLatest &&
@@ -5088,7 +5174,10 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       ...meta,
       totals: publicTotals,
       scope,
-      providers: publicProviders,
+      providers: publicProviders.map((p) => ({
+        ...p,
+        publiclyShown: isLatencyComparisonPublic(p),
+      })),
     },
   };
 }

@@ -1,32 +1,39 @@
 name: iOS build (Mac runner)
 
-# Compile-check the iOS app on the self-hosted Mac runner.
+# Compile AND run the 71 CongressTradeTests cases on the self-hosted Mac runner.
+# A broken compile or a failing XCTest must fail this job (never continue-on-error).
 #
-# XCODE BUILDS ONLY (owner directive, 2026-08-12): this is the sole workflow
-# that may target the mac-runner labels. Backend typecheck/test/lint stay on
-# hetzner/ubuntu — label routing enforces that, since nothing lands on the Mac
-# unless a workflow asks for these labels.
+# The required-check job name is `xcodebuild (unsigned)`.  That job always
+# reports on pull_request (no paths: filter on that event) so GitHub can
+# require it without blocking backend-only PRs.  The Mac work stays behind
+# an iOS-path gate.
+#
+# XCODE BUILDS ONLY (owner directive, 2026-08-12): the Mac labels are only
+# used by the compile+test job below.  Backend typecheck/test/lint stay on
+# hetzner/ubuntu.
 #
 # Why this exists: version 1.0 was rejected as INVALID_BINARY twice, and the
-# box carries stable Xcode 26.x and Xcode-beta 27 side by side. A binary built
-# against the beta SDK passes TestFlight upload but fails App Store submission.
-# CI therefore pins DEVELOPER_DIR to stable and ASSERTS the version, so a
-# stray xcode-select can never silently move builds onto the beta.
+# box carries stable Xcode 26.x and Xcode-beta 27 side by side.  A binary
+# built against the beta SDK passes TestFlight upload but fails App Store
+# submission.  CI pins DEVELOPER_DIR to stable and ASSERTS the version.
 #
-# Deliberately unsigned (CODE_SIGNING_ALLOWED=NO) and no archive/upload —
-# TestFlight shipping stays in scripts/ios-ship-testflight.sh, which carries
-# its own stable-Xcode guard.
+# Deliberately unsigned for the device compile, and no archive/upload —
+# TestFlight shipping stays in scripts/ios-ship-testflight.sh.
+#
+# Required-check follow-up (Jay/ASC — after this workflow is on main):
+# Settings → Branches → main → Require status checks to pass → add
+# `xcodebuild (unsigned)`.  Do not add it before this lands: a path-filtered
+# job as a required check blocks every non-iOS PR.
 
 on:
   pull_request:
-    paths:
-      - 'clients/ios/**'
-      - '.github/workflows/ios-build.yml'
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
       - 'clients/ios/**'
       - '.github/workflows/ios-build.yml'
+      - 'scripts/ios-ci-xctest.sh'
   workflow_dispatch:
 
 permissions:
@@ -34,17 +41,56 @@ permissions:
 
 concurrency:
   group: ios-build-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs only.  Rapid pushes to main must not drop the
+  # last compile+test signal (IOSENGINEERING-14: two main runs cancelled
+  # 2026-08-16 while the branch was still red).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  decide:
+    name: ios path gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Decide whether Mac compile+test must run
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "ios=1" >> "$GITHUB_OUTPUT"
+            echo "${EVENT}: path filter already applied or dispatch; run Mac compile+test."
+            exit 0
+          fi
+          if [ -z "$BASE_SHA" ]; then
+            echo "ios=1" >> "$GITHUB_OUTPUT"
+            echo "pull_request missing base sha; fail-closed and run Mac compile+test."
+            exit 0
+          fi
+          git fetch --depth=1 origin "$BASE_SHA"
+          if git diff --name-only "$BASE_SHA" "$GITHUB_SHA" | grep -E '^(clients/ios/|\.github/workflows/ios-build\.yml$|scripts/ios-ci-xctest\.sh$)'; then
+            echo "ios=1" >> "$GITHUB_OUTPUT"
+            echo "iOS paths changed; Mac compile+test required."
+          else
+            echo "ios=0" >> "$GITHUB_OUTPUT"
+            echo "no iOS paths; required check is green without a Mac run."
+          fi
+
   build:
-    name: xcodebuild (unsigned)
-    # Self-hosted Mac: never run fork PRs on it.
+    name: xcodebuild-mac
+    needs: decide
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.decide.outputs.ios == '1' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, xcode26]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
@@ -75,5 +121,54 @@ jobs:
             -project clients/ios/CongressTrade.xcodeproj \
             -scheme CongressTrade \
             -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-ct-ci" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
+
+      - name: Test CongressTrade (simulator XCTest, do not skip)
+        run: bash scripts/ios-ci-xctest.sh
+
+      - name: Upload XCTest result bundle
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: congress-trade-ios-xcresult
+          path: ${{ runner.temp }}/CongressTrade.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Always-present status.  This is the context to tick required after merge.
+  # If it needed: the Mac job, a red compile or XCTest makes this red too.
+  report:
+    name: xcodebuild (unsigned)
+    needs: [decide, build]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail when Mac compile or XCTest failed
+        env:
+          IOS: ${{ needs.decide.outputs.ios }}
+          DECIDE: ${{ needs.decide.result }}
+          MAC: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "decide=${DECIDE} ios=${IOS} mac=${MAC}"
+          if [ "$DECIDE" != "success" ]; then
+            echo "::error::iOS path gate did not succeed; fail closed."
+            exit 1
+          fi
+          if [ "$IOS" = "0" ]; then
+            echo "No iOS paths on this PR; required check is green without a Mac run."
+            exit 0
+          fi
+          if [ "$IOS" != "1" ]; then
+            echo "::error::iOS path gate did not vote; fail closed."
+            exit 1
+          fi
+          if [ "$MAC" = "success" ]; then
+            echo "Mac compile + XCTest succeeded."
+            exit 0
+          fi
+          echo "::error::iOS compile or XCTest failed (mac job result=${MAC}). This required check is red."
+          exit 1
