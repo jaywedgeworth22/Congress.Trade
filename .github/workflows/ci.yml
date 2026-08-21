@@ -160,12 +160,14 @@ jobs:
     # the job-level condition has to fail closed too. `!= '0'` means an absent
     # or unparseable output still RUNS; only an explicit "already verified"
     # vote skips, and only on the scheduled path.
+    # Fork PRs must run this required job. GitHub treats a skipped required
+    # check as satisfied, so a same-repo-only `if:` would let a fork merge
+    # without tsc/tests. congress-trading-shared is public and vendored;
+    # `npm ci` does not need GH_PAT. This job is contents:read on ubuntu-latest.
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      needs.schedule-gate.outputs.should_run != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -267,9 +269,7 @@ jobs:
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      needs.schedule-gate.outputs.should_run != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -313,9 +313,7 @@ jobs:
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      needs.schedule-gate.outputs.should_run != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
