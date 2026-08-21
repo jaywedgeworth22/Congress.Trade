@@ -149,9 +149,8 @@ jobs:
 
   build:
     name: typecheck + test
-    # Self-hosted CI with automatic hosted fallback. Set CT_CI_RUNNER repo
-    # variable to 'congress-ci' for owned runner, clear/delete for hosted.
-    # Dependabot forced to hosted runners for security.
+    # GitHub-hosted only. Do not restore a private-repo oracle-ci / self-hosted
+    # branch — a later private flip must not send Linux CI back to the box.
     needs: [schedule-gate]
     # `!cancelled()`, NOT the bare gate output. `needs:` alone would let a
     # FAILED or timed-out schedule-gate job skip this one, and GitHub reports a
@@ -161,13 +160,15 @@ jobs:
     # the job-level condition has to fail closed too. `!= '0'` means an absent
     # or unparseable output still RUNS; only an explicit "already verified"
     # vote skips, and only on the scheduled path.
+    # Fork PRs must run this required job. GitHub treats a skipped required
+    # check as satisfied, so a same-repo-only `if:` would let a fork merge
+    # without tsc/tests. congress-trading-shared is public and vendored;
+    # `npm ci` does not need GH_PAT. This job is contents:read on ubuntu-latest.
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ vars.CT_CI_RUNNER != '' && github.event.repository.private && fromJSON('["self-hosted", "oracle-ci"]') || 'ubuntu-latest' }}
+      needs.schedule-gate.outputs.should_run != '0')
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
       run:
@@ -198,6 +199,12 @@ jobs:
       - name: Enforce owned-runner workflow policy
         working-directory: .
         run: node scripts/check-actions-runner-policy.mjs
+
+      # Offline policy table for Coolify compose overlap (#1537 / PR #1964).
+      # Does not talk to Docker, Coolify, or the origin.
+      - name: Deploy overlap policy tests
+        working-directory: .
+        run: bash scripts/ops/test-deploy-overlap.sh
 
       # Static guard for the class of defect behind the sqlite-web finding: a
       # security-relevant variable given a fail-open default, or a password
@@ -262,9 +269,7 @@ jobs:
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      needs.schedule-gate.outputs.should_run != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -308,9 +313,7 @@ jobs:
     if: >-
       !cancelled() &&
       (github.event_name != 'schedule' ||
-      needs.schedule-gate.outputs.should_run != '0') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      needs.schedule-gate.outputs.should_run != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -323,6 +326,7 @@ jobs:
           bash -n scripts/ios-fleet/scheduled-ship-gate.sh
           bash -n scripts/ios-fleet/test-scheduled-ship-gate.sh
           bash -n scripts/ios-ship-testflight.sh
+          bash -n scripts/ios-ci-xctest.sh
           node --check scripts/ios-fleet/asc-api.mjs
 
       - name: Build-number + ship-gate tests
@@ -333,3 +337,12 @@ jobs:
       # TestFlight build. It runs solely on the Mac runner, so test it here.
       - name: Scheduled ship gate tests
         run: bash scripts/ios-fleet/test-scheduled-ship-gate.sh
+
+      # Docs-only main merges must not rebuild congress-app.  Same matcher
+      # Coolify watch_paths / fleet-deploy-guard use.
+      - name: Coolify deploy-relevance tests
+        run: |
+          bash -n scripts/ops/coolify-watch-paths.sh
+          bash -n scripts/ops/test-deploy-relevance.sh
+          python3 -m py_compile scripts/ops/deploy_relevance.py
+          bash scripts/ops/test-deploy-relevance.sh

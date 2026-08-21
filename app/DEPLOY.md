@@ -130,28 +130,28 @@ curl -sS -A "Mozilla/5.0" -X POST https://congress.trade/api/admin/backfill \
   -d '{"chambers":["house","senate"],"sinceYear":2014}'
 ```
 
+Do not run production backfill unless Jay explicitly asks.
+
 ## 6. Dev / deploy
 
 ```bash
-npm run dev      # local Deno on http://localhost:8787
-# production: merge to main → Coolify docker-compose rebuild
-ADMIN_TOKEN=... bash scripts/ship.sh   # wait for sha, then migrate
+npm run dev      # local Deno server
+npm run deploy   # reminder only — Coolify publishes on main
+ADMIN_TOKEN=... bash scripts/ship.sh   # wait for live SHA + migrate
 ```
 
-Confirm `GET /api/health` → `ok`, `db`, `build.sha`, `costProfile.name=paid`.
-The watcher still self-gates via `shouldPollNow` / `probeSchedule`.
-
+Confirm with `GET https://congress.trade/api/health` → `ok` / `db` true and
+a `build.sha` that matches the intended commit.
 ## Endpoint reference
 
 Public API (`/api`):
-- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&from=&to=&order=&limit=` — cursor feed (reconciliation backstop).  `from=`/`to=` (YYYY-MM-DD) bound the trade date; `order=asc` (default) or `order=desc`.
-- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
+- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&from=&to=&order=&limit=` — cursor feed (reconciliation backstop).  `from=`/`to=` (YYYY-MM-DD) bound the trade date for rolling-window pulls; `order=asc` (default, oldest-first — page forward with the returned `cursor` as the next `since`) or `order=desc` (newest-first "latest trades" snapshot, pair with `from=`).- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
 - `GET /api/filings/:docId`, `GET /api/members`
 - `POST /api/subscriptions` — create and return the subscription secret once
 - `GET/PATCH /api/subscriptions/:id` — secret-scoped management
 - `GET /api/subscriptions` is disabled publicly; use the admin endpoint below.
 
-Client API (`/api/client/v1`, shared by the PWA and SwiftUI app):
+Client API (`/api/client/v1`, shared by the website and SwiftUI app):
 - `GET /api/client/v1/bootstrap`, `GET /api/client/v1/me`
 - `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=&order=`
 - `GET/PUT /api/client/v1/preferences` — signed-in users only
@@ -170,7 +170,6 @@ UI: `GET /` (dashboard) and `/admin`.  `GET /health` → `{ok:true}`.
 
 Admin custom domain: `admin.congress.trade` is routed to the same Coolify app.
 Protect it with Cloudflare Access; see `docs/wave4-auth-billing.md`.
-
 ## Pipeline (how a filing flows)
 
 ```
@@ -179,8 +178,7 @@ Deno.cron (paid: * * * * *) → watcher (House + Senate eFD + OGE)
   filing.new   → fetcher    (raw → R2)
   filing.fetched → classifier (senate_html | text_pdf | scanned_pdf)
   filing.extracted → orchestrator → extractor pipeline → normalizer
-        ├ confidence ≥ 0.85 → persist (source='primary') → delivery
-        └ below / invalid   → review_queue (held off the live feed)
+        ├ confidence ≥ 0.85 → persist (source='primary') → delivery        └ below / invalid   → review_queue (held off the live feed)
   delivery.dispatch → webhook fan-out (HMAC) + SSE + APNs
 ```
 
@@ -189,8 +187,12 @@ Deno.cron (paid: * * * * *) → watcher (House + Senate eFD + OGE)
 - **Branch protection** on `main`: PRs required, `typecheck + test` required,
   no force push/deletion.
 - **Senate eFD** depends on the named tunnel `https://scout.jays.services`.
-  Never "fix" an outage by changing `SENATE_RELAY_URL`.
-- **House bulk XML** refreshes ~daily; live-search overlays when enabled.
+  Never "fix" an outage by changing `SENATE_RELAY_URL`.  Scraping still uses
+  the agreement-gate + CSRF flow (`src/ingestion/senateSource.ts`).
+- **House bulk XML** refreshes ~daily; `pollHouseLiveSearch()` overlays the
+  intraday live-search result when enabled.
+- **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
+  constant before changing extraction cost/quality.
 - **Observability** is Coolify + Sentry + `/api/health`, not Workers Smart
   Placement / `wrangler.toml` dashboard toggles.
 - Confirm `SEED_SOURCES` URLs in `src/backfill/seed.ts` before a backfill.

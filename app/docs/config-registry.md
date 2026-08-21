@@ -10,7 +10,6 @@ only for the Infisical bootstrap + `TURSO_DATABASE_URL=file:…` override).
 Every configuration key and knob the Coolify Deno process reads is routed
 through the Infisical runtime resolver (`src/secrets/infisical.ts`) unless
 listed under **Env-only** below. Resolution order per key:
-
 1. **Infisical** — the value set in the Infisical project (env `prod` by
    default). Edits go live within the resolver cache TTL
    (`INFISICAL_CACHE_TTL_SECONDS`, default 600s) with **no redeploy**.
@@ -18,14 +17,15 @@ listed under **Env-only** below. Resolution order per key:
    name that exists in both is shadowed by the app row — so fleet-wide
    keys (`AGENT_SYNC_TOKEN`, `AGENT_SYNC_POST_TOKEN`) live **only** in
    shared.  Do not copy them onto the ST or CT app projects.
-2. **Env fallback** — Coolify container env, or local `wrangler.toml [vars]` /
-   `.dev.vars` for tests.  Kept so keyless local dev / tests still boot and so
-   an Infisical outage never leaves production unconfigured. Disable with
+2. **Env fallback** — Coolify container env, or local `.dev.vars` for tests.
+   Kept so keyless local dev / tests still boot and so an Infisical outage
+   never leaves production unconfigured. Disable with
    `INFISICAL_ALLOW_ENV_FALLBACK="false"` to hard-require Infisical.
 
-**Operate by editing Infisical, not Deno Deploy and not wrangler.toml.** Audit
-which source is live for every key at any time: `GET /api/admin/config-sources`
-(admin-gated; reports names + sources only, never values).
+**Operate by editing Infisical, not Deno Deploy and not wrangler.toml.**
+There is no production `wrangler.toml`.  Audit which source is live for
+every key at any time: `GET /api/admin/config-sources` (admin-gated; reports
+names + sources only, never values).
 
 ## Infisical-tunable (everything here is live-editable)
 
@@ -341,12 +341,13 @@ rejected.
 
 ## Not env at all (already hot-configurable elsewhere)
 
-- **Poll cadence / Aggressive Mode** — stored in SQLite `poll_config` + KV,
+- **Poll cadence / Aggressive Mode** — stored in SQLite `poll_config` + Deno KV,
   edited live from the Admin · Cadence tab.
-- **Site logo style** — admin UI setting (KV).
+- **Site logo style** — admin UI setting (Deno KV).
 - **Runtime paths** — SQLite file, Deno KV file, R2/S3 shim, and the
-  `deno_runtime_queue` table are Coolify/compose infrastructure, not Infisical
-  knobs.  `TURSO_DATABASE_URL` is the leftover env name for the local file.
+  `deno_runtime_queue` table are Coolify/compose infrastructure
+  (`app/docker-compose.yml`, `src/deno/main.ts`), not Infisical knobs.
+  `TURSO_DATABASE_URL` is the leftover env name for the local file.
 
 ## Conventions
 

@@ -75,11 +75,22 @@ export function tickerLogoRawUrl(symbol: string): string {
   return `${TICKER_LOGO_BASE_URL}/${encodeURIComponent(symbol)}.png`;
 }
 
-/** logo.dev ticker endpoint URL (PNG, dark by default, 404 on a true miss). */
+/**
+ * logo.dev ticker endpoint URL (PNG, dark by default, 404 on a true miss).
+ *
+ * WEBPERF-02: the largest rendered `.tkr-logo` box is 36px (.trades-card),
+ * so `size=48&retina=true` (96px delivered) already covers ~2.7x DPI with
+ * headroom, versus the previous `size=128` (256px) that was up to ~7x
+ * oversized for the 22px table box. Format stays PNG (not webp) because
+ * `isValidPngBytes`/`pngResponse` below, the repo pack, and the GitHub
+ * fallback all assume PNG bytes and an `image/png` content-type; switching
+ * format would need those three call sites (and their tests) reworked
+ * together, so it is left as a follow-up rather than folded in here.
+ */
 export function logoDevUrl(symbol: string, token: string, theme: 'dark' | 'light' = 'dark'): string {
   return (
     `https://img.logo.dev/ticker/${encodeURIComponent(symbol)}` +
-    `?token=${encodeURIComponent(token)}&format=png&theme=${theme}&size=128&retina=true&fallback=404`
+    `?token=${encodeURIComponent(token)}&format=png&theme=${theme}&size=48&retina=true&fallback=404`
   );
 }
 

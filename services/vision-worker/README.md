@@ -57,6 +57,20 @@ flooded Grok Build session history. That is a **defect**, not a tuning preferenc
 (verified 2026-08-10). Headless runs may still appear in the Grok Build chat list;
 we do not hack around that.
 
+### Batch selection (defect fix 2026-08-20)
+
+The worker polls `GET /api/admin/scanned-filings/pending?worker=local` and picks
+the first `MAX_DOCS_PER_POLL` **processable** docs (skipping exhausted and
+backoff docs), then re-asserts the server-side park for exhausted docs whose
+earlier park call failed.  Previously it took the raw head of the pending list
+(server sorts newest first): two exhausted docs sat at the head, every poll
+skipped them, and the rest of a 48-item backlog starved for days with zero
+progress.  `?worker=local` also opts into the broad reclaim set — every
+unresolved scanned review item (cascade disagreement, `extraction_row_limit`
+garbage, low-confidence flags) is advertised to local vision, which is free
+(subscription Grok CLI) and strictly better than the `server_cpu` OCR that
+created those flags.  The Coolify CPU worker stays on the conservative set.
+
 ## Installation (launchd)
 
 ```bash

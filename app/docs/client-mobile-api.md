@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-08-11
+Last updated: 2026-08-20
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -8,9 +8,10 @@ the implementation mounted at `/api/client/v1/*`.
 
 ## Source Of Truth
 
-- The Cloudflare Worker backend owns data access, calculations, entitlement,
-  billing state, scraping, extraction, enrichment, prices, delivery, backfills,
-  provider secrets, admin tokens, and MCP/tool orchestration.
+- The Coolify Deno backend at congress.trade owns data access, calculations,
+  entitlement, billing state, scraping, extraction, enrichment, prices,
+  delivery, backfills, provider secrets, admin tokens, and MCP/tool
+  orchestration.
 - SwiftUI are peer clients over the same backend-owned API.
 - Do not add client-only scraping, calculation, provider-secret, admin, MCP, or
   migration paths.
@@ -24,6 +25,21 @@ the implementation mounted at `/api/client/v1/*`.
   Keychain refresh sessions for iOS, and backend token validation.
 - Account alerts and developer delivery settings should be account-owned
   resources, not bearer-secret-only objects in mobile UI.
+
+## Archived Filing PDF (Premium, in-app)
+
+Jay 2026-08-20: the stored R2 copy is a Premium digital good.
+
+- `GET /api/documents/:docId/pdf` (also mounted at `/api/client/v1/documents/:docId/pdf`)
+  serves the archived bytes.  iOS must fetch it with the session Bearer and
+  `Accept: application/pdf`, then present QuickLook/PDFKit or a temp file.
+  Never open Safari to `congress.trade/pricing` or Stripe.
+- Free or anonymous iOS: the Filing PDF control opens `PremiumSheet` (StoreKit).
+- Backend: Bearer and/or `Accept: application/pdf` on a non-premium request
+  returns **402 JSON** `{ upgradeRequired: true, feature: "pdf" }`, not a 302
+  to `/pricing`.  Browser HTML navigations without Bearer still 302 to the
+  web paywall.
+- The public government **Source Filing** URL on the trade row stays ungated.
 
 ## Command And Status Model
 
@@ -48,8 +64,23 @@ be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
 trail.
 The current router implements `update_preferences`, `create_subscription`,
 `update_subscription`, `delete_subscription`, `register_device`,
-`unregister_device`, and `redeem_apple_purchase`; `start_checkout` and
+`unregister_device`, `redeem_apple_purchase`, and `delete_account`; `start_checkout` and
 `request_export` are defined in the shared type set but still return `501`.
+
+### Account deletion — `delete_account`
+
+Guideline 5.1.1(v).  Signed-in only.  Permanently deletes the account:
+
+- delivery subscriptions for `user:<id>` (and their SSE leases)
+- `push_devices`, `user_preferences`, `apple_subscriptions`, other `client_commands`
+- indexed sessions (`sess:*` / `sess_user:<id>`)
+- the `users` row (PII)
+- best-effort Stripe subscription cancel (no refund)
+
+Web also exposes `POST /auth/account/delete` (cookie or bearer).  After a
+successful delete the client must clear its local token; a follow-up logout is
+unnecessary because the session is already gone.  Apple In-App Purchase
+subscriptions must still be cancelled in the App Store.
 
 ### Device registration (APNs / web push)
 
@@ -132,6 +163,65 @@ placeholder address in that edge case.
     command `failed` status with `"this Apple subscription is already linked
     to a different account"` (`409`-equivalent) rather than reassigning it.
   - Result on success: `{ entitlement, plan, expiresAt, originalTransactionId }`.
+
+### Anonymous Apple purchase (Guideline 5.1.1(v)) — no account required to buy (2026-08-20)
+
+Apple rejected submission b61e2a4a: requiring account registration before an
+In-App Purchase that is not itself account-based violates 5.1.1(v). PDF
+download and CSV export are content, not account-specific functionality, so
+they must be purchasable and usable signed OUT. Delivery (webhook/SSE) alerts
+and push registration remain sign-in-gated — that is account-specific
+functionality Apple's own guideline explicitly allows to require sign-in.
+
+- `POST /api/client/v1/entitlements/apple/redeem` `{ signedTransaction }` — no
+  session, no cookie, no bearer. Outside the `requireUser`-gated `/commands`
+  pipeline entirely. Runs the exact same verification as
+  `redeem_apple_purchase` (`billing/appleRedeem.ts`: JWS chain, bundle id,
+  Sandbox policy, product mapping, active-window check), then upserts the
+  `apple_subscriptions` ledger row with `user_id = NULL` instead of a session
+  user. Rate-limited per IP and per `originalTransactionId`.
+  - A transaction already linked to a real account returns `409` (same
+    "already linked to a different account" as the authenticated path) — an
+    anonymous caller can never take over an owned row.
+  - Result on success: `{ entitlement: { premium: true, plan, ..., source:
+    "apple_anonymous" }, plan, expiresAt, originalTransactionId,
+    deviceEntitlementToken }`. `deviceEntitlementToken` is a short-lived
+    (`min(subscription expiry, 24h)`), HMAC-signed, opaque token
+    (`billing/deviceEntitlement.ts`) — no personal data, just the
+    `originalTransactionId` + an expiry.
+- The device presents that token as `X-Apple-Device-Entitlement` on two
+  requests that no longer require a session: `GET
+  /api/documents/:docId/pdf` and `GET /api/export/transactions.csv`. Both
+  routes re-check the LIVE `apple_subscriptions` row (not just the token's own
+  signature) on every request, so a refund/revoke that lands after the token
+  was issued takes effect immediately rather than waiting for the token to
+  expire. **A present session always wins** — the device token is only
+  consulted when the request has no signed-in user at all, never OR'd with a
+  session that simply isn't Premium.
+- `link_apple_entitlement` — a `POST /api/client/v1/commands` command,
+  authenticated, payload `{ signedTransaction }`. Identical verification and
+  ledger write to `redeem_apple_purchase` (in fact the same server code path)
+  — the only difference is client-side, and it changed 2026-08-21 (owner
+  directive: "linked to an account, usable via website or app both" —
+  Premium belongs to the ACCOUNT, and linking a purchase to one is always an
+  EXPLICIT user action). iOS now calls this command from exactly two places,
+  both an explicit tap: the Premium sheet's "Link to This Account" button
+  (row 4 of the truth table below — an unclaimed device purchase) and
+  Restore Purchases. Nothing runs it silently any more — sign-in, the
+  `Transaction.updates` listener, and the launch-time quiet reconcile only
+  PROBE ownership read-only (reusing the anonymous redeem route below, which
+  never assigns an account) so the UI can ask before linking. `409` ("already
+  linked to a different account") is always surfaced to the person, never
+  swallowed.
+  - iOS-side entitlement truth table (`Store/AppleIAP.swift`
+    `PremiumAccessGate`): (1) signed out + a verified, unclaimed device
+    purchase → Premium (Guideline 5.1.1(v)); (2) signed in + server Premium →
+    Premium; (3) signed in + server free + device purchase owned by a
+    DIFFERENT account → NOT Premium, conflict shown plainly, way out is
+    Restore Purchases or switching accounts; (4) signed in + server free +
+    device purchase unclaimed → Premium (never strand a payer), with an
+    explicit "Link to this account?" ask (remembered "Not now" per account,
+    Link stays available from the Premium sheet and Restore Purchases).
 - App Store Server Notifications V2 land at `POST /api/webhooks/apple`
   (`{ signedPayload }`, same env gate, same JWS-chain verification — including
   the notification's OWN nested `signedTransactionInfo` /
@@ -160,9 +250,13 @@ is unchanged — Stripe's own resolution code was not touched or restructured.
 
 The response adds one **optional, additive** field for clients that want to
 show the right "Manage subscription" surface (App Store vs. Stripe billing
-portal): `entitlement.source: "stripe" | "apple" | null`. Absent/`undefined`
-is a valid value (older code paths that haven't been touched still omit it)
-and must not be treated as "not premium" — always gate on `entitlement.premium`.
+portal): `entitlement.source: "stripe" | "apple" | "apple_anonymous" | null`.
+Absent/`undefined` is a valid value (older code paths that haven't been
+touched still omit it) and must not be treated as "not premium" — always gate
+on `entitlement.premium`. `"apple_anonymous"` only ever appears in the
+anonymous redeem route's own response body (above) — it is device-scoped, not
+`User`-keyed, so no `resolveEntitlementAsync` response (bootstrap/me/etc.)
+ever returns it.
 
 - Implemented now: bootstrap, `me`, feed, trade detail, ticker detail,
   politician detail (`member` endpoint), `preferences` GET/PUT, subscription listing, and command-backed
@@ -494,7 +588,8 @@ were verified live on 2026-08-11 and pinned by
 
 ## Production Boundaries
 
-- Mobile/web app work must not require production deploys, remote D1 migrations,
-  queue drains, production crawlers, or backfills unless Jay explicitly asks.
+- Mobile/web app work must not require production deploys, production schema
+  migrations, queue drains, production crawlers, or backfills unless Jay
+  explicitly asks.
 - If a contract change needs a migration or production backfill, document that
   in the PR and keep the code path safe before the production step runs.
