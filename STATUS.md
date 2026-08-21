@@ -18,6 +18,15 @@ wrong email in an alert.
 Migration is 0093 (renumbered twice by collisions).  AFTER MERGE: run
 `POST /api/admin/migrate`.
 Receipt: `docs/rollouts/2026-08-20-premium-activation-alerts.md`.
+## 2026-08-20 CURSOR — Shared-dep auto-merge: no GH_PAT, no pull_request_target
+
+Jay: do not add `GH_PAT`.  `congress-trading-shared` is public and vendored
+here.  `auto-merge-shared-dependency.yml` (and `auto-merge-prs.yml`) no
+longer use `pull_request_target` or write tokens, skip forks, and do not
+invite a PAT.  Same-repo bumps still land with
+`gh pr merge <n> --squash --auto`.  Required Linux CI runs on fork PRs so
+skipped typecheck is not satisfied.  Receipt:
+`docs/rollouts/2026-08-20-harden-shared-dep-automerge.md`.
 
 ## 2026-08-20 GROK — Review-queue glued PTR rows (#2106)
 
