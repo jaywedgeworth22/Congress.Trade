@@ -3,7 +3,7 @@ import StoreKit
 
 /// Redeeming App Store purchases against the Congress.Trade backend.
 ///
-/// Three rules this file exists to keep:
+/// Four rules this file exists to keep:
 ///
 /// 1. **Apple's money is already gone by the time we run.** `product.purchase()`
 ///    returning `.success` means the customer was charged. Every failure after
@@ -21,8 +21,18 @@ import StoreKit
 ///    records it against this DEVICE via `POST
 ///    /api/client/v1/entitlements/apple/redeem`, no session required. Signing
 ///    in later is optional and only adds cross-device access + Delivery
-///    alerts (see `linkAppleEntitlementIfNeeded`) — it is never the gate on
-///    the purchase itself.
+///    alerts — it is never the gate on the purchase itself.
+/// 4. **Linking a purchase to an account is always an explicit user action**
+///    (owner directive 2026-08-21 — Premium belongs to the ACCOUNT, usable on
+///    website or app once linked). A device's Apple purchase must never make
+///    every account that signs into it look Premium, and a claimed ledger row
+///    cannot be reassigned later — so this app only ever calls the
+///    authenticated `link_apple_entitlement` / `redeem_apple_purchase`
+///    commands from an explicit Link tap (`linkAppleEntitlementToCurrentAccount`)
+///    or an explicit Restore Purchases tap. Every automatic/background path
+///    (sign-in, the `Transaction.updates` listener, the launch-time quiet
+///    reconcile) only PROBES ownership read-only
+///    (`refreshAppleEntitlementOwnership`) and never claims anything.
 extension CongressTradeStore {
     /// Redeem one verified StoreKit transaction against the SIGNED-IN
     /// account, then finish it.
@@ -43,6 +53,13 @@ extension CongressTradeStore {
     /// this DEVICE (`apple_subscriptions.user_id = NULL`) and caches the
     /// resulting device entitlement token so PDF / CSV requests can present
     /// it. Returns whether the purchase is now recognized as Premium.
+    ///
+    /// Also doubles as the READ-ONLY row-3/row-4 ownership probe (see
+    /// `refreshAppleEntitlementOwnership` below) when called while signed
+    /// in: the server route this hits never assigns an account (it always
+    /// upserts with `userId: null`), so calling it cannot silently link
+    /// anything — an already-claimed row simply 409s, which is a fact-find,
+    /// not a side effect.
     ///
     /// Does NOT finish the transaction — callers decide (see call sites):
     /// the live `.updates` listener wants it left open so it is redelivered
@@ -77,36 +94,47 @@ extension CongressTradeStore {
     }
 
     /// Redeem every current entitlement on this Apple Account. Returns whether
-    /// any active subscription was found. Used by Restore Purchases and by the
-    /// launch-time sweep.
+    /// any active subscription was found. Used by Restore Purchases (explicit
+    /// tap — `allowSignedInLink` defaults `true`) and by the silent
+    /// launch-time reconcile (`reconcileAppleEntitlementsQuietly`, which
+    /// passes `false`).
     ///
-    /// Signed in: authenticated redeem (attaches to the account). Signed out:
-    /// anonymous redeem (Guideline 5.1.1(v) — device-scoped, no account
-    /// required). Either way the visible outcome is the same: Premium
-    /// unlocks on this device.
+    /// Signed out: anonymous redeem (Guideline 5.1.1(v) — device-scoped, no
+    /// account required). Signed in and already Premium: authenticated
+    /// redeem — this is only ever a renewal/refresh of a grant this account
+    /// already has, never a new claim. Signed in and NOT Premium: the
+    /// authenticated CLAIM only runs when `allowSignedInLink` is true, i.e.
+    /// the caller is an explicit user action (Restore Purchases); the silent
+    /// reconcile instead falls back to the read-only ownership probe so a
+    /// launch never silently links an unclaimed-or-foreign transaction to
+    /// whoever happens to be signed in.
     @discardableResult
-    func redeemCurrentAppleEntitlements() async throws -> Bool {
+    func redeemCurrentAppleEntitlements(allowSignedInLink: Bool = true) async throws -> Bool {
         var confirmed = false
         var firstError: Error?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             do {
                 if signedIn {
-                    _ = try await api.redeemApplePurchase(signedTransaction: result.jwsRepresentation)
+                    if isPremium || allowSignedInLink {
+                        _ = try await api.redeemApplePurchase(signedTransaction: result.jwsRepresentation)
+                        await transaction.finish()
+                        confirmed = true
+                    } else {
+                        await refreshAppleEntitlementOwnership(force: true)
+                    }
                 } else {
                     _ = try await redeemAppleTransactionAnonymously(jws: result.jwsRepresentation)
+                    await transaction.finish()
+                    confirmed = true
                 }
-                await transaction.finish()
-                confirmed = true
             } catch {
                 // Keep going: one bad row must not block the others. Signed
                 // in, that's typically "already linked to a different
-                // account"; signed out, the anonymous route returns the same
-                // 409 when this transaction is already claimed by SOME
-                // account — either way restore()'s copy stays "no active
-                // subscription found on this Apple Account" for this row,
-                // which is accurate: nothing new was found for the CURRENT
-                // caller.
+                // account" (surfaced to the caller below, not swallowed —
+                // see `PremiumSheet.restore()`); signed out, the anonymous
+                // route returns the same 409 when this transaction is
+                // already claimed by SOME account.
                 if firstError == nil { firstError = error }
             }
         }
@@ -136,7 +164,22 @@ extension CongressTradeStore {
                 try? await redeemAppleTransactionAnonymously(jws: result.jwsRepresentation)
                 continue
             }
-            // Also intentionally left unfinished on failure — next launch retries.
+            guard isPremium else {
+                // Signed in but not (yet) Premium on this account: this
+                // redelivered transaction might be unclaimed (row 4 — ask
+                // before linking) or already linked to a DIFFERENT account
+                // (row 3). Either way this listener never claims it — only
+                // an explicit Link tap (`linkAppleEntitlementToCurrentAccount`)
+                // or Restore Purchases does. Left unfinished so it keeps
+                // being redelivered until the person decides.
+                await refreshAppleEntitlementOwnership(force: true)
+                continue
+            }
+            // Already Premium on this account (Stripe or a previously-linked
+            // Apple subscription) — this is a renewal/refresh of that SAME
+            // grant, not a new claim, so auto-applying it here is not
+            // "linking" anything new. Also intentionally left unfinished on
+            // failure — next launch retries.
             try? await redeemAppleTransaction(transaction, jws: result.jwsRepresentation)
         }
     }
@@ -148,30 +191,203 @@ extension CongressTradeStore {
     /// Runs signed in OR signed out — a signed-out launch also refreshes/
     /// claims this device's own anonymous access (Guideline 5.1.1(v)), which
     /// doubles as how the device entitlement token gets renewed before its
-    /// short (<=24h) expiry on every app open.
+    /// short (<=24h) expiry on every app open. Signed in and not yet
+    /// Premium, this only probes ownership (`allowSignedInLink: false`) —
+    /// silent paths never claim a purchase to whoever happens to be signed
+    /// in.
     func reconcileAppleEntitlementsQuietly() async {
         await refreshLocalAppleEntitlement()
         guard !isPremium else { return }
-        _ = try? await redeemCurrentAppleEntitlements()
+        _ = try? await redeemCurrentAppleEntitlements(allowSignedInLink: false)
     }
 
-    /// Called once, right after a successful sign-in, to claim any purchase
-    /// this device already made anonymously under the account that just
-    /// signed in (`link_apple_entitlement`). Silent by design (same pattern
-    /// as `reconcileAppleEntitlementsQuietly`): a 409 here means the
-    /// transaction is already linked to a DIFFERENT account, which is not an
-    /// error for THIS account — it keeps whatever entitlement it already has
-    /// (Stripe or none), and the device keeps its anonymous access via the
-    /// cached device token either way. Only surface that conflict when the
-    /// person explicitly taps Restore Purchases (`PremiumSheet.restore()`).
-    func linkAppleEntitlementIfNeeded() async {
-        guard signedIn, !isPremium, hasLocalAppleEntitlement else { return }
+    /// Read-only probe for the current account's row-3/row-4 status (see
+    /// `AppleEntitlementOwnership`). Reuses the anonymous redeem route —
+    /// it never assigns an account, so calling it while signed in cannot
+    /// silently link anything: it only confirms the transaction is still
+    /// unclaimed (success) or reports the existing owner-mismatch (a 409,
+    /// surfaced into `appleEntitlementOwnership` instead of swallowed).
+    ///
+    /// Resets to `.unknown` whenever the signed-in account changes (a
+    /// different account gets its own fresh check, never a stale
+    /// conflict/offer left over from someone else), and no-ops once already
+    /// resolved for the CURRENT account unless `force` — cheap to call from
+    /// every `refresh()` without hammering the network.
+    ///
+    /// Deliberately does NOT gate on the cached `hasLocalAppleEntitlement`
+    /// flag: a caller reached via `Transaction.updates`
+    /// (`observeAppleTransactions`) can have a fresher, still-unflushed
+    /// verified entitlement in hand than that flag reflects, and checking
+    /// `Transaction.currentEntitlements` directly below is a local StoreKit
+    /// read (no network) even when there is nothing to find.
+    func refreshAppleEntitlementOwnership(force: Bool = false) async {
+        guard signedIn, let userID = signedInUser?.id else {
+            appleEntitlementOwnership = .unknown
+            appleEntitlementOwnershipAccountID = nil
+            return
+        }
+        if appleEntitlementOwnershipAccountID != userID {
+            appleEntitlementOwnershipAccountID = userID
+            appleEntitlementOwnership = .unknown
+            appleLinkPromptDismissedForCurrentAccount = Self.loadAppleLinkPromptDismissed(userID: userID)
+        }
+        guard !isPremium else { return }
+        guard force || appleEntitlementOwnership == .unknown else { return }
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result,
+                  AppleIAPProduct(rawValue: transaction.productID) != nil,
+                  transaction.revocationDate == nil else { continue }
+            do {
+                _ = try await redeemAppleTransactionAnonymously(jws: result.jwsRepresentation)
+                appleEntitlementOwnership = PremiumAccessGate.ownership(afterProbe: .success(()))
+            } catch {
+                appleEntitlementOwnership = PremiumAccessGate.ownership(afterProbe: .failure(error))
+            }
+            return
+        }
+    }
+
+    /// Explicit-consent claim of THIS device's own Apple purchase for the
+    /// signed-in account — the row-4 "Link" tap. The ONLY places besides
+    /// Restore Purchases (`redeemCurrentAppleEntitlements`) this app calls
+    /// the authenticated `link_apple_entitlement` command. Never invoked
+    /// automatically: a claimed ledger row cannot be reassigned later, so
+    /// someone who signs in, decides they want a DIFFERENT account, and
+    /// signs out again must still be free to link there instead — which is
+    /// exactly what silent auto-linking used to take away.
+    @discardableResult
+    func linkAppleEntitlementToCurrentAccount() async -> Bool {
+        guard signedIn, !isPremium, hasLocalAppleEntitlement else { return false }
+        var linked = false
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result,
                   AppleIAPProduct(rawValue: transaction.productID) != nil else { continue }
-            _ = try? await api.linkAppleEntitlement(signedTransaction: result.jwsRepresentation)
-            await transaction.finish()
+            do {
+                _ = try await api.linkAppleEntitlement(signedTransaction: result.jwsRepresentation)
+                await transaction.finish()
+                linked = true
+            } catch {
+                appleEntitlementOwnership = PremiumAccessGate.ownership(afterProbe: .failure(error))
+                appleLinkNotice = appleEntitlementOwnership == .linkedToOtherAccount
+                    ? "This Apple purchase is already linked to a different account.  "
+                        + "Sign out and sign in with that account, or tap Restore Purchases to confirm."
+                    : "Could not link this purchase yet.  \(PremiumPricing.redeemFailureMessage(error))"
+            }
         }
-        await refresh()
+        if linked {
+            appleLinkNotice = "Linked.  This Apple purchase now unlocks Premium on this account everywhere."
+            await refresh()
+        }
+        return linked
+    }
+
+    /// "Not now" on the row-4 link offer (`PremiumSheet` / the launch-time
+    /// alert) — remembered per account so it does not nag every launch. The
+    /// Link action itself stays permanently available afterward from the
+    /// Premium sheet and Restore Purchases either way.
+    func dismissAppleLinkPrompt() {
+        guard let userID = signedInUser?.id else { return }
+        UserDefaults.standard.set(true, forKey: Self.appleLinkPromptDismissedKey(userID: userID))
+        appleLinkPromptDismissedForCurrentAccount = true
+    }
+
+    private static func appleLinkPromptDismissedKey(userID: String) -> String {
+        "trade.congress.appleLinkPromptDismissed.\(userID)"
+    }
+
+    fileprivate static func loadAppleLinkPromptDismissed(userID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: appleLinkPromptDismissedKey(userID: userID))
+    }
+}
+
+/// Who currently owns THIS device's verified Apple subscription, from the
+/// Congress.Trade account's point of view — truth-table rows 3 vs 4 (see
+/// `PremiumAccessGate` below). Resolved by `refreshAppleEntitlementOwnership`,
+/// a READ-ONLY probe that never claims anything; only an explicit Link tap
+/// or Restore Purchases calls the authenticated commands.
+enum AppleEntitlementOwnership: Equatable {
+    /// Not yet checked for the current account (or nothing to check yet).
+    /// Feature gating treats this the same as `.unclaimed` — a payer must
+    /// never be stranded while a background probe is still in flight.
+    case unknown
+    /// Nobody has claimed this transaction yet.
+    case unclaimed
+    /// A DIFFERENT Congress.Trade account already claimed this transaction
+    /// (the `owner_mismatch` 409 from `upsertAppleSubscription`).
+    case linkedToOtherAccount
+}
+
+/// Pure truth-table gate — owner directive 2026-08-21 ("It should be linked
+/// to an account which can be used via website or iOS app both"). Kept
+/// separate from `CongressTradeStore` so it is directly unit-testable
+/// without StoreKit:
+///
+/// | # | signed in | server Premium | device entitlement          | access |
+/// |---|-----------|-----------------|------------------------------|--------|
+/// | 1 | no        | n/a             | verified, unclaimed          | YES (Guideline 5.1.1(v)) |
+/// | 2 | yes       | true            | any                          | YES |
+/// | 3 | yes       | false           | linked to ANOTHER account    | NO  |
+/// | 4 | yes       | false           | unclaimed / not yet resolved | YES (never strand a payer) |
+enum PremiumAccessGate {
+    /// Whether the UI should currently treat the device as Premium for
+    /// feature gating (archived filing PDF, CSV export). Replaces the old
+    /// `isPremium || hasLocalAppleEntitlement` OR-gate, which let ANY
+    /// device purchase unlock EVERY signed-in account.
+    static func granted(
+        isPremium: Bool,
+        signedIn: Bool,
+        hasLocalAppleEntitlement: Bool,
+        ownership: AppleEntitlementOwnership
+    ) -> Bool {
+        if isPremium { return true }
+        guard hasLocalAppleEntitlement else { return false }
+        guard signedIn else { return true }
+        return ownership != .linkedToOtherAccount
+    }
+
+    /// Row 4: should the "Link this subscription to your account?" prompt
+    /// show right now. Never itself the gate for `granted` above — access is
+    /// already open; this only controls whether to ASK for the explicit
+    /// consent to persist it (never link silently).
+    static func showsLinkOffer(
+        isPremium: Bool,
+        signedIn: Bool,
+        hasLocalAppleEntitlement: Bool,
+        ownership: AppleEntitlementOwnership,
+        dismissedForAccount: Bool
+    ) -> Bool {
+        signedIn && !isPremium && hasLocalAppleEntitlement
+            && ownership == .unclaimed && !dismissedForAccount
+    }
+
+    /// Row 3: say plainly this Apple purchase belongs to a different
+    /// account, rather than silently gating out with no explanation.
+    static func showsConflict(
+        isPremium: Bool,
+        signedIn: Bool,
+        hasLocalAppleEntitlement: Bool,
+        ownership: AppleEntitlementOwnership
+    ) -> Bool {
+        signedIn && !isPremium && hasLocalAppleEntitlement && ownership == .linkedToOtherAccount
+    }
+
+    /// Interprets the outcome of the read-only ownership probe
+    /// (`POST /entitlements/apple/redeem`, called while signed in — it never
+    /// assigns an account, it only reports whether the row is still
+    /// unclaimed or already owned by someone else). A 409 here is the
+    /// `owner_mismatch` conflict, surfaced as `.linkedToOtherAccount` rather
+    /// than swallowed (the old `linkAppleEntitlementIfNeeded` used to
+    /// `try?` this away). Any other failure (offline, 5xx) leaves ownership
+    /// `.unknown` so a transient error never wrongly reports a conflict.
+    static func ownership(afterProbe result: Result<Void, Error>) -> AppleEntitlementOwnership {
+        switch result {
+        case .success:
+            return .unclaimed
+        case .failure(let error):
+            if let apiError = error as? APIError, case .server(let status, _, _) = apiError, status == 409 {
+                return .linkedToOtherAccount
+            }
+            return .unknown
+        }
     }
 }
