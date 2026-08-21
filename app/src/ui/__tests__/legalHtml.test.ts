@@ -150,7 +150,11 @@ describe('shared legal chrome and theme path', () => {
 });
 
 describe('short legal and pricing routes', () => {
-  it('redirects /privacy, /terms, and /pricing to canonical destinations', async () => {
+  // These dynamically import the whole UI router; under cold transform or
+  // parallel-suite load the default 5s per-test budget occasionally trips
+  // (observed 2026-08-20: flaky timeouts on the redirect test). 20s is ample
+  // for the full module graph and still fails fast on a real hang.
+  it('redirects /privacy, /terms, and /pricing to canonical destinations', { timeout: 20_000 }, async () => {
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
     const privacy = await app.request('http://localhost/privacy', {}, {} as never);
@@ -166,7 +170,7 @@ describe('short legal and pricing routes', () => {
     expect(pricing.headers.get('location')).toContain('pricing=1');
   });
 
-  it('serves ToS and Privacy Policy from the same themed shell', async () => {
+  it('serves ToS and Privacy Policy from the same themed shell', { timeout: 20_000 }, async () => {
     const { buildUiRouter } = await import('../routes.ts');
     const app = buildUiRouter();
     const tos = await app.request('http://localhost/terms-of-service', {}, {} as never);
