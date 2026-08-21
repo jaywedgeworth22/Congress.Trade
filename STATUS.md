@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-08-21 CURSOR-BUGBOT — PDF-native cascade must see upright pages
+
+#2146 rotated PNG page images only.  After #2142 a 13+ page sideways PTR
+discards the upright CLI extract and sends the original scan to Gemini /
+grok-4.5.  Rebuild an uncapped upright PDF from those PNGs.  Mac
+`source=local_mac` OpenRouter hits use the same omitted-checkbox soften as
+local Grok so a Rogers/Khanna attached-schedule row without an amount box
+does not park the packet.  Live `~/vision-worker/worker.py` still needs a
+copy after merge.  Receipt:
+`docs/rollouts/2026-08-21-upright-pdf-native-cascade.md`.
+
 ## 2026-08-21 GROK — Upright-rotate sideways PTR scans before Grok CLI
 
 Portrait `pdftoppm` images of landscape House PTR grids are rotated 90/270

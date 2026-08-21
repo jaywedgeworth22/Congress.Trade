@@ -397,6 +397,34 @@ class UprightRotateTest(unittest.TestCase):
                 with Image.open(path) as im:
                     self.assertEqual(im.size, (40, 20))
 
+    def test_write_upright_pdf_includes_pages_past_cli_cap(self):
+        with tempfile.TemporaryDirectory() as td:
+            pages = [
+                self._png(os.path.join(td, "page-1.png"), 20, 40),
+                self._png(os.path.join(td, "page-2.png"), 20, 40),
+                self._png(os.path.join(td, "page-13.png"), 20, 40),
+            ]
+            dest = os.path.join(td, "upright.pdf")
+            written = worker.write_upright_pdf(pages, dest)
+            self.assertEqual(written, dest)
+            with open(dest, "rb") as f:
+                magic = f.read(5)
+            self.assertEqual(magic, b"%PDF-")
+            self.assertGreater(os.path.getsize(dest), 200)
+
+    def test_native_cascade_prefers_upright_rebuild(self):
+        with tempfile.TemporaryDirectory() as td:
+            original = os.path.join(td, "filing.pdf")
+            upright = os.path.join(td, "upright.pdf")
+            Path(original).write_bytes(b"%PDF-1.4 sideways")
+            Path(upright).write_bytes(b"%PDF-1.4 upright-pages")
+            self.assertEqual(worker.native_cascade_pdf(original, upright), upright)
+            self.assertEqual(worker.native_cascade_pdf(original, None), original)
+            self.assertEqual(
+                worker.native_cascade_pdf(original, os.path.join(td, "missing.pdf")),
+                original,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

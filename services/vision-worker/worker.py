@@ -17,8 +17,9 @@ Engines (VISION_ENGINE):
   auto        — try local_cli first. On a missed solo pass (timeout, parse
                 fail, or 0 valid rows without noRows) cascade cheap OpenRouter
                 VL models (Qwen3-VL page images, then Gemini Flash PDF, then
-                grok-4.5 PDF). Never send Qwen a PDF file attachment — that
-                bills mistral-ocr.
+                grok-4.5 PDF). PDF-native steps attach an upright rebuild of
+                every rendered page, not the original sideways scan. Never
+                send Qwen a PDF file attachment — that bills mistral-ocr.
 
 Kimi CLI was retired (provider billing 403). Do not reintroduce it.
 
@@ -521,14 +522,75 @@ def upright_pages(pages: list[str], score_fn=tesseract_upright_score) -> list[st
     return pages
 
 
-def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int]:
+def write_upright_pdf(pages: list[str], dest: str) -> str | None:
+    """Rebuild a PDF from already-oriented page PNGs for PDF-native cascade.
+
+    #2146 only rotates the raster files.  Gemini / grok-4.5 attach pdf_path,
+    so a 13+ page sideways PTR would discard the upright CLI extract (#2142)
+    and send the original sideways file.  Building from the PNGs keeps
+    PDF-native aligned with whatever upright_pages did, including mixed
+    portrait covers plus landscape attached schedules, and includes pages
+    past MAX_PAGES that CLI never saw.
+    """
+    if not pages:
+        return None
+    try:
+        from PIL import Image
+    except Exception as err:
+        logger.warning("upright-pdf: PIL missing: %s", err)
+        return None
+    opened: list = []
+    rgb: list = []
+    try:
+        for path in pages:
+            im = Image.open(path)
+            opened.append(im)
+            rgb.append(im.convert("RGB"))
+        if len(rgb) == 1:
+            rgb[0].save(dest, format="PDF", resolution=150)
+        else:
+            rgb[0].save(
+                dest,
+                format="PDF",
+                save_all=True,
+                append_images=rgb[1:],
+                resolution=150,
+            )
+    except Exception as err:
+        logger.warning("upright-pdf failed: %s", err)
+        return None
+    finally:
+        for im in opened + rgb:
+            try:
+                im.close()
+            except Exception:
+                pass
+    if not os.path.isfile(dest) or os.path.getsize(dest) < 8:
+        return None
+    logger.info(
+        "upright-pdf pages=%s dest=%s bytes=%s",
+        len(pages), dest, os.path.getsize(dest),
+    )
+    return dest
+
+
+def native_cascade_pdf(original_pdf: str, upright_pdf: str | None) -> str:
+    """Prefer the upright rebuild so Gemini sees the same pages as CLI/Qwen."""
+    if upright_pdf and os.path.isfile(upright_pdf) and os.path.getsize(upright_pdf) >= 8:
+        return upright_pdf
+    return original_pdf
+
+
+def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int, str | None]:
     """Render PDF pages to PNG via pdftoppm.
 
-    Returns (pages_for_cli, total_rendered).  pages_for_cli is capped at
-    MAX_PAGES so the local Grok CLI stays bounded.  total_rendered is the
-    uncapped pdftoppm count so a cheap VL hit that only saw
+    Returns (pages_for_cli, total_rendered, upright_pdf).  pages_for_cli is
+    capped at MAX_PAGES so the local Grok CLI stays bounded.  total_rendered
+    is the uncapped pdftoppm count so a cheap VL hit that only saw
     OPENROUTER_CASCADE_MAX_PAGES images is not treated as a complete extract
     when later PDF-native cascade steps can still read the full file.
+    upright_pdf is a rebuild from every rotated PNG (uncapped) so Gemini
+    does not attach the original sideways scan.
     """
     prefix = os.path.join(out_dir, "page")
     rc = subprocess.run(
@@ -537,17 +599,18 @@ def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int]:
     )
     if rc.returncode != 0:
         logger.error("pdftoppm failed: %s", (rc.stderr or "")[:200])
-        return [], 0
+        return [], 0, None
     pages = sorted(
         os.path.join(out_dir, f) for f in os.listdir(out_dir)
         if f.startswith("page-") and f.endswith(".png")
     )
     pages = upright_pages(pages)
     total = len(pages)
+    upright_pdf = write_upright_pdf(pages, os.path.join(out_dir, "upright.pdf"))
     if MAX_PAGES > 0 and total > MAX_PAGES:
         logger.warning("capping pages %d -> %d", total, MAX_PAGES)
-        return pages[:MAX_PAGES], total
-    return pages, total
+        return pages[:MAX_PAGES], total, upright_pdf
+    return pages, total, upright_pdf
 
 
 def cascade_hit_is_terminal(model: str, total_pages: int, image_pages_available: int) -> bool:
@@ -1101,13 +1164,14 @@ def process_filing(filing: dict, state: dict) -> str:
         if not download_stored_document(filing, pdf_path):
             record_failure(state, doc_id, "stored_download_failed", extractor)
             return "failed"
-        pages, total_pages = render_pages(pdf_path, td)
+        pages, total_pages, upright_pdf = render_pages(pdf_path, td)
         if not pages:
             logger.warning(
                 "page render failed for %s; PDF-native cascade steps can still run",
                 doc_id,
             )
-        rows, extractor = transcribe(pdf_path, pages, filing, td, total_pages)
+        native_pdf = native_cascade_pdf(pdf_path, upright_pdf)
+        rows, extractor = transcribe(native_pdf, pages, filing, td, total_pages)
     if rows is None:
         record_failure(state, doc_id, "transcription_failed", extractor)
         return "failed"

@@ -338,7 +338,12 @@ export async function normalize(
   // real (penalized) min so the filing stays in review — pretending we
   // met the threshold used to auto-publish amount-less extracts as live
   // (sideways / portrait Grok CLI misses, 2026-08-21).
-  const localVision = isLocalVisionExtractor(extractorName);
+  // Mac vision-worker always posts source=local_mac, including OpenRouter
+  // cascade hits labeled openrouter_google_gemini_…  Those must use the same
+  // omitted-checkbox soften as local Grok.  Otherwise a 13+ page PTR that
+  // #2142 sent to Gemini parks the whole packet when one attached-schedule
+  // row has no amount box (Rogers / Khanna).
+  const localVision = isLocalVisionExtractor(extractorName) || source === 'local_mac';
   const gateRows = localVision
     ? flagged.filter((f) => hardFlagsBlockingPublish(f.flags, true).length === 0
       && !f.flags.includes('no_amount'))
