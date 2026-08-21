@@ -338,7 +338,12 @@ export async function runMaintenancePipeline(
         const { maybeRunDeterministicReviewDrain } = await import(
           '../extraction/deterministicDrain.ts'
         );
-        return maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const drain = await maybeRunDeterministicReviewDrain(env, { signal: options.signal });
+        const { maybePublishFromStoredRuns } = await import(
+          '../extraction/storedRunPublish.ts'
+        );
+        await maybePublishFromStoredRuns(env, { signal: options.signal });
+        return drain;
       },
     );
     result.agreementAutopublish = await runLane(
@@ -365,13 +370,17 @@ export async function runMaintenancePipeline(
         'delivery_outbox',
         () => flushDeliveryOutbox(env, { limit: options.outboxLimit, now }),
       );
-      result.apnsFanout = await runLane('apns_fanout', () =>
-        import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
-      );
       if (options.afterOutboxFlush) {
         await runLane('durable_queue', options.afterOutboxFlush);
       }
     }
+    // APNs is independent of the idle outbox gate so a prior throw can still
+    // recover the 2h lookback.  fanOut cheap-probes delivery_outbox / review_queue
+    // (PK lookup, not an unindexed transactions.created_at scan) and only runs
+    // TRADE_SQL when events are pending or a recent lane error needs recovery.
+    result.apnsFanout = await runLane('apns_fanout', () =>
+      import('../delivery/apnsFanout.ts').then((mod) => mod.fanOutApnsProductEvents(env, { now })),
+    );
     if (options.parkedDeliveryLimit !== undefined) {
       const limit = options.parkedDeliveryLimit;
       await runLane('parked_deliveries', () => flushParkedDeliveries(env, { limit }));

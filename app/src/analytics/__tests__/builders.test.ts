@@ -38,14 +38,15 @@ import {
   buildVolumeOverTimeQuery,
   momentumOffsets,
 } from '../builders.ts';
-import { BRACKET_MIDPOINT_SQL, granularityFormat } from '../sql.ts';
+import { STOCK_MIDPOINT_SQL, granularityFormat } from '../sql.ts';
 
 describe('buildSummaryQuery', () => {
   it('aggregates corpus totals and uses the bracket midpoint for $', () => {
     const q = buildSummaryQuery({ window: '30d' });
     expect(q.sql).toContain('COUNT(*) AS total_trades');
     expect(q.sql).toContain('COUNT(DISTINCT t.filer_id) AS unique_members');
-    expect(q.sql).toContain(`SUM(${BRACKET_MIDPOINT_SQL}) AS est_volume`);
+    expect(q.sql).toContain(`SUM(${STOCK_MIDPOINT_SQL}) AS est_volume`);
+    expect(q.sql).toContain('AS option_count');
     expect(q.params).toEqual(['-30 days']);
   });
 });
@@ -416,6 +417,7 @@ describe('filing-lag builders', () => {
     const q = buildFilingLagHistogramQuery({ window: '90d' });
     expect(q.sql).toContain('CAST(julianday(f.filed_date) - julianday(t.tx_date) AS INTEGER) AS lag_days');
     expect(q.sql).toContain('julianday(f.filed_date) >= julianday(t.tx_date)');
+    expect(q.sql).toContain("t.source = 'competitor_backfill' AND f.filed_date = t.tx_date");
     expect(q.sql).toContain('GROUP BY lag_days');
   });
   it('late filers require >= 3 trades and sort by average lag', () => {
@@ -474,6 +476,7 @@ describe('ticker deep-dive builders', () => {
   it('summary upper-cases the ticker and binds it first', () => {
     const q = buildTickerSummaryQuery('aapl', { window: '30d' });
     expect(q.sql).toContain('t.ticker = ?');
+    expect(q.sql).toContain('AS option_count');
     expect(q.params).toEqual(['AAPL', '-30 days']);
   });
   it('time series binds the format first, then the ticker, then the window', () => {

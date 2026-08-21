@@ -109,10 +109,53 @@ describe('buildConsensusRows', () => {
     expect(name.unanimous).toBe(false);
     // All competing values listed when contested.
     expect(name.dissenters).toEqual([
-      { model: 'm1', value: 'Apple Inc' },
-      { model: 'm2', value: 'Microsoft Corp' },
+      { model: 'm1', value: 'Apple Inc.' },
+      { model: 'm2', value: 'Microsoft Corp.' },
     ]);
     expect(rows[0].rowConsensus).toBe('contested');
+  });
+
+  it('accepts a unique 2-of-5 plurality on assetName', () => {
+    const runs = [
+      run('m1', [tx({ assetName: 'Treasury Bill 3-Month' })]),
+      run('m2', [tx({ assetName: 'Treasury Bill 3-Month' })]),
+      run('m3', [tx({ assetName: 'T-Bill 3 mo' })]),
+      run('m4', [tx({ assetName: 'US T Bill' })]),
+      run('m5', [tx({ assetName: 'Treas Bill' })]),
+    ];
+    const { rows, summary } = buildConsensusRows(runs);
+    expect(rows).toHaveLength(1);
+    const name = rows[0].fields.assetName;
+    expect(name.value).toBe('Treasury Bill 3-Month');
+    expect(name.votes).toBe(2);
+    expect(name.total).toBe(5);
+    expect(rows[0].rowConsensus).toBe('majority');
+    expect(summary.rowsMajority).toBe(1);
+  });
+
+  it('collapses a House GS ticker onto the same T-bill row', () => {
+    const runs = [
+      run('m1', [tx({
+        ticker: 'GS',
+        assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+        assetType: 'GS',
+      })]),
+      run('m2', [tx({
+        ticker: null,
+        assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+        assetType: 'GS',
+      })]),
+      run('m3', [tx({
+        ticker: null,
+        assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+        assetType: 'GS',
+      })]),
+    ];
+    const { rows } = buildConsensusRows(runs);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].rowConsensus).not.toBe('contested');
+    expect(rows[0].fields.ticker.value).toBeNull();
+    expect(rows[0].presentIn).toHaveLength(3);
   });
 
   it('marks a field contested on a 2-2 tie', () => {

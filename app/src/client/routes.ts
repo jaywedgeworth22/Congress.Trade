@@ -13,6 +13,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
+import { redeemAppleEntitlementAnonymously } from './entitlements.ts';
 import {
   claimCommandResultSecret,
   createCommand,
@@ -69,6 +70,7 @@ import { aggregateMemberDualPerformance } from '../analytics/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
 import type { TradeSummaryRow } from './types.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
+import { mergePeeledQuery, peelEncodedQueryFromPathParam } from '../shared/memberPath.ts';
 
 export function buildClientRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
@@ -103,6 +105,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   });
 
   r.get('/documents/:docId/pdf', serveDocumentPdf);
+
+  // Unauthenticated by design (Guideline 5.1.1(v)) — see client/entitlements.ts.
+  r.post('/entitlements/apple/redeem', redeemAppleEntitlementAnonymously);
 
   r.get('/me', async (c) => {
     const user = await getCurrentUserFromRequest(c);
@@ -245,7 +250,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   });
 
   r.get('/member/:memberIdOrName', async (c) => {
-    const memberIdOrName = (c.req.param('memberIdOrName') || '').trim();
+    const peeled = peelEncodedQueryFromPathParam((c.req.param('memberIdOrName') || '').trim());
+    const memberIdOrName = peeled.id.trim();
+    const q = mergePeeledQuery(c.req.query(), peeled.query);
     if (!memberIdOrName || memberIdOrName.length > 120) {
       return c.json({ error: 'invalid member id or name' }, 400);
     }
@@ -258,7 +265,6 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
     const resolved = await resolveMember(c.env, memberIdOrName);
     if (!resolved) return c.json({ error: 'member not found' }, 404);
-    const q = c.req.query();
     const filters = filtersFromQuery(q);
     const params: TxQueryParams = {
       ...filters,
@@ -492,6 +498,17 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     // client polls on queued/running either way.
     const terminal = settled.status === 'succeeded' || settled.status === 'failed' ||
       settled.status === 'canceled';
+    // Inline create_subscription used to return the redacted row and never
+    // GET /commands/:id, so the one-time secret sat unclaimed (DELIVERYALERTS-01).
+    // Claim it here for the creating user. Do not log the secret.
+    if (settled.status === 'succeeded') {
+      const claimed = await claimCommandResultSecret(c.env, user.id, settled.id);
+      if (claimed) {
+        return c.json({
+          command: { ...settled, result: mergeClaimedSecret(settled.result, claimed) },
+        }, 200);
+      }
+    }
     return c.json({ command: settled }, terminal ? 200 : 202);
   });
 

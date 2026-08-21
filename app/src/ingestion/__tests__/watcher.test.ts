@@ -326,6 +326,22 @@ describe('runWatcher', () => {
     expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:oge');
   });
 
+  it('does not retry a failed OGE attempt every minute', async () => {
+    const now = new Date('2026-08-05T16:00:00.000Z'); // Wed 12:00 EDT — weekday floor 15 min
+    const { env } = fakeEnv({}, {}, {
+      'last_attempt:oge': new Date(now.getTime() - 2 * 60_000).toISOString(),
+    });
+    quietExecutiveEnv();
+    mocks.pollOgeExecutive.mockClear();
+
+    const result = await runWatcher(env, now);
+
+    expect(result.executive).toBe('skipped');
+    expect(result.executiveCadence?.poll).toBe(true);
+    expect(result.executiveCadence?.intervalSec).toBe(900);
+    expect(mocks.pollOgeExecutive).not.toHaveBeenCalled();
+  });
+
   it('caps genuinely new OGE persistence and queue handoffs', async () => {
     const { env, kvPuts, queueSends } = fakeEnv();
     mocks.pollOgeExecutive.mockResolvedValueOnce([

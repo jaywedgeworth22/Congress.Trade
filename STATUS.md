@@ -1,5 +1,126 @@
 # Current Handoff
 
+## 2026-08-20 CLAUDE — Premium activation alerts, Codex round resolved (PR #2082)
+
+Eight Codex findings fixed.  Highest-value: `sendPushover` had no abort signal,
+so a STALLED Pushover connection could hang the Stripe webhook indefinitely and
+trigger Stripe's retry - now bounded at 5s in the shared helper.  The activation
+claim was consumed before delivery, losing the alert permanently on any failure;
+it is now released on failure, which also covers the migration-window case where
+auto-deploy serves new code before `premium_activation_notices` exists.
+
+Also: `customer.subscription.updated` admitted (card-confirmation subscriptions
+were silently unalerted), a recognised plan required instead of defaulting
+null->monthly, the deprecated Apple confirm route wired, and Apple newness
+re-checked against the persisted owner to close a TOCTOU that could put the
+wrong email in an alert.
+
+Migration is 0093 (renumbered twice by collisions).  AFTER MERGE: run
+`POST /api/admin/migrate`.
+Receipt: `docs/rollouts/2026-08-20-premium-activation-alerts.md`.
+## 2026-08-20 CURSOR — Shared-dep auto-merge: no GH_PAT, no pull_request_target
+
+Jay: do not add `GH_PAT`.  `congress-trading-shared` is public and vendored
+here.  `auto-merge-shared-dependency.yml` (and `auto-merge-prs.yml`) no
+longer use `pull_request_target` or write tokens, skip forks, and do not
+invite a PAT.  Same-repo bumps still land with
+`gh pr merge <n> --squash --auto`.  Required Linux CI runs on fork PRs so
+skipped typecheck is not satisfied.  Receipt:
+`docs/rollouts/2026-08-20-harden-shared-dep-automerge.md`.
+
+## 2026-08-20 GROK — Review-queue glued PTR rows (#2106)
+
+73 House items still held after #2102.  Seven typed PTRs glued later self-owned
+rows into the first `rawText` (AMZN on a PA muni).  Parser now splits on every
+`[TYPE] P/S/E date date $amount` tail.  Drain refuses a glued stored payload.
+Due-dates are not tx dates.  Mixed OCR keeps dated non-chrome rows.  Receipt:
+`docs/rollouts/2026-08-20-review-queue-glued-ptr.md`.  Do not empty-confirm
+the 47 scanned form-chrome items.
+
+## 2026-08-20 GROK — Mac/TestFlight IAP Sandbox grants (#2095)
+
+Owner screenshot on Mac: StoreKit success then `(Sandbox Apple purchases are
+not accepted)`.  `#2030` required Infisical `APPLE_ALLOW_SANDBOX=true`; the key
+was missing.  TestFlight, App Review, and Designed-for-iPad on Mac all send
+Apple-signed `environment=Sandbox` JWS to production.  Code now allows those
+unless the flag is explicitly `false`.  Infisical prod is `true` (len=4) and
+the secret cache was refreshed, so Restore Purchases works on current main
+before this deploy.  Receipt:
+`docs/rollouts/2026-08-20-mac-iap-sandbox-allow.md`.
+
+## 2026-08-20 CLAUDE — Latency price snapshots repaired (PR pending)
+
+Pipeline recorded 7 prices out of 2955.  Rows were scheduled retrospectively so every
+`due_at` was already past and the 3-minute staleness guard correctly refused; the sole
+price source was FMP, now banned for market data.  Fix: one per-row per-tick decision -
+live quote inside the staleness window, else backfill from ST `/api/market/intraday`.
+A single empty `200 {bars:[]}` does NOT terminate a row (ST collapses every intraday
+failure into that shape until #2959 lands); empty corroborates via `backfill_attempts`.
++15m rung added.  2937 `missed_window` and 11 `fmp_quote_http_402` rows reopened.
+
+Gates: deno check clean; 273 files / 3414 tests; lint 403 = baseline.
+
+AFTER MERGE: run `POST /api/admin/migrate` - auto-deploy ships code, never schema.
+Receipt: `docs/rollouts/2026-08-20-latency-snapshot-repair.md`.
+
+## 2026-08-20 CLAUDE — Probe-run brackets (PR pending)
+
+Competitor "lead" numbers were an artifact of our own polling.
+`provider_published_at` is NULL 600/600; quiver and unusual_whales both report
+68.28h / 147.28h leads across dozens of rows.  New `provider_probe_runs` records
+every probe including no-ops so publication is bracketed to (T_prev, T] instead
+of guessed.  Migration 0089.  Dashboard still shows point leads — next step.
+
+Separately diagnosed, NOT yet fixed: `latency_price_snapshots` has 7 priced rows
+of 2955 (2937 `missed_window`) because snapshots are scheduled retrospectively
+and are born stale.  Owner ruling 2026-08-20: never use FMP for market data.
+Receipt: `docs/rollouts/2026-08-20-probe-run-brackets.md`.
+
+# Current Shape
+
+Production is **not** a Cloudflare Worker / D1 / `wrangler.toml` app.
+Live site: [https://congress.trade](https://congress.trade).  The app in
+`app/` runs as Deno in Coolify `congress-app` on `fleet-hetzner-nbg1`,
+SQLite at `/data/congress-trade/db.sqlite`, Deno KV at
+`/data/congress-trade/kv.sqlite`, filing PDFs in R2, queues in
+`deno_runtime_queue`.  Proof: `app/Dockerfile`, `app/docker-compose.yml`,
+`app/src/deno/main.ts`, `app/DEPLOY.md`.  Dated Worker/D1 handoff rows
+below are historical.
+
+## 2026-08-20 CURSOR — #1537 Coolify deploy overlap (PR #1964)
+
+Compose deploys still stop every in-project container before start.  Repo
+has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
+failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
+install required.  Receipt:
+`docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+## 2026-08-20 CURSOR — scout.jays.services answers GET / like mac
+
+Same named tunnel and DNS as `mac.jays.services`.  The 404 on GET `/` was
+the origin: `senate-relay` only treated GET `/health` as liveness.  GET and
+HEAD on `/` and `/health` now return the same JSON.  `/fetch-doc` unchanged.
+Receipt: `docs/rollouts/2026-08-20-scout-tunnel-health.md`.  Activate with
+`pm2 restart senate-relay` on the Mac after pull.
+
+## 2026-08-20 CURSOR — Monet P0/P1 pack (#2029)
+
+Apple webhook is on the production Hono app.  Politician detail peels an
+encoded query out of the path.  Delivery shows the one-time secret on inline
+create.  Apple REFUND revokes; Sandbox does not grant live Premium unless
+`APPLE_ALLOW_SANDBOX`; Stripe `livemode` must match the key prefix.  Archived
+Filing PDF is Premium: iOS fetches with Bearer + QuickLook; free/anon opens
+StoreKit; backend 402 JSON for Bearer / Accept: pdf; government Source Filing
+stays ungated.  APNs join is #2028, not this pack.  Receipt:
+`docs/rollouts/2026-08-20-monet-p0-pack.md`.
+## 2026-08-20 CURSOR — In-app account deletion (LEGALCOMPLIANCE-01)
+
+Guideline 5.1.1(v).  Signed-in users delete the account in iOS Account /
+Settings and the website account menu.  Backend command +
+`POST /auth/account/delete` remove the session, push devices, delivery
+subscriptions, and PII.  Issue #2034.  Receipt:
+`docs/rollouts/2026-08-20-in-app-account-deletion.md`.  iOS change rides the
+hourly TestFlight; this seat does not ship TF.
+
 ## 2026-08-17 CURSOR — iOS does not take web payments for Premium
 
 Guideline 3.1.1.  Delivery and the empty StoreKit catalog no longer offer

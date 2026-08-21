@@ -111,9 +111,29 @@ enum DigitalGoodsCheckout {
     }
 }
 
+/// Archived Filing PDF is a Premium digital good (APPSTORECOMPLIANCE-01/02).
+/// Free and anonymous users open StoreKit.  Premium fetches with the Bearer
+/// session.  Never Safari to congress.trade/pricing or Stripe.
+enum FilingPDFAccess {
+    enum Action: Equatable {
+        case showPremiumSheet
+        case fetchInApp
+    }
+
+    static func action(isPremium: Bool) -> Action {
+        isPremium ? .fetchInApp : .showPremiumSheet
+    }
+}
+
 final class CongressTradeAPIClient {
     private let baseURL: URL
     let tokenStore: SessionTokenStore
+    /// Device-scoped (not account-scoped) proof of an anonymous Apple
+    /// purchase (Guideline 5.1.1(v)) — a separate Keychain item from
+    /// `tokenStore`. Attached as `X-Apple-Device-Entitlement` on the two
+    /// requests that accept it (archived filing PDF, CSV export) whenever
+    /// present; the server only consults it when there is no session.
+    let deviceEntitlementStore: SessionTokenStore
     private let session: URLSession
     private let interceptor: RequestInterceptor
     private let decoder: JSONDecoder
@@ -121,14 +141,27 @@ final class CongressTradeAPIClient {
     init(
         baseURL: URL = CongressTradeAPIClient.defaultBaseURL,
         tokenStore: SessionTokenStore = KeychainTokenStore(),
+        deviceEntitlementStore: SessionTokenStore = KeychainTokenStore(service: "trade.congress.appleDeviceEntitlement"),
         session: URLSession = .shared,
         interceptor: RequestInterceptor? = nil
     ) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
+        self.deviceEntitlementStore = deviceEntitlementStore
         self.session = session
         self.interceptor = interceptor ?? AuthHeaderInterceptor(tokenStore: tokenStore)
         self.decoder = JSONDecoder()
+    }
+
+    deinit {
+        // Dedicated sessions (XCTest MockURLProtocol, never URLSession.shared)
+        // must not keep protocol callbacks alive after this client is released.
+        // Otherwise a previous test's in-flight trends/feed request can land
+        // after that test's tearDown niled MockURLProtocol.handler and
+        // XCTUnwrap-crash whichever case is running next.
+        if session !== URLSession.shared {
+            session.invalidateAndCancel()
+        }
     }
 
     static var defaultBaseURL: URL {
@@ -155,12 +188,71 @@ final class CongressTradeAPIClient {
         originURL
     }
 
-    /// URL for the filing PDF served from R2 (or redirected to the source).
+    /// URL for the archived filing PDF served from R2.
     /// Mirrors `GET /api/documents/:docId/pdf` in `app/src/delivery/rest.ts`.
+    /// Do not open this in Safari — fetch with `fetchDocumentPDF` and the
+    /// Bearer session.  Government source URLs stay ungated on the trade row.
     func documentPDFURL(docId: String) -> URL? {
         guard !docId.isEmpty else { return nil }
         let encoded = docId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? docId
         return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
+    }
+
+    /// Bearer + `Accept: application/pdf`.  The server returns 402 JSON for
+    /// free/anonymous clients instead of a 302 to `/pricing`.
+    func documentPDFRequest(docId: String) throws -> URLRequest {
+        guard let url = documentPDFURL(docId: docId) else { throw APIError.invalidResponse }
+        var request = try makeRequest(url)
+        request.setValue("application/pdf", forHTTPHeaderField: "accept")
+        attachDeviceEntitlementHeaderIfNeeded(to: &request)
+        return request
+    }
+
+    /// Attaches the cached device entitlement token (Guideline 5.1.1(v)), if
+    /// any, so a signed-out device can reach the two routes that accept it.
+    /// Harmless to attach even when a session Bearer is also present — the
+    /// server always prefers the session and only falls back to this header
+    /// when there is no signed-in user at all.
+    private func attachDeviceEntitlementHeaderIfNeeded(to request: inout URLRequest) {
+        guard let token = try? deviceEntitlementStore.load() else { return }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        request.setValue(trimmed, forHTTPHeaderField: "X-Apple-Device-Entitlement")
+    }
+
+    func fetchDocumentPDF(docId: String) async throws -> (data: Data, contentType: String) {
+        let request = try documentPDFRequest(docId: docId)
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if let finalURL = http.url,
+           finalURL.path.contains("pricing") || finalURL.path.contains("billing") {
+            throw APIError.server(
+                status: 402,
+                message: "Archived filing PDF requires a Premium account",
+                retryAfterSeconds: nil
+            )
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            throw APIError.server(
+                status: http.statusCode,
+                message: error?.error ?? "Request failed",
+                retryAfterSeconds: http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) }
+            )
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "application/pdf"
+        return (data, contentType)
+    }
+
+    func writeDocumentPDFPreviewFile(docId: String, data: Data, contentType: String) throws -> URL {
+        let ext = contentType.lowercased().contains("html") ? "html" : "pdf"
+        let safe = docId
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "..", with: "_")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ct-filing-\(safe).\(ext)")
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
     /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
@@ -523,6 +615,7 @@ final class CongressTradeAPIClient {
         if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
         var request = try makeRequest(url)
+        attachDeviceEntitlementHeaderIfNeeded(to: &request)
         // Export can be large; give it a longer budget than interactive GETs.
         request.timeoutInterval = 60
         let (data, response) = try await perform(request)
@@ -633,6 +726,22 @@ final class CongressTradeAPIClient {
         )
     }
 
+    /// Permanently delete the signed-in account (`delete_account` command).
+    /// The backend revokes sessions, push devices, delivery subscriptions, and
+    /// PII.  Callers must clear the local token after success — a follow-up
+    /// logout is unnecessary because the session is already dead.
+    func deleteAccount(
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<DeleteAccountResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "delete_account",
+                "payload": [:] as [String: Any]
+            ]
+        )
+    }
+
     func logout() async throws {
         var request = try makeRequest(originURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"
@@ -686,6 +795,45 @@ final class CongressTradeAPIClient {
                 "payload": ["signedTransaction": signedTransaction]
             ]
         )
+    }
+
+    /// Claims this device's own Apple subscription (`user_id: NULL` ledger
+    /// row) for the signed-in account, from an EXPLICIT Link tap
+    /// (`link_apple_entitlement` command —
+    /// `app/docs/client-mobile-api.md` "Anonymous Apple purchase"). Never
+    /// called automatically — see `Store/AppleIAP.swift`
+    /// `linkAppleEntitlementToCurrentAccount`. Server-identical to
+    /// `redeemApplePurchase`; the distinct command name only lets the caller
+    /// know which UI copy to use. A 409 means "already linked to a
+    /// different account" and is surfaced to the person, never swallowed.
+    func linkAppleEntitlement(
+        signedTransaction: String,
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> ClientCommandResponse<RedeemAppleResult> {
+        try await postCommand(
+            idempotencyKey: idempotencyKey,
+            body: [
+                "type": "link_apple_entitlement",
+                "payload": ["signedTransaction": signedTransaction]
+            ]
+        )
+    }
+
+    /// Anonymous counterpart of `redeemApplePurchase` (Guideline 5.1.1(v)) —
+    /// `POST /api/client/v1/entitlements/apple/redeem`, no session sent or
+    /// required. Records the purchase against a device, not an account, and
+    /// returns a short-lived device entitlement token the caller is
+    /// responsible for caching (`api.deviceEntitlementStore`) — this method
+    /// has no side effects of its own beyond the network call.
+    func redeemAppleEntitlementAnonymously(signedTransaction: String) async throws -> AnonymousAppleRedeemResult {
+        var request = try makeRequest(endpointURL("entitlements/apple/redeem"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["signedTransaction": signedTransaction],
+            options: []
+        )
+        return try await send(request)
     }
 
     /// Mints a short-lived Stripe-hosted Billing Portal URL for the

@@ -27,6 +27,7 @@
 
 import type { ParsedTx } from '../shared/types.ts';
 import { arbitrationRowKey } from '../extractors/types.ts';
+import { prepareExtractedRows } from './prepareTx.ts';
 
 /** One model's reading of the document. */
 export interface ConsensusRun {
@@ -235,15 +236,28 @@ function voteField(
 
   // Largest bloc, ties broken by sorted vote key for determinism.
   let top: { rawValue: FieldValue; models: string[] } | null = null;
+  let secondVotes = 0;
   for (const [, bloc] of [...blocs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
     if (!top || bloc.models.length > top.models.length) {
+      secondVotes = top ? top.models.length : 0;
       top = { rawValue: bloc.rawValue, models: bloc.models };
+    } else if (bloc.models.length > secondVotes) {
+      secondVotes = bloc.models.length;
     }
   }
   const topVotes = top ? top.models.length : 0;
   const hasMajority = topVotes * 2 > total;
+  const uniquePlurality = topVotes >= 2 && topVotes > secondVotes;
+  const allowPlurality =
+    field === 'assetName'
+    || field === 'assetType'
+    || field === 'assetTypeName'
+    || field === 'subholding'
+    || field === 'location'
+    || field === 'description'
+    || field === 'supplementalText';
 
-  if (hasMajority && top) {
+  if ((hasMajority || (allowPlurality && uniquePlurality)) && top) {
     const winners = new Set(top.models);
     const dissenters = present
       .filter((p) => !winners.has(p.model))
@@ -269,6 +283,36 @@ function voteField(
  * Build the reconciled consensus rows + summary from each model's reading of a
  * single document. Pure — no I/O.
  */
+const IDENTITY_FIELDS: ConsensusFieldName[] = [
+  'txType',
+  'transactionDate',
+  'owner',
+  'ticker',
+  'isOption',
+  'capGainsOver200',
+  'filingStatus',
+  'amount',
+];
+
+function fieldAuthoritative(field: ConsensusFieldName, fc: FieldConsensus): boolean {
+  if (fc.total <= 0) return false;
+  if (fc.votes * 2 > fc.total) return true;
+  if (field === 'assetName' || field === 'assetType') {
+    return fc.value != null && fc.votes >= 2;
+  }
+  // Soft footnotes never veto a row that already has identity agreement.
+  if (
+    field === 'assetTypeName'
+    || field === 'subholding'
+    || field === 'location'
+    || field === 'description'
+    || field === 'supplementalText'
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function buildConsensusRows(runs: ConsensusRun[]): ConsensusResult {
   // Collapse duplicate model ids to a DISTINCT electorate. Two runs sharing a
   // model id (e.g. a misconfigured lineup naming the same provider:model twice)
@@ -277,13 +321,14 @@ export function buildConsensusRows(runs: ConsensusRun[]): ConsensusResult {
   // `totalRuns`, so both must be the distinct-model count. When ids collide the
   // last run's rows win (perModel is keyed by id); the earlier duplicate read is
   // dropped rather than corroborating itself.
-  const models = [...new Set(runs.map((r) => r.model))];
+  const preparedRuns = runs.map((r) => ({ ...r, rows: prepareExtractedRows(r.rows) }));
+  const models = [...new Set(preparedRuns.map((r) => r.model))];
   const totalRuns = models.length;
 
   // Per model: base row key -> every source-order occurrence. A later run with
   // the same model id replaces the earlier run, but occurrences within it stay.
   const perModel = new Map<string, Map<string, ParsedTx[]>>();
-  for (const run of runs) perModel.set(run.model, groupRunRows(run.rows));
+  for (const run of preparedRuns) perModel.set(run.model, groupRunRows(run.rows));
 
   // Every row key seen by any model.
   const allKeys = new Set<string>();
@@ -341,9 +386,10 @@ export function buildConsensusRows(runs: ConsensusRun[]): ConsensusResult {
       // fail closed for automatic editor substitution.
       const ambiguousDuplicate = occurrenceCount > 1;
       const allUnanimous = FIELD_NAMES.every((f) => fields[f].unanimous);
-      // votes*2 > total is the strict-majority test; independent of the value
-      // being null (a unanimous "no ticker" reading still has a majority).
-      const allHaveMajority = FIELD_NAMES.every((f) => fields[f].votes * 2 > fields[f].total);
+      const identityOk = IDENTITY_FIELDS.every((f) => fields[f].votes * 2 > fields[f].total);
+      const nameOk = fieldAuthoritative('assetName', fields.assetName)
+        && fieldAuthoritative('assetType', fields.assetType);
+      const allHaveMajority = identityOk && nameOk;
 
       let rowConsensus: RowConsensus;
       if (!majorityPresence || ambiguousDuplicate) {
