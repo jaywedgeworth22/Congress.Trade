@@ -859,13 +859,30 @@ def transcribe(
         logger.warning("unknown VISION_ENGINE=%s; using auto", engine)
         engine = "auto"
 
+    skip_page_image_models = False
     if engine in ("auto", "local_cli"):
         rows = transcribe_with_local_cli(pages, filing)
         if rows is not None:
-            return rows, "local_grok_cli_v1"
-        if engine == "local_cli":
+            page_total = len(pages) if total_pages is None else total_pages
+            # Same lock as a truncated Qwen hit (#2141): MAX_PAGES (12) is
+            # short of a 13+ page scan, ingest publishes at 0.97, drain
+            # skips scanned_pdf, later-page trades never land.  PDF-native
+            # cascade steps still attach the full file.
+            truncated_cli = page_total > len(pages)
+            if engine == "auto" and truncated_cli and OPENROUTER_API_KEY:
+                logger.warning(
+                    "local CLI returned %s row(s) from %d/%d pages — not terminal, cascading to PDF-native",
+                    len(rows),
+                    len(pages),
+                    page_total,
+                )
+                skip_page_image_models = True
+            else:
+                return rows, "local_grok_cli_v1"
+        elif engine == "local_cli":
             return None, "local_grok_cli_v1"
-        logger.warning("local CLI solo pass missed; cascading cheap OpenRouter VL")
+        else:
+            logger.warning("local CLI solo pass missed; cascading cheap OpenRouter VL")
 
     if not OPENROUTER_API_KEY:
         logger.error("no OpenRouter key — cannot cascade after solo-pass miss")
@@ -874,6 +891,12 @@ def transcribe(
     page_total = len(pages) if total_pages is None else total_pages
     last_label = "openrouter_cascade"
     for model in cascade_model_list():
+        if skip_page_image_models and model_uses_page_images(model):
+            logger.info(
+                "cascade skip model=%s: page-image cap already short versus PDF",
+                model,
+            )
+            continue
         logger.info("cascade try model=%s images=%s", model, model_uses_page_images(model))
         rows = transcribe_with_openrouter(pdf_path, pages, filing, model, work_dir)
         last_label = extractor_label_for_model(model)
