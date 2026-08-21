@@ -11,6 +11,8 @@ import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
 import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
+import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
+import { captureException, initProductionSentry } from '#sentry';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -53,8 +55,17 @@ const secretEnv = {
   CONFIG_KV: configKvShim as any,
 } as Env;
 
-// 2. Resolve Infisical secrets at boot
+// 2. Resolve Infisical secrets at boot, then init Sentry for this Coolify
+// container (Deno-in-Docker on Hetzner).  Not Deno Deploy — no deployctl,
+// no Deploy APIs.  Missing Coolify/Infisical SENTRY_DSN is fail-soft.
 await refreshSecrets(secretEnv);
+const sentryResolved = await resolveProductionSentryEnv(secretEnv, resolveSecret);
+const sentryBoot = initProductionSentry(sentryResolved);
+console.log(
+  sentryBoot.initialized
+    ? `Sentry initialized (${sentryResolved.SENTRY_ENVIRONMENT || 'production'})`
+    : `Sentry disabled (${sentryBoot.reason})`,
+);
 const tursoUrlRes = await resolveSecret(secretEnv, 'TURSO_DATABASE_URL');
 const tursoTokenRes = await resolveSecret(secretEnv, 'TURSO_AUTH_TOKEN');
 
@@ -64,7 +75,7 @@ const rawTursoToken = tursoTokenRes.value || Deno.env.get('TURSO_AUTH_TOKEN') ||
 const tursoToken = rawTursoToken.trim().replace(/^['"]+|['"]+$/g, '').trim();
 
 if (!tursoUrl || tursoUrl.includes('dummy-url')) {
-  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Deno Deploy.");
+  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Coolify.");
 }
 
 // 3. Initialize Turso DB Shim
@@ -125,6 +136,7 @@ const s3Shim = new S3BucketShim(s3Client, awsS3BucketName);
 function buildEnv(): Env {
   return {
     ...buildEnvironmentValues(),
+    ...sentryResolved,
     CONFIG_KV: configKvShim as any,
     DB: dbShim as any,
     RAW_FILES: s3Shim as any,
@@ -208,6 +220,7 @@ if (!costProfile.disableInternalCron) {
       }
     } catch (err) {
       console.error('Deno cron tick caught error:', err);
+      captureException(err, { tags: { cron: 'deno-tick' } });
     } finally {
       tickInFlight = false;
     }
