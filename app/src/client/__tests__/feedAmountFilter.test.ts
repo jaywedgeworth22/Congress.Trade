@@ -115,7 +115,9 @@ function makeEnv(corpus: Row[]): Env {
         return { results: [{ total: matched.length } as T] };
       }
       if (/FROM transactions t/i.test(sql) || /FROM \(/i.test(sql)) {
-        const limit = Number(sql.match(/LIMIT\s+(\d+)/i)?.[1] ?? matched.length);
+        // Page LIMIT is last; an earlier LIMIT is the cheap twin-candidate window (#2062).
+        const limitMatches = [...sql.matchAll(/LIMIT\s+(\d+)/gi)];
+        const limit = Number(limitMatches.at(-1)?.[1] ?? matched.length);
         const offset = Number(sql.match(/OFFSET\s+(\d+)/i)?.[1] ?? 0);
         const ordered = /DESC/i.test(sql)
           ? [...matched].sort((a, b) => Number(b.cursor_seq) - Number(a.cursor_seq))

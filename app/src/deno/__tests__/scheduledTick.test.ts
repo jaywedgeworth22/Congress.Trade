@@ -299,6 +299,13 @@ describe('runScheduledTick idle short-circuit', () => {
     expect(result.skippedDrain).toBe(true);
     expect(result.drained).toBeNull();
     expect(result.ingestionOutbox).toBeNull();
+    expect(result.apnsFanout).toEqual({
+      skipped: 'not_configured',
+      trades: 0,
+      reviews: 0,
+      delivered: 0,
+      retired: 0,
+    });
     expect(handlers.handleIngestMessage).not.toHaveBeenCalled();
     // Autonomy lanes still run even when the drain short-circuits.
     expect(refreshSecrets).toHaveBeenCalledOnce();

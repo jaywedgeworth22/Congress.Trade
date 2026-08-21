@@ -158,8 +158,8 @@ async function run() {
       ticker: tk,
       assetType: 'stock', // Fallback
       txType: type === 'buy' ? 'B' : type === 'sell' ? 'S' : 'E',
-      amountMin: 1001, // default
-      amountMax: 15000, // default
+      amountMin: null,
+      amountMax: null,
       isOption: false,
       capGainsOver200: false,
       rawText: JSON.stringify(rawObj),
@@ -170,13 +170,13 @@ async function run() {
       description: `Injected from ${provider}`,
       supplementalText: null,
       rowKey: tradeHash,
-      confidence: 100,
+      confidence: 0,
       source: 'competitor_backfill',
       createdAt: nowStr,
       // cursor_seq is assigned by the DB trigger; persistTransactions() binds NULL.
       cursorSeq: 0,
       firstSeenAt: nowStr,
-      filedDate: date, // Treat filed_date same as tx_date for these purposes
+      filedDate: null,
     });
     novelSet.add(exactKey);
   }
