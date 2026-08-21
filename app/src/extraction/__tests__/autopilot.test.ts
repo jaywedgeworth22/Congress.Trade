@@ -496,6 +496,25 @@ describe('handleAutopilotTick — error-class kill-switch', () => {
     expect(final!.params[10]).toBe('error_class:auth');
   });
 
+  it('does not latch the pipeline on garbage or Unauthorized OpenRouter replies', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1'), doc('H-2')] });
+    const { env } = makeEnv(state, {
+      AUTOPILOT_DAILY_USD_BUDGET: '5',
+      AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD: '2',
+    });
+    const check = vi.fn(async () => {
+      throw new Error('openRouterText: OpenRouter API 401 Unauthorized');
+    });
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).toHaveBeenCalledTimes(2);
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).not.toBe('error_class:auth');
+    expect(final!.params[10]).not.toBe('error_class:parse');
+  });
+
   it('does not latch on source-fetch Unauthorized (Clerk / admin 401 statusText)', async () => {
     const state = makeState({ runRow: runRow(), docs: [doc('H-1'), doc('H-2')] });
     const { env } = makeEnv(state, {

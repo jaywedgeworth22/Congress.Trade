@@ -6,6 +6,10 @@ import XCTest
 
 final class CongressTradeTests: XCTestCase {
     override func tearDown() {
+        // Nilling bumps MockURLProtocol's generation so a leftover URLSession
+        // callback from this case cannot run the next case's handler — and
+        // startLoading no longer XCTUnwraps a nil handler onto whoever is
+        // running (the `testFeedQueryEmitsTypeForBuySellFilter` crash).
         MockURLProtocol.handler = nil
         super.tearDown()
     }
@@ -169,7 +173,7 @@ final class CongressTradeTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "intent-123")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer native-session")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
             XCTAssertEqual(payload["id"] as? String, "sub_1")
@@ -296,7 +300,6 @@ final class CongressTradeTests: XCTestCase {
 
         let capture = RequestCapture()
         installFeedMock(capture: capture)
-
         // Empty selection omits chamber= so unresolved-chamber rows stay in view.
         await store.setChamberSelection([])
 
@@ -316,7 +319,6 @@ final class CongressTradeTests: XCTestCase {
         )
         let capture = RequestCapture()
         installFeedMock(capture: capture)
-
         // Selecting a proper subset (not all three) must send a sorted CSV.
         await store.setChamberSelection([.executive, .house])
 
@@ -386,7 +388,6 @@ final class CongressTradeTests: XCTestCase {
     func testTimeRangeAllOmitsFromParameter() async throws {
         let capture = RequestCapture()
         installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
-
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
             cursorStore: InMemorySyncCursorStore(),
@@ -407,7 +408,7 @@ final class CongressTradeTests: XCTestCase {
             capture: capture,
             feedJSON: Self.feedJSON(
                 items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                cursor: 110, count: 10, total: 250, limit: 100
+                cursor: 110, count: 10, total: 250, limit: 50
             )
         )
 
@@ -418,7 +419,7 @@ final class CongressTradeTests: XCTestCase {
         )
         await store.refresh()
 
-        XCTAssertEqual(store.totalPages, 3, "250 rows at 100/page rounds up to 3 pages")
+        XCTAssertEqual(store.totalPages, 5, "250 rows at the default 50/page rounds up to 5 pages")
         XCTAssertTrue(store.canGoToNextPage)
         XCTAssertFalse(store.canGoToPreviousPage)
         // The first page must not send offset= at all (page 1, not offset=0).
@@ -430,7 +431,7 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(store.canGoToPreviousPage)
 
         let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
-        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "100")
+        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "50")
 
         await store.goToPreviousPage()
         XCTAssertEqual(store.currentPage, 0)
@@ -441,7 +442,6 @@ final class CongressTradeTests: XCTestCase {
     func testSwitchingToAmountSortDoesNotRefetchButSwitchingBackToDateDoes() async throws {
         let capture = RequestCapture()
         installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
-
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
             cursorStore: InMemorySyncCursorStore(),
@@ -474,7 +474,6 @@ final class CongressTradeTests: XCTestCase {
     func testChangingATimeRangeResetsCurrentPageToZero() async throws {
         let capture = RequestCapture()
         installFeedMock(capture: capture, feedJSON: Self.feedJSON(items: [], cursor: 0, count: 0, total: 300, limit: 100))
-
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
             cursorStore: InMemorySyncCursorStore(),
@@ -653,6 +652,9 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
+            if request.url?.path.contains("/feed") != true {
+                return Self.response(for: request, json: "{}")
+            }
             feedAttempts += 1
             if feedAttempts == 1 {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: [:])!
@@ -709,6 +711,9 @@ final class CongressTradeTests: XCTestCase {
         MockURLProtocol.handler = { request in
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") != true {
+                return Self.response(for: request, json: "{}")
             }
             feedAttempts += 1
             let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: [:])!
@@ -913,6 +918,214 @@ final class CongressTradeTests: XCTestCase {
                 "this Apple subscription is already linked to a different account"
             )
         }
+    }
+
+    /// `POST /entitlements/apple/redeem` (the anonymous route
+    /// `refreshAppleEntitlementOwnership` reuses as a READ-ONLY row-3/row-4
+    /// probe while signed in — `Store/AppleIAP.swift`) reports a `409` for a
+    /// transaction some other account already owns. Locks that the API
+    /// client surfaces it as a normal thrown error the caller can inspect,
+    /// not a decoded "success" body — the thing `PremiumAccessGate.ownership
+    /// (afterProbe:)` depends on to tell rows 3 and 4 apart.
+    func testRedeemAppleEntitlementAnonymouslyThrowsOn409OwnerMismatch() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/client/v1/entitlements/apple/redeem")
+            return Self.response(
+                for: request,
+                status: 409,
+                json: """
+                {"error":"this Apple subscription is already linked to a different account","upgradeRequired":false}
+                """
+            )
+        }
+
+        do {
+            _ = try await client.redeemAppleEntitlementAnonymously(signedTransaction: "jws-blob")
+            XCTFail("Expected the 409 to throw")
+        } catch let error as APIError {
+            guard case .server(let status, let message, _) = error else {
+                return XCTFail("Expected .server, got \(error)")
+            }
+            XCTAssertEqual(status, 409)
+            XCTAssertEqual(message, "this Apple subscription is already linked to a different account")
+        }
+    }
+
+    // MARK: - Account-linked Apple entitlement (owner directive 2026-08-21)
+    //
+    // "It should be linked to an account which can be used via website or
+    // iOS app both." Premium belongs to the ACCOUNT; a device's Apple
+    // purchase must never make every signed-in account look Premium.
+    // `PremiumAccessGate` (`Store/AppleIAP.swift`) is the pure truth table
+    // gate — tested directly here without StoreKit or the Store's async
+    // orchestration.
+
+    /// Row 1: signed OUT + a verified, unclaimed device purchase must still
+    /// resolve as Premium (Guideline 5.1.1(v)) — must not regress.
+    func testPremiumAccessGateGrantsSignedOutDeviceEntitlement() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: false,
+            hasLocalAppleEntitlement: true,
+            ownership: .unknown
+        ))
+    }
+
+    /// Row 2: signed in + server Premium is always granted, regardless of
+    /// the device's own entitlement state.
+    func testPremiumAccessGateGrantsSignedInServerPremium() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: true,
+            signedIn: true,
+            hasLocalAppleEntitlement: false,
+            ownership: .linkedToOtherAccount
+        ))
+    }
+
+    /// Row 3 — the regression this change exists to fix: a signed-in FREE
+    /// account must not get Premium access just because this device's Apple
+    /// purchase happens to be owned by a DIFFERENT account. This is the case
+    /// that used to leak through the old `isPremium || hasLocalAppleEntitlement`
+    /// OR-gate at `FeedDashboardView.swift:1241`, `TradeDetailView.swift:325`,
+    /// and `CongressTradeStore.exportCSV`.
+    func testPremiumAccessGateRefusesForeignDeviceEntitlementWhileSignedIn() {
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ))
+    }
+
+    /// Row 4: signed in, server free, device purchase unclaimed (or the
+    /// ownership probe has not resolved yet) — grant access so a payer is
+    /// never stranded while they decide whether to link it.
+    func testPremiumAccessGateGrantsUnclaimedDeviceEntitlementWhileSignedIn() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .unclaimed
+        ))
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .unknown
+        ))
+    }
+
+    /// Baseline: no device entitlement at all, free — never granted, signed
+    /// in or out.
+    func testPremiumAccessGateRefusesPlainFreeAccount() {
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: false,
+            ownership: .unknown
+        ))
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: false,
+            hasLocalAppleEntitlement: false,
+            ownership: .unknown
+        ))
+    }
+
+    /// Row 4's "Link this subscription?" ask shows only once the probe
+    /// resolves unclaimed and only until "Not now" is remembered for this
+    /// account; row 3's plain conflict message shows only once resolved
+    /// linked-elsewhere. Neither shows while still unresolved or once the
+    /// account is already Premium.
+    func testPremiumAccessGateLinkOfferAndConflictVisibility() {
+        XCTAssertTrue(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: false
+        ))
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: true
+        ), "a remembered 'Not now' must not nag again")
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unknown, dismissedForAccount: false
+        ), "never asks before the read-only ownership probe has resolved")
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: true, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: false
+        ), "already Premium — nothing left to link")
+
+        XCTAssertTrue(PremiumAccessGate.showsConflict(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ))
+        XCTAssertFalse(PremiumAccessGate.showsConflict(
+            isPremium: false, signedIn: false, hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ), "signed out never shows an account conflict — there is no account yet")
+    }
+
+    /// The core regression this change exists to fix, expressed at the
+    /// boundary: `linkAppleEntitlementIfNeeded` used to `try?` away a `409`
+    /// from `link_apple_entitlement` ("already linked to a different
+    /// account"). `PremiumAccessGate.ownership(afterProbe:)` is what
+    /// replaced that swallow — a `409` must surface as
+    /// `.linkedToOtherAccount`, never silently vanish, and a transient
+    /// failure (offline, 5xx) must never be misreported as a conflict (that
+    /// would wrongly gate out a legitimate unclaimed payer).
+    func testOwnershipProbeSurfacesThe409ConflictInsteadOfSwallowingIt() {
+        XCTAssertEqual(PremiumAccessGate.ownership(afterProbe: .success(())), .unclaimed)
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(
+                APIError.server(
+                    status: 409,
+                    message: "this Apple subscription is already linked to a different account",
+                    retryAfterSeconds: nil
+                )
+            )),
+            .linkedToOtherAccount
+        )
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(
+                APIError.server(status: 500, message: "boom", retryAfterSeconds: nil)
+            )),
+            .unknown
+        )
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(APIError.transport(URLError(.notConnectedToInternet)))),
+            .unknown
+        )
+    }
+
+    /// #2120 leftover: `observeAppleTransactions` used `isPremium` alone to
+    /// decide an authenticated redeem.  Stripe Premium is `isPremium` with
+    /// `source: "stripe"` and never consults the Apple ledger, so a Stripe
+    /// account on a device with an unfinished signed-out Apple purchase
+    /// would silent-link that row.  Auto-redeem is only a renewal of an
+    /// already-Apple-backed grant.
+    func testTransactionUpdateDoesNotAutoRedeemStripePremiumOntoDeviceApplePurchase() {
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: "stripe"
+        ), "Stripe Premium must not claim a leftover unfinished Apple purchase")
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: nil
+        ), "unknown source is treated as not-Apple — probe only")
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: false,
+            entitlementSource: "apple"
+        ), "free account never auto-claims; Link / Restore only")
+        XCTAssertTrue(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: "apple"
+        ), "already-Apple-backed Premium may refresh the same grant")
     }
 
     // MARK: - UX P0: memberName search + async command result claim
@@ -1178,7 +1391,6 @@ final class CongressTradeTests: XCTestCase {
         )
         let capture = RequestCapture()
         installFeedMock(capture: capture)
-
         await store.setChamberSelection([.house, .executive])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
@@ -1242,7 +1454,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_subscription")
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
@@ -1277,7 +1489,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-acct-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_account")
             return Self.response(
@@ -1309,7 +1521,6 @@ final class CongressTradeTests: XCTestCase {
         )
         let capture = RequestCapture()
         installFeedMock(capture: capture)
-
         await store.setSearch("Nancy Pelosi")
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capture.last(pathContains: "/feed")), resolvingAgainstBaseURL: false))
@@ -1608,10 +1819,13 @@ final class CongressTradeTests: XCTestCase {
     // MARK: - Guideline 5.1.1(v): no account required to buy Premium
 
     /// `FilingPDFAccess.action` itself only ever sees one `isPremium` bool —
-    /// the call site (`TradeDetailView.openArchivedFilingPDF`) is what OR's
-    /// in `store.hasLocalAppleEntitlement`. This locks the boolean logic
-    /// callers depend on: a signed-out device with its own Apple purchase
-    /// must resolve exactly like a signed-in Premium session.
+    /// the call site (`TradeDetailView.openArchivedFilingPDF`) passes
+    /// `store.premiumFeatureAccess` (`PremiumAccessGate.granted`, see the
+    /// "Account-linked Apple entitlement" tests above). This locks the
+    /// boolean logic callers depend on for the SIGNED-OUT case (row 1): a
+    /// signed-out device with its own unclaimed Apple purchase must resolve
+    /// exactly like a signed-in Premium session. (Signed IN, the gate is no
+    /// longer a plain OR — see `testPremiumAccessGateRefusesForeignDeviceEntitlementWhileSignedIn`.)
     func testFilingPDFAccessTreatsLocalAppleEntitlementAsPremium() {
         let isPremiumSession = true
         let hasLocalAppleEntitlementSignedOut = true
@@ -1620,7 +1834,9 @@ final class CongressTradeTests: XCTestCase {
             .fetchInApp
         )
         XCTAssertEqual(
-            FilingPDFAccess.action(isPremium: false || hasLocalAppleEntitlementSignedOut),
+            FilingPDFAccess.action(isPremium: PremiumAccessGate.granted(
+                isPremium: false, signedIn: false, hasLocalAppleEntitlement: true, ownership: .unknown
+            )),
             .fetchInApp
         )
         XCTAssertEqual(FilingPDFAccess.action(isPremium: false || false), .showPremiumSheet)
@@ -1986,6 +2202,58 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(decoded.runs[0].confirmEdits.first?["ticker"] as? String, "MSFT")
     }
 
+    // MARK: - MockURLProtocol isolation (handler races)
+
+    /// Leftover `refreshTrends()` / URLSession callbacks used to hit
+    /// `XCTUnwrap(Self.handler)` after tearDown niled it, and XCTest blamed
+    /// whichever case was running — including ones that never install a
+    /// handler (`testFeedQueryEmitsTypeForBuySellFilter`).
+    func testMockURLProtocolNilHandlerDoesNotRecordAnXCTUnwrapFailure() async {
+        MockURLProtocol.handler = nil
+        let session = makeSession()
+        let url = URL(string: "https://example.test/api/analytics/latency-summary")!
+        do {
+            _ = try await session.data(from: url)
+            XCTFail("a request with no handler must not succeed")
+        } catch {
+            let nsError = error as NSError
+            XCTAssertEqual(nsError.domain, NSURLErrorDomain)
+            XCTAssertEqual(nsError.code, URLError.cancelled.rawValue)
+        }
+    }
+
+    /// `setTimeRange` fans out feed + trends.  Capturing only `/feed` must
+    /// keep a latency-summary URL from winning `feedURL`.
+    @MainActor
+    func testFeedURLCaptureIgnoresConcurrentNonFeedRequests() async throws {
+        var feedURL: URL?
+        var nonFeedHits = 0
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") == true {
+                feedURL = request.url
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            nonFeedHits += 1
+            return Self.response(for: request, json: "{}")
+        }
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.setTimeRange(.all)
+        let captured = try XCTUnwrap(feedURL)
+        XCTAssertTrue(captured.path.contains("/feed"), captured.path)
+        XCTAssertFalse(captured.path.contains("latency"), captured.absoluteString)
+        XCTAssertGreaterThan(nonFeedHits, 0, "setTimeRange must also fire the trends fan-out")
+        let components = try XCTUnwrap(URLComponents(url: captured, resolvingAgainstBaseURL: false))
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "from" }))
+        store.cancelOutstandingWork()
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
@@ -2089,14 +2357,70 @@ private final class MemoryTokenStore: SessionTokenStore {
 }
 
 private final class MockURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    typealias Handler = (URLRequest) throws -> (HTTPURLResponse, Data)
+
+    /// Stamped onto each request in `canonicalRequest` so a leftover
+    /// URLSession callback from an earlier test cannot run a later test's
+    /// handler, and so `startLoading` never `XCTUnwrap`s a niled handler
+    /// onto whichever case happens to be running.
+    private static let generationPropertyKey = "CongressTrade.MockURLProtocol.generation"
+    private static let lock = NSLock()
+    private static var currentGeneration: UInt64 = 0
+    private static var boxedHandler: Handler?
+
+    static var handler: Handler? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return boxedHandler
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            currentGeneration &+= 1
+            boxedHandler = newValue
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        if URLProtocol.property(forKey: generationPropertyKey, in: request) != nil {
+            return request
+        }
+        guard let copy = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        lock.lock()
+        let generation = currentGeneration
+        lock.unlock()
+        URLProtocol.setProperty(NSNumber(value: generation), forKey: generationPropertyKey, in: copy)
+        return copy as URLRequest
+    }
 
     override func startLoading() {
+        let capturedHandler: Handler?
+        let activeGeneration: UInt64
+        Self.lock.lock()
+        capturedHandler = Self.boxedHandler
+        activeGeneration = Self.currentGeneration
+        Self.lock.unlock()
+
+        let requestGeneration = (URLProtocol.property(forKey: Self.generationPropertyKey, in: request) as? NSNumber)?.uint64Value
+        if let requestGeneration, requestGeneration != activeGeneration {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+        guard let handler = capturedHandler else {
+            // Leftover after tearDown, or a unit test that never installed a
+            // handler.  Do not XCTUnwrap — that records a failure on the
+            // currently running test.
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+
         do {
-            let (response, data) = try XCTUnwrap(Self.handler)(request)
+            let (response, data) = try handler(request)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)

@@ -259,7 +259,7 @@ describe('DASHBOARD_HTML', () => {
       sources.join('\n\n') + '\nreturn { entityHref, copyLinkHtml };',
     )() as {
       entityHref: (param: string, value: string) => string;
-      copyLinkHtml: (param: string, value: string, label: string) => string;
+      copyLinkHtml: (param: string, value: string, entityLabel: string) => string;
     };
 
     expect(helpers.entityHref('member', 'P000197')).toBe('/?member=P000197');
@@ -268,18 +268,84 @@ describe('DASHBOARD_HTML', () => {
     // of the query string.
     expect(helpers.entityHref('member', 'a&b=c')).toBe('/?member=a%26b%3Dc');
 
-    const link = helpers.copyLinkHtml('ticker', 'NVDA', 'Copy link to NVDA');
-    expect(link).toContain('<a class="drawer-all-link clickable" href="/?ticker=NVDA"');
-    expect(link).toContain('data-copy-param="ticker"');
-    expect(link).toContain('data-copy-value="NVDA"');
+    // copyLinkHtml() must build its href through entityHref() — the exact
+    // same URL builder the Directory member/ticker cells use below — not a
+    // second, independently-maintained copy of the '/?param=value' string
+    // construction.
+    const [copyLinkHtmlSrc] = loadDashboardFunctions(['copyLinkHtml']);
+    expect(copyLinkHtmlSrc).toContain('entityHref(param, value)');
+    expect(copyLinkHtmlSrc).not.toContain('encodeURIComponent(param)');
 
-    // The click handler now preventDefault()s before building the clipboard
-    // URL, since the anchor carries a real href that would otherwise navigate.
+    const link = helpers.copyLinkHtml('ticker', 'NVDA', 'NVDA');
+    expect(link).toContain('<a class="drawer-all-link clickable" href="/?ticker=NVDA">🔗 NVDA</a>');
+  });
+
+  it('splits the drawer "Copy link" control into a real navigable <a href> and a separate, focusable copy <button> (SEOSOCIAL-02 + WEBA11Y-08)', () => {
+    // SEOSOCIAL-02 (crawlable permalink) and WEBA11Y-08 (a real, keyboard-
+    // operable copy control) each rewrote this ONE element to fix their own
+    // finding, which made the two mutually exclusive: a href-less <a> has no
+    // working navigation for crawlers/new-tab/middle-click, while a <button>
+    // alone has no href at all. Splitting into two controls keeps both true.
+    const sources = loadDashboardFunctions(['esc', 'entityHref', 'copyLinkHtml']);
+    const helpers = new Function(
+      sources.join('\n\n') + '\nreturn { copyLinkHtml };',
+    )() as { copyLinkHtml: (param: string, value: string, entityLabel: string) => string };
+
+    const html = helpers.copyLinkHtml('member', 'P000197', 'Nancy Pelosi');
+    const root = parse(html);
+
+    // Control 1: a real <a href> a crawler can follow and a user can
+    // right-click "open in new tab" / middle-click — genuine navigation, not
+    // a data-* attribute a JS click handler reads.
+    const a = root.querySelector('a.drawer-all-link');
+    expect(a).not.toBeNull();
+    expect(a!.getAttribute('href')).toBe('/?member=P000197');
+    expect(a!.getAttribute('data-copy-param')).toBeUndefined();
+
+    // Control 2: a real <button> — natively focusable and Enter/Space-
+    // activatable, unlike the href-less <a> it replaces — whose accessible
+    // name says what it copies (WEBA11Y-08). The visible text is a prefix of
+    // the aria-label (WCAG 2.5.3 Label in Name).
+    const btn = root.querySelector('button.drawer-copy-link-btn');
+    expect(btn).not.toBeNull();
+    expect(btn!.getAttribute('type')).toBe('button');
+    expect(btn!.getAttribute('data-copy-param')).toBe('member');
+    expect(btn!.getAttribute('data-copy-value')).toBe('P000197');
+    const ariaLabel = btn!.getAttribute('aria-label') || '';
+    expect(ariaLabel).toBe('Copy Link to Nancy Pelosi’s page');
+    expect(ariaLabel.startsWith(btn!.text.trim().replace(/^\S+\s/, ''))).toBe(true);
+    // Repo copy convention: button labels use Title Case (AGENTS.md) — "Copy
+    // link" (sentence case) was flagged and corrected to "Copy Link".
+    expect(btn!.text.trim().replace(/^\S+\s/, '')).toBe('Copy Link');
+
+    // Neither the pre-#2075 href-less <a> nor the pre-#2072 <a>-doubling-as-
+    // copy-button shape survives the merge.
+    expect(DASHBOARD_HTML).not.toContain('<a class="drawer-all-link clickable" data-copy-param="');
+    expect(DASHBOARD_HTML).not.toContain('<button type="button" class="drawer-all-link clickable" data-copy-param="');
+
+    // The click delegate for the copy button reuses the shared copyText()
+    // helper with an explicit "Link copied." message; #toast (asserted
+    // elsewhere to carry role="status" aria-live="polite") is the live
+    // region that announces it to screen-reader users.
     const clickHandlerMatch = DASHBOARD_HTML.match(
-      /document\.addEventListener\('click', function \(e\) \{\n {2}var b = e\.target[\s\S]*?copyText\(u\.toString\(\)\);\n\}\);/,
+      /document\.addEventListener\('click', function \(e\) \{\n {2}var b = e\.target[\s\S]*?copyText\(u\.toString\(\), 'Link copied\.'\);\n\}\);/,
     );
     expect(clickHandlerMatch).not.toBeNull();
-    expect(clickHandlerMatch![0]).toContain('if (e.preventDefault) e.preventDefault();');
+
+    // Both controls carry the shared 'clickable' class, which is where the
+    // app's generic keyboard focus-visible ring (.clickable:focus-visible)
+    // comes from, so both get a visible focus state without any bespoke CSS.
+    expect(DASHBOARD_HTML).toContain('.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }');
+
+    // Placement: a flex row lays the two controls side by side without
+    // otherwise restyling the drawer — same font-size/color/cursor as the
+    // single control this replaces, just two of them now.
+    expect(DASHBOARD_HTML).toContain(
+      '.drawer-link-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:9px; }',
+    );
+    expect(DASHBOARD_HTML).toContain(
+      '.drawer-all-link, .drawer-copy-link-btn { display:inline-block; margin:0; font-size:13px; background:none; border:0; padding:0; color:var(--accent); text-decoration:none; cursor:pointer; text-align:left; font-family:inherit; }',
+    );
   });
 
   it('links Directory table rows to real crawlable /?member= and /?ticker= hrefs (SEOSOCIAL-02)', () => {
@@ -640,7 +706,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("function polFull(n)");
   });
 
-  it('defaults theme to light and offers Light/Sepia/Dark/System controls', () => {
+  it('defaults theme to light and offers Light/Dark/System controls', () => {
     expect(DASHBOARD_HTML).toContain("var pref = 'light'");
     expect(DASHBOARD_HTML).toContain("return 'light'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
@@ -648,12 +714,31 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
     expect(DASHBOARD_HTML).toContain('class="theme-seg"');
     expect(DASHBOARD_HTML).toContain('data-theme-opt');
-    expect(DASHBOARD_HTML).toContain("id: 'sepia', label: 'Sepia'");
+    expect(DASHBOARD_HTML).toContain("id: 'light', label: 'Light'");
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
-    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"]');
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
+  });
+
+  // Owner 2026-08-21: "just delete the option" — Sepia was half-implemented
+  // (only Trades/Trends were properly themed) and looked ugly, not like
+  // paper.  Assert the palette, the picker entry, and every
+  // html[data-theme="sepia"] CSS rule stay gone so a future PR can't
+  // silently reintroduce it. The only surviving mentions of 'sepia' must be
+  // the one-time localStorage migration that rewrites a returning visitor's
+  // stored 'sepia' value to 'light' instead of letting it fail validation
+  // forever — assert that migration is present in both the pre-paint boot
+  // script and the runtime readThemePref().
+  it('has fully removed the Sepia theme and migrates any stored preference to Light', () => {
+    expect(DASHBOARD_HTML).not.toContain("label: 'Sepia'");
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="sepia"]');
+    expect(DASHBOARD_HTML).not.toContain("id: 'sepia'");
+    expect(DASHBOARD_HTML).not.toContain('#f3e6d0');
+    const sepiaMigrations = DASHBOARD_HTML.match(/if \(s === 'sepia'\)/g) || [];
+    // Boot script + readThemePref() each migrate a stored 'sepia' value.
+    expect(sepiaMigrations.length).toBe(2);
+    expect(DASHBOARD_HTML).toContain("localStorage.setItem('ui-theme', 'light')");
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
@@ -690,6 +775,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("aGet('member/");
     // the old centered ticker modal is fully replaced by the drawer
     expect(DASHBOARD_HTML).not.toContain('tickerModal');
+    // WEBA11Y-07: the drawer announces itself as a dialog and gets its name
+    // from the (aria-hidden but still referenceable) topbar title span.
+    expect(DASHBOARD_HTML).toContain(
+      '<div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTopbarTitle">',
+    );
   });
 
   it('keeps mobile overlay controls dismissible and tap-safe', () => {
@@ -2584,6 +2674,31 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('$140/yr');
   });
 
+  it('makes the Monthly/Annual plan picker a real keyboard/AT-operable radio group (WEBA11Y-03)', () => {
+    // Native radio inputs give keyboard users arrow-key selection and a
+    // programmatic checked state, instead of mouse-only onclick divs whose
+    // selection was conveyed only by a border/tint colour change.
+    expect(DASHBOARD_HTML).toContain('role="radiogroup" aria-label="Plan"');
+    expect(DASHBOARD_HTML).toContain('<label class="plan sel" id="planMonthly" for="planMonthlyRadio">');
+    expect(DASHBOARD_HTML).toContain(
+      '<input type="radio" class="plan-radio-input" id="planMonthlyRadio" name="plan" value="monthly" checked onchange="selectPlan(\'monthly\')">',
+    );
+    expect(DASHBOARD_HTML).toContain('<label class="plan" id="planAnnual" for="planAnnualRadio">');
+    expect(DASHBOARD_HTML).toContain(
+      '<input type="radio" class="plan-radio-input" id="planAnnualRadio" name="plan" value="annual" onchange="selectPlan(\'annual\')">',
+    );
+    // Both radios share name="plan" so they behave as one native group.
+    expect(DASHBOARD_HTML.match(/name="plan"/g)?.length).toBe(2);
+    // selectPlan() keeps the native .checked state in sync with the visual
+    // 'sel' class, not just the class.
+    const fn = extractFn(DASHBOARD_HTML, 'selectPlan');
+    expect(fn).toContain("mr.checked = selectedPlan === 'monthly'");
+    expect(fn).toContain("ar.checked = selectedPlan === 'annual'");
+    // Focus lands on the visually-hidden input, so the ring goes on the
+    // visible label via :focus-within, not a raw outline around a 1px box.
+    expect(DASHBOARD_HTML).toContain('.plan:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }');
+  });
+
   it('supports editing existing deliveries (edit button + save path)', () => {
     expect(DASHBOARD_HTML).toContain('data-sub-edit');
     expect(DASHBOARD_HTML).toContain('function beginEditSubscription(');
@@ -2611,21 +2726,90 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
   });
 
   // ---- 8b. Keyboard-operable sort headers ----------------------------------
-  it('makes the "What Is Being Traded" ticker leaderboard sort headers keyboard-operable', () => {
+  it('puts a real named <button> inside the "What Is Being Traded" ticker leaderboard sort headers, with aria-sort on the <th> (WEBA11Y P2 follow-up)', () => {
+    // A bare tabindex'd <th> (the pre-#2072-followup shape) was announced
+    // only as a column header, with nothing indicating Enter/Space sorts.
+    // The <th> keeps its native columnheader role + aria-sort; the actual
+    // focusable, named control is a real <button> inside it.
     for (const sortKey of ['trades', 'members', 'volume', 'netflow']) {
-      expect(DASHBOARD_HTML).toContain(
-        `event.preventDefault();setTickerSort('${sortKey}');}`,
-      );
+      expect(DASHBOARD_HTML).toContain(`<button type="button" class="th-sort-btn" onclick="setTickerSort('${sortKey}')">`);
     }
-    expect(DASHBOARD_HTML.match(/class="sortable[^"]*" (?:style="[^"]*" )?tabindex="0" role="button"/g)?.length).toBeGreaterThanOrEqual(5);
+    // No more hand-rolled onkeydown — a native <button> already fires click
+    // on Enter/Space, so the old per-header keydown wiring is gone.
+    expect(DASHBOARD_HTML).not.toMatch(/tabindex="0" onclick="setTickerSort/);
+    expect(DASHBOARD_HTML).not.toMatch(/onkeydown="if\(event\.key===.Enter.\|\|event\.key===. .\)\{event\.preventDefault\(\);setTickerSort/);
+    // aria-sort ships on the <th> (baked in for the default 'trades' sort,
+    // and kept live afterward — see the loadTrTickers() test below), never
+    // on the <th> that has no data-sort (the "Asset" column, which never
+    // showed a visual arrow either — see assetCellHtml()'s "whole row" note).
+    expect(DASHBOARD_HTML).toContain('<th class="sortable" style="min-width: 140px;"><button type="button" class="th-sort-btn" onclick="setTickerSort(\'trades\')">Asset</button></th>');
+    expect(DASHBOARD_HTML).toContain('<th class="sortable" data-sort="trades" aria-sort="descending">');
+    expect(DASHBOARD_HTML).toContain('<th class="sortable r" data-sort="members" aria-sort="none">');
+    expect(DASHBOARD_HTML).toContain('<th class="sortable r est" data-sort="volume" aria-sort="none">');
+    expect(DASHBOARD_HTML).toContain('<th class="sortable r" data-sort="netflow" aria-sort="none">');
   });
 
-  it('makes the main Trades feed table sort headers keyboard-operable with aria-sort', () => {
-    expect(DASHBOARD_HTML).toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" role=\"button\" aria-sort=\"none\"' : '';");
-    expect(DASHBOARD_HTML).toContain('th.onkeydown = function (e) {');
+  it('keeps loadTrTickers() updating aria-sort alongside the visual .sort-icon on every leaderboard refresh', () => {
+    const fn = extractFn(DASHBOARD_HTML, 'loadTrTickers');
+    expect(fn).toContain("document.querySelectorAll('#tableTrTickers th[data-sort]')");
+    expect(fn).toContain("sortThs[j].setAttribute('aria-sort', sortThs[j].getAttribute('data-sort') === sortVal ? 'descending' : 'none');");
+  });
+
+  it('makes the main Trades feed table sort headers keyboard-operable via a real <button>, with valid aria-sort on the <th> (WEBA11Y-01 + P2 follow-up)', () => {
+    // No role="button" on sortAttrs: overriding a <th>'s native columnheader
+    // role made aria-sort invalid ARIA and broke column-header association
+    // for screen readers (finding WEBA11Y-01).
+    expect(DASHBOARD_HTML).toContain("var sortAttrs = c.sort ? ' aria-sort=\"none\"' : '';");
+    expect(DASHBOARD_HTML).not.toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" aria-sort=\"none\"' : '';");
+    expect(DASHBOARD_HTML).not.toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" role=\"button\" aria-sort=\"none\"' : '';");
+    // WEBA11Y P2 follow-up: a bare tabindex'd <th> gave no indication Enter/
+    // Space did anything.  The header now wraps its label in a real, named
+    // <button class="th-sort-btn">; native button semantics give Enter/Space
+    // activation for free, so the old hand-rolled th.onkeydown is gone.
+    expect(DASHBOARD_HTML).toContain(
+      "var inner = c.sort\n      ? '<button type=\"button\" class=\"th-sort-btn\" data-sort=\"' + c.sort + '\">' + esc(c.label) + '<span class=\"arr\" aria-hidden=\"true\"></span></button>'\n      : esc(c.label);",
+    );
+    expect(DASHBOARD_HTML).not.toContain('th.onkeydown = function (e) {');
+    expect(DASHBOARD_HTML).toContain('btn.onclick = function () { setSort(btn.dataset.sort); };');
     expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');");
     expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', 'none');");
-    expect(DASHBOARD_HTML).toContain('th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+    // Focus ring moved from the (no-longer-focusable) <th> to the button.
+    expect(DASHBOARD_HTML).not.toContain('th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+    expect(DASHBOARD_HTML).toContain('.th-sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+  });
+
+  it('gives the main Trades feed table row a real, named control instead of relying on the bare <tr> for keyboard/AT users (WEBA11Y P2 follow-up)', () => {
+    // assetCellHtml() explicitly documents "No data-asset on the feed cell —
+    // whole row opens the trade", so before this fix the <tr> was the ONLY
+    // thing carrying data-txid/clickable — after WEBA11Y-01 stopped putting
+    // role="button" on it (correctly, to keep native row semantics), Tab
+    // landed on a plain "row" with nothing indicating Enter/Space did
+    // anything. rowOpenBtnHtml() drops a real <button> into the row's first
+    // cell instead — invisible at rest, a visible focus-ringed pill on
+    // keyboard focus (same clip technique as the existing .fc-hint utility).
+    expect(DASHBOARD_HTML).toContain(
+      "function rowOpenBtnHtml(attrName, attrValue, label) {\n  return '<button type=\"button\" class=\"row-open-btn\" ' + attrName + '=\"' + esc(attrValue) + '\">' + esc(label) + '</button>';\n}",
+    );
+    const fn = extractFn(DASHBOARD_HTML, 'renderTrades');
+    expect(fn).toContain("if (i === 0) cell = rowOpenBtnHtml('data-txid', r.id, 'Open trade details') + cell;");
+    expect(DASHBOARD_HTML).toContain('.row-open-btn { position: absolute; width: 1px; height: 1px;');
+    expect(DASHBOARD_HTML).toContain('.row-open-btn:focus-visible {');
+    // The drawer's own "Recent Trades" mini-trade tables (asset + member
+    // drawers) get the identical control — see the entity-click-through
+    // coverage tests for the exact rendered snippet.
+    expect(DASHBOARD_HTML.match(/rowOpenBtnHtml\('data-txid', /g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps two literal spaces between sentences in this PR\'s new comments (owner convention)', () => {
+    // A single space slipped into one newly-added comment and was flagged in
+    // review; this locks in the fix and the sweep of the rest of this PR's
+    // new prose comments for the same slip.
+    expect(DASHBOARD_HTML).toContain('// date from screen-reader users.  Dropping it lets the card\'s own visible');
+    expect(DASHBOARD_HTML).not.toContain('// date from screen-reader users. Dropping it lets the card\'s own visible');
+    expect(DASHBOARD_HTML).toContain("// the '/?param=value' construction.  A genuine <a href>, left to navigate");
+    expect(DASHBOARD_HTML).not.toContain("// the '/?param=value' construction. A genuine <a href>, left to navigate");
+    expect(DASHBOARD_HTML).toContain('// actually copied to the clipboard.  aria-label spells out what gets');
+    expect(DASHBOARD_HTML).not.toContain('// actually copied to the clipboard. aria-label spells out what gets');
   });
 
   // ---- 8c. Focus trap + Escape in drawer/modals ----------------------------
@@ -2706,6 +2890,26 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     const sameSurname = ['John Delaney', 'April McClain Delaney'];
     const sortedSame = [...sameSurname].sort((a, b) => (surnameSortKey(a) < surnameSortKey(b) ? -1 : 1));
     expect(sortedSame).toEqual(['April McClain Delaney', 'John Delaney']);
+  });
+
+  it('makes the People directory column headers keyboard-operable via a real <button>, with aria-sort on the <th> (WEBA11Y-05 + P2 follow-up)', () => {
+    // WEBA11Y P2 follow-up: a bare tabindex'd <th> was announced only as a
+    // column header, with nothing indicating Enter/Space sorts.  The <th>
+    // keeps native columnheader role + aria-sort; a real, named <button>
+    // inside it is the actual focusable control (native button semantics
+    // give Enter/Space activation for free, so the old onkeydown is gone).
+    for (const key of ['name', 'chamber', 'trades']) {
+      expect(DASHBOARD_HTML).toContain(`data-sort="${key}" aria-sort="none"`);
+      expect(DASHBOARD_HTML).toContain(`<button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('${key}')">`);
+    }
+    expect(DASHBOARD_HTML).not.toMatch(/data-sort="(?:name|chamber|trades)" tabindex="0" aria-sort="none" onclick="sortPeopleDirectory/);
+    expect(DASHBOARD_HTML).not.toMatch(/onkeydown="if\(event\.key===.Enter.\|\|event\.key===. .\)\{event\.preventDefault\(\);sortPeopleDirectory/);
+    // The people-table-specific focus rule is gone; the shared .th-sort-btn
+    // rule (asserted for the Trades/Trends headers above) covers it now.
+    expect(DASHBOARD_HTML).not.toContain('.people-table thead th[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+    const fn = extractFn(DASHBOARD_HTML, 'syncPeopleSortIndicators');
+    expect(fn).toContain("th.setAttribute('aria-sort', PEOPLE_SORT.dir > 0 ? 'ascending' : 'descending');");
+    expect(fn).toContain("th.setAttribute('aria-sort', 'none');");
   });
 });
 
@@ -3038,6 +3242,19 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('payload: { delivery: delivery, targetUrl: targetUrl || null, filters: filters }');
     expect(DASHBOARD_HTML).toContain('<option value="E">Exchanges</option>');
     expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sells</option>');
+  });
+
+  it('gives every Delivery create-form control a programmatic label (WEBA11Y-04)', () => {
+    // Visible-if-hidden <label for> siblings, not wrapping (wrapping would
+    // stop the control being a direct .row-flex child and break the
+    // existing responsive `.row-flex > select/input` sizing rules).
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newDelivery">Channel</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newTarget">Target URL</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newTickers">Tickers</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newMembers">Members</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newChambers">Branches</label>');
+    expect(DASHBOARD_HTML).toContain('<label class="field-vh-label" for="newSides">Trade side</label>');
+    expect(DASHBOARD_HTML).toContain('.field-vh-label { position: absolute;');
   });
 
   it('styles trends-fold summaries like section headers and keeps mobile bottom nav', () => {
@@ -3773,7 +3990,7 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       expect(DASHBOARD_HTML).toContain("openTradeById(feedHit.getAttribute('data-txid'));");
       // Feed cell helpers no longer emit nested entity targets.
       expect(DASHBOARD_HTML).toContain('/* Feed cells are NOT nested entity links');
-      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +');
+      expect(DASHBOARD_HTML).toContain('return \'<div class="member-cell">\' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket, true) +');
       expect(DASHBOARD_HTML).toContain('// No data-asset on the feed cell');
       expect(DASHBOARD_HTML).toContain('Politician Details');
       expect(DASHBOARD_HTML).toContain('Company Details');
@@ -3830,8 +4047,11 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       );
       // Recent Trades rows open the trade view; the ticker chip inside each
       // row is itself a second, nested entity link to the asset drawer.
+      // rowOpenBtnHtml(...) (WEBA11Y P2 follow-up) supplies the real, named
+      // control this row needs — see the dedicated "row-open-btn" describe
+      // block below.
       expect(DASHBOARD_HTML).toContain(
-        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + miniTradeDateOnlyHtml(t) + \'</td>\' +',
+        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + rowOpenBtnHtml(\'data-txid\', tradeRow.id, \'Open trade details\') + miniTradeDateOnlyHtml(t) + \'</td>\' +',
       );
       expect(DASHBOARD_HTML).toContain(
         '? \'<span class="tkr clickable" data-asset="\' + esc(t.ticker) + \'">\' + esc(t.ticker) + \'</span>\'',
@@ -3841,7 +4061,7 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
     it('keeps asset-drawer Recent Trades and Top Buyers/Sellers entity-clickable', () => {
       expect(DASHBOARD_HTML).toContain('function openAsset(ticker)');
       expect(DASHBOARD_HTML).toContain(
-        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + miniTradeDateHtml(t) + \'</td>\' +',
+        'return \'<tr class="row clickable" data-txid="\' + esc(tradeRow.id) + \'" title="Open trade details"><td class="muted">\' + rowOpenBtnHtml(\'data-txid\', tradeRow.id, \'Open trade details\') + miniTradeDateHtml(t) + \'</td>\' +',
       );
       expect(DASHBOARD_HTML).toContain("var memberAttr = m.filerId ? ' data-member=\"' + esc(m.filerId) + '\"' : '';");
     });
@@ -3862,8 +4082,13 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       hasAttribute: (name: string) => boolean;
       setAttribute: (name: string, value: string) => void;
       getAttribute: (name: string) => string | undefined;
+      querySelector: (sel: string) => unknown;
     };
-    function fakeNode(tagName: string, attrs: Record<string, string> = {}): FakeNode {
+    // innerMatches lists selectors this node's querySelector() should find a
+    // (stub) descendant for — used by the "already has its own row-open-btn"
+    // test below; every other call site leaves it empty (querySelector always
+    // returns null, matching a real element with no such descendant).
+    function fakeNode(tagName: string, attrs: Record<string, string> = {}, innerMatches: string[] = []): FakeNode {
       const a = { ...attrs };
       return {
         tagName,
@@ -3874,6 +4099,7 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
           a[name] = value;
         },
         getAttribute: (name) => a[name],
+        querySelector: (sel) => (innerMatches.includes(sel) ? {} : null),
       };
     }
     function fakeRoot(children: FakeNode[], selfMatches = false) {
@@ -3937,6 +4163,40 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       makeEntityTargetsFocusable(fakeRoot([link]));
       expect(link.hasAttribute('tabindex')).toBe(false);
       expect(link.hasAttribute('role')).toBe(false);
+    });
+
+    it('keeps native row/columnheader/cell roles on TR/TH/TD entity targets (WEBA11Y-01)', () => {
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const row = fakeNode('TR', { class: 'row clickable', 'data-txid': 'abc' });
+      const th = fakeNode('TH', { class: 'clickable', 'data-asset': 'AAPL' });
+      const td = fakeNode('TD', { class: 'asset-cell clickable', 'data-asset': 'AAPL' });
+      makeEntityTargetsFocusable(fakeRoot([row, th, td]));
+      // Still Tab-focusable...
+      expect(row.getAttribute('tabindex')).toBe('0');
+      expect(th.getAttribute('tabindex')).toBe('0');
+      expect(td.getAttribute('tabindex')).toBe('0');
+      // ...but role="button" is never applied: overriding it would destroy
+      // the native row/columnheader/cell semantics screen readers rely on
+      // for table navigation and make aria-sort invalid ARIA.
+      expect(row.hasAttribute('role')).toBe(false);
+      expect(th.hasAttribute('role')).toBe(false);
+      expect(td.hasAttribute('role')).toBe(false);
+    });
+
+    it('does not add a redundant tabindex to a <tr> that already carries its own row-open-btn control (WEBA11Y P2 follow-up)', () => {
+      // Rows rendered by renderTrades() / the drawer mini-trade tables now
+      // insert a real, named <button class="row-open-btn"> (rowOpenBtnHtml())
+      // into their first cell.  That button is the thing that should be
+      // Tab-focusable; the <tr> itself doesn't need a second, semantically-
+      // empty tab stop for the identical "open this row" action.
+      const makeEntityTargetsFocusable = loadMakeEntityTargetsFocusable();
+      const rowWithControl = fakeNode('TR', { class: 'row clickable', 'data-txid': 'abc' }, ['.row-open-btn']);
+      makeEntityTargetsFocusable(fakeRoot([rowWithControl]));
+      expect(rowWithControl.hasAttribute('tabindex')).toBe(false);
+      expect(rowWithControl.hasAttribute('role')).toBe(false);
+      // A row with no such control (the ticker-leaderboard/trending shape,
+      // whose inner .asset-cell.clickable[data-asset] div is the control
+      // instead) keeps the old fallback tabindex behavior asserted above.
     });
 
     it('also tags the root node itself when it matches (MutationObserver addedNodes case)', () => {
@@ -4272,14 +4532,14 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
       "memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + ownerBadge + '</div></div></div>';"
     );
     expect(DASHBOARD_HTML).toContain(
-      "memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party, true) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';"
     );
     // Structural check: inside the generated personCard markup, the name div
     // (which carries the ellipsis) must fully close with </div> BEFORE the
     // <span class="drawer-trade-owner ...> badge opens — i.e. the badge is
     // outside, not nested inside, the ellipsized div.
     const personCardMatch = DASHBOARD_HTML.match(
-      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl, row\.party\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
+      /memberAvatarHtml\(fmtName\(row\.member\), row\.photoUrl, row\.party, true\) \+ '<div>' \+ memberVal \+ '<\/div>' \+ ownerBadge \+ '<\/div><\/div>';/
     );
     expect(personCardMatch).toBeTruthy();
     const nameDivCloseIdx = DASHBOARD_HTML.indexOf("memberVal + '</div>'");
@@ -4317,7 +4577,7 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
   it('#13(f) gives every drawer a useful sticky-header summary instead of an empty bar', () => {
     expect(DASHBOARD_HTML).toContain('<span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span>');
     expect(DASHBOARD_HTML).toContain('function openDrawer(html, topbarTitle) {');
-    expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || '';");
+    expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || DRAWER_DEFAULT_TITLE;");
     // Trade drawer: "SOLD  $1k-$15k  of  ARCC  |  Ares Capital Corp." style summary.
     expect(DASHBOARD_HTML).toContain(
       "var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +\n    (topbarAsset ? ' <span class=\"muted\">of</span> ' + esc(topbarAsset) : '');",
@@ -4328,6 +4588,61 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     );
     // Member drawer: the politician's name.
     expect(DASHBOARD_HTML).toContain("// Owner punch list #13(f): sticky-header summary — the politician's name.\n      esc(name)\n    );");
+  });
+
+  it('gives the drawer dialog a real accessible name in every state, including loading and error (WEBA11Y P2 follow-up)', () => {
+    // #drawerTopbarTitle is the dialog's aria-labelledby target (asserted
+    // elsewhere as WEBA11Y-07).  Every openDrawer() call used to leave it
+    // empty unless a caller happened to pass a topbarTitle — which every
+    // loading/error caller did not — pointing the dialog's accessible name
+    // at nothing.  DRAWER_DEFAULT_TITLE is a last-resort fallback; every
+    // current call site instead passes its own real, state-specific title.
+    expect(DASHBOARD_HTML).toContain("var DRAWER_DEFAULT_TITLE = 'Details';");
+    expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || DRAWER_DEFAULT_TITLE;");
+    const loadingAndErrorTitles: Array<[string, string]> = [
+      // Asset drawer.
+      [
+        "openDrawer('<div class=\"note\">Loading ' + esc(ticker) + '…</div>', 'Loading ' + esc(ticker) + '…');",
+        'asset loading',
+      ],
+      [
+        "openDrawer('<div class=\"note\">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>', 'Could not load ' + esc(ticker));",
+        'asset error',
+      ],
+      // Member drawer.
+      [
+        "openDrawer('<div class=\"note\">Loading politician…</div>', 'Loading politician…');",
+        'member loading',
+      ],
+      [
+        "openDrawer('<div class=\"note\">Could not load politician: ' + esc(e.message) + '</div>', 'Could not load politician');",
+        'member error',
+      ],
+      // Trade drawer (openTradeById deep-link resolution).
+      [
+        "openDrawer('<div class=\"note\">Loading trade…</div>', 'Loading trade…');",
+        'trade loading',
+      ],
+      [
+        "openDrawer('<div class=\"note\">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>', 'Trade unavailable');",
+        'trade retracted/incomplete',
+      ],
+      [
+        "openDrawer('<div class=\"note\">That trade was not found. It may have been retracted or the share link is outdated.</div>', 'Trade not found');",
+        'trade not found',
+      ],
+      [
+        "openDrawer('<div class=\"note\">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>', 'Could not load trade');",
+        'trade generic fetch error',
+      ],
+    ];
+    for (const [snippet, label] of loadingAndErrorTitles) {
+      expect(DASHBOARD_HTML, `${label} openDrawer() call should pass an explicit topbarTitle`).toContain(snippet);
+    }
+    // None of the loading/error paths call openDrawer() with a single
+    // argument anymore (which is what silently produced the empty-name bug).
+    expect(DASHBOARD_HTML).not.toMatch(/openDrawer\('<div class="note">Loading[^']*'\);/);
+    expect(DASHBOARD_HTML).not.toMatch(/openDrawer\('<div class="note">Could not load[^']*'\);/);
   });
 
   it('#15 wires the trade drawer Company section to the same ticker analytics source as the ticker drawer', () => {
@@ -5463,7 +5778,7 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(DASHBOARD_HTML).toContain('.avatar.party-R { box-shadow: 0 0 0 2px var(--party-r);');
     expect(DASHBOARD_HTML).toContain('.avatar.party-O { box-shadow: 0 0 0 2px var(--party-o);');
     expect(DASHBOARD_HTML).toContain('function partyBucketClass(raw)');
-    expect(DASHBOARD_HTML).toContain('function memberAvatarHtml(name, photoUrl, party)');
+    expect(DASHBOARD_HTML).toContain('function memberAvatarHtml(name, photoUrl, party, decorative)');
     expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
     const src = [
       extractFn(DASHBOARD_HTML, 'esc'),
@@ -5472,10 +5787,73 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
       extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
       'return memberAvatarHtml;',
     ].join('\n');
-    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string, party?: string) => string;
+    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string, party?: string, decorative?: boolean) => string;
     expect(memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'Democrat')).toContain('party-D');
     expect(memberAvatarHtml('Some Republican', '', 'R')).toContain('party-R');
     expect(memberAvatarHtml('Guest', '', '')).not.toMatch(/party-[DRO]/);
+  });
+
+  it('makes the avatar decorative when a call site already has its own adjacent visible name text (WEBA11Y P2: duplicate mobile trade-card name)', () => {
+    // Removing tradesCardHtml()'s name-replacing aria-label (WEBA11Y-02) means
+    // the card's accessible name is now built from its visible content —
+    // which put memberAvatarHtml()'s own fallback initials text, and the
+    // <img alt> when a photo loaded, RIGHT NEXT TO the sibling .fc-member
+    // name text in that concatenated name: a screen reader heard the name
+    // once for the avatar and again for the visible text. decorative=true
+    // drops the avatar out of the accessible name entirely (alt="" +
+    // aria-hidden) wherever a sibling already names it visibly.
+    const src = [
+      extractFn(DASHBOARD_HTML, 'esc'),
+      extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'partyBucketClass'),
+      extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
+      'return memberAvatarHtml;',
+    ].join('\n');
+    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string, party?: string, decorative?: boolean) => string;
+    const decorative = memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'D', true);
+    expect(decorative).toContain('aria-hidden="true"');
+    expect(decorative).toContain('alt=""');
+    expect(decorative).not.toContain('alt="Nancy Pelosi"');
+    // Default (no 4th arg, or explicitly false) stays named — the cluster-
+    // card face strip (loadTrClusters()) has no adjacent name text, so the
+    // photo/initials remain the ONLY identifier there.
+    const named = memberAvatarHtml('Nancy Pelosi', 'https://example.com/p.jpg', 'D');
+    expect(named).not.toContain('aria-hidden="true"');
+    expect(named).toContain('alt="Nancy Pelosi"');
+    // Every render call site with an adjacent visible name passes true.
+    const decorativeCallSites = [
+      "memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket, true)", // memberCellHtml (desktop feed table)
+      "memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket, true)", // tradesCardHtml (mobile card — the reported bug)
+      "memberAvatarHtml(name, m.photoUrl, m.party, true) + '<span class=\"cell-clip\"", // People directory row
+      "memberAvatarHtml(name, r.photoUrl, r.partyBucket, true)", // Trends member leaderboards (Top Performers / Most Active)
+      "memberAvatarHtml(name, m.photoUrl, m.party, true) + '<div>'", // Disclosure-lag member table
+      "memberAvatarHtml(name, m.photoUrl, m.partyBucket, true) + ' ' + pdot(m.partyBucket) + esc(name)", // asset-drawer Recent Trades member cell
+      "memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true)", // member-drawer header (<h2> name alongside it)
+      "memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party, true)", // trade-drawer person card
+    ];
+    for (const snippet of decorativeCallSites) {
+      expect(DASHBOARD_HTML, `expected decorative avatar call: ${snippet}`).toContain(snippet);
+    }
+    // The one call site that intentionally stays named: the cluster-card
+    // face strip has no adjacent name text at all.
+    expect(DASHBOARD_HTML).toContain('var av = memberAvatarHtml(m.fullName, m.photoUrl, m.partyBucket || m.party);');
+  });
+
+  it('does not mask mobile trade card content with a name-replacing aria-label (WEBA11Y-02)', () => {
+    const fn = extractFn(DASHBOARD_HTML, 'tradesCardHtml');
+    // No aria-label on the card: it used to collapse the accessible name down
+    // to just "Open trade details for TICKER by NAME", hiding the visible
+    // Buy/Sell badge, amount bracket and date from screen-reader users. The
+    // card's own content (assetCellHtml + actionBadge + amountCellHtml +
+    // date) now becomes the accessible name instead.
+    expect(fn).not.toContain('aria-label="Open trade details for');
+    expect(fn).toContain(
+      String.raw`<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details">`,
+    );
+    // The action hint is appended as a visually-hidden suffix instead of
+    // replacing the name.
+    expect(fn).toContain('<span class="fc-hint">Open trade details</span>');
+    expect(DASHBOARD_HTML).toContain('.fc-hint { position: absolute;');
   });
 
   it('surfaces owner, relative filed time, and the iOS politician line on mobile trade cards', () => {
@@ -5483,7 +5861,7 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
     expect(fn).toContain("ident.push(esc(chamber) + ' · ' + esc(member))");
     expect(fn).toContain('fc-owner');
     expect(fn).toContain('relativeTimeText');
-    expect(fn).toContain('memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket)');
+    expect(fn).toContain('memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket, true)');
     expect(DASHBOARD_HTML).toContain('party: tx.party || \'\'');
     const relSrc = [
       'function dateText(s) { return String(s || ""); }',
@@ -5647,7 +6025,7 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
   });
 
   it('puts member photos on the People directory and does not add Largest Buys/Sells on Trends', () => {
-    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party) + '<span class=\"cell-clip\"");
+    expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party, true) + '<span class=\"cell-clip\"");
     expect(DASHBOARD_HTML).not.toContain('id="trLargestBuys"');
     expect(DASHBOARD_HTML).not.toContain('id="trLargestSells"');
     expect(DASHBOARD_HTML).not.toContain('id="trExtremes"');
@@ -5669,7 +6047,9 @@ describe('mobile web chrome polish (issue #2016)', () => {
     expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
     // Full-bleed filter bar must not be overridden back to shrink-to-fit.
     expect(DASHBOARD_HTML).not.toContain('align-items: center;\n    width: auto;\n    max-width: 100%;');
-    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"] nav.tabs');
+    // Sepia was removed (owner 2026-08-21) — only Light/Dark theme this row.
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="sepia"] nav.tabs');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] nav.tabs');
   });
 
   it('removes Snapshot and the Largest Buys/Sells sections', () => {

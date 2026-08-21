@@ -10,6 +10,21 @@ import UserNotifications
 enum AppAppearance {
     private static var windowObserver: NSObjectProtocol?
 
+    /// Sepia was removed (owner 2026-08-21: "too dark of a color that
+    /// doesn't look like old fashioned paper", only half-themed and ugly).
+    /// A visitor who had it selected still has `"sepia"` sitting in
+    /// `UserDefaults` under `app_color_scheme` — rewrite that to `"light"`
+    /// the moment it is seen, everywhere the raw pref is read, so it stops
+    /// failing validation on every launch instead of just falling through to
+    /// an unstyled/undefined case once.  Every other read of this pref
+    /// funnels through `paint`, `colorScheme(for:)`, or `CTPalette.resolved`
+    /// below, so migrating here covers all of them.
+    static func migratedPref(_ pref: String) -> String {
+        guard pref == "sepia" else { return pref }
+        UserDefaults.standard.set("light", forKey: "app_color_scheme")
+        return "light"
+    }
+
     static func apply(_ pref: String) {
         paint(pref)
         // Sheet windows can appear a beat after the tap.  Paint again on the
@@ -28,15 +43,15 @@ enum AppAppearance {
     }
 
     private static func paint(_ pref: String) {
+        let pref = migratedPref(pref)
         let style: UIUserInterfaceStyle
         switch pref {
-        case "light", "sepia": style = .light
+        case "light": style = .light
         case "dark": style = .dark
         default: style = .unspecified
         }
         let palette: CTPalette
         switch pref {
-        case "sepia": palette = .sepia
         case "dark": palette = .dark
         default: palette = .light
         }
@@ -51,8 +66,8 @@ enum AppAppearance {
     }
 
     static func colorScheme(for pref: String) -> ColorScheme? {
-        switch pref {
-        case "light", "sepia": return .light
+        switch migratedPref(pref) {
+        case "light": return .light
         case "dark": return .dark
         default: return nil
         }
@@ -60,22 +75,20 @@ enum AppAppearance {
 }
 
 enum CTPalette: String {
-    case light, sepia, dark
+    case light, dark
 
     static func resolved(pref: String, system: ColorScheme) -> CTPalette {
-        switch pref {
-        case "sepia": return .sepia
+        switch AppAppearance.migratedPref(pref) {
         case "dark": return .dark
         case "light": return .light
         default: return system == .dark ? .dark : .light
         }
     }
 
-    /// Cool light page (#eff3f8), warm paper, or night navy — never mix.
+    /// Cool light page (#eff3f8) or night navy — never mix.
     var background: Color {
         switch self {
         case .light: return Color(red: 0.937, green: 0.953, blue: 0.973)
-        case .sepia: return Color(red: 0.953, green: 0.902, blue: 0.816)
         case .dark: return Color(red: 0.031, green: 0.047, blue: 0.090)
         }
     }
@@ -83,7 +96,6 @@ enum CTPalette: String {
     var card: Color {
         switch self {
         case .light: return Color.white
-        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910)
         case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188)
         }
     }
@@ -91,7 +103,6 @@ enum CTPalette: String {
     var panel: Color {
         switch self {
         case .light: return Color.white.opacity(0.92)
-        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910).opacity(0.94)
         case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188).opacity(0.72)
         }
     }
@@ -149,6 +160,30 @@ enum AppTheme {
     static var panelElevated: Color { currentPalette.card }
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    /// Neutral "chrome" colour for bare icon glyphs that carry no semantic
+    /// meaning of their own and have no adjacent text — dropdown chevrons,
+    /// the sort-direction flip arrow, disclosure carets.  Same treatment as
+    /// the header ⓘ/≡ buttons' `headerGlyphGrey` (owner: leave those exactly
+    /// as they are; this is the same grey, reused for the rest of the chrome
+    /// family). A concrete `Color`, not the hierarchical `.secondary`
+    /// `ShapeStyle`: hierarchical styles resolve against the environment
+    /// tint, and `MainTabView` sets `.tint(.blue)` (App.swift), so
+    /// `.secondary` inside a `Menu`/`Button` renders accent blue instead of
+    /// grey — see `headerGlyphGrey`'s doc comment below for the fuller story.
+    static let glyphGrey = Color(uiColor: .secondaryLabel)
+
+    /// Ordinary "ink" colour for text words on chrome controls — filter pill
+    /// labels ("House", "D+R", "3 Months"), "Done", "Export CSV", "Subscribe
+    /// with Apple", sort-field names, the rows-per-page value.  Owner
+    /// (2026-08-21): these must read as "very dark grey or almost black",
+    /// comfortably legible — `.secondaryLabel`/`glyphGrey` above is too light
+    /// for text, even though it is fine for a bare glyph.  `.label` clears
+    /// WCAG AA (4.5:1) against `AppTheme.card`/`AppTheme.panel` in both
+    /// themes and inverts correctly in dark mode.  Same concrete-`Color`
+    /// reasoning as `glyphGrey`: hierarchical `.primary` also resolves
+    /// against the blue tint inside a `Menu`/`Button`.
+    static let wordInk = Color(uiColor: .label)
 
     /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
     static let siteFooterDisclaimer =
@@ -1004,7 +1039,16 @@ struct AccountQuickMenu: View {
                     Button {
                         showExportSheet = true
                     } label: {
-                        Label("Export CSV", systemImage: "arrow.down.circle")
+                        // Split colour: bare-glyph grey on the icon, dark
+                        // legible ink on the word (owner 2026-08-21 — words
+                        // must read dark, glyphs can stay the lighter grey).
+                        // Without this the row inherits the app-wide
+                        // `.tint(.blue)` (App.swift) and renders accent blue.
+                        Label {
+                            Text("Export CSV").foregroundStyle(AppTheme.wordInk)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(AppTheme.glyphGrey)
+                        }
                     }
                     billingRow
                 }
@@ -1073,7 +1117,14 @@ struct AccountQuickMenu: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21) — `.foregroundStyle` alone is not enough
+                    // here: the toolbar button style re-applies `.tint` over
+                    // it, so both must be set (same defensive pattern as
+                    // `SignInWithGoogleButton` below).
                     Button("Done") { isPresented = false }
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
         }
@@ -1678,7 +1729,6 @@ struct ThemeSegmentControl: View {
 
     private let options: [Option] = [
         .init(id: "light", label: "Light", systemImage: "sun.max"),
-        .init(id: "sepia", label: "Sepia", systemImage: "sun.haze"),
         .init(id: "dark", label: "Dark", systemImage: "moon"),
         .init(id: "system", label: "System", systemImage: "desktopcomputer"),
     ]

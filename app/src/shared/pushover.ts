@@ -38,6 +38,19 @@ export interface PushoverMessage {
  * resolved secrets (avoids a second resolveSecrets round trip); otherwise they
  * are resolved here from Infisical/env.
  */
+/**
+ * Hard ceiling on how long a Pushover delivery may hold up its caller.
+ *
+ * This helper is awaited from money paths - the Stripe webhook handler and the
+ * Apple redeem command - where the notification is explicitly fail-soft. Without
+ * a bound, a Pushover connection that STALLS rather than fails never settles, so
+ * catching rejections does not help: the webhook response and the client command
+ * are delayed indefinitely by a notification nobody is waiting on. Stripe retries
+ * a webhook it considers timed out, which turns a notification hiccup into
+ * duplicate event processing.
+ */
+export const PUSHOVER_TIMEOUT_MS = 5_000;
+
 export async function sendPushover(
   env: Env,
   msg: PushoverMessage,
@@ -69,11 +82,14 @@ export async function sendPushover(
   if (msg.url) form.set('url', msg.url);
   if (msg.urlTitle) form.set('url_title', msg.urlTitle);
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PUSHOVER_TIMEOUT_MS);
   try {
     const res = await fetchFn(PUSHOVER_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
+      signal: controller.signal,
     });
     if (!res.ok) return { sent: false, reason: `pushover HTTP ${res.status}` };
     const body = (await res.json().catch(() => null)) as { status?: number; errors?: string[] } | null;
@@ -82,6 +98,11 @@ export async function sendPushover(
     }
     return { sent: true };
   } catch (err) {
+    if (controller.signal.aborted) {
+      return { sent: false, reason: `pushover timed out after ${PUSHOVER_TIMEOUT_MS}ms` };
+    }
     return { sent: false, reason: (err as Error).message };
+  } finally {
+    clearTimeout(timer);
   }
 }
