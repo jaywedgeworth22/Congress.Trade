@@ -565,7 +565,7 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   /** Secondary OpenRouter API key for budget cap failover. */
   OPENROUTER_BACKUP_API_KEY?: string;
-  /** OpenRouter model override (defaults to 'google/gemini-3.7-flash'). */
+  /** OpenRouter model override (defaults to '~google/gemini-flash-latest'). */
   OPENROUTER_MODEL?: string;
   /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */
   OPENROUTER_PDF_ENGINE_TEXT?: string;

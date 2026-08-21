@@ -27,7 +27,11 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  // Auto-injected Web Analytics loads from static.cloudflareinsights.com
+  // (script-src) and beacons to cloudflareinsights.com — or, on a proxied
+  // zone, to same-origin /cdn-cgi/rum ('self'). Allow both so the beacon
+  // is not CSP-blocked on every anonymous load (issue #1457).
+  "connect-src 'self' https://cloudflareinsights.com https://static.cloudflareinsights.com",
   "form-action 'self'",
 ].join('; ');
 

@@ -689,6 +689,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      politician's name at the top of the trade drawer instead of its own row
      further down in Trade Details. */
   .drawer-trade-owner { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .owner-badge { display:inline-block; flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; vertical-align:middle; }
+  .member-cell .owner-badge { margin-left: 2px; }
   /* Owner punch list #13(b): a small link chevron on the "Name" row in Trade
      Details signals it opens the politician drawer (the click already worked). */
   .kv-chevron { opacity:.55; margin-left:2px; }
@@ -821,6 +823,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .people-table .col-fill .member-cell {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    text-overflow: unset;
+  }
+  .people-table .col-fill .member-cell .cell-clip {
+    flex: 1 1 auto;
   }
   .people-table .dir-asset-cell {
     display: flex;
@@ -3742,6 +3753,12 @@ var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo';
 var typeName = { B: 'Buy', P: 'Buy', S: 'Sell', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+function ownerBadgeHtml(o) {
+  var text = ownerLabel(o);
+  return text
+    ? '<span class="owner-badge muted" title="Beneficial owner reported on the filing">' + esc(text) + '</span>'
+    : '';
+}
 /* Format a politician name so a generational suffix sits after a single comma
    with no space on its left, e.g. "Sonny Perdue Jr" -> "Sonny Perdue, Jr". */
 var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II', 'iii': 'III', 'iv': 'IV' };
@@ -4533,7 +4550,8 @@ function isAuthError(e) { return !!(e && e.isAuth); }
 function memberCellHtml(r) {
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
   return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket, true) +
-    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
+    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div>' +
+    ownerBadgeHtml(r.owner) + '</div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
    placeholder "Securities" with no further detail (e.g. Max Miller's private
@@ -7135,7 +7153,14 @@ function saveSubscriptionEdits() {
     .catch(function (err) { el('subsMsg').textContent = 'Save failed: ' + err.message; });
 }
 /* Pause/Resume via update_subscription (active flag). Delete via delete_subscription
-   (hard-removes the row; distinct from pause, which only frees the active slot). */
+   (hard-removes the row; distinct from pause, which only frees the active slot).
+   First tap arms Confirm? for 4s (iOS Delivery parity); second tap deletes. */
+var PENDING_SUB_DELETE = { id: null, timer: null };
+function resetPendingSubDelete(btn) {
+  if (PENDING_SUB_DELETE.timer) { clearTimeout(PENDING_SUB_DELETE.timer); PENDING_SUB_DELETE.timer = null; }
+  if (btn && btn.dataset && btn.dataset.origLabel) btn.textContent = btn.dataset.origLabel;
+  PENDING_SUB_DELETE.id = null;
+}
 document.addEventListener('click', function (e) {
   var editBtn = e.target && e.target.closest ? e.target.closest('[data-sub-edit]') : null;
   if (editBtn) {
@@ -7146,7 +7171,25 @@ document.addEventListener('click', function (e) {
   if (delBtn) {
     var delId = delBtn.getAttribute('data-sub-delete');
     if (!delId) return;
-    if (!window.confirm('Delete this delivery permanently? You can create a new one later (Premium). Paused deliveries can be Resumed instead.')) return;
+    if (PENDING_SUB_DELETE.id !== delId) {
+      var prev = document.querySelector('[data-sub-delete][data-confirming="1"]');
+      if (prev && prev !== delBtn) resetPendingSubDelete(prev);
+      delBtn.dataset.origLabel = delBtn.textContent || 'Delete';
+      delBtn.dataset.confirming = '1';
+      delBtn.textContent = 'Confirm?';
+      delBtn.setAttribute('aria-label', 'Confirm delete this delivery permanently');
+      PENDING_SUB_DELETE.id = delId;
+      if (PENDING_SUB_DELETE.timer) clearTimeout(PENDING_SUB_DELETE.timer);
+      PENDING_SUB_DELETE.timer = setTimeout(function () {
+        if (PENDING_SUB_DELETE.id === delId) {
+          delBtn.removeAttribute('data-confirming');
+          resetPendingSubDelete(delBtn);
+        }
+      }, 4000);
+      return;
+    }
+    resetPendingSubDelete(delBtn);
+    delBtn.removeAttribute('data-confirming');
     delBtn.disabled = true;
     var delIdem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-del-' + Date.now());
     fetch('/api/client/v1/commands', {
@@ -11716,7 +11759,9 @@ function openMember(filerId) {
     var committees = p.committees || [];
     var commHtml = committees.length
       ? committees.map(function (c) { return '<span class="committee-tag">' + esc(c) + '</span>'; }).join('')
-      : '<span class="muted">Not recorded</span>';
+      : '<span class="muted">' + (isExec
+        ? 'Executive filers do not sit on congressional committees.'
+        : 'No current assignments on file.') + '</span>';
     var top = (d.topTickers || []).map(function (t) {
       return '<div class="hbar ledger" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '">' +
         '<span class="tkr">' + esc(t.ticker) + '</span>' + (t.name ? ' <span class="muted">' + esc(t.name) + '</span>' : '') +
@@ -11775,7 +11820,7 @@ function memberPerfHtml(d) {
   if ((!trade || !trade.scoredCount) && (!filing || !filing.scoredCount)) {
     return '<div class="note">No priced equity buys to score yet — this fills in as the price cache backfills. Sells are not scored as skill (no cost basis).</div>';
   }
-  function legBlock(title, tip, leg, isDeemphasized) {
+  function legBlock(title, tip, horizon, leg, isDeemphasized) {
     if (!leg || !leg.scoredCount) {
       return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.7; transform: scale(0.95); transform-origin: left top;' : '') + '"><div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
         '<div class="note">Not enough priced buys for this anchor.</div></div>';
@@ -11785,9 +11830,10 @@ function memberPerfHtml(d) {
     var sizeStyles = isDeemphasized ? 'font-size: 14px; opacity: 0.8;' : '';
     return '<div style="margin-bottom:12px' + (isDeemphasized ? '; opacity: 0.85;' : '') + '">' +
       '<div class="eyebrow" title="' + esc(tip) + '">' + esc(title) + '</div>' +
+      '<div class="note" style="margin:2px 0 6px">' + esc(horizon) + '</div>' +
       '<div class="perf-line net" style="' + sizeStyles + '">' + pctSigned(leg.avgExcess) + ' <span class="muted" style="font-weight:400; font-size: ' + (isDeemphasized ? '13px' : 'inherit') + '">avg excess</span></div>' +
       '<div class="chip">Median excess ' + pctSigned(leg.medianExcess) +
-        ' · Avg return ' + pctSigned(leg.avgReturn) +
+        ' · Avg asset return ' + pctSigned(leg.avgReturn) +
         ' · ' + esc(win) + ' · ' + esc(n) + '</div>' +
       '</div>';
   }
@@ -11798,12 +11844,14 @@ function memberPerfHtml(d) {
   return legBlock(
       'Their timing (approx.)',
       'Size-weighted average excess return of disclosed equity buys from the trade date to now.  Not portfolio P&L — amounts are brackets and we do not know when (if) they sold.',
+      'Variable hold — each buy from the trade date through the latest price.  Avg excess is versus the index; avg asset return is the stock alone.',
       trade,
       true
     ) +
     legBlock(
       'If you bought at filing',
       'Copy-trade: size-weighted excess from the public disclosure date (when a follower could have traded). Matches Top Performers.',
+      'Variable hold — each buy from the public filing date through the latest price.  Same end date, later start.',
       filing,
       false
     ) +
@@ -13284,12 +13332,16 @@ el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
-// ?view= aliases: "delivery" is the Delivery tab's subs view; "feed" is the
-// Trades tab's PRE-RENAME canonical id (owner follow-up batch #25 — "trades"
-// is now canonical, both in the URL and in localStorage's last-viewed tab;
-// "feed" is kept as a silent legacy alias forever so old bookmarked/shared
-// links never break). trends/people/admin already match their ids.
-var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };
+// ?view= aliases must accept the visible tab names (#1458): Directory is
+// people, Delivery is subs. "feed" is the Trades tab's PRE-RENAME id (batch
+// #25 — "trades" is now canonical in the URL and in localStorage; "feed"
+// stays a silent legacy alias so old bookmarked/shared links never break).
+var VIEW_ALIASES = { feed: 'trades', delivery: 'subs', directory: 'people' };
+function resolveViewId(raw) {
+  var key = String(raw || '').trim().toLowerCase();
+  if (!key) return '';
+  return Object.prototype.hasOwnProperty.call(VIEW_ALIASES, key) ? VIEW_ALIASES[key] : key;
+}
 
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 loadMe().then(function () {
@@ -13306,21 +13358,18 @@ loadMe().then(function () {
       if (path === '/review') fromUrl = 'review';
     }
     if (fromUrl) {
-      // ?view= accepts legacy ids as aliases (issue #1458, batch #25) —
-      // "feed" resolves to the Trades tab's canonical "trades", "delivery"
-      // resolves to "subs". Everything else (including canonical ids)
-      // matches as-is.
-      var canonicalView = VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl;
-      // Unknown values fall back to Trends, not the last-viewed tab — a typo'd
-      // or stale ?view= should never silently resurrect an old session.
+      // Visible names + legacy ids (#1458): directory→people, delivery→subs,
+      // feed→trades. Case-insensitive. Unknown values fall back to Trends,
+      // not the last-viewed tab — a typo'd or stale ?view= should never
+      // silently resurrect an old session. Tabs are <a>, not <button>
+      // (web-mobile chrome on main).
+      var canonicalView = resolveViewId(fromUrl);
       initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
-      // Same legacy-alias resolution applies to a stored last-viewed tab —
-      // visitors with "feed" persisted from before batch #25 still land back
-      // on the Trades tab, and the stored value is migrated to the canonical
-      // id in place so every later load reads it directly.
-      var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;
+      // Same alias table for a stored last-viewed tab — old "feed" still
+      // lands on Trades and is migrated to the canonical id in place.
+      var canonicalSaved = resolveViewId(saved);
       if (canonicalSaved && document.querySelector('nav.tabs a[data-view="' + canonicalSaved + '"]')) {
         initialView = canonicalSaved;
         if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }
