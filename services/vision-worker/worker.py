@@ -37,7 +37,9 @@ Env:
   OPENROUTER_CASCADE_MODELS  comma list tried AFTER a missed Grok CLI solo
                            pass, before OPENROUTER_MODEL. Default:
                            qwen/qwen3-vl-8b-instruct,qwen/qwen3-vl-30b-a3b-instruct,google/gemini-3.7-flash
-  OPENROUTER_CASCADE_MAX_PAGES  cap images sent to VL models (default 8)
+  OPENROUTER_CASCADE_MAX_PAGES  cap images sent to VL models (default 8).
+                           A hit that did not see every PDF page is not
+                           terminal — cascade continues to Gemini/Grok.
   OPENROUTER_TIMEOUT_SEC   (default 600)
   MAX_DOCS_PER_POLL        (default 2)
   MAX_PAGES                (default 12 — cap page images sent to local CLI)
@@ -429,8 +431,15 @@ def download_stored_document(filing: dict, dest: str) -> bool:
     return False
 
 
-def render_pages(pdf_path: str, out_dir: str) -> list:
-    """Render PDF pages to PNG via pdftoppm. Returns absolute page paths."""
+def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int]:
+    """Render PDF pages to PNG via pdftoppm.
+
+    Returns (pages_for_cli, total_rendered).  pages_for_cli is capped at
+    MAX_PAGES so the local Grok CLI stays bounded.  total_rendered is the
+    uncapped pdftoppm count so a cheap VL hit that only saw
+    OPENROUTER_CASCADE_MAX_PAGES images is not treated as a complete extract
+    when later PDF-native cascade steps can still read the full file.
+    """
     prefix = os.path.join(out_dir, "page")
     rc = subprocess.run(
         ["pdftoppm", "-png", "-r", "150", pdf_path, prefix],
@@ -438,15 +447,30 @@ def render_pages(pdf_path: str, out_dir: str) -> list:
     )
     if rc.returncode != 0:
         logger.error("pdftoppm failed: %s", (rc.stderr or "")[:200])
-        return []
+        return [], 0
     pages = sorted(
         os.path.join(out_dir, f) for f in os.listdir(out_dir)
         if f.startswith("page-") and f.endswith(".png")
     )
-    if MAX_PAGES > 0 and len(pages) > MAX_PAGES:
-        logger.warning("capping pages %d -> %d", len(pages), MAX_PAGES)
-        pages = pages[:MAX_PAGES]
-    return pages
+    total = len(pages)
+    if MAX_PAGES > 0 and total > MAX_PAGES:
+        logger.warning("capping pages %d -> %d", total, MAX_PAGES)
+        return pages[:MAX_PAGES], total
+    return pages, total
+
+
+def cascade_hit_is_terminal(model: str, total_pages: int, image_pages_available: int) -> bool:
+    """False when a page-image model did not see every PDF page.
+
+    Gemini / grok-4.5 attach the original PDF, so they can still recover
+    trades on pages past OPENROUTER_CASCADE_MAX_PAGES (and past MAX_PAGES).
+    Accepting a truncated Qwen hit publishes at 0.97 and locks the filing
+    — drain then skips scanned_pdf, so the unseen pages never land.
+    """
+    if not model_uses_page_images(model):
+        return True
+    sent = min(max(0, image_pages_available), OPENROUTER_CASCADE_MAX_PAGES)
+    return total_pages <= sent
 
 
 def parse_model_json(text: str):
@@ -822,7 +846,13 @@ def transcribe_with_openrouter(
     return rows_or_miss(parsed, f"openrouter:{model}")
 
 
-def transcribe(pdf_path: str, pages: list, filing: dict, work_dir: str) -> tuple:
+def transcribe(
+    pdf_path: str,
+    pages: list,
+    filing: dict,
+    work_dir: str,
+    total_pages: int | None = None,
+) -> tuple:
     """Returns (rows|None, engine_used). Local Grok CLI solo pass, then cheap VL cascade."""
     engine = VISION_ENGINE
     if engine not in ("auto", "local_cli", "openrouter"):
@@ -841,14 +871,26 @@ def transcribe(pdf_path: str, pages: list, filing: dict, work_dir: str) -> tuple
         logger.error("no OpenRouter key — cannot cascade after solo-pass miss")
         return None, "openrouter_cascade_skipped"
 
+    page_total = len(pages) if total_pages is None else total_pages
     last_label = "openrouter_cascade"
     for model in cascade_model_list():
         logger.info("cascade try model=%s images=%s", model, model_uses_page_images(model))
         rows = transcribe_with_openrouter(pdf_path, pages, filing, model, work_dir)
         last_label = extractor_label_for_model(model)
-        if rows is not None:
-            return rows, last_label
-        logger.warning("cascade miss model=%s", model)
+        if rows is None:
+            logger.warning("cascade miss model=%s", model)
+            continue
+        if not cascade_hit_is_terminal(model, page_total, len(pages)):
+            sent = min(len(pages), OPENROUTER_CASCADE_MAX_PAGES)
+            logger.warning(
+                "cascade %s returned %s row(s) from %d/%d pages — not terminal, continuing to PDF-native",
+                model,
+                len(rows),
+                sent,
+                page_total,
+            )
+            continue
+        return rows, last_label
     return None, last_label
 
 
@@ -942,13 +984,13 @@ def process_filing(filing: dict, state: dict) -> str:
         if not download_stored_document(filing, pdf_path):
             record_failure(state, doc_id, "stored_download_failed", extractor)
             return "failed"
-        pages = render_pages(pdf_path, td)
+        pages, total_pages = render_pages(pdf_path, td)
         if not pages:
             logger.warning(
                 "page render failed for %s; PDF-native cascade steps can still run",
                 doc_id,
             )
-        rows, extractor = transcribe(pdf_path, pages, filing, td)
+        rows, extractor = transcribe(pdf_path, pages, filing, td, total_pages)
     if rows is None:
         record_failure(state, doc_id, "transcription_failed", extractor)
         return "failed"
