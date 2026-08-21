@@ -564,7 +564,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
-  /* Capitol Ledger / iOS: party-colored rings on politician photos (not account avatars).
+  /* iOS-parity: party-colored rings on politician photos (not account avatars).
      The ring is an inset overlay, not an outer box-shadow.  Outer shadows sit
      outside the 24px layout box and get sliced by overflow:hidden on this chip
      and on .member-cell / table td / .fc-row2 / .trades-card parents, so the
