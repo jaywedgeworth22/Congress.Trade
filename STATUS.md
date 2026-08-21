@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-20 GROK — Review-queue glued PTR rows (#2106)
+
+73 House items still held after #2102.  Seven typed PTRs glued later self-owned
+rows into the first `rawText` (AMZN on a PA muni).  Parser now splits on every
+`[TYPE] P/S/E date date $amount` tail.  Drain refuses a glued stored payload.
+Due-dates are not tx dates.  Mixed OCR keeps dated non-chrome rows.  Receipt:
+`docs/rollouts/2026-08-20-review-queue-glued-ptr.md`.  Do not empty-confirm
+the 47 scanned form-chrome items.
+
 ## 2026-08-20 GROK — Mac/TestFlight IAP Sandbox grants (#2095)
 
 Owner screenshot on Mac: StoreKit success then `(Sandbox Apple purchases are
