@@ -226,7 +226,7 @@ describe('POST /api/webhooks/apple', () => {
     expect(row?.lastNotificationType).toBe('REFUND');
   });
 
-  it('does not apply a Sandbox DID_RENEW unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('applies a Sandbox DID_RENEW by default (TestFlight / Mac / App Review)', async () => {
     payloadsByJws.set(
       'outer-jws',
       notificationPayload({
@@ -237,6 +237,26 @@ describe('POST /api/webhooks/apple', () => {
     );
     payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', expiresDate: Date.now() + 30 * 86_400_000 }));
     const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+
+    const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.lastNotificationType).toBe('DID_RENEW');
+    expect(row?.status).toBe('active');
+  });
+
+  it('does not apply a Sandbox DID_RENEW when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    payloadsByJws.set(
+      'outer-jws',
+      notificationPayload({
+        notificationType: 'DID_RENEW',
+        notificationUUID: 'notif-sandbox-off',
+        data: { bundleId: 'trade.congress.ios', environment: 'Sandbox', signedTransactionInfo: 'txn-jws' },
+      }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ environment: 'Sandbox', expiresDate: Date.now() + 30 * 86_400_000 }));
+    const { env } = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     await seedLedgerRow(env);
 
     const res = await post(buildAppleWebhookRouter(), env, 'outer-jws');
@@ -454,5 +474,355 @@ describe('POST /api/webhooks/apple', () => {
     expect(res.status).toBe(200);
     const row = await getAppleSubscription(env, 'otxn-1');
     expect(row?.lastNotificationType).toBeNull(); // untouched by the mismatched event
+  });
+
+  it('DID_RENEW after REFUND does not resurrect Premium when the transaction predates revokedAt', async () => {
+    const renewalPurchaseMs = Date.now() - 60_000;
+    const { env } = await fakeEnv();
+    await upsertAppleSubscription(env, {
+      originalTransactionId: 'otxn-1',
+      userId: 'user_1',
+      productId: 'trade.congress.premium.monthly',
+      plan: 'monthly',
+      status: 'active',
+      latestTransactionId: 'txn-renew',
+      purchaseDate: new Date(renewalPurchaseMs).toISOString(),
+      expiresDate: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
+
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-renew' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-refund', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+    expect((await getAppleSubscription(env, 'otxn-1'))?.status).toBe('revoked');
+
+    payloadsByJws.set(
+      'renew-jws',
+      notificationPayload({ notificationType: 'DID_RENEW', notificationUUID: 'notif-stale-renew' }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-renew',
+        purchaseDate: renewalPurchaseMs,
+        expiresDate: Date.now() + 30 * 86_400_000,
+      }),
+    );
+    const res = await post(buildAppleWebhookRouter(), env, 'renew-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.lastNotificationType).toBe('REFUND');
+  });
+
+  it('DID_RENEW after REFUND still restores when Apple sends a later purchase (resubscribe)', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-resub' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+    const revoked = await getAppleSubscription(env, 'otxn-1');
+    expect(revoked?.status).toBe('revoked');
+    const revokedMs = revoked?.revokedAt ? Date.parse(revoked.revokedAt) : 0;
+
+    payloadsByJws.set(
+      'resub-jws',
+      notificationPayload({ notificationType: 'DID_RENEW', notificationUUID: 'notif-real-resub' }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-resub',
+        purchaseDate: revokedMs + 60_000,
+        expiresDate: Date.now() + 30 * 86_400_000,
+      }),
+    );
+    const res = await post(buildAppleWebhookRouter(), env, 'resub-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('active');
+    expect(row?.revokedAt).toBeNull();
+    expect(row?.latestTransactionId).toBe('txn-resub');
+  });
+
+  it('DID_FAIL_TO_RENEW grace_period does not resurrect a revoked row', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-grace' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+
+    payloadsByJws.set(
+      'grace-jws',
+      notificationPayload({
+        notificationType: 'DID_FAIL_TO_RENEW',
+        subtype: 'GRACE_PERIOD',
+        notificationUUID: 'notif-stale-grace',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-old',
+        purchaseDate: Date.now() - 60_000,
+        expiresDate: Date.now() - 1000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      gracePeriodExpiresDate: Date.now() + 3 * 86_400_000,
+      isInBillingRetryPeriod: true,
+    });
+    await post(buildAppleWebhookRouter(), env, 'grace-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.lastNotificationType).toBe('REFUND');
+  });
+
+  it('EXPIRED after REFUND does not drop status off revoked (original JWS would otherwise redeem)', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-expired' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+
+    payloadsByJws.set(
+      'expired-jws',
+      notificationPayload({ notificationType: 'EXPIRED', notificationUUID: 'notif-stale-expired' }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-old',
+        purchaseDate: Date.now() - 60_000,
+        expiresDate: Date.now() - 1000,
+      }),
+    );
+    const res = await post(buildAppleWebhookRouter(), env, 'expired-jws');
+    expect(res.status).toBe(200);
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.lastNotificationType).toBe('REFUND');
+    expect(
+      clientRedeemWouldResurrectRevoked(row, {
+        transactionId: 'txn-old',
+        purchaseDateMs: Date.now() - 60_000,
+      }),
+    ).toBe(true);
+  });
+
+  it('DID_FAIL_TO_RENEW billing_retry after REFUND does not drop status off revoked', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-retry' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+
+    payloadsByJws.set(
+      'retry-jws',
+      notificationPayload({
+        notificationType: 'DID_FAIL_TO_RENEW',
+        notificationUUID: 'notif-stale-retry',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-old',
+        purchaseDate: Date.now() - 60_000,
+        expiresDate: Date.now() - 1000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      isInBillingRetryPeriod: true,
+    });
+    await post(buildAppleWebhookRouter(), env, 'retry-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.lastNotificationType).toBe('REFUND');
+  });
+
+  it('GRACE_PERIOD_EXPIRED after REFUND does not drop status off revoked', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-grace-end' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+
+    payloadsByJws.set(
+      'grace-end-jws',
+      notificationPayload({
+        notificationType: 'GRACE_PERIOD_EXPIRED',
+        notificationUUID: 'notif-stale-grace-end',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-old',
+        purchaseDate: Date.now() - 60_000,
+        expiresDate: Date.now() - 1000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      isInBillingRetryPeriod: true,
+    });
+    await post(buildAppleWebhookRouter(), env, 'grace-end-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.lastNotificationType).toBe('REFUND');
+  });
+
+  it('DID_CHANGE_RENEWAL_STATUS after REFUND keeps revokedAt so a later resubscribe can restore', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-renewal-status' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+    const revoked = await getAppleSubscription(env, 'otxn-1');
+    expect(revoked?.status).toBe('revoked');
+    const revokedAt = revoked?.revokedAt ?? '';
+    expect(revokedAt.length).toBeGreaterThan(0);
+
+    payloadsByJws.set(
+      'renewal-status-jws',
+      notificationPayload({
+        notificationType: 'DID_CHANGE_RENEWAL_STATUS',
+        subtype: 'AUTO_RENEW_DISABLED',
+        notificationUUID: 'notif-stale-renewal-status',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-old',
+        purchaseDate: Date.now() - 60_000,
+        expiresDate: Date.now() + 10 * 86_400_000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 0,
+      autoRenewProductId: null,
+    });
+    await post(buildAppleWebhookRouter(), env, 'renewal-status-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).toBe(revokedAt);
+    expect(row?.lastNotificationType).toBe('REFUND');
+    expect(
+      clientRedeemWouldResurrectRevoked(row, {
+        transactionId: 'txn-resub',
+        purchaseDateMs: Date.parse(revokedAt) + 60_000,
+      }),
+    ).toBe(false);
+  });
+
+  it('DID_CHANGE_RENEWAL_STATUS after REFUND with a later purchase still keeps revokedAt and the old transaction id', async () => {
+    const { env } = await fakeEnv();
+    await seedLedgerRow(env);
+    payloadsByJws.set(
+      'refund-jws',
+      notificationPayload({ notificationType: 'REFUND', notificationUUID: 'notif-refund-then-resub-renewal-status' }),
+    );
+    payloadsByJws.set('txn-jws', txPayload({ transactionId: 'txn-old', revocationReason: 1 }));
+    await post(buildAppleWebhookRouter(), env, 'refund-jws');
+    const revoked = await getAppleSubscription(env, 'otxn-1');
+    expect(revoked?.status).toBe('revoked');
+    const revokedAt = revoked?.revokedAt ?? '';
+    expect(revokedAt.length).toBeGreaterThan(0);
+
+    payloadsByJws.set(
+      'renewal-status-jws',
+      notificationPayload({
+        notificationType: 'DID_CHANGE_RENEWAL_STATUS',
+        subtype: 'AUTO_RENEW_ENABLED',
+        notificationUUID: 'notif-resub-renewal-status',
+        data: {
+          bundleId: 'trade.congress.ios',
+          environment: 'Production',
+          signedTransactionInfo: 'txn-jws',
+          signedRenewalInfo: 'renewal-jws',
+        },
+      }),
+    );
+    payloadsByJws.set(
+      'txn-jws',
+      txPayload({
+        transactionId: 'txn-resub',
+        purchaseDate: Date.parse(revokedAt) + 60_000,
+        expiresDate: Date.now() + 30 * 86_400_000,
+      }),
+    );
+    payloadsByJws.set('renewal-jws', {
+      originalTransactionId: 'otxn-1',
+      autoRenewStatus: 1,
+      autoRenewProductId: 'trade.congress.premium.monthly',
+    });
+    await post(buildAppleWebhookRouter(), env, 'renewal-status-jws');
+    const row = await getAppleSubscription(env, 'otxn-1');
+    expect(row?.status).toBe('revoked');
+    expect(row?.revokedAt).toBe(revokedAt);
+    expect(row?.latestTransactionId).toBe('txn-old');
+    expect(row?.autoRenewStatus).toBe(true);
+    expect(
+      clientRedeemWouldResurrectRevoked(row, {
+        transactionId: 'txn-resub',
+        purchaseDateMs: Date.parse(revokedAt) + 60_000,
+      }),
+    ).toBe(false);
   });
 });

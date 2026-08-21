@@ -224,4 +224,52 @@ describe('notifyPremiumActivation', () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it('RELEASES the claim when delivery fails, so a later attempt can still notify', async () => {
+    // Claiming before delivering makes the notifier idempotent, but it also means a
+    // failed delivery would consume the key forever: every retry short-circuits at
+    // !isNew and the alert is lost rather than merely failing soft. Releasing on
+    // failure is what keeps "fail-soft" honest.
+    const env = await fakeEnv();
+    env.__db.exec(`INSERT INTO users (id, subscription_status, plan) VALUES ('u1', 'active', 'monthly');`);
+    const input = {
+      activationKey: 'sub_retry', userId: 'u1', userEmail: 'e@x.com',
+      source: 'stripe' as const, plan: 'monthly', trialing: false,
+    };
+
+    const failing = fakePush({ sent: false, reason: 'pushover HTTP 500' });
+    await notifyPremiumActivation(env, input, { push: failing.push });
+    expect(failing.push).toHaveBeenCalledTimes(1);
+
+    const claimsAfterFailure = env.__db
+      .prepare(`SELECT COUNT(*) AS n FROM premium_activation_notices WHERE activation_key = 'sub_retry'`)
+      .get() as { n: number };
+    expect(claimsAfterFailure.n).toBe(0);
+
+    const succeeding = fakePush({ sent: true });
+    await notifyPremiumActivation(env, input, { push: succeeding.push });
+    expect(succeeding.push).toHaveBeenCalledTimes(1);
+  });
+
+  it('KEEPS the claim after a successful delivery, so a redelivery still does not re-notify', async () => {
+    const env = await fakeEnv();
+    env.__db.exec(`INSERT INTO users (id, subscription_status, plan) VALUES ('u1', 'active', 'monthly');`);
+    const input = {
+      activationKey: 'sub_keep', userId: 'u1', userEmail: 'e@x.com',
+      source: 'stripe' as const, plan: 'monthly', trialing: false,
+    };
+
+    const first = fakePush({ sent: true });
+    await notifyPremiumActivation(env, input, { push: first.push });
+    expect(first.push).toHaveBeenCalledTimes(1);
+
+    const claims = env.__db
+      .prepare(`SELECT COUNT(*) AS n FROM premium_activation_notices WHERE activation_key = 'sub_keep'`)
+      .get() as { n: number };
+    expect(claims.n).toBe(1);
+
+    const second = fakePush({ sent: true });
+    await notifyPremiumActivation(env, input, { push: second.push });
+    expect(second.push).not.toHaveBeenCalled();
+  });
 });

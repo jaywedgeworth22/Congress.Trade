@@ -51,6 +51,12 @@ import {
 } from './bakeoff.ts';
 import { getUnderlyingProvider, isOpenRouterAuto } from '../benchmark/settings.ts';
 import { estimateNominalReadCostUsd } from './benchmarkMetrics.ts';
+import {
+  classifyOpenRouterErrorMessage,
+  isDocScopedOpenRouterError,
+  isProvenOpenRouterCredentialRejection,
+  providerErrorClassForOpenRouterReply,
+} from './openRouterReply.ts';
 
 export type ProviderErrorClass =
   | 'billing'
@@ -78,17 +84,7 @@ function peelCircuitLastError(message: string): string | null {
  * Do not treat source-fetch 401/403 or admin 401 as a dead OpenRouter key.
  */
 function isProvenLlmCredentialRejection(message: string): boolean {
-  return (
-    message.includes('invalid_api_key')
-    || message.includes('invalid api key')
-    || message.includes('api key not configured')
-    || message.includes('rejected the configured credential')
-    || message.includes('authentication_error')
-    || message.includes('authentication failed')
-    || (message.includes('user not found')
-      && (/\b401\b/.test(message) || message.includes('openrouter')))
-    || /openrouter api 401/.test(message)
-  );
+  return isProvenOpenRouterCredentialRejection(message);
 }
 
 function isLlmCredentialContext(message: string): boolean {
@@ -173,6 +169,23 @@ export function classifyProviderErrorClass(
     message.includes('llm daily usd budget exceeded')
     || message.includes('llm per-doc usd budget exceeded')
   ) return 'quota';
+  // OpenRouter reply-routing: a garbage / bare Unauthorized completion is
+  // one document, not a dead key.  Proven invalid_api_key / User not found
+  // still classify as auth and stay fail-closed.
+  if (
+    message.includes('openrouter')
+    || message.includes('openrouterreply:')
+    || isDocScopedOpenRouterError(message)
+  ) {
+    const replyClass = providerErrorClassForOpenRouterReply(
+      classifyOpenRouterErrorMessage(message),
+    );
+    if (replyClass === 'auth' || replyClass === 'billing' || replyClass === 'quota'
+      || replyClass === 'rate_limit' || replyClass === 'timeout') {
+      return replyClass;
+    }
+    if (isDocScopedOpenRouterError(message)) return 'other';
+  }
   if (
     /\b402\b/.test(message)
     || message.includes('payment required')

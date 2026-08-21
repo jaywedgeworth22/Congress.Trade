@@ -33,6 +33,31 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(AssetDirectorySearch.SortKey.name.label, "Asset")
     }
 
+    func testTimeRangeLabelsMatchWebsiteWithoutPastPrefix() {
+        XCTAssertEqual(TimeRange.oneDay.label, "Day")
+        XCTAssertEqual(TimeRange.ninetyDays.label, "3 Months")
+        XCTAssertEqual(TimeRange.all.label, "All Time")
+        for range in TimeRange.allCases {
+            XCTAssertFalse(range.label.hasPrefix("Past "), "\(range.rawValue) still says Past")
+        }
+    }
+
+    func testSiteFooterDisclaimerIsOneCombinedLine() {
+        let line = AppTheme.siteFooterDisclaimer
+        XCTAssertTrue(line.contains("  ·  "))
+        XCTAssertTrue(line.contains("(2012)"))
+        XCTAssertTrue(line.hasSuffix("agency"))
+        XCTAssertFalse(line.hasSuffix("."))
+        XCTAssertTrue(line.contains("independent/private service not affiliated"))
+    }
+
+    func testSignedFlowFormatUsesUnicodeMinusOnOneLine() {
+        XCTAssertEqual(SignedFlowFormat.usd(1_200_000), "+$1.2m")
+        XCTAssertEqual(SignedFlowFormat.usd(-178_300_000), "\u{2212}$178.3m")
+        XCTAssertEqual(SignedFlowFormat.usd(0), "$0")
+        XCTAssertEqual(SignedFlowFormat.usd(nil), "—")
+    }
+
     func testNameInitialsMatchWebAvatarFallback() {
         XCTAssertEqual("Ro Khanna".nameInitials, "RK")
         XCTAssertEqual("Pelosi".nameInitials, "PE")
@@ -101,7 +126,7 @@ final class CongressTradeTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "intent-123")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer native-session")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
             XCTAssertEqual(payload["id"] as? String, "sub_1")
@@ -368,7 +393,7 @@ final class CongressTradeTests: XCTestCase {
             feedURLs.append(request.url!)
             return Self.response(for: request, json: Self.feedJSON(
                 items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                cursor: 110, count: 10, total: 250, limit: 100
+                cursor: 110, count: 10, total: 250, limit: 50
             ))
         }
 
@@ -379,7 +404,7 @@ final class CongressTradeTests: XCTestCase {
         )
         await store.refresh()
 
-        XCTAssertEqual(store.totalPages, 3, "250 rows at 100/page rounds up to 3 pages")
+        XCTAssertEqual(store.totalPages, 5, "250 rows at the default 50/page rounds up to 5 pages")
         XCTAssertTrue(store.canGoToNextPage)
         XCTAssertFalse(store.canGoToPreviousPage)
         // The first page must not send offset= at all (page 1, not offset=0).
@@ -391,7 +416,7 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(store.canGoToPreviousPage)
 
         let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
-        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "100")
+        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "50")
 
         await store.goToPreviousPage()
         XCTAssertEqual(store.currentPage, 0)
@@ -952,8 +977,8 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(toLast!.hasSuffix("-12-31"))
         XCTAssertNil(thisYear.toDateISO)
         XCTAssertEqual(TimeRange.all.fromDateISO, nil)
-        XCTAssertEqual(thisYear.label, "This Calendar Year")
-        XCTAssertEqual(lastYear.label, "Last Calendar Year")
+        XCTAssertEqual(thisYear.label, "This Year")
+        XCTAssertEqual(lastYear.label, "Last Year")
     }
 
     func testAPIErrorCancellationIsNotRetryable() {
@@ -1247,7 +1272,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_subscription")
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
@@ -1282,7 +1307,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-acct-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_account")
             return Self.response(

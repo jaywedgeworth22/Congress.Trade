@@ -1,12 +1,10 @@
 /**
  * Apple In-App Purchase (StoreKit 2) confirmation helpers.
  *
- * iOS sends the transaction's `jwsRepresentation`. The legacy
- * POST /billing/apple/confirm route below decodes the payload without
- * verifying its signature. The current, recommended path is the
- * `redeem_apple_purchase` client command (client/commands.ts), which uses
- * appleJws.ts's full x5c chain verification against the pinned Apple root —
- * see that module for the "why" behind the two paths coexisting.
+ * iOS sends the transaction's `jwsRepresentation`. The current grant path
+ * is `redeem_apple_purchase` (and the leftover POST /billing/apple/confirm
+ * wrapper). Both verify via appleJws.ts (x5c chain to the pinned Apple root)
+ * and write `apple_subscriptions`, not the Stripe-shaped users columns.
  */
 
 import type { Env } from '../shared/types.ts';
@@ -90,9 +88,21 @@ export function isAppleSandboxEnvironment(value: string | undefined | null): boo
   return (value ?? '').trim().toLowerCase() === 'sandbox';
 }
 
-/** Sandbox / TestFlight JWS must not grant live Premium unless this flag is on. */
+/**
+ * Apple-signed Sandbox JWS is allowed unless explicitly turned off.
+ *
+ * TestFlight, App Review, Xcode, and Designed-for-iPad on Mac all send
+ * `environment=Sandbox` to production `congress.trade` — the app binary has
+ * no staging API. Rejecting those (the #2030 default) leaves Apple having
+ * confirmed the purchase and Congress.Trade refusing to unlock Premium.
+ *
+ * The JWS is still chain-verified against the pinned Apple root. The
+ * ledger keeps `environment` so sandbox grants stay distinguishable.
+ * Set `APPLE_ALLOW_SANDBOX=false` to restore the kill switch.
+ */
 export async function appleSandboxPurchasesAllowed(env: Env): Promise<boolean> {
-  return (await resolveSecret(env, 'APPLE_ALLOW_SANDBOX')).value === 'true';
+  const raw = (await resolveSecret(env, 'APPLE_ALLOW_SANDBOX')).value?.trim().toLowerCase();
+  return raw !== 'false' && raw !== '0' && raw !== 'no';
 }
 
 /** Map a StoreKit product id to a plan using the CONFIGURED product ids (env-overridable), unlike {@link planFromAppleProductId}'s hardcoded suffix match. */

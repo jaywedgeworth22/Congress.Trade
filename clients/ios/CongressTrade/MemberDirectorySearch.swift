@@ -242,6 +242,7 @@ enum AssetDirectorySearch {
 struct AssetDirectoryView: View {
     var wrapsNavigation: Bool = true
     @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var selectedTicker: TickerSheetTarget?
@@ -327,6 +328,21 @@ struct AssetDirectoryView: View {
                                 )
                             }
                             .padding(.top, 40)
+                        } else if horizontalSizeClass == .regular {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 540), spacing: 12)], spacing: 12) {
+                                ForEach(pageSlice(of: rows, page: page)) { asset in
+                                    Button {
+                                        selectedTicker = TickerSheetTarget(ticker: asset.ticker)
+                                    } label: {
+                                        AssetDirectoryRow(asset: asset)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens asset details")
+                                }
+                            }
+
+                            assetPager(page: page, pages: pages)
+                                .padding(.top, 4)
                         } else {
                             LazyVStack(spacing: 8) {
                                 ForEach(pageSlice(of: rows, page: page)) { asset in
@@ -498,6 +514,6 @@ private struct AssetSearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

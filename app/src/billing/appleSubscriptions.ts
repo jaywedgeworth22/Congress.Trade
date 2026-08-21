@@ -263,5 +263,15 @@ export async function upsertAppleSubscription(
   );
   const record = await getAppleSubscription(env, input.originalTransactionId);
   if (!record) throw new Error('apple subscription upsert failed');
-  return { ok: true, record, isNew };
+  // Re-check ownership AFTER the write before reporting newness.
+  //
+  // `isNew` above comes from a pre-read, so two accounts redeeming the same
+  // previously-unseen originalTransactionId can both see null and both claim to
+  // be new. The INSERT preserves the first writer's user_id, but the LOSER would
+  // still report isNew - and whichever request then claims the notification key
+  // first sends an alert carrying its own email for the winner's subscription.
+  // The row's persisted owner is the only authority on who actually won, so a
+  // caller that does not own it is never new.
+  const wonTheRow = record.userId == null || record.userId === input.userId;
+  return { ok: true, record, isNew: isNew && wonTheRow };
 }

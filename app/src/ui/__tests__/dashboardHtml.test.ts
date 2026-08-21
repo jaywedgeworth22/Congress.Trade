@@ -640,7 +640,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("function polFull(n)");
   });
 
-  it('defaults theme to light and offers Light/Dark/System controls like Socratic.Trade', () => {
+  it('defaults theme to light and offers Light/Sepia/Dark/System controls', () => {
     expect(DASHBOARD_HTML).toContain("var pref = 'light'");
     expect(DASHBOARD_HTML).toContain("return 'light'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
@@ -648,7 +648,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
     expect(DASHBOARD_HTML).toContain('class="theme-seg"');
     expect(DASHBOARD_HTML).toContain('data-theme-opt');
+    expect(DASHBOARD_HTML).toContain("id: 'sepia', label: 'Sepia'");
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
+    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"]');
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
@@ -1628,10 +1630,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML.toLowerCase()).toContain('educational');
   });
 
-  it('LEGALCOMPLIANCE-04: site footer states Congress.Trade is not affiliated with any government agency', () => {
-    expect(DASHBOARD_HTML).toContain(
-      'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.',
-    );
+  it('LEGALCOMPLIANCE-04: site footer is one combined disclaimer with two-space dots and no trailing period', () => {
+    const footerLine =
+      'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
+    expect(DASHBOARD_HTML).toContain(footerLine);
+    expect(DASHBOARD_HTML).toContain("var FOOTER_DISCLAIMER_TEXT = '" + footerLine + "';");
+    expect(footerLine).not.toMatch(/agency\./);
   });
 
   it('formats trade amount brackets compactly', () => {
@@ -1940,6 +1944,20 @@ describe('DASHBOARD_HTML', () => {
     expect(consensus).toBeGreaterThan(buys);
   });
 
+  it('hides Rising Activity on All Time and keeps net-flow / buy-pressure on one line', () => {
+    expect(DASHBOARD_HTML).toContain('id="trRisingFold"');
+    expect(DASHBOARD_HTML).toContain("getTrWindow() === 'all'");
+    expect(DASHBOARD_HTML).toContain('syncRisingActivityVisibility');
+    expect(DASHBOARD_HTML).toContain('kpi-money');
+    expect(DASHBOARD_HTML).toContain('class="bp"');
+    expect(DASHBOARD_HTML).toContain('.card .v .bp-n { font-size: 28px;');
+    expect(DASHBOARD_HTML).toContain('.card .v .bp-pct { font-size: 20px;');
+    expect(DASHBOARD_HTML).toContain('.card .v .bp-w { font-size: 16px;');
+    expect(DASHBOARD_HTML).toContain('--trends-gap: 24px');
+    expect(DASHBOARD_HTML).toContain("n < 0 ? '\u2212' : ''");
+    expect(DASHBOARD_HTML).toContain('font-size: clamp(12px, 16cqi, 28px)');
+  });
+
   it('toggles What Is Being Traded between # trades and $ volume, with no rank numbers', () => {
     expect(DASHBOARD_HTML).toContain('id="trTickerMetric"');
     expect(DASHBOARD_HTML).toContain("onclick=\"setTickerSort('trades')\"");
@@ -2084,6 +2102,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       extractFn(html, 'reviewMoney'),
       extractFn(html, 'reviewBracketLabel'),
       extractFn(html, 'consensusHasMajority'),
+      extractFn(html, 'consensusHasPlurality'),
       extractFn(html, 'consensusFieldClass'),
       extractFn(html, 'consensusFieldDisplay'),
       extractFn(html, 'consensusModelFieldValue'),
@@ -2500,7 +2519,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
     expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
-    expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
     expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
     expect(DASHBOARD_HTML).toContain("if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);");
     expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
@@ -4048,7 +4067,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     // The SHORT footer line (not the old long paragraph) is reused verbatim
     // inside the mobile menu, appended after Sign Out (signed in) and after
     // Upgrade (signed out) — i.e. always the last thing in the dropdown.
-    const footerLine = 'Congress.Trade · educational tool for public STOCK Act (2012) disclosures · not financial advice · $ estimated from brackets';
+    const footerLine = 'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
     expect(DASHBOARD_HTML).toContain("var FOOTER_DISCLAIMER_TEXT = '" + footerLine + "';");
     // Static <footer> markup carries the identical sentence (single source of truth).
     expect(DASHBOARD_HTML).toContain('<span>' + footerLine + '</span>');
@@ -5308,7 +5327,7 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
-    expect(DASHBOARD_HTML).toContain('width: 100vw; max-width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
     expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
     expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
     expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');
@@ -5393,7 +5412,7 @@ describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
   it('does not fill dropdown rows or the closed pill with toggle-blue', () => {
     expect(DASHBOARD_HTML).toContain('.ios-filter-item.on { background: transparent; font-weight: 600; }');
     expect(DASHBOARD_HTML).toContain('.ios-filter-item.on::after { content: "✓";');
-    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--panel-2); color: var(--text); border-color: var(--border); }');
+    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--panel); color: var(--text); border-color: var(--border); }');
     expect(DASHBOARD_HTML).not.toContain('.ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }');
     expect(DASHBOARD_HTML).not.toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }');
   });
@@ -5647,6 +5666,9 @@ describe('mobile web chrome polish (issue #2016)', () => {
     expect(DASHBOARD_HTML).toContain('>3 Months</option>');
     expect(DASHBOARD_HTML).not.toContain('>Past 3 Months</option>');
     expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
+    // Full-bleed filter bar must not be overridden back to shrink-to-fit.
+    expect(DASHBOARD_HTML).not.toContain('align-items: center;\n    width: auto;\n    max-width: 100%;');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"] nav.tabs');
   });
 
   it('removes Snapshot and the Largest Buys/Sells sections', () => {

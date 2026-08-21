@@ -15,6 +15,13 @@
  * REFUND/REVOKE with no existing ledger row insert a null-owner tombstone so a
  * later client redeem of the original StoreKit JWS cannot mint Premium (#2088
  * only works once a revoked row exists). Other types still ignore unknown ids.
+ * A revoked row is not overwritten by a stale pre-refund retry of any other
+ * handled type — upsert would otherwise clear revokedAt and, for EXPIRED /
+ * billing_retry, drop status off 'revoked' so redeem/confirm would re-grant.
+ * DID_CHANGE_RENEWAL_STATUS never advances purchase identity or clears
+ * revokedAt: a resubscribe's AUTO_RENEW_ENABLED carries the new
+ * transactionId, and writing that id (or nulling revokedAt) makes
+ * clientRedeemWouldResurrectRevoked treat the later Restore as a replay.
  * Idempotent on Apple's `notificationUUID`
  * via the same claim/release/processed ledger pattern the Stripe webhook uses
  * (appleWebhookEvents.ts), so an at-least-once redelivery never double-applies
@@ -32,7 +39,11 @@ import {
   resolveAppleProductIds,
   type AppleTransactionPayload,
 } from './apple.ts';
-import { getAppleSubscription, upsertAppleSubscription } from './appleSubscriptions.ts';
+import {
+  clientRedeemWouldResurrectRevoked,
+  getAppleSubscription,
+  upsertAppleSubscription,
+} from './appleSubscriptions.ts';
 import {
   claimAppleWebhookEvent,
   markAppleWebhookEventProcessed,
@@ -168,7 +179,7 @@ async function applyNotification(
     || isAppleSandboxEnvironment(transaction.environment);
   if (sandbox && !ACCESS_ENDING_NOTIFICATION_TYPES.has(notificationType)
     && !(await appleSandboxPurchasesAllowed(env))) {
-    console.warn(`apple webhook ${notificationType}: Sandbox environment rejected (APPLE_ALLOW_SANDBOX is not true)`);
+    console.warn(`apple webhook ${notificationType}: Sandbox environment rejected (APPLE_ALLOW_SANDBOX is false)`);
     return;
   }
 
@@ -224,6 +235,26 @@ async function applyNotification(
     lastNotificationSubtype: notification.subtype ?? null,
   };
 
+  // Same newer-purchase rule as redeem/confirm. Apple retries each
+  // notificationUUID independently, so EXPIRED / DID_FAIL_TO_RENEW /
+  // DID_CHANGE_RENEWAL_STATUS / DID_RENEW that 500'd (or was still in
+  // flight) can land AFTER REFUND/REVOKE. upsert writes revokedAt=null
+  // unless the caller passes it, and EXPIRED / billing_retry move status
+  // off 'revoked' — after which clientRedeemWouldResurrectRevoked no
+  // longer fires and a StoreKit restore of the original JWS re-grants
+  // Premium. A genuine resubscribe has a new transactionId and a
+  // purchaseDate after revokedAt.
+  const staleRevokedReplay = clientRedeemWouldResurrectRevoked(existing, {
+    transactionId: transaction.transactionId,
+    purchaseDateMs: transaction.purchaseDate != null ? Number(transaction.purchaseDate) : null,
+  });
+  if (staleRevokedReplay && notificationType !== 'REVOKE' && notificationType !== 'REFUND') {
+    console.warn(
+      `apple webhook ${notificationType}: refusing to overwrite revoked ${originalTransactionId} from a pre-refund retry`,
+    );
+    return;
+  }
+
   if (notificationType === 'DID_RENEW') {
     await upsertAppleSubscription(env, { ...base, status: 'active', revokedAt: null, revocationReason: null });
     return;
@@ -244,8 +275,19 @@ async function applyNotification(
   if (!existing) return;
   if (notificationType === 'DID_CHANGE_RENEWAL_STATUS') {
     // Entitlement is unaffected by this event alone — only the renewal-info
-    // fields change; keep the subscription's current access status as-is.
-    await upsertAppleSubscription(env, { ...base, status: existing.status });
+    // fields change. Keep access status, revokedAt, and the purchase
+    // identity as-is. A resubscribe's AUTO_RENEW_ENABLED is a newer
+    // transactionId; writing it (or defaulting revokedAt to null) makes
+    // clientRedeemWouldResurrectRevoked fail the newer-purchase check
+    // (same id, or purchaseDate > NaN) and bricks Restore / DID_RENEW.
+    await upsertAppleSubscription(env, {
+      ...base,
+      status: existing.status,
+      latestTransactionId: existing.latestTransactionId,
+      purchaseDate: existing.purchaseDate,
+      revokedAt: existing.revokedAt,
+      revocationReason: existing.revocationReason,
+    });
     return;
   }
   if (notificationType === 'DID_FAIL_TO_RENEW') {

@@ -86,6 +86,30 @@ async function claimActivation(env: Env, activationKey: string, userId: string):
   return (result.meta?.changes ?? 0) > 0;
 }
 
+/**
+ * Undo a claim we made but could not deliver on.
+ *
+ * The claim is what makes this notifier idempotent, but claiming FIRST and
+ * delivering second means any failure after the insert - the totals query
+ * throwing, Pushover unconfigured, an HTTP/API refusal, a timeout - leaves the
+ * key permanently consumed. Every later attempt then short-circuits at
+ * `!isNew`, so the alert is lost forever rather than merely failing soft, which
+ * is the opposite of the module's stated contract.
+ *
+ * Releasing on failure restores retryability. Deleting is safe because we only
+ * ever reach here on the attempt that actually INSERTED the row (`isNew`), so
+ * we cannot delete a claim another caller owns.
+ */
+async function releaseActivation(env: Env, activationKey: string): Promise<void> {
+  try {
+    await run(env.DB, `DELETE FROM premium_activation_notices WHERE activation_key = ?`, [activationKey]);
+  } catch (err) {
+    // Best effort. A failed release just restores the original behaviour for
+    // this key (claimed, undelivered) - it must never mask the real error.
+    console.warn('premium activation claim release failed:', (err as Error).message);
+  }
+}
+
 function planLabel(plan: BillingPlan | string): string {
   return plan === 'annual' ? 'annual' : 'monthly';
 }
@@ -101,9 +125,19 @@ export async function notifyPremiumActivation(
   deps: { push?: typeof sendPushover } = {},
 ): Promise<void> {
   const push = deps.push ?? sendPushover;
+  let claimed = false;
   try {
+    // NOTE the ordering hazard this guards against, beyond ordinary failure:
+    // CT auto-deploy ships CODE but never SCHEMA (schema comes only from
+    // POST /api/admin/migrate via ship.sh). On the first deploy the new HEAD
+    // therefore serves traffic BEFORE premium_activation_notices exists, so
+    // this claim throws. Without the release below, the catch would swallow
+    // that, and once the table did appear every retry would dedupe against a
+    // row that was never delivered - the activation alert lost permanently for
+    // exactly the customers who subscribed during the migration window.
     const isNew = await claimActivation(env, input.activationKey, input.userId);
     if (!isNew) return;
+    claimed = true;
 
     const totals = await getPremiumTotals(env);
     const sourceLabel = input.source === 'apple' ? 'Apple' : 'Stripe';
@@ -120,8 +154,10 @@ export async function notifyPremiumActivation(
     });
     if (!delivered.sent) {
       console.warn('premium activation pushover not sent:', delivered.reason ?? 'unknown reason');
+      await releaseActivation(env, input.activationKey);
     }
   } catch (err) {
     console.error('premium activation notification failed:', (err as Error).message);
+    if (claimed) await releaseActivation(env, input.activationKey);
   }
 }
