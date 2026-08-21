@@ -13,6 +13,7 @@ import {
   OPENROUTER_EXTRACTION_RESPONSE_FORMAT,
   annotationObjectKey,
   chooseParserEngine,
+  gemini37FlashProviderPreference,
   isEngineOverrideRejection,
   parseMaxPrice,
   supportsNativeVision,
@@ -264,7 +265,12 @@ describe('OpenRouterVisionExtractor', () => {
     expect(body.trace.metadata).toBeUndefined();
     expect('metadata' in body).toBe(false);
     // Enrichment must never displace the core request fields.
-    expect(body.model).toBe('google/gemini-3.7-flash');
+    expect(body.model).toBe('~google/gemini-flash-latest');
+    expect(body.provider).toEqual({
+      order: ['Google'],
+      allow_fallbacks: true,
+      require_parameters: true,
+    });
     expect(body.messages).toHaveLength(1);
   });
 
@@ -410,16 +416,46 @@ function lastRequestBody(fetchMock: ReturnType<typeof vi.fn>, call = 0): Record<
   return JSON.parse(String(fetchMock.mock.calls[call][1].body));
 }
 
+describe('gemini37FlashProviderPreference', () => {
+  it('pins Flash latest and 3.7 (plus batch) to Vertex/Google with fallbacks', () => {
+    expect(gemini37FlashProviderPreference('~google/gemini-flash-latest')).toEqual({
+      order: ['Google'],
+      allow_fallbacks: true,
+    });
+    expect(gemini37FlashProviderPreference('google/gemini-3.7-flash')).toEqual({
+      order: ['Google'],
+      allow_fallbacks: true,
+    });
+    expect(gemini37FlashProviderPreference('google/gemini-3.7-flash:batch')).toEqual({
+      order: ['Google'],
+      allow_fallbacks: true,
+    });
+  });
+
+  it('does not pin other models', () => {
+    expect(gemini37FlashProviderPreference('anthropic/claude-sonnet-5')).toEqual({});
+    expect(gemini37FlashProviderPreference('google/gemini-3.5-flash-lite')).toEqual({});
+    expect(gemini37FlashProviderPreference('google/gemini-3.5-flash')).toEqual({});
+  });
+});
+
 describe('supportsNativeVision', () => {
   it('matches the current anthropic/claude-* catalog slugs', () => {
     expect(supportsNativeVision('anthropic/claude-sonnet-5')).toBe(true);
     expect(supportsNativeVision('anthropic/claude-haiku-4.5')).toBe(true);
     expect(supportsNativeVision('anthropic/claude-3-opus')).toBe(true);
   });
-  it('rejects models without native PDF file input', () => {
+  it('matches Gemini Flash latest and DeepSeek Flash Vision without paying mistral-ocr', () => {
+    expect(supportsNativeVision('~google/gemini-flash-latest')).toBe(true);
+    expect(supportsNativeVision('google/gemini-flash-latest')).toBe(true);
+    expect(supportsNativeVision('google/gemini-3.7-flash')).toBe(true);
+    expect(supportsNativeVision('deepseek/deepseek-v4-flash-vision-exp')).toBe(true);
+  });
+  it('rejects models without native PDF / vision input', () => {
     expect(supportsNativeVision('amazon/nova-lite-v1')).toBe(false);
     expect(supportsNativeVision('z-ai/glm-4.6v')).toBe(false);
     expect(supportsNativeVision('qwen/qwen3-vl-8b-instruct')).toBe(false);
+    expect(supportsNativeVision('deepseek/deepseek-v4-flash')).toBe(false);
   });
 });
 
@@ -427,6 +463,7 @@ describe('supportsStructuredOutputs', () => {
   it('allows vendors verified to list structured_outputs', () => {
     for (const model of [
       'openai/gpt-5.6-terra', 'anthropic/claude-sonnet-5', 'google/gemini-3.5-flash',
+      '~google/gemini-flash-latest',
       'deepseek/deepseek-v4-flash', 'qwen/qwen3-vl-8b-instruct', 'x-ai/grok-4.5',
     ]) expect(supportsStructuredOutputs(model), model).toBe(true);
   });
@@ -448,7 +485,10 @@ describe('chooseParserEngine', () => {
   });
   it('lets native-vision models read scans natively and routes the rest to mistral-ocr', () => {
     expect(chooseParserEngine({ model: 'anthropic/claude-sonnet-5', docKind: 'scanned_pdf' })).toBeNull();
+    expect(chooseParserEngine({ model: '~google/gemini-flash-latest', docKind: 'scanned_pdf' })).toBeNull();
+    expect(chooseParserEngine({ model: 'deepseek/deepseek-v4-flash-vision-exp', docKind: 'scanned_pdf' })).toBeNull();
     expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docKind: 'scanned_pdf' })).toBe('mistral-ocr');
+    expect(chooseParserEngine({ model: 'deepseek/deepseek-v4-flash', docKind: 'scanned_pdf' })).toBe('mistral-ocr');
   });
   it('honors the engine knobs', () => {
     expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docClass: 'typed', textEngine: 'mistral-ocr' })).toBe('mistral-ocr');
@@ -479,6 +519,49 @@ describe('OpenRouterVisionExtractor OpenRouter features', () => {
     expect(conf).toEqual({ type: 'number' });
     expect(conf).not.toHaveProperty('minimum');
     expect(conf).not.toHaveProperty('maximum');
+  });
+
+  it('defaults to Flash latest and pins Vertex/Google', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.model).toBe('~google/gemini-flash-latest');
+    expect(body.provider).toEqual({
+      order: ['Google'],
+      allow_fallbacks: true,
+      require_parameters: true,
+    });
+  });
+
+  it('still pins Vertex/Google when an explicit 3.7 Flash slug is requested', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'google/gemini-3.7-flash' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.model).toBe('google/gemini-3.7-flash');
+    expect(body.provider.order).toEqual(['Google']);
+  });
+
+  it('leaves Flash Lite and Claude provider prefs unchanged', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const lite = new OpenRouterVisionExtractor(env, { model: 'google/gemini-3.5-flash-lite' });
+    await lite.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+    expect(lastRequestBody(fetchMock, 0).model).toBe('google/gemini-3.5-flash-lite');
+    expect(lastRequestBody(fetchMock, 0).provider).toEqual({ require_parameters: true });
+
+    const claude = new OpenRouterVisionExtractor(env, { model: 'anthropic/claude-sonnet-5' });
+    await claude.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+    expect(lastRequestBody(fetchMock, 1).model).toBe('anthropic/claude-sonnet-5');
+    expect(lastRequestBody(fetchMock, 1).provider).toEqual({ require_parameters: true });
   });
 
   it('sends strict json_schema + require_parameters + usage accounting for structured-output models', async () => {
