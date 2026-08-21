@@ -53,8 +53,13 @@ Effort logs are standardized across all apps: protocol at
   answers as `host.jays.services`), reading/writing a **local SQLite file** at
   `/data/congress-trade/db.sqlite` on the host disk (migrated off Turso 2026-07-30;
   `TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` is set as a Coolify env override;
-  file measured 1.88GB on 2026-08-11).  Deno KV lives alongside at
-  `/data/congress-trade/kv.sqlite`.
+  file measured 1.88GB on 2026-08-11).  Litestream replicates that file off-box.
+  Deno KV lives alongside at `/data/congress-trade/kv.sqlite`.
+  **Deno Deploy is retired.**  Do not deploy there, do not set production secrets
+  there, and do not treat Deploy free-tier quotas as the live cost model.
+  Production is Coolify paid (`CT_COST_PROFILE=paid`, cron `* * * * *` on
+  `/api/health`).  **Turso is retired.**  The `TURSO_*` env names are leftovers
+  that now point at the local SQLite file.
   **The Oracle ARM64 host (`141.148.182.224`) that ran this before 2026-08-08 is
   DECOMMISSIONED — it is gone, not just idle.  Do not ssh to it, do not diagnose "the box is
   down" against it, and treat any doc/script that still names it as historical.**  See
@@ -177,8 +182,8 @@ production ingestion jobs unless the user explicitly asks.
 ## `SENATE_RELAY_URL` is static (READ THIS — it must never need a manual update)
 
 Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Coolify
-app reaches it through a relay on the owner's Mac.  The address is permanent:
-
+Deno process reaches it through a relay on the owner's Mac.  The address is
+permanent:
 ```
 SENATE_RELAY_URL=https://scout.jays.services
 ```
@@ -298,10 +303,10 @@ npm run typecheck
 npm test
 ```
 
-For deployment/config changes, also inspect `app/docker-compose.yml`,
-`app/DEPLOY.md`, relevant docs, and whether migrations need to be applied
-separately via `POST /api/admin/migrate`.
-
+For deployment/config changes, inspect `app/docker-compose.yml`, Coolify/Infisical
+env, relevant docs, and whether `POST /api/admin/migrate` needs to run after
+Coolify lands the SHA (`bash app/scripts/ship.sh`).  `app/wrangler.toml` is
+local/preview leftover, not the production deploy target.
 ## Cursor / Cursor Cloud Instructions
 
 Cursor is a peer agent platform for this repo, not a separate product lane. Use

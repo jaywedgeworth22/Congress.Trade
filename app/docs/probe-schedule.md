@@ -1,6 +1,10 @@
 # Adaptive Probe Cadence
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
+
+**Current shape:** this schedule runs inside the Coolify Deno container on
+Hetzner (paid cron `* * * * *`).  Deno Deploy and Turso are retired.  The
+read path is the local SQLite file.  Intervals below are unchanged.
 
 `src/ingestion/probeSchedule.ts` decides **how often** each source is probed.
 It does not decide **who** probes — that is the lease in
@@ -544,11 +548,9 @@ Two notes on day length:
 
 **Self-correcting windows** were considered and not built.  Deriving the table
 from a rolling query would adapt to recesses and rule changes automatically, but
-the read path is a local SQLite file on the Coolify host and the admin API is
-currently unreachable (all four Infisical universal-auth identities return
-`Invalid credentials`, and `CT_ADMIN_TOKEN` returns 401).  Building a live
-feedback loop on top of a broken credential path would be gold-plating a
-foundation that does not exist yet.  The static table plus `PROBE_SCHEDULE_JSON`
-gives the same retune-without-deploy capability at a fraction of the
-complexity.  Revisit once the credentials are re-issued and
-`provider_published_at` is populated.
+the read path is a local SQLite file on the Coolify host.  The 2026-08-11
+credential re-verify (see `AGENTS.md`) found Infisical and `CT_ADMIN_TOKEN`
+live; the earlier "all identities Invalid credentials" diagnosis was a
+missing-browser-UA / test-shape miss, not a dead secret.  The static table
+plus `PROBE_SCHEDULE_JSON` still gives retune-without-rebuild.  Intervals
+in this file are unchanged.

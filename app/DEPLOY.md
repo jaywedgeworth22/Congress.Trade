@@ -1,146 +1,133 @@
 # Deploy runbook — Congress.Trade
 
-Congress.Trade ingests public US STOCK Act disclosures (House, Senate, and
-Executive Branch), extracts/normalizes trades, and pushes them to clients via
-webhook + SSE, with a dashboard and admin panel.  Live site:
-[https://congress.trade](https://congress.trade).
+Deno-in-Docker service that ingests US STOCK Act disclosures (House + Senate +
+Executive / OGE 278-T), extracts/normalizes trades, and pushes them to clients
+via webhook + SSE, with a dashboard and admin panel.
 
-Production is **not** a Cloudflare Worker, **not** D1, and **not** Node.
-The app in this directory is **Deno** in the Coolify `congress-app`
-container on Hetzner `fleet-hetzner-nbg1` (same box as `host.jays.services`).
-Coolify builds `app/docker-compose.yml` on push to `main`.  Structured data
-is the host SQLite file at `/data/congress-trade/db.sqlite`.  Deno KV is
-`/data/congress-trade/kv.sqlite`.  Filing PDFs are Cloudflare R2.
-Cloudflare DNS routes `https://congress.trade`.
+**Current shape (2026-08):** production is **Coolify Docker on the Hetzner
+fleet box** `fleet-hetzner-nbg1` (`ssh coolify` / `host.jays.services`).
+The app process is Deno inside `congress-app`.  The database is a **local
+SQLite file** at `/data/congress-trade/db.sqlite`, replicated by **Litestream**.
+Secrets come from **Infisical**.  See `../AGENTS.md` "Current Shape".
 
-Proof: `../AGENTS.md` Current Shape, `Dockerfile`
-(`FROM denoland/deno:alpine`), `docker-compose.yml` (`congress-app`),
-`src/deno/main.ts`.  `wrangler.toml` is gone (404).  Leftover only:
-`wrangler.preview.example.toml`, `@sentry/cloudflare`,
-`@cloudflare/workers-types`.  Do not reintroduce `wrangler deploy` as the
-production path.  Treat `scripts/ship.sh` and `POST /api/admin/migrate` as
-production operations.  `npm run deploy` only prints that Coolify owns the
-publish step.
-
-`app/scripts/deploy-preview.sh` is leftover isolated Wrangler preview
-tooling.  It is not the live site and must not be pointed at
-`congress.trade` or the production SQLite file.
+**Deno Deploy is retired.**  Do not `deployctl`, do not open a Deno Deploy
+dashboard to set env, and do not treat Deploy free-tier quotas as the live
+cost model.  **Turso is retired.**  Do not point `TURSO_DATABASE_URL` at a
+`libsql://…turso.io` host.  Production uses
+`TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` (the env name is a
+leftover).  Cloudflare Workers / D1 / `wrangler deploy` are also not the
+production path — `wrangler.toml` is local/preview leftover.
 
 ## 0. Prerequisites
 
-- Node 18+ and npm for local `typecheck` / `test`.
-- Deno for the production entrypoint (`src/deno/main.ts`).
-- Infisical machine-identity credentials (Coolify runtime env / `app/.dev.vars` locally).
-- `cd app && npm install`.
-- Verify locally before merging: `npm run typecheck && npm run test`.
+- Node 18+ and npm for local typecheck/test (`cd app && npm ci`).
+- A Coolify login on the Hetzner fleet box, or a merge to `main` (auto-deploy).
+- Infisical congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290`, env
+  `prod`, plus the shared-at-ct project for fleet keys.
+- Verify locally before merging: `npm run typecheck && npm test`.
 
-## 1. Production host (already provisioned)
+## 1. How production actually deploys
 
-Do not run Cloudflare `wrangler d1 create` / `kv namespace create` /
-`queues create` against this product.  Those commands provisioned the
-retired Worker stack.
+Coolify owns the image.  `app/docker-compose.yml` is the compose file
+(`congress-app` + Litestream entrypoint + optional `sqlite-web`).
+`is_auto_deploy_enabled` is on; a merge to `main` queues a docker-compose
+deploy.  `npm run deploy` only prints that fact.  It does not upload to
+Deno Deploy or run `wrangler deploy`.
 
-Live resources:
-
-| Resource | Where |
-|----------|--------|
-| HTTP app | Coolify service `congress-app`, `127.0.0.1:5000` behind Traefik |
-| SQLite | `/data/congress-trade/db.sqlite` on `fleet-hetzner-nbg1` |
-| Deno KV | `/data/congress-trade/kv.sqlite` |
-| Queues | SQLite table `deno_runtime_queue`, polled in-process |
-| Filing PDFs | Cloudflare R2 (`RAW_FILES` S3 shim) |
-| DB replica | Litestream → Backblaze B2 (`app/litestream.yml`) |
-| Public hostname | `https://congress.trade` |
-
-`scripts/provision.sh` is Worker-era.  Read the header before touching it.
-Production schema still goes through `scripts/ship.sh` /
-`POST /api/admin/migrate`.
-
-## 2. Apply the database schema
+`bash scripts/ship.sh` does **not** build or push an image.  It waits until
+`GET /api/health` reports `build.sha` = this checkout's HEAD, then applies
+schema via `POST /api/admin/migrate`.  If Coolify has not landed the commit,
+`ship.sh` fails instead of migrating a stale revision.
 
 ```bash
-# local leftover helper (Wrangler D1 --local).  Not production.
-npx wrangler d1 migrations apply DB --local
-# production (idempotent migrate against the live Coolify app)
+# after main is green and Coolify has (or will) rebuild
 ADMIN_TOKEN=... bash scripts/ship.sh
 ```
 
-`ship.sh` does **not** publish a Worker.  Coolify already redeploys on
-`main`.  The script waits until `GET https://congress.trade/api/health`
-reports the current HEAD SHA, then POSTs `/api/admin/migrate`.
+Manual Coolify kick (only when the GitHub webhook did not fire): Coolify UI,
+or the fleet deploy-guard POST against the `congress-trade` app uuid.  Use a
+browser User-Agent — Cloudflare 403s bare curl on `host.jays.services`.
 
-This creates all tables and seeds `poll_config` row 1 with the default adaptive
-schedule (Mon–Fri 08–19 ET = 300s, evenings = 1200s, weekends = 3600s).
+Do not run `scripts/provision.sh` or `wrangler d1` / Turso CLI against
+production.  Do not recreate R2 / queues / D1 as if this were a Worker.
+
+## 2. Apply the database schema
+
+Local (dev only):
+
+```bash
+npx wrangler d1 migrations apply DB --local
+```
+
+Production schema is the idempotent statement list in
+`POST /api/admin/migrate` (`src/admin/routes.ts`).  Mirror every new
+`app/migrations/*.sql` file there.  `npm run migrate:remote` is disabled on
+purpose.
+
+```bash
+ADMIN_TOKEN=... bash scripts/ship.sh
+# or, after Coolify already reports the new sha:
+curl -sS -A "Mozilla/5.0" -X POST https://congress.trade/api/admin/migrate \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" -d '{}'
+```
+
+"Duplicate column" / "already exists" is treated as already-applied.
+`poll_config` row 1 still holds the adaptive House/Senate schedule.
 
 ## 3. Secrets and vars
 
-Infisical is the source of truth.  Coolify should store the Infisical
-machine-identity bootstrap credentials and the host SQLite URL override
-`TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite`.  Do not
-`wrangler secret put` production keys.
+Infisical is the source of truth.  Coolify should hold only the Infisical
+machine-identity bootstrap (`INFISICAL_APP_*`, `INFISICAL_SHARED_*`) plus the
+SQLite path override (`TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite`).
+Edit provider/app secrets in Infisical env `prod`.  They go live inside the
+resolver cache TTL (default 600s) with no rebuild.
 
-The app reads provider/app secrets from Infisical at runtime and caches them
-briefly.  Existing env copies may remain as compatibility fallback while
-`INFISICAL_ALLOW_ENV_FALLBACK` is not `"false"`.
+Do **not** set production secrets in a Deno Deploy project.  Do not
+`wrangler secret put` against production.  For local bootstrap, run
+`bash scripts/cloud-setup.sh` from the repository root; do not copy
+`.dev.vars.example`.
 
-Arbitration is **off** until `ARBITRATION_ENABLED = "true"` is present (set it
-in Infisical or `.dev.vars`).  For local dev, run `bash scripts/cloud-setup.sh`
-from the repository root; do not copy the reference `.dev.vars.example`
-template.
+Admin auth fails closed unless `ADMIN_TOKEN` (Infisical) or Cloudflare Access
+is configured.  `ADMIN_OPEN_IN_DEV="true"` is local-only, and
+`SENTRY_ENVIRONMENT` / `USAGE_MONITOR_ENVIRONMENT` in `wrangler.toml` `[vars]`
+must be overridden in `.dev.vars` or the run is treated as production.
 
-Admin auth fails closed by default.  Set `ADMIN_TOKEN` or configure Cloudflare
-Access (`ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`) in front of the
-admin surface.  Only local development should use `ADMIN_OPEN_IN_DEV="true"`.
+### Cost profile
 
-## 3a. Sentry error monitoring
+Live production is **`CT_COST_PROFILE=paid`** (cron `* * * * *` on
+`GET /api/health` → `costProfile`).  The `free` profile (15-minute ticks,
+tiny drains) was sized for retired Deno Deploy free-tier quotas.  Do not
+flip prod back to `free` to "save Deploy quota."  `CT_*` names are the
+operator knobs; leftover `DENO_*` aliases are local-test only.
 
-Sentry is configured through Infisical (`SENTRY_DSN`,
-`SENTRY_ENVIRONMENT`).  The production Deno entry does not use Wrangler
-secrets.  Get the DSN from Sentry → Projects → congress-trade → Settings →
-Client Keys.  Local dev reads overrides from `app/.dev.vars`.
+## 3a. Sentry
 
-## 3b. End-user auth + Stripe paywall (Wave 4)
+Production Sentry is a Coolify/Infisical `SENTRY_DSN` concern, not a
+`wrangler secret put`.  `SENTRY_ENVIRONMENT=production` is the live value.
 
-The public-site account system and freemium paywall have their own runbook —
-Stripe products/webhook, Google OAuth, Resend, and Cloudflare Access for the
-admin hostname: see [`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md).
-All of it degrades gracefully until configured.
+## 3b. Auth + Stripe
 
-## 3c. Runtime cost profile
+Google OAuth, Stripe products/webhook, Resend, and Cloudflare Access for
+`admin.congress.trade` live in Infisical.  Copy-paste product setup:
+[`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md).  Email magic-link
+sign-in is no longer offered in the UI.
 
-Production Coolify sets `CT_COST_PROFILE=paid` so in-process cron can tick
-every minute.  The code default remains `free` if unset.  Confirm with
-`GET /api/health` → `costProfile`.  The watcher still self-gates via
-`shouldPollNow` against `poll_config`.
+## 4. Seed ticker resolution (optional)
 
-> **Migrations don't auto-apply.**  Code auto-deploys (Coolify docker-compose
-> on push to `main`), but schema does **not** run as part of that.
->
-> - `ADMIN_TOKEN=... bash scripts/ship.sh`, or
-> - `curl -X POST https://congress.trade/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"`
->
-> The admin migration endpoint is idempotent and skips "duplicate column" /
-> "already exists" cases.  Keep its statement list in `src/admin/routes.ts` in
-> sync when you add a migration file.  `npm run deploy:full` aliases `ship.sh`;
-> `npm run migrate:remote` is intentionally disabled.
-
-## 4. (Optional) Seed ticker resolution
-
-The normalizer resolves tickers against the `securities_master` table;
-unresolved tickers still pass through but with lower confidence.  Load an
-equities list into `securities_master(ticker, name, aliases)` for best
-results (admin import or local SQL).
+The normalizer resolves tickers against `securities_master`.  Load rows via
+admin import or a local SQLite insert — not `wrangler d1 execute` against
+production.
 
 ## 5. Hybrid backfill ("instant history")
 
-After deploy, seed historical trades from the free open datasets
-(house/senate-stock-watcher), written as `source='seed_dataset'`, idempotent:
+Do not run this unless Jay explicitly asks.  It mutates production queues
+and the SQLite file.
 
 ```bash
-curl -X POST https://congress.trade/api/admin/backfill \
+curl -sS -A "Mozilla/5.0" -X POST https://congress.trade/api/admin/backfill \
+  -H "authorization: Bearer $ADMIN_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"chambers":["house","senate"],"sinceYear":2014}'
-# add "dryRun":true to preview counts without writing
 ```
 
 Do not run production backfill unless Jay explicitly asks.
@@ -155,12 +142,10 @@ ADMIN_TOKEN=... bash scripts/ship.sh   # wait for live SHA + migrate
 
 Confirm with `GET https://congress.trade/api/health` → `ok` / `db` true and
 a `build.sha` that matches the intended commit.
-
 ## Endpoint reference
 
 Public API (`/api`):
-- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&from=&to=&order=&limit=` — cursor feed (reconciliation backstop).  `from=`/`to=` (YYYY-MM-DD) bound the trade date for rolling-window pulls; `order=asc` (default, oldest-first — page forward with the returned `cursor` as the next `since`) or `order=desc` (newest-first "latest trades" snapshot, pair with `from=`).
-- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
+- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&from=&to=&order=&limit=` — cursor feed (reconciliation backstop).  `from=`/`to=` (YYYY-MM-DD) bound the trade date for rolling-window pulls; `order=asc` (default, oldest-first — page forward with the returned `cursor` as the next `since`) or `order=desc` (newest-first "latest trades" snapshot, pair with `from=`).- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
 - `GET /api/filings/:docId`, `GET /api/members`
 - `POST /api/subscriptions` — create and return the subscription secret once
 - `GET/PATCH /api/subscriptions/:id` — secret-scoped management
@@ -178,35 +163,39 @@ Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless conf
 - `GET /api/admin/review-queue`, `POST /api/admin/review/:docId` `{decision:'confirm'|'reject', edits?}`
 - `GET /api/admin/sources/health`, `GET /api/admin/subscriptions`
 - `POST /api/admin/backfill`
+- `POST /api/admin/migrate`
 
 UI: `GET /` (dashboard) and `/admin`.  `GET /health` → `{ok:true}`.
+`GET /api/health` is the readiness document (db, Litestream, cost profile, sha).
 
-Admin hostname `admin.congress.trade` is DNS/edge in front of the same Coolify
-app.  Protect it with Cloudflare Access before exposing admin workflows there;
-see `docs/wave4-auth-billing.md`.
-
+Admin custom domain: `admin.congress.trade` is routed to the same Coolify app.
+Protect it with Cloudflare Access; see `docs/wave4-auth-billing.md`.
 ## Pipeline (how a filing flows)
 
 ```
-cron → watcher (House XML diff + Senate eFD) → deno_runtime_queue (ingest)
+Deno.cron (paid: * * * * *) → watcher (House + Senate eFD + OGE)
+  → durable SQLite queue (deno_runtime_queue)
   filing.new   → fetcher    (raw → R2)
   filing.fetched → classifier (senate_html | text_pdf | scanned_pdf)
   filing.extracted → orchestrator → extractor pipeline → normalizer
-        ├ confidence ≥ 0.85 → persist (source='primary') → deno_runtime_queue (delivery)
-        └ below / invalid   → review_queue (held off the live feed)
-  delivery.dispatch → webhook fan-out (HMAC) + SSE
+        ├ confidence ≥ 0.85 → persist (source='primary') → delivery        └ below / invalid   → review_queue (held off the live feed)
+  delivery.dispatch → webhook fan-out (HMAC) + SSE + APNs
 ```
 
 ## Notes
 
-- **Branch protection/rulesets** should remain enforced on `main`: use PRs,
-  require the `typecheck + test` check, and prohibit force pushes/deletions.
-- **Senate eFD** scraping depends on the agreement-gate + CSRF flow; if Senate
-  changes its markup, `src/ingestion/senateSource.ts` is the place to adjust.
-  Datacenter egress uses the named relay `https://scout.jays.services`.
+- **Branch protection** on `main`: PRs required, `typecheck + test` required,
+  no force push/deletion.
+- **Senate eFD** depends on the named tunnel `https://scout.jays.services`.
+  Never "fix" an outage by changing `SENATE_RELAY_URL`.  Scraping still uses
+  the agreement-gate + CSRF flow (`src/ingestion/senateSource.ts`).
 - **House bulk XML** refreshes ~daily; `pollHouseLiveSearch()` overlays the
-  intraday live-search result when enabled so newly filed House PTRs can appear
-  before the next bulk XML refresh.
+  intraday live-search result when enabled.
 - **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
   constant before changing extraction cost/quality.
-- Confirm the `SEED_SOURCES` URLs in `src/backfill/seed.ts` resolve (flagged in code).
+- **Observability** is Coolify + Sentry + `/api/health`, not Workers Smart
+  Placement / `wrangler.toml` dashboard toggles.
+- Confirm `SEED_SOURCES` URLs in `src/backfill/seed.ts` before a backfill.
+- Host / Litestream / runner history:
+  `docs/rollouts/2026-08-08-runners-hetzner-migration.md`,
+  `docs/rollouts/2026-08-12-litestream-b2-rebuild.md`.
