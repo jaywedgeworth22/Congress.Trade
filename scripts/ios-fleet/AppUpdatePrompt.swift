@@ -75,6 +75,10 @@ enum AppUpdatePrompt {
             }
         }
 
+        static func == (lhs: Version, rhs: Version) -> Bool {
+            !(lhs < rhs) && !(rhs < lhs)
+        }
+
         static func < (lhs: Version, rhs: Version) -> Bool {
             let count = max(lhs.parts.count, rhs.parts.count)
             for index in 0..<count {
