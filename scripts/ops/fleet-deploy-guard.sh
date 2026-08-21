@@ -42,6 +42,18 @@ set -uo pipefail
 
 APP_KEY="${1:?usage: fleet-deploy-guard.sh <app-key>}"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RELEVANCE_PY="${RELEVANCE_PY:-}"
+if [[ -z "$RELEVANCE_PY" ]]; then
+  if [[ -f "${SCRIPT_DIR}/deploy_relevance.py" ]]; then
+    RELEVANCE_PY="${SCRIPT_DIR}/deploy_relevance.py"
+  elif [[ -f /usr/local/lib/congress/deploy_relevance.py ]]; then
+    RELEVANCE_PY=/usr/local/lib/congress/deploy_relevance.py
+  fi
+fi
+GITHUB_REPO="${GITHUB_REPO:-jaywedgeworth22/Congress.Trade}"
+GITHUB_API="${GITHUB_API:-https://api.github.com}"
+
 CONF="/etc/fleet-deploy-guard.d/${APP_KEY}.env"
 SHARED_ENV="${SHARED_ENV:-/etc/congress-health-recover.env}"
 # shellcheck disable=SC1090
@@ -113,6 +125,70 @@ app_is_down() {
   local code
   code=$(curl -sS -m 12 -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || echo 000)
   [[ "$code" != "200" ]]
+}
+
+# 0 = HEAD needs a Coolify rebuild, 1 = skip (docs/iOS/ops only), 2 = unknown.
+# Unknown must fail closed: the existing deploy path stays.
+head_deploy_relevance() {
+  local live head files rc
+  [[ -n "$HEALTH_URL" && -n "$RELEVANCE_PY" && -f "$RELEVANCE_PY" ]] || return 2
+
+  live=$(curl -sS -m 12 -A 'congress-deploy-guard/1' "$HEALTH_URL" 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin)
+    sha=(d.get("build") or {}).get("sha") or ""
+except Exception:
+    sha=""
+print(sha.lower())') || return 2
+  [[ "$live" =~ ^[0-9a-f]{7,40}$ ]] || return 2
+
+  head=$(curl -sS -m 20 -H 'Accept: application/vnd.github+json' \
+    ${GH_TOKEN:+-H "Authorization: Bearer ${GH_TOKEN}"} \
+    "${GITHUB_API}/repos/${GITHUB_REPO}/commits/main" 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    print((json.load(sys.stdin).get("sha") or "").lower())
+except Exception:
+    print("")') || return 2
+  [[ "$head" =~ ^[0-9a-f]{7,40}$ ]] || return 2
+
+  if [[ "$live" == "$head" ]]; then
+    log "live sha ${live:0:12} already is main; nothing to deploy"
+    return 1
+  fi
+
+  files=$(curl -sS -m 30 -H 'Accept: application/vnd.github+json' \
+    ${GH_TOKEN:+-H "Authorization: Bearer ${GH_TOKEN}"} \
+    "${GITHUB_API}/repos/${GITHUB_REPO}/compare/${live}...${head}" 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    raise SystemExit(2)
+if d.get("truncated") is True:
+    raise SystemExit(2)
+files=d.get("files")
+if not isinstance(files, list):
+    raise SystemExit(2)
+for f in files:
+    name=f.get("filename")
+    if name:
+        print(name)
+') || return 2
+
+  if [[ -z "$files" ]]; then
+    log "compare ${live:0:12}...${head:0:12} is empty; skip"
+    return 1
+  fi
+
+  rc=0
+  printf '%s\n' "$files" | python3 "$RELEVANCE_PY" --from-stdin >/dev/null || rc=$?
+  case "$rc" in
+    0) log "HEAD ${head:0:12} is deploy-relevant vs live ${live:0:12}"; return 0 ;;
+    1) log "HEAD ${head:0:12} vs live ${live:0:12} is docs/iOS/ops only; skip"; return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 # One retry, and a generous timeout: when a build is IN FLIGHT this endpoint
@@ -248,6 +324,19 @@ else
     notify "Deploy pending $(( ($(now) - PENDING_SINCE) / 60 ))min without shipping. Guard may be stuck."
   fi
   exit 0
+fi
+
+if ! app_is_down; then
+  rel_rc=0
+  head_deploy_relevance || rel_rc=$?
+  if [[ "$rel_rc" -eq 1 ]]; then
+    rm -f "$PENDING_FILE" "$STATE_DIR/pending_force"
+    log "cleared pending — Coolify rebuild would not change the running image"
+    exit 0
+  fi
+  if [[ "$rel_rc" -eq 2 ]]; then
+    log "could not decide deploy relevance; keeping the existing trigger path"
+  fi
 fi
 
 FORCE_FLAG=false

@@ -16,10 +16,13 @@
  *   POST  /subscriptions/:id/deactivate    -> deactivate (drops from fanout, frees creation quota)
  *   POST  /filings-hygiene              -> dry-run (default) / apply probe delete + review desync (#1576/#1574)
  *
- * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
+ * AUTH (deny-by-default once provisioned). A request is authorized if:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
  *      `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation); OR
- *   2. Cloudflare Access — an Access application fronts /api/admin/* and the
+ *   2. First-party session — cookie `ct_session` or `Authorization: Bearer
+ *      <session>` for an ADMIN_EMAILS user (website cookie; native iOS Bearer);
+ *      OR
+ *   3. Cloudflare Access — an Access application fronts /api/admin/* and the
  *      `Cf-Access-Jwt-Assertion` JWT verifies against the team keys with an
  *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
  *      (good for humans signing in with Google/SSO — no token to paste).
@@ -30,7 +33,7 @@
  *   ACCESS_AUD + ACCESS_TEAM_DOMAIN (with an Access app in front), to lock down.
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   AnalystRowSchema,
   FundamentalRowSchema,
@@ -70,6 +73,8 @@ import {
   webhookTargetLengthError,
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
+import { apnsLaneErrorIsRecent, inspectApnsFanoutDiagnostics, resolveApnsConfig } from '../delivery/apnsFanout.ts';
+import { apnsConfigured } from '../shared/apns.ts';
 import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
 import { runFmpSenateRecovery } from '../backfill/fmpSenateRecovery.ts';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
@@ -84,6 +89,7 @@ import {
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
+import { storedReviewBlocksSmallerVisionSubmit } from '../extraction/visionSubmitGuard.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
@@ -108,7 +114,7 @@ import {
 } from '../shared/memberIdentity.ts';
 import { dedupeSplitFilerIdentities } from './filerIdentityDedupe.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { getCurrentUser } from '../auth/session.ts';
+import { getCurrentUserFromRequest } from '../auth/session.ts';
 import {
   DEFAULT_CANDIDATES,
   EXTRACTION_SCHEMA_VERSION,
@@ -154,6 +160,10 @@ import {
 } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
+
+function isObjectStoreAuthError(message: string): boolean {
+  return /\bunauthorized\b|\baccessdenied\b|\binvalidaccesskeyid\b|\bsignaturedoesnotmatch\b/i.test(message);
+}
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import {
   requeueTransientFailedDurableJobs,
@@ -242,6 +252,12 @@ import {
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
 import { runFilingsHygiene } from '../ingestion/reviewStatusReconcile.ts';
+import {
+  grantAdmin,
+  revokeAdmin,
+  listGrantedAdmins,
+  normalizeAdminEmail,
+} from './adminAccess.ts';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -334,6 +350,27 @@ function adminActor(c: { req: { header(name: string): string | undefined } }): s
 }
 
 /**
+ * Best-effort real email for the admin-allowlist audit trail and the
+ * last-admin/self-revoke check.  Prefers a verified identity (Cloudflare
+ * Access header, first-party session) over the generic adminActor()
+ * fallback ('admin-token'/'admin'), which carries no email to compare
+ * against a revoke target.
+ */
+async function resolveAdminActor(c: Context<{ Bindings: Env }>): Promise<string> {
+  const accessEmail =
+    c.req.header('Cf-Access-Authenticated-User-Email') ||
+    c.req.header('cf-access-authenticated-user-email');
+  if (accessEmail) return accessEmail.trim().toLowerCase();
+  try {
+    const user = await getCurrentUserFromRequest(c);
+    if (user?.email) return user.email.trim().toLowerCase();
+  } catch {
+    /* fall through to the generic actor label */
+  }
+  return adminActor(c);
+}
+
+/**
  * Admin auth — authorized if a valid bearer token OR an allowlisted, verified
  * Cloudflare Access identity is presented. Open only when neither is configured.
  */
@@ -342,11 +379,21 @@ async function isAuthorized(
   headers: { authorization?: string; accessJwt?: string; sessionEmail?: string },
 ): Promise<boolean> {
   const token = (await resolveSecret(env, 'ADMIN_TOKEN')).value;
+  const tokenConfigured = !!token;
+
+  // Fast path: a correct bearer ADMIN_TOKEN authorizes without ever needing
+  // the merged allowlist (ADMIN_EMAILS + persisted grants) — skips an extra
+  // DB round trip on the overwhelmingly common automation/curl/CI path.  A
+  // wrong or missing bearer falls through to the full check below exactly
+  // as before.
+  if (tokenConfigured && (await constantTimeEqual(headers.authorization ?? '', `Bearer ${token}`))) {
+    return true;
+  }
+
   const adminConfig = await adminRuntimeConfig(env);
   const allow = adminConfig.allow;
   const aud = adminConfig.accessAud;
   const teamDomain = adminConfig.accessTeamDomain;
-  const tokenConfigured = !!token;
   const accessConfigured = !!(aud && teamDomain && allow.size > 0);
   const sessionConfigured = allow.size > 0;
 
@@ -373,16 +420,11 @@ async function isAuthorized(
     return false;
   }
 
-  // 1) Bearer token (automation / curl).
-  if (
-    tokenConfigured &&
-    (await constantTimeEqual(headers.authorization ?? '', `Bearer ${token}`))
-  ) {
-    return true;
-  }
+  // 1) Bearer token (automation / curl) — already tried above via the fast
+  // path; reaching here means it was absent or wrong, so fall through.
 
   // 2) First-party Google session identity (browser). The session itself is an
-  // opaque KV token; admin authorization is the ADMIN_EMAILS allowlist.
+  // opaque KV token; admin authorization is the ADMIN_EMAILS + granted allowlist.
   const sessionEmail = headers.sessionEmail?.trim().toLowerCase();
   if (sessionConfigured && sessionEmail && allow.has(sessionEmail)) {
     return true;
@@ -2097,15 +2139,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
     if (await isAuthorizedMaintenance(env, c.req.path, authorization)) return next();
-    // Always resolve the browser session email, even when an Authorization
-    // header is present. A stale/wrong ADMIN_TOKEN in localStorage used to
-    // skip this path (only looked up when !authorization), so allowlisted
-    // Google sessions got 401 on Review Queue and other admin routes while
-    // the UI still showed the admin tabs. isAuthorized still prefers a valid
-    // bearer ADMIN_TOKEN; a bad bearer falls through to session / Access.
+    // Always resolve the session email, even when an Authorization header is
+    // present. Cookie `ct_session` covers the website; native iOS sends the
+    // same opaque session as `Authorization: Bearer <session>`. A stale
+    // ADMIN_TOKEN in web localStorage used to skip this path (only looked up
+    // when !authorization), so allowlisted Google sessions got 401 on Review
+    // Queue while the UI still showed the admin tabs. isAuthorized still
+    // prefers a valid bearer ADMIN_TOKEN; a bad bearer falls through to
+    // session / Access. Native session bearers are not ADMIN_TOKEN — they
+    // resolve here via getCurrentUserFromRequest.
     let sessionEmail: string | undefined;
     try {
-      sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
+      sessionEmail = (await getCurrentUserFromRequest(c))?.email ?? undefined;
     } catch {
       sessionEmail = undefined;
     }
@@ -3215,8 +3260,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
-      // Executive (OGE 278-T) polls on a ~6h cadence, so it needs a much longer staleness window
-      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 21600 * 3 : staleAfterSec;
+      // Executive weekday floor is 15 min; weekend is hourly like House.
+      // Staleness uses 3× the weekend floor so a healthy weekend poller is
+      // not marked stale between hourly ticks.
+      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 3600 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
         || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'
@@ -4190,6 +4237,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY is not available to this Worker runtime',
     });
 
+    const apnsConfig = await resolveApnsConfig(c.env);
+    const apnsReady = apnsConfigured(apnsConfig);
+    const apnsFanout = await inspectApnsFanoutDiagnostics(c.env).catch(() => null);
+    const apnsLaneError = apnsFanout?.lastLaneError ?? null;
+    const apnsLaneErrorRecent = apnsLaneErrorIsRecent(apnsLaneError?.at, now);
+    const apnsQueryError = apnsFanout && !apnsFanout.queryOk ? apnsFanout.queryError : null;
+    const apnsErrorCount = (apnsLaneErrorRecent ? 1 : 0) + (apnsQueryError ? 1 : 0);
+    const apnsNoteParts = [
+      apnsReady ? 'APNs credentials present' : 'APNs credentials are not available to this runtime',
+      `${apnsFanout?.activeDevices ?? 0} active device${(apnsFanout?.activeDevices ?? 0) === 1 ? '' : 's'}`,
+    ];
+    if (apnsQueryError) apnsNoteParts.push(`trade query failed: ${apnsQueryError}`);
+    else if (apnsFanout) apnsNoteParts.push('trade query ok');
+    if (apnsLaneErrorRecent) apnsNoteParts.push(`last lane error: ${apnsLaneError.message}`);
+    else if (apnsLaneError) apnsNoteParts.push(`last lane error (older than 24h): ${apnsLaneError.message}`);
+    connections.push({
+      id: 'delivery:apns',
+      label: 'APNs Fan-out',
+      status: apnsErrorCount > 0
+        ? 'error'
+        : !apnsReady
+          ? 'warn'
+          : (apnsFanout?.activeDevices ?? 0) === 0
+            ? 'warn'
+            : connectionStatus(true, 0, apnsFanout?.lastTradeAt ?? apnsFanout?.lastReviewAt ?? null),
+      configured: apnsReady,
+      lastUsedAt: apnsFanout?.lastTradeAt ?? apnsFanout?.lastReviewAt ?? null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: apnsErrorCount,
+      note: apnsNoteParts.join('; '),
+    });
+
     connections.push({
       id: 'auth:google',
       label: 'Google Sign-In',
@@ -4228,6 +4309,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
 
     const errors: DiagnosticError[] = [];
+    if (apnsQueryError) {
+      errors.push({
+        at: now.toISOString(),
+        area: 'APNs Fan-out',
+        severity: 'error',
+        subject: 'apns_fanout',
+        message: apnsQueryError,
+      });
+    }
+    if (apnsLaneErrorRecent && apnsLaneError) {
+      errors.push({
+        at: apnsLaneError.at,
+        area: 'APNs Fan-out',
+        severity: 'error',
+        subject: 'apns_fanout',
+        message: apnsLaneError.message,
+      });
+    }
     for (const source of secretStatus.sources) {
       if (source.configured && !source.ok) {
         errors.push({
@@ -4530,6 +4629,90 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const logoDisplay = await setLogoDisplay(c.env, body.logoDisplay);
     return c.json({ logoDisplay });
+  });
+
+  // --- GET /admins ----------------------------------------------------------
+  // List admins: the env-configured root allowlist (read-only bootstrap —
+  // "configured in the environment, not editable here") and every
+  // additionally-granted email, with who granted it and when.  This route
+  // sits behind the same admin-only auth gate as every other /api/admin/*
+  // route (see r.use('*', ...) above) — there is no separate unauthenticated
+  // read path, so a non-admin can never enumerate the admin list.
+  r.get('/admins', async (c) => {
+    const cfg = await adminRuntimeConfig(c.env);
+    const granted = await listGrantedAdmins(c.env.DB);
+    return c.json({
+      adminEmails: [...cfg.envAllow].sort(),
+      granted,
+      total: cfg.allow.size,
+    });
+  });
+
+  // --- POST /admins/grant ----------------------------------------------------
+  // Body: { email }.  Grants admin access to an email IN ADDITION to
+  // ADMIN_EMAILS, which stays the env-configured root bootstrap escape hatch
+  // and is never written here.  Emails are trimmed + lowercased on write.
+  r.post('/admins/grant', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const rawEmail = typeof body.email === 'string' ? body.email : '';
+    if (!rawEmail.trim()) return c.json({ error: 'email is required' }, 400);
+
+    const cfg = await adminRuntimeConfig(c.env);
+    const actor = await resolveAdminActor(c);
+    const result = await grantAdmin(c.env.DB, { email: rawEmail, actor, envAllow: cfg.envAllow });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    try {
+      console.log(
+        'admin allowlist audit:',
+        JSON.stringify({ action: 'grant', email: normalizeAdminEmail(rawEmail), actor, at: new Date().toISOString() }),
+      );
+    } catch {
+      /* console logging is best-effort; the DB audit row above already landed */
+    }
+    return c.json({ ok: true, granted: await listGrantedAdmins(c.env.DB) });
+  });
+
+  // --- POST /admins/revoke ---------------------------------------------------
+  // Body: { email }.  Revokes a previously-granted admin.  Refuses to touch an
+  // ADMIN_EMAILS address (edit the environment instead — this table never
+  // overrides it) and refuses to remove the last remaining admin, whether
+  // that's someone else's only access or the caller's own — a clear 400
+  // error either way, never a silent no-op.
+  r.post('/admins/revoke', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const rawEmail = typeof body.email === 'string' ? body.email : '';
+    if (!rawEmail.trim()) return c.json({ error: 'email is required' }, 400);
+
+    const cfg = await adminRuntimeConfig(c.env);
+    const actor = await resolveAdminActor(c);
+    const result = await revokeAdmin(c.env.DB, {
+      email: rawEmail,
+      actor,
+      actorEmail: actor,
+      envAllow: cfg.envAllow,
+    });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    try {
+      console.log(
+        'admin allowlist audit:',
+        JSON.stringify({ action: 'revoke', email: normalizeAdminEmail(rawEmail), actor, at: new Date().toISOString() }),
+      );
+    } catch {
+      /* console logging is best-effort; the DB audit row above already landed */
+    }
+    return c.json({ ok: true, granted: await listGrantedAdmins(c.env.DB) });
   });
 
   // --- POST /backfill -----------------------------------------------------
@@ -5198,6 +5381,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     letterhead floods — reclaim for local vision, not human review)
   //   • error + stored raw + no live txs (honest reject of garbage OCR must
   //     still be re-claimable by Mac/server_cpu vision — 2026-08-10 drain)
+  //   • ?worker=local (the Mac Grok-CLI worker) additionally reclaims EVERY
+  //     unresolved needs_review scan with stored raw bytes — cascade
+  //     disagreements, extraction_row_limit garbage, low-confidence flags —
+  //     because local vision is free (subscription) and strictly better than
+  //     the server_cpu OCR that created those flags. The Coolify scan-cpu
+  //     worker (no param / worker=server_cpu) keeps the conservative reason
+  //     set so it never re-generates garbage on hard scans.
   // Skips published live-transaction docs and local_vision_exhausted parks
   // (worker retry-cap terminal class — #1575 vision-spend bucket) so workers
   // don't burn subscription quota on no-ops.
@@ -5207,6 +5397,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Mac/residential IP. source_url is metadata only.
   r.get('/scanned-filings/pending', async (c) => {
     try {
+      const worker = typeof c.req.query('worker') === 'string'
+        ? c.req.query('worker').trim().toLowerCase()
+        : '';
+      // Local (Mac Grok-CLI) workers get the broad reclaim set; the CPU OCR
+      // worker keeps the conservative reasons so it cannot re-generate
+      // garbage on hard scans it already failed.
+      const localWorker = worker.includes('local');
+      const reviewReasonMatch = localWorker
+        ? `rq.reason NOT LIKE '%local_vision_exhausted%'`
+        : `(
+             rq.reason LIKE '%extract_empty%'
+             OR rq.reason LIKE '%no_transactions_extracted%'
+             OR rq.reason LIKE '%ocr_unusable%'
+             OR rq.reason LIKE '%form_chrome%'
+           )
+           AND rq.reason NOT LIKE '%local_vision_exhausted%'`;
       const rows = await all<{
         doc_id: string;
         chamber: string | null;
@@ -5234,13 +5440,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                   SELECT 1 FROM review_queue rq
                    WHERE rq.doc_id = f.doc_id
                      AND rq.resolved = 0
-                     AND (
-                       rq.reason LIKE '%extract_empty%'
-                       OR rq.reason LIKE '%no_transactions_extracted%'
-                       OR rq.reason LIKE '%ocr_unusable%'
-                       OR rq.reason LIKE '%form_chrome%'
-                     )
-                     AND rq.reason NOT LIKE '%local_vision_exhausted%'
+                     AND ${reviewReasonMatch}
                 )
               )
             )
@@ -5340,7 +5540,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       return new Response(obj.body, { headers });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      const message = err instanceof Error ? err.message : String(err);
+      if (isObjectStoreAuthError(message)) {
+        return c.json({
+          error: 'stored copy unavailable',
+          detail: 'object store rejected credentials',
+        }, 503);
+      }
+      return c.json({ error: 'stored copy read failed' }, 500);
     }
   });
 
@@ -5498,6 +5705,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         // decisions table may lag in some local fixtures — park still lands.
       }
 
+      // local_mac_1 is supplemental only.  After local exhaustion, hand the
+      // doc to the hosted extraction path instead of leaving it parked.
+      let hostedFallbackEnqueued = false;
+      try {
+        await c.env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
+        hostedFallbackEnqueued = true;
+      } catch (err) {
+        console.warn('local-vision-park: hosted fallback enqueue failed', docId, (err as Error).message);
+      }
+
       return c.json({
         ok: true,
         docId,
@@ -5506,6 +5723,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         lastError,
         previousStatus: filingRow.ingest_status,
         ingestStatus: 'needs_review',
+        hostedFallbackEnqueued,
       });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
@@ -5539,6 +5757,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         : 'local_mac';
 
     try {
+      const existingReview = await get<{ reason: string | null; payload: string | null }>(
+        c.env.DB,
+        `SELECT reason, payload FROM review_queue WHERE doc_id = ? AND resolved = 0`,
+        [docId],
+      );
+      if (
+        existingReview
+        && storedReviewBlocksSmallerVisionSubmit(
+          existingReview.reason,
+          existingReview.payload,
+          parsedTx.length,
+        )
+      ) {
+        return c.json({
+          ok: true,
+          docId,
+          published: false,
+          needsReview: true,
+          skipped: 'smaller_than_stored_review',
+          txCount: parsedTx.length,
+        });
+      }
+
       const filingRow = await loadFilingRow(c.env, docId);
       if (!filingRow) {
         return c.json({ error: `Filing ${docId} not found` }, 404);

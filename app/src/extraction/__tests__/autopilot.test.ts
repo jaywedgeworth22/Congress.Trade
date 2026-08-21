@@ -26,7 +26,13 @@ interface EligibleDocRow {
 }
 
 interface MockState {
-  openRuns: Array<{ id: string; status: string; updated_at: string }>;
+  openRuns: Array<{
+    id: string;
+    status: string;
+    updated_at: string;
+    halt_reason?: string | null;
+    sample_errors?: string | null;
+  }>;
   runRow: Record<string, unknown> | null;
   docs: EligibleDocRow[];
   /** Docs findable ONLY by the legacy-replay fallback query (never the primary one). */
@@ -35,6 +41,7 @@ interface MockState {
   legacyReplayResetLands: boolean;
   readsByDoc: Record<string, Array<{ provider: string; model: string; ok: number; error: string | null; usage_json: string | null }>>;
   backlogCount: number;
+  eligibleDueCount: number;
   budget: Map<string, number>;
   reservations: Map<string, {
     day: string;
@@ -61,6 +68,7 @@ function makeState(over: Partial<MockState> = {}): MockState {
     legacyReplayResetLands: true,
     readsByDoc: {},
     backlogCount: 0,
+    eligibleDueCount: 0,
     budget: new Map(),
     reservations: new Map(),
     runUpdates: [],
@@ -122,6 +130,9 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
             return (halted ? { id: halted.id } : null) as T | null;
           }
           if (/SELECT COUNT\(\*\) AS n/i.test(sql)) {
+            if (/agreement_attempts/i.test(sql)) {
+              return { n: state.eligibleDueCount } as T;
+            }
             return { n: state.backlogCount } as T;
           }
           if (/SELECT f\.doc_id, f\.raw_object_key, f\.chamber, f\.page_count/i.test(sql)) {
@@ -485,6 +496,41 @@ describe('handleAutopilotTick — error-class kill-switch', () => {
     expect(final!.params[10]).toBe('error_class:auth');
   });
 
+  it('does not latch the pipeline on garbage or Unauthorized OpenRouter replies', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1'), doc('H-2')] });
+    const { env } = makeEnv(state, {
+      AUTOPILOT_DAILY_USD_BUDGET: '5',
+      AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD: '2',
+    });
+    const check = vi.fn(async () => {
+      throw new Error('openRouterText: OpenRouter API 401 Unauthorized');
+    });
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).toHaveBeenCalledTimes(2);
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).not.toBe('error_class:auth');
+    expect(final!.params[10]).not.toBe('error_class:parse');
+  });
+
+  it('does not latch on source-fetch Unauthorized (Clerk / admin 401 statusText)', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1'), doc('H-2')] });
+    const { env } = makeEnv(state, {
+      AUTOPILOT_DAILY_USD_BUDGET: '5',
+      AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD: '2',
+    });
+    const check = vi.fn(async () => { throw new Error('Unauthorized'); });
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).toHaveBeenCalledTimes(2);
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).not.toBe('error_class:auth');
+  });
+
   it('re-enqueues a continuation tick when the slice ends mid-run', async () => {
     const state = makeState({
       runRow: runRow(),
@@ -698,6 +744,81 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(state.runInserts).toHaveLength(0);
   });
 
+  it('auto-resumes a files-prepaid halt instead of latching forever', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-files',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:quota',
+        sample_errors: JSON.stringify({
+          quota: 'HTTP 402 {"error":{"message":"This request requires at least $0.50 in balance for files","code":402,"metadata":{"limit_source":"openrouter_key_limit"}}}',
+        }),
+      }],
+    });
+    const { env } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).not.toBe('unacknowledged_halt');
+    expect(state.openRuns[0].status).toBe('halt_acknowledged');
+  });
+
+  it('auto-resumes a false source-auth Unauthorized halt', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-unauth',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:auth',
+        sample_errors: JSON.stringify({ auth: 'Unauthorized' }),
+      }],
+    });
+    const { env } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).not.toBe('unacknowledged_halt');
+    expect(state.openRuns[0].status).toBe('halt_acknowledged');
+    expect(state.openRuns[0]).toMatchObject({
+      status: 'halt_acknowledged',
+    });
+  });
+
+  it('keeps a proven OpenRouter User-not-found auth halt latched', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-dead-key',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:auth',
+        sample_errors: JSON.stringify({
+          auth: 'openRouterVision: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}',
+        }),
+      }],
+    });
+    const { env, send } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('unacknowledged_halt');
+    expect(send).not.toHaveBeenCalled();
+    expect(state.openRuns[0].status).toBe('halted');
+  });
+
+  it('keeps a real depleted-credit halt latched until a human acknowledges', async () => {
+    const state = makeState({
+      openRuns: [{
+        id: 'run-depleted',
+        status: 'halted',
+        updated_at: new Date().toISOString(),
+        halt_reason: 'error_class:billing',
+        sample_errors: JSON.stringify({
+          billing: 'Your prepayment credits are depleted',
+        }),
+      }],
+    });
+    const { env, send } = makeEnv(state);
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('unacknowledged_halt');
+    expect(send).not.toHaveBeenCalled();
+    expect(state.openRuns[0].status).toBe('halted');
+  });
+
   it('refuses to start while a fresh run is in progress', async () => {
     const state = makeState({
       openRuns: [{ id: 'run-live', status: 'running', updated_at: new Date().toISOString() }],
@@ -721,8 +842,18 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     expect(kv.get('autopilot:lastday')).toBe(new Date().toISOString().slice(0, 10));
   });
 
+  it('does not start on health-eligible count when no selector-due doc exists', async () => {
+    const state = makeState({ backlogCount: 24, eligibleDueCount: 0 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10));
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.blocked).toBe('not_due');
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('same-day backlog trigger honors the threshold', async () => {
-    const state = makeState({ backlogCount: 100 });
+    const state = makeState({ backlogCount: 100, eligibleDueCount: 0 });
     const { env, kv, send } = makeEnv(state);
     kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10)); // daily already ran
     const below = await maybeStartBacklogAutopilot(env);
@@ -732,6 +863,29 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     state.backlogCount = 300;
     const above = await maybeStartBacklogAutopilot(env);
     expect(above?.started?.trigger).toBe('backlog');
+  });
+
+  it('starts a run from a single eligible-due doc without waiting for UTC midnight or 150', async () => {
+    const state = makeState({ backlogCount: 1, eligibleDueCount: 1 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastday', new Date().toISOString().slice(0, 10));
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.started?.trigger).toBe('eligible');
+    expect(state.runInserts[0]?.[1]).toBe('eligible');
+    expect(send).toHaveBeenCalledTimes(1);
+    const tick = send.mock.calls[0]?.[0] as { type: string; runId: string };
+    expect(tick).toMatchObject({ type: 'autopilot.tick', runId: result!.started!.runId });
+  });
+
+  it('starts that single due doc even on a fresh UTC day, before the daily catch-up path', async () => {
+    const state = makeState({ backlogCount: 1, eligibleDueCount: 1 });
+    const { env, kv, send } = makeEnv(state);
+    kv.set('autopilot:lastrun', new Date().toISOString());
+    const result = await maybeStartBacklogAutopilot(env);
+    expect(result?.started?.trigger).toBe('eligible');
+    expect(kv.get('autopilot:lastday')).toBe(new Date().toISOString().slice(0, 10));
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
 

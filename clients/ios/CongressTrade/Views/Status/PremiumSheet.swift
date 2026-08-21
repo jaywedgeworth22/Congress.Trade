@@ -10,12 +10,13 @@ import SwiftUI
 /// two copies of the pricing/trial line, and they drifted (the info sheet still
 /// said "1-month free trial" months after the trial became two weeks).
 ///
-/// Every benefit line is a gate that exists in the backend today — source PDFs
-/// (`serveDocumentPdf` redirects non-premium to `/pricing`), full-history CSV
+/// Every benefit line is a gate that exists in the backend today — archived
+/// filing PDFs (`serveDocumentPdf` returns 402 JSON for Bearer / Accept: pdf;
+/// web browsers without those still 302 to `/pricing`), full-history CSV
 /// export (`/api/export/transactions.csv` → 401/402 with `feature: 'export'`),
 /// and webhook/SSE delivery (402 with `feature: 'alerts'`, capped at
 /// `MAX_SUBSCRIPTIONS_PER_USER = 2`). No scarcity, no countdown, nothing the
-/// server does not enforce.
+/// server does not enforce.  Filing PDF on iOS never opens Safari checkout.
 ///
 /// It renders in full when signed out, too: hiding what Premium is until after
 /// sign-in leaves the price and the benefits invisible to exactly the people
@@ -37,6 +38,10 @@ struct PremiumSheet: View {
     @State private var isRestoring = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
+    @State private var isLinking = false
+    /// Sign-in stays a way IN, never a gate (Guideline 5.1.1(v)) — tapping
+    /// "Sign in" opens this sheet without interrupting an in-flight purchase.
+    @State private var showSignIn = false
 
     private struct Benefit: Identifiable {
         let id = UUID()
@@ -54,7 +59,7 @@ struct PremiumSheet: View {
         .init(systemImage: "bell", text: "Push notifications when a new filing lands"),
     ]
 
-    private var isBusy: Bool { purchasingProductID != nil || isRestoring }
+    private var isBusy: Bool { purchasingProductID != nil || isRestoring || isLinking }
 
     var body: some View {
         NavigationStack {
@@ -91,6 +96,12 @@ struct PremiumSheet: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    if let appleLinkNotice = store.appleLinkNotice {
+                        Text(appleLinkNotice)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let purchaseError {
                         Text(purchaseError)
                             .font(.footnote)
@@ -108,8 +119,13 @@ struct PremiumSheet: View {
                         Text(store.isPremium ? "Done" : "Not Now")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 50)
+                            .foregroundStyle(AppTheme.wordInk)
                     }
                     .buttonStyle(.bordered)
+                    // `.bordered` keys its border/text colour off `.tint`,
+                    // which is otherwise the app-wide blue (App.swift) — dark
+                    // legible ink instead (owner 2026-08-21).
+                    .tint(AppTheme.wordInk)
                     .disabled(isBusy)
 
                     LegalFooterLinks(includePricing: false)
@@ -122,21 +138,54 @@ struct PremiumSheet: View {
             .inlineNavigationTitle()
         }
         .task { await loadProducts() }
+        .sheet(isPresented: $showSignIn) {
+            NavigationStack {
+                ScrollView {
+                    SignInPanel(onSignedIn: { showSignIn = false })
+                        .padding(20)
+                }
+                .background(AppTheme.background)
+                .navigationTitle("Sign In")
+                .inlineNavigationTitle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { showSignIn = false }
+                    }
+                }
+            }
+            .environmentObject(store)
+        }
     }
 
     // MARK: - Sections
 
+    /// Guideline 5.1.1(v): purchasing must work with zero prior sign-in, so
+    /// this no longer branches on `store.signedIn` at all — only on whether
+    /// Premium is already active (signed-in account, or this device's own
+    /// anonymous Apple purchase) versus still needing a plan choice. Signing
+    /// in is offered underneath as an optional way to extend access to other
+    /// devices, never a gate on the purchase itself.
     @ViewBuilder
     private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            primaryActionContent
+            if !store.signedIn && !store.hasLocalAppleEntitlement {
+                signInOptionalNotice(
+                    "No account needed to buy.  It's optional — sign in to use Premium on your "
+                        + "other devices, and to set up Delivery alerts, which are tied to your account."
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var primaryActionContent: some View {
         if store.isPremium {
             subscribedSection
-        } else if !store.signedIn {
-            // Honest, not a dead end: the purchase has to attach to an account,
-            // and the sign-in stack is one sheet behind this one.
-            Text("sign in first — Premium is tied to your account")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        } else if !store.signedIn && store.hasLocalAppleEntitlement {
+            anonymousSubscribedSection
+        } else if store.signedIn && store.hasLocalAppleEntitlement {
+            signedInDeviceEntitlementSection
         } else if isLoadingProducts {
             HStack(spacing: 10) {
                 ProgressView()
@@ -147,14 +196,10 @@ struct PremiumSheet: View {
             .frame(maxWidth: .infinity, minHeight: 50)
         } else if products.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("In-app purchase isn't available right now.  You can still subscribe on the website.")
+                Text(PremiumPricing.emptyCatalogMessage)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let url = store.api.upgradeURL {
-                    Link("Open Congress.Trade pricing", destination: url)
-                        .font(.subheadline.weight(.semibold))
-                }
                 restoreButton
             }
         } else {
@@ -164,6 +209,126 @@ struct PremiumSheet: View {
                 }
                 restoreButton
             }
+        }
+    }
+
+    /// Signed out, but `Transaction.currentEntitlements` already shows an
+    /// active purchase on this device (Guideline 5.1.1(v) anonymous path) —
+    /// the same "you're subscribed" treatment as a signed-in Premium account,
+    /// routed straight to the App Store (no billing-portal call, which would
+    /// need a session this device does not have).
+    @ViewBuilder
+    private var anonymousSubscribedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("You're subscribed to Premium on this device through the App Store.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                openURL(CongressTradeAPIClient.appStoreManageSubscriptionsURL)
+            } label: {
+                Text("Manage on App Store")
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint("Opens the App Store subscriptions page")
+
+            signInOptionalNotice(
+                "It's optional — sign in to use Premium on your other devices, and to set up "
+                    + "Delivery alerts, which are tied to your account."
+            )
+        }
+    }
+
+    /// Signed in, not yet Premium on the SERVER, but this device already
+    /// holds a verified Apple purchase — truth-table rows 3/4 (owner
+    /// directive 2026-08-21). Never a "Subscribe" button here: they already
+    /// paid, only whether it belongs to THIS account is still open.
+    @ViewBuilder
+    private var signedInDeviceEntitlementSection: some View {
+        switch store.appleEntitlementOwnership {
+        case .linkedToOtherAccount:
+            appleEntitlementConflictSection
+        case .unclaimed, .unknown:
+            appleLinkOfferSection
+        }
+    }
+
+    /// Row 3: say plainly this Apple purchase is linked elsewhere. The way
+    /// out is an explicit tap — Restore Purchases (which surfaces the
+    /// conflict again if it's still true) or signing out and back in with
+    /// the owning account.
+    @ViewBuilder
+    private var appleEntitlementConflictSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("This Apple purchase is linked to a different Congress.Trade account.  "
+                + "Sign out and sign in with that account, or tap Restore Purchases to confirm.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            restoreButton
+        }
+    }
+
+    /// Row 4: this device's purchase is unclaimed. Grant access already
+    /// happened (`premiumFeatureAccess`) — this only ASKS for the explicit
+    /// consent to make it stick to the account (owner rule: never link
+    /// silently). "Not now" only silences the launch-time prompt; the Link
+    /// button itself stays here either way.
+    @ViewBuilder
+    private var appleLinkOfferSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("You're subscribed to Premium on this device through the App Store.  "
+                + "Link it to your account to use it on the website and your other devices too.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                Task { await linkToAccount() }
+            } label: {
+                HStack {
+                    Text("Link to This Account")
+                    if isLinking {
+                        Spacer()
+                        ProgressView()
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isBusy)
+            .accessibilityHint("Links this device's Apple subscription to the signed-in account")
+
+            Button("Not Now") {
+                store.dismissAppleLinkPrompt()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(isBusy)
+
+            restoreButton
+        }
+    }
+
+    /// Apple's own suggested framing from the Guideline 5.1.1(v) rejection:
+    /// explain what sign-in adds without ever implying it is required. A
+    /// tappable link, not a primary action — it opens the sign-in sheet and
+    /// never interrupts an in-flight purchase.
+    @ViewBuilder
+    private func signInOptionalNotice(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Sign in") {
+                showSignIn = true
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
         }
     }
 
@@ -294,8 +459,19 @@ struct PremiumSheet: View {
                 let transaction = try checkVerified(verification)
                 notice = "Purchase confirmed.  Unlocking Premium…"
                 // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
-                try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
-                notice = "Premium unlocked.  You can create Delivery alerts now."
+                // Guideline 5.1.1(v): no account required to buy — signed in,
+                // this attaches to the account; signed out, it records the
+                // purchase against this device and the transaction is finished
+                // here (redeemAppleTransaction finishes the signed-in path
+                // itself; the anonymous path does not, so it is finished here).
+                if store.signedIn {
+                    try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
+                    notice = "Premium unlocked.  You can create Delivery alerts now."
+                } else {
+                    try await store.redeemAppleTransactionAnonymously(jws: verification.jwsRepresentation)
+                    await transaction.finish()
+                    notice = "Premium unlocked on this device.  Sign in any time to use it on your other devices too."
+                }
                 try? await Task.sleep(for: .seconds(1.2))
                 dismiss()
             case .userCancelled:
@@ -321,9 +497,31 @@ struct PremiumSheet: View {
             notice = confirmed
                 ? "Purchases restored."
                 : "No active Premium subscription found on this Apple Account."
+        } catch let error as APIError {
+            // Restore Purchases is an explicit user action — the owner's
+            // rule ("linking is always explicit, Restore Purchases counts")
+            // — so a 409 here is surfaced plainly rather than the generic
+            // "could not confirm it yet" retry framing, which would be
+            // misleading: retrying will not fix an owner conflict.
+            if case .server(409, _, _) = error {
+                purchaseError = "This Apple purchase is already linked to a different Congress.Trade account.  "
+                    + "Sign out and sign in with that account to use it there instead."
+            } else {
+                purchaseError = PremiumPricing.redeemFailureMessage(error)
+            }
         } catch {
             purchaseError = PremiumPricing.redeemFailureMessage(error)
         }
+    }
+
+    /// Row 4's explicit "Link" tap — the only place besides Restore
+    /// Purchases this app calls the authenticated `link_apple_entitlement`
+    /// command. Never automatic.
+    private func linkToAccount() async {
+        isLinking = true
+        store.appleLinkNotice = nil
+        defer { isLinking = false }
+        _ = await store.linkAppleEntitlementToCurrentAccount()
     }
 
     private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
@@ -367,6 +565,14 @@ struct PremiumSheet: View {
 /// `docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 enum PremiumPricing {
     static let headline = "$5/month  •  $50/year  •  2-week free trial"
+
+    /// Empty StoreKit catalog: Restore stays, website checkout does not.
+    /// Guideline 3.1.1 — same digital good as IAP.
+    static let emptyCatalogMessage = "In-app purchase isn't available.  Try again later."
+
+    /// Delivery paywall.  In-App Purchase only — no website Stripe CTA.
+    static let deliveryUpgradeMessage =
+        "2-week free trial, then $5/month or $50/year.  Upgrade with In-App Purchase to create SSE/webhook deliveries.  Existing deliveries still appear below."
 
     static func subtitle(for product: Product) -> String? {
         switch AppleIAPProduct(rawValue: product.id) {

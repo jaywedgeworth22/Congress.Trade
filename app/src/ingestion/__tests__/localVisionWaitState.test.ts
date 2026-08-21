@@ -440,6 +440,142 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(ids).not.toContain('scanned-exhausted-1');
     });
 
+    it('GET /api/admin/scanned-filings/pending?worker=local reclaims cascade/row-limit/low-confidence scans; default stays conservative', async () => {
+      // 2026-08-20 autonomy fix: every unresolved scanned review item with
+      // stored raw bytes is advertised to the local (free Grok-CLI) worker so
+      // the whole queue drains without OpenRouter spend. The Coolify CPU OCR
+      // worker (no param) must NOT see those docs — it is what generated the
+      // garbage/cascade flags in the first place.
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      const seed = async (docId: string, reason: string) => {
+        await d1.prepare(
+          `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(docId, 'house', `https://example.com/${docId}.pdf`, `raw/${docId}.pdf`, 'needs_review', 'scanned_pdf', nowIso).run();
+        await d1.prepare(
+          `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+        ).bind(docId, reason, 0, nowIso).run();
+      };
+      await seed('scan-cascade-1', 'agreement_cascade_unresolved');
+      await seed('scan-rowlimit-1', 'extraction_row_limit_exceeded_likely_garbage:0.93');
+      await seed('scan-mismatch-1', 'ticker_asset_mismatch,invalid_amount,low_confidence');
+      await seed('scan-empty-1', 'extract_empty_failure,no_transactions_extracted');
+      // Parked docs stay excluded even for local workers.
+      await seed('scan-parked-1', 'local_vision_exhausted,scanned_pdf_vision_spend');
+
+      const conservative = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(conservative.status).toBe(200);
+      const consJson = await conservative.json() as { filings: Array<{ doc_id: string }> };
+      const consIds = consJson.filings.map((f) => f.doc_id);
+      expect(consIds).toContain('scan-empty-1');
+      expect(consIds).not.toContain('scan-cascade-1');
+      expect(consIds).not.toContain('scan-rowlimit-1');
+      expect(consIds).not.toContain('scan-mismatch-1');
+      expect(consIds).not.toContain('scan-parked-1');
+
+      const local = await app.request('/scanned-filings/pending?worker=local_mac', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(local.status).toBe(200);
+      const localJson = await local.json() as { filings: Array<{ doc_id: string }> };
+      const localIds = localJson.filings.map((f) => f.doc_id);
+      expect(localIds).toContain('scan-empty-1');
+      expect(localIds).toContain('scan-cascade-1');
+      expect(localIds).toContain('scan-rowlimit-1');
+      expect(localIds).toContain('scan-mismatch-1');
+      expect(localIds).not.toContain('scan-parked-1');
+    });
+
+    it('POST /ingest-local-vision refuses a shorter OCR over a stored cascade payload', async () => {
+      // #2107 advertises cascade scans to ?worker=local. The Mac worker stamps
+      // confidence 0.97, so a 12-row OCR would publish (or overwrite) a 40-row
+      // stored extract and lock the filing — drain skips scanned_pdf.
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      const stored = Array.from({ length: 40 }, (_, i) => ({
+        txDate: '2024-01-01',
+        owner: 'self',
+        assetName: `City of El Paso TX GO ${i}`,
+        ticker: null,
+        assetType: 'GS',
+        txType: 'B',
+        amountMin: 1001,
+        amountMax: 15000,
+      }));
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'scan-cascade-shrink-1',
+        'house',
+        'P',
+        '2024-06-01',
+        'https://example.com/cascade.pdf',
+        'raw/cascade.pdf',
+        'needs_review',
+        'scanned_pdf',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, resolved, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(
+        'scan-cascade-shrink-1',
+        'agreement_cascade_unresolved',
+        JSON.stringify({ transactionCount: 40, transactions: stored }),
+        0,
+        nowIso,
+      ).run();
+
+      const incoming = [{
+        ticker: 'NVDA',
+        assetName: 'NVIDIA Corporation',
+        txType: 'B',
+        txDate: '2024-05-01',
+        amountMin: 1001,
+        amountMax: 15000,
+        confidence: 0.97,
+        rawText: 'NVIDIA Corporation [NVDA] P 05/01/2024 $1,001 - $15,000',
+      }];
+      const res = await app.request('/ingest-local-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'scan-cascade-shrink-1',
+          transactions: incoming,
+          workerId: 'local_mac_1',
+          extractor: 'local_grok_cli',
+          source: 'local_mac',
+        }),
+      }, env as never);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        published: boolean;
+        needsReview: boolean;
+        skipped?: string;
+      };
+      expect(json.published).toBe(false);
+      expect(json.needsReview).toBe(true);
+      expect(json.skipped).toBe('smaller_than_stored_review');
+
+      const live = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ?`,
+      ).bind('scan-cascade-shrink-1').first<{ n: number }>();
+      expect(live?.n ?? 0).toBe(0);
+
+      const review = await d1.prepare(
+        `SELECT reason, payload, resolved FROM review_queue WHERE doc_id = ?`,
+      ).bind('scan-cascade-shrink-1').first<{ reason: string; payload: string; resolved: number }>();
+      expect(review?.resolved).toBe(0);
+      expect(review?.reason).toBe('agreement_cascade_unresolved');
+      expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
+    });
+
     it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
       const app = createAdminApp();
       const env = makeEnv();
@@ -479,11 +615,17 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
         docId: string;
         reason: string;
         ingestStatus: string;
+        hostedFallbackEnqueued?: boolean;
       };
       expect(json.ok).toBe(true);
       expect(json.docId).toBe('doc-park-1');
       expect(json.reason).toBe('local_vision_exhausted,scanned_pdf_vision_spend');
       expect(json.ingestStatus).toBe('needs_review');
+      expect(json.hostedFallbackEnqueued).toBe(true);
+      expect(sentMessages.some((m) => {
+        const msg = m.message as { type?: string; docId?: string };
+        return msg.type === 'filing.extracted' && msg.docId === 'doc-park-1';
+      })).toBe(true);
 
       const filing = await d1.prepare(
         `SELECT ingest_status, error, local_wait_expires_at FROM filings WHERE doc_id = ?`

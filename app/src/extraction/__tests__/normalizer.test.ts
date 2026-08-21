@@ -3,9 +3,9 @@ import {
   normalize,
   CONFIDENCE_THRESHOLD,
   DETERMINISTIC_CONFIDENCE_THRESHOLD,
-  MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+  isDeterministicExtractor,
+  confidenceThresholdFor,
   persistTransactions,
-  TransactionPublishLimitError,
   transactionRowKey,
   clearResolverCache,
   clearNameIndexCache,
@@ -181,16 +181,36 @@ function letterVariant(index: number): string {
 }
 
 describe('normalize', () => {
-  it('holds an oversized extraction for review and caps its review payload', async () => {
+  it('publishes a clean oversized extraction instead of capping at 200', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const parsed = Array.from(
-      { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
-      // Letters-only variant tag, not a digit-bearing index: parseAmountRange
-      // strips non-digits from the WHOLE rawText and would otherwise merge a
-      // two-digit row index into the embedded "$1,001" figure for index>=10
-      // (e.g. "row 10 $1,001" -> digits "101001"), tripping a spurious
-      // invalid_amount flag unrelated to what this test exercises.
-      (_, index) => tx({ rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})` }),
+      { length: 201 },
+      (_, index) => tx({
+        rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})`,
+        confidence: 0.97,
+      }),
+    );
+    const result = await normalize(
+      env,
+      filing({ docKind: 'scanned_pdf', extractor: 'visionLlm' }),
+      parsed,
+      { extractor: 'visionLlm' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.transactions.length).toBe(201);
+    expect(cap.insertedTx).toHaveLength(201);
+    await expect(persistTransactions(env, result.transactions)).resolves.toBeTruthy();
+  });
+
+  it('still holds a low-confidence uniform OCR flood above 200 rows', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const parsed = Array.from(
+      { length: 201 },
+      (_, index) => tx({
+        rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})`,
+        confidence: 0.189,
+      }),
     );
     const result = await normalize(
       env,
@@ -199,20 +219,8 @@ describe('normalize', () => {
       { extractor: 'visionLlm' },
     );
     expect(result.needsReview).toBe(true);
-    expect(result.transactions.length).toBe(MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1);
     expect(cap.insertedTx).toHaveLength(0);
-    // 201 rows, uniform 0.97 confidence, no duplicate content, no ticker
-    // mismatch -> garbage_ratio 0.00 but the perfect confidence uniformity
-    // (itself the H-2025-8221264 tell) still classifies it as likely-garbage.
-    // See the dedicated classifyRowLimitReason tests below for the
-    // needs_reprocess / duplicate-flood branches.
     expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded_likely_garbage:0.00');
-    const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
-      transactionCount: number; truncated: boolean; transactions: unknown[];
-    };
-    expect(payload).toMatchObject({ transactionCount: 201, truncated: true });
-    expect(payload.transactions).toHaveLength(MAX_PUBLISH_TRANSACTIONS_PER_FILING);
-    await expect(persistTransactions(env, result.transactions)).rejects.toBeInstanceOf(TransactionPublishLimitError);
   });
 
   it('makes the publication receipt part of the atomic batch and retries it idempotently', async () => {
@@ -587,27 +595,24 @@ describe('normalize', () => {
     expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
   });
 
-  it('classifies an oversized extraction of distinct, varied-confidence rows as needs_reprocess', async () => {
+  it('publishes an oversized extraction of distinct, varied-confidence rows', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const parsed = Array.from(
-      { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
+      { length: 201 },
       (_, index) => tx({
         rawText: `AAPL Apple Inc P $1,001 - $15,000 (variant ${letterVariant(index)})`,
-        // Wide, clearly-non-uniform spread (not a razor's-edge value near the
-        // suspiciouslyUniform stdev<0.01 threshold) -- a real large-but-clean
-        // filing's per-row confidence varies well beyond that.
         confidence: 0.97 - (index % 7) * 0.03,
       }),
     );
     const result = await normalize(env, filing(), parsed);
-    expect(result.needsReview).toBe(true);
-    expect(cap.insertedTx).toHaveLength(0);
-    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded_needs_reprocess:0.00');
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(201);
   });
 
   it('classifies an oversized extraction of duplicated rows as likely_garbage', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
-    const parsed = Array.from({ length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 }, () => tx());
+    const parsed = Array.from({ length: 201 }, () => tx());
     const result = await normalize(env, filing(), parsed);
     expect(result.needsReview).toBe(true);
     expect(cap.insertedTx).toHaveLength(0);
@@ -637,6 +642,75 @@ describe('normalize', () => {
     expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
     expect(cap.insertedTx).toHaveLength(1);
     expect(cap.reviewRows).toHaveLength(0);
+  });
+
+  it('does not false-flag invalid_amount when rawText also has an address number', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AGIO', name: 'Agios Pharmaceuticals, Inc.', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-agio', chamber: 'house', docKind: 'text_pdf', extractor: 'textPdf' }),
+      [
+        tx({
+          ticker: 'AGIO',
+          assetName: 'Agios Pharmaceuticals, Inc.',
+          amountMin: 1001,
+          amountMax: 15000,
+          confidence: 0.6,
+          rawText:
+            'Agios Pharmaceuticals, Inc. - Common Stock (AGIO) [ST] P 01/29/2025 02/06/2025 $1,001 - $15,000 F S: New S O: 150 Main St',
+        }),
+      ],
+      { extractor: 'textPdf' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
+  });
+
+  it('demotes a House GS type code stuffed into ticker on a Treasury bill', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-2025-20026666', chamber: 'house', docKind: 'text_pdf', extractor: 'openRouterText' }),
+      [
+        tx({
+          ticker: 'GS',
+          assetName: 'Treasury Bill (3-Month, Matures 5/1/2025)',
+          assetType: 'GS',
+          amountMin: 15001,
+          amountMax: 50000,
+          confidence: 0.6,
+          rawText: 'Treasury Bill (3-Month, Matures 5/1/2025) [GS] P $15,001 - $50,000',
+        }),
+      ],
+      { extractor: 'openRouterText' },
+    );
+    expect(result.published).toBe(true);
+    expect(result.needsReview).toBe(false);
+    expect(cap.insertedTx).toHaveLength(1);
+  });
+
+  it('treats cheap openRouterText on typed PTRs as deterministic', () => {
+    expect(isDeterministicExtractor('openRouterText', 'text_pdf')).toBe(true);
+    expect(isDeterministicExtractor('openRouterText', 'senate_html')).toBe(true);
+    expect(isDeterministicExtractor('openRouterText', 'scanned_pdf')).toBe(false);
+    expect(isDeterministicExtractor('openRouterVision', 'text_pdf')).toBe(false);
+    expect(confidenceThresholdFor('openRouterText', 'text_pdf')).toBe(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+  });
+
+  it('autopublishes cheap openRouterText rows at 0.6 on electronic House PTRs', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-2026-20034898', chamber: 'house', docKind: 'text_pdf', extractor: 'openRouterText' }),
+      [tx({ confidence: 0.6, rawText: 'AAPL Apple Inc B $1,001 - $15,000' })],
+      { extractor: 'openRouterText' },
+    );
+    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(DETERMINISTIC_CONFIDENCE_THRESHOLD);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
   });
 
   it('autopublishes deterministic textPdf rows below vision conf threshold when clean', async () => {
@@ -686,10 +760,50 @@ describe('normalize', () => {
     expect(payload.transactionCount).toBe(0);
   });
 
+  it('keeps a dated real row in the review payload when the rest is OCR chrome', async () => {
+    const { env, cap } = makeEnv([]);
+    const garbage = Array.from({ length: 24 }, (_, i) =>
+      tx({
+        assetName: `unreadable asset p1 y${300 + i}`,
+        ticker: null,
+        txDate: null,
+        amountMin: 250001,
+        amountMax: 500000,
+        confidence: 0.19,
+        rawText: 'form chrome',
+      }),
+    );
+    garbage.push(tx({
+      assetName: 'Apple Inc.',
+      ticker: 'AAPL',
+      txDate: '2025-02-19',
+      amountMin: 1001,
+      amountMax: 15000,
+      confidence: 0.95,
+      rawText: 'Apple Inc. (AAPL) [ST] P 02/19/2025 02/19/2025 $1,001 - $15,000',
+    }));
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-mix', chamber: 'house', docKind: 'scanned_pdf', extractor: 'server_cpu_v1' }),
+      garbage,
+      { extractor: 'server_cpu_v1' },
+    );
+    expect(result.needsReview).toBe(true);
+    expect(result.published).toBe(false);
+    expect(cap.insertedTx).toHaveLength(0);
+    const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
+      transactionCount: number;
+      transactions: Array<{ ticker?: string | null }>;
+    };
+    expect(payload.transactionCount).toBeGreaterThanOrEqual(1);
+    expect(payload.transactions.some((row) => row.ticker === 'AAPL')).toBe(true);
+  });
+
   it('classifies expanded form-chrome and garbage-ratio helpers', () => {
     expect(looksLikeHeaderContaminatedAsset('Member of the U.S. House of Representatives')).toBe(true);
     expect(looksLikeHeaderContaminatedAsset('unreadable asset p1 y331')).toBe(true);
     expect(looksLikeHeaderContaminatedAsset('Apple Inc.')).toBe(false);
+    expect(looksLikeHeaderContaminatedAsset('The following information serves to identify the previously and erroneously filed periodic')).toBe(true);
     expect(isMostlyGarbageOcrExtraction(100, 5, 5)).toBe(true);
     expect(isMostlyGarbageOcrExtraction(10, 9, 0)).toBe(false);
   });
@@ -733,6 +847,18 @@ describe('scoreFields ticker/asset-name consistency (informational, unpenalized)
     const scored = scoreFields(
       0.97,
       { ...baseFields, ticker: 'BTC', assetName: 'BTC' },
+      '2024-07-01',
+      passthroughResolve,
+      nameIndex,
+    );
+    expect(scored.flags).not.toContain('ticker_asset_mismatch');
+  });
+
+  it('does not flag a mismatch when the asset name is just the ticker symbol', () => {
+    const nameIndex: NameIndex = new Map([['ACN', 'accenture']]);
+    const scored = scoreFields(
+      0.97,
+      { ...baseFields, ticker: 'ACN', assetName: 'ACN' },
       '2024-07-01',
       passthroughResolve,
       nameIndex,

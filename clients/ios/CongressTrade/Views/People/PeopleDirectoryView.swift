@@ -71,6 +71,14 @@ struct PeopleDirectoryView: View {
             .background(AppTheme.background)
             .navigationTitle("Directory")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // Sign-in, appearance, export, and Premium were otherwise
+                // unreachable from this tab — the hamburger menu only lived
+                // on Trends/Trades (iPad audit P2-2).
+                ToolbarItem(placement: .topBarTrailing) {
+                    HamburgerMenuButton()
+                }
+            }
             .refreshable { await store.loadMembersDirectory(force: true) }
             .task {
                 await store.loadMembersDirectory()
@@ -84,6 +92,8 @@ struct PeopleDirectoryView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             .onChange(of: searchText) { _, _ in currentPage = 0 }
             .onChange(of: sortKey) { _, _ in currentPage = 0 }
@@ -255,7 +265,7 @@ private struct PersonRow: View {
     private var metaLine: String {
         var parts: [String] = []
         if let chamber = member.chamber, !chamber.isEmpty {
-            parts.append(chamber.chamberLabel)
+            parts.append(chamber.chamberLabel(title: member.title))
         }
         var partyStateBits: [String] = []
         if let party = member.party, !party.isEmpty {
@@ -309,6 +319,6 @@ private struct PeopleSearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

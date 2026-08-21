@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 
 struct TradeDetailView: View {
@@ -5,11 +6,16 @@ struct TradeDetailView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.openPremium) private var openPremium
     @State private var didCheckRetraction = false
     @State private var performance: TradePerformanceResponse?
     @State private var performanceLoaded = false
     @State private var performanceFailed = false
     @State private var performanceTask: Task<Void, Never>?
+    @State private var showPremiumSheet = false
+    @State private var pdfPreview: IdentifiedFileURL?
+    @State private var pdfBusy = false
+    @State private var pdfError: String?
 
     var body: some View {
         NavigationStack {
@@ -95,6 +101,12 @@ struct TradeDetailView: View {
                         }
 
                         filingButtons
+                        if let pdfError {
+                            Text(pdfError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -121,8 +133,22 @@ struct TradeDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showPremiumSheet) {
+            PremiumSheet()
+                .environmentObject(store)
+        }
+        .sheet(item: $pdfPreview) { item in
+            FilingPDFQuickLook(url: item.url)
+        }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        // Without this, a drag starting inside the body `ScrollView` never
+        // reaches the detent-resize recognizer, so dragging the grabber up
+        // to `.large` silently does nothing (iPad audit P2-1) — this makes
+        // the same upward drag resize the sheet once its scroll view is
+        // already at the top, matching Apple's own apps.
+        .presentationContentInteraction(.resizes)
+        .iPadFullWidthSheet()
         .task {
             // The feed never re-announces a row it already served once it's
             // retracted (see app/docs/client-mobile-api.md); reconcile this
@@ -235,14 +261,11 @@ struct TradeDetailView: View {
         }
     }
 
-    /// PDF + source filing side-by-side (~half width), liquid-glass / light grey,
-    /// no "View" word in the labels.
+    /// Archived Filing PDF is Premium and stays in-app (Bearer + QuickLook).
+    /// Source Filing is the public government URL and stays ungated.
     @ViewBuilder
     private var filingButtons: some View {
-        let pdfURL: URL? = {
-            guard let docId = trade.docId, !docId.isEmpty else { return nil }
-            return store.api.documentPDFURL(docId: docId)
-        }()
+        let hasArchivedPDF = !(trade.docId ?? "").isEmpty
         let sourceURL: URL? = {
             guard let raw = trade.filing.sourceUrl,
                   let url = URL(string: raw),
@@ -250,21 +273,28 @@ struct TradeDetailView: View {
             return url
         }()
 
-        if pdfURL != nil || sourceURL != nil {
+        if hasArchivedPDF || sourceURL != nil {
             HStack(spacing: 10) {
-                if let pdfURL {
+                if hasArchivedPDF {
                     Button {
-                        openURL(pdfURL)
+                        openArchivedFilingPDF()
                     } label: {
-                        Label("Filing PDF", systemImage: "doc.richtext")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                        HStack {
+                            if pdfBusy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Label("Filing PDF", systemImage: "doc.richtext")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
                     }
                     .buttonStyle(.bordered)
                     .tint(chamberGradient.opacity(0.85))
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .disabled(pdfBusy)
                 }
 
                 if let sourceURL {
@@ -283,6 +313,55 @@ struct TradeDetailView: View {
                 }
             }
             .padding(.top, 8)
+        }
+    }
+
+    private func openArchivedFilingPDF() {
+        pdfError = nil
+        // Guideline 5.1.1(v): the filing PDF is content, not account-specific
+        // functionality — a signed-out device with its own Apple purchase
+        // fetches it in-app the same way a signed-in Premium session does
+        // (APIClient attaches the cached device entitlement token). Signed
+        // in, `premiumFeatureAccess` additionally excludes a device purchase
+        // already linked to a DIFFERENT account.
+        switch FilingPDFAccess.action(isPremium: store.premiumFeatureAccess) {
+        case .showPremiumSheet:
+            if let openPremium {
+                openPremium()
+            } else {
+                showPremiumSheet = true
+            }
+        case .fetchInApp:
+            Task { await loadArchivedFilingPDF() }
+        }
+    }
+
+    private func loadArchivedFilingPDF() async {
+        guard let docId = trade.docId, !docId.isEmpty else { return }
+        await MainActor.run { pdfBusy = true }
+        defer { Task { @MainActor in pdfBusy = false } }
+        do {
+            let fetched = try await store.api.fetchDocumentPDF(docId: docId)
+            let fileURL = try store.api.writeDocumentPDFPreviewFile(
+                docId: docId,
+                data: fetched.data,
+                contentType: fetched.contentType
+            )
+            await MainActor.run { pdfPreview = IdentifiedFileURL(url: fileURL) }
+        } catch let error as APIError {
+            if case .server(let status, _, _) = error, status == 402 {
+                await MainActor.run {
+                    if let openPremium {
+                        openPremium()
+                    } else {
+                        showPremiumSheet = true
+                    }
+                }
+                return
+            }
+            await MainActor.run { pdfError = error.errorDescription ?? "Could not open the filing PDF." }
+        } catch {
+            await MainActor.run { pdfError = "Could not open the filing PDF." }
         }
     }
 
@@ -424,6 +503,39 @@ struct TradeDetailView: View {
         if chamber == "senate" { return AppTheme.senateColor }
         if chamber == "executive" { return AppTheme.execColor }
         return .blue
+    }
+}
+
+private struct IdentifiedFileURL: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+private struct FilingPDFQuickLook: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
+        context.coordinator.url = url
+        uiViewController.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
+            url as QLPreviewItem
+        }
     }
 }
 

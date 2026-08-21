@@ -243,7 +243,7 @@ describe('fetchSenatePtrFilings', () => {
     expect(out.map((f) => f.pipelineDocId)).toEqual(['S-a', 'S-b', 'S-c']);
   });
 
-  it('routes requests to relayUrl microservice endpoint when provided', async () => {
+  it('prefers the Mac relay over direct eFD (Imperva 403s the box)', async () => {
     const urls: string[] = [];
     const bodies: any[] = [];
     const fetchImpl = async (

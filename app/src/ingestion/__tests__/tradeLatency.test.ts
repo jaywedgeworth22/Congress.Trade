@@ -42,6 +42,8 @@ import {
   mergeFmpFamilyCandidateRows,
   mergeFmpFamilyObservationRows,
   mergeFmpOperationalStatus,
+  isLatencyComparisonPublic,
+  PUBLIC_FMP_LATENCY_LABEL,
   parseFmpDisclosureRows,
   parseUnusualWhalesDisclosureRows,
   providerFilerName,
@@ -975,6 +977,20 @@ describe('tradeLatency', () => {
       expect(mergeFmpOperationalStatus(['off', 'running'])).toBe('running');
       expect(mergeFmpOperationalStatus(['stopped', 'off'])).toBe('stopped');
       expect(mergeFmpOperationalStatus(['off', 'off'])).toBe('off');
+    });
+
+    it('isLatencyComparisonPublic keeps only running lanes with a trustworthy coverage join', () => {
+      expect(isLatencyComparisonPublic({ operationalStatus: 'running' })).toBe(true);
+      expect(isLatencyComparisonPublic({ operationalStatus: 'running', coverageIntegrity: 'ok' })).toBe(true);
+      expect(isLatencyComparisonPublic({ operationalStatus: 'error' })).toBe(false);
+      expect(isLatencyComparisonPublic({ operationalStatus: 'stopped' })).toBe(false);
+      expect(isLatencyComparisonPublic({ operationalStatus: 'off' })).toBe(false);
+      expect(isLatencyComparisonPublic({ operationalStatus: 'unknown' })).toBe(false);
+      expect(isLatencyComparisonPublic({
+        operationalStatus: 'running',
+        coverageIntegrity: 'contradiction',
+      })).toBe(false);
+      expect(PUBLIC_FMP_LATENCY_LABEL).toBe('FinancialModelingPrep.com');
     });
   });
 

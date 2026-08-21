@@ -34,6 +34,7 @@ import {
   extractPrintedDateFromText,
   runAutonomySweeps,
   sweepLivenessAlarms,
+  sweepLocalVisionHostedFallback,
 } from '../autonomySweeps.ts';
 
 describe('autonomySweeps', () => {
@@ -424,6 +425,48 @@ describe('autonomySweeps', () => {
     });
   });
 
+  describe('sweepLocalVisionHostedFallback', () => {
+    it('enqueues hosted filing.extracted once for a parked local_mac_1 doc', async () => {
+      const env = makeEnv();
+      await insertFiling({
+        doc_id: 'H-2025-20026666',
+        ingest_status: 'needs_review',
+        doc_kind: 'scanned_pdf',
+        first_seen_at: '2026-08-10T00:00:00Z',
+        raw_object_key: 'raw/H-2025-20026666.pdf',
+      });
+      await d1.prepare(
+        `UPDATE filings SET error = ? WHERE doc_id = ?`,
+      ).bind(
+        'local_vision_exhausted: attempts=3 last=transcription_failed worker=local_mac_1',
+        'H-2025-20026666',
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, 0, ?)`,
+      ).bind(
+        'H-2025-20026666',
+        'local_vision_exhausted,scanned_pdf_vision_spend',
+        '2026-08-10T00:00:00Z',
+      ).run();
+
+      const first = await sweepLocalVisionHostedFallback(env);
+      expect(first.enqueued).toBe(1);
+      expect(sentMessages).toEqual([{
+        message: { type: 'filing.extracted', docId: 'H-2025-20026666' },
+        options: undefined,
+      }]);
+      const stamped = await d1.prepare(
+        `SELECT error FROM filings WHERE doc_id = ?`,
+      ).bind('H-2025-20026666').first<{ error: string }>();
+      expect(stamped?.error).toContain('hosted_fallback_enqueued');
+
+      sentMessages.length = 0;
+      const second = await sweepLocalVisionHostedFallback(env);
+      expect(second.enqueued).toBe(0);
+      expect(sentMessages).toEqual([]);
+    });
+  });
+
   describe('runAutonomySweeps orchestration', () => {
     it('isolates a failing sweep so the others still run', async () => {
       const env = makeEnv();
@@ -493,6 +536,26 @@ describe('sweepLivenessAlarms (owner 2026-08-10: silence must be loud)', () => {
     expect(pushes[0].title).toContain('DOWN');
     expect(pushes[0].priority).toBe(1);
     expect(store.has('liveness-alarm:polling_senate')).toBe(true);
+  });
+
+  it('pages autopilot_halt and extraction_backlog through the same liveness path', async () => {
+    const { env } = kvEnv();
+    const pushes: Array<{ title: string; priority?: number }> = [];
+    const r = await sweepLivenessAlarms(env, new Date('2026-08-17T23:00:00Z'), {
+      checkHealth: async () => ({
+        status: 'stalled',
+        checks: [
+          { id: 'autopilot_halt', status: 'stalled', detail: 'Autopilot runs halted: error_class:billing', value: 1 },
+          { id: 'extraction_backlog', status: 'stalled', detail: '219 unresolved human-review item(s)', value: 219 },
+        ],
+      }) as never,
+      push: (async (_e: unknown, m: { title: string; priority?: number }) => {
+        pushes.push(m);
+        return { sent: true };
+      }) as never,
+    });
+    expect(r.notified.sort()).toEqual(['autopilot_halt', 'extraction_backlog']);
+    expect(pushes).toHaveLength(2);
   });
 
   it('does NOT re-notify inside the 6h window while still bad', async () => {
