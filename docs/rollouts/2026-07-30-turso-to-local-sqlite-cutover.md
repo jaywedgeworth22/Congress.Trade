@@ -1,5 +1,9 @@
 # 2026-07-30 — Turso → local SQLite cutover (Oracle/Coolify)
 
+> **Current shape (2026-08):** Turso stays retired.  The SQLite file now lives
+> on Hetzner (`/data/congress-trade/db.sqlite`) with Litestream.  Oracle is
+> decommissioned.  See `app/DEPLOY.md`.
+
 ## Summary
 
 Per owner directive ("we aren't using Turso anymore"), the production database

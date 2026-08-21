@@ -525,14 +525,16 @@ export interface ThirdPartyUsageTelemetryEvent {
 // ---------------------------------------------------------------------------
 
 export interface Env {
-  // --- Bindings (wrangler.toml) ---
+  // --- Bindings (Worker-shaped names; Deno shims them on Coolify) ---
   DB: D1Database;
   RAW_FILES: R2Bucket;
   INGEST_QUEUE: Queue<QueueMessage>;
   DELIVERY_QUEUE: Queue<QueueMessage>;
   CONFIG_KV: KVNamespace;
 
-  // Turso Database Credentials (resolved via Infisical)
+  // SQLite path.  Env names are Turso leftovers.  Production is
+  // `file:/data/congress-trade/db.sqlite` via Coolify / Infisical.
+  // Do not point these at libsql://…turso.io.  Deno Deploy is retired.
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
 
@@ -543,7 +545,7 @@ export interface Env {
   AWS_S3_BUCKET_NAME?: string;
   AWS_REGION?: string;
 
-  // --- Secrets (wrangler secret put / .dev.vars) ---
+  // --- Secrets (Infisical / Coolify env / local .dev.vars) ---
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
   GEMINI_RPM_LIMIT?: string;

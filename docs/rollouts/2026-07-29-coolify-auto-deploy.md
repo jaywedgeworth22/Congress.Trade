@@ -1,5 +1,9 @@
 # 2026-07-29 — Coolify auto-deploy for Congress.Trade
 
+> **Current shape (2026-08):** Coolify auto-deploy is still the production
+> path, now on Hetzner `fleet-hetzner-nbg1` (Oracle is decommissioned).
+> Deno Deploy is retired.  See `app/DEPLOY.md`.
+
 ## Context
 Retire SSH Actions deploy. Prod deploys via Coolify on Oracle like Socratic.Trade.
 

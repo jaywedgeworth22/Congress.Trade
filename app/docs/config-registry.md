@@ -1,11 +1,15 @@
 # Config Registry — Infisical as the Single Source of Truth
 
-Last updated: 2026-08-16
+Last updated: 2026-08-20
 
-Every configuration key and knob the Coolify Deno app reads is routed through the
-Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
-**Env-only** below.  Resolution order per key:
+**Current shape:** production is Coolify Deno-in-Docker on Hetzner, local
+SQLite + Litestream, Infisical secrets.  Deno Deploy and Turso are retired.
+Do not set production secrets "in Deno Deploy."  Edit Infisical (and Coolify
+only for the Infisical bootstrap + `TURSO_DATABASE_URL=file:…` override).
 
+Every configuration key and knob the Coolify Deno process reads is routed
+through the Infisical runtime resolver (`src/secrets/infisical.ts`) unless
+listed under **Env-only** below. Resolution order per key:
 1. **Infisical** — the value set in the Infisical project (env `prod` by
    default). Edits go live within the resolver cache TTL
    (`INFISICAL_CACHE_TTL_SECONDS`, default 600s) with **no redeploy**.
@@ -13,15 +17,15 @@ Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
    name that exists in both is shadowed by the app row — so fleet-wide
    keys (`AGENT_SYNC_TOKEN`, `AGENT_SYNC_POST_TOKEN`) live **only** in
    shared.  Do not copy them onto the ST or CT app projects.
-2. **Env fallback** — Coolify / `.dev.vars` process environment.
+2. **Env fallback** — Coolify container env, or local `.dev.vars` for tests.
    Kept so keyless local dev / tests still boot and so an Infisical outage
-   never leaves production unconfigured.  Disable with
+   never leaves production unconfigured. Disable with
    `INFISICAL_ALLOW_ENV_FALLBACK="false"` to hard-require Infisical.
 
-**Operate by editing Infisical, not a wrangler.toml.**  There is no production
-`wrangler.toml`.  Audit which source is live for every key at any time:
-`GET /api/admin/config-sources` (admin-gated; reports names + sources only,
-never values).
+**Operate by editing Infisical, not Deno Deploy and not wrangler.toml.**
+There is no production `wrangler.toml`.  Audit which source is live for
+every key at any time: `GET /api/admin/config-sources` (admin-gated; reports
+names + sources only, never values).
 
 ## Infisical-tunable (everything here is live-editable)
 
@@ -56,9 +60,9 @@ they can drain backlogs without holding `ADMIN_TOKEN`. Worst case if leaked:
 someone re-runs an idempotent requeue.
 
 ¹ Admin AUTH accepts the Infisical value (rotation works live). Keep a strong
-`INFISICAL_APP_CLIENT_SECRET` set as a Worker secret regardless: the encrypted
+`INFISICAL_APP_CLIENT_SECRET` set as a Coolify env regardless: the encrypted
 KV cache of resolved secrets keys off the Infisical client secret (falling
-back to the env `ADMIN_TOKEN`), so pulling ADMIN_TOKEN out of Worker env is
+back to the env `ADMIN_TOKEN`), so pulling ADMIN_TOKEN out of container env is
 safe only while a strong client secret exists.
 
 ### Fleet coordination (shared-at-ct ONLY)
@@ -340,9 +344,10 @@ rejected.
 - **Poll cadence / Aggressive Mode** — stored in SQLite `poll_config` + Deno KV,
   edited live from the Admin · Cadence tab.
 - **Site logo style** — admin UI setting (Deno KV).
-- **Runtime resources** (SQLite / Deno KV / R2 / `deno_runtime_queue`) —
-  host + Coolify infrastructure in `app/docker-compose.yml` and
-  `src/deno/main.ts`, not Infisical config values.
+- **Runtime paths** — SQLite file, Deno KV file, R2/S3 shim, and the
+  `deno_runtime_queue` table are Coolify/compose infrastructure
+  (`app/docker-compose.yml`, `src/deno/main.ts`), not Infisical knobs.
+  `TURSO_DATABASE_URL` is the leftover env name for the local file.
 
 ## Conventions
 

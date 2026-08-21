@@ -1,18 +1,20 @@
 # Congress.Trade
 
-Deno / Hono app that ingests public US **STOCK Act** trade disclosures
-(House, Senate, and Executive Branch OGE 278-T), extracts structured trade
-events, and pushes them to clients via webhook / SSE / REST.  Live site:
+Deno-in-Docker service that ingests US **STOCK Act** disclosures (House +
+Senate + Executive / OGE 278-T), extracts structured trade events, and pushes
+them to clients via webhook / SSE / REST / APNs.  Live site:
 [congress.trade](https://congress.trade).
 
-> This is the production app in `app/`.  It runs as **Deno** (not Node) in
+> This is the production Coolify app.  It runs as **Deno** (not Node) in
 > the Coolify `congress-app` container on Hetzner `fleet-hetzner-nbg1` /
 > `host.jays.services`, not as a Cloudflare Worker.  Proof:
 > `../AGENTS.md` Current Shape, `Dockerfile`, `docker-compose.yml`,
 > `src/deno/main.ts`.  `wrangler.toml` is gone.  Leftover only:
 > `wrangler.preview.example.toml`, `@sentry/cloudflare`,
 > `@cloudflare/workers-types`.  Do not reintroduce Worker deploy as
-> production.  See `../AGENTS.md` for branch/worktree coordination
+> production.  **Deno Deploy and Turso are retired.**  Production is Coolify
+> on Hetzner, local SQLite + Litestream, Infisical secrets, paid cron
+> `* * * * *`.  See `../AGENTS.md` for branch/worktree coordination
 > rules before continuing work.
 >
 > iOS planning lives in `docs/mobile-app-roadmap.md`.  It treats the planned
@@ -24,7 +26,6 @@ events, and pushes them to clients via webhook / SSE / REST.  Live site:
 > (admin DB browser), `scan-cpu-worker` (Tesseract OCR helper).  Filing PDFs
 > still use the R2 bucket historically named `congress-feed-raw`.  Do not
 > rename that bucket without a coordinated resource migration.
-
 ---
 
 ## Architecture

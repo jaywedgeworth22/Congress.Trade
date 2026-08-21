@@ -3,15 +3,13 @@
 Congress.Trade is a live product at [congress.trade](https://congress.trade)
 that ingests public US STOCK Act trade disclosures (House, Senate, and
 Executive Branch OGE 278-T), extracts and normalizes trades, and serves a
-public dashboard plus REST, webhook, and SSE delivery.
+public dashboard plus REST, webhook, SSE, and APNs delivery.
 
-Production is not a Cloudflare Worker and is not Node.  The runnable app
-lives in `app/` and runs as **Deno** inside the Coolify `congress-app`
-Docker container on Hetzner `fleet-hetzner-nbg1` (same box as
-`host.jays.services`).  Structured data is host SQLite at
-`/data/congress-trade/db.sqlite`.  Filing PDFs live in Cloudflare R2.
-Cloudflare DNS routes `https://congress.trade`; it is not the application
-runtime.
+**Deno Deploy and Turso are retired.**  Production is Coolify Docker on
+Hetzner `fleet-hetzner-nbg1` (same box as `host.jays.services`), Deno inside
+the `congress-app` container, host SQLite at `/data/congress-trade/db.sqlite`
+(Litestream-replicated), Infisical secrets.  Cloudflare DNS routes
+`https://congress.trade`; it is not the application runtime.
 
 Proof (do not treat leftover Worker packages as the live host):
 `AGENTS.md` Current Shape, `app/Dockerfile` (`FROM denoland/deno:alpine`,
@@ -19,7 +17,7 @@ Proof (do not treat leftover Worker packages as the live host):
 `app/src/deno/main.ts`.  `app/wrangler.toml` is gone.  Leftover only:
 `app/wrangler.preview.example.toml`, `@sentry/cloudflare`,
 `@cloudflare/workers-types`.  Do not reintroduce `wrangler deploy` as the
-production path.
+production path.  See `AGENTS.md` "Current Shape" and `app/DEPLOY.md`.
 
 ## Repository Layout
 
@@ -31,8 +29,7 @@ production path.
 | `app/docker-compose.yml` | Coolify compose project: `congress-app`, `sqlite-web`, `scan-cpu-worker`. |
 | `app/migrations/` | Local schema files.  Production schema is applied via `POST /api/admin/migrate`, not Wrangler D1. |
 | `app/docs/` | Runbooks for auth/billing, preview leftovers, and cross-app FMP data sharing. |
-| `app/scripts/` | Operational scripts.  Some target production, so read headers before running. |
-| `congress-trade-feed-design.md` | Historical design context and product rationale. |
+| `app/scripts/` | Operational scripts.  Some target production, so read headers before running. || `congress-trade-feed-design.md` | Historical design context and product rationale. |
 | `congress_trade_watch.py` | Standalone local House PTR watcher prototype.  It is not the production ingest path. |
 | `dashboard-design.html` | Historical/static UI design artifact.  Current UI lives in `app/src/ui/`. |
 | `AGENTS.md` | Collaboration rules for Codex, Claude, Cursor, Copilot, Antigravity, and other agents. |
@@ -56,10 +53,11 @@ Coolify owns production.  After a `main` deploy, apply schema with
 `ADMIN_TOKEN=... bash app/scripts/ship.sh` (waits for the live `/api/health`
 build SHA, then `POST /api/admin/migrate` against `https://congress.trade`).
 
-There is no production `app/wrangler.toml`.  `app/scripts/deploy-preview.sh`
-is leftover isolated Wrangler preview tooling and is not the live site.  Do
-not deploy, migrate production, or run ingest/backfill unless that is
-explicitly intended.
+Do not `wrangler deploy`, do not deploy to Deno Deploy, and do not point the
+DB at Turso.  There is no production `app/wrangler.toml`.
+`app/scripts/deploy-preview.sh` is leftover isolated Wrangler preview tooling
+and is not the live site.  Do not deploy, migrate production, or run
+ingest/backfill unless that is explicitly intended.
 
 ## Coordination
 
