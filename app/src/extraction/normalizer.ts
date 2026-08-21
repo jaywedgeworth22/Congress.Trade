@@ -386,15 +386,29 @@ export async function normalize(
     // so local-vision pending can re-claim the stored raw copy.
     let reviewFlagged = flagged;
     if (ocrUnusable && !exceedsPublishLimit) {
-      reason = `ocr_unusable,extract_empty_failure,no_transactions_extracted`;
-      if (droppedFormChrome > 0) reason = `form_chrome_only,${reason}`;
-      reviewFlagged = [];
+      // Keep dated, non-chrome rows (amendment letters with one real Treasury
+      // line). Only wipe when nothing recoverable remains.
+      const keepable = flagged.filter((f) =>
+        Boolean(f.tx.txDate) && !looksLikeHeaderContaminatedAsset(f.tx.assetName)
+      );
+      if (keepable.length === 0) {
+        reason = `ocr_unusable,extract_empty_failure,no_transactions_extracted`;
+        if (droppedFormChrome > 0) reason = `form_chrome_only,${reason}`;
+        reviewFlagged = [];
+      } else {
+        reviewFlagged = keepable;
+        reason = reviewReason(
+          keepable,
+          Math.min(...keepable.map((f) => f.tx.confidence)),
+          confThreshold,
+        );
+      }
     }
     const routed = await routeToReview(
       env,
       filing,
       reviewFlagged,
-      ocrUnusable ? 0 : minConfidence,
+      ocrUnusable && reviewFlagged.length === 0 ? 0 : minConfidence,
       nowIso,
       {
         extractor: extractorName,
@@ -408,9 +422,10 @@ export async function normalize(
       },
       reviewSnapshot,
     );
+    const wiped = ocrUnusable && reviewFlagged.length === 0;
     return {
-      transactions: ocrUnusable ? [] : transactions,
-      minConfidence: ocrUnusable ? 0 : minConfidence,
+      transactions: wiped ? [] : (ocrUnusable ? reviewFlagged.map((f) => f.tx) : transactions),
+      minConfidence: wiped ? 0 : minConfidence,
       needsReview: routed,
       published: false,
       reviewReason: reason,
@@ -657,7 +672,12 @@ export function scoreFields(
     const knownName = nameIndex.get(ticker);
     if (knownName) {
       const simplifiedAsset = simplifyCompanyName(assetName);
-      if (simplifiedAsset && !namesPlausiblyMatch(simplifiedAsset, knownName)) {
+      const tickerAsName = simplifiedAsset === ticker.toLowerCase();
+      if (
+        simplifiedAsset
+        && !tickerAsName
+        && !namesPlausiblyMatch(simplifiedAsset, knownName)
+      ) {
         flags.push('ticker_asset_mismatch');
       }
     }
