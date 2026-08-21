@@ -1,5 +1,23 @@
 # Current Handoff
 
+## 2026-08-20 CLAUDE — Premium activation alerts, Codex round resolved (PR #2082)
+
+Eight Codex findings fixed.  Highest-value: `sendPushover` had no abort signal,
+so a STALLED Pushover connection could hang the Stripe webhook indefinitely and
+trigger Stripe's retry - now bounded at 5s in the shared helper.  The activation
+claim was consumed before delivery, losing the alert permanently on any failure;
+it is now released on failure, which also covers the migration-window case where
+auto-deploy serves new code before `premium_activation_notices` exists.
+
+Also: `customer.subscription.updated` admitted (card-confirmation subscriptions
+were silently unalerted), a recognised plan required instead of defaulting
+null->monthly, the deprecated Apple confirm route wired, and Apple newness
+re-checked against the persisted owner to close a TOCTOU that could put the
+wrong email in an alert.
+
+Migration is 0093 (renumbered twice by collisions).  AFTER MERGE: run
+`POST /api/admin/migrate`.
+Receipt: `docs/rollouts/2026-08-20-premium-activation-alerts.md`.
 ## 2026-08-20 CURSOR — Shared-dep auto-merge: no GH_PAT, no pull_request_target
 
 Jay: do not add `GH_PAT`.  `congress-trading-shared` is public and vendored
