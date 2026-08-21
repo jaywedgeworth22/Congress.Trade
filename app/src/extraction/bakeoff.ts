@@ -101,8 +101,9 @@ export interface CandidateInvocation {
  * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
  * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
  * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
- * cell for a dead slug can only fail. `google/gemini-3.7-flash` is the OR-transport
- * route around the blocked direct Gemini key.
+ * cell for a dead slug can only fail. `~google/gemini-flash-latest` is the
+ * live OpenRouter Flash seat (currently Gemini 3.7).  `google/gemini-3.7-flash`
+ * stays offered as the pinned generation.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   // Mistral OCR via the OpenRouter mistral-ocr file-parser plugin (see
@@ -123,6 +124,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'amazon/nova-lite-v1' },
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
   { provider: 'openrouter', model: 'google/gemini-3.7-flash' },
+  { provider: 'openrouter', model: '~google/gemini-flash-latest' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
 ];
 
@@ -157,10 +159,12 @@ export function isRetiredDisclosureCandidate(candidate: Pick<BakeoffCandidate, '
 
 /** Upgrade stale agreement configuration without rewriting historical run records. */
 export function upgradeRetiredDisclosureCandidate(candidate: BakeoffCandidate): BakeoffCandidate {
-  if (!isRetiredDisclosureCandidate(candidate)) return candidate;
-  return candidate.provider === 'openrouter'
-    ? { provider: 'openrouter', model: 'openai/gpt-5.6-terra' }
-    : { provider: 'openai', model: 'gpt-5.6-terra' };
+  const retired = isRetiredDisclosureCandidate(candidate)
+    ? (candidate.provider === 'openrouter'
+      ? { provider: 'openrouter' as const, model: 'openai/gpt-5.6-terra' }
+      : { provider: 'openai' as const, model: 'gpt-5.6-terra' })
+    : candidate;
+  return retired;
 }
 
 /** Production reasoning profile for the three GPT-5.6 scanned-document roles. */
