@@ -459,13 +459,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
   tr:last-child td { border-bottom: none; }
   tr.row:hover td { background: var(--panel-2); }
-  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable { user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
-  th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   th.sortable .arr { display: none; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable:hover .arr { display: inline; opacity: .18; }
   th.sortable.active .arr { display: inline; opacity: 1; color: var(--accent); }
+  /* Real, named control inside every sortable <th> (WEBA11Y P2 findings on
+     PR #2072): a bare tabindex+aria-sort <th> is announced only as a column
+     header, with no indication Enter/Space does anything. The <th> itself
+     keeps its native columnheader role and carries aria-sort (WEBA11Y-01);
+     .th-sort-btn is the actual focusable, named control, reset to look like
+     the plain-text label it replaces so the table doesn't shift size.  Shared by the
+     Trades feed, Trends leaderboard, and People directory headers. */
+  .th-sort-btn {
+    display: inline-block; background: none; border: 0; margin: -6px -4px; padding: 6px 4px;
+    font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
+    text-align: inherit; white-space: inherit; cursor: pointer;
+  }
+  .th-sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   #benchmarkResults { display: block; }
   .bench-table { min-width: 800px; margin-top: 16px; table-layout: fixed; }
   .bench-table th { font-size: 10px; padding: 10px 8px; line-height: 1.3; white-space: normal; }
@@ -600,6 +612,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .fc-owner { display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text); }
   .fc-member.clickable:active { text-decoration: underline; }
   .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
+  /* Visually hidden but still readable by AT — folded into the card's
+     accessible name after the visible content (WEBA11Y-02). */
+  .fc-hint { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  /* Real, named control for a whole-row-click table row (WEBA11Y P2 follow-up
+     to WEBA11Y-01): a <tr> that keeps its native row role (correctly, per
+     WEBA11Y-01) but exposes no link/button of its own is announced only as
+     "row", with no indication Enter/Space does anything. rowOpenBtnHtml()
+     below renders a real <button data-txid>/<button data-asset> into the
+     row's first cell. It stays visually hidden (same clip technique as
+     .fc-hint above) so it adds zero footprint to the table's layout at
+     rest — column widths and the resizable colgroup are unaffected — but
+     :focus-visible pops it into a real, visible, focus-ringed control the
+     moment a keyboard user tabs onto it (the standard "skip link" pattern).
+     Mouse clicks anywhere in the row keep working via the existing
+     delegated click handler; this button only adds the missing keyboard/AT
+     affordance. */
+  .row-open-btn { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; background: none; cursor: pointer; }
+  .row-open-btn:focus-visible {
+    position: relative; width: auto; height: auto; margin: 0 6px 0 0; padding: 2px 8px; overflow: visible; clip: auto;
+    display: inline-block; font: inherit; font-size: 11px; color: var(--accent); background: var(--panel-2);
+    border: 1px solid var(--accent); border-radius: 6px; outline: 2px solid var(--accent); outline-offset: 2px;
+  }
   /* Issue #1529: iOS-parity mobile-card layout — asset+logo/badge leading,
      bold trailing amount+date stack, tighter identity-first meta line.
      Replaces .fc-row1 (kept above, unused, harmless) as tradesCardHtml()'s
@@ -1222,7 +1256,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      drawer for no reason. ID-scoped so it always wins. */
   #detailDrawerBody .table-wrap { padding-right:0; }
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
-  .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
+  /* copyLinkHtml() splits the old single "Copy link" element into a real <a>
+     (navigates, SEOSOCIAL-02) and a real <button> (copies, WEBA11Y-08) placed
+     side by side; drawer-link-row carries the row layout + spacing that used
+     to live on drawer-all-link alone so both controls still read as one
+     compact affordance, just two of them now. */
+  .drawer-link-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:9px; }
+  .drawer-all-link, .drawer-copy-link-btn { display:inline-block; margin:0; font-size:13px; background:none; border:0; padding:0; color:var(--accent); text-decoration:none; cursor:pointer; text-align:left; font-family:inherit; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
   .review-doc-link { display:block; margin-top:5px; font-size:12px; font-family:var(--sans); font-weight:600; white-space:nowrap; }
   .review-doc-link.inline { display:inline-block; margin:0 0 0 10px; }
@@ -1286,6 +1326,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-party.clickable { transition: border-color 0.15s ease, background 0.15s ease; }
   .drawer-trade-party.clickable:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
   .subs-msg { flex-basis: 100%; margin-top: 10px; }
+  /* Programmatic labels for the Delivery create-form controls (WEBA11Y-04):
+     absolutely positioned so they never occupy layout space or participate
+     in flex sizing, and stay a sibling (not a wrapper) so the existing
+     .row-flex > select/input responsive rules keep matching. */
+  .field-vh-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .secret-panel { display:grid; gap:16px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:19px; color:var(--text); max-width:100%; }
   .secret-panel strong { font-size:13px; }
   .secret-panel code { display:block; overflow:auto; white-space:nowrap; padding:8px; }
@@ -1431,12 +1476,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .field { display:flex; gap:8px; margin-top:6px; }
   .field input { flex:1; }
   .plan-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
-  .plan { border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
+  .plan { display:block; border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
   .plan:hover, .plan.sel { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 7%,transparent); }
+  .plan:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .plan .price { font-size:23px; font-weight:800; }
   .plan .per { font-size:12px; color:var(--text-dim); }
   .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
   .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:800; color:#ffffff; background:#15803d; padding:2px 7px; border-radius:999px; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
+  .plan-radio-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
   .toast.show { display:block; }
@@ -3047,11 +3094,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTickers">
             <thead>
               <tr>
-                <th class="sortable" style="min-width: 140px;" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
-                <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable" style="min-width: 140px;"><button type="button" class="th-sort-btn" onclick="setTickerSort('trades')">Asset</button></th>
+                <th class="sortable" data-sort="trades" aria-sort="descending"><button type="button" class="th-sort-btn" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades" aria-hidden="true"></span></button></th>
+                <th class="sortable r" data-sort="members" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members" aria-hidden="true"></span></button></th>
+                <th class="sortable r est" data-sort="volume" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume" aria-hidden="true"></span></button></th>
+                <th class="sortable r" data-sort="netflow" aria-sort="none"><button type="button" class="th-sort-btn" onclick="setTickerSort('netflow')">Net Flow <span class="sort-icon" data-sort="netflow" aria-hidden="true"></span></button></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
@@ -3195,9 +3242,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th class="col-fill" data-sort="name" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind"></span></th>
-          <th class="col-fit" data-sort="chamber" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
+          <th class="col-fill" data-sort="name" aria-sort="none" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th class="col-fit" data-sort="chamber" aria-sort="none" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th class="col-num" data-sort="trades" aria-sort="none" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -3281,12 +3328,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px;flex-wrap:wrap">
+        <label class="field-vh-label" for="newDelivery">Channel</label>
         <select id="newDelivery" disabled onchange="updateNewTargetVisibility()">
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
+        <label class="field-vh-label" for="newTarget">Target URL</label>
         <input id="newTarget" placeholder="target URL (webhook only)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newTickers">Tickers</label>
         <input id="newTickers" placeholder="tickers (CSV, optional)" style="flex:1 1 100%;min-width:0" disabled />
+        <label class="field-vh-label" for="newMembers">Members</label>
         <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated filer ids or names" />
+        <label class="field-vh-label" for="newChambers">Branches</label>
         <select id="newChambers" disabled>
           <option value="">House + Senate + Executive</option>
           <option value="house">House</option>
@@ -3294,6 +3346,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="house,senate">House + Senate</option>
           <option value="executive">Executive</option>
         </select>
+        <label class="field-vh-label" for="newSides">Trade side</label>
         <select id="newSides" disabled title="Trade side filter (B buy / S sell / E exchange)">
           <option value="">Buys + Sells + Exchanges</option>
           <option value="B">Buys</option>
@@ -3554,7 +3607,7 @@ ${speedProofSectionHtml(true)}
 
 <div class="drawer" id="detailDrawer">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-  <div class="drawer-panel"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTopbarTitle"><div class="drawer-topbar"><span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
@@ -3592,16 +3645,18 @@ ${speedProofSectionHtml(true)}
       <li style="opacity:0.8; font-size:0.9em; margin-top:0.5rem">Note: Users can add up to 2 delivery methods (webhooks or SSE streams).</li>
     </ul>
 
-    <div class="plan-grid" id="pricingPlans">
-      <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
+    <div class="plan-grid" id="pricingPlans" role="radiogroup" aria-label="Plan">
+      <label class="plan sel" id="planMonthly" for="planMonthlyRadio">
+        <input type="radio" class="plan-radio-input" id="planMonthlyRadio" name="plan" value="monthly" checked onchange="selectPlan('monthly')">
         <div class="cad">Monthly</div>
         <div class="price">$5<span class="per">/mo</span></div>
-      </div>
-      <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
+      </label>
+      <label class="plan" id="planAnnual" for="planAnnualRadio">
+        <input type="radio" class="plan-radio-input" id="planAnnualRadio" name="plan" value="annual" onchange="selectPlan('annual')">
         <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
         <div class="price">$50<span class="per">/yr</span></div>
-      </div>
+      </label>
     </div>
     <p class="trial-note" id="pricingTrialNote">2-week free trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
@@ -4403,8 +4458,18 @@ function initials(name) {
    revealing the initials underneath — mirrors the ticker-logo onerror pattern.
    Unlike the ticker logo (decorative next to a visible ticker string), this
    photo is sometimes the ONLY identifier on screen (e.g. the cluster-card face
-   strip has no adjacent name text), so it always gets a real alt with the
-   politician's name rather than alt="". */
+   strip has no adjacent name text), so by default it gets a real alt with the
+   politician's name rather than alt="".
+   WEBA11Y P2 (mobile trade cards, tradesCardHtml()): most call sites DO have
+   an adjacent name — memberAvatarHtml() is immediately followed by a sibling
+   name element. When the whole thing sits inside one accessible-name-bearing
+   container (a role="button" row/card/link with no aria-label of its own),
+   the avatar's own text — fallback initials, plus the <img alt> when a photo
+   loaded — gets concatenated into that name RIGHT ALONGSIDE the sibling name
+   text, so AT users hear e.g. "JS John Smith John Smith" once for the
+   initials/alt and again for the visible name. Pass decorative=true from any
+   call site that already has its own adjacent, visible name text so the
+   avatar contributes nothing to the accessible name and the name reads once. */
 function partyBucketClass(raw) {
   var s = String(raw || '').trim();
   if (!s) return '';
@@ -4412,13 +4477,15 @@ function partyBucketClass(raw) {
   if (/^r/i.test(s) || /^rep/i.test(s)) return 'R';
   return 'O';
 }
-function memberAvatarHtml(name, photoUrl, party) {
+function memberAvatarHtml(name, photoUrl, party, decorative) {
+  var altText = decorative ? '' : esc(name || '');
   var img = photoUrl
-    ? '<img src="' + esc(photoUrl) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="this.remove()" />'
+    ? '<img src="' + esc(photoUrl) + '" alt="' + altText + '" loading="lazy" decoding="async" onerror="this.remove()" />'
     : '';
   var bucket = partyBucketClass(party);
   var ring = bucket ? ' party-' + bucket : '';
-  return '<span class="avatar' + ring + '">' + esc(initials(name)) + img + '</span>';
+  var hidden = decorative ? ' aria-hidden="true"' : '';
+  return '<span class="avatar' + ring + '"' + hidden + '>' + esc(initials(name)) + img + '</span>';
 }
 function setBanner(text, isErr) {
   var nodes = document.querySelectorAll('#banner, .feed-banner');
@@ -4490,7 +4557,7 @@ function isAuthError(e) { return !!(e && e.isAuth); }
    magic "click here for X, there for Y" on the list surface). */
 function memberCellHtml(r) {
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
-  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket) +
+  return '<div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl, r.party || r.partyBucket, true) +
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? '<span class="muted">  |  ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 /* Owner punch list #16: a minority of filings report the bare, unhelpful
@@ -4589,7 +4656,7 @@ function tradesCardHtml(r) {
   var owner = ownerLabel(r.owner);
   var filedRel = relativeTimeText(r.filed || r.filedDate || r.firstSeenAt);
   var bits = [];
-  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket) +
+  bits.push(memberAvatarHtml(member, r.photoUrl, r.party || r.partyBucket, true) +
     '<span class="fc-member">' + ident.join(' · ') + '</span>');
   if (owner) bits.push('<span class="fc-owner">' + esc(owner) + '</span>');
   if (filedRel) bits.push('<span class="fc-filed" title="Official filed time">' + esc(filedRel) + '</span>');
@@ -4597,7 +4664,13 @@ function tradesCardHtml(r) {
     bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
       (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
   }
-  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+  // No aria-label here (WEBA11Y-02): it used to replace the accessible name
+  // with just "TICKER by NAME", hiding Buy/Sell, the amount bracket and the
+  // date from screen-reader users.  Dropping it lets the card's own visible
+  // content (ticker, Buy/Sell badge, amount, date, member line) become the
+  // name, matching what a sighted user sees; the action hint is appended as
+  // a visually-hidden suffix instead of replacing the name.
+  return '<article class="trades-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" title="Open trade details">' +
     '<div class="fc-main">' +
       '<div class="fc-top">' + assetCellHtml(r) + actionBadge(r.type) +
         '<div class="fc-trail">' + amountCellHtml(r) + '<div class="fc-date muted">' + esc(traded) + '</div></div>' +
@@ -4605,6 +4678,7 @@ function tradesCardHtml(r) {
       '<div class="fc-row2 muted">' + bits.join('<span class="fc-sep">  ·  </span>') + '</div>' +
     '</div>' +
     '<span class="fc-chevron" aria-hidden="true">›</span>' +
+    '<span class="fc-hint">Open trade details</span>' +
   '</article>';
 }
 function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
@@ -4771,21 +4845,24 @@ function renderTradesHeader() {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    var sortAttrs = c.sort ? ' tabindex="0" role="button" aria-sort="none"' : '';
-    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
+    // No role="button" here: a <th> keeps its native columnheader role so
+    // aria-sort (set by updateSortIndicators()) stays valid ARIA (WEBA11Y-01).
+    // The actual interactive control is the real named <button> inside —
+    // native <button> semantics give Enter/Space activation for free, so no
+    // custom keydown handler is needed here anymore (WEBA11Y P2 follow-up:
+    // a bare tabindex'd <th> was announced only as a column header, with no
+    // indication that Enter/Space did anything).
+    var sortAttrs = c.sort ? ' aria-sort="none"' : '';
+    var inner = c.sort
+      ? '<button type="button" class="th-sort-btn" data-sort="' + c.sort + '">' + esc(c.label) + '<span class="arr" aria-hidden="true"></span></button>'
+      : esc(c.label);
+    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + inner + '</th>';
   }).join('');
-  var ths = head.querySelectorAll('th.sortable');
-  for (var i = 0; i < ths.length; i++) {
-    (function (th) {
-      th.onclick = function () { setSort(th.dataset.sort); };
-      // Sort headers are keyboard-focusable (tabindex+role=button above); Enter/Space
-      // activates them the same as a click, matching the trades-card keyboard pattern.
-      th.onkeydown = function (e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        setSort(th.dataset.sort);
-      };
-    })(ths[i]);
+  var btns = head.querySelectorAll('.th-sort-btn');
+  for (var i = 0; i < btns.length; i++) {
+    (function (btn) {
+      btn.onclick = function () { setSort(btn.dataset.sort); };
+    })(btns[i]);
   }
   // Re-init the resizable columns for the new header.
   var table = el('tradesTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
@@ -4946,6 +5023,12 @@ function makeTradesFilterMatcher() {
     return tradeRowMatchesSearch(r, q);
   };
 }
+// See the .row-open-btn CSS comment above for why this exists: a real,
+// named control dropped into a clickable table row's first cell, invisible
+// at rest and popped into view on keyboard focus.
+function rowOpenBtnHtml(attrName, attrValue, label) {
+  return '<button type="button" class="row-open-btn" ' + attrName + '="' + esc(attrValue) + '">' + esc(label) + '</button>';
+}
 function renderTrades() {
   var matchesActiveFilters = makeTradesFilterMatcher();
   var body = el('tradesBody');
@@ -4975,8 +5058,10 @@ function renderTrades() {
     updateTradesCountMsg(0); maybeInitResize(); syncTradesTableWidth(); return;
   }
   body.innerHTML = rows.map(function (r) {
-    var tds = cols.map(function (c) {
-      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + c.cell(r) + '</td>';
+    var tds = cols.map(function (c, i) {
+      var cell = c.cell(r);
+      if (i === 0) cell = rowOpenBtnHtml('data-txid', r.id, 'Open trade details') + cell;
+      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + cell + '</td>';
     }).join('');
     return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
@@ -10073,6 +10158,9 @@ function syncPeopleSortIndicators() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.getAttribute('data-sort') === PEOPLE_SORT.key) {
       th.classList.add(PEOPLE_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+      th.setAttribute('aria-sort', PEOPLE_SORT.dir > 0 ? 'ascending' : 'descending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
     }
   }
 }
@@ -10142,7 +10230,7 @@ function renderPeopleDirectory(all) {
     }
     var branchPartyState = parts.length ? parts.join(' • ') : '—';
     return '<tr class="row" ' + (m.filerId ? 'data-member="' + esc(m.filerId) + '"' : '') + '>' +
-      '<td class="col-fill"><' + memberTag + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></' + memberTag + '></td>' +
+      '<td class="col-fill"><' + memberTag + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party, true) + '<span class="cell-clip" title="' + esc(name) + '">' + esc(name) + '</span></' + memberTag + '></td>' +
       '<td class="col-fit muted" title="' + esc(branchPartyState.replace(/<[^>]+>/g, '')) + '">' + branchPartyState + '</td>' +
       '<td class="col-num muted">' + (m.txCount != null ? fmtCount(m.txCount) : '—') + '</td></tr>';
   }).join('');
@@ -10868,7 +10956,7 @@ function loadTrPerformers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
           '</div></div></td>' +
@@ -10904,10 +10992,18 @@ function loadTrTickers() {
   var sortVal = trTickerSortVal || 'trades';
   var queryParams = trParams() + '&sort=' + sortVal + '&limit=15';
 
-  // Update header sort icons
+  // Update header sort icons + aria-sort together (WEBA11Y P2: this table
+  // never exposed aria-sort before — only the visual .sort-icon updated —
+  // so a screen-reader user got no indication which column, or direction,
+  // the leaderboard was sorted by).  Always descending: there is no asc/desc
+  // toggle for this table, only a choice of metric.
   var icons = document.querySelectorAll('#tableTrTickers .sort-icon');
   for (var i = 0; i < icons.length; i++) {
     icons[i].innerHTML = icons[i].getAttribute('data-sort') === sortVal ? ' ▼' : '';
+  }
+  var sortThs = document.querySelectorAll('#tableTrTickers th[data-sort]');
+  for (var j = 0; j < sortThs.length; j++) {
+    sortThs[j].setAttribute('aria-sort', sortThs[j].getAttribute('data-sort') === sortVal ? 'descending' : 'none');
   }
 
   aGet('ticker-leaderboard?' + queryParams).then(function (d) {
@@ -11019,7 +11115,7 @@ function loadTrMembers() {
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
           '<div class="stack-under"><span>' + statLine + '</span></div>' +
@@ -11120,7 +11216,7 @@ function loadTrLag() {
       var avgTip = 'Avg: mean number of days between transaction date and official filing date. ' + basis;
       var maxTip = 'Max: longest single trade-to-filing delay for this filer in the selected window. ' + basis;
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
-      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party) + '<div>' +
+      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl, m.party, true) + '<div>' +
         pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd</td>' +
@@ -11183,6 +11279,9 @@ document.addEventListener('keydown', function (e) {
 /* One reusable right-side drawer, filled per type: trade / asset / politician.
    Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
    quiet note until a market-data key is configured. */
+// Last-resort accessible name for the drawer dialog (see openDrawer() below) —
+// every current call site passes its own state-specific title instead.
+var DRAWER_DEFAULT_TITLE = 'Details';
 function openDrawer(html, topbarTitle) {
   closePanels();
   // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
@@ -11193,11 +11292,19 @@ function openDrawer(html, topbarTitle) {
   var wasOpen = drawer.classList.contains('open');
   el('detailDrawerBody').innerHTML = html;
   // Owner punch list #13(f): the sticky topbar reads like "SOLD $1k-$15k of
-  // ARCC | Ares Capital Corporation" instead of sitting empty. Callers that
-  // pass nothing (loading/error states, or a drawer type with nothing
-  // meaningful to summarize) leave it blank rather than showing a stale title.
+  // ARCC | Ares Capital Corporation" instead of a stale title held over from
+  // whatever was open before.
+  // WEBA11Y P2: #drawerTopbarTitle is also the dialog's aria-labelledby
+  // target (see the .drawer-panel markup below), so leaving it empty here —
+  // as every loading/error caller used to, by simply not passing a second
+  // argument — pointed the dialog's accessible name at nothing: a screen
+  // reader landing in the dialog while a trade/asset/politician was loading,
+  // or after a fetch failed, heard an unnamed dialog.  Every call site now
+  // passes a real, state-specific title (e.g. "Loading trade…", "Trade not
+  // found"); DRAWER_DEFAULT_TITLE is only a last-resort safety net for a
+  // caller that forgets to, so the name is never blank in ANY state.
   var titleEl = el('drawerTopbarTitle');
-  if (titleEl) titleEl.innerHTML = topbarTitle || '';
+  if (titleEl) titleEl.innerHTML = topbarTitle || DRAWER_DEFAULT_TITLE;
   var p = document.querySelector('#detailDrawer .drawer-panel');
   // Start off-screen, then open on the next frame so CSS transitions/animations
   // actually run (display:none → block alone does not interpolate transform).
@@ -11229,22 +11336,43 @@ function closeDrawer() {
   }
 }
 /* Deep links: every drawer gets a shareable URL (?ticker= / ?member= / ?trade=)
-   via a "Copy link" action; openDeepLink() below restores the drawer on boot. */
-function copyLinkHtml(param, value, label) {
-  // Real href (SEOSOCIAL-02) so "Copy link" is also a genuine, crawlable,
-  // right-clickable/middle-clickable permalink — not just a JS clipboard
-  // trick. The click handler below still preventDefault()s and copies, so
-  // clicking it keeps the existing "copied!" toast behaviour.
-  var href = '/?' + encodeURIComponent(param) + '=' + encodeURIComponent(value);
-  return '<a class="drawer-all-link clickable" href="' + esc(href) + '" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
+   as TWO separate controls — a real navigable link and a copy-to-clipboard
+   button; openDeepLink() below restores the drawer on boot.
+   SEOSOCIAL-02 (crawlable permalink) and WEBA11Y-08 (a real, focusable copy
+   control) both landed as changes to this ONE "Copy link" element, which
+   made them mutually exclusive: a href-less <a> is a real link with no
+   working navigation (fails SEOSOCIAL-02), while a <button> alone has no
+   href for crawlers, right-click "open in new tab", or middle-click (fails
+   WEBA11Y-08's intent — a control shouldn't lie about what it is). Splitting
+   into an <a href> that only navigates and a <button> that only copies keeps
+   both properties true at once, each on the control that actually has it. */
+function copyLinkHtml(param, value, entityLabel) {
+  // SEOSOCIAL-02: reuses the same entityHref() the Directory member/ticker
+  // cells and drawer-open links use — one URL builder, not a second copy of
+  // the '/?param=value' construction.  A genuine <a href>, left to navigate
+  // normally (no click-time preventDefault/SPA takeover): landing back on
+  // '/' with this same query re-opens this exact drawer on boot via
+  // openDeepLink(), so a full navigation still ends up in the right place,
+  // and open-in-new-tab / middle-click / crawler-follow all just work.
+  var href = entityHref(param, value);
+  // WEBA11Y-08: copying is a SEPARATE real <button>, not the href-less <a>
+  // that used to double as both — that was unfocusable via Tab and announced
+  // to assistive tech as a link that goes nowhere, when activating it
+  // actually copied to the clipboard.  aria-label spells out what gets
+  // copied; the visible text is a prefix of it (WCAG 2.5.3 Label in Name).
+  // A successful copy announces through the existing polite toast live
+  // region (#toast, role="status" aria-live="polite") with "Link copied."
+  return '<span class="drawer-link-row">' +
+    '<a class="drawer-all-link clickable" href="' + esc(href) + '">🔗 ' + esc(entityLabel) + '</a>' +
+    '<button type="button" class="drawer-copy-link-btn clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '" aria-label="Copy Link to ' + esc(entityLabel) + '’s page">📋 Copy Link</button>' +
+    '</span>';
 }
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-copy-param]') : null;
   if (!b) return;
-  if (e.preventDefault) e.preventDefault();
   var u = new URL(window.location.origin + '/');
   u.searchParams.set(b.getAttribute('data-copy-param'), b.getAttribute('data-copy-value') || '');
-  copyText(u.toString());
+  copyText(u.toString(), 'Link copied.');
 });
 /* Client-side mirror of TICKER_RESOLVED_SQL (src/analytics/sql.ts): the server
    only treats a ticker as resolved when it is non-empty and not one of the
@@ -11481,7 +11609,7 @@ function analyticsTradeRow(t, ctx) {
 /* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
 function openAsset(ticker) {
   if (!ticker) return;
-  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
+  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>', 'Loading ' + esc(ticker) + '…');
   // Follow the Trends window if it's on the page; fall back to all-time when the
   // drawer is opened from a context without the window selector (feed, search).
   var tickerWindow = document.querySelector('.tr-window-select') ? getTrWindow() : 'all';
@@ -11508,7 +11636,7 @@ function openAsset(ticker) {
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
         return '<div class="hbar ledger" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + '>' +
-          memberAvatarHtml(name, m.photoUrl, m.partyBucket) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          memberAvatarHtml(name, m.photoUrl, m.partyBucket, true) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
     }
@@ -11521,7 +11649,7 @@ function openAsset(ticker) {
       // Owner punch list #18(d): the "M" manual-entry badge is dropped from
       // this table — the note stays put inside the trade drawer's own details.
       var actionCell = actionBadge(t.txType);
-      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
+      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + rowOpenBtnHtml('data-txid', tradeRow.id, 'Open trade details') + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionCell + '</td>' +
         '<td>' + member + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
@@ -11544,7 +11672,7 @@ function openAsset(ticker) {
         '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>',
+      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, d.ticker) + '</div>',
       topbarTitle
     );
     // Lazy-load purchase-cohort backtest (forward returns vs S&P after Congress buys).
@@ -11554,7 +11682,7 @@ function openAsset(ticker) {
       var pEl = el('assetPerf');
       if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
     });
-  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
+  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>', 'Could not load ' + esc(ticker)); });
 }
 
 /* Buy-cohort backtest summary for the asset drawer. */
@@ -11593,7 +11721,7 @@ function tickerBacktestHtml(d) {
 /* ---- politician drawer (/api/analytics/member/:filerId) ---- */
 function openMember(filerId) {
   if (!filerId) return;
-  openDrawer('<div class="note">Loading politician…</div>');
+  openDrawer('<div class="note">Loading politician…</div>', 'Loading politician…');
   aGet('member/' + encodeURIComponent(filerId) + '?' + trParams()).then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
@@ -11631,13 +11759,13 @@ function openMember(filerId) {
         ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
       var actionCell = actionBadge(t.txType) + (t.source === 'manual' ? '<span class="badge sm ghost" style="margin-left:4px" title="Manual Entry">M</span>' : '');
-      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateOnlyHtml(t) + '</td>' +
+      return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + rowOpenBtnHtml('data-txid', tradeRow.id, 'Open trade details') + miniTradeDateOnlyHtml(t) + '</td>' +
         '<td>' + actionCell + '</td><td>' + assetCell + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party) +
+      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       // Same shared chips as Trends (window/chamber/party/side) via trParams().
       '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
@@ -11649,7 +11777,7 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>',
+      '<div class="drawer-section">' + copyLinkHtml('member', filerId, name) + '</div>',
       // Owner punch list #13(f): sticky-header summary — the politician's name.
       esc(name)
     );
@@ -11660,7 +11788,7 @@ function openMember(filerId) {
       var pEl = el('memberPerf');
       if (pEl) pEl.innerHTML = '<div class="note">Performance unavailable right now.</div>';
     });
-  }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>'); });
+  }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>', 'Could not load politician'); });
 }
 
 /* Dual-anchor politician skill: trade-date (their timing) + filing-date (copy-trade). Buys only. */
@@ -11737,7 +11865,7 @@ function openTrade(row) {
   var personCard = '<div class="drawer-trade-party' + (row.filerId ? ' clickable' : '') + '"' +
     (row.filerId ? ' data-member="' + esc(row.filerId) + '" title="Open politician"' : '') +
     '><div class="member-cell">' +
-    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
+    memberAvatarHtml(fmtName(row.member), row.photoUrl, row.party, true) + '<div>' + memberVal + '</div>' + ownerBadge + '</div></div>';
   var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party' + (displayTicker ? ' clickable' : '') + '"' +
     (displayTicker ? ' data-asset="' + esc(displayTicker) + '" title="Open company"' : '') +
@@ -11805,7 +11933,7 @@ function openTrade(row) {
   // drawer as the Company Details / Politician Details buttons in the header —
   // one destination, two controls, and another restatement of both names. The
   // header buttons win; only the share link stays here.
-  var links = row.id ? '<div class="drawer-section">' + copyLinkHtml('trade', row.id, 'Copy link to this trade') + '</div>' : '';
+  var links = row.id ? '<div class="drawer-section">' + copyLinkHtml('trade', row.id, 'this trade') + '</div>' : '';
   // Owner punch list #13(f): sticky-header one-liner instead of an empty bar,
   // e.g. "SOLD  $1k - $15k  of  ARCC". One entity token only: the ticker when
   // there is one, the asset name when there isn't — the hero identity card
@@ -12239,6 +12367,9 @@ function selectPlan(p) {
   var m = el('planMonthly'), a = el('planAnnual');
   if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
   if (a) a.classList.toggle('sel', selectedPlan === 'annual');
+  var mr = el('planMonthlyRadio'), ar = el('planAnnualRadio');
+  if (mr) mr.checked = selectedPlan === 'monthly';
+  if (ar) ar.checked = selectedPlan === 'annual';
 }
 function startCheckout() {
   if (!checkoutConfigured()) {
@@ -12386,11 +12517,11 @@ function showToast(text, isErr) {
   if (TOAST_TIMER) clearTimeout(TOAST_TIMER);
   TOAST_TIMER = setTimeout(function () { t.className = 'toast'; }, 4200);
 }
-function copyText(text) {
+function copyText(text, successMsg) {
   if (!text) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function () {
-      showToast('Copied.');
+      showToast(successMsg || 'Copied.');
     }).catch(function () {
       showToast('Copy failed. Select and copy the value manually.', true);
     });
@@ -12946,7 +13077,7 @@ function openTradeById(id) {
     if (TRADES[i].id === id) { openTrade(TRADES[i]); return; }
   }
   // Deep links and drawer rows outside the current feed page: resolve by id.
-  openDrawer('<div class="note">Loading trade…</div>');
+  openDrawer('<div class="note">Loading trade…</div>', 'Loading trade…');
   fetch('/api/client/v1/trade/' + encodeURIComponent(id), { headers: { accept: 'application/json' } })
     .then(function (r) {
       if (r.status === 404) throw new Error('not_found');
@@ -12957,7 +13088,7 @@ function openTradeById(id) {
       var item = (d && d.item) || (d && d.items && d.items[0]) || null;
       var row = clientTradeToRow(item);
       if (!row || !row.id) {
-        openDrawer('<div class="note">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>');
+        openDrawer('<div class="note">That trade could not be loaded. It may have been retracted or the link is incomplete.</div>', 'Trade unavailable');
         return;
       }
       rememberTradeRow(row);
@@ -12965,9 +13096,9 @@ function openTradeById(id) {
     })
     .catch(function (e) {
       if (e && e.message === 'not_found') {
-        openDrawer('<div class="note">That trade was not found. It may have been retracted or the share link is outdated.</div>');
+        openDrawer('<div class="note">That trade was not found. It may have been retracted or the share link is outdated.</div>', 'Trade not found');
       } else {
-        openDrawer('<div class="note">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>');
+        openDrawer('<div class="note">Could not load that trade' + (e && e.message && e.message !== 'not_found' ? ': ' + esc(e.message) : '') + '.</div>', 'Could not load trade');
       }
     });
 }
@@ -13086,7 +13217,17 @@ function makeEntityTargetsFocusable(root) {
   if (root.matches && root.matches(ENTITY_FOCUSABLE_SELECTOR)) nodes.push(root);
   nodes.forEach(function (n) {
     if (n.tagName === 'A' || n.tagName === 'BUTTON') return;
+    // A row that already carries its own real, named open-control (added at
+    // its render site — see rowOpenBtnHtml()) does not need the <tr> itself
+    // to be a second, semantically-empty tab stop for the same action.
+    if (n.tagName === 'TR' && n.querySelector('.row-open-btn')) return;
     if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    // TR/TH/TD keep their native row/columnheader/cell roles (WEBA11Y-01):
+    // role="button" on a table row destroys table semantics for screen
+    // readers (no column-header association, aria-sort becomes invalid).
+    // These stay keyboard-activatable via tabindex + the delegated
+    // Enter/Space handler above, which keys off the .clickable class, not role.
+    if (n.tagName === 'TR' || n.tagName === 'TH' || n.tagName === 'TD') return;
     if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
   });
 }
