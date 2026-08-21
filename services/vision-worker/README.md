@@ -17,6 +17,7 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 - Heartbeats → `POST /api/admin/local-worker/heartbeat`
 - Polls → `GET /api/admin/scanned-filings/pending` (**stored-copy only**: requires `raw_object_key`)
 - Downloads → `GET /api/admin/filings/:docId/raw` (R2 bytes; **never** Clerk/eFD/OGE)
+- After `pdftoppm`, portrait page images of landscape House PTRs are rotated upright (tesseract header score, else 270° CW) so Grok/Qwen see the grid instead of sideways pixels
 - Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`)
 
 ## Env

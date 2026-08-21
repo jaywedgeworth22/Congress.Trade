@@ -431,6 +431,96 @@ def download_stored_document(filing: dict, dest: str) -> bool:
     return False
 
 
+PTR_UPRIGHT_HINTS = (
+    "full asset name",
+    "hand delivered",
+    "periodic transaction",
+    "date of transaction",
+    "amount of transaction",
+    "united states house",
+)
+
+
+def _png_size(path: str) -> tuple[int, int]:
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.size
+
+
+def rotate_png_cw(path: str, degrees: int) -> None:
+    """Rotate a PNG in place clockwise.  90 and 270 are the House PTR scan cases."""
+    from PIL import Image
+    degrees = int(degrees) % 360
+    if degrees == 0:
+        return
+    # PIL rotate() is counter-clockwise; convert CW to CCW.
+    ccw = (360 - degrees) % 360
+    with Image.open(path) as im:
+        im.rotate(ccw, expand=True).save(path)
+
+
+def tesseract_upright_score(path: str) -> int:
+    """Count House PTR header phrases in a cheap OCR pass.  0 if tesseract misses."""
+    try:
+        rc = subprocess.run(
+            ["tesseract", path, "stdout", "--psm", "6"],
+            capture_output=True, text=True, timeout=45,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    text = (rc.stdout or "").lower()
+    return sum(1 for hint in PTR_UPRIGHT_HINTS if hint in text)
+
+
+def choose_upright_cw_degrees(sample_path: str, score_fn=tesseract_upright_score) -> int:
+    """Portrait page images of landscape House PTRs need a 90 or 270 CW spin.
+
+    Landscape renders (already upright, e.g. 8220834) stay at 0.  When both
+    trial scores are 0, default 270 CW — that is the rotation that stood up
+    every sideways McCaul/LaMalfa scan in the 2026-08-21 drain.
+    """
+    try:
+        width, height = _png_size(sample_path)
+    except Exception:
+        return 0
+    if width >= height:
+        return 0
+    import shutil
+    scores: dict[int, int] = {}
+    for deg in (90, 270):
+        trial = f"{sample_path}.rot{deg}.png"
+        try:
+            shutil.copy(sample_path, trial)
+            rotate_png_cw(trial, deg)
+            scores[deg] = int(score_fn(trial) or 0)
+        except Exception:
+            scores[deg] = 0
+        finally:
+            try:
+                os.remove(trial)
+            except OSError:
+                pass
+    best = max(scores, key=lambda d: (scores[d], 1 if d == 270 else 0))
+    if scores[best] <= 0:
+        return 270
+    return best
+
+
+def upright_pages(pages: list[str], score_fn=tesseract_upright_score) -> list[str]:
+    """Rotate every page of a doc the same way so Grok/Qwen see upright grids."""
+    if not pages:
+        return pages
+    degrees = choose_upright_cw_degrees(pages[0], score_fn=score_fn)
+    if degrees:
+        logger.info("upright-rotate deg=%s pages=%s sample=%s", degrees, len(pages), pages[0])
+        for path in pages:
+            try:
+                rotate_png_cw(path, degrees)
+            except Exception as err:
+                logger.warning("upright-rotate failed %s: %s", path, err)
+    return pages
+
+
 def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int]:
     """Render PDF pages to PNG via pdftoppm.
 
@@ -452,6 +542,7 @@ def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int]:
         os.path.join(out_dir, f) for f in os.listdir(out_dir)
         if f.startswith("page-") and f.endswith(".png")
     )
+    pages = upright_pages(pages)
     total = len(pages)
     if MAX_PAGES > 0 and total > MAX_PAGES:
         logger.warning("capping pages %d -> %d", total, MAX_PAGES)
