@@ -14,7 +14,7 @@ vi.mock('unpdf', () => ({
   extractText: unpdfMocks.extractText,
 }));
 
-import { parseHousePtrText, TextPdfExtractor } from '../textPdf.ts';
+import { countHousePtrTails, parseHousePtrText, TextPdfExtractor } from '../textPdf.ts';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -357,6 +357,56 @@ describe('parseHousePtrText', () => {
     expect(result.transactions).toHaveLength(1);
     expect(result.transactions[0].confidence).toBe(1.0);
     expect(result.extractor).toBe('textPdf');
+  });
+
+  it('splits later self-owned rows that omit SP/DC/JT so a muni does not inherit AMZN', () => {
+    const rows = parseHousePtrText(
+      'ALLEGHENY CNTY PA HOSP DEV AUTH REF-UNIV PITTSBURGH MED CNTR [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 F S: New S O: JP Morgan Brokerage Account #4 Amazon.com, Inc. - Common Stock (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000 F S: New S O: JP Morgan Brokerage Account #2 Broadcom Inc. - Common Stock (AVGO) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000',
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(rows[0]).toMatchObject({
+      assetName: expect.stringMatching(/ALLEGHENY/i),
+      ticker: null,
+      assetType: 'GS',
+      txDate: '2025-03-27',
+      amountMin: 100001,
+      amountMax: 250000,
+    });
+    expect(rows.some((r) => r.ticker === 'AMZN' && r.assetType === 'ST')).toBe(true);
+    expect(rows.some((r) => r.ticker === 'AVGO' && r.assetType === 'ST')).toBe(true);
+    expect(rows[0].ticker).not.toBe('AMZN');
+  });
+
+  it('does not treat a bond due-date as the transaction date', () => {
+    const rows = parseHousePtrText(
+      'SP U.S. Treasury Note due 1/31/2028 [GS] P 04/23/2024 04/23/2024 Over $1,000,000 F S: New',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      assetName: expect.stringMatching(/Treasury Note/i),
+      ticker: null,
+      assetType: 'GS',
+      txType: 'B',
+      txDate: '2024-04-23',
+    });
+    expect(rows[0].txDate).not.toBe('2028-01-31');
+    expect(rows[0].amountMin).toBeGreaterThanOrEqual(1000001);
+  });
+
+  it('splits three TNA lots glued without owner prefixes', () => {
+    const rows = parseHousePtrText(
+      'Direxion Daily Small Cap Bull 3X ETF - TNA [OT] P 02/24/2025 03/10/2025 $50,001 - $100,000 F S: New L: US D: EFT Direxion Daily Small Cap Bull 3X ETF - TNA [OT] P 02/25/2025 03/10/2025 $15,001 - $50,000 F S: New L: US D: EFT Direxion Daily Small Cap Bull 3X ETF - TNA [OT] P 02/26/2025 03/10/2025 $50,001 - $100,000',
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.txDate)).toEqual(['2025-02-24', '2025-02-25', '2025-02-26']);
+    expect(rows.every((r) => r.assetType === 'OT')).toBe(true);
+  });
+
+  it('counts PTR tails so drain can refuse a glued stored payload', () => {
+    const glued =
+      'ALLEGHENY CNTY PA HOSP [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 Amazon.com, Inc. (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000';
+    expect(countHousePtrTails(glued)).toBe(2);
+    expect(countHousePtrTails('SP Apple Inc. (AAPL) [ST] P 06/14/2026 06/20/2026 $1,001 - $15,000')).toBe(1);
   });
 });
 

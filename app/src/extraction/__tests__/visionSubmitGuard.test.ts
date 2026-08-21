@@ -1,0 +1,72 @@
+import { describe, expect, it } from 'vitest';
+import {
+  storedReviewBlocksSmallerVisionSubmit,
+  storedReviewTransactionCount,
+} from '../visionSubmitGuard.ts';
+
+function payload(count: number, transactionCount?: number): string {
+  return JSON.stringify({
+    transactionCount: transactionCount ?? count,
+    transactions: Array.from({ length: count }, (_, i) => ({ assetName: `Row ${i}` })),
+  });
+}
+
+describe('storedReviewTransactionCount', () => {
+  it('uses the larger of listed rows and claimed transactionCount', () => {
+    expect(storedReviewTransactionCount(payload(200, 219))).toBe(219);
+    expect(storedReviewTransactionCount(payload(2, 2))).toBe(2);
+    expect(storedReviewTransactionCount(null)).toBe(0);
+    expect(storedReviewTransactionCount('not-json')).toBe(0);
+  });
+});
+
+describe('storedReviewBlocksSmallerVisionSubmit', () => {
+  it('blocks a shorter vision submit over cascade / mismatch / needs-reprocess payloads', () => {
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      payload(40),
+      12,
+    )).toBe(true);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'ticker_asset_mismatch,invalid_amount,low_confidence',
+      payload(15),
+      8,
+    )).toBe(true);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'extraction_row_limit_exceeded_needs_reprocess:0.00',
+      payload(200, 219),
+      180,
+    )).toBe(true);
+  });
+
+  it('allows empty / OCR-garbage / likely_garbage parks to be replaced', () => {
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'extract_empty_failure,no_transactions_extracted',
+      payload(0),
+      4,
+    )).toBe(false);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'ocr_unusable,form_chrome_only',
+      payload(80),
+      6,
+    )).toBe(false);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'extraction_row_limit_exceeded_likely_garbage:0.93',
+      payload(200),
+      8,
+    )).toBe(false);
+  });
+
+  it('allows a vision submit that is at least as large as the stored extract', () => {
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      payload(12),
+      12,
+    )).toBe(false);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      payload(12),
+      14,
+    )).toBe(false);
+  });
+});
