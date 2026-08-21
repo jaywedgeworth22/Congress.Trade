@@ -14,7 +14,11 @@ Engines (VISION_ENGINE):
                 vision. $0 OpenRouter / API-key spend.
   openrouter  — OpenRouter x-ai/grok-4.5 with native PDF file attachment.
                 Uses CT_OPENROUTER_API_KEY. Kept as fallback / secondary path.
-  auto        — try local_cli first, fall back to openrouter on hard failure.
+  auto        — try local_cli first. On a missed solo pass (timeout, parse
+                fail, or 0 valid rows without noRows) cascade cheap OpenRouter
+                VL models (Qwen3-VL page images, then Gemini Flash PDF, then
+                grok-4.5 PDF). Never send Qwen a PDF file attachment — that
+                bills mistral-ocr.
 
 Kimi CLI was retired (provider billing 403). Do not reintroduce it.
 
@@ -29,7 +33,11 @@ Env:
   GROK_CLI_TIMEOUT_SEC     (per-doc local CLI budget, default 900)
   GROK_CLI_MAX_TURNS       (default 8 — room to read multipage scans)
   OPENROUTER_API_KEY       (required only for openrouter / auto fallback)
-  OPENROUTER_MODEL         (default x-ai/grok-4.5)
+  OPENROUTER_MODEL         (default x-ai/grok-4.5) — last cascade step
+  OPENROUTER_CASCADE_MODELS  comma list tried AFTER a missed Grok CLI solo
+                           pass, before OPENROUTER_MODEL. Default:
+                           qwen/qwen3-vl-8b-instruct,qwen/qwen3-vl-30b-a3b-instruct,google/gemini-3.7-flash
+  OPENROUTER_CASCADE_MAX_PAGES  cap images sent to VL models (default 8)
   OPENROUTER_TIMEOUT_SEC   (default 600)
   MAX_DOCS_PER_POLL        (default 2)
   MAX_PAGES                (default 12 — cap page images sent to local CLI)
@@ -85,6 +93,14 @@ STATE_FILE = os.path.expanduser(
 )
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.5")
+# Cheap VL first. Qwen slugs read raster pages, not PDF `file` (see prefersPageImages).
+DEFAULT_CASCADE_MODELS = (
+    "qwen/qwen3-vl-8b-instruct,"
+    "qwen/qwen3-vl-30b-a3b-instruct,"
+    "google/gemini-3.7-flash"
+)
+OPENROUTER_CASCADE_MODELS = os.getenv("OPENROUTER_CASCADE_MODELS", DEFAULT_CASCADE_MODELS)
+OPENROUTER_CASCADE_MAX_PAGES = max(1, int(os.getenv("OPENROUTER_CASCADE_MAX_PAGES", "8")))
 PUSHOVER_APP_TOKEN = os.getenv("PUSHOVER_APP_TOKEN", "")
 PUSHOVER_USER_KEY = os.getenv("PUSHOVER_USER_KEY", "")
 DOWNLOAD_UA = "congress-feed/0.1 (+https://congress.trade)"
@@ -238,6 +254,7 @@ def send_heartbeat(state: dict | None = None) -> bool:
                 "visionEngine": VISION_ENGINE,
                 "grokBin": grok_bin(),
                 "openrouterModel": OPENROUTER_MODEL,
+                "openrouterCascade": cascade_model_list(),
                 "openrouterKeyConfigured": bool(OPENROUTER_API_KEY),
                 "maxAttempts": MAX_ATTEMPTS,
                 "maxDocsPerPoll": MAX_DOCS_PER_POLL,
@@ -534,6 +551,114 @@ def rows_from_parsed(parsed) -> list | None:
     return None
 
 
+def cascade_model_list() -> list[str]:
+    """Cheap VL models, then OPENROUTER_MODEL last. Deduped, order preserved."""
+    raw = (OPENROUTER_CASCADE_MODELS or "").split(",")
+    models: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        model = item.strip()
+        if not model or model in seen:
+            continue
+        models.append(model)
+        seen.add(model)
+    tail = (OPENROUTER_MODEL or "").strip()
+    if tail and tail not in seen:
+        models.append(tail)
+    return models
+
+
+def model_uses_page_images(model: str) -> bool:
+    """Qwen VL / GLM-V read image_url. PDF file-parser would bill mistral-ocr."""
+    m = (model or "").strip().lower()
+    if "qwen" in m and "vl" in m:
+        return True
+    if "glm-4" in m and "v" in m:
+        return True
+    return False
+
+
+def extractor_label_for_model(model: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", (model or "openrouter").lower()).strip("_")
+    return f"openrouter_{slug[:56]}"
+
+
+def parsed_is_genuine_empty(parsed) -> bool:
+    return isinstance(parsed, dict) and bool(parsed.get("noRows"))
+
+
+def rows_or_miss(parsed, label: str) -> list | None:
+    """None means 'try the next cascade step'. [] is a claimed empty filing."""
+    rows = rows_from_parsed(parsed)
+    if rows is None:
+        return None
+    if len(rows) == 0 and not parsed_is_genuine_empty(parsed):
+        logger.warning("%s returned 0 valid rows without noRows — treating as miss", label)
+        return None
+    return rows
+
+
+def encode_page_image(path: str, work_dir: str) -> str | None:
+    """JPEG data-URI, downscaled for cheap VL context. Falls back to PNG bytes."""
+    dest = os.path.join(work_dir, os.path.basename(path) + ".jpg")
+    try:
+        rc = subprocess.run(
+            [
+                "sips",
+                "-s", "format", "jpeg",
+                "-s", "formatOptions", "70",
+                "--resampleHeightWidthMax", "1800",
+                path,
+                "--out", dest,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        use = dest if rc.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 32 else path
+    except Exception:
+        use = path
+    try:
+        with open(use, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    mime = "image/jpeg" if use.endswith(".jpg") else "image/png"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def openrouter_user_content(prompt: str, pdf_path: str, pages: list, model: str, work_dir: str) -> list | None:
+    """Image parts for VL slugs; PDF file part for native-PDF models."""
+    if model_uses_page_images(model):
+        capped = pages[:OPENROUTER_CASCADE_MAX_PAGES]
+        if not capped:
+            logger.warning("skip %s: needs page images, none rendered", model)
+            return None
+        parts: list = []
+        for page in capped:
+            uri = encode_page_image(page, work_dir)
+            if not uri:
+                continue
+            parts.append({"type": "image_url", "image_url": {"url": uri}})
+        if not parts:
+            logger.warning("skip %s: no encodable page images", model)
+            return None
+        parts.append({"type": "text", "text": prompt})
+        return parts
+    with open(pdf_path, "rb") as f:
+        pdf_b64 = base64.b64encode(f.read()).decode("ascii")
+    file_data = f"data:application/pdf;base64,{pdf_b64}"
+    return [
+        {
+            "type": "file",
+            "file": {"filename": "filing.pdf", "file_data": file_data},
+        },
+        {"type": "text", "text": prompt},
+    ]
+
+
 def transcribe_with_local_cli(pages: list, filing: dict) -> list | None:
     """Grok Build CLI (`grok -p`) via owner OIDC subscription — primary path."""
     bin_path = grok_bin()
@@ -599,29 +724,42 @@ def transcribe_with_local_cli(pages: list, filing: dict) -> list | None:
     if parsed is None:
         logger.error("could not parse local grok CLI output: %s", content[:300])
         return None
-    rows = rows_from_parsed(parsed)
+    rows = rows_or_miss(parsed, "local grok CLI")
     logger.info("local grok CLI rows=%s", None if rows is None else len(rows))
     return rows
 
 
-def transcribe_with_openrouter(pdf_path: str, filing: dict) -> list | None:
-    """OpenRouter Grok vision fallback (paid API key)."""
+def transcribe_with_openrouter(
+    pdf_path: str,
+    pages: list,
+    filing: dict,
+    model: str,
+    work_dir: str,
+) -> list | None:
+    """One OpenRouter model. VL slugs get page images; native-PDF models get the file."""
     if not OPENROUTER_API_KEY:
         logger.error("OPENROUTER_API_KEY is not set — cannot run OpenRouter fallback")
         return None
-
-    with open(pdf_path, "rb") as f:
-        pdf_b64 = base64.b64encode(f.read()).decode("ascii")
-    file_data = f"data:application/pdf;base64,{pdf_b64}"
 
     core = PROMPT_CORE.format(
         form_hint=form_hint_for(filing),
         filed_date=filing.get("filed_date") or "unknown",
     )
-    prompt = OPENROUTER_PROMPT.format(core=core)
+    if model_uses_page_images(model):
+        n = min(len(pages), OPENROUTER_CASCADE_MAX_PAGES)
+        prompt = LOCAL_CLI_PROMPT.format(
+            core=core,
+            image_list="\n".join(f"- page {i + 1}" for i in range(n)),
+        ) + "\nPage images are attached in order. Forms may be rotated.\n"
+    else:
+        prompt = OPENROUTER_PROMPT.format(core=core)
+
+    content_parts = openrouter_user_content(prompt, pdf_path, pages, model, work_dir)
+    if not content_parts:
+        return None
 
     body = {
-        "model": OPENROUTER_MODEL,
+        "model": model,
         "max_tokens": 32000,
         "temperature": 0,
         "response_format": {"type": "json_object"},
@@ -630,13 +768,7 @@ def transcribe_with_openrouter(pdf_path: str, filing: dict) -> list | None:
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "file",
-                        "file": {"filename": "filing.pdf", "file_data": file_data},
-                    },
-                    {"type": "text", "text": prompt},
-                ],
+                "content": content_parts,
             }
         ],
         "user": f"vision-worker:{filing.get('doc_id') or 'unknown'}",
@@ -658,19 +790,20 @@ def transcribe_with_openrouter(pdf_path: str, filing: dict) -> list | None:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", "replace")[:500]
-        logger.error("OpenRouter HTTP %d: %s", e.code, err_body)
+        logger.error("OpenRouter HTTP %d model=%s: %s", e.code, model, err_body)
         if e.code in (402, 403):
             logger.error("OpenRouter budget/auth halt — backing off 15m")
             time.sleep(900)
         return None
     except Exception as e:
-        logger.error("OpenRouter request failed: %s", str(e)[:300])
+        logger.error("OpenRouter request failed model=%s: %s", model, str(e)[:300])
         return None
 
     usage = payload.get("usage") or {}
     logger.info(
-        "OpenRouter reply model=%s tokens_in=%s tokens_out=%s cost=%s",
-        payload.get("model") or OPENROUTER_MODEL,
+        "OpenRouter reply requested=%s served=%s tokens_in=%s tokens_out=%s cost=%s",
+        model,
+        payload.get("model") or model,
         usage.get("prompt_tokens"),
         usage.get("completion_tokens"),
         usage.get("cost"),
@@ -684,13 +817,13 @@ def transcribe_with_openrouter(pdf_path: str, filing: dict) -> list | None:
 
     parsed = parse_model_json(content)
     if parsed is None:
-        logger.error("could not parse OpenRouter output: %s", content[:240])
+        logger.error("could not parse OpenRouter output (%s): %s", model, content[:240])
         return None
-    return rows_from_parsed(parsed)
+    return rows_or_miss(parsed, f"openrouter:{model}")
 
 
-def transcribe(pdf_path: str, pages: list, filing: dict) -> tuple[list | None, str]:
-    """Returns (rows|None, engine_used)."""
+def transcribe(pdf_path: str, pages: list, filing: dict, work_dir: str) -> tuple:
+    """Returns (rows|None, engine_used). Local Grok CLI solo pass, then cheap VL cascade."""
     engine = VISION_ENGINE
     if engine not in ("auto", "local_cli", "openrouter"):
         logger.warning("unknown VISION_ENGINE=%s; using auto", engine)
@@ -702,10 +835,21 @@ def transcribe(pdf_path: str, pages: list, filing: dict) -> tuple[list | None, s
             return rows, "local_grok_cli_v1"
         if engine == "local_cli":
             return None, "local_grok_cli_v1"
-        logger.warning("local CLI failed; falling back to OpenRouter Grok")
+        logger.warning("local CLI solo pass missed; cascading cheap OpenRouter VL")
 
-    rows = transcribe_with_openrouter(pdf_path, filing)
-    return rows, "local_grok_openrouter_v1"
+    if not OPENROUTER_API_KEY:
+        logger.error("no OpenRouter key — cannot cascade after solo-pass miss")
+        return None, "openrouter_cascade_skipped"
+
+    last_label = "openrouter_cascade"
+    for model in cascade_model_list():
+        logger.info("cascade try model=%s images=%s", model, model_uses_page_images(model))
+        rows = transcribe_with_openrouter(pdf_path, pages, filing, model, work_dir)
+        last_label = extractor_label_for_model(model)
+        if rows is not None:
+            return rows, last_label
+        logger.warning("cascade miss model=%s", model)
+    return None, last_label
 
 
 def record_failure(state: dict, doc_id: str, reason: str, extractor: str | None = None) -> None:
@@ -798,11 +942,13 @@ def process_filing(filing: dict, state: dict) -> str:
         if not download_stored_document(filing, pdf_path):
             record_failure(state, doc_id, "stored_download_failed", extractor)
             return "failed"
-        pages = render_pages(pdf_path, td) if VISION_ENGINE != "openrouter" else []
-        if VISION_ENGINE != "openrouter" and not pages:
-            # Still try OpenRouter with the stored PDF if local render failed.
-            logger.warning("page render failed for %s; OpenRouter-only attempt on stored bytes", doc_id)
-        rows, extractor = transcribe(pdf_path, pages, filing)
+        pages = render_pages(pdf_path, td)
+        if not pages:
+            logger.warning(
+                "page render failed for %s; PDF-native cascade steps can still run",
+                doc_id,
+            )
+        rows, extractor = transcribe(pdf_path, pages, filing, td)
     if rows is None:
         record_failure(state, doc_id, "transcription_failed", extractor)
         return "failed"

@@ -8,7 +8,7 @@ Local vision worker for paper-scanned PTR / OGE filings.
 | --- | --- | --- |
 | **`local_cli` (PRIMARY)** | Local `grok -p` headless CLI, authenticated via the owner's **xAI OIDC subscription** (`~/.grok/auth.json`). Renders PDF pages with `pdftoppm` and has Grok read the PNGs via multimodal `read_file`. | Subscription pool (no OpenRouter) |
 | **`openrouter` (fallback)** | OpenRouter `x-ai/grok-4.5` with native PDF attachment | `CT_OPENROUTER_API_KEY` |
-| **`auto` (default)** | Try `local_cli` first, fall back to OpenRouter on hard failure | subscription first |
+| **`auto` (default)** | Try `local_cli` first. On a missed solo pass (timeout, unparseable JSON, or 0 valid rows without `noRows`), cascade cheap OpenRouter VL: Qwen3-VL 8B → Qwen3-VL 30B-A3B (page images, never PDF/`mistral-ocr`) → Gemini 3.7 Flash PDF → `OPENROUTER_MODEL` (Grok 4.5 PDF) | subscription first, then cheap VL |
 
 Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 
@@ -28,7 +28,9 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 | `GROK_CLI_TIMEOUT_SEC` | `900` | Per-doc local CLI budget |
 | `GROK_CLI_MAX_TURNS` | `8` | Headless turns (page reads) |
 | `OPENROUTER_API_KEY` | — | Required for openrouter / auto fallback |
-| `OPENROUTER_MODEL` | `x-ai/grok-4.5` | |
+| `OPENROUTER_MODEL` | `x-ai/grok-4.5` | Last cascade step (native PDF) |
+| `OPENROUTER_CASCADE_MODELS` | `qwen/qwen3-vl-8b-instruct,qwen/qwen3-vl-30b-a3b-instruct,google/gemini-3.7-flash` | Tried after a missed Grok CLI solo pass, before `OPENROUTER_MODEL`. Qwen VL slugs receive raster pages. |
+| `OPENROUTER_CASCADE_MAX_PAGES` | `8` | Cap images sent to VL models |
 | `CONGRESS_TRADE_API_URL` | `http://localhost:8787` | Use `https://congress.trade` in launchd |
 | `ADMIN_TOKEN` | — | `CT_ADMIN_TOKEN` from `~/.secrets/` |
 | `WORKER_ID` | `local_mac_1` | |

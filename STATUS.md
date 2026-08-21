@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Cheap Qwen VL cascade after Grok CLI solo-pass miss
+
+Mac vision-worker (`pm2 vision-worker`): local Grok CLI remains primary.
+A missed solo pass now tries Qwen3-VL 8B → 30B-A3B on page images, then
+Gemini 3.7 Flash PDF, then Grok 4.5 PDF.  Qwen never gets a PDF file
+attachment (that would bill mistral-ocr).  Receipt:
+`docs/rollouts/2026-08-21-qwen-vision-cascade.md`.  Board `52004cfc`.
+Copy `~/vision-worker/{worker.py,run-vision-worker.sh,README.md}` and
+`pm2 restart vision-worker` after merge.
+
 ## 2026-08-17 CURSOR — Ingestion integrity audit (read-only)
 
 Report: `docs/audits/2026-08-17-ingestion-integrity.md`.  No prod writes.

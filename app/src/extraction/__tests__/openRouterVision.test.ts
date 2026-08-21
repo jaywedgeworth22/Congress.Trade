@@ -16,6 +16,7 @@ import {
   gemini37FlashProviderPreference,
   isEngineOverrideRejection,
   parseMaxPrice,
+  prefersPageImages,
   supportsNativeVision,
   supportsStructuredOutputs,
 } from '../openRouterVision.ts';
@@ -456,6 +457,19 @@ describe('supportsNativeVision', () => {
     expect(supportsNativeVision('z-ai/glm-4.6v')).toBe(false);
     expect(supportsNativeVision('qwen/qwen3-vl-8b-instruct')).toBe(false);
     expect(supportsNativeVision('deepseek/deepseek-v4-flash')).toBe(false);
+  });
+});
+
+describe('prefersPageImages', () => {
+  it('routes Qwen VL and GLM-V to raster pages instead of PDF file-parser', () => {
+    expect(prefersPageImages('qwen/qwen3-vl-8b-instruct')).toBe(true);
+    expect(prefersPageImages('qwen/qwen3-vl-30b-a3b-instruct')).toBe(true);
+    expect(prefersPageImages('z-ai/glm-4.6v')).toBe(true);
+  });
+  it('does not force images on native-PDF models', () => {
+    expect(prefersPageImages('x-ai/grok-4.5')).toBe(false);
+    expect(prefersPageImages('google/gemini-3.7-flash')).toBe(false);
+    expect(prefersPageImages('anthropic/claude-sonnet-5')).toBe(false);
   });
 });
 
