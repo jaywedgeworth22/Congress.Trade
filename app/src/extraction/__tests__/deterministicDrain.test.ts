@@ -114,6 +114,19 @@ describe('storedReviewPayloadIsIncomplete', () => {
       transactions: [{ ticker: 'AAPL' }, { ticker: 'MSFT' }],
     })).toBe(false);
   });
+
+  it('treats a one-row payload whose rawText still contains later PTR tails as incomplete', () => {
+    expect(storedReviewPayloadIsIncomplete({
+      truncated: false,
+      transactionCount: 1,
+      transactions: [{
+        ticker: 'AMZN',
+        assetName: 'Allegheny Cnty Pa Hosp Dev Auth',
+        rawText:
+          'ALLEGHENY CNTY PA HOSP DEV AUTH [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 F S: New Amazon.com, Inc. (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000',
+      }],
+    })).toBe(true);
+  });
 });
 
 describe('maybeRunDeterministicReviewDrain', () => {
