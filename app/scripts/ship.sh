@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# ship.sh — wait for the Coolify main deploy, then migrate production.
+# ship.sh — wait for Coolify, then migrate Congress.Trade.
 #
-# Coolify rebuilds congress-app on push to main.  This script does not
-# wrangler-deploy.  It waits until https://congress.trade/api/health reports
-# the current HEAD SHA, then applies schema + optional data steps through
-# POST /api/admin/migrate.  That path talks to the host SQLite file, not D1.
+# Coolify rebuilds the Deno-in-Docker app on push to main.  This script does
+# not wrangler-deploy and does not talk to Deno Deploy or Turso.  It waits
+# until https://congress.trade/api/health reports the current HEAD SHA, then
+# applies schema via POST /api/admin/migrate against the live host SQLite
+# file (not D1).
 #
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh                  # deploy + ensure schema
 #   bash scripts/ship.sh --deploy-only                    # deploy + health only

@@ -3,18 +3,19 @@
  *
  * Background: the once-a-day job chain (FMP enrichment, price refresh, bulk
  * R2 snapshot, photo enrichment, ticker backfill, retention sweeps) used to
- * run inside the 15-minute scheduled tick, which carries a 45s deadline left
- * over from Deno Deploy free-tier constraints. Provider-paced network lanes
- * routinely blew that deadline, and because the whole chain shared one KV
- * date stamp, every lane after the abort silently never ran that day — most
- * visibly photo enrichment (bioguide/photo fill) and the bulk R2 snapshot.
+ * run inside the 15-minute scheduled tick, which carried a 45s deadline left
+ * over from retired Deno Deploy free-tier constraints. Provider-paced network
+ * lanes routinely blew that deadline, and because the whole chain shared one
+ * KV date stamp, every lane after the abort silently never ran that day —
+ * most visibly photo enrichment (bioguide/photo fill) and the bulk R2 snapshot.
  *
- * On the Oracle container there is no 45s platform limit, so each daily lane
+ * On Coolify / Hetzner there is no 45s platform limit, so each daily lane
  * now gets its OWN hourly cron window (first run of the UTC day wins; the
  * lane's KV date stamp makes later same-day firings cheap no-ops) and its own
  * multi-minute deadline. Windows are staggered so lanes never compete, and
  * ordered so the snapshot lane runs after the market-data lane it snapshots.
- * Minutes avoid :00/:30 per fleet scheduling policy.
+ * Minutes avoid :00/:30 per fleet scheduling policy.  Production health tick
+ * is the Coolify paid profile (`* * * * *`).
  */
 
 import type { Env } from '../shared/types.ts';
@@ -79,7 +80,7 @@ export const DAILY_LANE_CRONS: readonly DailyLaneCron[] = [
 ];
 
 /** Per-lane deadline. The tick's 45s was a Deno Deploy free-tier constraint;
- *  on the Oracle container a lane may take minutes (provider pacing). */
+ *  on Coolify / Hetzner a lane may take minutes (provider pacing). */
 export const DAILY_LANE_DEFAULT_DEADLINE_MS = 10 * 60_000;
 
 function parseDeadlineMs(raw: string | undefined): number {
@@ -88,7 +89,7 @@ function parseDeadlineMs(raw: string | undefined): number {
   return Math.min(n, 30 * 60_000);
 }
 
-/** Env override (CT_ prefix; Deno Deploy forbade DENO_* names). */
+/** Env override (CT_ prefix; leftover DENO_* alias for local tests). */
 export function resolveDailyLaneDeadlineMs(
   env: Record<string, string | undefined> | { get?: (k: string) => string | undefined } = {},
 ): number {
