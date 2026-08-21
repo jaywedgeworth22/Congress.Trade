@@ -19,7 +19,8 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
-import { all, first, get, parseJson } from '../shared/db.ts';
+import { all, first, get } from '../shared/db.ts';
+import { parseCommitteeNames, resolveFilerCommittees } from '../shared/committeeNames.ts';
 import { resolveMember } from '../client/queries.ts';
 import { tradeLearnedAt } from '../delivery/tradeLearnedAt.ts';
 import { cached, cacheKey } from '../shared/kvCache.ts';
@@ -210,7 +211,10 @@ function toLatencyScoreboardRow(
     providerObserved: p.providerObserved,
     maturedProviderObserved: p.maturedProviderObserved,
     unmatchedProvider: p.unmatchedProvider,
+    unmatchedProviderCtMissing: p.unmatchedProviderCtMissing,
+    unmatchedProviderCtExcluded: p.unmatchedProviderCtExcluded,
     observedRowsMissingFiler: p.observedRowsMissingFiler,
+    parserHealth: p.parserHealth,
     pendingProvider: p.pendingProvider,
     maturedCandidates: p.maturedCandidates,
     maturedMatched: p.maturedMatched,
@@ -1141,7 +1145,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const [profileRow, statsRow, topRows, recentRows] = await Promise.all([
         get<Record<string, unknown>>(
           c.env.DB,
-          'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
+          'SELECT bioguide_id, chamber, COALESCE(display_name, full_name) AS full_name, party, state, district, committees, photo_url, resolved_bioguide_id FROM filers WHERE bioguide_id = ?',
           [txFilerId],
         ),
         first<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
@@ -1152,7 +1156,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const buyCount = num(s.buy_count);
       const sellCount = num(s.sell_count);
       const committees = profileRow
-        ? parseJson<string[]>(profileRow.committees, [])
+        ? await resolveFilerCommittees(
+            c.env.DB,
+            txFilerId,
+            profileRow.committees,
+            str(profileRow.resolved_bioguide_id),
+          )
         : [];
       return meta(f, {
         filerId: txFilerId,
@@ -1249,10 +1258,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
       return c.json({ error: 'invalid member id' }, 400);
     }
-    // Cache key v2: dual-anchor shape (bust old single-leg cache entries).
-    const key = cacheKey(`member-perf-v2:${filerId}`, f as never);
+    const resolved = await resolveMember(c.env, filerId);
+    const txFilerId = resolved?.id ?? filerId;
+    // Cache key v3: resolve house-/senate- slugs and official bioguides to the
+    // same PK the profile drawer already uses (v2 keyed the raw path param).
+    const key = cacheKey(`member-perf-v3:${txFilerId}`, f as never);
     const data = await cached(c.env, key, 600, async () => {
-      const built = buildMemberPerformanceQuery(filerId, f);
+      const built = buildMemberPerformanceQuery(txFilerId, f);
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const currentSpx = await latestSpxClose(c.env);
       const perfRows = rows.map((row) => ({
@@ -1269,7 +1281,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       }));
       const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
       return meta(f, {
-        filerId,
+        filerId: txFilerId,
         side: dual.side,
         buyCount: dual.buyCount,
         tradeDate: dual.tradeDate,
@@ -1300,8 +1312,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const conflicts: Array<Record<string, unknown>> = [];
       for (const row of rows) {
-        const committees = parseJson<string[]>(row.committees, []);
-        const m = committeeConflict(Array.isArray(committees) ? committees : [], str(row.sector));
+        const committees = parseCommitteeNames(row.committees);
+        const m = committeeConflict(committees, str(row.sector));
         if (!m.conflict) continue;
         conflicts.push({
           id: str(row.id),
@@ -1359,6 +1371,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           providerObserved: publicSummary.totals.providerObserved,
           maturedProviderObserved: publicSummary.totals.maturedProviderObserved,
           unmatchedProvider: publicSummary.totals.unmatchedProvider,
+          unmatchedProviderCtMissing: publicSummary.totals.unmatchedProviderCtMissing,
+          unmatchedProviderCtExcluded: publicSummary.totals.unmatchedProviderCtExcluded,
           comparableProviders: publicSummary.totals.comparableProviders,
           scopeMatched: publicSummary.scope.matched,
           scopeTotal: publicSummary.scope.total,

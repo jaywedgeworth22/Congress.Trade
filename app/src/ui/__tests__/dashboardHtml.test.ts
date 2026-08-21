@@ -1159,6 +1159,7 @@ describe('DASHBOARD_HTML', () => {
     expect(keys).toContain('openrouter:deepseek/deepseek-v4-pro');
     expect(keys).toContain('openrouter:deepseek/deepseek-v4-flash');
     expect(keys).toContain('openrouter:google/gemini-3.7-flash');
+    expect(keys).toContain('openrouter:~google/gemini-flash-latest');
     expect(keys).toContain('openrouter:anthropic/claude-opus-4.8');
     expect(keys).toContain('llamaparse:fast');
     // Dead-on-OpenRouter slugs and the retired GPT-4o family never render.
@@ -2714,7 +2715,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('Delivery paused.');
     expect(DASHBOARD_HTML).toContain('Delivery resumed.');
     expect(DASHBOARD_HTML).toContain('Delivery deleted.');
-    expect(DASHBOARD_HTML).toContain('Delete this delivery permanently?');
+    expect(DASHBOARD_HTML).toContain("delBtn.textContent = 'Confirm?';");
+    expect(DASHBOARD_HTML).toContain('Confirm delete this delivery permanently');
     expect(DASHBOARD_HTML).toContain('All deliveries are paused.');
   });
 
@@ -3461,8 +3463,9 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
   it('accepts visible tab names as ?view= aliases and falls back to Trends (not last-viewed) on unknown values', () => {
     // Owner follow-up batch #25: "trades" is now the canonical id (the URL
     // writes ?view=trades); "feed" is kept as a silent legacy alias forever.
-    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs' };");
-    expect(DASHBOARD_HTML).toContain('VIEW_ALIASES.hasOwnProperty(fromUrl) ? VIEW_ALIASES[fromUrl] : fromUrl');
+    expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs', directory: 'people' };");
+    expect(DASHBOARD_HTML).toContain('function resolveViewId(raw)');
+    expect(DASHBOARD_HTML).toContain('var canonicalView = resolveViewId(fromUrl);');
     // Unknown/garbage values resolve straight to 'trends' inside the same
     // branch that handles ?view= — never falling through to localStorage's
     // last-viewed tab (issue #1458).
@@ -3475,7 +3478,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     // table — an old "feed" value still resolves to the Trades tab and gets
     // migrated to the canonical "trades" string in place, so links/last-tab
     // state made before the rename keep working.
-    expect(DASHBOARD_HTML).toContain("var canonicalSaved = saved && VIEW_ALIASES.hasOwnProperty(saved) ? VIEW_ALIASES[saved] : saved;");
+    expect(DASHBOARD_HTML).toContain('var canonicalSaved = resolveViewId(saved);');
     expect(DASHBOARD_HTML).toContain("if (canonicalSaved !== saved) { try { localStorage.setItem('ct-active-tab', canonicalSaved); } catch (e2) {} }");
   });
 });
@@ -4215,6 +4218,42 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
       expect(DASHBOARD_HTML).not.toContain('disclosed buys in window');
       expect(DASHBOARD_HTML).toContain("var horizonPhrase = d.window ? ' (' + esc(windowLabel(d.window)) + ')' : '';");
       expect(DASHBOARD_HTML).toContain("fmtCount(buyCount) + ' disclosed buys' + horizonPhrase");
+    });
+
+    it('labels each skill leg as a variable hold and splits excess from asset return (#1460)', () => {
+      expect(DASHBOARD_HTML).toContain(
+        'Variable hold — each buy from the trade date through the latest price.',
+      );
+      expect(DASHBOARD_HTML).toContain(
+        'Variable hold — each buy from the public filing date through the latest price.',
+      );
+      expect(DASHBOARD_HTML).toContain('Avg excess is versus the index');
+      expect(DASHBOARD_HTML).toContain('Avg asset return');
+    });
+  });
+
+  describe('directory photos, filer owner, delivery delete (#1460 / #1429 leftovers)', () => {
+    it('renders People directory names with the same avatar helper as the feed', () => {
+      expect(DASHBOARD_HTML).toContain('function renderPeopleDirectory(all)');
+      expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party, true)");
+    });
+
+    it('shows the beneficial owner on feed rows and mobile cards', () => {
+      expect(DASHBOARD_HTML).toContain('function ownerBadgeHtml(o)');
+      expect(DASHBOARD_HTML).toContain('ownerBadgeHtml(r.owner)');
+      expect(DASHBOARD_HTML).toContain("bits.push('<span class=\"fc-owner\">' + esc(owner) + '</span>')");
+    });
+
+    it('replaces the politician-drawer Not recorded committee fallback', () => {
+      expect(DASHBOARD_HTML).not.toContain("? '<span class=\"muted\">Not recorded</span>'");
+      expect(DASHBOARD_HTML).toContain('No current assignments on file.');
+      expect(DASHBOARD_HTML).toContain('Executive filers do not sit on congressional committees.');
+    });
+
+    it('uses a second-click Confirm? for web delivery delete', () => {
+      expect(DASHBOARD_HTML).toContain('var PENDING_SUB_DELETE');
+      expect(DASHBOARD_HTML).toContain("delBtn.textContent = 'Confirm?';");
+      expect(DASHBOARD_HTML).not.toContain("window.confirm('Delete this delivery permanently?");
     });
   });
 });

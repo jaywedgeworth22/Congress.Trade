@@ -575,7 +575,6 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(review?.reason).toBe('agreement_cascade_unresolved');
       expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
     });
-
     it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
       const app = createAdminApp();
       const env = makeEnv();

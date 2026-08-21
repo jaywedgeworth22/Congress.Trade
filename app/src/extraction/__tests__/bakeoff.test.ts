@@ -596,6 +596,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'amazon/nova-lite-v1',
       'z-ai/glm-4.6v',
       'google/gemini-3.7-flash',
+      '~google/gemini-flash-latest',
       'qwen/qwen-2.5-72b-instruct',
     ]);
 
@@ -672,6 +673,8 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       .toEqual({ provider: 'openrouter', model: 'openai/gpt-5.6-terra' });
     expect(upgradeRetiredDisclosureCandidate({ provider: 'openrouter', model: 'z-ai/glm-4.6v' }))
       .toEqual({ provider: 'openrouter', model: 'z-ai/glm-4.6v' });
+    expect(upgradeRetiredDisclosureCandidate({ provider: 'openrouter', model: '~google/gemini-flash-latest' }))
+      .toEqual({ provider: 'openrouter', model: '~google/gemini-flash-latest' });
   });
 
   it('blocks a low-level GPT-4o invocation before resolving a key or calling a provider', async () => {
