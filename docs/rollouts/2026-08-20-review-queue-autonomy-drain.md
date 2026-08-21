@@ -72,7 +72,6 @@ distinct causes, three of which were blocking the queue from draining at all:
   it 10/22/2025, and the confirm validator refuses tx date > filing date — a human
   override decision is needed (candidate follow-up: allow an explicit future-date
   override on human confirm).
-
 ## Verification
 
 - Full gate: `npm run typecheck` + 3502/3502 tests green.
@@ -84,7 +83,6 @@ distinct causes, three of which were blocking the queue from draining at all:
   2,850 post-deploy; was ~1/min before).
 - Landed as PR #2107 (`08a22005`) + follow-up #2110 (future_tx_date churn skip); peer
   lane PRs #2108/#2109/#2111 landed alongside.
-
 ## Follow-ups
 
 - The remaining queue is scanned paper forms draining through the Mac vision worker; any

@@ -153,6 +153,17 @@ final class CongressTradeAPIClient {
         self.decoder = JSONDecoder()
     }
 
+    deinit {
+        // Dedicated sessions (XCTest MockURLProtocol, never URLSession.shared)
+        // must not keep protocol callbacks alive after this client is released.
+        // Otherwise a previous test's in-flight trends/feed request can land
+        // after that test's tearDown niled MockURLProtocol.handler and
+        // XCTUnwrap-crash whichever case is running next.
+        if session !== URLSession.shared {
+            session.invalidateAndCancel()
+        }
+    }
+
     static var defaultBaseURL: URL {
         if let raw = ProcessInfo.processInfo.environment["CONGRESS_TRADE_API_BASE_URL"],
            let url = URL(string: raw) {
@@ -786,13 +797,15 @@ final class CongressTradeAPIClient {
         )
     }
 
-    /// Claims an anonymously-purchased Apple subscription (`user_id: NULL`
-    /// ledger row) for the just-signed-in account (`link_apple_entitlement`
-    /// command — `app/docs/client-mobile-api.md` "Anonymous Apple purchase").
-    /// Server-identical to `redeemApplePurchase`; the distinct command name
-    /// only lets the CALLER (see `Store/AppleIAP.swift`
-    /// `linkAppleEntitlementIfNeeded`) treat a 409 "already linked to a
-    /// different account" as silent, not an error to show.
+    /// Claims this device's own Apple subscription (`user_id: NULL` ledger
+    /// row) for the signed-in account, from an EXPLICIT Link tap
+    /// (`link_apple_entitlement` command —
+    /// `app/docs/client-mobile-api.md` "Anonymous Apple purchase"). Never
+    /// called automatically — see `Store/AppleIAP.swift`
+    /// `linkAppleEntitlementToCurrentAccount`. Server-identical to
+    /// `redeemApplePurchase`; the distinct command name only lets the caller
+    /// know which UI copy to use. A 409 means "already linked to a
+    /// different account" and is surfaced to the person, never swallowed.
     func linkAppleEntitlement(
         signedTransaction: String,
         idempotencyKey: String = UUID().uuidString

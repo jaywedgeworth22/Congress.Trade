@@ -11,6 +11,7 @@ import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { all, get, run } from '../shared/db.ts';
 import { extractAndNormalize, extractParsed } from './orchestrator.ts';
 import { isDeterministicExtractor, normalize } from './normalizer.ts';
+import { countHousePtrTails } from './ptrTails.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 
 export interface DeterministicDrainResult {
@@ -22,6 +23,16 @@ export interface DeterministicDrainResult {
 }
 
 const DEFAULT_LIMIT = 40;
+
+function countPayloadPtrTails(transactions: unknown[]): number {
+  let n = 0;
+  for (const tx of transactions) {
+    if (!tx || typeof tx !== 'object') continue;
+    const raw = (tx as { rawText?: unknown }).rawText;
+    if (typeof raw === 'string' && raw) n += countHousePtrTails(raw);
+  }
+  return n;
+}
 
 /** True when the parked review payload is a sliced stump, not the full extract. */
 export function storedReviewPayloadIsIncomplete(
@@ -35,7 +46,13 @@ export function storedReviewPayloadIsIncomplete(
   const txs = Array.isArray(payload.transactions) ? payload.transactions : [];
   if (txs.length === 0) return true;
   if (payload.truncated === true) return true;
-  return typeof payload.transactionCount === 'number' && payload.transactionCount > txs.length;
+  if (typeof payload.transactionCount === 'number' && payload.transactionCount > txs.length) {
+    return true;
+  }
+  // One stored row whose rawText still contains later `[ST] S date $amount`
+  // tails is the glued-PTR class (H-2025-20030212). Publishing it would land
+  // 1 of N trades and skip re-extract — same failure as a truncated McCaul.
+  return countPayloadPtrTails(txs) > txs.length;
 }
 
 function payloadToParsedTx(row: Record<string, unknown>): ParsedTx {

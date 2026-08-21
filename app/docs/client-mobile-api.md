@@ -201,11 +201,27 @@ functionality Apple's own guideline explicitly allows to require sign-in.
 - `link_apple_entitlement` — a `POST /api/client/v1/commands` command,
   authenticated, payload `{ signedTransaction }`. Identical verification and
   ledger write to `redeem_apple_purchase` (in fact the same server code path)
-  — the only difference is client-side: iOS calls this one silently right
-  after sign-in to claim a purchase the device already made anonymously, and
-  does not surface its 409 as an error (the person keeps whatever entitlement
-  they already have; the device keeps its anonymous access). `409` is only
-  surfaced to the person when they explicitly tap Restore Purchases.
+  — the only difference is client-side, and it changed 2026-08-21 (owner
+  directive: "linked to an account, usable via website or app both" —
+  Premium belongs to the ACCOUNT, and linking a purchase to one is always an
+  EXPLICIT user action). iOS now calls this command from exactly two places,
+  both an explicit tap: the Premium sheet's "Link to This Account" button
+  (row 4 of the truth table below — an unclaimed device purchase) and
+  Restore Purchases. Nothing runs it silently any more — sign-in, the
+  `Transaction.updates` listener, and the launch-time quiet reconcile only
+  PROBE ownership read-only (reusing the anonymous redeem route below, which
+  never assigns an account) so the UI can ask before linking. `409` ("already
+  linked to a different account") is always surfaced to the person, never
+  swallowed.
+  - iOS-side entitlement truth table (`Store/AppleIAP.swift`
+    `PremiumAccessGate`): (1) signed out + a verified, unclaimed device
+    purchase → Premium (Guideline 5.1.1(v)); (2) signed in + server Premium →
+    Premium; (3) signed in + server free + device purchase owned by a
+    DIFFERENT account → NOT Premium, conflict shown plainly, way out is
+    Restore Purchases or switching accounts; (4) signed in + server free +
+    device purchase unclaimed → Premium (never strand a payer), with an
+    explicit "Link to this account?" ask (remembered "Not now" per account,
+    Link stays available from the Premium sheet and Restore Purchases).
 - App Store Server Notifications V2 land at `POST /api/webhooks/apple`
   (`{ signedPayload }`, same env gate, same JWS-chain verification — including
   the notification's OWN nested `signedTransactionInfo` /

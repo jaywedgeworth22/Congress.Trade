@@ -43,13 +43,26 @@ struct DeliveryView: View {
                     Button {
                         showExportSheet = true
                     } label: {
-                        Label("Export CSV", systemImage: "arrow.down.circle")
+                        // Split colour: bare-glyph grey on the icon, dark
+                        // legible ink on the word (owner 2026-08-21 — words
+                        // must read dark, glyphs can stay the lighter grey).
+                        // Without this the row inherits the app-wide
+                        // `.tint(.blue)` (App.swift) and renders accent blue.
+                        Label {
+                            Text("Export CSV").foregroundStyle(AppTheme.wordInk)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(AppTheme.glyphGrey)
+                        }
                     }
                     if !store.isPremium {
                         Button {
                             showSubscribe = true
                         } label: {
+                            // Owner (2026-08-21): the Apple logo glyph itself
+                            // must be the same near-black as the text, not
+                            // blue — unlike Export CSV above, no split here.
                             Label("Subscribe with Apple", systemImage: "apple.logo")
+                                .foregroundStyle(AppTheme.wordInk)
                         }
                     }
                 } header: {
@@ -86,6 +99,13 @@ struct DeliveryView: View {
                                     .padding(.vertical, 10)
                             }
                             .buttonStyle(.borderedProminent)
+                            // `.borderedProminent`'s fill comes from `.tint`,
+                            // not `.foregroundStyle` — the app-wide
+                            // `.tint(.blue)` (App.swift) would otherwise
+                            // paint this pill accent blue. Owner (2026-08-21)
+                            // wants near-black here, matching the plain
+                            // "Subscribe with Apple" row above.
+                            .tint(AppTheme.wordInk)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         .padding(.vertical, 4)
@@ -547,8 +567,14 @@ struct DeliveryCredentialView: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21); `.tint` is required alongside
+                    // `.foregroundStyle` because the toolbar button style
+                    // re-applies tint over a plain foreground colour.
                     Button("Done") { dismiss() }
                         .fontWeight(.bold)
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
         }

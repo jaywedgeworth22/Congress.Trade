@@ -69,6 +69,7 @@ import {
   isTransientFilesPrepaidHalt,
   type ProviderErrorClass,
 } from './providerHealth.ts';
+import { isDocScopedOpenRouterError } from './openRouterReply.ts';
 import { sendPushover } from '../shared/pushover.ts';
 import { countReviewQueueBuckets, TERMINAL_REVIEW_REASON_EXCLUDE_SQL } from './reviewQueueHealth.ts';
 import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics.ts';
@@ -1396,9 +1397,12 @@ export async function handleAutopilotTick(
       && haltSamples.every((sample) => isTransientFilesPrepaidError(sample));
     const falseSourceAuthOnly = haltSamples.length > 0
       && haltSamples.every((sample) => isFalseSourceAuthError(sample));
+    const docScopedOpenRouterOnly = haltSamples.length > 0
+      && haltSamples.every((sample) => isDocScopedOpenRouterError(sample));
     const skipTransientLatch = (
       (transientFilesOnly && (haltClass === 'billing' || haltClass === 'quota'))
       || (falseSourceAuthOnly && haltClass === 'auth')
+      || (docScopedOpenRouterOnly && (haltClass === 'auth' || haltClass === 'parse'))
     );
     if (haltClass && !skipTransientLatch) {
       await finalize('halted', `error_class:${haltClass}`);

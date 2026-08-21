@@ -1279,6 +1279,24 @@ export const LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS = [
     WHERE error IN ('missed_window', 'fmp_quote_http_402')`,
 ] as const;
 
+/**
+ * 0093_premium_activation_alerts.sql — idempotency ledger for the "someone
+ * became Premium" Pushover notification (billing/premiumActivationAlert.ts),
+ * plus supporting indexes so the totals aggregate it sends stays cheap.
+ * Renumbered off 0090/0091 after those slots landed on main as
+ * admin_allowlist / apple_subscriptions_nullable_user / latency_snapshot_repair.
+ */
+export const PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS premium_activation_notices (
+     activation_key  TEXT PRIMARY KEY,
+     user_id         TEXT NOT NULL,
+     notified_at     TEXT NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_users_premium_status ON users (subscription_status, plan)',
+  `CREATE INDEX IF NOT EXISTS idx_apple_subscriptions_status_expires
+     ON apple_subscriptions (status, expires_date)`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1405,6 +1423,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
   // 0092_latency_snapshot_repair.sql
   ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
+  // 0093_premium_activation_alerts.sql
+  ...PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

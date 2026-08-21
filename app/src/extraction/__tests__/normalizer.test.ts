@@ -760,10 +760,50 @@ describe('normalize', () => {
     expect(payload.transactionCount).toBe(0);
   });
 
+  it('keeps a dated real row in the review payload when the rest is OCR chrome', async () => {
+    const { env, cap } = makeEnv([]);
+    const garbage = Array.from({ length: 24 }, (_, i) =>
+      tx({
+        assetName: `unreadable asset p1 y${300 + i}`,
+        ticker: null,
+        txDate: null,
+        amountMin: 250001,
+        amountMax: 500000,
+        confidence: 0.19,
+        rawText: 'form chrome',
+      }),
+    );
+    garbage.push(tx({
+      assetName: 'Apple Inc.',
+      ticker: 'AAPL',
+      txDate: '2025-02-19',
+      amountMin: 1001,
+      amountMax: 15000,
+      confidence: 0.95,
+      rawText: 'Apple Inc. (AAPL) [ST] P 02/19/2025 02/19/2025 $1,001 - $15,000',
+    }));
+    const result = await normalize(
+      env,
+      filing({ docId: 'H-mix', chamber: 'house', docKind: 'scanned_pdf', extractor: 'server_cpu_v1' }),
+      garbage,
+      { extractor: 'server_cpu_v1' },
+    );
+    expect(result.needsReview).toBe(true);
+    expect(result.published).toBe(false);
+    expect(cap.insertedTx).toHaveLength(0);
+    const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
+      transactionCount: number;
+      transactions: Array<{ ticker?: string | null }>;
+    };
+    expect(payload.transactionCount).toBeGreaterThanOrEqual(1);
+    expect(payload.transactions.some((row) => row.ticker === 'AAPL')).toBe(true);
+  });
+
   it('classifies expanded form-chrome and garbage-ratio helpers', () => {
     expect(looksLikeHeaderContaminatedAsset('Member of the U.S. House of Representatives')).toBe(true);
     expect(looksLikeHeaderContaminatedAsset('unreadable asset p1 y331')).toBe(true);
     expect(looksLikeHeaderContaminatedAsset('Apple Inc.')).toBe(false);
+    expect(looksLikeHeaderContaminatedAsset('The following information serves to identify the previously and erroneously filed periodic')).toBe(true);
     expect(isMostlyGarbageOcrExtraction(100, 5, 5)).toBe(true);
     expect(isMostlyGarbageOcrExtraction(10, 9, 0)).toBe(false);
   });
@@ -807,6 +847,18 @@ describe('scoreFields ticker/asset-name consistency (informational, unpenalized)
     const scored = scoreFields(
       0.97,
       { ...baseFields, ticker: 'BTC', assetName: 'BTC' },
+      '2024-07-01',
+      passthroughResolve,
+      nameIndex,
+    );
+    expect(scored.flags).not.toContain('ticker_asset_mismatch');
+  });
+
+  it('does not flag a mismatch when the asset name is just the ticker symbol', () => {
+    const nameIndex: NameIndex = new Map([['ACN', 'accenture']]);
+    const scored = scoreFields(
+      0.97,
+      { ...baseFields, ticker: 'ACN', assetName: 'ACN' },
       '2024-07-01',
       passthroughResolve,
       nameIndex,
