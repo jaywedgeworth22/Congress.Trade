@@ -7,6 +7,7 @@
  */
 
 import type { Env, Filing, ParsedTx } from '../shared/types.ts';
+import { IngestRetryError } from '../ingestion/fetcher.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import {
   classifyHouseExtractRoute,
@@ -434,6 +435,73 @@ export class HousePdfExtractor implements Extractor {
   }
 }
 
+/**
+ * Executive 278-T PDFs are often tagged `scanned_pdf` even when unpdf can
+ * still recover a usable text layer (Burns-class misclassifications). Always
+ * try the deterministic OGE parser first. Paid OpenRouter vision runs only
+ * when that parse yields zero rows on a true scan, and is fail-soft: missing
+ * keys, parse errors, and provider 4xx return the empty text result instead
+ * of failing the extract. Budget/rate-limit `IngestRetryError` still
+ * propagates so the queue can back off.
+ */
+export class OgePdfExtractor implements Extractor {
+  readonly name: string;
+  readonly circuitBreakerName: string;
+
+  constructor(
+    private readonly ogeText: Extractor,
+    private readonly visionPdf: Extractor,
+  ) {
+    this.name = `ogePdf(${ogeText.name},${visionPdf.name})`;
+    this.circuitBreakerName = visionPdf.circuitBreakerName ?? visionPdf.name;
+  }
+
+  canHandle(f: Filing): boolean {
+    return f.chamber === 'executive' && (f.docKind === 'text_pdf' || f.docKind === 'scanned_pdf');
+  }
+
+  async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    let textResult: ExtractorResult | null = null;
+    let textError: unknown = null;
+    try {
+      textResult = await this.ogeText.extract(input);
+      if (textResult.transactions.length > 0) return textResult;
+    } catch (error) {
+      // Image-only or malformed PDFs can throw in unpdf; vision is the fallback
+      // for scans. Typed 278-T files keep their previous throw behavior.
+      textError = error;
+    }
+
+    // Typed executive PDFs with no matching rows are usually empty/termination
+    // reports (Fudge-class). Do not charge vision for those.
+    if (input.filing.docKind === 'text_pdf') {
+      if (textResult) return textResult;
+      throw textError instanceof Error ? textError : new Error('ogePdf: ogeText failed');
+    }
+
+    try {
+      return await this.visionPdf.extract(input);
+    } catch (error) {
+      if (error instanceof IngestRetryError) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      const fallback = textResult ?? emptyOgeTextResult();
+      return {
+        ...fallback,
+        raw: `${fallback.raw}\n\n---\nogePdf vision fail-soft: ${reason}`,
+      };
+    }
+  }
+}
+
+function emptyOgeTextResult(): ExtractorResult {
+  return {
+    transactions: [],
+    confidence: 0.3,
+    raw: '',
+    extractor: 'ogeText',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline construction
 // ---------------------------------------------------------------------------
@@ -446,6 +514,8 @@ export class HousePdfExtractor implements Extractor {
  *   - SenateHtmlExtractor (senate_html)
  *   - TextPdfExtractor    (text_pdf, House PTR layout)
  *   - OgeTextExtractor    (text_pdf, chamber='executive' — OGE 278-T layout)
+ *   - OgePdfExtractor     (executive text_pdf + scanned_pdf — unpdf first,
+ *                          fail-soft OpenRouter vision only for true scans)
  *   - VisionLlmExtractor  (scanned_pdf — uses GEMINI_API_KEY)
  *
  * The classifier picks a docKind; the queue handler iterates this pipeline and
@@ -485,11 +555,14 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const visionArbitrated = new ArbitratingExtractor(configuredVision, env, secondary);
   const cheapText = new OpenRouterTextExtractor(env);
   const housePdf = new HousePdfExtractor(textPdf, visionArbitrated, cheapText);
+  const ogePdf = new OgePdfExtractor(ogeText, visionArbitrated);
 
-  // ogeText is ordered before the generic textPdf so executive-chamber PDFs
+  // ogePdf is ordered before the generic textPdf so executive-chamber PDFs
   // (OGE 278-T layout) get the parser tuned for their table, instead of
   // silently matching the House-tuned parser and yielding zero rows.
-  return [senateHtml, housePdf, ogeText, textPdf, visionArbitrated];
+  // scanned_pdf executive filings stay on this wrapper (unpdf first, then
+  // fail-soft vision) rather than jumping straight to paid vision.
+  return [senateHtml, housePdf, ogePdf, textPdf, visionArbitrated];
 }
 
 // ---------------------------------------------------------------------------
