@@ -30,10 +30,11 @@
  * This is a DIFFERENT layout from the House PTR text_pdf format that
  * textPdf.ts targets (House rows carry an owner code + a bracketed asset-type
  * code; OGE 278-T rows have neither). Routing an executive filing through the
- * House-tuned parser silently yields zero rows — this extractor claims
- * chamber==='executive' text_pdf filings ahead of the generic TextPdfExtractor
- * in buildExtractorPipeline() so those filings get a parser that actually
- * matches their layout.
+ * House-tuned parser silently yields zero rows — OgePdfExtractor claims
+ * chamber==='executive' text_pdf and scanned_pdf filings ahead of the generic
+ * TextPdfExtractor in buildExtractorPipeline() and runs this parser first.
+ * True scans that yield zero rows then take a fail-soft OpenRouter vision
+ * path; this class itself still only claims text_pdf.
  *
  * SCOPE: the dedicated 278-T "Periodic Transaction Report" form only. The
  * broader OGE 278e annual/termination disclosure (a much larger multi-section
