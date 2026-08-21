@@ -321,8 +321,10 @@ struct TradeDetailView: View {
         // Guideline 5.1.1(v): the filing PDF is content, not account-specific
         // functionality — a signed-out device with its own Apple purchase
         // fetches it in-app the same way a signed-in Premium session does
-        // (APIClient attaches the cached device entitlement token).
-        switch FilingPDFAccess.action(isPremium: store.isPremium || store.hasLocalAppleEntitlement) {
+        // (APIClient attaches the cached device entitlement token). Signed
+        // in, `premiumFeatureAccess` additionally excludes a device purchase
+        // already linked to a DIFFERENT account.
+        switch FilingPDFAccess.action(isPremium: store.premiumFeatureAccess) {
         case .showPremiumSheet:
             if let openPremium {
                 openPremium()

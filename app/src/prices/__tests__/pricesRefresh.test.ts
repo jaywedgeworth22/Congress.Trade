@@ -51,12 +51,15 @@ const m = vi.hoisted(() => ({
   errors: new Map<string, string>(),
   responses: new Map<string, Array<{ date: string; close: number }>>(),
 }));
+const order = vi.hoisted(() => ({ log: [] as string[] }));
+
 vi.mock('../massive', () => ({
   buildMassivePriceClient: () => ({
     // Default suite records into h.* (same shape as the old FMP mock) so
     // assertions on h.eodCalls / h.responses stay stable. Unmetered-provider
     // suite below uses m.* overrides when PRICE_PROVIDER=massive with m.errors.
     eodHistory: async (symbol: string, from?: string, to?: string) => {
+      order.log.push(`massive:eod:${symbol}`);
       m.eodCalls.push({ symbol });
       h.eodCalls.push({ symbol, from: from ?? '', to: to ?? '' });
       const err = m.errors.get(symbol);
@@ -66,6 +69,7 @@ vi.mock('../massive', () => ({
       return m.responses.get(symbol) ?? h.responses.get(symbol) ?? [];
     },
     spxHistory: async (from?: string, to?: string) => {
+      order.log.push('massive:spx');
       m.eodCalls.push({ symbol: 'SPY' });
       h.eodCalls.push({ symbol: 'SPY', from: from ?? '', to: to ?? '' });
       const err = m.errors.get('SPY');
@@ -73,6 +77,30 @@ vi.mock('../massive', () => ({
       const herr = h.errors.get('SPY');
       if (herr) throw new Error(herr);
       return m.responses.get('SPY') ?? h.responses.get('SPY') ?? [];
+    },
+  }),
+}));
+
+const p = vi.hoisted(() => ({
+  eodCalls: [] as Array<{ symbol: string }>,
+  errors: new Map<string, string>(),
+  responses: new Map<string, Array<{ date: string; close: number }>>(),
+}));
+vi.mock('../peer', () => ({
+  buildPeerPriceClient: () => ({
+    eodHistory: async (symbol: string) => {
+      order.log.push(`peer:eod:${symbol}`);
+      p.eodCalls.push({ symbol });
+      const err = p.errors.get(symbol);
+      if (err) throw new Error(err);
+      return p.responses.get(symbol) ?? [];
+    },
+    spxHistory: async () => {
+      order.log.push('peer:spx');
+      p.eodCalls.push({ symbol: 'SPY' });
+      const err = p.errors.get('SPY');
+      if (err) throw new Error(err);
+      return p.responses.get('SPY') ?? [];
     },
   }),
 }));
@@ -92,6 +120,10 @@ beforeEach(async () => {
   m.eodCalls.length = 0;
   m.responses.clear();
   m.errors.clear();
+  p.eodCalls.length = 0;
+  p.responses.clear();
+  p.errors.clear();
+  order.log.length = 0;
   const opened = await openMigratedD1();
   db = opened.db;
   close = opened.close;
@@ -470,5 +502,64 @@ describe('runPriceRefresh — unmetered provider (massive): 429 is not run-fatal
     expect(res.aborted).toBe(true);
     expect(m.eodCalls.some((c) => c.symbol === 'NEVER4')).toBe(false);
     expect(srRow('NEVER4')).toBeUndefined();
+  });
+});
+
+describe('runPriceRefresh — PRICE_PROVIDER=peer: Massive is last-resort, not first', () => {
+  function usePeerPrimary(): void {
+    const envx = env as unknown as Record<string, string>;
+    envx.PRICE_PROVIDER = 'peer';
+    envx.APP_B_IMPORT_URL = 'https://socratictrade.com';
+    envx.APP_B_INGEST_TOKEN = 'test-peer-token';
+    envx.MASSIVE_API_KEY = 'test-massive-key';
+  }
+
+  it('does not call Massive first (or at all) when peer returns history', async () => {
+    usePeerPrimary();
+    const d1 = daysAgo(1);
+    seedTrade('t-peer-1', 'AAPL', '2026-01-05');
+    p.responses.set('SPY', [{ date: d1, close: 500 }]);
+    p.responses.set('AAPL', [{ date: d1, close: 200 }]);
+    m.responses.set('AAPL', [{ date: d1, close: 199 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(false);
+    expect(res.tickersPriced).toBe(1);
+    expect(srRow('AAPL')?.current_price).toBe(200);
+    expect(m.eodCalls).toEqual([]);
+    expect(order.log[0]).toBe('peer:spx');
+    expect(order.log.some((c) => c.startsWith('massive:'))).toBe(false);
+    expect(order.log.filter((c) => c.startsWith('peer:')).length).toBeGreaterThan(0);
+  });
+
+  it('calls Massive only after an empty peer series', async () => {
+    usePeerPrimary();
+    const d1 = daysAgo(1);
+    seedTrade('t-peer-2', 'MSFT', '2026-01-05');
+    p.responses.set('SPY', [{ date: d1, close: 500 }]);
+    // Peer has no MSFT bars → last-resort Massive.
+    m.responses.set('MSFT', [{ date: d1, close: 410 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.tickersPriced).toBe(1);
+    expect(srRow('MSFT')?.current_price).toBe(410);
+    const msftOrder = order.log.filter((c) => c.endsWith(':MSFT'));
+    expect(msftOrder).toEqual(['peer:eod:MSFT', 'massive:eod:MSFT']);
+  });
+
+  it('aborts on peer 401 and never calls Massive', async () => {
+    usePeerPrimary();
+    seedTrade('t-peer-3', 'NVDA', '2026-01-05');
+    p.errors.set('SPY', 'PEER_HTTP_401');
+    m.responses.set('NVDA', [{ date: daysAgo(1), close: 100 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(true);
+    expect(m.eodCalls).toEqual([]);
+    expect(order.log.some((c) => c.startsWith('massive:'))).toBe(false);
+    expect(srRow('NVDA')).toBeUndefined();
   });
 });

@@ -65,6 +65,31 @@ struct PoliticianDetailView: View {
                             }
                         }
                         .padding(.top, 16)
+
+                        DetailSection("Committees") {
+                            if let committees = member.committees, !committees.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(committees.enumerated()), id: \.offset) { _, name in
+                                        Text(name)
+                                            .font(.caption.weight(.semibold))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(AppTheme.panel, in: Capsule())
+                                            .overlay(
+                                                Capsule().stroke(AppTheme.borderColor.opacity(0.55), lineWidth: 1)
+                                            )
+                                    }
+                                }
+                            } else if isExecutiveChamber(member.chamber) {
+                                Text("Executive filers do not sit on congressional committees.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("No current assignments on file.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         
                         // Performance: dual anchors when backend provides them
                         if let perf = summary?.performance {
@@ -139,9 +164,15 @@ struct PoliticianDetailView: View {
                     }
                 }
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21); `.tint` is required alongside
+                    // `.foregroundStyle` because the toolbar button style
+                    // re-applies tint over a plain foreground colour.
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundStyle(AppTheme.wordInk)
+                    .tint(AppTheme.wordInk)
                 }
             }
             .task {
@@ -184,6 +215,11 @@ struct PoliticianDetailView: View {
                     value: leg.medianExcess != nil ? String(format: "%+.1f%%", leg.medianExcess! * 100) : "N/A"
                 )
             }
+            Text(matchesTopPerformers
+                 ? "Variable hold.  Each buy from the public filing date through the latest price.  Avg excess is versus the index; avg return is the asset alone."
+                 : "Variable hold.  Each buy from the trade date through the latest price.  Avg excess is versus the index; avg return is the asset alone.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if matchesTopPerformers, leg.avgExcess != nil {
                 Text("Avg Excess is the statistic Top Performers ranks by.")
                     .font(.caption)
@@ -214,6 +250,12 @@ struct PoliticianDetailView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func isExecutiveChamber(_ chamber: String?) -> Bool {
+        guard let chamber else { return false }
+        let lowered = chamber.lowercased()
+        return lowered == "executive" || lowered == "oge" || lowered.contains("exec")
     }
 
     private func fetchMember() async throws -> ClientMemberResponse {

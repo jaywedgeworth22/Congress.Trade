@@ -22,7 +22,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ## Execution Workflow
 
-- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (the Hetzner fleet box `fleet-hetzner-nbg1` — see "Current Shape"; the old Oracle host is decommissioned). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
+- **CI/CD Runners Policy**: Fleet CI is GitHub-hosted `ubuntu-latest` only.  Self-hosted Oracle/Coolify runners (`oracle-ci`, `socratic-ci`, `hetzner-ct-ci-*`, and `runs-on: self-hosted` for the JS/Deno verify gate) are RETIRED.  Do not resurrect them, re-register them, or point verify workflows at Coolify/Oracle labels.  The Mac `mac-xcode26-congress` runner stays for iOS/Xcode jobs only — never for the verify JS/Deno gate.
 
 
 - **Always Tagged**: Always explicitly identify as AG or Antigravity in Slack messages and commits to avoid "untagged" ghost work.
@@ -31,7 +31,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 - **Socialize First**: For cross-app changes (like API SDKs or UX overhauls), socialize the design in #agent-sync before executing.
 - **Never Say "Can Be Viewed Locally"**: NEVER tell the user that a task is finished and that it "can be viewed locally" (unless explicitly told to build local-only). Work is NOT finished until it is merged to `main` and fully deployed to production. Saying a task is done when it is only runnable locally leads to duplicate work and confusion. Always merge and run the production deployment script (`bash app/scripts/ship.sh`) as part of completing the task.
 - **Always Keep Branches Updated with Main**: All agents MUST merge or rebase `main` into their feature branch (`git fetch origin main && git merge origin/main`) before running final verification, before requesting review, and immediately before merging. Never leave active feature branches or PRs lagging behind `main`.
-- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners now living on the Hetzner fleet box (`hetzner-ct-ci-1` / `hetzner-ct-ci-2`, labels `congress-ci` / `hetzner-ci`; the `oracle-ci` label string is kept ONLY so existing `runs-on` selectors keep matching — it names a label, not a location — see `docs/rollouts/2026-08-08-runners-hetzner-migration.md`), `socratic-ci`. NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
+- **CI Runner Policy (GitHub-hosted verify)**: The JS/Deno verify gate (`typecheck`, `npm test`, pin-check, lint) MUST use `runs-on: ubuntu-latest`.  Do not send it to Coolify self-hosted runners, `oracle-ci`, `socratic-ci`, `hetzner-ct-ci-*`, or a generic `self-hosted` label.  Those Oracle/Coolify listeners are retired.  The owned Mac runner (`mac-xcode26-congress`, labels `self-hosted, macOS, ARM64, xcode26`) is for iOS archive/TestFlight only.  Never start, spawn, or re-enable the retired Mac product runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`) for any job.
 
 
 At session start in any repo, run one agent-sync poll pass:
@@ -207,111 +207,28 @@ dead laptop pages in minutes.  Remaining host dependency and the always-on
 residential fix: `docs/rollouts/2026-08-17-senate-relay-host-dependency.md`
 (issue #1604).
 
-## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
+## Credential testing (public-safe)
 
-Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
-or "invalid" when it is fine.  The usual cause is testing it the obvious way.
+The private attack map (credential inventory, Infisical project ids, Coolify
+UUIDs, which token maps to which zone) lives in the **private** repo
+`jaywedgeworth22/fleet-ops` → `ATTACK-MAP.md`. Do not copy it here.
 
-**Never judge a Cloudflare token by `GET /user/tokens/verify`.**  That endpoint
-only understands *user*-owned tokens.  An **account-owned** token returns
-`success: false` there while working perfectly against real resources.
-Measured 2026-08-11 against `/Users/jay/.secrets/global-api-keys`:
+Public rules that belong in this file:
 
-| Credential | `/user/tokens/verify` | Can it actually read `congress.trade`? |
-|---|---|---|
-| `CLOUDFLARE_CT_API_TOKEN` | `success: false` | **Yes** — reads the zone fine |
-| `CLOUDFLARE_JAY_API_TOKEN` | `success: true`, `active` | **No** — sees 0 zones |
-
-Both obvious conclusions are wrong.  Verify by calling the **resource you
-actually need**, and read the error code rather than the message:
-
-- **`10000 "Authentication error"` does NOT reliably mean a bad token.**
-  Cloudflare returns it both for a genuinely invalid credential *and* for a
-  valid credential lacking permission on that resource.  If a token can read
-  something in the zone but 10000s on a write, it is a **missing permission
-  scope**, not an expired token — say so, and name the scope needed.
-- A token that verifies but lists **0 zones** is account-scoped with no zone
-  permissions.  It cannot do zone work no matter how valid it is.
-- Do **not** go credential-hunting.  As of 2026-08-11 there is exactly **one**
-  active Cloudflare credential (below); every legacy `CT` / `JAY` / `ST` / `OLD`
-  token and key has been commented out in `~/.secrets/global-api-keys`
-  specifically so no agent picks one up and re-runs this diagnosis.
-
-### The only Cloudflare credential: `CLOUDFLARE_FLEET_API_TOKEN`
-
-Created 2026-08-11.  **Use it for every Cloudflare operation, in every repo.**
-
-It is a **USER-owned** token under `mail@jays.services` — deliberately *not*
-account-owned, so it is not tied to the old `jay` account (which owns no zones
-and has a billing issue).  Its policies grant all four accounts, so one token
-covers the whole fleet:
-
-| Zone | Account |
-|---|---|
-| `congress.trade` | Congress.Trade |
-| `jays.services`, `jaywedgeworth.com` | Usage.Jays.Services |
-| `socratic.trade`, `socratictrade.com` | SocraticTrade.com |
-
-Verified: reads all 5 zones **and** writes a zone cache ruleset — the exact
-operation every legacy token failed.  Carries Zone Read/Write, Cache Settings
-Write, Config Settings Write, Zone Settings Write, DNS Write, Cache Purge,
-Workers Routes Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.
-
-**Break glass.**  If the fleet token is ever revoked or needs replacing, the
-only credential that can mint a new one is `CLOUDFLARE_JAY_API_KEY`, commented
-out at the bottom of the secrets file.  It is a legacy global key
-(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`, *not* `Bearer`), full admin
-and unscoped — which is exactly why it is commented out.  Uncomment it, mint the
-replacement, re-comment it.  Do not use it for routine work.
-
-
-Secret hygiene when testing (the repo hook enforces this):
-extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
-the file; pipe command output through `sed "s/$TOK/REDACTED/g"`; send stderr to
-`/dev/null` rather than `2>&1` (error text can echo fragments of the argv).
-
-## Admin/secrets credentials (READ THIS — a missing browser UA looks exactly like a dead credential)
-
-Same failure shape as the Cloudflare section above: an agent tests a credential the obvious
-way, gets a non-200, and declares it dead — when the credential is actually fine and the test
-was wrong.  Re-verified live 2026-08-11 after a diagnosis session reported ALL of the below as
-dead ("`CT_ADMIN_TOKEN` 401s", "all four Infisical identities fail with Invalid credentials").
-That diagnosis was wrong.  Every path below is currently live:
-
-| Credential | Where | Verified 2026-08-11 |
-|---|---|---|
-| `CT_ADMIN_TOKEN` (`~/.secrets/global-api-keys`) | bearer for `/api/admin/*` on `https://congress.trade` | **200** on `POST /api/admin/debug-sql` with `{"query":"SELECT 1"}`; a deliberately-wrong token on the same request correctly 401s (sanity-checks the test itself) |
-| `INFISICAL_CT_CLIENT_ID`/`SECRET` | universal-auth login, congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290` env `prod` | login succeeds; `infisical secrets get ADMIN_TOKEN` returns a value whose SHA-256 hash **matches** the `CT_ADMIN_TOKEN` file value byte-for-byte — Infisical and the secrets file agree |
-| `INFISICAL_ST_CLIENT_ID`/`SECRET`, `INFISICAL_SHARED_CLIENT_ID`/`SECRET`, `INFISICAL_AUTOMATION_CLIENT_ID`/`SECRET` | universal-auth login | all three log in successfully |
-
-**The likely cause of the false-dead diagnosis:** `congress.trade` sits behind a Cloudflare
-managed challenge that blocks non-browser User-Agents (same mechanism as the Cloudflare-token
-section above). Measured with the identical token: a browser UA gets **200**; the default curl
-UA on the exact same request gets **502** from the Cloudflare edge — a response an agent can
-easily misread as "the token is dead" when it is actually an edge block that never reached the
-app's auth check.  **Always spoof a browser UA when testing `/api/admin/*` by hand:**
-
-```bash
-UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-TOK=$(grep -m1 '^CT_ADMIN_TOKEN=' ~/.secrets/global-api-keys | cut -d= -f2-)
-curl -sS -A "$UA" -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
-  -X POST "https://congress.trade/api/admin/debug-sql" -d '{"query":"SELECT 1"}'
-```
-
-If that genuinely 401s with the browser UA in place (not a 403/502 edge response), THEN treat
-the token as actually rejected — that has happened for real once before (2026-07-30: Coolify's
-runtime `ADMIN_TOKEN` had drifted from Infisical's because `INFISICAL_APP_PROJECT_ID` was unset
-on Coolify, so the app silently fell back to an older image-baked value; see `docs/EFFORT-LOG.md`
-2026-07-30 KIMI entries and PR #1192 for the full forensics). **How to re-sync if it happens
-again:** set `INFISICAL_APP_PROJECT_ID=f61a79de-8d77-4f0b-9361-4b7208598290` and
-`INFISICAL_SHARED_PROJECT_ID` (Socratic-shared project id) as Coolify **runtime env vars** on
-the `congress-app` service, then redeploy — the app re-reads Infisical on the ~600s secrets
-cache TTL with no rebuild needed.  `ADMIN_TOKEN` itself lives in Infisical's congress-trade
-project (`f61a79de-…`), env `prod`, key `ADMIN_TOKEN` — that is the source of truth; do not mint
-a new one without owner sign-off (production-intent, see the migration/deploy rules below).
-
-Verify without ever printing a secret value — extract with `grep -m1`, reduce Infisical fetches
-to length/hash only, and use the wrong-token sanity check above so a 401 you see is trusted.
+- **Never judge a Cloudflare token by `GET /user/tokens/verify`.** That endpoint
+  only understands *user*-owned tokens. An account-owned token 401s there while
+  working against real resources. Call the resource you need; `10000` can mean
+  missing *scope*, not an expired token.
+- **`congress.trade` admin routes sit behind a Cloudflare managed challenge.**
+  Default curl User-Agents often get an edge 502/403 that looks like a dead
+  credential. Use a browser UA. Never paste tokens into chat.
+- **Never dump the operator handoff file.** Names only:
+  `grep -oE '^[A-Z][A-Z0-9_]*' ~/.secrets/global-api-keys`. Never `cat` it,
+  never open it with a Read tool. Canonical: `~/apps/AGENT-SYNC.md` § secret-safety.
+- **Never run bare `infisical secrets`.** It table-prints every value. Use
+  `scripts/infisical-secrets-safe.sh` (`set` / `has` / `names`).
+- Runtime secrets live in Infisical (app prod). Coolify env is bootstrap +
+  overrides. Do not re-export Infisical into a tracked `.prod.vars`.
 
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 

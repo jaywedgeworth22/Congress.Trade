@@ -34,6 +34,7 @@ import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
   asAssetCategories,
+  asTxSource,
   buildTransactionsQuery,
   buildTransactionsCountQuery,
   buildTransactionsTodayFilingsQuery,
@@ -434,6 +435,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     owner: asOwner(q.owner),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
+    source: asTxSource(q.source),
   };
 }
 
