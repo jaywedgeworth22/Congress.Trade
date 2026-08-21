@@ -126,7 +126,7 @@ final class CongressTradeTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "intent-123")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer native-session")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
             XCTAssertEqual(payload["id"] as? String, "sub_1")
@@ -256,7 +256,18 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request.  `setChamberSelection` also
+            // fires `refreshTrends()`'s ~12-endpoint analytics/latency
+            // fan-out concurrently (CongressTradeStore.performTrendsRefresh);
+            // one of those (`latency-summary`) intentionally carries no
+            // chamber= param at all (CT-AUD-010: latency is
+            // chamber-independent by design).  Capturing "whichever
+            // non-bootstrap request lands last" raced that unrelated request
+            // against the real feed fetch and could overwrite `feedURL` with
+            // the chamber-less one under load, so the test intermittently
+            // saw `nil` for a param the feed request actually sent (CI job
+            // xcodebuild-mac, run 32472709681).
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -282,7 +293,14 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request — see the identical note in
+            // testDefaultChamberSelectionMatchesBackendDefaultAndOmitsTheParam
+            // above.  Without this guard, `refreshTrends()`'s concurrent
+            // `latency-summary` call (no chamber= by design) could overwrite
+            // `feedURL` and make this assertion see `nil` even though the
+            // real feed request correctly sent chamber=executive,house (CI
+            // job xcodebuild-mac, run 32472709681).
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -393,7 +411,7 @@ final class CongressTradeTests: XCTestCase {
             feedURLs.append(request.url!)
             return Self.response(for: request, json: Self.feedJSON(
                 items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                cursor: 110, count: 10, total: 250, limit: 100
+                cursor: 110, count: 10, total: 250, limit: 50
             ))
         }
 
@@ -404,7 +422,7 @@ final class CongressTradeTests: XCTestCase {
         )
         await store.refresh()
 
-        XCTAssertEqual(store.totalPages, 3, "250 rows at 100/page rounds up to 3 pages")
+        XCTAssertEqual(store.totalPages, 5, "250 rows at the default 50/page rounds up to 5 pages")
         XCTAssertTrue(store.canGoToNextPage)
         XCTAssertFalse(store.canGoToPreviousPage)
         // The first page must not send offset= at all (page 1, not offset=0).
@@ -416,7 +434,7 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(store.canGoToPreviousPage)
 
         let secondComponents = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURLs.last), resolvingAgainstBaseURL: false))
-        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "100")
+        XCTAssertEqual(secondComponents.queryItems?.first(where: { $0.name == "offset" })?.value, "50")
 
         await store.goToPreviousPage()
         XCTAssertEqual(store.currentPage, 0)
@@ -1193,7 +1211,14 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request — see the note in
+            // testDefaultChamberSelectionMatchesBackendDefaultAndOmitsTheParam.
+            // `refreshTrends()`'s concurrent `latency-summary` call carries
+            // no chamber= by design; without this guard it could race the
+            // real feed fetch and overwrite `feedURL`, making this assertion
+            // see `nil` — the same "chamber= arrives as nil" signature as CI
+            // job xcodebuild-mac, run 32472709681.
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -1272,7 +1297,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_subscription")
             let payload = try XCTUnwrap(json["payload"] as? [String: Any])
@@ -1307,7 +1332,7 @@ final class CongressTradeTests: XCTestCase {
         )
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Idempotency-Key"), "del-acct-1")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(Self.requestBody(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["type"] as? String, "delete_account")
             return Self.response(
