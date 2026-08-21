@@ -95,6 +95,7 @@ final class ClientTrade: Decodable, Identifiable {
         var party: String?
         var state: String?
         var photoUrl: String?
+        var committees: [String]?
         /// Curated executive-branch position ("President", "Treasury
         /// Secretary"; `shared/executiveTitles.ts` server-side). Present on
         /// `/member/:id`'s `member` object; `nil` on the lighter member embed
