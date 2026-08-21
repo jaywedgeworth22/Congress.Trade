@@ -53,6 +53,23 @@ for (const name of workflowNames) {
     errors.push(`${name}: macos-26 is only allowed on ios-appstore-gm.yml`);
   }
 
+  // IOSENGINEERING-14: iOS compile + XCTest must fail the job.  Advisory
+  // continue-on-error let red Mac builds merge.  Do not skip tests.
+  if (name === "ios-build.yml") {
+    if (/\bcontinue-on-error\s*:/.test(text)) {
+      errors.push(`${name}: iOS compile+test must fail the job (no continue-on-error)`);
+    }
+    if (!text.includes("scripts/ios-ci-xctest.sh")) {
+      errors.push(`${name}: must run scripts/ios-ci-xctest.sh (do not only build)`);
+    }
+    if (!text.includes("name: xcodebuild (unsigned)")) {
+      errors.push(`${name}: required-check job must keep name 'xcodebuild (unsigned)'`);
+    }
+    if (!text.includes("always() && !cancelled()")) {
+      errors.push(`${name}: required-check wrapper must always report (not skip on Mac failure)`);
+    }
+  }
+
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
     if (runner) {
@@ -85,6 +102,18 @@ for (const name of workflowNames) {
       errors.push(`${name}:${index + 1}: reusable workflow runner policy is not locally auditable`);
     }
   });
+}
+
+const xctestPath = new URL("./ios-ci-xctest.sh", import.meta.url);
+const xctest = await readFile(xctestPath, "utf8");
+if (!/\bxcodebuild\s+test\b/.test(xctest)) {
+  errors.push("scripts/ios-ci-xctest.sh: must run xcodebuild test (do not only build)");
+}
+if (!xctest.includes("-only-testing:CongressTradeTests")) {
+  errors.push("scripts/ios-ci-xctest.sh: must target CongressTradeTests (do not skip XCTest)");
+}
+if (!xctest.includes("IOS_CI_MIN_TESTS:-71") && !xctest.includes("-lt \"$MIN_TESTS\"")) {
+  errors.push("scripts/ios-ci-xctest.sh: must assert at least 71 XCTest cases ran");
 }
 
 if (errors.length) {
