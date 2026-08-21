@@ -380,12 +380,21 @@ class UprightRotateTest(unittest.TestCase):
 
             self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=score), 90)
 
-    def test_portrait_defaults_to_270_when_ocr_is_silent(self):
+    def test_portrait_prefers_unrotated_when_it_scores_highest(self):
         with tempfile.TemporaryDirectory() as td:
             page = self._png(os.path.join(td, "page-1.png"), 20, 40)
-            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 0), 270)
 
-    def test_upright_pages_rotates_every_page_the_same_way(self):
+            def score(path: str) -> int:
+                return 0 if ".rot" in os.path.basename(path) else 4
+
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=score), 0)
+
+    def test_portrait_stays_put_when_ocr_is_silent(self):
+        with tempfile.TemporaryDirectory() as td:
+            page = self._png(os.path.join(td, "page-1.png"), 20, 40)
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 0), 0)
+
+    def test_upright_pages_leaves_silent_portrait_alone(self):
         with tempfile.TemporaryDirectory() as td:
             pages = [
                 self._png(os.path.join(td, "page-1.png"), 20, 40),
@@ -395,7 +404,22 @@ class UprightRotateTest(unittest.TestCase):
             from PIL import Image
             for path in pages:
                 with Image.open(path) as im:
-                    self.assertEqual(im.size, (40, 20))
+                    self.assertEqual(im.size, (20, 40))
+
+    def test_landscape_sibling_is_not_rotated_when_cover_spins(self):
+        with tempfile.TemporaryDirectory() as td:
+            cover = self._png(os.path.join(td, "page-1.png"), 20, 40)
+            grid = self._png(os.path.join(td, "page-2.png"), 40, 20)
+
+            def score(path: str) -> int:
+                return 6 if path.endswith(".rot270.png") else 0
+
+            worker.upright_pages([cover, grid], score_fn=score)
+            from PIL import Image
+            with Image.open(cover) as im:
+                self.assertEqual(im.size, (40, 20))
+            with Image.open(grid) as im:
+                self.assertEqual(im.size, (40, 20))
 
 
 if __name__ == "__main__":

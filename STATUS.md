@@ -1,11 +1,19 @@
 # Current Handoff
 
+## 2026-08-21 CURSOR-BUGBOT — Score unrotated page before upright-rotate
+
+#2146 scored only 90/270 and defaulted 270 when OCR was silent, so an
+already-upright portrait (OGE / Senate / House cover) was spun sideways
+before Grok.  Score 0° too; leave the page alone when every score is 0;
+do not rotate landscape siblings.  Live `~/vision-worker/worker.py` still
+needs a copy after merge.
+
 ## 2026-08-21 GROK — Upright-rotate sideways PTR scans before Grok CLI
 
 Portrait `pdftoppm` images of landscape House PTR grids are rotated 90/270
-CW (tesseract header score, else 270) so local Grok CLI and Qwen VL see
-the table upright.  Live `~/vision-worker/worker.py` copied and
-`pm2 restart vision-worker`.  Receipt:
+CW when tesseract header phrases score a trial above the unrotated page.
+Silent OCR and already-landscape pages stay put.  Live `~/vision-worker/worker.py`
+copied and `pm2 restart vision-worker`.  Receipt:
 `docs/rollouts/2026-08-21-vision-upright-rotate.md`.  Drain this session:
 McCaul 8220320/8220834/8221120/8221173, LaMalfa NVIDIA, Collins, Issa.
 
