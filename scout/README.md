@@ -136,7 +136,8 @@ old failure mode, and it is gone.  Debug the tunnel or the relay instead.
 |---|---|
 | pm2 entry | `senate-tunnel` (`scout/run-senate-tunnel.sh`) |
 | tunnel | Jay's Tunnel (launchd system service), id `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6` |
-| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` |
+| hostname | `scout.jays.services` -> `http://127.0.0.1:8899` (same named tunnel as `mac.jays.services`) |
+| liveness | GET and HEAD on `/` and `/health` return `{"ok":true,"service":"senate-relay",...}` |
 | ingress | configured **in Cloudflare** (`config_src=cloudflare`), pushed to cloudflared at connect |
 | credentials | `~/.cloudflared/<tunnel-id>.json`, mode 600, not in the repo |
 
@@ -170,6 +171,35 @@ documented remedy was "update `SENATE_RELAY_URL` when it changes" — a manual
 step in a machine's restart path, which is a defect rather than a procedure, and
 it is exactly what failed.  The named tunnel removes the rotation, so the
 hostname-recording and rotation-alerting machinery built around it is gone too.
+
+### Remaining host dependency (#1604)
+
+The hostname is durable.  The **origin is not**: `senate-relay` still runs on
+one residential Mac.  If that Mac sleeps, the named tunnel stays at
+`scout.jays.services` and Cloudflare answers `error code: 502`.
+
+`scout.jays.services` and `mac.jays.services` are the same Jay's Tunnel
+(proxied CNAMEs to `6fa2a97c-b4f8-420d-94ae-bd9858aff4b6.cfargotunnel.com`).
+A 404 on GET `/` is the origin handler, not a missing hostname: the relay
+used to answer only GET `/health`.  GET and HEAD on `/` and `/health` are
+now the same liveness probe so a browser or HEAD-only monitor matches mac.
+
+The app now falls back to a direct eFD session when the relay is unreachable
+(502/503/504/521–524 or a connect error).  `/fetch-doc` is unchanged when the
+relay answers.  `GET /api/health/senate-relay` probes this origin live.
+
+That fallback is the durable path **only while Imperva allows the box**.
+Measured 2026-08-17 from a public AWS IP: `GET /search/` returned 302 to
+`/search/home/` with a CSRF token (not the 2026-08-09 bare 403).  Production
+`polling_senate` was also ok while `scout.jays.services` 502'd from the same
+vantage.  If Imperva re-blocks datacenter egress, Senate ingestion needs an
+always-on residential host again:
+
+1. Keep this Mac awake (Energy Saver → Prevent sleep; launchd already owns
+   Jay's Tunnel; pm2 already owns `senate-relay` + `senate-tunnel`).
+2. Or move `scout/senate-relay.ts` to a Raspberry Pi / clamshell Mac that
+   never sleeps, pointed at the **same** named tunnel hostname.  Do not mint
+   a new URL.
 
 ## Feeding the app (official residential ingest)
 

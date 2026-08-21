@@ -145,9 +145,15 @@ struct TickerDetailView: View {
                     }
                 }
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21); `.tint` is required alongside
+                    // `.foregroundStyle` because the toolbar button style
+                    // re-applies tint over a plain foreground colour.
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundStyle(AppTheme.wordInk)
+                    .tint(AppTheme.wordInk)
                 }
             }
             .task {
@@ -235,10 +241,10 @@ struct TickerDetailView: View {
 
     private func fetchTicker() async throws -> ClientTickerResponse {
         do {
-            return try await store.api.ticker(ticker)
+            return try await store.fetchTicker(ticker)
         } catch let error as APIError where error.isRetryable {
             try await Task.sleep(for: .milliseconds(400))
-            return try await store.api.ticker(ticker)
+            return try await store.fetchTicker(ticker)
         }
     }
 }

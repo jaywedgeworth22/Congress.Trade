@@ -35,6 +35,7 @@
 
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import * as cheerio from 'cheerio';
+import { isSenateRelayUnreachable } from './senateRelayHealth.ts';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -367,32 +368,44 @@ export async function fetchSenatePtrFilings(
   const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
 
+  // EXCEPTION to the fleet default (server-first, relay fallback).  Imperva
+  // 403s the box datacenter IP (measured 2026-08-09), so Senate eFD stays
+  // Mac/scout relay-first.  Direct is only used when the relay is unreachable.
   // Prefer an explicitly-passed relayUrl (callers should thread env.SENATE_RELAY_URL
   // through — see watcher.ts's pollSenate and senateCrawler.ts's runSenateBackfill).
-  // The raw process.env read stays only as a last-resort fallback: it was found
-  // 2026-08-09 to be UNRELIABLE on its own — Imperva blocks the box's datacenter
-  // IP with a 403, and calls relying solely on this fallback intermittently took
-  // the direct (non-relay) path and hit that block even with the container env
-  // var correctly set, while explicit env-threaded calls did not reproduce it.
+  // The raw process.env read stays only as a last-resort fallback: calls that
+  // relied solely on it intermittently took the direct path and hit the 403
+  // even with the container env var set.
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
   if (relayUrl) {
-    const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        submitted_start_date: formatSenateDate(since),
-        submitted_end_date: formatSenateDate(now),
-        pageSize,
-      }),
-    }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
+    try {
+      const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({
+          submitted_start_date: formatSenateDate(since),
+          submitted_end_date: formatSenateDate(now),
+          pageSize,
+        }),
+      }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
 
-    if (!res.ok) throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
-    const json = (await res.json()) as { data?: unknown };
-    const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
-    return parseSenateRows(rows);
+      if (res.ok) {
+        const json = (await res.json()) as { data?: unknown };
+        const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
+        return parseSenateRows(rows);
+      }
+      if (!isSenateRelayUnreachable(res)) {
+        throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
+      }
+      await res.body?.cancel().catch(() => {});
+      console.warn(`senate relay unreachable (HTTP ${res.status}); falling back to direct eFD`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('senate relay POST')) throw err;
+      console.warn('senate relay failed; falling back to direct eFD:', (err as Error).message);
+    }
   }
 
   let session: SenateSession | null = null;

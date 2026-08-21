@@ -1,6 +1,6 @@
 # Adaptive Probe Cadence
 
-Last updated: 2026-08-11
+Last updated: 2026-08-19
 
 `src/ingestion/probeSchedule.ts` decides **how often** each source is probed.
 It does not decide **who** probes — that is the lease in
@@ -81,10 +81,26 @@ Achieved peak:trough = **15.4×**.
 
 Achieved peak:trough = **30×**.
 
+### Executive — weekday (budget 107, effective 96)
+
+No measured OGE arrival-hour sample exists in-repo.  Do **not** invent
+House-style 78% peak weights.  One flat `low` window uses the same
+floor/peak machinery with a conservative **15-minute weekday coverage
+floor** (never 6 hours) and the shared **60s politeness floor**.
+
+| tier | window (ET) | covered | events | weight | pre-clamp | probes | interval | clamped by |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| LOW | 00:00–24:00 | 86 400s | 0 | 1.0000 | 96.0 | 96 | **900s (15.0m)** | none |
+| | | 86 400s | 0 | | 96.0 | **96** | | |
+
+Assumption: until someone measures OGE 278-T arrival hours, the weekday
+floor is 15 minutes everywhere.  Re-measure before adding peak/high/mid
+tiers.
+
 ### Weekend — all sources
 
-Flat LOW at the weekend coverage floor: House/Senate 3 600s (24 probes,
-cap 27), providers 2 700s (32 runs, cap 36).
+Flat LOW at the weekend coverage floor: House/Senate/executive 3 600s (24
+probes, cap 27), providers 2 700s (32 runs, cap 36).
 
 ---
 
@@ -301,6 +317,7 @@ All keys optional; every one falls back to the shipped default.  Nothing throws
 | `PROBE_SCHEDULE_HOUSE_BUDGET` | `171` | probes/weekday |
 | `PROBE_SCHEDULE_SENATE_BUDGET` | `171` | probes/weekday |
 | `PROBE_SCHEDULE_PROVIDER_BUDGET` | `240` | nominal runs/weekday |
+| `PROBE_SCHEDULE_EXECUTIVE_BUDGET` | `107` | weekday probes (96 spendable = 15 min flat floor) |
 | `PROBE_SCHEDULE_JSON` | — | full window-table override |
 
 `PROBE_SCHEDULE_JSON` takes a partial override; `ranges` are

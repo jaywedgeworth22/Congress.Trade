@@ -1,5 +1,4 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 const workflowsDir = new URL("../.github/workflows/", import.meta.url);
 const workflowNames = (await readdir(workflowsDir))
@@ -8,28 +7,15 @@ const workflowNames = (await readdir(workflowsDir))
 
 const errors = [];
 const allowedRunners = new Set([
-  "[self-hosted, oracle-ci]",
-  "[self-hosted, congress-ci]",
-  // Owned Mac runner (mac-xcode26-congress on the owner's Mac) — Xcode builds
-  // ONLY. It exists so App Store binaries are always compiled by stable
-  // Xcode 26.x, never the side-by-side beta (beta-SDK builds pass TestFlight
-  // but are rejected at submission as INVALID_BINARY). Do not schedule
-  // non-Xcode jobs onto it.
+  // Owned Mac runner (mac-xcode26-congress) — day-to-day xcodebuild compile
+  // and TestFlight ship only. Do not move ios-build.yml / ios-ship.yml onto
+  // GitHub-hosted macos. Do not schedule non-Xcode jobs onto these labels.
   "[self-hosted, macOS, ARM64, xcode26]",
-  // GitHub-hosted Tahoe GM.  The owned Mac is macOS 27 beta; App Store
-  // review rejects those IPAs as INVALID_BINARY.  Only the App Store GM
-  // ship workflow may use this label.  macos-latest stays forbidden.
+  // GitHub-hosted Tahoe GM. The owned Mac is macOS 27 beta; App Store
+  // review rejects those IPAs as INVALID_BINARY. Only the App Store GM
+  // ship workflow may use this label. macos-latest stays forbidden.
   "macos-26",
-  "self-hosted",
   "ubuntu-latest",
-]);
-// Dynamic expressions: self-hosted when repo is private (and, in the gated
-// form, only while the CT_CI_RUNNER repo variable is set — clearing the
-// variable is the documented instant fallback to GitHub-hosted runners when
-// the owned runner host is down; see docs/rollouts/2026-08-08-runners-hetzner-migration.md).
-const allowedRunnerExpressions = new Set([
-  '${{ github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
-  '${{ vars.CT_CI_RUNNER != \'\' && github.event.repository.private && fromJSON(\'["self-hosted", "oracle-ci"]\') || \'ubuntu-latest\' }}',
 ]);
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
@@ -67,10 +53,36 @@ for (const name of workflowNames) {
     errors.push(`${name}: macos-26 is only allowed on ios-appstore-gm.yml`);
   }
 
+  // IOSENGINEERING-14: iOS compile + XCTest must fail the job.  Advisory
+  // continue-on-error let red Mac builds merge.  Do not skip tests.
+  if (name === "ios-build.yml") {
+    if (/\bcontinue-on-error\s*:/.test(text)) {
+      errors.push(`${name}: iOS compile+test must fail the job (no continue-on-error)`);
+    }
+    if (!text.includes("scripts/ios-ci-xctest.sh")) {
+      errors.push(`${name}: must run scripts/ios-ci-xctest.sh (do not only build)`);
+    }
+    if (!text.includes("name: xcodebuild (unsigned)")) {
+      errors.push(`${name}: required-check job must keep name 'xcodebuild (unsigned)'`);
+    }
+    if (!text.includes("always() && !cancelled()")) {
+      errors.push(`${name}: required-check wrapper must always report (not skip on Mac failure)`);
+    }
+  }
+
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
-    if (runner && !allowedRunners.has(runner[1]) && !allowedRunnerExpressions.has(runner[1])) {
-      errors.push(`${name}:${index + 1}: runner must be an owned literal label set or the approved fallback expression`);
+    if (runner) {
+      const value = runner[1];
+      if (!allowedRunners.has(value)) {
+        errors.push(`${name}:${index + 1}: runner must be ubuntu-latest, macos-26 (GM ship only), or the Mac xcode26 label set`);
+      }
+      if (
+        value.includes("oracle-ci") ||
+        (/self-hosted/.test(value) && value !== "[self-hosted, macOS, ARM64, xcode26]")
+      ) {
+        errors.push(`${name}:${index + 1}: leftover Linux self-hosted / oracle-ci selector`);
+      }
     }
 
     const action = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/);
@@ -90,6 +102,29 @@ for (const name of workflowNames) {
       errors.push(`${name}:${index + 1}: reusable workflow runner policy is not locally auditable`);
     }
   });
+
+  const uncommented = text
+    .split("\n")
+    .map((line) => line.replace(/#.*$/, ""))
+    .join("\n");
+  if (/\bpull_request_target\b/.test(uncommented)) {
+    errors.push(`${name}: pull_request_target is forbidden (write token on untrusted PRs; use pull_request + same-repo guard)`);
+  }
+  if (/\bsecrets\.GH_PAT\b/.test(uncommented) || /\bsecrets\.SHEPHERD_TOKEN\b/.test(uncommented)) {
+    errors.push(`${name}: GH_PAT / SHEPHERD_TOKEN must not appear; congress-trading-shared is public and vendored`);
+  }
+}
+
+const xctestPath = new URL("./ios-ci-xctest.sh", import.meta.url);
+const xctest = await readFile(xctestPath, "utf8");
+if (!/\bxcodebuild\s+test\b/.test(xctest)) {
+  errors.push("scripts/ios-ci-xctest.sh: must run xcodebuild test (do not only build)");
+}
+if (!xctest.includes("-only-testing:CongressTradeTests")) {
+  errors.push("scripts/ios-ci-xctest.sh: must target CongressTradeTests (do not skip XCTest)");
+}
+if (!xctest.includes("IOS_CI_MIN_TESTS:-71") && !xctest.includes("-lt \"$MIN_TESTS\"")) {
+  errors.push("scripts/ios-ci-xctest.sh: must assert at least 71 XCTest cases ran");
 }
 
 if (errors.length) {
@@ -97,4 +132,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log(`Actions policy OK: ${workflowNames.length} workflows use owned runners only.`);
+console.log(`Actions policy OK: ${workflowNames.length} workflows use hosted Linux or the owned Mac xcodebuild runner.`);

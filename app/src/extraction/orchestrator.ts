@@ -26,6 +26,7 @@ import { isDeterministicExtractor, normalize } from './normalizer.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { enqueueAgreementCheck } from './agreement.ts';
 import { ensureDocClass } from './docClassifier.ts';
+import { evaluateExtractQuality, shouldEnqueueAgreement } from './extractRouting.ts';
 import { reportAiUsage } from '../shared/telemetry.ts';
 import {
   assertDocLlmSpendAllowed,
@@ -197,9 +198,18 @@ export async function extractAndNormalize(
   // A2: never enqueue paid agreement for deterministic text/html/OGE extractors.
   // Those either already published at the lower confidence gate (A1) or belong
   // in human review for hard flags — OpenRouter quota must not be spent on them.
+  // Electronic / typed House PTRs and already-failed letterhead reads also skip
+  // the trio — do not spend more models on junk.
+  const quality = evaluateExtractQuality(extracted.transactions);
   if (
     result.needsReview
     && !isDeterministicExtractor(extracted.extractor, extracted.filing.docKind)
+    && shouldEnqueueAgreement({
+      filing: extracted.filing,
+      extractor: extracted.extractor,
+      quality,
+      reviewReason: result.reviewReason,
+    })
   ) {
     try {
       await lease?.assertOwned();

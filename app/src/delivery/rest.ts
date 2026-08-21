@@ -8,6 +8,7 @@
  * (YYYY-MM-DD), and filtering by ticker / member / chamber / type.
  *
  * Routes (all relative to /api):
+ *   GET   /health/senate-relay  live probe of the named Senate tunnel origin (#1604)
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
  *   GET   /feed.xml          RSS 2.0 feed of recent trades (same filters as /transactions)
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
@@ -28,6 +29,7 @@ import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import { readBuildInfo } from '../shared/buildInfo.ts';
 import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
+import { probeSenateRelay } from '../ingestion/senateRelayHealth.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -50,6 +52,8 @@ import {
 import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { isPremiumUserAsync } from '../billing/entitlement.ts';
 import { getUserById } from '../auth/users.ts';
+import { getAppleSubscription, appleStatusGrantsAccess } from '../billing/appleSubscriptions.ts';
+import { verifyDeviceEntitlementToken } from '../billing/deviceEntitlement.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 /**
@@ -578,6 +582,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok, check }, ok ? 200 : 503);
   });
 
+  // --- GET /health/senate-relay --------------------------------------------
+  // Issue #1604: the named tunnel hostname is permanent; the Mac origin is
+  // not.  Live-probes GET {SENATE_RELAY_URL}/health (5s budget) so a sleeping
+  // laptop pages in minutes.  Does not call checkPipelineHealth — that path
+  // is already the uptime-monitor target and must not grow an outbound hop.
+  r.get('/health/senate-relay', async (c) => {
+    const check = await probeSenateRelay(c.env);
+    c.header('Cache-Control', 'no-store');
+    return c.json(check, check.ok ? 200 : 503);
+  });
+
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
@@ -655,18 +670,20 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       }
     }
     const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + politician name alongside the feed
-    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
-    // mapFeedTransaction maps the filer/filing columns (fullName, state,
-    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
-    // which aren't part of the base Transaction type.
+    // The query SELECTs the resolved chamber + politician name + party
+    // alongside the feed columns via `__chamber` / `__member_name` / `__party`
+    // (see buildTransactionsQuery). mapFeedTransaction maps the filer/filing
+    // columns (fullName, state, photoUrl, dates); we then attach the resolved
+    // `chamber` / `memberName` / `party`, which aren't part of the base
+    // Transaction type on webhook/normalizer paths.
     const rows = await all<
-      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }
     >(c.env.DB, built.sql, built.params);
     const transactions = rows.map((row) => ({
       ...mapFeedTransaction(row),
       chamber: (row.__chamber as Chamber | null) ?? null,
       memberName: row.__member_name ?? null,
+      party: row.__party ?? null,
     }));
     const maxCursor = transactions.reduce(
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
@@ -675,9 +692,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Zero-delta incremental poll: a `?since=` cursor with no new rows is the
     // dashboard's steady state (its fetchUpdates() bails out on an empty
     // delta before ever reading `total`/`filingsImportedToday`), so skip the
-    // full unindexed COUNT(*) scan AND the today-filings aggregate entirely
-    // rather than paying D1 read cost every ~poll interval for numbers nobody
-    // reads. Both fields are omitted (not falsely reported as 0) so a
+    // COUNT(*) and today-filings aggregates entirely rather than paying a
+    // full live-row read every ~poll interval for numbers nobody reads. Both fields are omitted (not falsely reported as 0) so a
     // reconciliation consumer that DOES want a fresh total on every poll can
     // tell "not computed this round" apart from "actually zero".
     // `since > 0` (not merely present): the dashboard sends since=0 on its
@@ -728,13 +744,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // session cookie and bearer so web + native clients share one gate.
   r.get('/export/transactions.csv', async (c) => {
     const user = await getCurrentUserFromRequest(c);
-    if (!user) {
-      return c.json(
-        { error: 'authentication required for CSV export', upgradeRequired: true, feature: 'export' },
-        401,
-      );
-    }
-    if (!(await isPremiumUserAsync(c.env, user))) {
+    // Signed in: unchanged Premium-session gate. Signed out (Guideline
+    // 5.1.1(v)): fall back to a device entitlement token from the anonymous
+    // Apple redeem route, instead of demanding sign-in before this feature —
+    // which is not account-based — can be used at all.
+    const premium = user
+      ? await isPremiumUserAsync(c.env, user)
+      : await hasAnonymousDeviceEntitlement(c);
+    if (!premium) {
+      // Always 402 "Premium required", never 401 "sign in required" — CSV
+      // export is not account-based, so the fix is subscribing, not signing
+      // in (though signing in remains available and optional).
       return c.json(
         { error: 'CSV export requires a Premium account', upgradeRequired: true, feature: 'export' },
         402,
@@ -1392,9 +1412,67 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   return r;
 }
 
+/**
+ * App Store 3.1.1: native clients send Bearer and/or Accept: application/pdf.
+ * Those must get 402 JSON, never a 302 to /pricing (Safari would open Stripe).
+ * Browser HTML navigations without Bearer still 302 to the web paywall.
+ */
+export function documentPdfGateWantsJson(headers: {
+  authorization?: string | null;
+  accept?: string | null;
+}): boolean {
+  const auth = headers.authorization ?? '';
+  if (/^bearer\s+\S+/i.test(auth)) return true;
+  const accept = (headers.accept ?? '').toLowerCase();
+  return accept.includes('application/pdf');
+}
+
+export function documentPdfUpgradePayload(): {
+  error: string;
+  upgradeRequired: true;
+  feature: 'pdf';
+} {
+  return {
+    error: 'Archived filing PDF requires a Premium account',
+    upgradeRequired: true,
+    feature: 'pdf',
+  };
+}
+
+/**
+ * Second, account-free entitlement path for a signed-out device that
+ * anonymously redeemed an Apple purchase (Guideline 5.1.1(v) —
+ * `client/entitlements.ts` `POST /api/client/v1/entitlements/apple/redeem`).
+ * Verifies the HMAC token, then re-checks the LIVE ledger row (not just the
+ * token's own signature) so a refund/revoke applied after the token was
+ * issued still takes effect the moment it reaches `apple_subscriptions` —
+ * the token's own expiry (<=24h) is only the outer bound for how long a
+ * webhook delivery can lag behind, not the sole check.
+ */
+async function hasAnonymousDeviceEntitlement(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  const token = c.req.header('X-Apple-Device-Entitlement');
+  if (!token) return false;
+  const claim = await verifyDeviceEntitlementToken(c.env, token);
+  if (!claim) return false;
+  const sub = await getAppleSubscription(c.env, claim.originalTransactionId);
+  if (!sub || !appleStatusGrantsAccess(sub.status)) return false;
+  if (sub.expiresDate && new Date(sub.expiresDate).getTime() <= Date.now()) return false;
+  return true;
+}
+
 export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   const user = await getCurrentUserFromRequest(c);
-  if (!user || !(await isPremiumUserAsync(c.env, user))) {
+  // Session wins when present; a signed-out device falls back to its own
+  // Apple entitlement token — never the other way around, and never OR'd
+  // with a session that simply isn't Premium (that stays gated).
+  const premium = user ? await isPremiumUserAsync(c.env, user) : await hasAnonymousDeviceEntitlement(c);
+  if (!premium) {
+    if (documentPdfGateWantsJson({
+      authorization: c.req.header('authorization'),
+      accept: c.req.header('accept'),
+    })) {
+      return c.json(documentPdfUpgradePayload(), 402);
+    }
     return c.redirect('/pricing?feature=pdf', 302);
   }
 

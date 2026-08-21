@@ -183,7 +183,9 @@ export type ProbeTier = 'peak' | 'high' | 'mid' | 'low';
 /** Probe targets with independent cadence curves. `provider` covers the
  *  metered latency providers (Unusual Whales / Quiver / FMP), which fetch both
  *  chambers in one call and therefore need the union of both peaks. */
-export type ProbeSource = 'house' | 'senate' | 'provider';
+export type ProbeSource = 'house' | 'senate' | 'provider' | 'executive';
+
+export const PROBE_SOURCES: readonly ProbeSource[] = ['house', 'senate', 'provider', 'executive'];
 
 export type DayType = 'weekday' | 'weekend';
 
@@ -210,6 +212,12 @@ export interface ProbeProfile {
   /** Probes (not HTTP calls) permitted per weekday / weekend day. */
   readonly weekdayBudget: number;
   readonly weekendBudget: number;
+  /** Optional per-source politeness floor. Unset = global tuning. */
+  readonly minIntervalSec?: number;
+  /** Optional per-source weekday coverage floor (longest gap). Unset = global. */
+  readonly maxIntervalSec?: number;
+  /** Optional per-source weekend coverage floor. Unset = global. */
+  readonly weekendMaxIntervalSec?: number;
 }
 
 export interface ProbeScheduleTuning {
@@ -510,6 +518,39 @@ export const PROVIDER_PROFILE: ProbeProfile = {
   weekendBudget: 36,
 };
 
+/**
+ * EXECUTIVE (OGE 278-T). No measured arrival-hour sample exists in-repo.
+ * Do not invent House-style 78% peak weights. One flat weekday window uses
+ * the same floor/peak machinery with a conservative 15-minute coverage floor
+ * (never 6 hours) and the shared 60s politeness floor. Weekend stays hourly
+ * like House. Re-measure before adding peak/high/mid tiers.
+ *
+ * Weekday budget 107 → 96 spendable after 10% headroom = 86400/900.
+ * Weekend budget 27 → 24 spendable = 86400/3600.
+ */
+export const EXECUTIVE_WEEKDAY_WINDOWS: readonly ProbeWindowSpec[] = [
+  {
+    tier: 'low',
+    ranges: [[at(0), at(24)]],
+    events: 0,
+    note: 'No measured OGE arrival-hour sample in-repo. Flat weekday window at the 15-minute coverage floor. Do not invent peak weights.',
+  },
+];
+
+export const EXECUTIVE_WEEKDAY_MAX_INTERVAL_SEC = 15 * MIN;
+export const EXECUTIVE_POLITENESS_MIN_INTERVAL_SEC = 60;
+
+export const EXECUTIVE_PROFILE: ProbeProfile = {
+  source: 'executive',
+  weekday: EXECUTIVE_WEEKDAY_WINDOWS,
+  weekend: WEEKEND_WINDOWS,
+  weekdayBudget: 107,
+  weekendBudget: 27,
+  minIntervalSec: EXECUTIVE_POLITENESS_MIN_INTERVAL_SEC,
+  maxIntervalSec: EXECUTIVE_WEEKDAY_MAX_INTERVAL_SEC,
+  weekendMaxIntervalSec: 60 * MIN,
+};
+
 export const DEFAULT_PROBE_TUNING: ProbeScheduleTuning = {
   minIntervalSec: 60,
   maxIntervalSec: 30 * MIN,
@@ -526,6 +567,7 @@ export const DEFAULT_PROBE_SCHEDULE_CONFIG: ProbeScheduleConfig = {
     house: HOUSE_PROFILE,
     senate: SENATE_PROFILE,
     provider: PROVIDER_PROFILE,
+    executive: EXECUTIVE_PROFILE,
   },
 };
 
@@ -582,7 +624,17 @@ export function allocateProbes(
   dayType: DayType,
   opts: AllocateOptions = {},
 ): ProbeAllocation {
-  const tuning: ProbeScheduleTuning = { ...DEFAULT_PROBE_TUNING, ...stripUndefined(opts) };
+  const tuning: ProbeScheduleTuning = {
+    ...DEFAULT_PROBE_TUNING,
+    ...stripUndefined(opts),
+    // Per-source floors win over the global House/Senate 30-minute coverage
+    // floor. Executive ships a 15-minute weekday floor; House/Senate unset.
+    ...stripUndefined({
+      minIntervalSec: profile.minIntervalSec,
+      maxIntervalSec: profile.maxIntervalSec,
+      weekendMaxIntervalSec: profile.weekendMaxIntervalSec,
+    }),
+  };
   const specs = (dayType === 'weekday' ? profile.weekday : profile.weekend).filter(
     (w) => coveredSecOf(w.ranges) > 0,
   );
@@ -778,6 +830,7 @@ function allocationFor(
   const key = [
     source, dayType, budgetOverride ?? 'default',
     cfg.minIntervalSec, cfg.maxIntervalSec, cfg.weekendMaxIntervalSec,
+    profile.minIntervalSec ?? '', profile.maxIntervalSec ?? '', profile.weekendMaxIntervalSec ?? '',
     cfg.peakTroughRatioCap, cfg.retryHeadroom, cfg.allocationExponent,
     profile.weekdayBudget, profile.weekendBudget,
     windowsSignature(dayType === 'weekday' ? profile.weekday : profile.weekend),
@@ -897,6 +950,7 @@ export interface ProbeScheduleEnvLike {
   PROBE_SCHEDULE_HOUSE_BUDGET?: string;
   PROBE_SCHEDULE_SENATE_BUDGET?: string;
   PROBE_SCHEDULE_PROVIDER_BUDGET?: string;
+  PROBE_SCHEDULE_EXECUTIVE_BUDGET?: string;
   /** Full window-table override; see probeScheduleConfigFromEnv(). */
   PROBE_SCHEDULE_JSON?: string;
 }
@@ -943,6 +997,7 @@ export function probeScheduleConfigFromEnv(env: ProbeScheduleEnvLike): ProbeSche
     house: num(env.PROBE_SCHEDULE_HOUSE_BUDGET, 24, 5000),
     senate: num(env.PROBE_SCHEDULE_SENATE_BUDGET, 24, 5000),
     provider: num(env.PROBE_SCHEDULE_PROVIDER_BUDGET, 12, 50_000),
+    executive: num(env.PROBE_SCHEDULE_EXECUTIVE_BUDGET, 24, 5000),
   };
 
   let overrides: Record<string, unknown> = {};
@@ -958,7 +1013,7 @@ export function probeScheduleConfigFromEnv(env: ProbeScheduleEnvLike): ProbeSche
   }
 
   const profiles = {} as Record<ProbeSource, ProbeProfile>;
-  for (const source of ['house', 'senate', 'provider'] as const) {
+  for (const source of PROBE_SOURCES) {
     profiles[source] = mergeProfile(base.profiles[source], overrides[source], budgets[source]);
   }
 
@@ -979,12 +1034,22 @@ function mergeProfile(base: ProbeProfile, raw: unknown, budgetOverride?: number)
   const weBudget = typeof o.weekendBudget === 'number' && Number.isFinite(o.weekendBudget) && o.weekendBudget > 0
     ? Math.floor(o.weekendBudget)
     : undefined;
+  const minIntervalSec = typeof o.minIntervalSec === 'number' && Number.isFinite(o.minIntervalSec) && o.minIntervalSec > 0
+    ? Math.floor(o.minIntervalSec)
+    : base.minIntervalSec;
+  const maxIntervalSec = typeof o.maxIntervalSec === 'number' && Number.isFinite(o.maxIntervalSec) && o.maxIntervalSec > 0
+    ? Math.floor(o.maxIntervalSec)
+    : base.maxIntervalSec;
+  const weekendMaxIntervalSec = typeof o.weekendMaxIntervalSec === 'number' && Number.isFinite(o.weekendMaxIntervalSec) && o.weekendMaxIntervalSec > 0
+    ? Math.floor(o.weekendMaxIntervalSec)
+    : base.weekendMaxIntervalSec;
   return {
     source: base.source,
     weekday,
     weekend,
     weekdayBudget: budgetOverride ?? wdBudget ?? base.weekdayBudget,
     weekendBudget: weBudget ?? base.weekendBudget,
+    ...stripUndefined({ minIntervalSec, maxIntervalSec, weekendMaxIntervalSec }),
   };
 }
 
@@ -1061,7 +1126,7 @@ export function describeAllocation(a: ProbeAllocation): string {
 /** Render the whole shipped schedule. Used by the docs and safe to log. */
 export function describeProbeSchedule(cfg: ProbeScheduleConfig = DEFAULT_PROBE_SCHEDULE_CONFIG): string {
   const out: string[] = [];
-  for (const source of ['house', 'senate', 'provider'] as const) {
+  for (const source of PROBE_SOURCES) {
     for (const dayType of ['weekday', 'weekend'] as const) {
       out.push(describeAllocation(allocateProbes(cfg.profiles[source], dayType, cfg)));
       out.push('');

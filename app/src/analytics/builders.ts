@@ -24,9 +24,12 @@ import {
   CHAMBER_EXPR,
   PARTY_BUCKET_SQL,
   SIGNED_MIDPOINT_SQL,
+  STOCK_MIDPOINT_SQL,
+  STOCK_SIGNED_MIDPOINT_SQL,
   TICKER_RESOLVED_SQL,
   buildCommonFilters,
   clampLimit,
+  constrainTxTypes,
   granularityFormat,
   whereSql,
   windowDays,
@@ -42,6 +45,8 @@ export interface BuiltQuery {
 
 const MID = BRACKET_MIDPOINT_SQL;
 const SIGNED = SIGNED_MIDPOINT_SQL;
+const STOCK_MID = STOCK_MIDPOINT_SQL;
+const STOCK_SIGNED = STOCK_SIGNED_MIDPOINT_SQL;
 const BUY = "SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN 1 ELSE 0 END)";
 const SELL = "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END)";
 const BUY_VOL = `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${MID} ELSE 0 END)`;
@@ -63,8 +68,8 @@ export function buildSummaryQuery(p: CommonFilters): BuiltQuery {
     `${BUY} AS buy_count, ` +
     `${SELL} AS sell_count, ` +
     "SUM(CASE WHEN t.tx_type = 'E' THEN 1 ELSE 0 END) AS exchange_count, " +
-    `SUM(${MID}) AS est_volume, ` +
-    `SUM(${SIGNED}) AS est_net_flow, ` +
+    `SUM(${STOCK_MID}) AS est_volume, ` +
+    `SUM(${STOCK_SIGNED}) AS est_net_flow, ` +
     `SUM(CASE WHEN ${TICKER_RESOLVED_SQL} THEN 1 ELSE 0 END) AS resolved_ticker_count, ` +
     'SUM(CASE WHEN t.is_option = 1 THEN 1 ELSE 0 END) AS option_count ' +
     ANALYTICS_FROM_JOINS +
@@ -103,8 +108,8 @@ export function buildTickerLeaderboardQuery(
     "COUNT(DISTINCT CASE WHEN t.tx_type IN ('B', 'P', 'S') THEN t.filer_id END) AS directional_member_count, " +
     "COUNT(DISTINCT CASE WHEN t.tx_type IN ('B', 'P') THEN t.filer_id END) AS buy_member_count, " +
     "COUNT(DISTINCT CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count, " +
-    `SUM(${MID}) AS est_volume, ` +
-    `SUM(${SIGNED}) AS est_net_flow ` +
+    `SUM(${STOCK_MID}) AS est_volume, ` +
+    `SUM(${STOCK_SIGNED}) AS est_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
     whereSql(where) +
     'GROUP BY t.ticker ' +
@@ -159,7 +164,11 @@ export function buildMemberLeaderboardQuery(
 export function buildClusterBuysQuery(
   p: CommonFilters & { minMembers?: number; limit?: number },
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    tickerNotNull: true,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const minMembers = clampLimit(p.minMembers, 3, 50);
   // Max 200 so a caller restricting to a candidate ticker set can fetch both the
   // buy ('B') and sell ('S') cluster row for up to 100 tickers; public callers
@@ -189,7 +198,10 @@ export function buildClusterMembersQuery(
   tickers: string[],
   p: CommonFilters,
 ): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const placeholders = tickers.map(() => '?').join(', ');
   const allWhere = [`t.ticker IN (${placeholders})`, ...where];
   const allParams: SqlParam[] = [...tickers, ...params];
@@ -281,8 +293,8 @@ export function buildVolumeOverTimeQuery(
   const sql =
     'SELECT strftime(?, t.tx_date) AS period, ' +
     `${BUY} AS buys, ${SELL} AS sells, ` +
-    `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${MID} ELSE 0 END) AS est_buy_vol, ` +
-    `SUM(CASE WHEN t.tx_type = 'S' THEN ${MID} ELSE 0 END) AS est_sell_vol ` +
+    `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${STOCK_MID} ELSE 0 END) AS est_buy_vol, ` +
+    `SUM(CASE WHEN t.tx_type = 'S' THEN ${STOCK_MID} ELSE 0 END) AS est_sell_vol ` +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
     'GROUP BY period ORDER BY period ASC';
@@ -572,6 +584,7 @@ export function buildFilingLagHistogramQuery(p: CommonFilters): BuiltQuery {
     't.tx_date IS NOT NULL',
     'f.filed_date IS NOT NULL',
     'julianday(f.filed_date) >= julianday(t.tx_date)',
+    "NOT (t.source = 'competitor_backfill' AND f.filed_date = t.tx_date)",
     ...where,
   ];
   const sql =
@@ -593,6 +606,7 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
     't.tx_date IS NOT NULL',
     'f.filed_date IS NOT NULL',
     `julianday(f.filed_date) >= julianday(t.tx_date)`,
+    "NOT (t.source = 'competitor_backfill' AND f.filed_date = t.tx_date)",
     ...where,
   ];
   const sql =
@@ -716,7 +730,11 @@ export function buildMemberPerformanceLeaderboardQuery(
  * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
  */
 export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
-  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['B', 'S'] });
+  const { where, params } = buildCommonFilters({
+    ...p,
+    tickers,
+    txTypes: constrainTxTypes(p.txTypes, ['B', 'S']),
+  });
   const allWhere = ['t.filer_id IS NOT NULL', ...where];
   const sql =
     'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +
@@ -786,7 +804,8 @@ export function buildTickerSummaryQuery(ticker: string, p: CommonFilters): Built
     'SELECT COUNT(*) AS total_trades, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
-    `SUM(${MID}) AS est_volume, SUM(${SIGNED}) AS est_net_flow, ` +
+    `SUM(${STOCK_MID}) AS est_volume, SUM(${STOCK_SIGNED}) AS est_net_flow, ` +
+    'SUM(CASE WHEN t.is_option = 1 THEN 1 ELSE 0 END) AS option_count, ' +
     'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where);
@@ -853,7 +872,8 @@ export function buildTickerTimeSeriesQuery(
   const sql =
     'SELECT strftime(?, t.tx_date) AS period, ' +
     `${BUY} AS buys, ${SELL} AS sells, ` +
-    `${BUY_VOL} AS est_buy_vol, ${SELL_VOL} AS est_sell_vol ` +
+    `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN ${STOCK_MID} ELSE 0 END) AS est_buy_vol, ` +
+    `SUM(CASE WHEN t.tx_type = 'S' THEN ${STOCK_MID} ELSE 0 END) AS est_sell_vol ` +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
     ' GROUP BY period ORDER BY period ASC';

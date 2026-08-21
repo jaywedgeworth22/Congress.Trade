@@ -95,6 +95,11 @@ final class ClientTrade: Decodable, Identifiable {
         var party: String?
         var state: String?
         var photoUrl: String?
+        /// Curated executive-branch position ("President", "Treasury
+        /// Secretary"; `shared/executiveTitles.ts` server-side). Present on
+        /// `/member/:id`'s `member` object; `nil` on the lighter member embed
+        /// inside each trade row, and for House/Senate filers everywhere.
+        var title: String?
     }
 
     struct Asset: Codable {
@@ -421,6 +426,10 @@ struct MemberDirectoryEntry: Decodable, Identifiable, Hashable {
     /// Same-columns addition to the roster query (2026-08-09); `nil` when the
     /// filer has no `filers.photo_url` — falls back to the party-emoji tile.
     let photoUrl: String?
+    /// Curated executive-branch position ("President", "Treasury
+    /// Secretary"); `nil` for House/Senate filers and for executive filers
+    /// with no curated title yet (`shared/executiveTitles.ts` server-side).
+    let title: String?
 
     var id: String { filerId }
 }
@@ -592,12 +601,9 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
 }
 
 /// Buy / Sell / Exchange side filter. Multi-select (`CongressTradeStore.
-/// selectedTradeTypes: Set<TradeTypeFilter>`, empty = all sides) — the server's
-/// `type=` param is single-valued (`asTxType` in `app/src/client/utils.ts`),
-/// exactly mirroring the web's own `qSideGroup`/`selectedSideParam` chips,
-/// which likewise only forward `type=` when exactly one side is toggled and
-/// otherwise fall back to an unfiltered fetch narrowed client-side. See
-/// `CongressTradeStore.tradeTypeQueryValue`.
+/// selectedTradeTypes: Set<TradeTypeFilter>`, empty = all sides). Forwarded as
+/// `type=` CSV (`asTxTypes`) on the Trades feed and every Trends analytics
+/// request. See `CongressTradeStore.tradeTypeQueryValue`.
 /// Trades-only instrument-class filter (owner: All vs Public Equities, Funds, & ETFs).
 enum AssetClassFilter: String, CaseIterable, Identifiable, Hashable {
     case all = "all"
@@ -810,6 +816,11 @@ struct DeleteSubscriptionResult: Decodable {
     let id: String?
 }
 
+struct DeleteAccountResult: Decodable {
+    let deleted: Bool?
+    let userId: String?
+}
+
 struct PreferencesCommandResult: Decodable {
     let preferences: ClientPreferences
 }
@@ -870,6 +881,22 @@ struct RedeemAppleResult: Decodable {
     let plan: String?
     let expiresAt: String?
     let originalTransactionId: String?
+}
+
+/// Result of `POST /api/client/v1/entitlements/apple/redeem` — the
+/// unauthenticated, device-scoped purchase path (Guideline 5.1.1(v): no
+/// Congress.Trade account required to buy). `entitlement.source` is
+/// `"apple_anonymous"` here specifically. `deviceEntitlementToken` is a
+/// short-lived, opaque proof of purchase — cache it
+/// (`api.deviceEntitlementStore`) and attach it as `X-Apple-Device-
+/// Entitlement` on PDF / CSV requests; it is never a session replacement and
+/// grants nothing beyond those two routes.
+struct AnonymousAppleRedeemResult: Decodable {
+    let entitlement: Entitlement?
+    let plan: String?
+    let expiresAt: String?
+    let originalTransactionId: String?
+    let deviceEntitlementToken: String?
 }
 
 /// `POST /billing/portal` response (`app/src/billing/routes.ts`) — a
@@ -937,6 +964,36 @@ enum JSONValue: Codable, Hashable {
             try container.encode(array)
         case .null:
             try container.encodeNil()
+        }
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case .object(let object) = self { return object }
+        return nil
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case .array(let array) = self { return array }
+        return nil
+    }
+
+    var stringValue: String? {
+        switch self {
+        case .string(let string): return string
+        case .number(let number):
+            return number.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(number))
+                : String(number)
+        case .bool(let bool): return bool ? "true" : "false"
+        default: return nil
+        }
+    }
+
+    var doubleValue: Double? {
+        switch self {
+        case .number(let number): return number
+        case .string(let string): return Double(string)
+        default: return nil
         }
     }
 
@@ -1049,15 +1106,15 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
-        case .oneDay: return "Past Day"
-        case .sevenDays: return "Past Week"
-        case .thirtyDays: return "Past Month"
-        case .ninetyDays: return "Past 3 Months"
-        case .sixMonths: return "Past 6 Months"
-        case .oneYear: return "Past Year"
-        case .fiveYears: return "Past 5 Years"
-        case .thisCalendarYear: return "This Calendar Year"
-        case .lastCalendarYear: return "Last Calendar Year"
+        case .oneDay: return "Day"
+        case .sevenDays: return "Week"
+        case .thirtyDays: return "Month"
+        case .ninetyDays: return "3 Months"
+        case .sixMonths: return "6 Months"
+        case .oneYear: return "Year"
+        case .fiveYears: return "5 Years"
+        case .thisCalendarYear: return "This Year"
+        case .lastCalendarYear: return "Last Year"
         case .all: return "All Time"
         }
     }
@@ -1492,5 +1549,635 @@ extension String {
         text = text.replacingOccurrences(of: #"\s+([.,])"#, with: "$1", options: .regularExpression)
         text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - Admin / review-queue (fail-soft)
+
+enum AdminRoute: Hashable {
+    case panel
+    case reviewQueue
+    case reviewDetail(String)
+}
+
+/// `GET /auth/me` — native Admin is gated on `admin.allowed`, not a token field.
+struct AuthMeResponse: Decodable {
+    let user: User?
+    let admin: AdminAccess?
+
+    struct AdminAccess: Decodable {
+        let allowed: Bool?
+    }
+
+    var adminAllowed: Bool { admin?.allowed == true }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        user = try? c.decodeIfPresent(User.self, forKey: .user)
+        admin = try? c.decodeIfPresent(AdminAccess.self, forKey: .admin)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case user, admin
+    }
+}
+
+enum FailSoftJSON {
+    static func string<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> String? {
+        if let value = try? c.decodeIfPresent(String.self, forKey: key) { return value }
+        if let value = try? c.decodeIfPresent(Int.self, forKey: key) { return String(value) }
+        if let value = try? c.decodeIfPresent(Double.self, forKey: key) { return String(value) }
+        if let value = try? c.decodeIfPresent(Bool.self, forKey: key) { return value ? "true" : "false" }
+        return nil
+    }
+
+    static func int<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Int? {
+        if let value = try? c.decodeIfPresent(Int.self, forKey: key) { return value }
+        if let value = try? c.decodeIfPresent(Double.self, forKey: key) { return Int(value.rounded()) }
+        if let value = try? c.decodeIfPresent(String.self, forKey: key) { return Int(value) }
+        return nil
+    }
+
+    static func double<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Double? {
+        if let value = try? c.decodeIfPresent(Double.self, forKey: key) { return value }
+        if let value = try? c.decodeIfPresent(Int.self, forKey: key) { return Double(value) }
+        if let value = try? c.decodeIfPresent(String.self, forKey: key) { return Double(value) }
+        return nil
+    }
+
+    static func bool<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Bool? {
+        if let value = try? c.decodeIfPresent(Bool.self, forKey: key) { return value }
+        if let value = try? c.decodeIfPresent(Int.self, forKey: key) { return value != 0 }
+        if let value = try? c.decodeIfPresent(String.self, forKey: key) {
+            switch value.lowercased() {
+            case "true", "1", "yes": return true
+            case "false", "0", "no": return false
+            default: return nil
+            }
+        }
+        return nil
+    }
+}
+
+struct PublicHealthResponse: Decodable {
+    let ok: Bool?
+    let status: String?
+    let pipeline: PipelineHealthPayload?
+    let time: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = FailSoftJSON.bool(c, .ok)
+        status = FailSoftJSON.string(c, .status)
+        pipeline = try? c.decodeIfPresent(PipelineHealthPayload.self, forKey: .pipeline)
+        time = FailSoftJSON.string(c, .time)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, status, pipeline, time
+    }
+}
+
+struct PipelineHealthPayload: Decodable {
+    let status: String?
+    let checks: [PipelineCheck]
+    let reviewQueue: ReviewQueueBuckets?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = FailSoftJSON.string(c, .status)
+        checks = (try? c.decodeIfPresent([PipelineCheck].self, forKey: .checks)) ?? []
+        reviewQueue = try? c.decodeIfPresent(ReviewQueueBuckets.self, forKey: .reviewQueue)
+    }
+
+    func check(id: String) -> PipelineCheck? {
+        checks.first { $0.id == id }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status, checks, reviewQueue
+    }
+}
+
+struct PipelineCheck: Decodable, Identifiable, Hashable {
+    let id: String
+    let status: String?
+    let detail: String?
+    let value: Double?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = FailSoftJSON.string(c, .id) ?? ""
+        status = FailSoftJSON.string(c, .status)
+        detail = FailSoftJSON.string(c, .detail)
+        value = FailSoftJSON.double(c, .value)
+    }
+
+    var statusLabel: String {
+        switch (status ?? "").lowercased() {
+        case "ok": return "OK"
+        case "degraded": return "Degraded"
+        case "stalled": return "Stalled"
+        case "unknown": return "Unknown"
+        case "down": return "Down"
+        default: return status?.capitalized ?? "Unknown"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, status, detail, value
+    }
+}
+
+struct ReviewQueueBuckets: Decodable, Hashable {
+    let unresolved: Int
+    let eligible: Int
+    let suppressed: Int
+    let terminal: Int
+
+    init(unresolved: Int = 0, eligible: Int = 0, suppressed: Int = 0, terminal: Int = 0) {
+        self.unresolved = unresolved
+        self.eligible = eligible
+        self.suppressed = suppressed
+        self.terminal = terminal
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        unresolved = FailSoftJSON.int(c, .unresolved) ?? 0
+        eligible = FailSoftJSON.int(c, .eligible) ?? 0
+        suppressed = FailSoftJSON.int(c, .suppressed) ?? 0
+        terminal = FailSoftJSON.int(c, .terminal) ?? 0
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case unresolved, eligible, suppressed, terminal
+    }
+}
+
+struct PollingHealthResponse: Decodable {
+    let ok: Bool?
+    let checks: [PipelineCheck]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = FailSoftJSON.bool(c, .ok)
+        checks = (try? c.decodeIfPresent([PipelineCheck].self, forKey: .checks)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, checks
+    }
+}
+
+struct AutopilotStatusResponse: Decodable {
+    let enabled: Bool?
+    let backlog: Int?
+    let reviewQueue: ReviewQueueBuckets?
+    let today: AutopilotToday?
+    let unacknowledgedHalt: AutopilotRunReceipt?
+    let runs: [AutopilotRunReceipt]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = FailSoftJSON.bool(c, .enabled)
+        backlog = FailSoftJSON.int(c, .backlog)
+        reviewQueue = try? c.decodeIfPresent(ReviewQueueBuckets.self, forKey: .reviewQueue)
+        today = try? c.decodeIfPresent(AutopilotToday.self, forKey: .today)
+        unacknowledgedHalt = try? c.decodeIfPresent(AutopilotRunReceipt.self, forKey: .unacknowledgedHalt)
+        runs = (try? c.decodeIfPresent([AutopilotRunReceipt].self, forKey: .runs)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, backlog, reviewQueue, today, unacknowledgedHalt, runs
+    }
+}
+
+struct AutopilotToday: Decodable, Hashable {
+    let day: String?
+    let spendUsd: Double?
+    let budgetUsd: Double?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        day = FailSoftJSON.string(c, .day)
+        spendUsd = FailSoftJSON.double(c, .spendUsd)
+        budgetUsd = FailSoftJSON.double(c, .budgetUsd)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case day, spendUsd, budgetUsd
+    }
+}
+
+struct AutopilotRunReceipt: Decodable, Identifiable, Hashable {
+    let id: String
+    let status: String?
+    let haltReason: String?
+    let startedAt: String?
+    let finishedAt: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = FailSoftJSON.string(c, .id) ?? ""
+        status = FailSoftJSON.string(c, .status)
+        haltReason = FailSoftJSON.string(c, .haltReason)
+        startedAt = FailSoftJSON.string(c, .startedAt)
+        finishedAt = FailSoftJSON.string(c, .finishedAt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, status, haltReason, startedAt, finishedAt
+    }
+}
+
+struct AutopilotAcknowledgeResponse: Decodable {
+    let acknowledged: AutopilotRunReceipt?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        acknowledged = try? c.decodeIfPresent(AutopilotRunReceipt.self, forKey: .acknowledged)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case acknowledged
+    }
+}
+
+struct ReviewQueueResponse: Decodable {
+    let items: [ReviewQueueItem]
+    let count: Int?
+    let resolved: Bool?
+    let nextCursor: String?
+    let totals: ReviewQueueTotals?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = (try? c.decodeIfPresent([ReviewQueueItem].self, forKey: .items)) ?? []
+        count = FailSoftJSON.int(c, .count)
+        resolved = FailSoftJSON.bool(c, .resolved)
+        nextCursor = FailSoftJSON.string(c, .nextCursor)
+        totals = try? c.decodeIfPresent(ReviewQueueTotals.self, forKey: .totals)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case items, count, resolved, nextCursor, totals
+    }
+}
+
+struct ReviewQueueTotals: Decodable, Hashable {
+    let unresolved: Int
+    let matching: Int
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        unresolved = FailSoftJSON.int(c, .unresolved) ?? 0
+        matching = FailSoftJSON.int(c, .matching) ?? 0
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case unresolved, matching
+    }
+}
+
+struct ReviewQueueItem: Decodable, Identifiable, Hashable {
+    let docId: String
+    let reason: String?
+    let payload: JSONValue?
+    let createdAt: String?
+    let resolved: Bool
+    let status: String?
+    let reviewRevision: Int
+    let chamber: String?
+    let docKind: String?
+    let ingestStatus: String?
+    let agreementSuppressedAt: String?
+    let agreementSuppressionReason: String?
+    let models: [ReviewModelSummary]
+
+    var id: String { docId }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        docId = FailSoftJSON.string(c, .docId) ?? ""
+        reason = FailSoftJSON.string(c, .reason)
+        payload = try? c.decodeIfPresent(JSONValue.self, forKey: .payload)
+        createdAt = FailSoftJSON.string(c, .createdAt)
+        resolved = FailSoftJSON.bool(c, .resolved) ?? false
+        status = FailSoftJSON.string(c, .status)
+        reviewRevision = FailSoftJSON.int(c, .reviewRevision) ?? 1
+        chamber = FailSoftJSON.string(c, .chamber)
+        docKind = FailSoftJSON.string(c, .docKind)
+        ingestStatus = FailSoftJSON.string(c, .ingestStatus)
+        let suppressed = FailSoftJSON.string(c, .agreementSuppressedAt)
+        agreementSuppressedAt = (suppressed?.isEmpty == false) ? suppressed : nil
+        agreementSuppressionReason = FailSoftJSON.string(c, .agreementSuppressionReason)
+        models = (try? c.decodeIfPresent([ReviewModelSummary].self, forKey: .models)) ?? []
+    }
+
+    var isHeldFromAutomation: Bool {
+        agreementSuppressedAt != nil
+    }
+
+    var reasonLabel: String {
+        ReviewReasonCopy.label(reason: reason, payload: payload)
+    }
+
+    var queuedRows: [ReviewExtractedRow] {
+        ReviewExtractedRow.rows(from: payload?.objectValue?["transactions"])
+    }
+
+    var primaryModelLabel: String {
+        models.first.map(\.displayName) ?? "unknown model"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docId, reason, payload, createdAt, resolved, status, reviewRevision
+        case chamber, docKind, ingestStatus, agreementSuppressedAt
+        case agreementSuppressionReason, models
+    }
+}
+
+struct ReviewModelSummary: Decodable, Hashable, Identifiable {
+    let provider: String?
+    let model: String?
+    let kind: String?
+    let ok: Bool?
+    let error: String?
+    let rowCount: Int?
+    let latencyMs: Double?
+    let avgConfidence: Double?
+
+    var id: String { "\(provider ?? "")-\(model ?? "")-\(kind ?? "")" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = FailSoftJSON.string(c, .provider)
+        model = FailSoftJSON.string(c, .model)
+        kind = FailSoftJSON.string(c, .kind)
+        ok = FailSoftJSON.bool(c, .ok)
+        error = FailSoftJSON.string(c, .error)
+        rowCount = FailSoftJSON.int(c, .rowCount)
+        latencyMs = FailSoftJSON.double(c, .latencyMs)
+        avgConfidence = FailSoftJSON.double(c, .avgConfidence)
+    }
+
+    /// Provider (e.g. openrouter) is a transport, never the chip label.
+    var displayName: String {
+        ReviewModelSummary.displayName(model: model)
+    }
+
+    static func displayName(model: String?) -> String {
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty || trimmed.lowercased() == "openrouter" { return "unknown model" }
+        return trimmed
+    }
+
+    var confidenceLabel: String {
+        guard let avgConfidence else { return "—" }
+        return "\(Int((avgConfidence * 100).rounded()))%"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider, model, kind, ok, error, rowCount, latencyMs, avgConfidence
+    }
+}
+
+struct ReviewExtractionsResponse: Decodable {
+    let docId: String?
+    let runs: [ReviewExtractionRun]
+    let count: Int?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        docId = FailSoftJSON.string(c, .docId)
+        runs = (try? c.decodeIfPresent([ReviewExtractionRun].self, forKey: .runs)) ?? []
+        count = FailSoftJSON.int(c, .count)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docId, runs, count
+    }
+}
+
+struct ReviewExtractionRun: Decodable, Identifiable, Hashable {
+    let id: String
+    let provider: String?
+    let model: String?
+    let kind: String?
+    let ok: Bool?
+    let error: String?
+    let rowCount: Int?
+    let latencyMs: Double?
+    let avgConfidence: Double?
+    let rows: [ReviewExtractedRow]
+    let createdAt: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = FailSoftJSON.string(c, .id) ?? UUID().uuidString
+        provider = FailSoftJSON.string(c, .provider)
+        model = FailSoftJSON.string(c, .model)
+        kind = FailSoftJSON.string(c, .kind)
+        ok = FailSoftJSON.bool(c, .ok)
+        error = FailSoftJSON.string(c, .error)
+        rowCount = FailSoftJSON.int(c, .rowCount)
+        latencyMs = FailSoftJSON.double(c, .latencyMs)
+        avgConfidence = FailSoftJSON.double(c, .avgConfidence)
+        if let decoded = try? c.decodeIfPresent([ReviewExtractedRow].self, forKey: .rows) {
+            rows = decoded
+        } else if let json = try? c.decodeIfPresent(JSONValue.self, forKey: .rows) {
+            rows = ReviewExtractedRow.rows(from: json)
+        } else {
+            rows = []
+        }
+        createdAt = FailSoftJSON.string(c, .createdAt)
+    }
+
+    var displayName: String {
+        ReviewModelSummary.displayName(model: model)
+    }
+
+    var canConfirmFrom: Bool {
+        ok == true && !confirmEdits.isEmpty
+    }
+
+    var confirmEdits: [[String: Any]] {
+        rows.compactMap(\.confirmEditBody)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, provider, model, kind, ok, error, rowCount, latencyMs, avgConfidence, rows, createdAt
+    }
+}
+
+struct ReviewExtractedRow: Decodable, Hashable {
+    var ticker: String?
+    var assetName: String?
+    var txType: String?
+    var txDate: String?
+    var owner: String?
+    var amountMin: Double?
+    var amountMax: Double?
+    var isOption: Bool?
+    var capGainsOver200: Bool?
+    var rawText: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ticker = FailSoftJSON.string(c, .ticker)
+        assetName = FailSoftJSON.string(c, .assetName) ?? FailSoftJSON.string(c, .asset)
+        txType = FailSoftJSON.string(c, .txType) ?? FailSoftJSON.string(c, .type)
+        txDate = FailSoftJSON.string(c, .txDate) ?? FailSoftJSON.string(c, .date)
+        owner = FailSoftJSON.string(c, .owner)
+        amountMin = FailSoftJSON.double(c, .amountMin)
+        amountMax = FailSoftJSON.double(c, .amountMax)
+        isOption = FailSoftJSON.bool(c, .isOption)
+        capGainsOver200 = FailSoftJSON.bool(c, .capGainsOver200)
+        rawText = FailSoftJSON.string(c, .rawText)
+    }
+
+    init(json: JSONValue) {
+        let object = json.objectValue ?? [:]
+        ticker = object["ticker"]?.stringValue
+        assetName = object["assetName"]?.stringValue ?? object["asset"]?.stringValue
+        txType = object["txType"]?.stringValue ?? object["type"]?.stringValue
+        txDate = object["txDate"]?.stringValue ?? object["date"]?.stringValue
+        owner = object["owner"]?.stringValue
+        amountMin = object["amountMin"]?.doubleValue
+        amountMax = object["amountMax"]?.doubleValue
+        isOption = object["isOption"].flatMap {
+            if case .bool(let value) = $0 { return value }
+            return nil
+        }
+        capGainsOver200 = object["capGainsOver200"].flatMap {
+            if case .bool(let value) = $0 { return value }
+            return nil
+        }
+        rawText = object["rawText"]?.stringValue
+    }
+
+    static func rows(from json: JSONValue?) -> [ReviewExtractedRow] {
+        guard let json else { return [] }
+        if let array = json.arrayValue {
+            return array.map(ReviewExtractedRow.init(json:))
+        }
+        return []
+    }
+
+    var confirmEditBody: [String: Any]? {
+        var type = (txType ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if type == "P" { type = "B" }
+        guard type == "B" || type == "S" || type == "E" else { return nil }
+        let date = (txDate ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard date.count >= 10 else { return nil }
+        let symbol = ticker?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = assetName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !symbol.isEmpty || !name.isEmpty else { return nil }
+        guard let amountMin else { return nil }
+        var body: [String: Any] = [
+            "txType": type,
+            "txDate": String(date.prefix(10)),
+            "amountMin": amountMin,
+        ]
+        if !symbol.isEmpty { body["ticker"] = symbol }
+        if !name.isEmpty { body["assetName"] = name }
+        if let amountMax { body["amountMax"] = amountMax }
+        let ownerValue = owner?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if ["self", "spouse", "joint", "dependent"].contains(ownerValue) {
+            body["owner"] = ownerValue
+        }
+        if let isOption { body["isOption"] = isOption }
+        if let capGainsOver200 { body["capGainsOver200"] = capGainsOver200 }
+        if let rawText, !rawText.isEmpty { body["rawText"] = rawText }
+        return body
+    }
+
+    var symbolLabel: String {
+        let symbol = ticker?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !symbol.isEmpty { return symbol }
+        let name = assetName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "—" : name
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ticker, assetName, asset, txType, type, txDate, date, owner
+        case amountMin, amountMax, isOption, capGainsOver200, rawText
+    }
+}
+
+enum ReviewReasonCopy {
+    static let labels: [String: String] = [
+        "low_confidence": "Automated read below publish threshold",
+        "no_transactions_extracted": "No transactions could be read from the document",
+        "unresolved_ticker": "Asset symbol could not be matched to a known company",
+        "invalid_bracket": "Dollar amount did not match a standard disclosure range",
+        "no_amount": "No dollar amount could be read",
+        "invalid_amount": "Dollar amount looked malformed",
+        "future_tx_date": "Trade date is after the filing date",
+        "bad_tx_type": "Transaction type was unclear (not buy / sell / exchange)",
+    ]
+
+    static func label(reason: String?, payload: JSONValue?) -> String {
+        guard let reason, !reason.isEmpty else { return "Needs a human check" }
+        let codes = reason.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let extractor = payload?.objectValue?["extractor"]?.stringValue ?? ""
+        if codes == ["low_confidence"], extractor.range(of: "vision", options: .caseInsensitive) != nil {
+            return "Vision-read filing held for review"
+        }
+        return codes.map { labels[$0] ?? $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: "; ")
+    }
+}
+
+struct ReviewMutationResponse: Decodable {
+    let docId: String?
+    let decision: String?
+    let resolved: Bool?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        docId = FailSoftJSON.string(c, .docId)
+        decision = FailSoftJSON.string(c, .decision)
+        resolved = FailSoftJSON.bool(c, .resolved)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docId, decision, resolved
+    }
+}
+
+struct ReviewUnpublishResponse: Decodable {
+    let docId: String?
+    let unpublished: Bool?
+    let reviewRevision: Int?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        docId = FailSoftJSON.string(c, .docId)
+        unpublished = FailSoftJSON.bool(c, .unpublished)
+        reviewRevision = FailSoftJSON.int(c, .reviewRevision)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docId, unpublished, reviewRevision
+    }
+}
+
+struct ReviewRetryAutoResponse: Decodable {
+    let docId: String?
+    let released: Bool?
+    let enqueued: Bool?
+    let reviewRevision: Int?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        docId = FailSoftJSON.string(c, .docId)
+        released = FailSoftJSON.bool(c, .released)
+        enqueued = FailSoftJSON.bool(c, .enqueued)
+        reviewRevision = FailSoftJSON.int(c, .reviewRevision)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docId, released, enqueued, reviewRevision
     }
 }

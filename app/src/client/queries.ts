@@ -3,6 +3,7 @@ import { all, first, get } from '../shared/db.ts';
 import {
   buildTransactionsCountQuery,
   buildTransactionsQuery,
+  buildTxFilters,
   escapeLikePattern,
   mapSubscription,
   readCursorHighWater,
@@ -43,7 +44,11 @@ export const CLIENT_TRADE_SELECT =
 export const CLIENT_TRADE_BY_ID_SQL =
   CLIENT_TRADE_SELECT + 'WHERE t.deprecated_at IS NULL AND t.id = ? LIMIT 1';
 
-export function tickerSummarySql(ticker: string): { sql: string; params: string[] } {
+export function tickerSummarySql(
+  ticker: string,
+  extra: TxQueryParams = {},
+): { sql: string; params: Array<string | number> } {
+  const { where, params } = buildTxFilters({ ...extra, ticker }, false);
   return {
     sql:
       'SELECT COUNT(*) AS total_trades, ' +
@@ -54,12 +59,19 @@ export function tickerSummarySql(ticker: string): { sql: string; params: string[
       `SUM(t.est_value) AS est_volume, ` +
       `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
       'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
-      'FROM transactions t WHERE t.deprecated_at IS NULL AND t.ticker = ?',
-    params: [ticker],
+      'FROM transactions t ' +
+      'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+      'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+      `WHERE ${where.join(' AND ')}`,
+    params,
   };
 }
 
-export function memberSummarySql(memberId: string): { sql: string; params: string[] } {
+export function memberSummarySql(
+  memberId: string,
+  extra: TxQueryParams = {},
+): { sql: string; params: Array<string | number> } {
+  const { where, params } = buildTxFilters({ ...extra, member: memberId }, false);
   return {
     sql:
       'SELECT COUNT(*) AS total_trades, ' +
@@ -71,8 +83,11 @@ export function memberSummarySql(memberId: string): { sql: string; params: strin
       `SUM(t.est_value) AS est_volume, ` +
       `SUM(CASE WHEN t.tx_type IN ('B', 'P') THEN t.est_value WHEN t.tx_type = 'S' THEN -t.est_value ELSE 0 END) AS est_net_flow, ` +
       'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
-      'FROM transactions t WHERE t.deprecated_at IS NULL AND t.filer_id = ?',
-    params: [memberId],
+      'FROM transactions t ' +
+      'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+      'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+      `WHERE ${where.join(' AND ')}`,
+    params,
   };
 }
 

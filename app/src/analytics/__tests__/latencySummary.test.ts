@@ -91,6 +91,7 @@ function fakeEnv() {
   return {
     DB: fakeDb(),
     CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    FMP_LATENCY_API_KEY: 'k',
   } as never;
 }
 
@@ -149,6 +150,7 @@ function fairnessEnv() {
       },
     },
     CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+    FMP_LATENCY_API_KEY: 'k',
   } as never;
 }
 
@@ -175,11 +177,9 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.totals.matched).toBe(1);
     const fmp = body.providers.find((p) => p.id === 'fmp');
     expect(fmp).toMatchObject({
-      // Public scoreboard collapses stable + RapidAPI into one "FMP" lane.
-      label: 'FMP',
-      // Default probe ON for CT; without latency keys the lane is stopped (red/amber),
-      // not intentional OFF (grey — only when FMP_LATENCY_PROBE_ENABLED=false).
-      operationalStatus: 'stopped',
+      // Public scoreboard collapses stable + RapidAPI into one FinancialModelingPrep.com lane.
+      label: 'FinancialModelingPrep.com',
+      operationalStatus: 'running',
       candidates: 2,
       matched: 1,
       strongMatched: 1,
@@ -193,8 +193,18 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     });
     // RapidAPI must not appear as a separate public provider.
     expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
-    const uw = body.providers.find((p) => p.id === 'unusual_whales');
-    expect(uw).toMatchObject({ matched: 0, strongMatched: 0, medianLeadSec: null });
+    // Stopped/unconfigured lanes stay off the public list.
+    expect(body.providers.find((p) => p.id === 'unusual_whales')).toBeUndefined();
+    expect(body.providers.find((p) => p.id === 'quiver')).toBeUndefined();
+    const admin = (body as { adminProviders: Array<Record<string, unknown>> }).adminProviders;
+    expect(admin.find((p) => p.id === 'fmp')).toMatchObject({
+      label: 'FinancialModelingPrep.com',
+      publiclyShown: true,
+    });
+    expect(admin.find((p) => p.id === 'unusual_whales')).toMatchObject({
+      publiclyShown: false,
+      matched: 0,
+    });
   });
 
   it('never leaks per-filing or member detail', async () => {
@@ -318,6 +328,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
         },
       },
       CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      QUIVER_API_KEY: 'k',
     } as never;
     const res = await app.request('http://localhost/latency-summary', {}, env);
     expect(res.status).toBe(200);
@@ -415,7 +426,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
     expect(body.providers.filter((p) => String(p.id).startsWith('fmp'))).toHaveLength(1);
     expect(body.providers.find((p) => p.id === 'fmp_rapidapi')).toBeUndefined();
     const fmp = body.providers.find((p) => p.id === 'fmp')!;
-    expect(fmp.label).toBe('FMP');
+    expect(fmp.label).toBe('FinancialModelingPrep.com');
     // Two distinct trades (shared_trade merged once + only_stable)
     expect(fmp.matched).toBe(2);
     expect(fmp.candidates).toBe(2);
@@ -484,6 +495,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
         },
       },
       CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      QUIVER_API_KEY: 'k',
     } as never;
     const res = await app.request('http://localhost/latency-summary', {}, env);
     const body = (await res.json()) as { providers: Array<Record<string, unknown>> };
@@ -554,6 +566,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
         },
       },
       CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      QUIVER_API_KEY: 'k',
     } as never;
     const res = await app.request('http://localhost/latency-summary', {}, env);
     const body = (await res.json()) as { providers: Array<Record<string, unknown>> };

@@ -8,6 +8,11 @@
  * split into nonceable/static assets. script-src also allows
  * https://static.cloudflareinsights.com for Cloudflare's auto-injected Web
  * Analytics beacon (RUM), which the zone injects into every HTML response.
+ *
+ * style-src/font-src no longer carry fonts.googleapis.com/fonts.gstatic.com
+ * exceptions (QABUGHUNT-01 / WEBPERF-01): every font (Zilla Slab, and now
+ * Inter) is self-hosted under /assets/*, so the third-party Google Fonts
+ * request — and the CSP holes it required — is gone, not just fixed.
  */
 
 import type { MiddlewareHandler } from 'hono';
@@ -19,9 +24,9 @@ const CONTENT_SECURITY_POLICY = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https:",
-  "font-src 'self' data: https://fonts.gstatic.com",
+  "font-src 'self' data:",
   "connect-src 'self'",
   "form-action 'self'",
 ].join('; ');

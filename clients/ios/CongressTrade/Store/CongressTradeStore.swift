@@ -51,6 +51,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var isCreatingDelivery = false
     @Published private(set) var subscriptionIDsInFlight: Set<String> = []
     @Published private(set) var isLoggingOut = false
+    @Published private(set) var isDeletingAccount = false
     @Published private(set) var feedNotice: String?
     @Published private(set) var watchlistNotice: String?
     @Published private(set) var deliveryNotice: String?
@@ -60,6 +61,31 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
+    /// UI-only local check (`Transaction.currentEntitlements`, never a network
+    /// call): does THIS device currently hold a verified, unexpired Apple
+    /// subscription — regardless of sign-in state? Guideline 5.1.1(v): a
+    /// signed-out person can buy Premium, and this is what lets the Premium
+    /// sheet / CSV export / filing PDF recognize that without a session. Never
+    /// treated as authorization on its own — every server request still
+    /// carries a real signed JWS or a server-issued device entitlement token
+    /// (see `Store/AppleIAP.swift`). Set by `refreshLocalAppleEntitlement()`.
+    @Published var hasLocalAppleEntitlement = false
+    /// Row 3 vs row 4 for a signed-in account (see `AppleEntitlementOwnership`
+    /// / `PremiumAccessGate` in `Store/AppleIAP.swift`) — resolved by a
+    /// read-only probe, never by silently linking. `.unknown` until that
+    /// probe completes for the CURRENT account.
+    @Published var appleEntitlementOwnership: AppleEntitlementOwnership = .unknown
+    /// Bookkeeping only (not UI-bound): which account `appleEntitlementOwnership`
+    /// was last resolved for, so a different sign-in resets it instead of
+    /// leaking a stale conflict/offer across accounts. See
+    /// `refreshAppleEntitlementOwnership`.
+    var appleEntitlementOwnershipAccountID: String?
+    /// "Not now" on the row-4 link offer, remembered per account
+    /// (`dismissAppleLinkPrompt`) so it does not nag every launch.
+    @Published var appleLinkPromptDismissedForCurrentAccount = false
+    /// User-facing outcome of the last explicit Link attempt
+    /// (`linkAppleEntitlementToCurrentAccount`) — shown by `PremiumSheet`.
+    @Published var appleLinkNotice: String?
     /// Page size for the visible feed snapshot (newest first). Not a multi-page
     /// crawl. `private(set)` with `setPageSize(_:)` as the only mutator: the old
     /// `didSet` fired a detached `Task { await refresh() }`, so nobody could
@@ -84,7 +110,7 @@ final class CongressTradeStore: ObservableObject {
     /// where nothing selected means all. Non-empty = filter to that subset.
     /// Empty = all branches (website HSP: no chips selected). Non-empty filters to that subset.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = []
-    /// Time window for the feed + trends (website default = Past 3 Months).
+    /// Time window for the feed + trends (website default = 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
     /// Multi-select Buy/Sell/Exchange side filter. Empty = all sides. Forwarded
     /// as `type=` CSV when a subset is selected (`asTxTypes`).
@@ -97,6 +123,22 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var selectedAssetClass: AssetClassFilter = .all
 
     @Published var isLoadingMore = false
+
+    /// Last successful `GET /auth/me` with `admin.allowed`.
+    @Published private(set) var adminAccessGranted = false
+    @Published private(set) var isProbingAdmin = false
+    @Published private(set) var isLoadingAdmin = false
+    @Published private(set) var isLoadingReviewQueue = false
+    @Published private(set) var adminNotice: String?
+    @Published private(set) var publicHealth: PublicHealthResponse?
+    @Published private(set) var pollingHealth: PollingHealthResponse?
+    @Published private(set) var autopilotStatus: AutopilotStatusResponse?
+    @Published private(set) var reviewQueueItems: [ReviewQueueItem] = []
+    @Published private(set) var reviewQueueTotals: ReviewQueueTotals?
+    @Published private(set) var reviewQueueNextCursor: String?
+    @Published private(set) var reviewQueueShowsResolved = false
+    @Published private(set) var reviewExtractions: [String: ReviewExtractionsResponse] = [:]
+    @Published private(set) var reviewActionDocId: String?
 
     var modelContext: ModelContext?
 
@@ -171,6 +213,9 @@ final class CongressTradeStore: ObservableObject {
         self.hasStoredSessionToken = storedToken?.isEmpty == false
     }
 
+    /// Admin hamburger row — hidden unless `GET /auth/me` reports `admin.allowed`.
+    var showsAdminRow: Bool { adminAccessGranted }
+
     var signedIn: Bool {
         bootstrap?.auth.user != nil
     }
@@ -181,6 +226,44 @@ final class CongressTradeStore: ObservableObject {
 
     var isPremium: Bool {
         bootstrap?.auth.entitlement.premium == true
+    }
+
+    /// Feature-gating truth (owner directive 2026-08-21): SERVER Premium,
+    /// OR — only when signed out — this device's own unclaimed Apple
+    /// purchase (Guideline 5.1.1(v)), OR — signed in — that same device
+    /// purchase as long as it is not already linked to a DIFFERENT account.
+    /// Use this (never the raw `isPremium || hasLocalAppleEntitlement` OR)
+    /// for archived filing PDF / CSV export gating. See `PremiumAccessGate`
+    /// (`Store/AppleIAP.swift`) for the pure truth table this delegates to.
+    var premiumFeatureAccess: Bool {
+        PremiumAccessGate.granted(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership
+        )
+    }
+
+    /// Row 4: ask before linking — see `PremiumSheet`.
+    var showsAppleLinkOffer: Bool {
+        PremiumAccessGate.showsLinkOffer(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership,
+            dismissedForAccount: appleLinkPromptDismissedForCurrentAccount
+        )
+    }
+
+    /// Row 3: say plainly this Apple purchase belongs to a different
+    /// account — see `PremiumSheet`.
+    var showsAppleEntitlementConflict: Bool {
+        PremiumAccessGate.showsConflict(
+            isPremium: isPremium,
+            signedIn: signedIn,
+            hasLocalAppleEntitlement: hasLocalAppleEntitlement,
+            ownership: appleEntitlementOwnership
+        )
     }
 
     var entitlementLabel: String {
@@ -500,6 +583,30 @@ final class CongressTradeStore: ObservableObject {
         term.range(of: #"^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$"#, options: .regularExpression) != nil
     }
 
+    /// Cancels the auto-poll timer, in-flight refresh/trends runners, and the
+    /// filter-intent watchdog.  A live screen must not call this; releasing
+    /// the store (or replacing it) should.  Tests rely on deinit running this
+    /// so a previous case's `refreshTrends()` fan-out and
+    /// `scheduleAutoRefresh()` timer cannot land on `MockURLProtocol` after
+    /// that case niled the handler.
+    func cancelOutstandingWork() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        refreshRunner?.cancel()
+        refreshRunner = nil
+        trendsRunner?.cancel()
+        trendsRunner = nil
+        filterIntentWatchdog?.cancel()
+        filterIntentWatchdog = nil
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
+        refreshRunner?.cancel()
+        trendsRunner?.cancel()
+        filterIntentWatchdog?.cancel()
+    }
+
     /// Pauses/resumes the foreground poll timer (backgrounded scenes must not
     /// keep polling). Resuming schedules from the last feed's
     /// `nextPollAfterSec`; the next successful refresh re-arms it anyway.
@@ -647,10 +754,12 @@ final class CongressTradeStore: ObservableObject {
             if signedIn {
                 await refreshSignedInState()
                 await PushNotificationManager.shared.syncTokenWithBackend(api: api)
+                await probeAdminAccess()
             } else {
                 subscriptions = []
                 commands = []
                 watchlist = []
+                adminAccessGranted = false
             }
         } catch {
             if Task.isCancelled { /* superseding refresh / view teardown */ }
@@ -748,20 +857,25 @@ final class CongressTradeStore: ObservableObject {
         let chamberParam = selectedChambers.isEmpty || selectedChambers.count == ChamberFilter.allCases.count
             ? nil
             : selectedChambers.map { $0.rawValue }.sorted().joined(separator: ",")
+        let typeParam = Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        let skipRising = selectedTimeRange == .all
 
         do {
-            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, rankBy: "volume")
-            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let trendingTask = api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let partySplitTask = api.partySplit(window: analyticsWindow, chamber: chamberParam)
-            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam)
-            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam)
+            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, sort: "volume")
+            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let trendingTask: [TrendingItem] = {
+                if skipRising { return [] }
+                return (try? await api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam))?.trending ?? []
+            }()
+            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
             // Latency is independent of trends filters; load it fail-soft so a
             // slow/failed scoreboard never blanks the rest of Trends.
             async let latencyTask = api.latencySummary()
@@ -772,7 +886,7 @@ final class CongressTradeStore: ObservableObject {
             sectorFlow = try await sectorsTask.sectors
             memberLeaderboard = try await membersTask.members
             clusterBuys = try await clustersTask.clusters
-            trendingAssets = (try? await trendingTask)?.trending ?? []
+            trendingAssets = await trendingTask
             topPerformers = (try? await topPerformersTask)?.members ?? []
             marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
             partySplit = try? await partySplitTask
@@ -891,6 +1005,32 @@ final class CongressTradeStore: ObservableObject {
         let all = Set(PartyFilter.allCases)
         if parties.isEmpty || parties == all { return nil }
         return parties.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// Shared chips (window/chamber/party/side) forwarded onto ticker and
+    /// politician sheets so those functions honor the same filters as Trends.
+    func fetchTicker(_ symbol: String) async throws -> ClientTickerResponse {
+        try await api.ticker(
+            symbol,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
+    }
+
+    func fetchMember(id: String) async throws -> ClientMemberResponse {
+        try await api.member(
+            id: id,
+            window: selectedTimeRange.analyticsWindow,
+            from: selectedTimeRange.fromDateISO,
+            to: selectedTimeRange.toDateISO,
+            chamber: Self.chamberQueryValue(for: selectedChambers),
+            party: Self.partyQueryValue(for: selectedParties),
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+        )
     }
 
     private func trimCache(in context: ModelContext) throws {
@@ -1086,11 +1226,15 @@ final class CongressTradeStore: ObservableObject {
 
     /// Premium CSV export using explicit From/To (export popup) plus active
     /// feed filters. Returns raw CSV bytes for share-sheet handoff.
+    ///
+    /// Guideline 5.1.1(v): CSV export is content, not account-specific
+    /// functionality, so it is not sign-in-gated — `premiumFeatureAccess`
+    /// (server Premium, or this device's own Apple purchase as long as it
+    /// is not linked to a DIFFERENT account) is the gate;
+    /// `APIClient.exportTransactionsCSV` attaches the cached device
+    /// entitlement token automatically when there is no session.
     func exportCSV(from: String?, to: String?) async throws -> Data {
-        guard signedIn else {
-            throw APIError.server(status: 401, message: "Sign in required for CSV export", retryAfterSeconds: nil)
-        }
-        guard isPremium else {
+        guard premiumFeatureAccess else {
             throw APIError.server(status: 402, message: "CSV export requires Premium", retryAfterSeconds: nil)
         }
         let chamberParam = Self.chamberQueryValue(for: selectedChambers)
@@ -1126,6 +1270,14 @@ final class CongressTradeStore: ObservableObject {
             watchlistNotice = "Signed in."
             Task {
                 await refresh()
+                // Determine — never silently CLAIM — whether this device's
+                // own Apple purchase is unclaimed (row 4, offer to link) or
+                // already linked to a DIFFERENT account (row 3, surface the
+                // conflict) now that we know who signed in. Linking itself
+                // only ever happens from an explicit Link tap
+                // (`linkAppleEntitlementToCurrentAccount`) or Restore
+                // Purchases.
+                await refreshAppleEntitlementOwnership(force: true)
             }
             return true
         } catch {
@@ -1134,21 +1286,190 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    /// Sends a magic-link sign-in email (`POST /auth/magic/request?client=ios`).
-    /// The emailed link deep-links back into the app as
-    /// `congresstrade://auth?token=…` (handled by `onOpenURL` in the app root).
-    func requestMagicLink(email: String) async {
-        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else {
-            watchlistNotice = "Enter your email address."
+    func probeAdminAccess() async {
+        if isProbingAdmin { return }
+        isProbingAdmin = true
+        defer { isProbingAdmin = false }
+        do {
+            let granted = try await api.probeAdminAccess()
+            adminAccessGranted = granted
+            if !granted {
+                publicHealth = nil
+                pollingHealth = nil
+                autopilotStatus = nil
+                reviewQueueItems = []
+                reviewQueueTotals = nil
+                reviewQueueNextCursor = nil
+                reviewExtractions = [:]
+            }
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminAccessGranted = false
+        }
+    }
+
+    func refreshAdminSurface() async {
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingAdmin = true
+        defer { isLoadingAdmin = false }
+        adminNotice = nil
+        do {
+            async let healthTask = api.publicHealth()
+            async let pollingTask = api.pollingHealth()
+            async let autopilotTask = api.autopilotStatus()
+            publicHealth = try await healthTask
+            pollingHealth = try await pollingTask
+            autopilotStatus = try await autopilotTask
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func refreshReviewQueue(resolved: Bool? = nil) async {
+        if let resolved { reviewQueueShowsResolved = resolved }
+        await probeAdminAccess()
+        guard adminAccessGranted else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(resolved: reviewQueueShowsResolved, limit: 50)
+            reviewQueueItems = response.items
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadMoreReviewQueue() async {
+        guard adminAccessGranted, let cursor = reviewQueueNextCursor, !cursor.isEmpty else { return }
+        isLoadingReviewQueue = true
+        defer { isLoadingReviewQueue = false }
+        do {
+            let response = try await api.reviewQueue(
+                resolved: reviewQueueShowsResolved,
+                limit: 50,
+                cursor: cursor
+            )
+            let existing = Set(reviewQueueItems.map(\.docId))
+            reviewQueueItems.append(contentsOf: response.items.filter { !existing.contains($0.docId) })
+            reviewQueueTotals = response.totals
+            reviewQueueNextCursor = response.nextCursor
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func loadReviewExtractions(docId: String) async {
+        guard adminAccessGranted, !docId.isEmpty else { return }
+        do {
+            reviewExtractions[docId] = try await api.reviewExtractions(docId: docId)
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation { return }
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func acknowledgeAutopilotHalt() async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = "autopilot-halt"
+        defer { reviewActionDocId = nil }
+        do {
+            _ = try await api.acknowledgeAutopilotHalt()
+            adminNotice = "Halt acknowledged.  A new run can start on the next cron tick."
+            await refreshAdminSurface()
+        } catch {
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func rejectReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "reject",
+                reviewRevision: item.reviewRevision
+            )
+            adminNotice = "Rejected \(item.docId)."
+        }
+    }
+
+    func confirmReviewItem(_ item: ReviewQueueItem, edits: [[String: Any]], modelName: String) async {
+        guard !edits.isEmpty else {
+            adminNotice = "Confirm needs at least one extracted row.  Use Reject to discard this filing."
             return
         }
-        do {
-            try await api.requestMagicLink(email: trimmed)
-            watchlistNotice = "If that email is registered, a sign-in link is on its way."
-        } catch {
-            watchlistNotice = error.localizedDescription
+        await mutateReview(docId: item.docId) {
+            _ = try await api.reviewDecision(
+                docId: item.docId,
+                decision: "confirm",
+                reviewRevision: item.reviewRevision,
+                edits: edits
+            )
+            adminNotice = "Confirmed \(item.docId) from \(modelName)."
         }
+    }
+
+    func unpublishReviewItem(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.unpublishReview(
+                docId: item.docId,
+                reviewRevision: item.reviewRevision,
+                reason: "unpublished from iOS admin"
+            )
+            adminNotice = "Unpublished \(item.docId).  It is back in the pending queue."
+        }
+    }
+
+    func retryReviewAuto(_ item: ReviewQueueItem) async {
+        await mutateReview(docId: item.docId) {
+            _ = try await api.retryReviewAuto(docId: item.docId, reviewRevision: item.reviewRevision)
+            adminNotice = "Released the automation hold on \(item.docId)."
+        }
+    }
+
+    private func mutateReview(docId: String, _ work: () async throws -> Void) async {
+        guard adminAccessGranted else { return }
+        reviewActionDocId = docId
+        defer { reviewActionDocId = nil }
+        do {
+            try await work()
+            await refreshReviewQueue()
+            await refreshAdminSurface()
+        } catch {
+            adminNotice = error.localizedDescription
+        }
+    }
+
+    func deleteAccount() async {
+        guard hasStoredSessionToken, !isDeletingAccount, !isLoggingOut else { return }
+        isDeletingAccount = true
+        watchlistNotice = nil
+        do {
+            let response = try await api.deleteAccount()
+            guard response.command.status == .succeeded, response.result?.deleted != false else {
+                throw APIError.server(
+                    status: 400,
+                    message: response.command.error ?? "Could not delete this account",
+                    retryAfterSeconds: nil
+                )
+            }
+            try api.tokenStore.clear()
+            hasStoredSessionToken = false
+            bootstrap = nil
+            subscriptions = []
+            commands = []
+            watchlist = []
+            watchlistNotice = "Account deleted."
+            await refresh()
+        } catch {
+            watchlistNotice = "Could not delete this account.  \(error.localizedDescription)"
+        }
+        isDeletingAccount = false
     }
 
     func signOut() async {
@@ -1174,6 +1495,7 @@ final class CongressTradeStore: ObservableObject {
             commands = []
             watchlist = []
             watchlistNotice = "Signed out locally. Server revoke may have failed: \(error.localizedDescription)"
+            await probeAdminAccess()
         }
         isLoggingOut = false
     }
