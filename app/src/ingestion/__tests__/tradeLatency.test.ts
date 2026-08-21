@@ -53,6 +53,10 @@ import {
   isInLatencyScope,
   buildPublicLatencyProviders,
   repairProviderObservationHashes,
+  CORPUS_MATCH_METHOD,
+  hashesFromCorpusTransactions,
+  coverageRowsFromCorpusHashes,
+  mergeCoveragePreferringRace,
 } from '../tradeLatency.ts';
 
 describe('tradeLatency', () => {
@@ -1169,6 +1173,7 @@ describe('tradeLatency', () => {
     it('keeps the headline on fully specified pairings', () => {
       expect(matchStrength('trade-hash')).toBe('strong');
       expect(matchStrength('fuzzy-near-date')).toBe('strong');
+      expect(matchStrength(CORPUS_MATCH_METHOD)).toBe('strong');
       // One identity axis never verified — reported, never in the headline.
       expect(matchStrength('fuzzy-missing-date')).toBe('weak');
       expect(matchStrength('fuzzy-no-ticker')).toBe('weak');
@@ -1529,6 +1534,139 @@ describe('tradeLatency', () => {
       expect(scope.total).toBe(0);
       expect(scope.excludedMissingFiler).toBe(1);
       expect(scope.matchedPct).toBeNull();
+    });
+
+    it('counts a corpus-hash pairing as both sides seeing the line, not provider-only', () => {
+      const scope = computeLatencyScope({
+        candidates: [],
+        observations: [observation({})] as never,
+        coverageRows: [
+          {
+            provider: 'quiver',
+            chamber: 'house',
+            provider_key: 'qq-1',
+            trade_hash: 'hern_CMCSA_2026-08-05_sell',
+            match_method: CORPUS_MATCH_METHOD,
+          },
+        ],
+        windowHours: 336,
+      });
+      expect(scope.total).toBe(1);
+      expect(scope.matched).toBe(1);
+      expect(scope.ctOnly).toBe(0);
+      expect(scope.providerOnly).toBe(0);
+    });
+  });
+
+  describe('corpus coverage (#1523 backfill/lag undercount)', () => {
+    const MATURITY = '2026-08-10T21:00:00.000Z';
+    const observation = {
+      provider: 'fmp' as const,
+      chamber: 'house' as const,
+      provider_key: '20035180',
+      trade_hash: 'hern_AAPL_2026-07-15_buy',
+      first_observed_at: '2026-08-07T04:30:10.001Z',
+      last_observed_at: '2026-08-07T04:30:10.001Z',
+      provider_published_at: null,
+      source_url: null,
+      filed_date: '2026-07-15',
+      filer_name: 'Kevin Hern',
+      payload: null,
+    };
+
+    it('hashes seed and competitor-backfill rows the same way as a live import', () => {
+      const hashes = hashesFromCorpusTransactions([
+        { full_name: 'Kevin Hern', ticker: 'AAPL', tx_date: '2026-07-15', tx_type: 'P' },
+        { full_name: 'Kevin Hern', ticker: 'MSFT', tx_date: '2026-07-15', tx_type: 'S' },
+      ]);
+      expect(hashes.has('hern_AAPL_2026-07-15_buy')).toBe(true);
+      expect(hashes.has('hern_MSFT_2026-07-15_sell')).toBe(true);
+    });
+
+    it('pairs a provider row to the full CT corpus by exact hash', () => {
+      const rows = coverageRowsFromCorpusHashes(
+        [observation],
+        new Set(['hern_AAPL_2026-07-15_buy']),
+      );
+      expect(rows).toEqual([
+        {
+          provider: 'fmp',
+          chamber: 'house',
+          provider_key: '20035180',
+          trade_hash: 'hern_AAPL_2026-07-15_buy',
+          match_method: CORPUS_MATCH_METHOD,
+        },
+      ]);
+    });
+
+    it('prefers a live-race pairing when both exist', () => {
+      const merged = mergeCoveragePreferringRace(
+        [
+          {
+            provider: 'fmp',
+            chamber: 'house',
+            provider_key: '20035180',
+            trade_hash: 'hern_AAPL_2026-07-15_buy',
+            match_method: 'trade-hash',
+          },
+        ],
+        coverageRowsFromCorpusHashes([observation], new Set(['hern_AAPL_2026-07-15_buy'])),
+      );
+      expect(merged).toHaveLength(1);
+      expect(merged[0]!.match_method).toBe('trade-hash');
+    });
+
+    it('counts a backfilled CT copy as coverage, not as a timed race and not as unmatched', () => {
+      const [fmp] = buildPublicLatencyProviders(
+        [],
+        [],
+        [observation],
+        [],
+        MATURITY,
+        [
+          {
+            provider: 'fmp',
+            chamber: 'house',
+            provider_key: '20035180',
+            trade_hash: 'hern_AAPL_2026-07-15_buy',
+            match_method: CORPUS_MATCH_METHOD,
+          },
+        ],
+      );
+      expect(fmp.provider).toBe('fmp');
+      // Coverage: we have the trade.
+      expect(fmp.maturedProviderObserved).toBe(1);
+      expect(fmp.maturedMatched).toBe(1);
+      expect(fmp.unmatchedProvider).toBe(0);
+      expect(fmp.unmatchedProviderCtMissing).toBe(0);
+      expect(fmp.unmatchedProviderCtExcluded).toBe(1);
+      expect(fmp.ctCoveragePct).toBe(100);
+      // Timing: no live-race candidate, so no Ahead/Behind sample.
+      expect(fmp.matched).toBe(0);
+      expect(fmp.comparisonStatus).toBe('insufficient');
+    });
+
+    it('still reports a genuine miss when the corpus does not contain the trade', () => {
+      const [fmp] = buildPublicLatencyProviders([], [], [observation], [], MATURITY, []);
+      expect(fmp.maturedMatched).toBe(0);
+      expect(fmp.unmatchedProvider).toBe(1);
+      expect(fmp.unmatchedProviderCtMissing).toBe(1);
+      expect(fmp.unmatchedProviderCtExcluded).toBe(0);
+      expect(fmp.ctCoveragePct).toBe(0);
+    });
+
+    it('refuses a usable Ahead/Behind claim when the parser stored empty-filer hashes', () => {
+      const broken = Array.from({ length: 12 }, (_, i) => ({
+        ...observation,
+        provider_key: `k-${i}`,
+        // Unique hashes so FMP-family merge does not collapse the cohort.
+        trade_hash: `_AAPL_2026-06-${String(i + 1).padStart(2, '0')}_buy`,
+      }));
+      const [fmp] = buildPublicLatencyProviders([], [], broken, [], MATURITY, []);
+      expect(fmp.observedRowsMissingFiler).toBe(12);
+      expect(fmp.parserHealth).toBe('unhealthy');
+      expect(fmp.comparisonStatus).not.toBe('usable');
+      expect(fmp.comparisonStatus).not.toBe('preliminary');
     });
   });
 });

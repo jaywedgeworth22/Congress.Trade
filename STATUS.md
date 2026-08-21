@@ -101,6 +101,15 @@ has `ct-deploy-overlap.sh` (`congress-hold` outside Coolify) and Traefik
 failover.  No `app/` edit (watch_paths is `app/**` + `services/**`).  Host
 install required.  Receipt:
 `docs/rollouts/2026-08-17-coolify-deploy-overlap.md`.
+## 2026-08-20 CURSOR — Cross-app coordination follow-ups (ST audit #2802 §7)
+
+ST audit `docs/audits/2026-08-17-cross-app-coordination.md` §7 peer items for
+this repo.  AGENTS.md CI runner policy now matches fleet truth: GitHub-hosted
+`ubuntu-latest` for JS/Deno verify; self-hosted Oracle/Coolify runners are
+retired; Mac `mac-xcode26-congress` is iOS-only.  Vendor provenance records the
+CTS `v2.5.2` lock SHA.  `PRICE_PROVIDER=peer` keeps peer-strict auth and uses
+direct Massive as last-resort only (not a parallel primary).  Receipt:
+`docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
 ## 2026-08-20 CURSOR — scout.jays.services answers GET / like mac
 
 Same named tunnel and DNS as `mac.jays.services`.  The 404 on GET `/` was
