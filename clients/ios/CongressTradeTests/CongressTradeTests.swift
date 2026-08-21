@@ -256,7 +256,18 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request.  `setChamberSelection` also
+            // fires `refreshTrends()`'s ~12-endpoint analytics/latency
+            // fan-out concurrently (CongressTradeStore.performTrendsRefresh);
+            // one of those (`latency-summary`) intentionally carries no
+            // chamber= param at all (CT-AUD-010: latency is
+            // chamber-independent by design).  Capturing "whichever
+            // non-bootstrap request lands last" raced that unrelated request
+            // against the real feed fetch and could overwrite `feedURL` with
+            // the chamber-less one under load, so the test intermittently
+            // saw `nil` for a param the feed request actually sent (CI job
+            // xcodebuild-mac, run 32472709681).
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -282,7 +293,14 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request — see the identical note in
+            // testDefaultChamberSelectionMatchesBackendDefaultAndOmitsTheParam
+            // above.  Without this guard, `refreshTrends()`'s concurrent
+            // `latency-summary` call (no chamber= by design) could overwrite
+            // `feedURL` and make this assertion see `nil` even though the
+            // real feed request correctly sent chamber=executive,house (CI
+            // job xcodebuild-mac, run 32472709681).
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -1193,7 +1211,14 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request — see the note in
+            // testDefaultChamberSelectionMatchesBackendDefaultAndOmitsTheParam.
+            // `refreshTrends()`'s concurrent `latency-summary` call carries
+            // no chamber= by design; without this guard it could race the
+            // real feed fetch and overwrite `feedURL`, making this assertion
+            // see `nil` — the same "chamber= arrives as nil" signature as CI
+            // job xcodebuild-mac, run 32472709681.
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
