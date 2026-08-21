@@ -61,11 +61,40 @@ import {
 } from './openRouterReply.ts';
 import { IngestRetryError } from '../ingestion/fetcher.ts';
 
-/** Live default (verified against the OpenRouter catalog 2026-08-14). */
-export const OPENROUTER_GEMINI_FLASH = 'google/gemini-3.7-flash';
-/** OpenRouter Flash batch/offline/backlog variant (~50% cheaper). */
+/**
+ * OpenRouter Flash-latest alias.  Live catalog 2026-08-21: this slug
+ * "always redirects to the latest model in the Google Gemini Flash family"
+ * and currently prices as Gemini 3.7 ($0.375/$1.875, Vertex 75% off).
+ * Bare `google/gemini-flash-latest` 404s — the `~` prefix is required.
+ */
+export const OPENROUTER_GEMINI_FLASH = '~google/gemini-flash-latest';
+/** Pinned 3.7 batch/offline slug (the latest alias has no `:batch` variant). */
 export const OPENROUTER_GEMINI_FLASH_BATCH = 'google/gemini-3.7-flash:batch';
 const DEFAULT_MODEL = OPENROUTER_GEMINI_FLASH;
+
+function isOpenRouterGeminiFlashLatest(model: string): boolean {
+  const base = model.trim().replace(/:batch$/i, '').replace(/^~/, '').toLowerCase();
+  return base === 'google/gemini-flash-latest' || base === 'gemini-flash-latest';
+}
+
+function isOpenRouterGemini37Flash(model: string): boolean {
+  const base = model.trim().replace(/:batch$/i, '').replace(/^~/, '').toLowerCase();
+  return base === 'google/gemini-3.7-flash' || base === 'gemini-3.7-flash';
+}
+
+/**
+ * Vertex/`Google` is the 75%-off Gemini Flash endpoint for current latest
+ * (3.7) and the pinned 3.7 slug.  AI Studio is only 50% off.  Fall back
+ * if Vertex is down rather than failing the read.
+ */
+export function gemini37FlashProviderPreference(model: string): {
+  order: string[];
+  allow_fallbacks: boolean;
+} | Record<string, never> {
+  if (!isOpenRouterGeminiFlashLatest(model) && !isOpenRouterGemini37Flash(model)) return {};
+  return { order: ['Google'], allow_fallbacks: true };
+}
+
 const DEFAULT_CONFIDENCE = 0.6;
 const MAX_TOKENS = 65000;
 
@@ -122,8 +151,15 @@ export function supportsNativeVision(model: string): boolean {
   // paid mistral-ocr parse for models that read PDFs natively.
   if (/claude-(?:\d|sonnet|haiku|opus)/.test(m)) return true;
   if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
+  // `~google/gemini-flash-latest` has file modality (verified 2026-08-21) but
+  // does not contain `gemini-3`, so the generation test above misses it.
+  if (/gemini-flash-latest/.test(m)) return true;
   // x-ai/grok-4.x lists `file` input modality on the live catalog (2026-07-18).
   if (/grok-4/.test(m)) return true;
+  // DeepSeek V4 Flash Vision (exp or later).  Catalog lists image, not file;
+  // skip paid mistral-ocr so a future seat does not double-pay.  Text-only
+  // `deepseek-v4-flash` stays on the OCR plugin.
+  if (/deepseek[-/].*flash-vision|deepseek[-/].*-vision(?:-|$)/.test(m)) return true;
   return false;
 }
 
@@ -135,7 +171,7 @@ export function supportsNativeVision(model: string): boolean {
  * unpredictable `openrouter/auto` router stay on the prompt-JSON fallback.
  */
 export function supportsStructuredOutputs(model: string): boolean {
-  const m = model.trim().toLowerCase();
+  const m = model.trim().replace(/^~/, '').toLowerCase();
   if (m.includes('mistral-ocr')) return false; // OCR endpoint, not a chat model
   const slash = m.indexOf('/');
   if (slash <= 0) return false;
@@ -472,6 +508,7 @@ export class OpenRouterVisionExtractor implements Extractor {
           ...(includeEngine && engine ? [{ id: 'file-parser', pdf: { engine } }] : []),
         ];
         const provider = {
+          ...gemini37FlashProviderPreference(model),
           ...(structured ? { require_parameters: true } : {}),
           ...(maxPrice ? { max_price: maxPrice } : {}),
         };

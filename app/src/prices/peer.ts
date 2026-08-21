@@ -8,10 +8,10 @@
  * Modes:
  *  - soft (default): empty / non-2xx / network → [] so a secondary client can
  *    take over (legacy peer-first fallback stack).
- *  - strict: sole source (PRICE_PROVIDER=peer). Auth/plan failures throw
+ *  - strict: peer-primary (PRICE_PROVIDER=peer). Auth/plan failures throw
  *    PEER_HTTP_<status> so the refresh run aborts visibly instead of silently
- *    falling through to Massive/FMP. Empty series still returns [] (ticker
- *    simply has no history on the peer).
+ *    spending the shared Massive key. Empty series still returns [] (ticker
+ *    simply has no history on the peer; last-resort Massive may then run).
  */
 
 import type { Close } from './compute.ts';

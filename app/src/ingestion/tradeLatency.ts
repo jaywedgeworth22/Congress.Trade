@@ -220,6 +220,9 @@ export interface DisclosureLatencyProbeResult {
  */
 export type CoverageIntegrity = 'ok' | 'contradiction';
 
+/** Whether this lane's stored observations have usable filer identity. */
+export type ParserHealth = 'ok' | 'unhealthy';
+
 export interface DisclosureLatencyProviderMetrics {
   provider: ProviderId;
   label: string;
@@ -249,11 +252,24 @@ export interface DisclosureLatencyProviderMetrics {
   /** Provider rows with NO pairing of any strength after the grace period. */
   unmatchedProvider: number;
   /**
+   * Matured unmatched rows after the corpus pass — CT has no transaction with
+   * this lastName/ticker/date/side, regardless of import path.
+   */
+  unmatchedProviderCtMissing: number;
+  /**
+   * Matured provider rows that pair only via {@link CORPUS_MATCH_METHOD}:
+   * congress.trade has the trade, but the CT copy was seed / backfill /
+   * historical-lag and was never eligible to race. Not a coverage miss.
+   */
+  unmatchedProviderCtExcluded: number;
+  /**
    * Provider rows we stored whose trade hash has no filer segment, so nothing
    * could ever match them. Non-zero means a provider parser is broken — this
    * is the alarm that would have caught FMP's 309-of-309 silent failure.
    */
   observedRowsMissingFiler: number;
+  /** `unhealthy` = enough rows with empty filer hashes that a win/loss claim is not publishable. */
+  parserHealth: ParserHealth;
   /** Recent provider rows still inside the late-match grace period. */
   pendingProvider: number;
   /** congress.trade candidates old enough for a directional coverage estimate. */
@@ -344,14 +360,12 @@ export interface DisclosureLatencyProviderMetrics {
  * filings neither side has seen. M is the union of what the two feeds
  * surfaced.
  *
- * READ `providerOnly` AS AN UPPER BOUND, NOT A MISS COUNT. A provider "latest"
- * endpoint returns rows by DISCLOSURE date, and a filing disclosed this week
- * routinely contains transactions from a year or more ago that congress.trade
- * already ingested — before this window, so with no in-window candidate to
- * pair against. Those land in `providerOnly` even though we have the trade.
- * The number that is unambiguously ours to fix is the subset where we have no
- * record of the trade at all; measuring that needs a join against
- * `transactions`, which this function deliberately does not do.
+ * READ `providerOnly` AFTER THE CORPUS PASS. A provider "latest" endpoint
+ * returns rows by DISCLOSURE date, and a filing disclosed this week routinely
+ * contains older transactions. Those used to land in `providerOnly` even when
+ * congress.trade already had the trade via seed / backfill / historical crawl
+ * ({@link CORPUS_MATCH_METHOD} now folds those onto both-sides). What remains
+ * in `providerOnly` is the subset with no CT transaction of that identity.
  */
 export interface DisclosureLatencyScope {
   /** Window applied to both clocks (hours). */
@@ -382,6 +396,8 @@ export interface DisclosureLatencyTotals {
   providerObserved: number;
   maturedProviderObserved: number;
   unmatchedProvider: number;
+  unmatchedProviderCtMissing: number;
+  unmatchedProviderCtExcluded: number;
   comparableProviders: number;
   configuredComparableProviders: number;
 }
@@ -1338,6 +1354,18 @@ export const LATENCY_MAX_CONCURRENT_DELTA_HOURS = LATENCY_PROVIDER_MATCH_LOOKBAC
 export const LATENCY_LIVE_FILING_MAX_LAG_DAYS = 7;
 /** Allow trade dates to differ by this many days for near-miss fuzzy match. */
 export const LATENCY_FUZZY_DATE_SLACK_DAYS = 2;
+/**
+ * Exact lastName_ticker_date_side hit against CT's full transactions table,
+ * including seed / competitor backfill / historical crawls that
+ * {@link isLiveRaceImport} refuses to mint as races. Counts as coverage, never
+ * as a timed Ahead/Behind race — otherwise a bulk reimport would mint fake
+ * "CT was first" wins. See issue #1523 failure mode #2.
+ */
+export const CORPUS_MATCH_METHOD = 'corpus-hash';
+/** Parser-health alarm: this many stored rows before a missing-filer ratio is meaningful. */
+export const LATENCY_PARSER_HEALTH_MIN_ROWS = 8;
+/** Parser-health alarm: missing-filer share that means the provider parser is broken. */
+export const LATENCY_PARSER_HEALTH_MISSING_FILER_RATIO = 0.25;
 
 const BACKFILL_TX_SOURCES = new Set(['seed_dataset', 'competitor_backfill']);
 
@@ -4355,7 +4383,7 @@ export function effectiveRaceProviderTime(
  */
 export type MatchStrength = 'strong' | 'weak' | 'none';
 
-const STRONG_MATCH_METHODS = new Set(['trade-hash', 'fuzzy-near-date']);
+const STRONG_MATCH_METHODS = new Set(['trade-hash', 'fuzzy-near-date', CORPUS_MATCH_METHOD]);
 
 const WEAK_MATCH_METHODS = new Set(['fuzzy-missing-date', 'fuzzy-no-ticker']);
 
@@ -4419,6 +4447,12 @@ interface CoverageIndex {
   strongHashes: Set<string>;
   weakKeys: Set<string>;
   weakHashes: Set<string>;
+  /** Live-race pairings (not {@link CORPUS_MATCH_METHOD}). */
+  raceKeys: Set<string>;
+  raceHashes: Set<string>;
+  /** Corpus-only pairings — CT has the trade, excluded from the race. */
+  corpusKeys: Set<string>;
+  corpusHashes: Set<string>;
   /** Canonical CT trade_hash for an observation, by key then by hash. */
   canonicalByKey: Map<string, string>;
   /**
@@ -4440,6 +4474,10 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
     strongHashes: new Set(),
     weakKeys: new Set(),
     weakHashes: new Set(),
+    raceKeys: new Set(),
+    raceHashes: new Set(),
+    corpusKeys: new Set(),
+    corpusHashes: new Set(),
     canonicalByKey: new Map(),
     strongPairings: 0,
   };
@@ -4453,6 +4491,14 @@ function buildCoverageIndex(rows: LatencyCoverageRow[], providerId: ProviderId):
     if (strength === 'none') continue;
     const key = row.provider_key ? `${row.chamber}:${row.provider_key}` : null;
     if (key && row.trade_hash) idx.canonicalByKey.set(key, row.trade_hash);
+    const corpus = row.match_method === CORPUS_MATCH_METHOD;
+    if (corpus) {
+      if (key) idx.corpusKeys.add(key);
+      if (row.trade_hash) idx.corpusHashes.add(row.trade_hash);
+    } else {
+      if (key) idx.raceKeys.add(key);
+      if (row.trade_hash) idx.raceHashes.add(row.trade_hash);
+    }
     if (strength === 'strong') {
       idx.strongPairings += 1;
       if (key) idx.strongKeys.add(key);
@@ -4508,6 +4554,104 @@ function coverageStrength(
     return 'weak';
   }
   return 'none';
+}
+
+function indexHas(set: Set<string>, row: ObservationIdentity, keyIsTrustworthy: Set<string>, kind: 'key' | 'hash'): boolean {
+  if (kind === 'hash') return Boolean(row.trade_hash && set.has(row.trade_hash));
+  const key = `${row.chamber}:${row.provider_key}`;
+  return keyIsTrustworthy.has(key) && set.has(key);
+}
+
+function isCorpusOnlyCovered(
+  idx: CoverageIndex,
+  row: ObservationIdentity,
+  keyIsTrustworthy: Set<string>,
+): boolean {
+  const corpus =
+    indexHas(idx.corpusKeys, row, keyIsTrustworthy, 'key') ||
+    indexHas(idx.corpusHashes, row, keyIsTrustworthy, 'hash');
+  if (!corpus) return false;
+  const raced =
+    indexHas(idx.raceKeys, row, keyIsTrustworthy, 'key') ||
+    indexHas(idx.raceHashes, row, keyIsTrustworthy, 'hash');
+  return !raced;
+}
+
+export interface CorpusTransactionRow {
+  full_name: string | null;
+  ticker: string | null;
+  tx_date: string | null;
+  tx_type: string | null;
+}
+
+/**
+ * Trade hashes from CT's full corpus — seed, competitor backfill, and
+ * historical crawls included. Used only for coverage, never to mint a race.
+ */
+export function hashesFromCorpusTransactions(rows: readonly CorpusTransactionRow[]): Set<string> {
+  const out = new Set<string>();
+  for (const row of rows) {
+    const hash = generateTradeHash(row.full_name, row.ticker, row.tx_date, row.tx_type);
+    if (tradeHashHasFiler(hash)) out.add(hash);
+  }
+  return out;
+}
+
+/**
+ * Pair provider observations to CT's full corpus by exact trade hash.
+ * Does not create race candidates and does not invent fuzzy matches.
+ */
+export function coverageRowsFromCorpusHashes(
+  observations: ReadonlyArray<{
+    provider: ProviderId;
+    chamber: Chamber;
+    provider_key: string;
+    trade_hash?: string | null;
+  }>,
+  corpusHashes: ReadonlySet<string>,
+): LatencyCoverageRow[] {
+  const out: LatencyCoverageRow[] = [];
+  const seen = new Set<string>();
+  for (const row of observations) {
+    if (!row.trade_hash || !tradeHashHasFiler(row.trade_hash)) continue;
+    if (!corpusHashes.has(row.trade_hash)) continue;
+    const id = `${row.provider}:${row.chamber}:${row.provider_key}:${row.trade_hash}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      provider: row.provider,
+      chamber: row.chamber,
+      provider_key: row.provider_key,
+      trade_hash: row.trade_hash,
+      match_method: CORPUS_MATCH_METHOD,
+    });
+  }
+  return out;
+}
+
+/**
+ * Prefer a live-race pairing when both exist for the same observation identity.
+ * Corpus rows fill only the holes the race matcher never saw.
+ */
+export function mergeCoveragePreferringRace(
+  raceRows: readonly LatencyCoverageRow[],
+  corpusRows: readonly LatencyCoverageRow[],
+): LatencyCoverageRow[] {
+  const seen = new Set<string>();
+  const out: LatencyCoverageRow[] = [];
+  for (const row of raceRows) {
+    const key = `${row.provider}:${row.chamber}:${row.trade_hash ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  for (const row of corpusRows) {
+    const key = `${row.provider}:${row.chamber}:${row.trade_hash ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 /**
@@ -4612,8 +4756,11 @@ function comparisonStatusFromSample(opts: {
   timingN: number;
   sampleOk: boolean;
   coverageOk: boolean;
+  parserUnhealthy?: boolean;
 }): DisclosureLatencyProviderMetrics['comparisonStatus'] {
-  const { timingN, sampleOk, coverageOk } = opts;
+  const { timingN, sampleOk, coverageOk, parserUnhealthy } = opts;
+  // A broken parser is not a speed result. Never publish Ahead/Behind from it.
+  if (parserUnhealthy) return timingN > 0 ? 'limited' : 'insufficient';
   // No timed deltas at all → never claim preliminary/usable (prevents "tie" with n=0).
   if (timingN <= 0) return 'insufficient';
   if (!sampleOk) {
@@ -4705,12 +4852,21 @@ function computeProviderMetrics(opts: {
   // The subtraction made "everything is unmatched" an arithmetic identity that
   // could not disagree with a broken numerator.
   const unmatchedProvider = maturedObservations.filter((row) => obsStrength(row) === 'none').length;
+  const unmatchedProviderCtExcluded = maturedObservations.filter((row) =>
+    isCorpusOnlyCovered(coverageIndex, row, trustworthyKeys),
+  ).length;
+  const unmatchedProviderCtMissing = unmatchedProvider;
   // Provider rows we stored with no usable filer segment in the trade hash —
   // unmatchable by construction (see tradeHashHasFiler). A non-zero value here
   // is a PARSER fault, not a coverage result.
   const observedRowsMissingFiler = observations.filter(
     (row) => !tradeHashHasFiler(row.trade_hash),
   ).length;
+  const parserHealth: ParserHealth =
+    observations.length >= LATENCY_PARSER_HEALTH_MIN_ROWS &&
+    observedRowsMissingFiler / observations.length >= LATENCY_PARSER_HEALTH_MISSING_FILER_RATIO
+      ? 'unhealthy'
+      : 'ok';
   const pendingProvider = observations.filter(
     (row) => row.first_observed_at > maturityCutoff && obsStrength(row) === 'none',
   ).length;
@@ -4779,7 +4935,10 @@ function computeProviderMetrics(opts: {
     providerObserved: observations.length,
     maturedProviderObserved,
     unmatchedProvider,
+    unmatchedProviderCtMissing,
+    unmatchedProviderCtExcluded,
     observedRowsMissingFiler,
+    parserHealth,
     pendingProvider,
     maturedCandidates: maturedCandidates.length,
     maturedMatched,
@@ -4789,7 +4948,12 @@ function computeProviderMetrics(opts: {
     overlapPct,
     coverageIntegrity,
     coverageStrongPairingsOnFile: coverageIndex.strongPairings,
-    comparisonStatus: comparisonStatusFromSample({ timingN, sampleOk, coverageOk }),
+    comparisonStatus: comparisonStatusFromSample({
+      timingN,
+      sampleOk,
+      coverageOk,
+      parserUnhealthy: parserHealth === 'unhealthy',
+    }),
     comparisonBasis: 'matched-overlap-only',
     // "Monitor" fields carry the effective race deltas (provider stamp with fallback).
     ctAheadMonitorCount: effectiveDeltas.filter((d) => d > 0).length,
@@ -4891,6 +5055,7 @@ export function computeLatencyScope(opts: {
   const canonical = new Map<string, string>();
   const strengthByKey = new Map<string, MatchStrength>();
   const strengthByHash = new Map<string, MatchStrength>();
+  const corpusLineKeys = new Set<string>();
   const observationKeyCounts = new Map<string, number>();
   for (const row of observations) {
     const key = `${row.provider}:${row.chamber}:${row.provider_key}`;
@@ -4907,7 +5072,12 @@ export function computeLatencyScope(opts: {
         strengthByKey.set(key, strength);
       }
     }
-    if (row.trade_hash) strengthByHash.set(`${row.provider}:${row.trade_hash}`, strength);
+    if (row.trade_hash) {
+      strengthByHash.set(`${row.provider}:${row.trade_hash}`, strength);
+      if (row.match_method === CORPUS_MATCH_METHOD) {
+        corpusLineKeys.add(`${row.chamber}:${row.trade_hash}`);
+      }
+    }
   }
 
   for (const row of observations) {
@@ -4925,6 +5095,9 @@ export function computeLatencyScope(opts: {
     }
     const entry = touch(`${row.chamber}:${hash}`);
     entry.provider = true;
+    // Corpus-hash means CT has the trade in the full table even though no
+    // live-race candidate was minted. Count that as both sides seeing the line.
+    if (corpusLineKeys.has(`${row.chamber}:${hash}`)) entry.ct = true;
     const strength =
       strengthByKey.get(byKey) ??
       (row.trade_hash ? strengthByHash.get(`${row.provider}:${row.trade_hash}`) : undefined) ??
@@ -5020,6 +5193,41 @@ export function buildPublicLatencyProviders(
   return [fmpMetrics, ...others];
 }
 
+/**
+ * Load exact trade hashes from CT's full transactions table for the dates
+ * present on in-window provider observations. Seed / backfill / lag rows are
+ * included on purpose — this answers "do we have the trade at all?"
+ */
+async function loadCorpusTradeHashes(
+  env: Env,
+  observations: ReadonlyArray<{ trade_hash?: string | null }>,
+): Promise<Set<string>> {
+  const dates = new Set<string>();
+  for (const row of observations) {
+    const parsed = parseTradeHash(row.trade_hash);
+    if (parsed.date) dates.add(parsed.date);
+  }
+  if (!dates.size) return new Set();
+  const dateList = Array.from(dates).slice(0, 200);
+  const placeholders = dateList.map(() => '?').join(', ');
+  const rows = await all<CorpusTransactionRow>(
+    env.DB,
+    `SELECT fil.full_name AS full_name, t.ticker, t.tx_date, t.tx_type
+       FROM transactions t
+       LEFT JOIN filings f ON f.doc_id = t.doc_id
+       LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+      WHERE t.deprecated_at IS NULL
+        AND t.tx_date IN (${placeholders})
+        AND fil.full_name IS NOT NULL
+      LIMIT 8000`,
+    dateList,
+  ).catch((err) => {
+    if (storageMissing(err)) return [];
+    throw err;
+  });
+  return hashesFromCorpusTransactions(rows);
+}
+
 export async function getDisclosureLatencySummary(env: Env, now: Date = new Date()): Promise<DisclosureLatencySummary> {
   const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const providerLookbackCutoff = new Date(
@@ -5081,6 +5289,11 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   });
 
   const statuses = await getDisclosureLatencyProviderStatuses(env);
+  const corpusHashes = await loadCorpusTradeHashes(env, providerRows);
+  const coverageRowsWithCorpus = mergeCoveragePreferringRace(
+    coverageRows,
+    coverageRowsFromCorpusHashes(providerRows, corpusHashes),
+  );
   // Per-path metrics (admin / ops — FMP stable and RapidAPI stay separate).
   const providers = PROVIDERS.filter((p) => p.supportsDirectLatest).map((provider) => {
     const mine = rows.filter(
@@ -5102,7 +5315,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       mine,
       observations,
       maturityCutoff,
-      coverageRows,
+      coverageRows: coverageRowsWithCorpus,
     });
   });
 
@@ -5113,7 +5326,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     providerRows,
     statuses,
     maturityCutoff,
-    coverageRows,
+    coverageRowsWithCorpus,
   );
 
   // "N of M matched" across the whole realm of concern (both feeds, one 14d
@@ -5127,7 +5340,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       }),
     ),
     observations: providerRows,
-    coverageRows,
+    coverageRows: coverageRowsWithCorpus,
     windowHours: LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS,
   });
   const totals = {
@@ -5138,6 +5351,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     providerObserved: providerRows.length,
     maturedProviderObserved: providers.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
     unmatchedProvider: providers.reduce((sum, p) => sum + p.unmatchedProvider, 0),
+    unmatchedProviderCtMissing: providers.reduce((sum, p) => sum + p.unmatchedProviderCtMissing, 0),
+    unmatchedProviderCtExcluded: providers.reduce((sum, p) => sum + p.unmatchedProviderCtExcluded, 0),
     comparableProviders: PROVIDERS.filter((p) => p.supportsDirectLatest).length,
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
   };
@@ -5148,6 +5363,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     matched: visiblePublicProviders.reduce((sum, p) => sum + p.matched, 0),
     maturedProviderObserved: visiblePublicProviders.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
     unmatchedProvider: visiblePublicProviders.reduce((sum, p) => sum + p.unmatchedProvider, 0),
+    unmatchedProviderCtMissing: visiblePublicProviders.reduce((sum, p) => sum + p.unmatchedProviderCtMissing, 0),
+    unmatchedProviderCtExcluded: visiblePublicProviders.reduce((sum, p) => sum + p.unmatchedProviderCtExcluded, 0),
     comparableProviders: visiblePublicProviders.length,
     configuredComparableProviders: statuses.filter(
       (p) =>
