@@ -54,7 +54,7 @@ struct CongressTradeApp: App {
 
     private var colorScheme: ColorScheme? {
         switch appColorScheme {
-        case "light", "sepia": return .light
+        case "light": return .light
         case "dark": return .dark
         default: return nil
         }

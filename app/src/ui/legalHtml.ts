@@ -39,31 +39,36 @@ const LEGAL_THEME_BOOT = /* html */ `<script>
     var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
-      if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') pref = s;
+      if (s === 'sepia') {
+        /* Sepia was removed (owner 2026-08-21) — migrate a returning
+           visitor's stored Sepia preference to Light so it stops failing
+           validation on every load. */
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        s = 'light';
+      }
+      if (s === 'light' || s === 'dark' || s === 'system') pref = s;
     } catch (e) {}
     var effective = pref;
     if (pref === 'system') {
       effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
-    var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+    var theme = effective === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-pref', pref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : '#eff3f8');
   })();
 </script>`;
 
-const LEGAL_THEME_ICONS: Record<'light' | 'sepia' | 'dark' | 'system', string> = {
+const LEGAL_THEME_ICONS: Record<'light' | 'dark' | 'system', string> = {
   dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
   system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>',
-  sepia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><path d="M4 20h16" opacity=".45"/></svg>',
   light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
 };
 
 function legalThemeSegHtml(): string {
   const opts = [
     { id: 'light' as const, label: 'Light' },
-    { id: 'sepia' as const, label: 'Sepia' },
     { id: 'dark' as const, label: 'Dark' },
     { id: 'system' as const, label: 'System' },
   ];
@@ -77,22 +82,29 @@ const LEGAL_THEME_RUNTIME = /* html */ `<script>
   function readThemePref() {
     try {
       var s = localStorage.getItem('ui-theme');
-      if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') return s;
+      if (s === 'sepia') {
+        /* Sepia was removed (owner 2026-08-21) — migrate a returning
+           visitor's stored Sepia preference to Light so it stops failing
+           validation on every load. */
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        return 'light';
+      }
+      if (s === 'light' || s === 'dark' || s === 'system') return s;
     } catch (e) {}
     return 'light';
   }
   function resolveTheme(pref) {
-    if (pref === 'dark' || pref === 'light' || pref === 'sepia') return pref;
+    if (pref === 'dark' || pref === 'light') return pref;
     try {
       if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
     } catch (e) {}
     return 'light';
   }
   function applyTheme(effective) {
-    var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+    var theme = effective === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : '#eff3f8');
     syncThemeSegUI();
   }
   function syncThemeSegUI() {
@@ -104,7 +116,7 @@ const LEGAL_THEME_RUNTIME = /* html */ `<script>
     });
   }
   function setThemePref(pref) {
-    if (pref !== 'light' && pref !== 'sepia' && pref !== 'dark' && pref !== 'system') pref = 'light';
+    if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
     try { localStorage.setItem('ui-theme', pref); } catch (e) {}
     document.documentElement.setAttribute('data-theme-pref', pref);
     applyTheme(resolveTheme(pref));
@@ -150,17 +162,12 @@ ${LEGAL_THEME_BOOT}
     color-scheme: light;
     --bg:#eff3f8;--bg2:#e4ebf4;--panel:#ffffff;--border:#c1cde2;--text:#09101c;--dim:#34435b;--body:#34435b;--accent:#2563eb;--warn:#b45309;
   }
-  html[data-theme="sepia"] {
-    color-scheme: light;
-    --bg:#f3e6d0;--bg2:#ead9bc;--panel:#fbf4e8;--border:#d4b896;--text:#3b2714;--dim:#6b4e32;--body:#5a3f28;--accent:#9a5a24;--warn:#9a5a24;
-  }
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,var(--bg2),var(--bg));color:var(--text);
        font:15px/1.65 var(--sans);}
   header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 35px;border-bottom:1px solid var(--border);
          background:rgba(10,16,30,.6);position:sticky;top:0;backdrop-filter:blur(8px)}
   html[data-theme="light"] header{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}
-  html[data-theme="sepia"] header{background:var(--panel);-webkit-backdrop-filter:none;backdrop-filter:none}
   .brand{font-weight:700;font-size:16px;font-family:var(--sans)}.brand .dot{color:var(--accent)}
   a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
   main{max-width:820px;margin:0 auto;padding:32px 35px 64px}

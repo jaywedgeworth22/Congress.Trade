@@ -163,21 +163,37 @@ describe('shared legal chrome and theme path', () => {
     expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 21, 2026</p>');
   });
 
-  it('honors the site Light / Sepia / Dark / System switch on both pages', () => {
+  it('honors the site Light / Dark / System switch on both pages', () => {
     expect(themeBoot(TOS_HTML)).toBe(themeBoot(PRIVACY_HTML));
     for (const html of [TOS_HTML, PRIVACY_HTML]) {
       expect(html).toContain('localStorage.getItem(\'ui-theme\')');
       expect(html).toContain('html[data-theme="light"]');
-      expect(html).toContain('html[data-theme="sepia"]');
       expect(html).toContain('html[data-theme="dark"]');
       expect(html).toContain('--bg:#0b1120');
       expect(html).toContain('--bg:#eff3f8');
-      expect(html).toContain('--bg:#f3e6d0');
       expect(html).toContain('data-theme-opt="light"');
-      expect(html).toContain('data-theme-opt="sepia"');
       expect(html).toContain('data-theme-opt="dark"');
       expect(html).toContain('data-theme-opt="system"');
       expect(html).toContain('aria-label="Theme"');
+    }
+  });
+
+  // Owner 2026-08-21: "just delete the option" — Sepia was half-implemented
+  // and looked ugly, not like paper.  Assert the palette, the picker entry,
+  // and every html[data-theme="sepia"] CSS rule stay gone on both legal
+  // pages so a future PR can't silently reintroduce it, while the one-time
+  // localStorage migration (stored 'sepia' → 'light') stays present so a
+  // returning visitor with Sepia selected doesn't keep failing validation.
+  it('has fully removed the Sepia theme and migrates any stored preference to Light', () => {
+    for (const html of [TOS_HTML, PRIVACY_HTML]) {
+      expect(html).not.toContain("label: 'Sepia'");
+      expect(html).not.toContain('html[data-theme="sepia"]');
+      expect(html).not.toContain('data-theme-opt="sepia"');
+      expect(html).not.toContain('--bg:#f3e6d0');
+      const sepiaMigrations = html.match(/if \(s === 'sepia'\)/g) || [];
+      // Boot script + runtime readThemePref() each migrate a stored 'sepia' value.
+      expect(sepiaMigrations.length).toBe(2);
+      expect(html).toContain("localStorage.setItem('ui-theme', 'light')");
     }
   });
 });

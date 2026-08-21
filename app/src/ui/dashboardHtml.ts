@@ -127,22 +127,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
   // Theme before first paint: default LIGHT (owner 2026-08-10); stored may be
-  // light|sepia|dark|system.  Sepia is a complete warm palette, not a mix.
+  // light|dark|system.  Sepia was removed (owner 2026-08-21: "too dark of a
+  // color that doesn't look like old fashioned paper", only half-themed) —
+  // any stored 'sepia' value is migrated to 'light' here so a returning
+  // visitor never gets stuck failing validation.
   (function () {
     var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
-      if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') pref = s;
+      if (s === 'sepia') {
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        s = 'light';
+      }
+      if (s === 'light' || s === 'dark' || s === 'system') pref = s;
     } catch (e) {}
     var effective = pref;
     if (pref === 'system') {
       effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
-    var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+    var theme = effective === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-pref', pref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   })();
 </script>
 <style>
@@ -206,30 +213,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   html[data-theme="light"] header.top {
     background: #fff;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  /* Sepia is a complete warm paper palette (owner 2026-08-20): page, header,
-     cards, filters, and drawers all share these tokens — never mix with cool
-     light chrome. */
-  html[data-theme="sepia"] {
-    --bg:        #f3e6d0;
-    --bg-2:      #ead9bc;
-    --panel:     #fbf4e8;
-    --panel-2:   #f0e4cc;
-    --border:    #d4b896;
-    --text:      #3b2714;
-    --text-dim:  #6b4e32;
-    --accent:    #9a5a24;
-    --buy:       #3f6b2a;
-    --sell:      #b42318;
-    --exch:      #9a5a24;
-    --warn:      #9a5a24;
-    --good:      #3f6b2a;
-    --rival:     #8a7058;
-  }
-  html[data-theme="sepia"] header.top {
-    background: var(--panel);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -668,9 +651,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html[data-theme="light"] .trades-card .tkr-logo.transparent,
   html[data-theme="light"] .trades-card .tkr-logo.mono,
   html[data-theme="light"] .trades-card .tkr-logo.glyph { background:#fff; }
-  html[data-theme="sepia"] .trades-card .tkr-logo.transparent,
-  html[data-theme="sepia"] .trades-card .tkr-logo.mono,
-  html[data-theme="sepia"] .trades-card .tkr-logo.glyph { background: var(--panel); }
   /* Asset-cell ticker→name spacing (the user asked for a clear gap). */
   .tkr-gap { display: inline-block; width: .65em; }
   /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
@@ -1458,7 +1438,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-mobile-menu .who { display:flex; align-items:center; gap:8px; padding:2px 2px 4px; }
   .acct-mobile-menu .footer-disclaimer { font-size:11px; line-height:1.45; color:var(--text-dim); padding:8px 2px 2px; border-top:1px solid var(--border); margin-top:2px; }
   html[data-theme="dark"] { color-scheme: dark; }
-  html[data-theme="light"], html[data-theme="sepia"] { color-scheme: light; }
+  html[data-theme="light"] { color-scheme: light; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:80; padding:18px; }
   .overlay.open { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:520px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
@@ -1750,8 +1730,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #trendsSharedFilters.toolbar { margin-bottom: 0; }
   html[data-theme="light"] .trades-toolbars,
   html[data-theme="light"] #trendsSharedFilters { background: #fff; }
-  html[data-theme="sepia"] .trades-toolbars,
-  html[data-theme="sepia"] #trendsSharedFilters { background: var(--panel); }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
      toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
      search fields + Search button. display:contents on both toolbar divs
@@ -1979,17 +1957,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: color-mix(in srgb, #fff 94%, transparent);
       border-top-color: rgba(23, 32, 46, 0.2);
     }
-    html[data-theme="sepia"] nav.tabs {
-      background: color-mix(in srgb, var(--panel) 94%, transparent);
-      border-top-color: color-mix(in srgb, var(--border) 80%, transparent);
-    }
     html[data-theme="dark"] nav.tabs {
       background: color-mix(in srgb, #1c1c1e 94%, transparent);
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       nav.tabs { background: var(--panel); }
       html[data-theme="light"] nav.tabs { background: #fff; }
-      html[data-theme="sepia"] nav.tabs { background: var(--panel); }
     }
     nav.tabs a {
       padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;
@@ -2763,7 +2736,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
-    html[data-theme="sepia"] header.top { background: var(--panel); }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -4306,12 +4278,19 @@ function fmtMs(ms) {
 function readThemePref() {
   try {
     var s = localStorage.getItem('ui-theme');
-    if (s === 'light' || s === 'sepia' || s === 'dark' || s === 'system') return s;
+    if (s === 'sepia') {
+      /* Sepia was removed (owner 2026-08-21) — migrate a returning visitor's
+         stored Sepia preference to Light so it stops failing validation on
+         every load. */
+      try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+      return 'light';
+    }
+    if (s === 'light' || s === 'dark' || s === 'system') return s;
   } catch (e) {}
   return 'light';
 }
 function resolveTheme(pref) {
-  if (pref === 'dark' || pref === 'light' || pref === 'sepia') return pref;
+  if (pref === 'dark' || pref === 'light') return pref;
   try {
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
   } catch (e) {}
@@ -4325,16 +4304,12 @@ function themeIconSvg(kind) {
   if (kind === 'system') {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
   }
-  if (kind === 'sepia') {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><path d="M4 20h16" opacity=".45"/></svg>';
-  }
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
 }
 function themeSegHtml(pref) {
   pref = pref || readThemePref();
   var opts = [
     { id: 'light', label: 'Light' },
-    { id: 'sepia', label: 'Sepia' },
     { id: 'dark', label: 'Dark' },
     { id: 'system', label: 'System' }
   ];
@@ -4352,7 +4327,7 @@ function themeRowHtml(pref, hideLabel) {
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
 function applyTheme(effective) {
-  var theme = effective === 'dark' ? 'dark' : effective === 'sepia' ? 'sepia' : 'light';
+  var theme = effective === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', theme);
   var logo = document.getElementById('brandLogo');
   if (logo) {
@@ -4360,7 +4335,7 @@ function applyTheme(effective) {
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : theme === 'sepia' ? '#f3e6d0' : '#eff3f8');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   syncThemeSegUI();
 }
 function syncThemeSegUI() {
@@ -4372,7 +4347,7 @@ function syncThemeSegUI() {
   });
 }
 function setThemePref(pref) {
-  if (pref !== 'light' && pref !== 'sepia' && pref !== 'dark' && pref !== 'system') pref = 'light';
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
   try {
     localStorage.setItem('ui-theme', pref);
   } catch (e) {}
@@ -4381,9 +4356,9 @@ function setThemePref(pref) {
 }
 /* Keep applyTheme(t) usable for callers that pass effective light|dark. */
 function toggleTheme() {
-  /* legacy: cycle light → sepia → dark → system → light */
+  /* legacy: cycle light → dark → system → light */
   var pref = readThemePref();
-  var next = pref === 'light' ? 'sepia' : pref === 'sepia' ? 'dark' : pref === 'dark' ? 'system' : 'light';
+  var next = pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
   setThemePref(next);
 }
 (function bindSystemThemeListener() {
