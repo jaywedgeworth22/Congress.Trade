@@ -127,6 +127,13 @@ const HOUSE_TABLE_HEADER_RE =
   /\b(?:Filing ID\s*#?\d+\s+)?ID\s+Owner\s+Asset\s+Transaction\s+Type\s+Date\s+Notification\s+Date\s+Amount(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/i;
 const HOUSE_TABLE_HEADER_GLOBAL_RE =
   /\b(?:Filing ID\s*#?\d+\s+)?ID\s+Owner\s+Asset\s+Transaction\s+Type\s+Date\s+Notification\s+Date\s+Amount(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/gi;
+// First-row prefix is the entire document up to the first `[ST] P date $`
+// tail. Electronic PTRs omit SP/DC/JT on self rows, so identityFromPrefix
+// cannot cut at an owner token and would otherwise name that row after the
+// clerk letterhead. normalize() then drops it as form chrome — silent loss
+// of the first trade (live: H-2025-20030212 Allegheny County muni).
+const HOUSE_PTR_PREAMBLE_RE =
+  /(?:Periodic Transaction Report|Clerk of the House of Representatives|Legislative Resource Center|B-?81 Cannon Building|Washington,\s*DC\s*\d+|Status:\s*Member|State\/District:\s*\S+|Filing ID\s*#?\d+)/gi;
 const INLINE_RECORD_RE = new RegExp(
   String.raw`\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>${TICKER_PATTERN})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>${TICKER_PATTERN})))?\s*\[(?<assetType>${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)`,
   'gi',
@@ -178,6 +185,25 @@ function stripHouseTableHeaders(text: string): string {
   return text
     .replace(new RegExp(`^.*?${HOUSE_TABLE_HEADER_RE.source}\\s*`, 'i'), '')
     .replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ');
+}
+
+function stripHousePtrPreamble(prefix: string): string {
+  let s = stripHouseTableHeaders(prefix).replace(/\s+/g, ' ').trim();
+  let cut = 0;
+  HOUSE_PTR_PREAMBLE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = HOUSE_PTR_PREAMBLE_RE.exec(s)) !== null) {
+    cut = m.index + m[0].length;
+  }
+  if (cut > 0) s = s.slice(cut);
+  // Leftover column marker from "T ID Owner Asset …" after the header strip.
+  s = s.replace(/^\s*T\s+/, '').trim();
+  // Stop before an owner code or a two-token ALL-CAPS asset (munis). Never
+  // run to end-of-string — that ate "JT Abbott … (ABT)" on filer-name lines.
+  return s.replace(
+    /^Name:\s*Hon\.\s+.+?(?=\s+(?:SP|DC|JT|SELF|Status:|State\/District:)\b|\s+[A-Z]{3,}\s+[A-Z]{2,})/i,
+    '',
+  ).trim();
 }
 
 function calculateRowConfidence(row: {
@@ -266,7 +292,7 @@ function parseTailRecords(text: string): ParsedTx[] {
 function identityFromPrefix(
   prefix: string,
 ): { owner: Owner | null; ticker: string | null; assetName: string } {
-  let s = prefix.replace(/\s+/g, ' ').trim();
+  let s = stripHousePtrPreamble(prefix);
   const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)];
   const ownerTok = ownerMatches.at(-1);
   const owner = ownerTok
