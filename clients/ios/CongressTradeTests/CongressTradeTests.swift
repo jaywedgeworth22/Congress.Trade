@@ -1116,6 +1116,31 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
+    /// #2120 leftover: `observeAppleTransactions` used `isPremium` alone to
+    /// decide an authenticated redeem.  Stripe Premium is `isPremium` with
+    /// `source: "stripe"` and never consults the Apple ledger, so a Stripe
+    /// account on a device with an unfinished signed-out Apple purchase
+    /// would silent-link that row.  Auto-redeem is only a renewal of an
+    /// already-Apple-backed grant.
+    func testTransactionUpdateDoesNotAutoRedeemStripePremiumOntoDeviceApplePurchase() {
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: "stripe"
+        ), "Stripe Premium must not claim a leftover unfinished Apple purchase")
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: nil
+        ), "unknown source is treated as not-Apple — probe only")
+        XCTAssertFalse(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: false,
+            entitlementSource: "apple"
+        ), "free account never auto-claims; Link / Restore only")
+        XCTAssertTrue(PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+            isPremium: true,
+            entitlementSource: "apple"
+        ), "already-Apple-backed Premium may refresh the same grant")
+    }
+
     // MARK: - UX P0: memberName search + async command result claim
 
     func testFeedQueryEmitsMemberNameNotMemberForFreeText() {
