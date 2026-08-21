@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Khanna attached-schedule PTRs (skip CLI + chunk Gemini)
+
+Cover+"Please see the attached" packets (15–34 pages) no longer burn a
+truncated 12-page Grok CLI pass.  Auto engine skips CLI when
+`page_count > MAX_PAGES` and sends the PDF to Gemini in 10-page chunks.
+`sweepRejectedScannedForLocalVision` no longer reopens
+`local_vision_exhausted` (Rogers NOTHING TO REPORT bounce).  Live
+`~/vision-worker` copied and restarted.  Receipt:
+`docs/rollouts/2026-08-21-khanna-attached-pages.md`.  Board `642b4524`.
+
 ## 2026-08-21 GROK — Upright-rotate sideways PTR scans before Grok CLI
 
 Portrait `pdftoppm` images of landscape House PTR grids are rotated 90/270
