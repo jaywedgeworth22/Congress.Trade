@@ -164,22 +164,21 @@ extension CongressTradeStore {
                 try? await redeemAppleTransactionAnonymously(jws: result.jwsRepresentation)
                 continue
             }
-            guard isPremium else {
-                // Signed in but not (yet) Premium on this account: this
-                // redelivered transaction might be unclaimed (row 4 — ask
-                // before linking) or already linked to a DIFFERENT account
-                // (row 3). Either way this listener never claims it — only
-                // an explicit Link tap (`linkAppleEntitlementToCurrentAccount`)
-                // or Restore Purchases does. Left unfinished so it keeps
-                // being redelivered until the person decides.
+            guard PremiumAccessGate.shouldAutoRedeemOnTransactionUpdate(
+                isPremium: isPremium,
+                entitlementSource: entitlementSource
+            ) else {
+                // Signed in but this is not a renewal of an Apple grant this
+                // account already has. A leftover unfinished signed-out
+                // purchase (Guideline 5.1.1(v)) is still unclaimed — Stripe
+                // Premium must not attach it. Probe only; Link / Restore
+                // claim. Left unfinished so it keeps being redelivered.
                 await refreshAppleEntitlementOwnership(force: true)
                 continue
             }
-            // Already Premium on this account (Stripe or a previously-linked
-            // Apple subscription) — this is a renewal/refresh of that SAME
-            // grant, not a new claim, so auto-applying it here is not
-            // "linking" anything new. Also intentionally left unfinished on
-            // failure — next launch retries.
+            // Apple-backed Premium already on this account — renewal/refresh
+            // of that SAME grant, not a new claim. Left unfinished on
+            // failure so the next launch retries.
             try? await redeemAppleTransaction(transaction, jws: result.jwsRepresentation)
         }
     }
@@ -369,6 +368,21 @@ enum PremiumAccessGate {
         ownership: AppleEntitlementOwnership
     ) -> Bool {
         signedIn && !isPremium && hasLocalAppleEntitlement && ownership == .linkedToOtherAccount
+    }
+
+    /// `Transaction.updates` may authenticated-redeem only when this account
+    /// already has an Apple-backed grant.  `isPremium` is also true for
+    /// Stripe, and `resolveEntitlementAsync` returns `source: "stripe"`
+    /// without reading the Apple ledger — so a Stripe session on a device
+    /// with an unfinished signed-out purchase must not call
+    /// `redeem_apple_purchase` (that command assigns `user.id` onto a
+    /// NULL-owner row, permanently).  Unknown/`nil` source is treated the
+    /// same as Stripe: probe only.  Apple renewals still auto-apply.
+    static func shouldAutoRedeemOnTransactionUpdate(
+        isPremium: Bool,
+        entitlementSource: String?
+    ) -> Bool {
+        isPremium && entitlementSource == "apple"
     }
 
     /// Interprets the outcome of the read-only ownership probe
