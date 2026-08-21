@@ -205,6 +205,14 @@ function classifyPayloadOrText(
   return 'other';
 }
 
+function looksLikeTruncatedJson(text: string): boolean {
+  const cleaned = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  if (!cleaned) return false;
+  const startsJson = cleaned.startsWith('{') || cleaned.startsWith('[');
+  if (!startsJson) return false;
+  return !cleaned.endsWith('}') && !cleaned.endsWith(']');
+}
+
 function classifyCompletionText(text: string): OpenRouterReplyKind {
   const trimmed = text.trim();
   if (!trimmed) return 'garbage';
@@ -229,6 +237,10 @@ function classifyCompletionText(text: string): OpenRouterReplyKind {
       if (Array.isArray(parsed) || hasTransactionArray(record)) return 'ok';
     }
   } catch {
+    // Cut-off JSON is not a garbage reply — parseTruncationAwareJson salvages
+    // the complete leading rows when finish_reason is length. Classifying it
+    // as garbage skipped that salvage and dropped the whole filing.
+    if (looksLikeTruncatedJson(trimmed)) return 'other';
     if (
       looksLikeHeaderContaminatedAsset(trimmed.slice(0, 400))
       && !looksLikePlausibleTradeTable(trimmed)

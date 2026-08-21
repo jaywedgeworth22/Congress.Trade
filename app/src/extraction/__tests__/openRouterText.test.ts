@@ -104,6 +104,35 @@ describe('OpenRouterTextExtractor', () => {
     expect(JSON.stringify(lastRequestBody(fetchMock))).not.toContain('"type":"file"');
   });
 
+  it('salvages leading rows from a max_tokens-truncated JSON completion', async () => {
+    const truncated =
+      '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"B","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro';
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        id: 'gen-trunc-1',
+        model: 'google/gemini-3.5-flash-lite',
+        choices: [{
+          message: { content: truncated },
+          finish_reason: 'length',
+        }],
+        usage: { prompt_tokens: 800, completion_tokens: 16000, cost: 0.002 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterTextExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      extractedText: 'SP  Apple Inc. (AAPL) [ST]\nP  06/14/2024  06/20/2024  $1,001 - $15,000',
+    });
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0]?.ticker).toBe('AAPL');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the cheap retry when the first Unauthorized reply is followed by JSON', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({

@@ -63,6 +63,19 @@ describe('classifyOpenRouterReply', () => {
       }),
     })).toBe('ok');
   });
+
+  it('does not treat truncated JSON as a garbage skip — salvage still runs', () => {
+    const truncated =
+      '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"B"},{"ticker":"MSFT","assetName":"Micro';
+    expect(classifyOpenRouterReply({
+      httpStatus: 200,
+      completionText: truncated,
+    })).toBe('other');
+    expect(classifyOpenRouterReply({
+      httpStatus: 200,
+      completionText: '[{"ticker":"AAPL","txType":"B"},{"ticker":"MSFT","assetName":"Micro',
+    })).toBe('other');
+  });
 });
 
 describe('classifyOpenRouterErrorMessage', () => {
