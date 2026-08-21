@@ -40,6 +40,18 @@ describe('classifyProviderErrorClass', () => {
     expect(classifyProviderErrorClass(
       'openRouterVision: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}',
     )).toBe('auth');
+    expect(classifyProviderErrorClass(
+      'openRouterText: OpenRouter API 401 Unauthorized',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterText: OpenRouter API 401 Unauthorized {"error":{"message":"Unauthorized","code":401}}',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterReply:unauth_reply: 401 Unauthorized',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterVision: could not parse model JSON: Unexpected token <',
+    )).toBe('other');
   });
 
   it('does not treat source-fetch or admin Unauthorized as a dead LLM key', () => {

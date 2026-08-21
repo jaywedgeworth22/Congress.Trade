@@ -101,6 +101,39 @@ describe('LEGALCOMPLIANCE-02: Privacy Policy discloses Apple, Sentry, and LLM ex
   });
 });
 
+describe('ToS §9-10: no-warranty / no-guarantee protective language', () => {
+  it('disclaims any guarantee that a filing is published at all or on any schedule, and names the upstream sources', () => {
+    expect(TOS_HTML).toContain('No guarantee any filing is published, or published on any schedule.');
+    expect(TOS_HTML).toContain("the U.S. House Clerk's office, the U.S. Senate's electronic financial disclosure (eFD) system, and the Office of Government Ethics (OGE)");
+    expect(TOS_HTML).toContain('do not guarantee that any particular filing will be published on the Service at all, on any schedule, or within any timeframe');
+  });
+
+  it('disclaims any guarantee of being faster than any other source, tying it to historical-only latency comparisons', () => {
+    expect(TOS_HTML).toContain('No guarantee of being faster than any other source.');
+    expect(TOS_HTML).toContain('historical measurement of past filings under the conditions observed at that time');
+    expect(TOS_HTML).toContain('not a representation, promise, or guarantee about the timing of any future filing');
+  });
+
+  it('disclaims delivery of alerts and notifications across every channel', () => {
+    expect(TOS_HTML).toContain('Alerts &amp; notifications may be delayed, duplicated, or fail.');
+    expect(TOS_HTML).toContain('Email, push, webhook, and SSE (real-time) delivery');
+    expect(TOS_HTML).toContain('A paid subscription does not guarantee the delivery, timing, or accuracy of any particular alert.');
+  });
+
+  it('reserves the right to change, suspend, or discontinue any part of the Service', () => {
+    expect(TOS_HTML).toContain('We may add, change, suspend, or discontinue any part of the Service');
+  });
+
+  it('states dollar amounts are bracket-derived estimates, not exact amounts', () => {
+    expect(TOS_HTML).toContain('estimates derived from the disclosure brackets the filings themselves use, not exact amounts');
+  });
+
+  it('carves out jurisdictions that do not allow warranty/liability exclusions', () => {
+    expect(TOS_HTML).toContain('Some jurisdictions do not allow the exclusion of certain warranties');
+    expect(TOS_HTML).toContain('limited to the maximum extent permitted by applicable law');
+  });
+});
+
 describe('shared legal chrome and theme path', () => {
   function styleBlock(html: string): string {
     const match = html.match(/<style>[\s\S]*?<\/style>/);
@@ -125,9 +158,9 @@ describe('shared legal chrome and theme path', () => {
       expect(html).toContain('Congress<span class="dot">.</span>Trade');
     }
     expect(TOS_HTML).toContain('<h1>Terms of Service</h1>');
-    expect(TOS_HTML).toContain('<p class="eff">Effective August 19, 2026</p>');
+    expect(TOS_HTML).toContain('<p class="eff">Effective August 21, 2026</p>');
     expect(PRIVACY_HTML).toContain('<h1>Privacy Policy</h1>');
-    expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 19, 2026</p>');
+    expect(PRIVACY_HTML).toContain('<p class="eff">Effective August 21, 2026</p>');
   });
 
   it('honors the site Light / Sepia / Dark / System switch on both pages', () => {
