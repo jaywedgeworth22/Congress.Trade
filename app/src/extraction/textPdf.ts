@@ -263,12 +263,56 @@ function parseTailRecords(text: string): ParsedTx[] {
   return rows;
 }
 
+/**
+ * True when an SP/DC/JT/SELF hit in the tail-row prefix is form chrome, not
+ * the holding's owner. Page-2 letterhead is "Washington, DC 20515"; the
+ * owner-code legend is "DC = Dependent Child". Taking the last match in the
+ * whole prefix (the #2109 first cut) published those later self-owned rows
+ * as dependent/joint — or stuffed the letterhead into assetName so
+ * looksLikeHeaderContaminatedAsset dropped the row.
+ */
+function ownerTokenIsLetterhead(text: string, match: RegExpMatchArray): boolean {
+  if (match.index == null) return true;
+  const tok = (match[1] ?? '').toUpperCase();
+  const before = text.slice(Math.max(0, match.index - 24), match.index);
+  const after = text.slice(match.index + match[0].length);
+  if (/^\s*=/.test(after)) return true;
+  if (/^\s+(?:spouse|dependent|joint|self|child)\b/i.test(after)) return true;
+  if (tok === 'DC') {
+    if (/washington,?\s*$/i.test(before)) return true;
+    if (/^\s*,?\s*\d{5}/.test(after)) return true;
+    if (/district:\s*$/i.test(before)) return true;
+  }
+  return false;
+}
+
+function stripPrefixChrome(text: string): string {
+  let s = text;
+  const chrome = [
+    /Periodic Transaction Report/gi,
+    /Clerk of the House of Representatives/gi,
+    /Legislative Resource Center/gi,
+    /B-?81 Cannon Building/gi,
+    /Washington,\s*DC(?:\s+\d{5})?/gi,
+    /State\/District:\s*\S+/gi,
+    /Name:\s*Hon\.\s+\S+(?:\s+\S+)?/gi,
+    /Status:\s*Member/gi,
+    /ID\s+Owner\s+Asset\s+Transaction\s+Type(?:\s+Date\s+Notification\s+Date\s+Amount)?(?:\s+Cap\.?\s*Gains(?:\s*>\s*(?:\$?\s*200\??)?)?)?/gi,
+    /\b(?:SP|DC|JT|SELF)\s*=\s*(?:Spouse|Dependent(?:\s+Child)?|Joint|Self)\b/gi,
+  ];
+  for (const re of chrome) {
+    s = s.replace(re, ' ');
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function identityFromPrefix(
   prefix: string,
   fallbackOwner: Owner | null,
 ): { owner: Owner | null; ticker: string | null; assetName: string } {
   let s = prefix.replace(/\s+/g, ' ').trim();
-  const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)];
+  const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)]
+    .filter((m) => !ownerTokenIsLetterhead(s, m));
   const ownerTok = ownerMatches.at(-1);
   const owner = ownerTok
     ? (OWNER_CODES[ownerTok[1].toUpperCase()] ?? fallbackOwner ?? 'self')
@@ -276,6 +320,7 @@ function identityFromPrefix(
   if (ownerTok && ownerTok.index != null) {
     s = s.slice(ownerTok.index + ownerTok[0].length).trim();
   }
+  s = stripPrefixChrome(s);
 
   const tickerMatches = [...s.matchAll(new RegExp(TICKER_RE.source, 'g'))]
     .filter((m) => !TICKER_SKIP_RE.test(m[1] ?? ''));

@@ -402,6 +402,46 @@ describe('parseHousePtrText', () => {
     expect(rows.every((r) => r.assetType === 'OT')).toBe(true);
   });
 
+  it('does not treat Washington, DC letterhead or the owner-code legend as the holding owner', () => {
+    const rows = parseHousePtrText(
+      'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'Apple Inc. (AAPL) [ST] P 03/10/2025 03/11/2025 $1,001 - $15,000 F S: New ' +
+        'Clerk of the House of Representatives Legislative Resource Center B81 Cannon Building Washington, DC 20515 ' +
+        'SP = Spouse DC = Dependent Child JT = Joint State/District: DC00 ' +
+        'ID Owner Asset Transaction Type Date Notification Date Amount ' +
+        'Microsoft Corporation (MSFT) [ST] S 03/12/2025 03/13/2025 $15,001 - $50,000',
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      ticker: 'AAPL',
+      owner: 'self',
+      txType: 'B',
+      txDate: '2025-03-10',
+    });
+    expect(rows[1]).toMatchObject({
+      ticker: 'MSFT',
+      owner: 'self',
+      txType: 'S',
+      txDate: '2025-03-12',
+    });
+    expect(rows[0].assetName).toMatch(/Apple/i);
+    expect(rows[1].assetName).toMatch(/Microsoft/i);
+    expect(rows.every((r) => !/Clerk|Washington|District|Spouse|Dependent/i.test(r.assetName))).toBe(true);
+  });
+
+  it('still honors a real DC / SP owner code on the holding line after page letterhead', () => {
+    const rows = parseHousePtrText(
+      'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount ' +
+        'Apple Inc. (AAPL) [ST] P 03/10/2025 03/11/2025 $1,001 - $15,000 F S: New ' +
+        'Washington, DC 20515 State/District: PA03 ' +
+        'DC General Dynamics Corporation (GD) [ST] P 06/10/2025 06/11/2025 $1,001 - $15,000 F S: New ' +
+        'SP Microsoft Corporation (MSFT) [ST] S 06/12/2025 06/13/2025 $1,001 - $15,000',
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.owner)).toEqual(['self', 'dependent', 'spouse']);
+    expect(rows.map((r) => r.ticker)).toEqual(['AAPL', 'GD', 'MSFT']);
+  });
+
   it('counts PTR tails so drain can refuse a glued stored payload', () => {
     const glued =
       'ALLEGHENY CNTY PA HOSP [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 Amazon.com, Inc. (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000';
