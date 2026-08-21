@@ -360,5 +360,43 @@ class ParseAndValidateTest(unittest.TestCase):
             self.assertEqual(parts[-1]["type"], "text")
 
 
+class UprightRotateTest(unittest.TestCase):
+    def _png(self, path: str, width: int, height: int) -> str:
+        from PIL import Image
+        Image.new("RGB", (width, height), (240, 240, 240)).save(path)
+        return path
+
+    def test_landscape_page_stays_unrotated(self):
+        with tempfile.TemporaryDirectory() as td:
+            page = self._png(os.path.join(td, "page-1.png"), 40, 20)
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 9), 0)
+
+    def test_portrait_prefers_the_higher_tesseract_score(self):
+        with tempfile.TemporaryDirectory() as td:
+            page = self._png(os.path.join(td, "page-1.png"), 20, 40)
+
+            def score(path: str) -> int:
+                return 5 if path.endswith(".rot90.png") else 1
+
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=score), 90)
+
+    def test_portrait_defaults_to_270_when_ocr_is_silent(self):
+        with tempfile.TemporaryDirectory() as td:
+            page = self._png(os.path.join(td, "page-1.png"), 20, 40)
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 0), 270)
+
+    def test_upright_pages_rotates_every_page_the_same_way(self):
+        with tempfile.TemporaryDirectory() as td:
+            pages = [
+                self._png(os.path.join(td, "page-1.png"), 20, 40),
+                self._png(os.path.join(td, "page-2.png"), 20, 40),
+            ]
+            worker.upright_pages(pages, score_fn=lambda _p: 0)
+            from PIL import Image
+            for path in pages:
+                with Image.open(path) as im:
+                    self.assertEqual(im.size, (40, 20))
+
+
 if __name__ == "__main__":
     unittest.main()

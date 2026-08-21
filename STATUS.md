@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Upright-rotate sideways PTR scans before Grok CLI
+
+Portrait `pdftoppm` images of landscape House PTR grids are rotated 90/270
+CW (tesseract header score, else 270) so local Grok CLI and Qwen VL see
+the table upright.  Live `~/vision-worker/worker.py` copied and
+`pm2 restart vision-worker`.  Receipt:
+`docs/rollouts/2026-08-21-vision-upright-rotate.md`.  Drain this session:
+McCaul 8220320/8220834/8221120/8221173, LaMalfa NVIDIA, Collins, Issa.
+
 ## 2026-08-21 GROK — Local vision auto-publish + stop re-OCR loop
 
 Vision-worker was re-transcribing the same two review items all afternoon.
