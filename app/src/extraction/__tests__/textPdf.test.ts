@@ -14,6 +14,7 @@ vi.mock('unpdf', () => ({
   extractText: unpdfMocks.extractText,
 }));
 
+import { looksLikeHeaderContaminatedAsset } from '../extractRouting.ts';
 import { countHousePtrTails, parseHousePtrText, TextPdfExtractor } from '../textPdf.ts';
 
 beforeEach(() => {
@@ -357,6 +358,30 @@ describe('parseHousePtrText', () => {
     expect(result.transactions).toHaveLength(1);
     expect(result.transactions[0].confidence).toBe(1.0);
     expect(result.extractor).toBe('textPdf');
+  });
+
+  it('does not name the first ownerless self row after the clerk letterhead', () => {
+    // Live H-2025-20030212: Owner column is blank (Self) on every row, so
+    // identityFromPrefix cannot cut the first prefix at SP/DC/JT. Without a
+    // preamble strip the Allegheny muni is named after "Clerk of the House"
+    // and normalize() drops it as form chrome.
+    const rows = parseHousePtrText(
+      'P T R Clerk of the House of Representatives Legislative Resource Center B81 Cannon Building Washington, DC 20515 ' +
+        'Name: Hon. Rob Bresnahan Status: Member State/District: PA08 T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'ALLEGHENY CNTY PA HOSP DEV AUTH REF-UNIV PITTSBURGH MED CNTR [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 F S: New S O: JP Morgan Brokerage Account #4 ' +
+        'Amazon.com, Inc. - Common Stock (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000 F S: New',
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows[0]).toMatchObject({
+      assetName: expect.stringMatching(/ALLEGHENY/i),
+      ticker: null,
+      assetType: 'GS',
+      txDate: '2025-03-27',
+      owner: 'self',
+    });
+    expect(rows[0].assetName).not.toMatch(/Clerk|Periodic Transaction Report|Hon\.|Bresnahan/i);
+    expect(looksLikeHeaderContaminatedAsset(rows[0].assetName)).toBe(false);
+    expect(rows.some((r) => r.ticker === 'AMZN')).toBe(true);
   });
 
   it('splits later self-owned rows that omit SP/DC/JT so a muni does not inherit AMZN', () => {
