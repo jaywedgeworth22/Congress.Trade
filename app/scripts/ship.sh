@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ship.sh — one-command production deploy for Congress.Trade.
+# ship.sh — wait for the Coolify main deploy, then migrate production.
 #
-# Deploys the Worker (uses your saved `wrangler login` — no API key needed),
-# then applies schema + optional data steps through the Worker's own database
-# binding via the admin API. This deliberately AVOIDS `wrangler d1 ... --remote`,
-# which has OAuth auth issues on this account; the Worker binding works fine.
+# Coolify rebuilds congress-app on push to main.  This script does not
+# wrangler-deploy.  It waits until https://congress.trade/api/health reports
+# the current HEAD SHA, then applies schema + optional data steps through
+# POST /api/admin/migrate.  That path talks to the host SQLite file, not D1.
 #
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh                  # deploy + ensure schema
 #   bash scripts/ship.sh --deploy-only                    # deploy + health only

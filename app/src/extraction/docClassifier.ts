@@ -34,6 +34,7 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { keyFor } from './bakeoff.ts';
 import { looksLikePdf } from '../ingestion/classifier.ts';
+import { isHouseElectronicDocId } from './extractRouting.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   OPENROUTER_PURPOSE,
@@ -76,6 +77,8 @@ export interface DocClassSignals {
   hasImages: boolean;
   /** Pipeline docKind hint when known (text_pdf | scanned_pdf | senate_html | unknown). */
   docKind?: string | null;
+  /** Filing id — House 20xxxxxx electronic PTRs are typed without a model call. */
+  docId?: string | null;
 }
 
 /** Compute the free deterministic signals for a raw document. */
@@ -107,7 +110,10 @@ export async function computeDocClassSignals(
     pdfLoadable,
     claimsPdf,
     pageCount,
-    hasTextLayer: hasFont && hasTextShow,
+    // Fonts mean a real text layer even when Flate-compressed streams hide
+    // BT..Tj from the raw sniff (same bias as classifyPdfBytes). Requiring
+    // both markers sent typed House PTRs to the scan/Files path.
+    hasTextLayer: hasFont || hasTextShow,
     hasImages,
     docKind: docKind ?? null,
   };
@@ -121,6 +127,7 @@ export function decideDocClass(signals: DocClassSignals): DocClass | null {
   if (signals.byteLength === 0) return 'corrupt';
   if (signals.claimsPdf && !signals.pdfLoadable) return 'corrupt';
   if (signals.docKind === 'senate_html') return 'typed';
+  if (signals.docId && isHouseElectronicDocId(signals.docId)) return 'typed';
   if (signals.docKind === 'text_pdf' || signals.hasTextLayer) return 'typed';
   if (!signals.claimsPdf) {
     // Not a PDF, not eFD HTML: the pipeline calls this docKind 'unknown';
@@ -341,7 +348,8 @@ export async function ensureDocClass(
     signal?.throwIfAborted();
     const signals = await computeSignals(bytes, docKindHint);
     signal?.throwIfAborted();
-    docClass = decideDocClass(signals);
+    docClass = decideDocClass({ ...signals, docId });
+    if (!docClass && isHouseElectronicDocId(docId)) docClass = 'typed';
   } catch (err) {
     signal?.throwIfAborted();
     console.warn('doc classifier: signal computation failed:', docId, (err as Error).message);

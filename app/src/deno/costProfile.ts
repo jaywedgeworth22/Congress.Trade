@@ -62,6 +62,8 @@ const PROFILES: Record<DenoCostProfileName, Omit<DenoCostProfile, 'disableIntern
     idleShortCircuit: true,
   },
   // Prior behavior: every minute, larger batches (paid / Pro headroom).
+  // idleShortCircuit stays on; probePendingWork includes eligible-due
+  // review rows so a quiet tick cannot skip claimable extract work.
   paid: {
     name: 'paid',
     cronSchedule: '* * * * *',

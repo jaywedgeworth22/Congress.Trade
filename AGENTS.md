@@ -148,17 +148,16 @@ Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as producti
 Note that the backend deployment targets Coolify on the Hetzner fleet box `fleet-hetzner-nbg1`
 (`ssh coolify`) — the Oracle ARM64 host is decommissioned (see "Current Shape" above).
 
-Preview deploys are the default review path after verified app changes. If
-`app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
-`npm run typecheck` and `npm test` pass, then report the preview URL. If the
-preview config is missing and the user has asked for preview behavior, run
-`cd app && npm run preview:provision` once, then `npm run preview:deploy`.
-Preview resources must stay isolated from production; do not use production D1,
-KV, R2, queues, custom domains, cron triggers, or `app/wrangler.toml` for
-preview work. Per owner directive (2026-07-29, applies to all chats and apps):
-merges to `main` are always pre-approved — land finished work once CI is green
-without asking for merge approval. Production deploys remain part of completing
-app changes (`bash app/scripts/ship.sh`); do not hold ready work undeployed.
+Preview deploys are leftover isolated Wrangler tooling
+(`app/scripts/deploy-preview.sh`), not the live host.  Production is Coolify
+`congress-app` on `fleet-hetzner-nbg1` serving `https://congress.trade`.  There
+is no production `app/wrangler.toml`.  If a leftover preview config exists
+and the user has asked for preview behavior, keep it isolated from the host
+SQLite file, production R2, `congress.trade`, and Coolify cron.  Per owner
+directive (2026-07-29, applies to all chats and apps): merges to `main` are
+always pre-approved — land finished work once CI is green without asking for
+merge approval.  Production deploys remain part of completing app changes
+(`bash app/scripts/ship.sh`); do not hold ready work undeployed.
 
 Backfill and ingestion commands can mutate queues, database state, R2, or provider
 state. Do not run remote backfills, queue drains, production crawlers, or
@@ -177,8 +176,8 @@ production ingestion jobs unless the user explicitly asks.
 
 ## `SENATE_RELAY_URL` is static (READ THIS — it must never need a manual update)
 
-Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Worker
-reaches it through a relay on the owner's Mac.  The address is permanent:
+Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Coolify
+app reaches it through a relay on the owner's Mac.  The address is permanent:
 
 ```
 SENATE_RELAY_URL=https://scout.jays.services
@@ -208,111 +207,28 @@ dead laptop pages in minutes.  Remaining host dependency and the always-on
 residential fix: `docs/rollouts/2026-08-17-senate-relay-host-dependency.md`
 (issue #1604).
 
-## Cloudflare tokens (READ THIS — `/user/tokens/verify` lies)
+## Credential testing (public-safe)
 
-Owner-reported recurring complaint: agents declare a Cloudflare token "expired"
-or "invalid" when it is fine.  The usual cause is testing it the obvious way.
+The private attack map (credential inventory, Infisical project ids, Coolify
+UUIDs, which token maps to which zone) lives in the **private** repo
+`jaywedgeworth22/fleet-ops` → `ATTACK-MAP.md`. Do not copy it here.
 
-**Never judge a Cloudflare token by `GET /user/tokens/verify`.**  That endpoint
-only understands *user*-owned tokens.  An **account-owned** token returns
-`success: false` there while working perfectly against real resources.
-Measured 2026-08-11 against `/Users/jay/.secrets/global-api-keys`:
+Public rules that belong in this file:
 
-| Credential | `/user/tokens/verify` | Can it actually read `congress.trade`? |
-|---|---|---|
-| `CLOUDFLARE_CT_API_TOKEN` | `success: false` | **Yes** — reads the zone fine |
-| `CLOUDFLARE_JAY_API_TOKEN` | `success: true`, `active` | **No** — sees 0 zones |
-
-Both obvious conclusions are wrong.  Verify by calling the **resource you
-actually need**, and read the error code rather than the message:
-
-- **`10000 "Authentication error"` does NOT reliably mean a bad token.**
-  Cloudflare returns it both for a genuinely invalid credential *and* for a
-  valid credential lacking permission on that resource.  If a token can read
-  something in the zone but 10000s on a write, it is a **missing permission
-  scope**, not an expired token — say so, and name the scope needed.
-- A token that verifies but lists **0 zones** is account-scoped with no zone
-  permissions.  It cannot do zone work no matter how valid it is.
-- Do **not** go credential-hunting.  As of 2026-08-11 there is exactly **one**
-  active Cloudflare credential (below); every legacy `CT` / `JAY` / `ST` / `OLD`
-  token and key has been commented out in `~/.secrets/global-api-keys`
-  specifically so no agent picks one up and re-runs this diagnosis.
-
-### The only Cloudflare credential: `CLOUDFLARE_FLEET_API_TOKEN`
-
-Created 2026-08-11.  **Use it for every Cloudflare operation, in every repo.**
-
-It is a **USER-owned** token under `mail@jays.services` — deliberately *not*
-account-owned, so it is not tied to the old `jay` account (which owns no zones
-and has a billing issue).  Its policies grant all four accounts, so one token
-covers the whole fleet:
-
-| Zone | Account |
-|---|---|
-| `congress.trade` | Congress.Trade |
-| `jays.services`, `jaywedgeworth.com` | Usage.Jays.Services |
-| `socratic.trade`, `socratictrade.com` | SocraticTrade.com |
-
-Verified: reads all 5 zones **and** writes a zone cache ruleset — the exact
-operation every legacy token failed.  Carries Zone Read/Write, Cache Settings
-Write, Config Settings Write, Zone Settings Write, DNS Write, Cache Purge,
-Workers Routes Write, plus account-level Rulesets / Workers / D1 / KV / R2 Write.
-
-**Break glass.**  If the fleet token is ever revoked or needs replacing, the
-only credential that can mint a new one is `CLOUDFLARE_JAY_API_KEY`, commented
-out at the bottom of the secrets file.  It is a legacy global key
-(`X-Auth-Email: mail@jays.services` + `X-Auth-Key`, *not* `Bearer`), full admin
-and unscoped — which is exactly why it is commented out.  Uncomment it, mint the
-replacement, re-comment it.  Do not use it for routine work.
-
-
-Secret hygiene when testing (the repo hook enforces this):
-extract the ONE value with `grep -m1 '^NAME=' file | cut -d= -f2-`, never dump
-the file; pipe command output through `sed "s/$TOK/REDACTED/g"`; send stderr to
-`/dev/null` rather than `2>&1` (error text can echo fragments of the argv).
-
-## Admin/secrets credentials (READ THIS — a missing browser UA looks exactly like a dead credential)
-
-Same failure shape as the Cloudflare section above: an agent tests a credential the obvious
-way, gets a non-200, and declares it dead — when the credential is actually fine and the test
-was wrong.  Re-verified live 2026-08-11 after a diagnosis session reported ALL of the below as
-dead ("`CT_ADMIN_TOKEN` 401s", "all four Infisical identities fail with Invalid credentials").
-That diagnosis was wrong.  Every path below is currently live:
-
-| Credential | Where | Verified 2026-08-11 |
-|---|---|---|
-| `CT_ADMIN_TOKEN` (`~/.secrets/global-api-keys`) | bearer for `/api/admin/*` on `https://congress.trade` | **200** on `POST /api/admin/debug-sql` with `{"query":"SELECT 1"}`; a deliberately-wrong token on the same request correctly 401s (sanity-checks the test itself) |
-| `INFISICAL_CT_CLIENT_ID`/`SECRET` | universal-auth login, congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290` env `prod` | login succeeds; `infisical secrets get ADMIN_TOKEN` returns a value whose SHA-256 hash **matches** the `CT_ADMIN_TOKEN` file value byte-for-byte — Infisical and the secrets file agree |
-| `INFISICAL_ST_CLIENT_ID`/`SECRET`, `INFISICAL_SHARED_CLIENT_ID`/`SECRET`, `INFISICAL_AUTOMATION_CLIENT_ID`/`SECRET` | universal-auth login | all three log in successfully |
-
-**The likely cause of the false-dead diagnosis:** `congress.trade` sits behind a Cloudflare
-managed challenge that blocks non-browser User-Agents (same mechanism as the Cloudflare-token
-section above). Measured with the identical token: a browser UA gets **200**; the default curl
-UA on the exact same request gets **502** from the Cloudflare edge — a response an agent can
-easily misread as "the token is dead" when it is actually an edge block that never reached the
-app's auth check.  **Always spoof a browser UA when testing `/api/admin/*` by hand:**
-
-```bash
-UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-TOK=$(grep -m1 '^CT_ADMIN_TOKEN=' ~/.secrets/global-api-keys | cut -d= -f2-)
-curl -sS -A "$UA" -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
-  -X POST "https://congress.trade/api/admin/debug-sql" -d '{"query":"SELECT 1"}'
-```
-
-If that genuinely 401s with the browser UA in place (not a 403/502 edge response), THEN treat
-the token as actually rejected — that has happened for real once before (2026-07-30: Coolify's
-runtime `ADMIN_TOKEN` had drifted from Infisical's because `INFISICAL_APP_PROJECT_ID` was unset
-on Coolify, so the app silently fell back to an older image-baked value; see `docs/EFFORT-LOG.md`
-2026-07-30 KIMI entries and PR #1192 for the full forensics). **How to re-sync if it happens
-again:** set `INFISICAL_APP_PROJECT_ID=f61a79de-8d77-4f0b-9361-4b7208598290` and
-`INFISICAL_SHARED_PROJECT_ID` (Socratic-shared project id) as Coolify **runtime env vars** on
-the `congress-app` service, then redeploy — the app re-reads Infisical on the ~600s secrets
-cache TTL with no rebuild needed.  `ADMIN_TOKEN` itself lives in Infisical's congress-trade
-project (`f61a79de-…`), env `prod`, key `ADMIN_TOKEN` — that is the source of truth; do not mint
-a new one without owner sign-off (production-intent, see the migration/deploy rules below).
-
-Verify without ever printing a secret value — extract with `grep -m1`, reduce Infisical fetches
-to length/hash only, and use the wrong-token sanity check above so a 401 you see is trusted.
+- **Never judge a Cloudflare token by `GET /user/tokens/verify`.** That endpoint
+  only understands *user*-owned tokens. An account-owned token 401s there while
+  working against real resources. Call the resource you need; `10000` can mean
+  missing *scope*, not an expired token.
+- **`congress.trade` admin routes sit behind a Cloudflare managed challenge.**
+  Default curl User-Agents often get an edge 502/403 that looks like a dead
+  credential. Use a browser UA. Never paste tokens into chat.
+- **Never dump the operator handoff file.** Names only:
+  `grep -oE '^[A-Z][A-Z0-9_]*' ~/.secrets/global-api-keys`. Never `cat` it,
+  never open it with a Read tool. Canonical: `~/apps/AGENT-SYNC.md` § secret-safety.
+- **Never run bare `infisical secrets`.** It table-prints every value. Use
+  `scripts/infisical-secrets-safe.sh` (`set` / `has` / `names`).
+- Runtime secrets live in Infisical (app prod). Coolify env is bootstrap +
+  overrides. Do not re-export Infisical into a tracked `.prod.vars`.
 
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 
@@ -320,11 +236,13 @@ to length/hash only, and use the wrong-token sanity check above so a 401 you see
 statement list in `app/src/admin/routes.ts`).**
 Do not use local SQLite migration commands against the production database.
 
-**Canonical production deploy:** `bash app/scripts/ship.sh` — it runs `npm run deploy`
-then `POST /api/admin/migrate` (idempotent;
-"duplicate column" is treated as already-applied) against the production database.
-`npm run deploy:full` now aliases `ship.sh`; `npm run migrate:remote` is intentionally
-disabled (it errors with guidance). `npm run migrate` (`--local`) is for local dev only.
+**Canonical production deploy:** Coolify rebuilds `congress-app` on push to
+`main`.  Then `bash app/scripts/ship.sh` waits for `https://congress.trade/api/health`
+to report the HEAD SHA and POSTs `/api/admin/migrate` (idempotent;
+"duplicate column" is treated as already-applied) against the host SQLite file.
+`npm run deploy` is a reminder, not a Worker publish.  `npm run deploy:full`
+aliases `ship.sh`; `npm run migrate:remote` is intentionally disabled (it
+errors with guidance).  `npm run migrate` is a local leftover helper only.
 
 If you add or change a migration:
 
@@ -380,8 +298,9 @@ npm run typecheck
 npm test
 ```
 
-For deployment/config changes, also inspect `app/wrangler.toml`, relevant docs,
-and whether migrations need to be applied separately.
+For deployment/config changes, also inspect `app/docker-compose.yml`,
+`app/DEPLOY.md`, relevant docs, and whether migrations need to be applied
+separately via `POST /api/admin/migrate`.
 
 ## Cursor / Cursor Cloud Instructions
 
@@ -393,7 +312,7 @@ Cursor project rules live in `.cursor/rules/`. They should point back to this
 file rather than duplicating long policy text.
 
 The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
-`npm ci` in `app/` + applies local D1 migrations). After it runs, the dev
+`npm ci` in `app/` + applies local schema helpers).  After it runs, the dev
 environment is ready; do not re-install deps to start services.
 
 Durable, non-obvious notes for running/testing locally (all from `app/`):
@@ -411,13 +330,14 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
   setup fills only missing or empty managed entries. To change an existing
   managed value, deliberately remove or empty that line, then re-run setup;
   unrelated `.dev.vars` bytes remain untouched.
-- Admin/ingest routes (`/api/admin/*`) fail closed. For local testing,
-  `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: `wrangler.toml` `[vars]` set
-  `SENTRY_ENVIRONMENT="production"` and `USAGE_MONITOR_ENVIRONMENT="production"`,
-  which mark the run as production and disable open-admin. To actually open admin
-  locally, also override those two in `app/.dev.vars` (`.dev.vars` wins over
-  `[vars]`), e.g. `SENTRY_ENVIRONMENT="development"` and
-  `USAGE_MONITOR_ENVIRONMENT="local"`. Confirm via the local server logs if the admin API is OPEN.
+- Admin/ingest routes (`/api/admin/*`) fail closed.  For local testing,
+  `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: Infisical / image defaults
+  can still resolve `SENTRY_ENVIRONMENT="production"` and
+  `USAGE_MONITOR_ENVIRONMENT="production"`, which mark the run as production
+  and disable open-admin.  To actually open admin locally, override those two
+  in `app/.dev.vars`, e.g. `SENTRY_ENVIRONMENT="development"` and
+  `USAGE_MONITOR_ENVIRONMENT="local"`.  Confirm via the local server logs if
+  the admin API is OPEN.
 - The cron handler does NOT auto-fire in local dev. Trigger
   it manually: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
 - Queue consumers run inside the same local Deno process. Ingest is async:
@@ -554,6 +474,24 @@ privacy, owner Notes.  HTML must preserve the gap (NBSP+space / SENTENCE_GAP).
 **Accuracy:** this app's corpus is House, Senate, **and Executive Branch**
 (OGE 278-T).  Store listing copy must say so — never Congress-only.  Premium
 trial is **2 weeks** (live ASC intro), never a leftover 1-month.
+
+**Strengthened 2026-08-19 (owner, in-conversation):** not limited to product copy —
+covers every paragraph an agent writes anywhere, including **chat replies to the
+owner**, PR titles/bodies, commit messages, Slack posts to #agent-sync, Apple Notes,
+effort-board rows, rollout notes, review reports, and design docs.  If it's prose a
+human reads, it gets two spaces.
+
+**HOW to emit it so it's actually visible (verified 2026-08-19, Socratic.Trade
+PR #2893):** intent is not enough, the gap has to survive the renderer.  In a
+**chat reply** (Claude Code terminal/desktop transcript, any agent chat UI), type
+the literal HTML entity text `&nbsp;` right after the period, then a normal space
+— `Sentence one.&nbsp; Sentence two.` — the markdown renderer expands the entity
+into a visibly wider gap.  Tested and confirmed NOT to work in chat: two literal
+spaces (collapsed by GitHub-flavored markdown); a raw U+00A0 character typed
+directly (normalized away in the transcript view even though copy-paste out of it
+can look right).  In a **file** (read as source, never through that renderer),
+literal two ASCII spaces stays correct — do not switch file content to NBSP or
+`&nbsp;`.
 
 Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Two spaces and
 `/Users/jay/apps/FLEET-UI-COPY.md`.

@@ -202,6 +202,29 @@ describe('GET /api/analytics/party-split', () => {
   });
 });
 
+describe('GET /api/analytics/summary type=', () => {
+  it('echoes a requested type in the envelope', async () => {
+    const body = (await getJson(fixture(), '/summary?window=90d&type=B')) as {
+      type: string | null;
+      window: string;
+    };
+    expect(body.window).toBe('90d');
+    expect(body.type).toBe('B');
+  });
+
+  it('omits type from the envelope when no side filter is set', async () => {
+    const body = (await getJson(fixture(), '/summary?window=90d')) as { type: string | null };
+    expect(body.type).toBeNull();
+  });
+
+  it('echoes a CSV party selection instead of the first letter only', async () => {
+    const body = (await getJson(fixture(), '/summary?window=90d&party=D,R')) as {
+      party: string | null;
+    };
+    expect(body.party).toBe('D,R');
+  });
+});
+
 describe('GET /api/analytics/sector-breakdown', () => {
   it('labels the canonical asset-type category and reports the raw types behind it', async () => {
     const body = (await getJson(fixture(), '/sector-breakdown?window=90d&limit=5')) as {
