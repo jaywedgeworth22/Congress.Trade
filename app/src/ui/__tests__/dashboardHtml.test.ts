@@ -4233,13 +4233,13 @@ describe('entity click-through coverage (verifying PR #1517 reaches every named 
   describe('directory photos, filer owner, delivery delete (#1460 / #1429 leftovers)', () => {
     it('renders People directory names with the same avatar helper as the feed', () => {
       expect(DASHBOARD_HTML).toContain('function renderPeopleDirectory(all)');
-      expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl)");
+      expect(DASHBOARD_HTML).toContain("memberAvatarHtml(name, m.photoUrl, m.party, true)");
     });
 
     it('shows the beneficial owner on feed rows and mobile cards', () => {
       expect(DASHBOARD_HTML).toContain('function ownerBadgeHtml(o)');
       expect(DASHBOARD_HTML).toContain('ownerBadgeHtml(r.owner)');
-      expect(DASHBOARD_HTML).toContain("bits.push('<span class=\"fc-owner\">' + esc(ownerText) + '</span>')");
+      expect(DASHBOARD_HTML).toContain("bits.push('<span class=\"fc-owner\">' + esc(owner) + '</span>')");
     });
 
     it('replaces the politician-drawer Not recorded committee fallback', () => {
