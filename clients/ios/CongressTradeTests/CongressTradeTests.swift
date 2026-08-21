@@ -6,6 +6,10 @@ import XCTest
 
 final class CongressTradeTests: XCTestCase {
     override func tearDown() {
+        // Nilling bumps MockURLProtocol's generation so a leftover URLSession
+        // callback from this case cannot run the next case's handler — and
+        // startLoading no longer XCTUnwraps a nil handler onto whoever is
+        // running (the `testFeedQueryEmitsTypeForBuySellFilter` crash).
         MockURLProtocol.handler = nil
         super.tearDown()
     }
@@ -384,7 +388,11 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            // Capture ONLY the feed request.  `setTimeRange` also fans out
+            // `refreshTrends()` (~12 analytics/latency calls); assigning
+            // whichever non-bootstrap URL lands last can overwrite `feedURL`
+            // with a latency-summary request that never carries `from=`.
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
         }
 
@@ -408,7 +416,9 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURLs.append(request.url!)
+            if request.url?.path.contains("/feed") == true {
+                feedURLs.append(request.url!)
+            }
             return Self.response(for: request, json: Self.feedJSON(
                 items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
                 cursor: 110, count: 10, total: 250, limit: 50
@@ -449,8 +459,10 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedCallCount += 1
-            lastURL = request.url
+            if request.url?.path.contains("/feed") == true {
+                feedCallCount += 1
+                lastURL = request.url
+            }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
         }
 
@@ -489,7 +501,11 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURLs.append(request.url!)
+            // `setTimeRange` also fires `refreshTrends()`.  Append only `/feed`
+            // URLs so `feedURLs.last` cannot be a concurrent analytics call.
+            if request.url?.path.contains("/feed") == true {
+                feedURLs.append(request.url!)
+            }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 300, limit: 100))
         }
 
@@ -671,6 +687,9 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
+            if request.url?.path.contains("/feed") != true {
+                return Self.response(for: request, json: "{}")
+            }
             feedAttempts += 1
             if feedAttempts == 1 {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: [:])!
@@ -727,6 +746,9 @@ final class CongressTradeTests: XCTestCase {
         MockURLProtocol.handler = { request in
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") != true {
+                return Self.response(for: request, json: "{}")
             }
             feedAttempts += 1
             let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: [:])!
@@ -1550,7 +1572,7 @@ final class CongressTradeTests: XCTestCase {
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
-            feedURL = request.url
+            if request.url?.path.contains("/feed") == true { feedURL = request.url }
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
@@ -2235,6 +2257,58 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(decoded.runs[0].confirmEdits.first?["ticker"] as? String, "MSFT")
     }
 
+    // MARK: - MockURLProtocol isolation (handler races)
+
+    /// Leftover `refreshTrends()` / URLSession callbacks used to hit
+    /// `XCTUnwrap(Self.handler)` after tearDown niled it, and XCTest blamed
+    /// whichever case was running — including ones that never install a
+    /// handler (`testFeedQueryEmitsTypeForBuySellFilter`).
+    func testMockURLProtocolNilHandlerDoesNotRecordAnXCTUnwrapFailure() async {
+        MockURLProtocol.handler = nil
+        let session = makeSession()
+        let url = URL(string: "https://example.test/api/analytics/latency-summary")!
+        do {
+            _ = try await session.data(from: url)
+            XCTFail("a request with no handler must not succeed")
+        } catch {
+            let nsError = error as NSError
+            XCTAssertEqual(nsError.domain, NSURLErrorDomain)
+            XCTAssertEqual(nsError.code, URLError.cancelled.rawValue)
+        }
+    }
+
+    /// `setTimeRange` fans out feed + trends.  Capturing only `/feed` must
+    /// keep a latency-summary URL from winning `feedURL`.
+    @MainActor
+    func testFeedURLCaptureIgnoresConcurrentNonFeedRequests() async throws {
+        var feedURL: URL?
+        var nonFeedHits = 0
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            if request.url?.path.contains("/feed") == true {
+                feedURL = request.url
+                return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+            }
+            nonFeedHits += 1
+            return Self.response(for: request, json: "{}")
+        }
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.setTimeRange(.all)
+        let captured = try XCTUnwrap(feedURL)
+        XCTAssertTrue(captured.path.contains("/feed"), captured.path)
+        XCTAssertFalse(captured.path.contains("latency"), captured.absoluteString)
+        XCTAssertGreaterThan(nonFeedHits, 0, "setTimeRange must also fire the trends fan-out")
+        let components = try XCTUnwrap(URLComponents(url: captured, resolvingAgainstBaseURL: false))
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "from" }))
+        store.cancelOutstandingWork()
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
@@ -2338,14 +2412,70 @@ private final class MemoryTokenStore: SessionTokenStore {
 }
 
 private final class MockURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    typealias Handler = (URLRequest) throws -> (HTTPURLResponse, Data)
+
+    /// Stamped onto each request in `canonicalRequest` so a leftover
+    /// URLSession callback from an earlier test cannot run a later test's
+    /// handler, and so `startLoading` never `XCTUnwrap`s a niled handler
+    /// onto whichever case happens to be running.
+    private static let generationPropertyKey = "CongressTrade.MockURLProtocol.generation"
+    private static let lock = NSLock()
+    private static var currentGeneration: UInt64 = 0
+    private static var boxedHandler: Handler?
+
+    static var handler: Handler? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return boxedHandler
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            currentGeneration &+= 1
+            boxedHandler = newValue
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        if URLProtocol.property(forKey: generationPropertyKey, in: request) != nil {
+            return request
+        }
+        guard let copy = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        lock.lock()
+        let generation = currentGeneration
+        lock.unlock()
+        URLProtocol.setProperty(NSNumber(value: generation), forKey: generationPropertyKey, in: copy)
+        return copy as URLRequest
+    }
 
     override func startLoading() {
+        let capturedHandler: Handler?
+        let activeGeneration: UInt64
+        Self.lock.lock()
+        capturedHandler = Self.boxedHandler
+        activeGeneration = Self.currentGeneration
+        Self.lock.unlock()
+
+        let requestGeneration = (URLProtocol.property(forKey: Self.generationPropertyKey, in: request) as? NSNumber)?.uint64Value
+        if let requestGeneration, requestGeneration != activeGeneration {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+        guard let handler = capturedHandler else {
+            // Leftover after tearDown, or a unit test that never installed a
+            // handler.  Do not XCTUnwrap — that records a failure on the
+            // currently running test.
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+
         do {
-            let (response, data) = try XCTUnwrap(Self.handler)(request)
+            let (response, data) = try handler(request)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)

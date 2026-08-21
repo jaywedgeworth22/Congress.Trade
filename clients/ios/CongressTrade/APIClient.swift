@@ -153,6 +153,17 @@ final class CongressTradeAPIClient {
         self.decoder = JSONDecoder()
     }
 
+    deinit {
+        // Dedicated sessions (XCTest MockURLProtocol, never URLSession.shared)
+        // must not keep protocol callbacks alive after this client is released.
+        // Otherwise a previous test's in-flight trends/feed request can land
+        // after that test's tearDown niled MockURLProtocol.handler and
+        // XCTUnwrap-crash whichever case is running next.
+        if session !== URLSession.shared {
+            session.invalidateAndCancel()
+        }
+    }
+
     static var defaultBaseURL: URL {
         if let raw = ProcessInfo.processInfo.environment["CONGRESS_TRADE_API_BASE_URL"],
            let url = URL(string: raw) {
