@@ -57,6 +57,29 @@ final class CongressTradeTests: XCTestCase {
         }
     }
 
+    func testAppUpdateVersionOrdering() {
+        XCTAssertGreaterThan(AppUpdatePrompt.Version("1.0.10"), AppUpdatePrompt.Version("1.0.9"))
+        XCTAssertEqual(AppUpdatePrompt.Version("1.0.0"), AppUpdatePrompt.Version("1.0"))
+        XCTAssertTrue(AppUpdatePrompt.isNewer(
+            latestMarketing: "1.0.68",
+            latestBuild: nil,
+            currentMarketing: "1.0.50",
+            currentBuild: "1"
+        ))
+        XCTAssertFalse(AppUpdatePrompt.isNewer(
+            latestMarketing: "1.0.8",
+            latestBuild: "9",
+            currentMarketing: "1.0.8",
+            currentBuild: "10"
+        ))
+        XCTAssertTrue(AppUpdatePrompt.isNewer(
+            latestMarketing: "1.0.8",
+            latestBuild: "202608211800",
+            currentMarketing: "1.0.8",
+            currentBuild: "202608201800"
+        ))
+    }
+
     func testParseTickersNormalizesAndDropsEmptyValues() async {
         let tickers = await CongressTradeStore.parseTickers(" aapl, MSFT, , nvda \n")
         XCTAssertEqual(tickers, ["AAPL", "MSFT", "NVDA"])
