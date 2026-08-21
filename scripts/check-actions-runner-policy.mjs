@@ -102,6 +102,17 @@ for (const name of workflowNames) {
       errors.push(`${name}:${index + 1}: reusable workflow runner policy is not locally auditable`);
     }
   });
+
+  const uncommented = text
+    .split("\n")
+    .map((line) => line.replace(/#.*$/, ""))
+    .join("\n");
+  if (/\bpull_request_target\b/.test(uncommented)) {
+    errors.push(`${name}: pull_request_target is forbidden (write token on untrusted PRs; use pull_request + same-repo guard)`);
+  }
+  if (/\bsecrets\.GH_PAT\b/.test(uncommented) || /\bsecrets\.SHEPHERD_TOKEN\b/.test(uncommented)) {
+    errors.push(`${name}: GH_PAT / SHEPHERD_TOKEN must not appear; congress-trading-shared is public and vendored`);
+  }
 }
 
 const xctestPath = new URL("./ios-ci-xctest.sh", import.meta.url);
