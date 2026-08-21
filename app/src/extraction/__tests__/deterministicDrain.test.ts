@@ -156,7 +156,30 @@ describe('maybeRunDeterministicReviewDrain', () => {
     ]);
     const r = await maybeRunDeterministicReviewDrain(env);
     expect(mocks.extractAndNormalize).not.toHaveBeenCalled();
+    // The mock DB returns the row regardless of the SQL WHERE clause; the
+    // in-loop scanned_pdf guard is what must hold it back.
+    expect(r.scanned).toBe(1);
     expect(r.skipped).toBe(1);
+    expect(r.stillReview).toBe(0);
+  });
+
+  it('never re-extracts a scanned_pdf even when the extractor string looks deterministic (2026-08-20 ping-pong)', async () => {
+    // Regression: H-2024-20025111 carried doc_kind=scanned_pdf with a stale
+    // extractor='textPdf'. The old selector matched on the extractor string,
+    // re-extracted the scan as text every minute (garbage), the normalizer
+    // re-flagged it, and the agreement recovery flipped it back to
+    // agreement_cascade_unresolved — an infinite per-minute ping-pong that
+    // burned CPU and review_revision without ever publishing.
+    const { env } = makeEnv([
+      { doc_id: 'H-2024-20025111', raw_object_key: 'raw/h.pdf', doc_kind: 'scanned_pdf', extractor: 'textPdf' },
+    ]);
+    const r = await maybeRunDeterministicReviewDrain(env, { limit: 5 });
+    expect(mocks.extractAndNormalize).not.toHaveBeenCalled();
+    expect(mocks.extractParsed).not.toHaveBeenCalled();
+    expect(mocks.normalize).not.toHaveBeenCalled();
+    expect(r.scanned).toBe(1);
+    expect(r.skipped).toBe(1);
+    expect(r.stillReview).toBe(0);
   });
 
   it('does not publish a truncated stored review payload; re-extracts instead', async () => {
