@@ -18,6 +18,7 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 - Polls → `GET /api/admin/scanned-filings/pending` (**stored-copy only**: requires `raw_object_key`)
 - Downloads → `GET /api/admin/filings/:docId/raw` (R2 bytes; **never** Clerk/eFD/OGE)
 - After `pdftoppm`, portrait page images of landscape House PTRs are rotated upright (tesseract header score, else 270° CW) so Grok/Qwen see the grid instead of sideways pixels
+- When a PDF has more pages than `MAX_PAGES` (Khanna attached-schedule packets, 15–34 pages), skip the local Grok CLI (it would only see 12 pages) and send the full PDF to Gemini/Grok in `PDF_NATIVE_CHUNK_PAGES` slices so later-page trades land
 - Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`)
 
 ## Env
@@ -36,6 +37,8 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 | `ADMIN_TOKEN` | — | `CT_ADMIN_TOKEN` from `~/.secrets/` |
 | `WORKER_ID` | `local_mac_1` | |
 | `MAX_DOCS_PER_POLL` | `2` | Log line when pending > cap |
+| `MAX_PAGES` | `12` | Cap page images sent to local CLI.  Auto engine skips CLI when the PDF is longer and goes PDF-native. |
+| `PDF_NATIVE_CHUNK_PAGES` | `10` | Split long PDFs for Gemini/Grok native-PDF calls |
 | `MAX_ATTEMPTS` | `3` | Per-doc retries before `local_vision_exhausted` park |
 | `BACKOFF_BASE_SEC` | `90` | Exponential: base × 2^(attempt−1) between tries |
 | `STATE_FILE` | `~/vision-worker/attempt-state.json` | Local attempt ledger |
