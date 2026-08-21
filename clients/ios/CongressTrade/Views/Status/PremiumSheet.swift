@@ -38,6 +38,7 @@ struct PremiumSheet: View {
     @State private var isRestoring = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
+    @State private var isLinking = false
     /// Sign-in stays a way IN, never a gate (Guideline 5.1.1(v)) — tapping
     /// "Sign in" opens this sheet without interrupting an in-flight purchase.
     @State private var showSignIn = false
@@ -58,7 +59,7 @@ struct PremiumSheet: View {
         .init(systemImage: "bell", text: "Push notifications when a new filing lands"),
     ]
 
-    private var isBusy: Bool { purchasingProductID != nil || isRestoring }
+    private var isBusy: Bool { purchasingProductID != nil || isRestoring || isLinking }
 
     var body: some View {
         NavigationStack {
@@ -91,6 +92,12 @@ struct PremiumSheet: View {
 
                     if let notice {
                         Text(notice)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let appleLinkNotice = store.appleLinkNotice {
+                        Text(appleLinkNotice)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -177,6 +184,8 @@ struct PremiumSheet: View {
             subscribedSection
         } else if !store.signedIn && store.hasLocalAppleEntitlement {
             anonymousSubscribedSection
+        } else if store.signedIn && store.hasLocalAppleEntitlement {
+            signedInDeviceEntitlementSection
         } else if isLoadingProducts {
             HStack(spacing: 10) {
                 ProgressView()
@@ -229,6 +238,77 @@ struct PremiumSheet: View {
                 "It's optional — sign in to use Premium on your other devices, and to set up "
                     + "Delivery alerts, which are tied to your account."
             )
+        }
+    }
+
+    /// Signed in, not yet Premium on the SERVER, but this device already
+    /// holds a verified Apple purchase — truth-table rows 3/4 (owner
+    /// directive 2026-08-21). Never a "Subscribe" button here: they already
+    /// paid, only whether it belongs to THIS account is still open.
+    @ViewBuilder
+    private var signedInDeviceEntitlementSection: some View {
+        switch store.appleEntitlementOwnership {
+        case .linkedToOtherAccount:
+            appleEntitlementConflictSection
+        case .unclaimed, .unknown:
+            appleLinkOfferSection
+        }
+    }
+
+    /// Row 3: say plainly this Apple purchase is linked elsewhere. The way
+    /// out is an explicit tap — Restore Purchases (which surfaces the
+    /// conflict again if it's still true) or signing out and back in with
+    /// the owning account.
+    @ViewBuilder
+    private var appleEntitlementConflictSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("This Apple purchase is linked to a different Congress.Trade account.  "
+                + "Sign out and sign in with that account, or tap Restore Purchases to confirm.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            restoreButton
+        }
+    }
+
+    /// Row 4: this device's purchase is unclaimed. Grant access already
+    /// happened (`premiumFeatureAccess`) — this only ASKS for the explicit
+    /// consent to make it stick to the account (owner rule: never link
+    /// silently). "Not now" only silences the launch-time prompt; the Link
+    /// button itself stays here either way.
+    @ViewBuilder
+    private var appleLinkOfferSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("You're subscribed to Premium on this device through the App Store.  "
+                + "Link it to your account to use it on the website and your other devices too.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                Task { await linkToAccount() }
+            } label: {
+                HStack {
+                    Text("Link to This Account")
+                    if isLinking {
+                        Spacer()
+                        ProgressView()
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isBusy)
+            .accessibilityHint("Links this device's Apple subscription to the signed-in account")
+
+            Button("Not Now") {
+                store.dismissAppleLinkPrompt()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(isBusy)
+
+            restoreButton
         }
     }
 
@@ -417,9 +497,31 @@ struct PremiumSheet: View {
             notice = confirmed
                 ? "Purchases restored."
                 : "No active Premium subscription found on this Apple Account."
+        } catch let error as APIError {
+            // Restore Purchases is an explicit user action — the owner's
+            // rule ("linking is always explicit, Restore Purchases counts")
+            // — so a 409 here is surfaced plainly rather than the generic
+            // "could not confirm it yet" retry framing, which would be
+            // misleading: retrying will not fix an owner conflict.
+            if case .server(409, _, _) = error {
+                purchaseError = "This Apple purchase is already linked to a different Congress.Trade account.  "
+                    + "Sign out and sign in with that account to use it there instead."
+            } else {
+                purchaseError = PremiumPricing.redeemFailureMessage(error)
+            }
         } catch {
             purchaseError = PremiumPricing.redeemFailureMessage(error)
         }
+    }
+
+    /// Row 4's explicit "Link" tap — the only place besides Restore
+    /// Purchases this app calls the authenticated `link_apple_entitlement`
+    /// command. Never automatic.
+    private func linkToAccount() async {
+        isLinking = true
+        store.appleLinkNotice = nil
+        defer { isLinking = false }
+        _ = await store.linkAppleEntitlementToCurrentAccount()
     }
 
     private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {

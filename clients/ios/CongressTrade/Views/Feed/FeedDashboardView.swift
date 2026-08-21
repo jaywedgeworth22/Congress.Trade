@@ -1302,7 +1302,10 @@ struct ExportCSVSheet: View {
                     // with its own Apple purchase (store.hasLocalAppleEntitlement)
                     // exports the same way a signed-in Premium account does;
                     // APIClient attaches the cached device entitlement token.
-                    if !(store.isPremium || store.hasLocalAppleEntitlement) {
+                    // Signed in, `premiumFeatureAccess` additionally excludes
+                    // a device purchase already linked to a DIFFERENT account
+                    // (Premium belongs to the account, not the device).
+                    if !store.premiumFeatureAccess {
                         Text("CSV export is a Premium feature ($5/mo or $50/yr, 2-week free trial).  "
                             + "No account needed to buy.")
                             .font(.subheadline)

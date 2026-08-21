@@ -933,6 +933,189 @@ final class CongressTradeTests: XCTestCase {
         }
     }
 
+    /// `POST /entitlements/apple/redeem` (the anonymous route
+    /// `refreshAppleEntitlementOwnership` reuses as a READ-ONLY row-3/row-4
+    /// probe while signed in — `Store/AppleIAP.swift`) reports a `409` for a
+    /// transaction some other account already owns. Locks that the API
+    /// client surfaces it as a normal thrown error the caller can inspect,
+    /// not a decoded "success" body — the thing `PremiumAccessGate.ownership
+    /// (afterProbe:)` depends on to tell rows 3 and 4 apart.
+    func testRedeemAppleEntitlementAnonymouslyThrowsOn409OwnerMismatch() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: session
+        )
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/client/v1/entitlements/apple/redeem")
+            return Self.response(
+                for: request,
+                status: 409,
+                json: """
+                {"error":"this Apple subscription is already linked to a different account","upgradeRequired":false}
+                """
+            )
+        }
+
+        do {
+            _ = try await client.redeemAppleEntitlementAnonymously(signedTransaction: "jws-blob")
+            XCTFail("Expected the 409 to throw")
+        } catch let error as APIError {
+            guard case .server(let status, let message, _) = error else {
+                return XCTFail("Expected .server, got \(error)")
+            }
+            XCTAssertEqual(status, 409)
+            XCTAssertEqual(message, "this Apple subscription is already linked to a different account")
+        }
+    }
+
+    // MARK: - Account-linked Apple entitlement (owner directive 2026-08-21)
+    //
+    // "It should be linked to an account which can be used via website or
+    // iOS app both." Premium belongs to the ACCOUNT; a device's Apple
+    // purchase must never make every signed-in account look Premium.
+    // `PremiumAccessGate` (`Store/AppleIAP.swift`) is the pure truth table
+    // gate — tested directly here without StoreKit or the Store's async
+    // orchestration.
+
+    /// Row 1: signed OUT + a verified, unclaimed device purchase must still
+    /// resolve as Premium (Guideline 5.1.1(v)) — must not regress.
+    func testPremiumAccessGateGrantsSignedOutDeviceEntitlement() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: false,
+            hasLocalAppleEntitlement: true,
+            ownership: .unknown
+        ))
+    }
+
+    /// Row 2: signed in + server Premium is always granted, regardless of
+    /// the device's own entitlement state.
+    func testPremiumAccessGateGrantsSignedInServerPremium() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: true,
+            signedIn: true,
+            hasLocalAppleEntitlement: false,
+            ownership: .linkedToOtherAccount
+        ))
+    }
+
+    /// Row 3 — the regression this change exists to fix: a signed-in FREE
+    /// account must not get Premium access just because this device's Apple
+    /// purchase happens to be owned by a DIFFERENT account. This is the case
+    /// that used to leak through the old `isPremium || hasLocalAppleEntitlement`
+    /// OR-gate at `FeedDashboardView.swift:1241`, `TradeDetailView.swift:325`,
+    /// and `CongressTradeStore.exportCSV`.
+    func testPremiumAccessGateRefusesForeignDeviceEntitlementWhileSignedIn() {
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ))
+    }
+
+    /// Row 4: signed in, server free, device purchase unclaimed (or the
+    /// ownership probe has not resolved yet) — grant access so a payer is
+    /// never stranded while they decide whether to link it.
+    func testPremiumAccessGateGrantsUnclaimedDeviceEntitlementWhileSignedIn() {
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .unclaimed
+        ))
+        XCTAssertTrue(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: true,
+            ownership: .unknown
+        ))
+    }
+
+    /// Baseline: no device entitlement at all, free — never granted, signed
+    /// in or out.
+    func testPremiumAccessGateRefusesPlainFreeAccount() {
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: true,
+            hasLocalAppleEntitlement: false,
+            ownership: .unknown
+        ))
+        XCTAssertFalse(PremiumAccessGate.granted(
+            isPremium: false,
+            signedIn: false,
+            hasLocalAppleEntitlement: false,
+            ownership: .unknown
+        ))
+    }
+
+    /// Row 4's "Link this subscription?" ask shows only once the probe
+    /// resolves unclaimed and only until "Not now" is remembered for this
+    /// account; row 3's plain conflict message shows only once resolved
+    /// linked-elsewhere. Neither shows while still unresolved or once the
+    /// account is already Premium.
+    func testPremiumAccessGateLinkOfferAndConflictVisibility() {
+        XCTAssertTrue(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: false
+        ))
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: true
+        ), "a remembered 'Not now' must not nag again")
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unknown, dismissedForAccount: false
+        ), "never asks before the read-only ownership probe has resolved")
+        XCTAssertFalse(PremiumAccessGate.showsLinkOffer(
+            isPremium: true, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .unclaimed, dismissedForAccount: false
+        ), "already Premium — nothing left to link")
+
+        XCTAssertTrue(PremiumAccessGate.showsConflict(
+            isPremium: false, signedIn: true, hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ))
+        XCTAssertFalse(PremiumAccessGate.showsConflict(
+            isPremium: false, signedIn: false, hasLocalAppleEntitlement: true,
+            ownership: .linkedToOtherAccount
+        ), "signed out never shows an account conflict — there is no account yet")
+    }
+
+    /// The core regression this change exists to fix, expressed at the
+    /// boundary: `linkAppleEntitlementIfNeeded` used to `try?` away a `409`
+    /// from `link_apple_entitlement` ("already linked to a different
+    /// account"). `PremiumAccessGate.ownership(afterProbe:)` is what
+    /// replaced that swallow — a `409` must surface as
+    /// `.linkedToOtherAccount`, never silently vanish, and a transient
+    /// failure (offline, 5xx) must never be misreported as a conflict (that
+    /// would wrongly gate out a legitimate unclaimed payer).
+    func testOwnershipProbeSurfacesThe409ConflictInsteadOfSwallowingIt() {
+        XCTAssertEqual(PremiumAccessGate.ownership(afterProbe: .success(())), .unclaimed)
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(
+                APIError.server(
+                    status: 409,
+                    message: "this Apple subscription is already linked to a different account",
+                    retryAfterSeconds: nil
+                )
+            )),
+            .linkedToOtherAccount
+        )
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(
+                APIError.server(status: 500, message: "boom", retryAfterSeconds: nil)
+            )),
+            .unknown
+        )
+        XCTAssertEqual(
+            PremiumAccessGate.ownership(afterProbe: .failure(APIError.transport(URLError(.notConnectedToInternet)))),
+            .unknown
+        )
+    }
+
     // MARK: - UX P0: memberName search + async command result claim
 
     func testFeedQueryEmitsMemberNameNotMemberForFreeText() {
@@ -1669,10 +1852,13 @@ final class CongressTradeTests: XCTestCase {
     // MARK: - Guideline 5.1.1(v): no account required to buy Premium
 
     /// `FilingPDFAccess.action` itself only ever sees one `isPremium` bool —
-    /// the call site (`TradeDetailView.openArchivedFilingPDF`) is what OR's
-    /// in `store.hasLocalAppleEntitlement`. This locks the boolean logic
-    /// callers depend on: a signed-out device with its own Apple purchase
-    /// must resolve exactly like a signed-in Premium session.
+    /// the call site (`TradeDetailView.openArchivedFilingPDF`) passes
+    /// `store.premiumFeatureAccess` (`PremiumAccessGate.granted`, see the
+    /// "Account-linked Apple entitlement" tests above). This locks the
+    /// boolean logic callers depend on for the SIGNED-OUT case (row 1): a
+    /// signed-out device with its own unclaimed Apple purchase must resolve
+    /// exactly like a signed-in Premium session. (Signed IN, the gate is no
+    /// longer a plain OR — see `testPremiumAccessGateRefusesForeignDeviceEntitlementWhileSignedIn`.)
     func testFilingPDFAccessTreatsLocalAppleEntitlementAsPremium() {
         let isPremiumSession = true
         let hasLocalAppleEntitlementSignedOut = true
@@ -1681,7 +1867,9 @@ final class CongressTradeTests: XCTestCase {
             .fetchInApp
         )
         XCTAssertEqual(
-            FilingPDFAccess.action(isPremium: false || hasLocalAppleEntitlementSignedOut),
+            FilingPDFAccess.action(isPremium: PremiumAccessGate.granted(
+                isPremium: false, signedIn: false, hasLocalAppleEntitlement: true, ownership: .unknown
+            )),
             .fetchInApp
         )
         XCTAssertEqual(FilingPDFAccess.action(isPremium: false || false), .showPremiumSheet)
