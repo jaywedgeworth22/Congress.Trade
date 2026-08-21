@@ -253,7 +253,11 @@ def send_heartbeat(state: dict | None = None) -> bool:
 
 
 def get_pending_scanned_filings() -> list:
-    res = send_request(f"{API_BASE_URL}/api/admin/scanned-filings/pending")
+    # ?worker=local opts into the broad reclaim set: the server advertises
+    # EVERY unresolved scanned review item (cascade disagreements, row-limit
+    # garbage, low-confidence flags), not just form-chrome/empty failures.
+    # The Coolify CPU OCR worker stays on the conservative set.
+    res = send_request(f"{API_BASE_URL}/api/admin/scanned-filings/pending?worker=local")
     if res.get("ok") and isinstance(res.get("filings"), list):
         return res["filings"]
     return []
@@ -881,7 +885,44 @@ def main():
                         "cap: poll backlog capped pending=%d processing=%d (MAX_DOCS_PER_POLL)",
                         len(filings), MAX_DOCS_PER_POLL,
                     )
-                batch = filings[:MAX_DOCS_PER_POLL]
+                # Select the first MAX_DOCS_PER_POLL *processable* docs.
+                # Exhausted / backoff docs can sit at the head of the pending
+                # list (server sorts newest first); taking the raw head used
+                # to starve the whole queue — the worker polled forever,
+                # skipping the same two exhausted docs while 46 others waited
+                # (observed 2026-08-20, 48-item backlog, zero progress).
+                batch = []
+                skipped = 0
+                now = time.time()
+                for f in filings:
+                    if len(batch) >= MAX_DOCS_PER_POLL:
+                        break
+                    doc_id = f.get("doc_id")
+                    entry = state.get("docs", {}).get(doc_id) if doc_id else None
+                    if entry:
+                        if entry.get("exhausted"):
+                            skipped += 1
+                            # Re-assert the server-side park when the API was
+                            # down earlier, so the doc leaves the pending list.
+                            if not entry.get("parked") and doc_id:
+                                parked = park_local_vision(
+                                    doc_id,
+                                    int(entry.get("attempts") or MAX_ATTEMPTS),
+                                    str(entry.get("last_error") or "exhausted"),
+                                )
+                                entry["parked"] = bool(parked)
+                                save_attempt_state(state)
+                            continue
+                        next_eligible = float(entry.get("next_eligible_at") or 0)
+                        if next_eligible > now:
+                            skipped += 1
+                            continue
+                    batch.append(f)
+                if skipped:
+                    logger.info(
+                        "cap: skipped %d not-yet-processable doc(s) (exhausted/backoff); processing %d",
+                        skipped, len(batch),
+                    )
                 logger.info(
                     "Found %d pending scanned filings; processing %d",
                     len(filings), len(batch),
