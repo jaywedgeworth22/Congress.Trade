@@ -490,6 +490,23 @@ record_successful_ship() {
   printf '%s %s\n' "$now" "$head_sha" >"$path"
   chmod 600 "$path" 2>/dev/null || true
   log "ship-gate: recorded success ts=${now} sha=${head_sha:0:10} -> ${path}"
+  # Public version manifest for the in-app update prompt.  Best-effort —
+  # a publish miss must never fail a ship that already uploaded.
+  if [[ -n "${BUNDLE_ID:-}" && -n "${MARKETING:-}" ]]; then
+    local apple_id display
+    local -a pub_args
+    apple_id="$(json_get "$APP_KEY" appleId || true)"
+    display="$(json_get "$APP_KEY" displayName || true)"
+    pub_args=(--bundle-id "$BUNDLE_ID" --version "$MARKETING")
+    [[ -n "${BUILD_NUM:-}" ]] && pub_args+=(--build "$BUILD_NUM")
+    [[ -n "${apple_id:-}" ]] && pub_args+=(--apple-id "$apple_id")
+    [[ -n "${display:-}" ]] && pub_args+=(--display-name "$display")
+    if bash "${FLEET_DIR}/publish-ios-versions.sh" "${pub_args[@]}" >/dev/null 2>&1; then
+      log "version-manifest: published ${BUNDLE_ID} ${MARKETING}"
+    else
+      log "warning: version-manifest publish failed (non-fatal)"
+    fi
+  fi
 }
 
 while [[ $# -gt 0 ]]; do

@@ -315,6 +315,24 @@ The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
 `npm ci` in `app/` + applies local schema helpers).  After it runs, the dev
 environment is ready; do not re-install deps to start services.
 
+### Cursor Cloud environment (`.cursor/environment.json`)
+
+Cursor Cloud agents boot from `.cursor/environment.json`, which drives the
+Deno-based backend (`app/src/deno/main.ts`), not the legacy `wrangler dev` path:
+
+- `install` → `bash scripts/cursor-cloud-setup.sh`: installs Deno (pinned to the
+  CI version), runs `npm ci --include=dev` in `app/`, and warms the Deno module
+  cache. Idempotent; safe to bake into an environment build snapshot.
+- `start` → `bash scripts/cursor-cloud-serve.sh`: starts the Deno server on
+  `http://localhost:8787` wired for keyless local dev — an **isolated local
+  SQLite file** (never the injected production `TURSO_DATABASE_URL`),
+  Infisical disabled (env/`.prod.vars` fallback), internal cron off, scrape
+  guard off, and a per-boot random `ADMIN_TOKEN`. On boot it applies the schema
+  via `POST /api/admin/migrate` and loads `app/scripts/seed-preview-fixtures.sql`
+  (idempotent) so the dashboard has data. `GET /api/health` → `schema:true` is
+  the readiness signal (it caches for 60s). Verify with
+  `cd app && deno check src/deno/main.ts && npm test`.
+
 Durable, non-obvious notes for running/testing locally (all from `app/`):
 
 - Local development serves on `http://localhost:8787` using Deno.
