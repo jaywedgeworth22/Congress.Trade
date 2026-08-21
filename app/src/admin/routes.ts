@@ -89,6 +89,7 @@ import {
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
+import { storedReviewBlocksSmallerVisionSubmit } from '../extraction/visionSubmitGuard.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
@@ -5756,6 +5757,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         : 'local_mac';
 
     try {
+      const existingReview = await get<{ reason: string | null; payload: string | null }>(
+        c.env.DB,
+        `SELECT reason, payload FROM review_queue WHERE doc_id = ? AND resolved = 0`,
+        [docId],
+      );
+      if (
+        existingReview
+        && storedReviewBlocksSmallerVisionSubmit(
+          existingReview.reason,
+          existingReview.payload,
+          parsedTx.length,
+        )
+      ) {
+        return c.json({
+          ok: true,
+          docId,
+          published: false,
+          needsReview: true,
+          skipped: 'smaller_than_stored_review',
+          txCount: parsedTx.length,
+        });
+      }
+
       const filingRow = await loadFilingRow(c.env, docId);
       if (!filingRow) {
         return c.json({ error: `Filing ${docId} not found` }, 404);
