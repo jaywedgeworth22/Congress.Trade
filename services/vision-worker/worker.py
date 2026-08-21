@@ -949,6 +949,9 @@ def process_filing(filing: dict, state: dict) -> str:
 
     entry = doc_entry(state, doc_id)
     now = time.time()
+    if entry.get("review_submitted"):
+        logger.info("cap: skip already-submitted-to-review doc=%s", doc_id)
+        return "skipped_review_submitted"
     if entry.get("exhausted"):
         logger.info(
             "cap: skip exhausted doc=%s attempts=%s last=%s",
@@ -1021,13 +1024,20 @@ def process_filing(filing: dict, state: dict) -> str:
             "%s submitted via %s: %d txs, published=%s needsReview=%s",
             doc_id, extractor, len(rows), published, needs_review,
         )
-        clear_attempts(state, doc_id)
         if published:
+            clear_attempts(state, doc_id)
             send_pushover(
                 "CT local vision: published",
                 f"{doc_id}: {len(rows)} tx via {extractor}",
             )
             return "published"
+        # Rows landed in review.  Do not clear state — pending?worker=local
+        # would advertise the same doc again and re-OCR it forever
+        # (prod 2026-08-21: H-2025-9115689 + H-2025-8221302 looped all afternoon).
+        entry = doc_entry(state, doc_id)
+        entry["review_submitted"] = True
+        entry["last_error"] = "review_submitted"
+        save_attempt_state(state)
         return "needs_review_with_rows"
     logger.error("Submission failed for %s: %s", doc_id, res.get("error"))
     record_failure(state, doc_id, f"submit_failed:{res.get('error')}", extractor)
@@ -1088,6 +1098,9 @@ def main():
                     doc_id = f.get("doc_id")
                     entry = state.get("docs", {}).get(doc_id) if doc_id else None
                     if entry:
+                        if entry.get("review_submitted"):
+                            skipped += 1
+                            continue
                         if entry.get("exhausted"):
                             skipped += 1
                             # Re-assert the server-side park when the API was
@@ -1108,7 +1121,7 @@ def main():
                     batch.append(f)
                 if skipped:
                     logger.info(
-                        "cap: skipped %d not-yet-processable doc(s) (exhausted/backoff); processing %d",
+                        "cap: skipped %d not-yet-processable doc(s) (exhausted/backoff/review); processing %d",
                         skipped, len(batch),
                     )
                 logger.info(

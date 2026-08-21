@@ -83,7 +83,12 @@ export function parseAmountRange(raw: string): AmountRange {
   }
 
   // Single value present — try to find the bracket whose min matches.
-  const single = parseDollar(text);
+  // The whole string must look like an amount.  Stripping digits out of
+  // "BDT Capital Partners Fund 4 LP" / "Oswego Ill Go BDS 2016" used to
+  // yield exact $4 / $2016 and false invalid_amount against a real bracket
+  // (prod H-2025-8221302, 2026-08-21).
+  const looksLikeAmount = /^\$?\s*[\d,]+(?:\.\d+)?\s*$/.test(text);
+  const single = looksLikeAmount ? parseDollar(text) : null;
   if (single !== null && text.length <= 32) {
     const byMin = STOCK_ACT_BRACKETS.find((b: AmountBracket) => b.min === single);
     if (byMin) return { min: byMin.min, max: byMin.max, exact: true };

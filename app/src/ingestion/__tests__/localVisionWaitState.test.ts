@@ -492,6 +492,34 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(localIds).not.toContain('scan-parked-1');
     });
 
+    it('GET /scanned-filings/pending?worker=local skips docs already submitted to review', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('scan-submitted-1', 'house', 'https://example.com/s.pdf', 'raw/s.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`,
+      ).bind('scan-submitted-1', 'no_amount,low_confidence,local_vision_submitted', 0, nowIso).run();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('scan-empty-2', 'house', 'https://example.com/e.pdf', 'raw/e.pdf', 'needs_review', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`,
+      ).bind('scan-empty-2', 'extract_empty_failure,no_transactions_extracted', 0, nowIso).run();
+
+      const local = await app.request('/scanned-filings/pending?worker=local_mac', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(local.status).toBe(200);
+      const localJson = await local.json() as { filings: Array<{ doc_id: string }> };
+      const localIds = localJson.filings.map((f) => f.doc_id);
+      expect(localIds).toContain('scan-empty-2');
+      expect(localIds).not.toContain('scan-submitted-1');
+    });
+
     it('POST /ingest-local-vision refuses a shorter OCR over a stored cascade payload', async () => {
       // #2107 advertises cascade scans to ?worker=local. The Mac worker stamps
       // confidence 0.97, so a 12-row OCR would publish (or overwrite) a 40-row

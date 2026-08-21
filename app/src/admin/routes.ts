@@ -1030,13 +1030,14 @@ function validateReviewEdits(
     if (ticker && (ticker.length > 20 || !/^[A-Za-z0-9.^$-]+$/.test(ticker))) {
       return { error: `edits[${index}].ticker is invalid` };
     }
-    if (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin)) {
-      return { error: `edits[${index}].amountMin is required` };
+    const amountOmitted = e.amountMin == null;
+    if (!amountOmitted && (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin))) {
+      return { error: `edits[${index}].amountMin must be a number or null` };
     }
     if (e.amountMax != null && (typeof e.amountMax !== 'number' || !Number.isFinite(e.amountMax))) {
       return { error: `edits[${index}].amountMax must be a number or null` };
     }
-    if (!isValidBracket(e.amountMin, e.amountMax ?? null)) {
+    if (!amountOmitted && !isValidBracket(e.amountMin as number, e.amountMax ?? null)) {
       return { error: `edits[${index}] amount must be a canonical STOCK Act bracket` };
     }
     if (e.confidence != null && (
@@ -5385,7 +5386,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     unresolved needs_review scan with stored raw bytes — cascade
   //     disagreements, extraction_row_limit garbage, low-confidence flags —
   //     because local vision is free (subscription) and strictly better than
-  //     the server_cpu OCR that created those flags. The Coolify scan-cpu
+  //     the server_cpu OCR that created those flags. Docs already submitted
+  //     (`local_vision_submitted`) stay out so the worker cannot re-OCR the
+  //     same 17/93-row extracts forever (2026-08-21). The Coolify scan-cpu
   //     worker (no param / worker=server_cpu) keeps the conservative reason
   //     set so it never re-generates garbage on hard scans.
   // Skips published live-transaction docs and local_vision_exhausted parks
@@ -5405,14 +5408,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // garbage on hard scans it already failed.
       const localWorker = worker.includes('local');
       const reviewReasonMatch = localWorker
-        ? `rq.reason NOT LIKE '%local_vision_exhausted%'`
+        ? `rq.reason NOT LIKE '%local_vision_exhausted%'
+           AND rq.reason NOT LIKE '%local_vision_submitted%'`
         : `(
              rq.reason LIKE '%extract_empty%'
              OR rq.reason LIKE '%no_transactions_extracted%'
              OR rq.reason LIKE '%ocr_unusable%'
              OR rq.reason LIKE '%form_chrome%'
            )
-           AND rq.reason NOT LIKE '%local_vision_exhausted%'`;
+           AND rq.reason NOT LIKE '%local_vision_exhausted%'
+           AND rq.reason NOT LIKE '%local_vision_submitted%'`;
       const rows = await all<{
         doc_id: string;
         chamber: string | null;
@@ -5807,6 +5812,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         modelVersion: workerId,
         source: txSource,
       });
+
+      if (result.needsReview && parsedTx.length > 0 && txSource === 'local_mac') {
+        await run(
+          c.env.DB,
+          `UPDATE review_queue
+              SET reason = CASE
+                WHEN reason LIKE '%local_vision_submitted%' THEN reason
+                WHEN reason IS NULL OR TRIM(reason) = '' THEN 'local_vision_submitted'
+                ELSE reason || ',local_vision_submitted'
+              END
+            WHERE doc_id = ? AND resolved = 0`,
+          [docId],
+        );
+      }
 
       return c.json({
         ok: true,

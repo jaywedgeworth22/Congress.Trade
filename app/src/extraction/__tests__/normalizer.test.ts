@@ -435,6 +435,40 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).toContain('no_amount');
   });
 
+  it('local Grok vision publishes siblings when some PTR rows omit the amount checkbox', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({ chamber: 'house', docKind: 'scanned_pdf', extractor: 'local_grok_cli_v1' }),
+      [
+        tx({
+          ticker: null,
+          assetName: 'Vng Growth Index',
+          txType: 'S',
+          amountMin: 1001,
+          amountMax: 15000,
+          confidence: 0.97,
+          rawText: 'Vng Growth Index',
+        }),
+        tx({
+          ticker: null,
+          assetName: 'Bridge Builder Sm/Mid Value',
+          txType: 'S',
+          amountMin: null,
+          amountMax: null,
+          confidence: 0.97,
+          rawText: 'Bridge Builder Sm/Mid Value',
+        }),
+      ],
+      { extractor: 'local_grok_cli_v1', source: 'local_mac' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.transactions).toHaveLength(2);
+    expect(cap.insertedTx).toHaveLength(2);
+    expect(cap.reviewRows).toHaveLength(0);
+  });
+
   it('does not penalize a legitimately ticker-less asset (no ticker supplied)', async () => {
     const { env, cap } = makeEnv([]); // empty securities_master
     const result = await normalize(env, filing(), [
@@ -874,5 +908,24 @@ describe('scoreFields ticker/asset-name consistency (informational, unpenalized)
       passthroughResolve,
     );
     expect(scored.flags).not.toContain('ticker_asset_mismatch');
+  });
+
+  it('does not flag invalid_amount when rawText is a fund name with a digit', () => {
+    const scored = scoreFields(
+      0.97,
+      {
+        ticker: null,
+        assetName: 'BDT Capital Partners Fund 4 LP',
+        amountMin: 250001,
+        amountMax: 500000,
+        txType: 'S',
+        txDate: '2025-12-19',
+        rawText: 'BDT Capital Partners Fund 4 LP',
+      },
+      '2026-01-15',
+      () => null,
+    );
+    expect(scored.flags).not.toContain('invalid_amount');
+    expect(scored.confidence).toBe(0.97);
   });
 });

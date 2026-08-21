@@ -66,4 +66,15 @@ describe('parseAmountRange -> canonical bracket', () => {
     );
     expect(r).toMatchObject({ min: 1001, max: 15000, exact: true });
   });
+
+  it('does not treat fund-name / bond-year digits as a dollar amount', () => {
+    for (const raw of [
+      'BDT Capital Partners Fund 4 LP',
+      'Mays-Allocate 2025 LP',
+      'Dawson Portfolio Finance 6 LP',
+      'OSWEGO ILL GO BDS 2016',
+    ]) {
+      expect(parseAmountRange(raw)).toMatchObject({ min: null, max: null, exact: false });
+    }
+  });
 });

@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Local vision auto-publish + stop re-OCR loop
+
+Vision-worker was re-transcribing the same two review items all afternoon.
+`parseAmountRange` false `invalid_amount` on fund names, plus `no_amount` on
+one PTR row, held whole filings.  Worker now skips `review_submitted`;
+pending list skips `local_vision_submitted`; local Grok extracts publish
+siblings when some amount boxes are blank.  McCaul `H-2025-8221302` 94 rows
+confirmed live.  Smith Bitcoin `H-2025-8221238` already live.  Receipt:
+`docs/rollouts/2026-08-21-local-vision-autopublish.md`.  Board `c9d9766b`.
+Copy `~/vision-worker/worker.py` (done this session) stays in sync after merge.
+
 ## 2026-08-21 GROK — Cheap Qwen VL cascade after Grok CLI solo-pass miss
 
 Mac vision-worker (`pm2 vision-worker`): local Grok CLI remains primary.
