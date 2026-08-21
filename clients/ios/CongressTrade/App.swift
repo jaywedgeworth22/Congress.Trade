@@ -54,7 +54,7 @@ struct CongressTradeApp: App {
 
     private var colorScheme: ColorScheme? {
         switch appColorScheme {
-        case "light", "sepia": return .light
+        case "light": return .light
         case "dark": return .dark
         default: return nil
         }
@@ -271,6 +271,22 @@ struct MainTabView: View {
         .sheet(isPresented: $showSubscribeSheet) {
             PremiumSheet()
                 .environmentObject(store)
+        }
+        // Truth-table row 4 (owner directive 2026-08-21): a signed-in
+        // account whose device already holds an UNCLAIMED Apple purchase is
+        // asked once — never linked silently — whether to link it. "Not
+        // now" (`dismissAppleLinkPrompt`) remembers per account so this does
+        // not reappear on every launch; the Link action itself stays
+        // available afterward from the Premium sheet and Restore Purchases.
+        .alert(
+            "Link This Subscription?",
+            isPresented: Binding(get: { store.showsAppleLinkOffer }, set: { _ in })
+        ) {
+            Button("Not Now", role: .cancel) { store.dismissAppleLinkPrompt() }
+            Button("Link") { Task { await store.linkAppleEntitlementToCurrentAccount() } }
+        } message: {
+            Text("This device already has an active Congress.Trade Premium subscription through the App Store.  "
+                + "Link it to your account to use it on the website and your other devices too.")
         }
         // StoreKit 2 requires a listener for the whole app lifetime: Ask to Buy
         // approvals, renewals, and retries of a redeem that failed mid-purchase

@@ -29,6 +29,7 @@ import {
 } from './pushDevices.ts';
 import { AppleRedeemError, jwsFromInput, requireAppleIapEnabled, verifyAppleRedemption } from '../billing/appleRedeem.ts';
 import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSubscription } from '../billing/appleSubscriptions.ts';
+import { notifyPremiumActivation } from '../billing/premiumActivationAlert.ts';
 import { deleteUserAccount } from '../auth/deleteAccount.ts';
 
 export function commandType(value: unknown): ClientCommandType {
@@ -174,6 +175,24 @@ async function redeemAppleTransactionForUser(
     // on a shared/second Apple ID or account must surface as a conflict, not
     // a takeover of the original owner's Premium.
     throw new ClientInputError('this Apple subscription is already linked to a different account', 409);
+  }
+  if (upserted.isNew) {
+    // Fires once per originalTransactionId (isNew is only true the first
+    // time this ledger row is created — see appleSubscriptions.ts).  A
+    // restore-purchases replay of the SAME transaction id (tested above:
+    // "redeeming the same originalTransactionId again ... is idempotent")
+    // hits the ON CONFLICT branch instead and does not re-notify.
+    // Apple's JWS payload carries no trial/introductory-offer flag this
+    // codebase decodes, so Apple activations are always reported as "paid" —
+    // a known gap vs. Stripe, where `trialing` is exact.
+    await notifyPremiumActivation(env, {
+      activationKey: `apple:${upserted.record.originalTransactionId}`,
+      userId: user.id,
+      userEmail: user.email,
+      source: 'apple',
+      plan: upserted.record.plan,
+      trialing: false,
+    });
   }
 
   const refreshedUser = await getUserById(env, user.id);
