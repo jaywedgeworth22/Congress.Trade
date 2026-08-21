@@ -640,7 +640,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("function polFull(n)");
   });
 
-  it('defaults theme to light and offers Light/Sepia/Dark/System controls', () => {
+  it('defaults theme to light and offers Light/Dark/System controls', () => {
     expect(DASHBOARD_HTML).toContain("var pref = 'light'");
     expect(DASHBOARD_HTML).toContain("return 'light'");
     expect(DASHBOARD_HTML).toContain('function setThemePref(pref)');
@@ -648,12 +648,31 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function themeSegHtml(pref)');
     expect(DASHBOARD_HTML).toContain('class="theme-seg"');
     expect(DASHBOARD_HTML).toContain('data-theme-opt');
-    expect(DASHBOARD_HTML).toContain("id: 'sepia', label: 'Sepia'");
+    expect(DASHBOARD_HTML).toContain("id: 'light', label: 'Light'");
     expect(DASHBOARD_HTML).toContain("id: 'system', label: 'System'");
-    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"]');
     expect(DASHBOARD_HTML).toContain('theme-row-label');
     expect(DASHBOARD_HTML).toContain('prefers-color-scheme: dark');
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
+  });
+
+  // Owner 2026-08-21: "just delete the option" — Sepia was half-implemented
+  // (only Trades/Trends were properly themed) and looked ugly, not like
+  // paper.  Assert the palette, the picker entry, and every
+  // html[data-theme="sepia"] CSS rule stay gone so a future PR can't
+  // silently reintroduce it. The only surviving mentions of 'sepia' must be
+  // the one-time localStorage migration that rewrites a returning visitor's
+  // stored 'sepia' value to 'light' instead of letting it fail validation
+  // forever — assert that migration is present in both the pre-paint boot
+  // script and the runtime readThemePref().
+  it('has fully removed the Sepia theme and migrates any stored preference to Light', () => {
+    expect(DASHBOARD_HTML).not.toContain("label: 'Sepia'");
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="sepia"]');
+    expect(DASHBOARD_HTML).not.toContain("id: 'sepia'");
+    expect(DASHBOARD_HTML).not.toContain('#f3e6d0');
+    const sepiaMigrations = DASHBOARD_HTML.match(/if \(s === 'sepia'\)/g) || [];
+    // Boot script + readThemePref() each migrate a stored 'sepia' value.
+    expect(sepiaMigrations.length).toBe(2);
+    expect(DASHBOARD_HTML).toContain("localStorage.setItem('ui-theme', 'light')");
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
@@ -5668,7 +5687,9 @@ describe('mobile web chrome polish (issue #2016)', () => {
     expect(DASHBOARD_HTML).not.toContain('#view-trends .toolbar .trends-filter-row { width: 100%; }');
     // Full-bleed filter bar must not be overridden back to shrink-to-fit.
     expect(DASHBOARD_HTML).not.toContain('align-items: center;\n    width: auto;\n    max-width: 100%;');
-    expect(DASHBOARD_HTML).toContain('html[data-theme="sepia"] nav.tabs');
+    // Sepia was removed (owner 2026-08-21) — only Light/Dark theme this row.
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="sepia"] nav.tabs');
+    expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] nav.tabs');
   });
 
   it('removes Snapshot and the Largest Buys/Sells sections', () => {

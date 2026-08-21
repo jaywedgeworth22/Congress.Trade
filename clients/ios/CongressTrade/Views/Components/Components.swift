@@ -10,6 +10,21 @@ import UserNotifications
 enum AppAppearance {
     private static var windowObserver: NSObjectProtocol?
 
+    /// Sepia was removed (owner 2026-08-21: "too dark of a color that
+    /// doesn't look like old fashioned paper", only half-themed and ugly).
+    /// A visitor who had it selected still has `"sepia"` sitting in
+    /// `UserDefaults` under `app_color_scheme` — rewrite that to `"light"`
+    /// the moment it is seen, everywhere the raw pref is read, so it stops
+    /// failing validation on every launch instead of just falling through to
+    /// an unstyled/undefined case once.  Every other read of this pref
+    /// funnels through `paint`, `colorScheme(for:)`, or `CTPalette.resolved`
+    /// below, so migrating here covers all of them.
+    static func migratedPref(_ pref: String) -> String {
+        guard pref == "sepia" else { return pref }
+        UserDefaults.standard.set("light", forKey: "app_color_scheme")
+        return "light"
+    }
+
     static func apply(_ pref: String) {
         paint(pref)
         // Sheet windows can appear a beat after the tap.  Paint again on the
@@ -28,15 +43,15 @@ enum AppAppearance {
     }
 
     private static func paint(_ pref: String) {
+        let pref = migratedPref(pref)
         let style: UIUserInterfaceStyle
         switch pref {
-        case "light", "sepia": style = .light
+        case "light": style = .light
         case "dark": style = .dark
         default: style = .unspecified
         }
         let palette: CTPalette
         switch pref {
-        case "sepia": palette = .sepia
         case "dark": palette = .dark
         default: palette = .light
         }
@@ -51,8 +66,8 @@ enum AppAppearance {
     }
 
     static func colorScheme(for pref: String) -> ColorScheme? {
-        switch pref {
-        case "light", "sepia": return .light
+        switch migratedPref(pref) {
+        case "light": return .light
         case "dark": return .dark
         default: return nil
         }
@@ -60,22 +75,20 @@ enum AppAppearance {
 }
 
 enum CTPalette: String {
-    case light, sepia, dark
+    case light, dark
 
     static func resolved(pref: String, system: ColorScheme) -> CTPalette {
-        switch pref {
-        case "sepia": return .sepia
+        switch AppAppearance.migratedPref(pref) {
         case "dark": return .dark
         case "light": return .light
         default: return system == .dark ? .dark : .light
         }
     }
 
-    /// Cool light page (#eff3f8), warm paper, or night navy — never mix.
+    /// Cool light page (#eff3f8) or night navy — never mix.
     var background: Color {
         switch self {
         case .light: return Color(red: 0.937, green: 0.953, blue: 0.973)
-        case .sepia: return Color(red: 0.953, green: 0.902, blue: 0.816)
         case .dark: return Color(red: 0.031, green: 0.047, blue: 0.090)
         }
     }
@@ -83,7 +96,6 @@ enum CTPalette: String {
     var card: Color {
         switch self {
         case .light: return Color.white
-        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910)
         case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188)
         }
     }
@@ -91,7 +103,6 @@ enum CTPalette: String {
     var panel: Color {
         switch self {
         case .light: return Color.white.opacity(0.92)
-        case .sepia: return Color(red: 0.984, green: 0.957, blue: 0.910).opacity(0.94)
         case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188).opacity(0.72)
         }
     }
@@ -1678,7 +1689,6 @@ struct ThemeSegmentControl: View {
 
     private let options: [Option] = [
         .init(id: "light", label: "Light", systemImage: "sun.max"),
-        .init(id: "sepia", label: "Sepia", systemImage: "sun.haze"),
         .init(id: "dark", label: "Dark", systemImage: "moon"),
         .init(id: "system", label: "System", systemImage: "desktopcomputer"),
     ]
