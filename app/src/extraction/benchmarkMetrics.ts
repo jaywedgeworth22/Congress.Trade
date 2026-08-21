@@ -567,7 +567,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['google/gemini-3.7-flash'],
+    models: ['google/gemini-3.7-flash', '~google/gemini-flash-latest'],
     meter: 'tokens',
     inputUsdPerMillion: 0.375,
     cachedInputUsdPerMillion: 0.0375,
@@ -575,7 +575,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     version: 'openrouter-static-2026-08-14',
     effectiveDate: '2026-08-14',
     sourceUrl: 'https://openrouter.ai/docs#models',
-    note: 'OpenRouter Gemini 3.7 Flash interactive pricing; verified against the live /api/v1/models listing 2026-08-14.',
+    note: 'OpenRouter Gemini 3.7 Flash interactive pricing on the Vertex/`Google` endpoint (75% off list $1.50/$7.50).  AI Studio is only 50% off ($0.75/$3.75).  Verified against /api/v1/models + /endpoints 2026-08-21.',
   },
   {
     provider: 'openrouter',

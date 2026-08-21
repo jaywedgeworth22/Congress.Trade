@@ -173,3 +173,8 @@ would not change the PDF-modality or Atlas-price findings.
 - Do not steal #1959.  If scanned-PDF autonomy is the real gap, that OCR
   path plus the Mac vision worker remain the owned work.
 - ST: do not add a vision-exp row to `llm-model-catalog.ts`.
+- ST `gemini-flash-latest` must send `~google/gemini-flash-latest`
+  (bare slug 404s; alias is currently Gemini 3.7).  See
+  `docs/rollouts/2026-08-21-gemini-flash-latest-openrouter.md`.
+- `supportsNativeVision` now recognizes vision-exp so a future seat does
+  not attach mistral-ocr.  Still do not add it to `DEFAULT_CANDIDATES`.
