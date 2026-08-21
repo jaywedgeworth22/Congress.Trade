@@ -7,7 +7,8 @@
     "start": "deno run --unstable-kv --unstable-cron --unstable-ffi --allow-ffi --allow-net --allow-env --allow-read src/deno/main.ts"
   },
   "imports": {
-    "#sentry": "./src/deno/sentryDummy.ts",
+    "#sentry": "./src/deno/sentry.ts",
+    "@sentry/deno": "npm:@sentry/deno@^10.70.0",
     "@jaywedgeworth22/congress-trading-shared": "./vendor/congress-trading-shared/src/index.ts",
     "hono": "npm:hono@^4.12.31",
     "hono/cookie": "npm:hono@^4.12.31/cookie",

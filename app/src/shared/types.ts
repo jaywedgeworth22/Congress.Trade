@@ -762,8 +762,12 @@ export interface Env {
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
-  /** Sentry DSN for error monitoring (Cloudflare Workers SDK). */
+  /** Sentry DSN for error monitoring (Deno SDK via `#sentry`). */
   SENTRY_DSN?: string;
+  /** Coolify image SHA (`SOURCE_COMMIT` baked at Docker build).  Sentry release. */
+  CT_BUILD_SHA?: string;
+  /** Coolify runtime commit when `CT_BUILD_SHA` is unset.  Not a Deploy id. */
+  SOURCE_COMMIT?: string;
   /** Sentry event/log environment tag, e.g. "production" | "preview". */
   SENTRY_ENVIRONMENT?: string;
   /** Read-only safety switch for isolated branch-review deployments. */

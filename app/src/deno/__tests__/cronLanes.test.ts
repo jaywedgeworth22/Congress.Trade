@@ -30,6 +30,9 @@ vi.mock('../../jobs.ts', () => ({
 vi.mock('../../ingestion/autonomySweeps.ts', () => ({
   runAutonomySweeps: mocks.autonomySweeps,
 }));
+vi.mock('#sentry', () => ({
+  captureException: vi.fn(),
+}));
 
 import {
   DAILY_LANE_CRONS,
