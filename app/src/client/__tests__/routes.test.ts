@@ -117,9 +117,16 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
   const filterFeedRows = (sql: string, params: unknown[]) => {
     let rows = [...feedRows];
     let i = 0;
+    if (/t\.source <> 'seed_dataset'/i.test(sql)) {
+      rows = rows.filter((row) => row.source !== 'seed_dataset');
+    }
     if (/t\.cursor_seq > \?/i.test(sql)) {
       const since = Number(params[i++] ?? 0);
       rows = rows.filter((row) => Number(row.cursor_seq ?? 0) > since);
+    }
+    if (/\bt\.source = \?/i.test(sql)) {
+      const source = String(params[i++]);
+      rows = rows.filter((row) => row.source === source);
     }
     if (/t\.id = \?/i.test(sql)) {
       const id = String(params[i++]);
@@ -2131,8 +2138,28 @@ describe('client API feed: default order (oldest-first-seed-rows bug)', () => {
     const body = (await res.json()) as {
       items: Array<{ id: string; filing: { filedDate: string | null } }>;
     };
-    expect(body.items.map((i) => i.id)).toEqual(['live-newest', 'seed-older']);
+    expect(body.items.map((i) => i.id)).toEqual(['live-newest']);
     expect(body.items[0].filing.filedDate).not.toBeNull();
+  });
+
+  it('includes seed_dataset rows only when source=all', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({
+        id: 'seed-older',
+        cursor_seq: 2,
+        source: 'seed_dataset',
+        filing_filed_date: null,
+        filing_first_seen_at: null,
+        filing_source_url: undefined,
+      }),
+      feedRow({ id: 'live-newest', cursor_seq: 3 }),
+    );
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?limit=5&source=all', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(['live-newest', 'seed-older']);
   });
 
   it('keeps ASC (oldest-of-the-new-batch-first) on a since-cursor poll even without an explicit order', async () => {
