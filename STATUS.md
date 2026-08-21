@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-17 CURSOR — Ingestion integrity audit (read-only)
+
+Report: `docs/audits/2026-08-17-ingestion-integrity.md`.  No prod writes.
+ZIP is still healthy (#1577).  New gap: **16/353** 2026 Clerk PTRs sit on
+`not_found` probe ids and never fetch.  Do not mass-delete the 897
+phantoms.  Resurrection + `not_found` upgrade is a follow-up PR, not the
+incident-audit halt/402 lane.
 ## 2026-08-20 CLAUDE — Premium activation alerts, Codex round resolved (PR #2082)
 
 Eight Codex findings fixed.  Highest-value: `sendPushover` had no abort signal,
