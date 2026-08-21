@@ -119,8 +119,13 @@ struct PremiumSheet: View {
                         Text(store.isPremium ? "Done" : "Not Now")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 50)
+                            .foregroundStyle(AppTheme.wordInk)
                     }
                     .buttonStyle(.bordered)
+                    // `.bordered` keys its border/text colour off `.tint`,
+                    // which is otherwise the app-wide blue (App.swift) — dark
+                    // legible ink instead (owner 2026-08-21).
+                    .tint(AppTheme.wordInk)
                     .disabled(isBusy)
 
                     LegalFooterLinks(includePricing: false)
