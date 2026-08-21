@@ -31,8 +31,8 @@ import type { AssetTypeCategory } from '../shared/assetTypes.ts';
 import { resolveAssetDisplayName } from '../shared/companyName.ts';
 import { plainCleaningNote } from '../shared/cleaningNote.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
+import { tradeLearnedAt } from './tradeLearnedAt.ts';
 import { sanitizeCompetitorPublication, TWIN_DEDUPE_SQL } from '../shared/tradeIdentity.ts';
-
 
 // ---------------------------------------------------------------------------
 // Raw row shapes (mirror the D1 column names in migrations/0001_init.sql)
@@ -237,7 +237,11 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     // already-persisted data, never fabricates a value.  Competitor rows
     // whose only date is filed_date = tx_date are stripped below.
     filedDate: row.filing_filed_date ?? row.filed_date ?? null,
-    firstSeenAt: row.filing_first_seen_at ?? row.first_seen_at ?? null,
+    firstSeenAt: tradeLearnedAt(
+      row.filing_first_seen_at ?? row.first_seen_at,
+      row.created_at,
+      row.tx_date,
+    ),
     sourceUrl: row.filing_source_url ?? undefined,
     pdfUrl: row.filing_raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
     refCompanyName: row.ref_company_name,
