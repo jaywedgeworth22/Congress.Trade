@@ -164,6 +164,23 @@ export function supportsNativeVision(model: string): boolean {
 }
 
 /**
+ * True when the model reads raster pages (image_url) but not PDF `file`
+ * attachments.  Sending a PDF through OpenRouter's file-parser would bill
+ * mistral-ocr (~$2/1k pages) — the opposite of a cheap cascade.  The Mac
+ * vision-worker therefore attaches page PNGs/JPEGs for these slugs.
+ *
+ * Keep in sync with `model_uses_page_images` in services/vision-worker/worker.py.
+ */
+export function prefersPageImages(model: string): boolean {
+  const m = model.toLowerCase();
+  if (supportsNativeVision(m)) return false;
+  if (/qwen/.test(m) && /vl/.test(m)) return true;
+  if (/glm-4/.test(m) && /v/.test(m)) return true;
+  if (/deepseek[-/].*flash-vision|deepseek[-/].*-vision(?:-|$)/.test(m)) return true;
+  return false;
+}
+
+/**
  * Models verified (live /api/v1/models `supported_parameters`, 2026-07-18) to
  * support `structured_outputs` via OpenRouter. Slug-vendor allowlist rather
  * than per-model so new same-vendor generations inherit the behavior; vendors
