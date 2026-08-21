@@ -10,7 +10,8 @@ describe('browserSecurityHeaders', () => {
     expect(headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
     expect(headers.get('permissions-policy')).toContain('camera=()');
     expect(headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    expect(headers.get('content-security-policy')).toContain("connect-src 'self'");
+    expect(headers.get('content-security-policy')).toContain("connect-src 'self' https://cloudflareinsights.com https://static.cloudflareinsights.com");
+    expect(headers.get('content-security-policy')).toContain('https://static.cloudflareinsights.com');
   });
 
   it('sets HSTS only for HTTPS requests', () => {
@@ -22,7 +23,7 @@ describe('browserSecurityHeaders', () => {
 
   it('documents only the current inline dashboard exceptions', () => {
     const csp = browserSecurityHeaders('https://congress.trade/').get('content-security-policy') ?? '';
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com");
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).not.toContain('*');

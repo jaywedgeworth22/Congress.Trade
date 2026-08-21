@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  asTxSource,
   buildTransactionsQuery,
   buildTransactionsCountQuery,
   buildTransactionsTodayFilingsQuery,
@@ -39,6 +40,16 @@ describe('twinCandidateLimit', () => {
   });
 });
 
+describe('asTxSource', () => {
+  it('accepts all / primary / seed_dataset and ignores junk', () => {
+    expect(asTxSource('all')).toBe('all');
+    expect(asTxSource('primary')).toBe('primary');
+    expect(asTxSource('SEED_DATASET')).toBe('seed_dataset');
+    expect(asTxSource('nope')).toBeUndefined();
+    expect(asTxSource(undefined)).toBeUndefined();
+  });
+});
+
 describe('buildTransactionsQuery', () => {
   it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {
     const q = buildTransactionsQuery({});
@@ -49,6 +60,19 @@ describe('buildTransactionsQuery', () => {
     // Hot path nests keyset+LIMIT before enrichment joins.
     expect(q.sql).toContain('SELECT t.* FROM transactions t');
     expect(q.sql).toMatch(/\) t LEFT JOIN filers/);
+  });
+
+  it('defaults to hiding seed_dataset historic copies (#1453)', () => {
+    const q = buildTransactionsQuery({});
+    expect(q.sql).toContain("t.source <> 'seed_dataset'");
+    expect(q.params).toEqual([0]);
+    const count = buildTransactionsCountQuery({});
+    expect(count.sql).toContain("t.source <> 'seed_dataset'");
+    const all = buildTransactionsQuery({ source: 'all' });
+    expect(all.sql).not.toContain("t.source <> 'seed_dataset'");
+    const seed = buildTransactionsQuery({ source: 'seed_dataset' });
+    expect(seed.sql).toContain('t.source = ?');
+    expect(seed.params).toEqual([0, 'seed_dataset']);
   });
 
   it('hides competitor-only executive orphans (no official OGE doc) from the public feed', () => {
