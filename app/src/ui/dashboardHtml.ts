@@ -4698,16 +4698,24 @@ function missingFiledReason(r) {
   return 'Official filing date is not available for this row.';
 }
 /* Owner punch list #17 — timestamp semantics: this was labeled "Published"
-   in the UI, which read like an editorial publish date. It is actually
-   firstSeenAt: the moment our own crawler first observed the filing at the
-   source (falling back to our import time, then the official filed date,
-   for older rows collected before that telemetry existed) — i.e. "Seen",
-   not "Published". The drawer shows this row directly alongside "Imported"
-   (when we finished storing it) and "Official Filed" (the source's own
-   disclosure date) so the three timestamps read in an unambiguous sequence
-   instead of two similarly-named dates that can look like they contradict
-   each other. */
-function seenRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }
+   in the UI, which read like an editorial publish date. Public firstSeenAt
+   is when we learned about THIS trade (filing-index first-seen only when
+   that stamp is on/after the trade date; otherwise persist time).  Fall
+   back to imported / official filed for older rows, but never show a
+   calendar day before the trade — House live search can list a DocID
+   before later trades in the same PDF exist. */
+function seenRaw(r) {
+  if (!r) return '';
+  var tx = toISODate(r.txdate);
+  var candidates = [r.firstSeenAt, r.imported, r.filed, r.filedDate];
+  for (var i = 0; i < candidates.length; i++) {
+    var s = candidates[i];
+    if (!s) continue;
+    if (tx && toISODate(s) && toISODate(s) < tx) continue;
+    return s;
+  }
+  return '';
+}
 function seenText(r) { var s = seenRaw(r); return s ? dateText(s) : 'Unavailable'; }
 function seenDetailText(r) { var s = seenRaw(r); return s ? dateTimeText(s) : 'Unavailable'; }
 function filedDetailText(r) { return r && r.filed ? dateText(r.filed) : 'Official Filing Date Unavailable'; }
@@ -4744,7 +4752,7 @@ var TRADES_COLS = [
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw this filing at the source, before it was parsed and imported. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
+  { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first learned about this trade. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
