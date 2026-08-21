@@ -340,9 +340,13 @@ export async function normalize(
     ? flagged.filter((f) => hardFlagsBlockingPublish(f.flags, true).length === 0
       && !f.flags.includes('no_amount'))
     : flagged;
+  // Sibling-publish only: gate on rows that have amounts.  If every row
+  // omitted the checkbox, use the real min (includes the no_amount penalty)
+  // so the filing stays in review.  Substituting the publish threshold here
+  // auto-published all-null-amount extracts after #2143.
   const gateMinConfidence = gateRows.length
     ? Math.min(...gateRows.map((f) => f.tx.confidence))
-    : (localVision && flagged.length > 0 ? confidenceThresholdFor(extractorName, filing.docKind) : minConfidence);
+    : minConfidence;
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = localVision
