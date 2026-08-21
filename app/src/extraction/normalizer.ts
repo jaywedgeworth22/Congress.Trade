@@ -127,6 +127,24 @@ export function confidenceThresholdFor(
     : CONFIDENCE_THRESHOLD;
 }
 
+/** Mac Grok-CLI / local_mac vision — subscription path, not server_cpu OCR. */
+export function isLocalVisionExtractor(extractor: string | null | undefined): boolean {
+  const compact = (extractor || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return compact.includes('local_grok')
+    || compact.includes('local_mac')
+    || compact.includes('mac_vision');
+}
+
+function hardFlagsBlockingPublish(
+  flags: readonly string[],
+  localVision: boolean,
+): string[] {
+  return flags.filter((flag) => {
+    if (localVision && flag === 'no_amount') return false;
+    return HARD_FAILURE_FLAG_SET.has(flag);
+  });
+}
+
 export class TransactionPublishLimitError extends Error {}
 
 // Multiplicative penalties applied to the extractor's per-row confidence when a
@@ -313,8 +331,23 @@ export async function normalize(
     ? Math.min(...flagged.map((f) => f.tx.confidence))
     : 0;
 
+  // Local vision: an omitted amount checkbox on an otherwise-read row
+  // (prod H-2025-9115689 page 4) must not hold sibling trades.  Gate
+  // confidence on the rows that have amounts; still persist the omitted
+  // ones with null brackets.
+  const localVision = isLocalVisionExtractor(extractorName);
+  const gateRows = localVision
+    ? flagged.filter((f) => hardFlagsBlockingPublish(f.flags, true).length === 0
+      && !f.flags.includes('no_amount'))
+    : flagged;
+  const gateMinConfidence = gateRows.length
+    ? Math.min(...gateRows.map((f) => f.tx.confidence))
+    : (localVision && flagged.length > 0 ? confidenceThresholdFor(extractorName, filing.docKind) : minConfidence);
+
   // Hard structural failures force review regardless of the soft confidence.
-  const hasHardFailure = hasHardFailureFlags(flagged);
+  const hasHardFailure = localVision
+    ? flagged.some((f) => hardFlagsBlockingPublish(f.flags, true).length > 0)
+    : hasHardFailureFlags(flagged);
   const hardFailureCount = flagged.filter((f) =>
     f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag)),
   ).length;
@@ -333,7 +366,7 @@ export async function normalize(
 
   const needsReview =
     flagged.length === 0
-    || minConfidence < confThreshold
+    || gateMinConfidence < confThreshold
     || hasHardFailure
     || exceedsPublishLimit
     || ocrUnusable;
