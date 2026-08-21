@@ -139,9 +139,15 @@ struct PoliticianDetailView: View {
                     }
                 }
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21); `.tint` is required alongside
+                    // `.foregroundStyle` because the toolbar button style
+                    // re-applies tint over a plain foreground colour.
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundStyle(AppTheme.wordInk)
+                    .tint(AppTheme.wordInk)
                 }
             }
             .task {
