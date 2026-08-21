@@ -142,6 +142,13 @@ struct TradeDetailView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        // Without this, a drag starting inside the body `ScrollView` never
+        // reaches the detent-resize recognizer, so dragging the grabber up
+        // to `.large` silently does nothing (iPad audit P2-1) — this makes
+        // the same upward drag resize the sheet once its scroll view is
+        // already at the top, matching Apple's own apps.
+        .presentationContentInteraction(.resizes)
+        .iPadFullWidthSheet()
         .task {
             // The feed never re-announces a row it already served once it's
             // retracted (see app/docs/client-mobile-api.md); reconcile this
@@ -314,8 +321,10 @@ struct TradeDetailView: View {
         // Guideline 5.1.1(v): the filing PDF is content, not account-specific
         // functionality — a signed-out device with its own Apple purchase
         // fetches it in-app the same way a signed-in Premium session does
-        // (APIClient attaches the cached device entitlement token).
-        switch FilingPDFAccess.action(isPremium: store.isPremium || store.hasLocalAppleEntitlement) {
+        // (APIClient attaches the cached device entitlement token). Signed
+        // in, `premiumFeatureAccess` additionally excludes a device purchase
+        // already linked to a DIFFERENT account.
+        switch FilingPDFAccess.action(isPremium: store.premiumFeatureAccess) {
         case .showPremiumSheet:
             if let openPremium {
                 openPremium()

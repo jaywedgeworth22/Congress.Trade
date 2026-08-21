@@ -10,6 +10,21 @@ import UserNotifications
 enum AppAppearance {
     private static var windowObserver: NSObjectProtocol?
 
+    /// Sepia was removed (owner 2026-08-21: "too dark of a color that
+    /// doesn't look like old fashioned paper", only half-themed and ugly).
+    /// A visitor who had it selected still has `"sepia"` sitting in
+    /// `UserDefaults` under `app_color_scheme` — rewrite that to `"light"`
+    /// the moment it is seen, everywhere the raw pref is read, so it stops
+    /// failing validation on every launch instead of just falling through to
+    /// an unstyled/undefined case once.  Every other read of this pref
+    /// funnels through `paint`, `colorScheme(for:)`, or `CTPalette.resolved`
+    /// below, so migrating here covers all of them.
+    static func migratedPref(_ pref: String) -> String {
+        guard pref == "sepia" else { return pref }
+        UserDefaults.standard.set("light", forKey: "app_color_scheme")
+        return "light"
+    }
+
     static func apply(_ pref: String) {
         paint(pref)
         // Sheet windows can appear a beat after the tap.  Paint again on the
@@ -28,12 +43,19 @@ enum AppAppearance {
     }
 
     private static func paint(_ pref: String) {
+        let pref = migratedPref(pref)
         let style: UIUserInterfaceStyle
         switch pref {
         case "light": style = .light
         case "dark": style = .dark
         default: style = .unspecified
         }
+        let palette: CTPalette
+        switch pref {
+        case "dark": palette = .dark
+        default: palette = .light
+        }
+        AppTheme.currentPalette = palette
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
@@ -44,11 +66,67 @@ enum AppAppearance {
     }
 
     static func colorScheme(for pref: String) -> ColorScheme? {
-        switch pref {
+        switch migratedPref(pref) {
         case "light": return .light
         case "dark": return .dark
         default: return nil
         }
+    }
+}
+
+enum CTPalette: String {
+    case light, dark
+
+    static func resolved(pref: String, system: ColorScheme) -> CTPalette {
+        switch AppAppearance.migratedPref(pref) {
+        case "dark": return .dark
+        case "light": return .light
+        default: return system == .dark ? .dark : .light
+        }
+    }
+
+    /// Cool light page (#eff3f8) or night navy — never mix.
+    var background: Color {
+        switch self {
+        case .light: return Color(red: 0.937, green: 0.953, blue: 0.973)
+        case .dark: return Color(red: 0.031, green: 0.047, blue: 0.090)
+        }
+    }
+
+    var card: Color {
+        switch self {
+        case .light: return Color.white
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188)
+        }
+    }
+
+    var panel: Color {
+        switch self {
+        case .light: return Color.white.opacity(0.92)
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188).opacity(0.72)
+        }
+    }
+}
+
+private struct CTPaletteKey: EnvironmentKey {
+    static let defaultValue: CTPalette = .light
+}
+
+extension EnvironmentValues {
+    var ctPalette: CTPalette {
+        get { self[CTPaletteKey.self] }
+        set { self[CTPaletteKey.self] = newValue }
+    }
+}
+
+struct CTPaletteInjector: ViewModifier {
+    let pref: String
+    @Environment(\.colorScheme) private var systemScheme
+
+    func body(content: Content) -> some View {
+        let palette = CTPalette.resolved(pref: pref, system: systemScheme)
+        AppTheme.currentPalette = palette
+        return content.environment(\.ctPalette, palette)
     }
 }
 
@@ -75,12 +153,42 @@ struct TickerSheetTarget: Identifiable, Hashable {
 }
 
 enum AppTheme {
-    static let background = Color(uiColor: .systemBackground)
-    static let panel = Color(uiColor: .systemGray6).opacity(0.4)
-    static let panelElevated = Color(uiColor: .systemGray5).opacity(0.6)
+    static var currentPalette: CTPalette = .light
+    static var background: Color { currentPalette.background }
+    static var card: Color { currentPalette.card }
+    static var panel: Color { currentPalette.panel }
+    static var panelElevated: Color { currentPalette.card }
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-    
+
+    /// Neutral "chrome" colour for bare icon glyphs that carry no semantic
+    /// meaning of their own and have no adjacent text — dropdown chevrons,
+    /// the sort-direction flip arrow, disclosure carets.  Same treatment as
+    /// the header ⓘ/≡ buttons' `headerGlyphGrey` (owner: leave those exactly
+    /// as they are; this is the same grey, reused for the rest of the chrome
+    /// family). A concrete `Color`, not the hierarchical `.secondary`
+    /// `ShapeStyle`: hierarchical styles resolve against the environment
+    /// tint, and `MainTabView` sets `.tint(.blue)` (App.swift), so
+    /// `.secondary` inside a `Menu`/`Button` renders accent blue instead of
+    /// grey — see `headerGlyphGrey`'s doc comment below for the fuller story.
+    static let glyphGrey = Color(uiColor: .secondaryLabel)
+
+    /// Ordinary "ink" colour for text words on chrome controls — filter pill
+    /// labels ("House", "D+R", "3 Months"), "Done", "Export CSV", "Subscribe
+    /// with Apple", sort-field names, the rows-per-page value.  Owner
+    /// (2026-08-21): these must read as "very dark grey or almost black",
+    /// comfortably legible — `.secondaryLabel`/`glyphGrey` above is too light
+    /// for text, even though it is fine for a bare glyph.  `.label` clears
+    /// WCAG AA (4.5:1) against `AppTheme.card`/`AppTheme.panel` in both
+    /// themes and inverts correctly in dark mode.  Same concrete-`Color`
+    /// reasoning as `glyphGrey`: hierarchical `.primary` also resolves
+    /// against the blue tint inside a `Menu`/`Button`.
+    static let wordInk = Color(uiColor: .label)
+
+    /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
+    static let siteFooterDisclaimer =
+        "Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency"
+
     // Web app aesthetic alignment
     static let houseColor = Color.blue.opacity(0.8)
     static let senateColor = Color.purple.opacity(0.8)
@@ -89,6 +197,20 @@ enum AppTheme {
     static func border(cornerRadius: CGFloat = 16) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius)
             .stroke(borderColor, lineWidth: 1)
+    }
+}
+
+extension View {
+    func ctThemedForm() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
+            .toolbarBackground(AppTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    func ctThemedRow() -> some View {
+        listRowBackground(AppTheme.card)
     }
 }
 
@@ -122,6 +244,20 @@ extension String {
         default: return self.capitalized
         }
     }
+
+    /// Same as `chamberLabel`, but for an executive-branch filer with a
+    /// curated position on file (`member.title`, sourced server-side from
+    /// `shared/executiveTitles.ts`) shows that position instead of the bare
+    /// branch name — "President" / "Treasury Secretary", never the literal
+    /// word "Executive" (iPad audit P1-4).  Falls back to `chamberLabel`
+    /// whenever no title is available, so House/Senate rows and executive
+    /// filers with no curated title yet render exactly as before.
+    func chamberLabel(title: String?) -> String {
+        if self.lowercased() == "executive", let title, !title.isEmpty {
+            return title
+        }
+        return chamberLabel
+    }
 }
 
 enum MemberPhotoURL {
@@ -150,7 +286,7 @@ struct MemberAvatar: View {
                 .font(.system(size: max(11, size * 0.34), weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
-                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                .background(AppTheme.card, in: Circle())
             if let photoURL {
                 AsyncImage(url: photoURL) { phase in
                     if case .success(let image) = phase {
@@ -274,9 +410,7 @@ struct AssetMark: View {
                         .padding(size * 0.12)
                         .frame(width: size, height: size)
                         .background(
-                            colorScheme == .dark
-                                ? Color(uiColor: .secondarySystemBackground)
-                                : Color.white,
+                            AppTheme.card,
                             in: RoundedRectangle(cornerRadius: size * 0.22)
                         )
                         .overlay(
@@ -753,6 +887,30 @@ extension View {
         self
         #endif
     }
+
+    /// Fills the iPad canvas instead of iPadOS's default "form sheet" card
+    /// (a fixed ~830pt-wide box centered in a sea of dimmed background —
+    /// the pattern behind every sheet flagged in the iPad audit, P1-1).
+    /// Apply this to the content passed to `.sheet` / `.fullScreenCover`.
+    /// Regular width class only: on iPhone's compact class this is a no-op,
+    /// because `.sheet` there already fills the available width and
+    /// `presentationSizing` never runs.
+    @ViewBuilder
+    func iPadFullWidthSheet() -> some View {
+        modifier(IPadFullWidthSheetModifier())
+    }
+}
+
+private struct IPadFullWidthSheetModifier: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), horizontalSizeClass == .regular {
+            content.presentationSizing(.page)
+        } else {
+            content
+        }
+    }
 }
 
 // MARK: - Header chrome (subtle icon buttons + hamburger account menu)
@@ -827,6 +985,7 @@ struct HamburgerMenuButton: View {
             AccountQuickMenu(isPresented: $showMenu)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(AppTheme.background)
         }
     }
 }
@@ -860,6 +1019,7 @@ struct AccountQuickMenu: View {
                         Text(notice)
                     }
                 }
+                .ctThemedRow()
 
                 if store.showsAdminRow {
                     Section {
@@ -867,20 +1027,32 @@ struct AccountQuickMenu: View {
                             Label("Admin", systemImage: "gearshape.2")
                         }
                     }
+                    .ctThemedRow()
                 }
 
                 Section {
                     TradeDisclosureAlertsToggle()
                 }
+                .ctThemedRow()
 
                 Section {
                     Button {
                         showExportSheet = true
                     } label: {
-                        Label("Export CSV", systemImage: "arrow.down.circle")
+                        // Split colour: bare-glyph grey on the icon, dark
+                        // legible ink on the word (owner 2026-08-21 — words
+                        // must read dark, glyphs can stay the lighter grey).
+                        // Without this the row inherits the app-wide
+                        // `.tint(.blue)` (App.swift) and renders accent blue.
+                        Label {
+                            Text("Export CSV").foregroundStyle(AppTheme.wordInk)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(AppTheme.glyphGrey)
+                        }
                     }
                     billingRow
                 }
+                .ctThemedRow()
 
                 Section {
                     // No "Theme" caption and no explanation of what Light/Dark
@@ -889,6 +1061,7 @@ struct AccountQuickMenu: View {
                     ThemeSegmentControl(selection: $appColorScheme)
                         .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                 }
+                .ctThemedRow()
 
                 if store.signedIn || store.hasStoredSessionToken {
                     Section {
@@ -913,21 +1086,23 @@ struct AccountQuickMenu: View {
                             .disabled(store.isLoggingOut || store.isDeletingAccount)
                         }
                     }
+                    .ctThemedRow()
                 }
 
                 Section {
                     LegalFooterLinks()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     // Short disclaimer line — mobile-web parity with `.site-footer`.
-                    Text("Congress.Trade is an educational tool for public STOCK Act disclosures.  Not financial advice — dollar figures are estimates from disclosed brackets.")
+                    Text(AppTheme.siteFooterDisclaimer)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .ctThemedRow()
             }
-            .scrollContentBackground(.hidden)
-            .background(AppTheme.background)
+            .ctThemedForm()
             .modifier(ForcedColorScheme(pref: appColorScheme))
+            .modifier(CTPaletteInjector(pref: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
             .navigationDestination(for: AdminRoute.self) { route in
@@ -942,7 +1117,14 @@ struct AccountQuickMenu: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21) — `.foregroundStyle` alone is not enough
+                    // here: the toolbar button style re-applies `.tint` over
+                    // it, so both must be set (same defensive pattern as
+                    // `SignInWithGoogleButton` below).
                     Button("Done") { isPresented = false }
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
         }
@@ -1223,7 +1405,7 @@ struct GoogleSignInButton: View {
                     .frame(width: 20, height: 20)
                 // System font, not the app's Zilla Slab body font: Google's
                 // brand guidance is a neutral sans for the button label.
-                Text(isBusy ? "Opening Google…" : "Sign In with Google")
+                Text(isBusy ? "Opening Google…" : "Sign in with Google")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(label)
             }
@@ -1237,7 +1419,7 @@ struct GoogleSignInButton: View {
         .buttonStyle(.plain)
         .tint(label)
         .disabled(isBusy)
-        .accessibilityLabel("Sign In with Google")
+        .accessibilityLabel("Sign in with Google")
     }
 }
 
@@ -1573,7 +1755,7 @@ struct ThemeSegmentControl: View {
                     .background {
                         if selection == option.id {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                                .fill(AppTheme.card)
                                 .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
                         }
                     }
@@ -1591,7 +1773,7 @@ struct ThemeSegmentControl: View {
             }
         }
         .padding(3)
-        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 1)

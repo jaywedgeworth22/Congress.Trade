@@ -89,6 +89,7 @@ import {
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
+import { storedReviewBlocksSmallerVisionSubmit } from '../extraction/visionSubmitGuard.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
@@ -5380,6 +5381,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     letterhead floods — reclaim for local vision, not human review)
   //   • error + stored raw + no live txs (honest reject of garbage OCR must
   //     still be re-claimable by Mac/server_cpu vision — 2026-08-10 drain)
+  //   • ?worker=local (the Mac Grok-CLI worker) additionally reclaims EVERY
+  //     unresolved needs_review scan with stored raw bytes — cascade
+  //     disagreements, extraction_row_limit garbage, low-confidence flags —
+  //     because local vision is free (subscription) and strictly better than
+  //     the server_cpu OCR that created those flags. The Coolify scan-cpu
+  //     worker (no param / worker=server_cpu) keeps the conservative reason
+  //     set so it never re-generates garbage on hard scans.
   // Skips published live-transaction docs and local_vision_exhausted parks
   // (worker retry-cap terminal class — #1575 vision-spend bucket) so workers
   // don't burn subscription quota on no-ops.
@@ -5389,6 +5397,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Mac/residential IP. source_url is metadata only.
   r.get('/scanned-filings/pending', async (c) => {
     try {
+      const worker = typeof c.req.query('worker') === 'string'
+        ? c.req.query('worker').trim().toLowerCase()
+        : '';
+      // Local (Mac Grok-CLI) workers get the broad reclaim set; the CPU OCR
+      // worker keeps the conservative reasons so it cannot re-generate
+      // garbage on hard scans it already failed.
+      const localWorker = worker.includes('local');
+      const reviewReasonMatch = localWorker
+        ? `rq.reason NOT LIKE '%local_vision_exhausted%'`
+        : `(
+             rq.reason LIKE '%extract_empty%'
+             OR rq.reason LIKE '%no_transactions_extracted%'
+             OR rq.reason LIKE '%ocr_unusable%'
+             OR rq.reason LIKE '%form_chrome%'
+           )
+           AND rq.reason NOT LIKE '%local_vision_exhausted%'`;
       const rows = await all<{
         doc_id: string;
         chamber: string | null;
@@ -5416,13 +5440,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                   SELECT 1 FROM review_queue rq
                    WHERE rq.doc_id = f.doc_id
                      AND rq.resolved = 0
-                     AND (
-                       rq.reason LIKE '%extract_empty%'
-                       OR rq.reason LIKE '%no_transactions_extracted%'
-                       OR rq.reason LIKE '%ocr_unusable%'
-                       OR rq.reason LIKE '%form_chrome%'
-                     )
-                     AND rq.reason NOT LIKE '%local_vision_exhausted%'
+                     AND ${reviewReasonMatch}
                 )
               )
             )
@@ -5739,6 +5757,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         : 'local_mac';
 
     try {
+      const existingReview = await get<{ reason: string | null; payload: string | null }>(
+        c.env.DB,
+        `SELECT reason, payload FROM review_queue WHERE doc_id = ? AND resolved = 0`,
+        [docId],
+      );
+      if (
+        existingReview
+        && storedReviewBlocksSmallerVisionSubmit(
+          existingReview.reason,
+          existingReview.payload,
+          parsedTx.length,
+        )
+      ) {
+        return c.json({
+          ok: true,
+          docId,
+          published: false,
+          needsReview: true,
+          skipped: 'smaller_than_stored_review',
+          txCount: parsedTx.length,
+        });
+      }
+
       const filingRow = await loadFilingRow(c.env, docId);
       if (!filingRow) {
         return c.json({ error: `Filing ${docId} not found` }, 404);

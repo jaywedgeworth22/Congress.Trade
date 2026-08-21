@@ -18,7 +18,8 @@ import type { Context } from 'hono';
 import type { BillingPlan, Env } from '../shared/types.ts';
 import { getCurrentUser } from '../auth/session.ts';
 import { getUserById } from '../auth/users.ts';
-import { resolveEntitlementAsync } from './entitlement.ts';
+import { PREMIUM_STATUSES, resolveEntitlementAsync } from './entitlement.ts';
+import { notifyPremiumActivation } from './premiumActivationAlert.ts';
 import {
   billingCapabilitiesAsync,
   checkoutConfiguredAsync,
@@ -200,6 +201,21 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
       if (!upserted.ok) {
         return c.json({ error: 'this Apple subscription is already linked to a different account' }, 409);
       }
+      // The deprecated path grants Premium just like redeem_apple_purchase, so it
+      // must raise the same alert. Old iOS clients still use this route, and
+      // without this a real new Apple subscriber arrives silently. Same
+      // activationKey shape, so a client that later replays through the modern
+      // path is deduped by the ledger claim rather than notifying twice.
+      if (upserted.isNew) {
+        await notifyPremiumActivation(c.env, {
+          activationKey: `apple:${upserted.record.originalTransactionId}`,
+          userId: user.id,
+          userEmail: user.email,
+          source: 'apple',
+          plan: upserted.record.plan,
+          trialing: false,
+        });
+      }
       const refreshed = await getUserById(c.env, user.id);
       return c.json({
         ok: true,
@@ -296,11 +312,57 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
         case 'customer.subscription.updated': {
           const sub = parseSubscription(obj ?? {});
           if (!sub) throw new Error(`malformed ${event.type} payload`);
-          await applySubscription(c.env, sub, {
+          const affectedUserId = await applySubscription(c.env, sub, {
             id: event.id,
             created: event.created,
             type: event.type,
           });
+          // Notify only on the event type Stripe fires exactly once per
+          // subscription's lifetime.  Renewals, a trial converting to paid,
+          // and any other change to this SAME subscription id arrive as
+          // customer.subscription.updated and are deliberately not checked
+          // here — this is what keeps "genuine new activation" from
+          // double-firing.  Re-confirm the persisted row (rather than
+          // trusting applySubscription's return, which can be non-null even
+          // when its guarded UPDATE lost an out-of-order-webhook race) before
+          // notifying: the ledger claim below is the actual idempotency
+          // guard, but this keeps the notified state truthful.
+          // `created` is NOT sufficient on its own. Stripe opens a card-confirmation
+          // subscription as `incomplete`, which is not a PREMIUM_STATUS, so the created
+          // event correctly declines to notify — and the payment confirmation then
+          // arrives as `customer.subscription.updated`. Excluding `updated` entirely
+          // meant every such customer became Premium with no alert ever produced.
+          // Admitting it is safe because the idempotency guard is the ledger claim on
+          // `activationKey: sub.id`, not this event-type filter: renewals, trial
+          // conversions and any later change to the SAME subscription id all present
+          // the same key and are refused by the claim.
+          if (
+            (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated')
+            && affectedUserId
+          ) {
+            const activatedUser = await getUserById(c.env, affectedUserId);
+            // Require a RECOGNISED plan rather than defaulting null to 'monthly'. When a
+            // subscription's price is not configured, applySubscription persists
+            // plan = null and the entitlement resolver does not grant Premium — so
+            // defaulting would announce a "monthly Premium" activation for a user who
+            // is not Premium, and whom the totals query in the alert excludes.
+            const plan = activatedUser?.plan;
+            if (
+              activatedUser?.stripeSubscriptionId === sub.id
+              && activatedUser.subscriptionStatus != null
+              && PREMIUM_STATUSES.has(activatedUser.subscriptionStatus)
+              && (plan === 'monthly' || plan === 'annual')
+            ) {
+              await notifyPremiumActivation(c.env, {
+                activationKey: sub.id,
+                userId: activatedUser.id,
+                userEmail: activatedUser.email,
+                source: 'stripe',
+                plan,
+                trialing: activatedUser.subscriptionStatus === 'trialing',
+              });
+            }
+          }
           break;
         }
         case 'customer.subscription.deleted': {

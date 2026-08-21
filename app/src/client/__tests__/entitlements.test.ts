@@ -156,13 +156,31 @@ describe('POST /entitlements/apple/redeem — no session required', () => {
     expect(row).toBeUndefined();
   });
 
-  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true — no ledger row, no token', async () => {
+  it('grants a Sandbox transaction by default — ledger row + device token', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
+    const res = await post(buildApp(), env, { signedTransaction: 'a.b.c' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      entitlement: { premium: boolean };
+      deviceEntitlementToken: string | null;
+    };
+    expect(body.entitlement.premium).toBe(true);
+    expect(body.deviceEntitlementToken).toBeTruthy();
+    const row = env.__db
+      .prepare('SELECT environment FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-anon-1') as { environment: string | null };
+    expect(row.environment).toBe('Sandbox');
+  });
+
+  it('rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false — no ledger row, no token', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     const res = await post(buildApp(), env, { signedTransaction: 'a.b.c' });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toMatch(/Sandbox/);
+    expect(env.__db.prepare('SELECT * FROM apple_subscriptions').get()).toBeUndefined();
   });
 
   it('rejects a bundle id mismatch', async () => {

@@ -293,7 +293,13 @@ struct FeedDashboardView: View {
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21); `.tint` is required alongside
+                    // `.foregroundStyle` because the toolbar button style
+                    // re-applies tint over a plain foreground colour.
                     Button("Done") { searchFocused = false }
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
             .refreshable { await store.refresh() }
@@ -322,6 +328,8 @@ struct FeedDashboardView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             .sheet(item: $selectedPolitician) { target in
                 PoliticianDetailView(
@@ -332,12 +340,16 @@ struct FeedDashboardView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             .sheet(item: $selectedTicker) { target in
                 TickerDetailView(ticker: target.ticker)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             .onDisappear {
                 filterTask?.cancel()
@@ -574,11 +586,18 @@ struct FeedControlBar: View {
         }
     }
 
+    /// Same party palette as the web dashboard's `--party-d` / `--party-r` /
+    /// `--party-o` CSS variables (`app/src/ui/dashboardHtml.ts`, used for the
+    /// avatar rings) — Democrat blue, Republican red, Other/Independent the
+    /// neutral purple, reused verbatim rather than inventing new hexes.  This
+    /// replaces an earlier green/red/blue set that did not match the web
+    /// palette at all (owner 2026-08-21: party symbols must read as their
+    /// real party colours, not an arbitrary local guess).
     private static func partyDotColor(_ party: PartyFilter) -> Color {
         switch party {
-        case .democrat: return Color(red: 0.16, green: 0.58, blue: 0.38)
-        case .republican: return Color(red: 0.78, green: 0.22, blue: 0.24)
-        case .other: return Color(red: 0.25, green: 0.45, blue: 0.85)
+        case .democrat: return Color(red: 0x3B / 255.0, green: 0x82 / 255.0, blue: 0xF6 / 255.0)   // --party-d #3b82f6
+        case .republican: return Color(red: 0xEF / 255.0, green: 0x44 / 255.0, blue: 0x44 / 255.0) // --party-r #ef4444
+        case .other: return Color(red: 0xA7 / 255.0, green: 0x8B / 255.0, blue: 0xFA / 255.0)      // --party-o #a78bfa
         }
     }
 
@@ -688,12 +707,9 @@ struct ControlChip<Content: View>: View {
         content()
             .padding(.horizontal, compact ? 10 : 12)
             .padding(.vertical, 8)
-            .foregroundStyle(isActive ? .white : .primary)
-            .background(
-                isActive ? Color.blue : Color(uiColor: .secondarySystemBackground),
-                in: Capsule()
-            )
-            .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
+            .foregroundStyle(.primary)
+            .background(AppTheme.card, in: Capsule())
+            .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: isActive ? 1.5 : 1))
             .opacity(isEnabled ? 1 : 0.35)
     }
 }
@@ -729,8 +745,16 @@ struct SortMenuControl<Key: Hashable>: View {
                     sortAscending.toggle()
                 } label: {
                     ControlChip(compact: true) {
+                        // Bare chrome glyph, no meaning of its own — stays
+                        // the lighter grey (owner 2026-08-21). Needs its own
+                        // concrete `Color`: `ControlChip`'s container-level
+                        // `.foregroundStyle(.primary)` is a hierarchical
+                        // style, which resolves against the app-wide
+                        // `.tint(.blue)` (App.swift) even with
+                        // `.buttonStyle(.plain)` below.
                         Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
                             .font(.caption.weight(.bold))
+                            .foregroundStyle(AppTheme.glyphGrey)
                     }
                 }
                 .buttonStyle(.plain)
@@ -756,8 +780,11 @@ struct SortMenuControl<Key: Hashable>: View {
                     }
                 } label: {
                     ControlChip {
+                        // Sort field name is a word — dark legible ink, not
+                        // the app-wide blue tint (owner 2026-08-21).
                         Text(label(sortKey))
                             .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.wordInk)
                     }
                 }
                 .accessibilityLabel("Sort by \(label(sortKey))")
@@ -778,8 +805,14 @@ struct FeedSortControl: View {
                 Task { await store.toggleFeedSortDirection() }
             } label: {
                 ControlChip(compact: true) {
+                    // Bare chrome glyph, no meaning of its own — stays the
+                    // lighter grey (owner 2026-08-21); needs its own concrete
+                    // `Color` because `ControlChip`'s container-level
+                    // `.foregroundStyle(.primary)` is hierarchical and
+                    // resolves against the app-wide `.tint(.blue)`.
                     Image(systemName: store.feedSortDirection.systemImage)
                         .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.glyphGrey)
                 }
             }
             .buttonStyle(.plain)
@@ -800,8 +833,11 @@ struct FeedSortControl: View {
                 }
             } label: {
                 ControlChip {
+                    // Sort field name is a word — dark legible ink, not the
+                    // app-wide blue tint (owner 2026-08-21).
                     Text(store.feedSortKey.label)
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.wordInk)
                 }
             }
             .accessibilityLabel("Sort by \(store.feedSortKey.label)")
@@ -841,8 +877,14 @@ struct PaginationBar: View {
                 HStack(spacing: 8) {
                     Button(action: onPrevious) {
                         ControlChip(isEnabled: canGoPrevious, compact: true) {
+                            // Bare chrome glyph — stays the lighter grey
+                            // (owner 2026-08-21); needs its own concrete
+                            // `Color` because `ControlChip`'s hierarchical
+                            // `.foregroundStyle(.primary)` resolves against
+                            // the app-wide `.tint(.blue)` (App.swift).
                             Image(systemName: "chevron.left")
                                 .font(.caption.weight(.bold))
+                                .foregroundStyle(AppTheme.glyphGrey)
                         }
                     }
                     .buttonStyle(.plain)
@@ -861,6 +903,7 @@ struct PaginationBar: View {
                         ControlChip(isEnabled: canGoNext, compact: true) {
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.bold))
+                                .foregroundStyle(AppTheme.glyphGrey)
                         }
                     }
                     .buttonStyle(.plain)
@@ -895,10 +938,15 @@ struct PaginationBar: View {
             } label: {
                 ControlChip {
                     HStack(spacing: 4) {
+                        // Rows-per-page value is a word — dark legible ink,
+                        // not the app-wide blue tint (owner 2026-08-21).
                         Text("\(pageSize)")
                             .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.wordInk)
+                        // Bare chrome glyph — stays the lighter grey.
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(AppTheme.glyphGrey)
                             .opacity(0.5)
                             .padding(.leading, 2)
                     }
@@ -954,7 +1002,7 @@ struct SidesFilterMenuLabel: View {
         selected.isEmpty || selected.contains(type)
     }
 
-    private var dimColor: Color { isActive ? .white.opacity(0.45) : .secondary }
+    private var dimColor: Color { Color.secondary.opacity(isActive ? 0.45 : 1) }
 
     var body: some View {
         ControlChip(isActive: isActive, compact: !isActive) {
@@ -969,9 +1017,8 @@ struct SidesFilterMenuLabel: View {
                     // Black rather than orange, matching the buy/sell arrows'
                     // treatment (owner). `Color.primary`, not a literal
                     // `.black`, because a literal black arrow is invisible on
-                    // the dark-mode chip — and on the blue active fill, where
-                    // `.primary` also stays legible. Size and weight now match
-                    // the two siblings exactly; the exchange glyph was a point
+                    // the dark-mode chip. Size and weight now match the two
+                    // siblings exactly; the exchange glyph was a point
                     // smaller, which read as a rendering slip.
                     Image(systemName: "arrow.left.arrow.right")
                         .font(.system(size: 9, weight: .heavy))
@@ -980,9 +1027,14 @@ struct SidesFilterMenuLabel: View {
                 if isActive {
                     Text(title)
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.wordInk)
                 }
+                // Bare chrome glyph, no meaning of its own — stays the
+                // lighter grey rather than the word ink above (owner
+                // 2026-08-21), matching every other dropdown caret.
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AppTheme.glyphGrey)
                     .opacity(0.5)
                     .padding(.leading, 2)
             }
@@ -1007,14 +1059,28 @@ struct FilterMenuLabel: View {
     var body: some View {
         ControlChip(isActive: isActive, compact: !showsLabel) {
             HStack(spacing: 4) {
+                // Chamber/party/timeframe have no natural colour of their
+                // own, so the icon and its value both take the ordinary
+                // dark label colour (owner 2026-08-21) — a container-level
+                // `.foregroundStyle(.primary)` (see `ControlChip`) is not
+                // enough: hierarchical styles resolve against the app-wide
+                // `.tint(.blue)` (App.swift) inside a `Menu`, so every one of
+                // these rendered accent blue until each leaf got its own
+                // concrete `Color`.
                 Image(systemName: icon)
                     .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.wordInk)
                 if showsLabel {
                     Text(title)
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.wordInk)
                 }
+                // The dropdown caret carries no meaning of its own — bare
+                // chrome glyph, so it keeps the lighter grey (owner
+                // 2026-08-21) rather than the darker word ink above.
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AppTheme.glyphGrey)
                     .opacity(0.5)
                     .padding(.leading, 2)
             }
@@ -1179,12 +1245,12 @@ struct DisclaimerBanner: View {
 
     var body: some View {
         if isExpanded {
-            Text("Congress.Trade is an informational tool for exploring public STOCK Act disclosures. Summaries are historical observational views — not trading signals or investment advice. Dollar figures are estimates from disclosed amount brackets.")
+            Text(AppTheme.siteFooterDisclaimer)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -1236,7 +1302,10 @@ struct ExportCSVSheet: View {
                     // with its own Apple purchase (store.hasLocalAppleEntitlement)
                     // exports the same way a signed-in Premium account does;
                     // APIClient attaches the cached device entitlement token.
-                    if !(store.isPremium || store.hasLocalAppleEntitlement) {
+                    // Signed in, `premiumFeatureAccess` additionally excludes
+                    // a device purchase already linked to a DIFFERENT account
+                    // (Premium belongs to the account, not the device).
+                    if !store.premiumFeatureAccess {
                         Text("CSV export is a Premium feature ($5/mo or $50/yr, 2-week free trial).  "
                             + "No account needed to buy.")
                             .font(.subheadline)
@@ -1244,7 +1313,11 @@ struct ExportCSVSheet: View {
                         Button {
                             showSubscribe = true
                         } label: {
+                            // Owner (2026-08-21): the Apple logo glyph itself
+                            // must be the same near-black as the text, not
+                            // the app-wide blue tint (App.swift).
                             Label("Subscribe with Apple", systemImage: "apple.logo")
+                                .foregroundStyle(AppTheme.wordInk)
                         }
                     } else {
                         Button {

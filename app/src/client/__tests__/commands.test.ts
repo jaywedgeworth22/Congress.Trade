@@ -12,6 +12,15 @@ vi.mock('../../billing/appleJws', () => ({
   AppleJwsVerificationError: class AppleJwsVerificationError extends Error {},
 }));
 
+// Real notification delivery (Pushover HTTP + totals aggregate) is covered by
+// billing/__tests__/premiumActivationAlert.test.ts; here we only need to
+// assert executeCommand calls it exactly once on a genuinely new Apple
+// activation, and not again on a restore-purchases replay.
+const notifyPremiumActivation = vi.fn();
+vi.mock('../../billing/premiumActivationAlert', () => ({
+  notifyPremiumActivation: (...args: unknown[]) => notifyPremiumActivation(...args),
+}));
+
 import { executeCommand, commandType } from '../commands.ts';
 import { AppleJwsVerificationError } from '../../billing/appleJws.ts';
 import { ClientInputError } from '../utils.ts';
@@ -70,6 +79,9 @@ async function freshDb(): Promise<SqliteDatabase> {
     CREATE TABLE client_commands (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT, status TEXT,
       payload TEXT, created_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE premium_activation_notices (
+      activation_key TEXT PRIMARY KEY, user_id TEXT NOT NULL, notified_at TEXT NOT NULL
     );
   `);
   db.exec(
@@ -179,6 +191,7 @@ describe('commandType', () => {
 describe('executeCommand redeem_apple_purchase', () => {
   beforeEach(() => {
     verifyAppleSignedJws.mockReset();
+    notifyPremiumActivation.mockReset();
   });
 
   it('is refused when APPLE_IAP_ENABLED is not "true"', async () => {
@@ -204,18 +217,25 @@ describe('executeCommand redeem_apple_purchase', () => {
     ).rejects.toThrow(ClientInputError);
   });
 
-  it('rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('grants a Sandbox transaction by default (TestFlight / Mac / App Review) and records environment', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
-    await expect(
-      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
-    ).rejects.toThrow(/Sandbox/);
-
-    const allowed = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'true' });
-    const result = (await executeCommand(allowed, baseUser(), 'redeem_apple_purchase', {
+    const result = (await executeCommand(env, baseUser(), 'redeem_apple_purchase', {
       signedTransaction: 'a.b.c',
     })) as { entitlement: { premium: boolean } };
     expect(result.entitlement.premium).toBe(true);
+    const row = env.__db
+      .prepare('SELECT environment FROM apple_subscriptions WHERE original_transaction_id = ?')
+      .get('otxn-1') as { environment: string | null };
+    expect(row.environment).toBe('Sandbox');
+  });
+
+  it('rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
+    await expect(
+      executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/Sandbox/);
   });
 
   it('rejects a bundle id mismatch', async () => {
@@ -297,6 +317,44 @@ describe('executeCommand redeem_apple_purchase', () => {
     expect(second.entitlement.premium).toBe(true);
   });
 
+  it('notifies once on a genuinely new Apple activation, keyed on the original transaction id', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+
+    expect(notifyPremiumActivation).toHaveBeenCalledTimes(1);
+    expect(notifyPremiumActivation).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        activationKey: 'apple:otxn-1',
+        userId: 'user_1',
+        userEmail: 'user_1@example.com',
+        source: 'apple',
+        plan: 'monthly',
+      }),
+    );
+  });
+
+  it('does not re-notify on a restore-purchases replay of the same transaction id', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+    await executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+
+    expect(notifyPremiumActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not notify when a purchase is refused (owner-mismatch conflict)', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction());
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser('user_1'), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+    notifyPremiumActivation.mockReset();
+    await expect(
+      executeCommand(env, baseUser('user_2'), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' }),
+    ).rejects.toThrow(/already linked/);
+    expect(notifyPremiumActivation).not.toHaveBeenCalled();
+  });
+
   it('refuses to reassign an originalTransactionId already owned by a different user', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction());
     const env = await fakeEnv();
@@ -349,6 +407,19 @@ describe('executeCommand redeem_apple_purchase', () => {
     })) as { expiresAt: string };
 
     expect(new Date(second.expiresAt).getTime()).toBeGreaterThan(new Date(first.expiresAt).getTime());
+  });
+
+  it('does not re-notify when a later renewal updates the same originalTransactionId', async () => {
+    verifyAppleSignedJws.mockResolvedValueOnce(activeTransaction({ transactionId: 'txn-1', expiresDate: FUTURE_MS }));
+    const env = await fakeEnv();
+    await executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+    expect(notifyPremiumActivation).toHaveBeenCalledTimes(1);
+
+    verifyAppleSignedJws.mockResolvedValueOnce(
+      activeTransaction({ transactionId: 'txn-2', expiresDate: FUTURE_MS + 30 * 86_400_000 }),
+    );
+    await executeCommand(env, baseUser(), 'redeem_apple_purchase', { signedTransaction: 'a.b.c' });
+    expect(notifyPremiumActivation).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -413,9 +484,18 @@ describe('executeCommand link_apple_entitlement (Guideline 5.1.1(v) — claiming
     ).rejects.toThrow(ClientInputError);
   });
 
-  it('still rejects a Sandbox transaction unless APPLE_ALLOW_SANDBOX is true', async () => {
+  it('links a Sandbox transaction by default', async () => {
     verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
     const env = await fakeEnv();
+    const result = (await executeCommand(env, baseUser(), 'link_apple_entitlement', {
+      signedTransaction: 'a.b.c',
+    })) as { entitlement: { premium: boolean } };
+    expect(result.entitlement.premium).toBe(true);
+  });
+
+  it('still rejects a Sandbox transaction when APPLE_ALLOW_SANDBOX is explicitly false', async () => {
+    verifyAppleSignedJws.mockResolvedValue(activeTransaction({ environment: 'Sandbox' }));
+    const env = await fakeEnv({ APPLE_ALLOW_SANDBOX: 'false' });
     await expect(
       executeCommand(env, baseUser(), 'link_apple_entitlement', { signedTransaction: 'a.b.c' }),
     ).rejects.toThrow(/Sandbox/);

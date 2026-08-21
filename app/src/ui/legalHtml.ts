@@ -8,7 +8,7 @@
  * before relying on them. Update EFFECTIVE_DATE when the text changes.
  */
 
-const EFFECTIVE_DATE = 'August 19, 2026';
+const EFFECTIVE_DATE = 'August 21, 2026';
 const ENTITY = 'Jay Wedgeworth, LLC d/b/a Congress.Trade';
 const CONTACT = 'support@congress.trade';
 
@@ -20,6 +20,10 @@ const CONTACT = 'support@congress.trade';
  */
 const NOT_AFFILIATED_SENTENCE =
   'Congress.Trade is an independent, privately operated service and is not affiliated with, endorsed by, or sponsored by the U.S. Congress, the U.S. House of Representatives, the U.S. Senate, the Office of Government Ethics, or any government agency.';
+
+/** Site-footer combined line (owner 2026-08-20).  Two spaces around each · and no trailing period. */
+const SITE_FOOTER_DISCLAIMER =
+  'Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency';
 
 /**
  * Shared legal chrome for /terms-of-service and /privacy-policy.
@@ -35,16 +39,24 @@ const LEGAL_THEME_BOOT = /* html */ `<script>
     var pref = 'light';
     try {
       var s = localStorage.getItem('ui-theme');
+      if (s === 'sepia') {
+        /* Sepia was removed (owner 2026-08-21) — migrate a returning
+           visitor's stored Sepia preference to Light so it stops failing
+           validation on every load. */
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        s = 'light';
+      }
       if (s === 'light' || s === 'dark' || s === 'system') pref = s;
     } catch (e) {}
     var effective = pref;
     if (pref === 'system') {
       effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
-    document.documentElement.setAttribute('data-theme', effective === 'dark' ? 'dark' : 'light');
+    var theme = effective === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-pref', pref);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', effective === 'dark' ? '#0b1120' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : '#eff3f8');
   })();
 </script>`;
 
@@ -70,6 +82,13 @@ const LEGAL_THEME_RUNTIME = /* html */ `<script>
   function readThemePref() {
     try {
       var s = localStorage.getItem('ui-theme');
+      if (s === 'sepia') {
+        /* Sepia was removed (owner 2026-08-21) — migrate a returning
+           visitor's stored Sepia preference to Light so it stops failing
+           validation on every load. */
+        try { localStorage.setItem('ui-theme', 'light'); } catch (e2) {}
+        return 'light';
+      }
       if (s === 'light' || s === 'dark' || s === 'system') return s;
     } catch (e) {}
     return 'light';
@@ -82,10 +101,10 @@ const LEGAL_THEME_RUNTIME = /* html */ `<script>
     return 'light';
   }
   function applyTheme(effective) {
-    effective = effective === 'dark' ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', effective);
+    var theme = effective === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', effective === 'dark' ? '#0b1120' : '#eff3f8');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0b1120' : '#eff3f8');
     syncThemeSegUI();
   }
   function syncThemeSegUI() {
@@ -97,7 +116,7 @@ const LEGAL_THEME_RUNTIME = /* html */ `<script>
     });
   }
   function setThemePref(pref) {
-    if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+    if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
     try { localStorage.setItem('ui-theme', pref); } catch (e) {}
     document.documentElement.setAttribute('data-theme-pref', pref);
     applyTheme(resolveTheme(pref));
@@ -178,7 +197,7 @@ ${LEGAL_THEME_BOOT}
 ${body}
 <p style="margin-top:36px"><a href="/">&larr; Back to Congress.Trade</a></p>
 </main>
-<footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets<span class="not-affiliated">${NOT_AFFILIATED_SENTENCE}</span></footer>
+<footer>${SITE_FOOTER_DISCLAIMER}</footer>
 ${LEGAL_THEME_RUNTIME}
 </body>
 </html>`;
@@ -202,7 +221,7 @@ export const TOS_HTML = shell(
 </div>
 
 <div class="callout">
-<strong>Not financial advice.</strong>&nbsp; The Service is for informational and educational purposes only.&nbsp; Nothing on Congress.Trade is investment, financial, legal, or tax advice, a recommendation, an offer or solicitation to buy or sell any security, or a "trading signal."&nbsp; We are not a broker-dealer, investment adviser, or fiduciary, and no advisory relationship is created by your use of the Service.&nbsp; Disclosure data is sourced from third parties and public filings, may be delayed, incomplete, or inaccurate, and <strong>dollar amounts are estimates derived from the disclosed value brackets</strong>.&nbsp; Always do your own research and consult a licensed professional before making any financial decision.&nbsp; You are solely responsible for your decisions and any resulting gains or losses.
+<strong>Not financial advice.</strong>&nbsp; The Service is for informational and educational purposes only.&nbsp; Nothing on Congress.Trade is investment, financial, legal, or tax advice, a recommendation, an offer or solicitation to buy or sell any security, or a "trading signal."&nbsp; We are not a broker-dealer, investment adviser, or fiduciary, and no advisory relationship is created by your use of the Service.&nbsp; Disclosure data is sourced from third parties and public filings, may be delayed, incomplete, or inaccurate, and <strong>dollar amounts are estimates derived from the disclosure brackets the filings themselves use, not exact amounts</strong>.&nbsp; Always do your own research and consult a licensed professional before making any financial decision.&nbsp; You are solely responsible for your decisions and any resulting gains or losses.
 </div>
 
 <h2>2. Eligibility &amp; accounts</h2>
@@ -242,10 +261,19 @@ export const TOS_HTML = shell(
 <p>The Service relies on third-party sources and providers (including U.S. House/Senate disclosure systems and market-data vendors).&nbsp; We do not control and are not responsible for the accuracy, availability, or content of third-party data or websites.</p>
 
 <h2>9. Disclaimers</h2>
-<p>THE SERVICE AND ALL DATA ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AND NON-INFRINGEMENT.&nbsp; We do not warrant that the Service will be uninterrupted, timely, secure, or error-free, or that data is accurate or complete.</p>
+<p>THE SERVICE AND ALL DATA ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AND NON-INFRINGEMENT.&nbsp; We do not warrant that the Service will be uninterrupted, available, timely, secure, or error-free, or that data is accurate or complete, to the maximum extent permitted by applicable law.</p>
+
+<p><strong>No guarantee any filing is published, or published on any schedule.</strong>&nbsp; Congress.Trade ingests disclosures from third-party government sources — the U.S. House Clerk's office, the U.S. Senate's electronic financial disclosure (eFD) system, and the Office of Government Ethics (OGE) — that we do not control and do not operate.&nbsp; Those sources can be delayed, incomplete, malformed, taken offline, or changed without notice, and we are not responsible for their availability or accuracy.&nbsp; We do not guarantee that any particular filing will be published on the Service at all, on any schedule, or within any timeframe.</p>
+
+<p><strong>No guarantee of being faster than any other source.</strong>&nbsp; The Service may show latency or speed comparisons against other sources (for example, a scorecard measuring how quickly a filing appeared on Congress.Trade relative to other sources).&nbsp; Any such comparison is a <strong>historical measurement of past filings under the conditions observed at that time</strong> — it is not a representation, promise, or guarantee about the timing of any future filing, and past speed is not a guarantee of future speed for any particular filing or source.</p>
+
+<p><strong>Alerts &amp; notifications may be delayed, duplicated, or fail.</strong>&nbsp; Email, push, webhook, and SSE (real-time) delivery all depend on third-party systems and networks outside our control — including email providers, Apple's push notification service, your webhook endpoint, and your own browser or network connection — and may be delayed, duplicated, or fail to arrive.&nbsp; A paid subscription does not guarantee the delivery, timing, or accuracy of any particular alert.</p>
+
+<p><strong>We may change the Service.</strong>&nbsp; We may add, change, suspend, or discontinue any part of the Service — including features, data sources, and data coverage — at any time, with or without notice.</p>
 
 <h2>10. Limitation of liability</h2>
 <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, ${ENTITY} AND ITS OWNERS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR EXEMPLARY DAMAGES, OR FOR ANY LOST PROFITS OR TRADING/INVESTMENT LOSSES, ARISING FROM OR RELATED TO THE SERVICE.&nbsp; OUR TOTAL LIABILITY FOR ANY CLAIM WILL NOT EXCEED THE GREATER OF (a) THE AMOUNTS YOU PAID US IN THE 12 MONTHS BEFORE THE CLAIM, OR (b) USD $100.</p>
+<p>Some jurisdictions do not allow the exclusion of certain warranties or the limitation or exclusion of liability for incidental or consequential damages, so some of the limitations in this Section and in Section 9 (Disclaimers) may not apply to you.&nbsp; In that case, our warranties and liability are limited to the maximum extent permitted by applicable law.</p>
 
 <h2>11. Indemnification</h2>
 <p>You agree to indemnify and hold harmless ${ENTITY} from claims and expenses arising out of your use of the Service or violation of these Terms.</p>
