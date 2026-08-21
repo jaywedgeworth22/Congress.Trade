@@ -364,6 +364,24 @@ export async function resolveMemberFilerId(env: Env, memberName: string): Promis
 // Transactions query builder (the REST `?since=` cursor backstop)
 // ---------------------------------------------------------------------------
 
+const TX_SOURCE_VALUES = new Set<TxSource>([
+  'primary',
+  'seed_dataset',
+  'manual',
+  'competitor_backfill',
+  'local_mac',
+  'server_cpu',
+]);
+
+/** Parse `?source=` for the public + client feeds. Unknown values are ignored. */
+export function asTxSource(v: string | undefined): TxQueryParams['source'] {
+  if (!v) return undefined;
+  const key = v.trim().toLowerCase();
+  if (key === 'all') return 'all';
+  if (TX_SOURCE_VALUES.has(key as TxSource)) return key as TxSource;
+  return undefined;
+}
+
 export interface TxQueryParams {
   since?: number;
   offset?: number;
@@ -474,6 +492,13 @@ export interface TxQueryParams {
    * default unchanged.
    */
   order?: 'asc' | 'desc';
+  /**
+   * Provenance filter. ABSENT / `primary` is the public default (#1453):
+   * hide `seed_dataset` historic copies so the default feed is not
+   * primary+seed duplicates. Pass `all` to include seed rows (admin / CSV
+   * opt-in). Any other {@link TxSource} value is an exact match.
+   */
+  source?: TxSource | 'all';
 }
 
 export interface BuiltQuery {
@@ -672,11 +697,22 @@ export function buildTxFilters(
   if (opts.twinDedupe !== false) {
     where.push(TWIN_DEDUPE_SQL);
   }
+  // Public default (#1453): hide historic seed copies so the default view is
+  // not primary+seed duplicates. Literal (no bound param) so existing param
+  // order stays stable. `source=all` opts back in; any other TxSource is exact.
+  if (!p.source || p.source === 'primary') {
+    where.push("t.source <> 'seed_dataset'");
+  }
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;
     where.push('t.cursor_seq > ?');
     params.push(since);
+  }
+
+  if (p.source && p.source !== 'all' && p.source !== 'primary') {
+    where.push('t.source = ?');
+    params.push(p.source);
   }
 
   if (p.ticker) {

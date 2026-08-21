@@ -181,6 +181,11 @@ export async function maybeRunDeterministicReviewDrain(
           AND f.raw_object_key IS NOT NULL
           AND COALESCE(rq.reason, '') NOT LIKE '%form_chrome_only%'
           AND COALESCE(rq.reason, '') NOT LIKE '%ocr_unusable%'
+          -- A future-tx-date hard fail cannot be fixed by deterministic
+          -- re-extraction (same parser, same misread date), so re-flagging it
+          -- every minute is pure churn (observed 2026-08-20: H-2025-20033330
+          -- revision climbing ~1/min for days).
+          AND COALESCE(rq.reason, '') NOT LIKE '%future_tx_date%'
           AND LOWER(COALESCE(f.doc_kind, '')) <> 'scanned_pdf'
           AND (
             LOWER(COALESCE(f.doc_kind, '')) IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')

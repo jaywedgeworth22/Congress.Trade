@@ -177,7 +177,7 @@ budget-status polling, see Tunables & flags below)
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
 - OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default
-  `google/gemini-3.7-flash`), `OPENROUTER_PDF_ENGINE_TEXT` (file-parser engine
+  `~google/gemini-flash-latest`, currently Gemini 3.7), `OPENROUTER_PDF_ENGINE_TEXT` (file-parser engine
   for typed/text PDFs; default `cloudflare-ai` — free markdown conversion),
   `OPENROUTER_PDF_ENGINE_SCANNED` (engine for scans read by
   non-native-vision models; default `mistral-ocr`, $2/1k pages),
