@@ -161,6 +161,30 @@ enum AppTheme {
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
+    /// Neutral "chrome" colour for bare icon glyphs that carry no semantic
+    /// meaning of their own and have no adjacent text — dropdown chevrons,
+    /// the sort-direction flip arrow, disclosure carets.  Same treatment as
+    /// the header ⓘ/≡ buttons' `headerGlyphGrey` (owner: leave those exactly
+    /// as they are; this is the same grey, reused for the rest of the chrome
+    /// family). A concrete `Color`, not the hierarchical `.secondary`
+    /// `ShapeStyle`: hierarchical styles resolve against the environment
+    /// tint, and `MainTabView` sets `.tint(.blue)` (App.swift), so
+    /// `.secondary` inside a `Menu`/`Button` renders accent blue instead of
+    /// grey — see `headerGlyphGrey`'s doc comment below for the fuller story.
+    static let glyphGrey = Color(uiColor: .secondaryLabel)
+
+    /// Ordinary "ink" colour for text words on chrome controls — filter pill
+    /// labels ("House", "D+R", "3 Months"), "Done", "Export CSV", "Subscribe
+    /// with Apple", sort-field names, the rows-per-page value.  Owner
+    /// (2026-08-21): these must read as "very dark grey or almost black",
+    /// comfortably legible — `.secondaryLabel`/`glyphGrey` above is too light
+    /// for text, even though it is fine for a bare glyph.  `.label` clears
+    /// WCAG AA (4.5:1) against `AppTheme.card`/`AppTheme.panel` in both
+    /// themes and inverts correctly in dark mode.  Same concrete-`Color`
+    /// reasoning as `glyphGrey`: hierarchical `.primary` also resolves
+    /// against the blue tint inside a `Menu`/`Button`.
+    static let wordInk = Color(uiColor: .label)
+
     /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
     static let siteFooterDisclaimer =
         "Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency"
@@ -1015,7 +1039,16 @@ struct AccountQuickMenu: View {
                     Button {
                         showExportSheet = true
                     } label: {
-                        Label("Export CSV", systemImage: "arrow.down.circle")
+                        // Split colour: bare-glyph grey on the icon, dark
+                        // legible ink on the word (owner 2026-08-21 — words
+                        // must read dark, glyphs can stay the lighter grey).
+                        // Without this the row inherits the app-wide
+                        // `.tint(.blue)` (App.swift) and renders accent blue.
+                        Label {
+                            Text("Export CSV").foregroundStyle(AppTheme.wordInk)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(AppTheme.glyphGrey)
+                        }
                     }
                     billingRow
                 }
@@ -1084,7 +1117,14 @@ struct AccountQuickMenu: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21) — `.foregroundStyle` alone is not enough
+                    // here: the toolbar button style re-applies `.tint` over
+                    // it, so both must be set (same defensive pattern as
+                    // `SignInWithGoogleButton` below).
                     Button("Done") { isPresented = false }
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
         }
