@@ -440,6 +440,58 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(ids).not.toContain('scanned-exhausted-1');
     });
 
+    it('GET /api/admin/scanned-filings/pending?worker=local reclaims cascade/row-limit/low-confidence scans; default stays conservative', async () => {
+      // 2026-08-20 autonomy fix: every unresolved scanned review item with
+      // stored raw bytes is advertised to the local (free Grok-CLI) worker so
+      // the whole queue drains without OpenRouter spend. The Coolify CPU OCR
+      // worker (no param) must NOT see those docs — it is what generated the
+      // garbage/cascade flags in the first place.
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+
+      const seed = async (docId: string, reason: string) => {
+        await d1.prepare(
+          `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(docId, 'house', `https://example.com/${docId}.pdf`, `raw/${docId}.pdf`, 'needs_review', 'scanned_pdf', nowIso).run();
+        await d1.prepare(
+          `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`
+        ).bind(docId, reason, 0, nowIso).run();
+      };
+      await seed('scan-cascade-1', 'agreement_cascade_unresolved');
+      await seed('scan-rowlimit-1', 'extraction_row_limit_exceeded_likely_garbage:0.93');
+      await seed('scan-mismatch-1', 'ticker_asset_mismatch,invalid_amount,low_confidence');
+      await seed('scan-empty-1', 'extract_empty_failure,no_transactions_extracted');
+      // Parked docs stay excluded even for local workers.
+      await seed('scan-parked-1', 'local_vision_exhausted,scanned_pdf_vision_spend');
+
+      const conservative = await app.request('/scanned-filings/pending', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(conservative.status).toBe(200);
+      const consJson = await conservative.json() as { filings: Array<{ doc_id: string }> };
+      const consIds = consJson.filings.map((f) => f.doc_id);
+      expect(consIds).toContain('scan-empty-1');
+      expect(consIds).not.toContain('scan-cascade-1');
+      expect(consIds).not.toContain('scan-rowlimit-1');
+      expect(consIds).not.toContain('scan-mismatch-1');
+      expect(consIds).not.toContain('scan-parked-1');
+
+      const local = await app.request('/scanned-filings/pending?worker=local_mac', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(local.status).toBe(200);
+      const localJson = await local.json() as { filings: Array<{ doc_id: string }> };
+      const localIds = localJson.filings.map((f) => f.doc_id);
+      expect(localIds).toContain('scan-empty-1');
+      expect(localIds).toContain('scan-cascade-1');
+      expect(localIds).toContain('scan-rowlimit-1');
+      expect(localIds).toContain('scan-mismatch-1');
+      expect(localIds).not.toContain('scan-parked-1');
+    });
+
     it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
       const app = createAdminApp();
       const env = makeEnv();
