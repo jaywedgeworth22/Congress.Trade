@@ -334,7 +334,10 @@ export async function normalize(
   // Local vision: an omitted amount checkbox on an otherwise-read row
   // (prod H-2025-9115689 page 4) must not hold sibling trades.  Gate
   // confidence on the rows that have amounts; still persist the omitted
-  // ones with null brackets.
+  // ones with null brackets.  If every row omitted the amount, keep the
+  // real (penalized) min so the filing stays in review — pretending we
+  // met the threshold used to auto-publish amount-less extracts as live
+  // (sideways / portrait Grok CLI misses, 2026-08-21).
   const localVision = isLocalVisionExtractor(extractorName);
   const gateRows = localVision
     ? flagged.filter((f) => hardFlagsBlockingPublish(f.flags, true).length === 0
@@ -342,7 +345,7 @@ export async function normalize(
     : flagged;
   const gateMinConfidence = gateRows.length
     ? Math.min(...gateRows.map((f) => f.tx.confidence))
-    : (localVision && flagged.length > 0 ? confidenceThresholdFor(extractorName, filing.docKind) : minConfidence);
+    : minConfidence;
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = localVision

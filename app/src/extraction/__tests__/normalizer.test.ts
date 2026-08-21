@@ -469,6 +469,40 @@ describe('normalize', () => {
     expect(cap.reviewRows).toHaveLength(0);
   });
 
+  it('local Grok vision does not auto-publish when every row omitted the amount', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({ chamber: 'house', docKind: 'scanned_pdf', extractor: 'local_grok_cli_v1' }),
+      [
+        tx({
+          ticker: null,
+          assetName: 'Vng Growth Index',
+          txType: 'S',
+          amountMin: null,
+          amountMax: null,
+          confidence: 0.97,
+          rawText: 'Vng Growth Index',
+        }),
+        tx({
+          ticker: null,
+          assetName: 'Bridge Builder Sm/Mid Value',
+          txType: 'S',
+          amountMin: null,
+          amountMax: null,
+          confidence: 0.97,
+          rawText: 'Bridge Builder Sm/Mid Value',
+        }),
+      ],
+      { extractor: 'local_grok_cli_v1', source: 'local_mac' },
+    );
+    expect(result.needsReview).toBe(true);
+    expect(result.published).toBe(false);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(cap.reviewRows).toHaveLength(1);
+    expect(String(cap.reviewRows[0][1])).toContain('no_amount');
+  });
+
   it('does not penalize a legitimately ticker-less asset (no ticker supplied)', async () => {
     const { env, cap } = makeEnv([]); // empty securities_master
     const result = await normalize(env, filing(), [
