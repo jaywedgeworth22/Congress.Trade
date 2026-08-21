@@ -575,6 +575,7 @@ final class CongressTradeTests: XCTestCase {
         """
         let decoded = try JSONDecoder().decode(ClientMemberResponse.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.member.name, "Max Miller")
+        XCTAssertEqual(decoded.member.committees, [])
         XCTAssertEqual(decoded.items.count, 2)
         XCTAssertEqual(decoded.items[0].transaction.amountMin, 15001)
         XCTAssertEqual(decoded.items[0].transaction.amountMax, 50000)

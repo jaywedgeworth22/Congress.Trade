@@ -3,7 +3,7 @@ import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { asAssetCategories, asTxSource, mapFeedTransaction } from '../delivery/rows.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
 import type { ClientTradeRow, TradeSummaryRow, SecurityRefRow, MemberProfileRow } from './types.ts';
-import { parseJson } from '../shared/db.ts';
+import { parseCommitteeNames } from '../shared/committeeNames.ts';
 import type { Context } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { getCurrentUserFromRequest } from '../auth/session.ts';
@@ -346,7 +346,7 @@ export function memberProfile(row: MemberProfileRow | null, id: string) {
       title: executiveTitleFor(id),
     };
   }
-  const committees = parseJson<string[]>(row.committees, []);
+  const committees = parseCommitteeNames(row.committees);
   return {
     id: row.bioguide_id,
     // Every other server surface runs `filers.full_name` through

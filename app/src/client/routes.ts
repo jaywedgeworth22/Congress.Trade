@@ -64,6 +64,7 @@ import { tickerAnalytics, wantsAnalytics } from './tickerAnalytics.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
+import { resolveFilerCommittees } from '../shared/committeeNames.ts';
 import { buildMemberPerformanceQuery } from '../analytics/builders.ts';
 import { asWindow } from '../analytics/sql.ts';
 import { aggregateMemberDualPerformance } from '../analytics/compute.ts';
@@ -314,8 +315,17 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       filingDate: dual.filingDate,
     };
 
+    const member = memberProfile(resolved.profile, resolved.id);
+    if (!member.committees.length) {
+      member.committees = await resolveFilerCommittees(
+        c.env.DB,
+        resolved.id,
+        resolved.profile?.committees,
+        resolved.profile?.resolved_bioguide_id,
+      );
+    }
     return c.json({
-      member: memberProfile(resolved.profile, resolved.id),
+      member,
       summary: {
         ...baseSummary(summaryRow),
         uniqueTickers: num(summaryRow?.unique_tickers),

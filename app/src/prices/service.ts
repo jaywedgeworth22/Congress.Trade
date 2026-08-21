@@ -89,8 +89,9 @@ type EnvX = Env & {
   APP_B_INGEST_TOKEN?: string;
   /**
    * Which provider supplies price history:
-   *   - 'peer' | 'socratic' | 'app_b' — Socratic.Trade / App B only (preferred;
-   *     owner 2026-08-03: CT does not buy Massive history)
+   *   - 'peer' | 'socratic' | 'app_b' — Socratic.Trade / App B primary (preferred;
+   *     owner 2026-08-03: CT does not buy Massive history). Direct Massive is
+   *     last-resort only when MASSIVE_API_KEY is also set.
    *   - 'fmp' (legacy default when no peer config), 'massive', or 'tiingo'
    */
   PRICE_PROVIDER?: string;
@@ -105,17 +106,40 @@ interface PricePlan {
   peerOnly: boolean;
 }
 
-/** True when PRICE_PROVIDER selects Socratic.Trade / App B as the sole source. */
+/** True when PRICE_PROVIDER selects Socratic.Trade / App B as the primary. */
 function isPeerOnlyProvider(provider: string): boolean {
   return provider === 'peer' || provider === 'socratic' || provider === 'app_b' || provider === 'app-b';
 }
 
 /**
+ * Peer-primary plan: Socratic.Trade first.  Direct Massive is last-resort
+ * only (empty peer series / non-auth failures), never a parallel primary.
+ * Peer 401/402/403 still throw — do not spend the shared Massive key on a
+ * broken ingest token.  Do not mint a second Massive key.
+ */
+function peerPrimaryPlan(env: EnvX): PricePlan | null {
+  if (!env.APP_B_IMPORT_URL) return null;
+  const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, {
+    strict: true,
+  });
+  if (env.MASSIVE_API_KEY) {
+    return {
+      client: buildFallbackPriceClient(peerClient, buildMassivePriceClient(env.MASSIVE_API_KEY), {
+        rethrowFatal: true,
+      }),
+      fmpBudgeted: false,
+      peerOnly: true,
+    };
+  }
+  return { client: peerClient, fmpBudgeted: false, peerOnly: true };
+}
+
+/**
  * Pick the price client from PRICE_PROVIDER, gated by configured keys.
  *
- * Preferred (owner 2026-08-03): PRICE_PROVIDER=peer with APP_B_IMPORT_URL +
- * APP_B_INGEST_TOKEN — all EOD history comes from Socratic.Trade. No Massive
- * key is required or used in that mode.
+ * Preferred (owner 2026-08-03 / audit 2026-08-17): PRICE_PROVIDER=peer with
+ * APP_B_IMPORT_URL + APP_B_INGEST_TOKEN — EOD history comes from Socratic.Trade.
+ * If MASSIVE_API_KEY is also set, Massive is last-resort fallback only.
  *
  * Legacy: 'massive' / 'tiingo' pick a paid provider. FMP is never used for
  * prices (free keys are latency-monitoring only). When APP_B_IMPORT_URL is also
@@ -124,23 +148,14 @@ function isPeerOnlyProvider(provider: string): boolean {
  */
 function pricePlan(env: EnvX): PricePlan | null {
   const rawProvider = (env.PRICE_PROVIDER || '').trim().toLowerCase();
-  // Explicit peer / socratic / app_b — sole source, never Massive/FMP.
+  // Explicit peer / socratic / app_b — peer-primary; Massive last-resort only.
   if (isPeerOnlyProvider(rawProvider)) {
-    if (!env.APP_B_IMPORT_URL) return null;
-    return {
-      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
-      fmpBudgeted: false,
-      peerOnly: true,
-    };
+    return peerPrimaryPlan(env);
   }
 
-  // Unset PRICE_PROVIDER + App B configured → peer-only (owner: CT prices from ST).
+  // Unset PRICE_PROVIDER + App B configured → same peer-primary plan.
   if (!rawProvider && env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN) {
-    return {
-      client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
-      fmpBudgeted: false,
-      peerOnly: true,
-    };
+    return peerPrimaryPlan(env);
   }
 
   // Owner 2026-08: FMP free keys are latency-monitoring only. Prices never
