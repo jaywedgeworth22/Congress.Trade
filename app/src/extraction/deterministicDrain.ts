@@ -164,11 +164,22 @@ export async function maybeRunDeterministicReviewDrain(
           AND f.raw_object_key IS NOT NULL
           AND COALESCE(rq.reason, '') NOT LIKE '%form_chrome_only%'
           AND COALESCE(rq.reason, '') NOT LIKE '%ocr_unusable%'
+          AND LOWER(COALESCE(f.doc_kind, '')) <> 'scanned_pdf'
           AND (
             LOWER(COALESCE(f.doc_kind, '')) IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')
-            OR LOWER(COALESCE(f.extractor, '')) IN (
-              'textpdf', 'text_pdf', 'senatehtml', 'senate_html',
-              'ogetext', 'oge_text', 'oge-text', 'openroutertext', 'open_router_text'
+            OR (
+              -- Unknown-kind docs are only drainable when the extractor itself
+              -- is deterministic; the extractor string alone is NOT enough.
+              -- A scanned_pdf can carry a stale 'textPdf' extractor label
+              -- (observed 2026-08-20: H-2024-20025111). Re-extracting it here
+              -- produced garbage every minute, which the agreement recovery
+              -- then re-flagged as cascade_unresolved — an infinite per-minute
+              -- review_revision / receipt ping-pong with zero model spend.
+              LOWER(COALESCE(f.doc_kind, '')) IN ('', 'unknown')
+              AND LOWER(COALESCE(f.extractor, '')) IN (
+                'textpdf', 'text_pdf', 'senatehtml', 'senate_html',
+                'ogetext', 'oge_text', 'oge-text', 'openroutertext', 'open_router_text'
+              )
             )
           )
           AND NOT EXISTS (
@@ -189,6 +200,12 @@ export async function maybeRunDeterministicReviewDrain(
   for (const row of rows) {
     if (opts.signal?.aborted) break;
     out.scanned++;
+    // Belt-and-braces: a scanned_pdf must never be re-extracted by the
+    // deterministic path even if the extractor string looks text-ish.
+    if ((row.doc_kind ?? '').trim().toLowerCase() === 'scanned_pdf') {
+      out.skipped++;
+      continue;
+    }
     if (!isDeterministicExtractor(row.extractor, row.doc_kind)) {
       out.skipped++;
       continue;
