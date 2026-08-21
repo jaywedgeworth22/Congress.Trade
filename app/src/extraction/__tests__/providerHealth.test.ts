@@ -4,6 +4,10 @@ import type { BakeoffCandidate } from '../bakeoff.ts';
 import {
   classifyProviderErrorClass,
   describeAutopilotHaltReason,
+  isFalseSourceAuthError,
+  isFalseSourceAuthHalt,
+  isTransientFilesPrepaidError,
+  isTransientFilesPrepaidHalt,
   summarizeProviderHaltCause,
   healthWindowKey,
   modelBanKey,
@@ -33,6 +37,39 @@ describe('classifyProviderErrorClass', () => {
     expect(classifyProviderErrorClass('anthropic 401 unauthorized')).toBe('auth');
     expect(classifyProviderErrorClass('invalid_api_key')).toBe('auth');
     expect(classifyProviderErrorClass('openrouter API key not configured')).toBe('auth');
+    expect(classifyProviderErrorClass(
+      'openRouterVision: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}',
+    )).toBe('auth');
+    expect(classifyProviderErrorClass(
+      'openRouterText: OpenRouter API 401 Unauthorized',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterText: OpenRouter API 401 Unauthorized {"error":{"message":"Unauthorized","code":401}}',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterReply:unauth_reply: 401 Unauthorized',
+    )).toBe('other');
+    expect(classifyProviderErrorClass(
+      'openRouterVision: could not parse model JSON: Unexpected token <',
+    )).toBe('other');
+  });
+
+  it('does not treat source-fetch or admin Unauthorized as a dead LLM key', () => {
+    expect(classifyProviderErrorClass('Unauthorized')).toBe('other');
+    expect(classifyProviderErrorClass('fetcher: Unauthorized')).toBe('other');
+    expect(classifyProviderErrorClass('Unauthorized — paste your admin token in the Admin tab access box.')).toBe('other');
+    expect(classifyProviderErrorClass('house live search -> HTTP 401')).toBe('other');
+    expect(classifyProviderErrorClass('admin 401 unauthorized')).toBe('other');
+    expect(classifyProviderErrorClass('filing.extracted HTTP 401')).toBe('other');
+    expect(isFalseSourceAuthError('Unauthorized')).toBe(true);
+    expect(isFalseSourceAuthError('fetcher: Unauthorized')).toBe(true);
+    expect(isFalseSourceAuthError('invalid_api_key')).toBe(false);
+    expect(isFalseSourceAuthHalt('error_class:auth', { auth: 'Unauthorized' })).toBe(true);
+    expect(isFalseSourceAuthHalt('error_class:auth', { auth: 'invalid_api_key' })).toBe(false);
+    expect(isFalseSourceAuthHalt('error_class:auth', {
+      auth: 'openRouterVision: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}',
+    })).toBe(false);
+    expect(summarizeProviderHaltCause('Unauthorized')).toContain('source-fetch or admin unauthorized');
   });
 
   it('classifies rate-limit as rate_limit, not quota', () => {
@@ -63,6 +100,11 @@ describe('classifyProviderErrorClass', () => {
     expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('stored as quota');
     expect(describeAutopilotHaltReason('error_class:quota', sample)).toContain('files-endpoint prepaid');
     expect(summarizeProviderHaltCause(sample.quota)).toContain('files-endpoint prepaid');
+    expect(isTransientFilesPrepaidError(sample.quota)).toBe(true);
+    expect(isTransientFilesPrepaidHalt('error_class:quota', sample)).toBe(true);
+    expect(isTransientFilesPrepaidHalt('error_class:auth', { auth: 'invalid_api_key' })).toBe(false);
+    expect(isTransientFilesPrepaidError('openrouter key budget circuit open: cool-down 3600s')).toBe(false);
+    expect(isTransientFilesPrepaidError('Your prepayment credits are depleted')).toBe(false);
   });
 
   it('classifies timeouts and parse failures', () => {

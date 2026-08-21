@@ -257,3 +257,19 @@ export async function verifyStripeSignature(
   const expected = await hmacSha256Hex(secret, `${timestamp}.${payload}`);
   return signatures.some((sig) => timingSafeEqual(sig, expected));
 }
+
+/**
+ * When the secret key has a live/test prefix, the event's `livemode` must match.
+ * A missing boolean is a fail — that is the "webhook ignores livemode" hole.
+ */
+export function stripeEventLivemodeMatchesKey(
+  livemode: unknown,
+  secretKey: string | undefined,
+): boolean {
+  const key = (secretKey ?? '').trim();
+  const liveKey = key.startsWith('sk_live');
+  const testKey = key.startsWith('sk_test');
+  if (!liveKey && !testKey) return true;
+  if (typeof livemode !== 'boolean') return false;
+  return liveKey ? livemode === true : livemode === false;
+}

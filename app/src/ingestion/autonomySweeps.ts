@@ -215,7 +215,10 @@ export async function sweepFiledDateBackfill(
   const filedDateByDocId = new Map<string, string>();
   for (const year of years) {
     try {
-      const index = await fetchHouseIndex(year, { fetchImpl: opts.fetchImpl });
+      const index = await fetchHouseIndex(year, {
+        fetchImpl: opts.fetchImpl,
+        relayUrl: env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL,
+      });
       for (const f of index) {
         if (f.filingDate) filedDateByDocId.set(f.pipelineDocId, f.filingDate);
       }
@@ -407,12 +410,61 @@ export interface LivenessAlarmResult {
   recovered: string[];
 }
 
+export interface LocalVisionHostedFallbackResult {
+  enqueued: number;
+}
+
+/**
+ * local_mac_1 is supplemental.  Docs parked as local_vision_exhausted must
+ * fall through to the hosted LLM path once, not sit suppressed forever.
+ */
+export async function sweepLocalVisionHostedFallback(
+  env: Env,
+  opts: { limit?: number } = {},
+): Promise<LocalVisionHostedFallbackResult> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const rows = await all<{ doc_id: string; error: string | null }>(
+    env.DB,
+    `SELECT f.doc_id, f.error
+       FROM filings f
+       JOIN review_queue rq ON rq.doc_id = f.doc_id
+      WHERE COALESCE(rq.resolved, 0) = 0
+        AND (
+          COALESCE(rq.reason, '') LIKE '%local_vision_exhausted%'
+          OR COALESCE(f.error, '') LIKE '%local_vision_exhausted%'
+        )
+        AND COALESCE(f.error, '') NOT LIKE '%hosted_fallback_enqueued%'
+        AND f.raw_object_key IS NOT NULL
+      LIMIT ?`,
+    [limit],
+  );
+  let enqueued = 0;
+  for (const row of rows) {
+    try {
+      await env.INGEST_QUEUE.send({ type: 'filing.extracted', docId: row.doc_id });
+      const stamp = `${row.error ? `${row.error}; ` : ''}hosted_fallback_enqueued`;
+      await run(
+        env.DB,
+        `UPDATE filings SET error = ? WHERE doc_id = ?`,
+        [stamp.slice(0, 1000), row.doc_id],
+      );
+      enqueued += 1;
+    } catch (err) {
+      console.warn('hosted fallback enqueue failed', row.doc_id, (err as Error).message);
+    }
+  }
+  return { enqueued };
+}
+
 const LIVENESS_ALARM_CHECK_IDS = new Set([
   'polling_house',
   'polling_senate',
   'polling_executive',
   'latency_probes',
   'senate_relay',
+  'autopilot_halt',
+  'extraction_provider',
+  'extraction_backlog',
 ]);
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;
@@ -527,11 +579,13 @@ export async function runAutonomySweeps(
 ): Promise<AutonomySweepResult & {
   deterministicDrain: DeterministicDrainResult | null;
   localVisionRequeue: LocalVisionRequeueResult | null;
+  hostedFallback: LocalVisionHostedFallbackResult | null;
 }> {
   const errors: string[] = [];
   const result: AutonomySweepResult & {
     deterministicDrain: DeterministicDrainResult | null;
     localVisionRequeue: LocalVisionRequeueResult | null;
+    hostedFallback: LocalVisionHostedFallbackResult | null;
   } = {
     ceiling: null,
     stranded: null,
@@ -541,6 +595,7 @@ export async function runAutonomySweeps(
     livenessAlarms: null,
     deterministicDrain: null,
     localVisionRequeue: null,
+    hostedFallback: null,
     errors,
   };
   const throwIfAborted = () => {
@@ -553,6 +608,12 @@ export async function runAutonomySweeps(
     result.deterministicDrain = await maybeRunDeterministicReviewDrain(env, {
       signal: opts.signal,
     });
+    try {
+      const { maybePublishFromStoredRuns } = await import('../extraction/storedRunPublish.ts');
+      await maybePublishFromStoredRuns(env, { signal: opts.signal });
+    } catch (storedErr) {
+      errors.push(`storedRunPublish: ${(storedErr as Error).message}`);
+    }
   } catch (err) {
     errors.push(`deterministicDrain: ${(err as Error).message}`);
   }
@@ -598,6 +659,13 @@ export async function runAutonomySweeps(
     result.localVisionRequeue = await sweepRejectedScannedForLocalVision(env);
   } catch (err) {
     errors.push(`localVisionRequeue: ${(err as Error).message}`);
+  }
+
+  try {
+    throwIfAborted();
+    result.hostedFallback = await sweepLocalVisionHostedFallback(env);
+  } catch (err) {
+    errors.push(`hostedFallback: ${(err as Error).message}`);
   }
 
   try {

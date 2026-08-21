@@ -13,6 +13,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
+import { redeemAppleEntitlementAnonymously } from './entitlements.ts';
 import {
   claimCommandResultSecret,
   createCommand,
@@ -64,10 +65,12 @@ import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../securit
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
 import { buildMemberPerformanceQuery } from '../analytics/builders.ts';
+import { asWindow } from '../analytics/sql.ts';
 import { aggregateMemberDualPerformance } from '../analytics/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
 import type { TradeSummaryRow } from './types.ts';
 import type { TxQueryParams } from '../delivery/rows.ts';
+import { mergePeeledQuery, peelEncodedQueryFromPathParam } from '../shared/memberPath.ts';
 
 export function buildClientRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
@@ -102,6 +105,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   });
 
   r.get('/documents/:docId/pdf', serveDocumentPdf);
+
+  // Unauthenticated by design (Guideline 5.1.1(v)) — see client/entitlements.ts.
+  r.post('/entitlements/apple/redeem', redeemAppleEntitlementAnonymously);
 
   r.get('/me', async (c) => {
     const user = await getCurrentUserFromRequest(c);
@@ -192,26 +198,29 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         'Retry-After': String(budget.retryAfterSec),
       });
     }
+    const q = c.req.query();
+    const filters = filtersFromQuery(q);
     const params: TxQueryParams = {
+      ...filters,
       ticker,
-      limit: detailLimit(c.req.query('limit')),
-      order: asOrder(c.req.query('order')) ?? 'desc',
+      limit: detailLimit(q.limit),
+      order: asOrder(q.order) ?? 'desc',
     };
     // Company-drawer parity block (buy pressure, buys/sells over time, top
     // buyers/sellers, "Performance After Buys"). Opt-in because the backtest
     // leg scans this ticker's full price history plus the whole SPX series —
     // see client/tickerAnalytics.ts for why it lives on THIS contract rather
     // than sending clients to the internal /api/analytics routes.
-    const includeAnalytics = wantsAnalytics(c.req.query('include'));
-    const summaryQ = tickerSummarySql(ticker);
+    const includeAnalytics = wantsAnalytics(q.include);
+    const summaryQ = tickerSummarySql(ticker, filters);
     const [list, summaryRow, refRow, analytics] = await Promise.all([
       readClientTradeList(c.env, params),
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
       getSecurityRef(c.env, ticker),
       includeAnalytics
         ? tickerAnalytics(c.env, ticker, {
-            window: c.req.query('window'),
-            granularity: c.req.query('granularity'),
+            window: q.window,
+            granularity: q.granularity,
           }).catch((err) => {
             // The trade list is this endpoint's primary job; an analytics
             // failure degrades that one section to `null` rather than blanking
@@ -241,7 +250,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   });
 
   r.get('/member/:memberIdOrName', async (c) => {
-    const memberIdOrName = (c.req.param('memberIdOrName') || '').trim();
+    const peeled = peelEncodedQueryFromPathParam((c.req.param('memberIdOrName') || '').trim());
+    const memberIdOrName = peeled.id.trim();
+    const q = mergePeeledQuery(c.req.query(), peeled.query);
     if (!memberIdOrName || memberIdOrName.length > 120) {
       return c.json({ error: 'invalid member id or name' }, 400);
     }
@@ -254,17 +265,24 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
     const resolved = await resolveMember(c.env, memberIdOrName);
     if (!resolved) return c.json({ error: 'member not found' }, 404);
+    const filters = filtersFromQuery(q);
     const params: TxQueryParams = {
+      ...filters,
       member: resolved.id,
-      limit: detailLimit(c.req.query('limit')),
+      limit: detailLimit(q.limit),
       // Recent Trades must be newest *trade date*, not newest ingest cursor.
       // Khanna 2026-08-16: lastTrade 2026-07-01 but cursor order put a
       // reimported 2025-12-12 filing first on the politician sheet.
-      sort: asSort(c.req.query('sort')) ?? 'tx_date',
-      order: asOrder(c.req.query('order')) ?? 'desc',
+      sort: asSort(q.sort) ?? 'tx_date',
+      order: asOrder(q.order) ?? 'desc',
     };
-    const summaryQ = memberSummarySql(resolved.id);
-    const perfQ = buildMemberPerformanceQuery(resolved.id, { window: 'all' });
+    const summaryQ = memberSummarySql(resolved.id, filters);
+    const perfQ = buildMemberPerformanceQuery(resolved.id, {
+      window: asWindow(q.window, 'all'),
+      chambers: filters.chambers,
+      parties: filters.partyBuckets,
+      txTypes: filters.types ?? (filters.type ? [filters.type] : undefined),
+    });
     const [list, summaryRow, perfRowsRaw, currentSpx] = await Promise.all([
       readClientTradeList(c.env, params),
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
@@ -480,6 +498,17 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     // client polls on queued/running either way.
     const terminal = settled.status === 'succeeded' || settled.status === 'failed' ||
       settled.status === 'canceled';
+    // Inline create_subscription used to return the redacted row and never
+    // GET /commands/:id, so the one-time secret sat unclaimed (DELIVERYALERTS-01).
+    // Claim it here for the creating user. Do not log the secret.
+    if (settled.status === 'succeeded') {
+      const claimed = await claimCommandResultSecret(c.env, user.id, settled.id);
+      if (claimed) {
+        return c.json({
+          command: { ...settled, result: mergeClaimedSecret(settled.result, claimed) },
+        }, 200);
+      }
+    }
     return c.json({ command: settled }, terminal ? 200 : 202);
   });
 

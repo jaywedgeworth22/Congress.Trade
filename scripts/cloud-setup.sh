@@ -6,13 +6,13 @@
 # Point your environment's "setup script" field at this file:
 #   bash scripts/cloud-setup.sh
 #
-# The runnable app lives in app/ (a Cloudflare Worker), NOT the repo root — so a
-# plain `npm ci` from the root fails. This script cd's into app/ for you.
+# The runnable app lives in app/ (Coolify Deno process), NOT the repo root — so a
+# plain `npm ci` from the root fails.  This script cd's into app/ for you.
 #
-# Local runtime configuration comes from Infisical. This setup maps the
+# Local runtime configuration comes from Infisical.  This setup maps the
 # app/shared machine-identity bootstrap credentials plus a narrow documented set
-# of env-only/local selectors into app/.dev.vars. Provider and app secrets remain
-# in Infisical and are resolved by the Worker at runtime.
+# of env-only/local selectors into app/.dev.vars.  Provider and app secrets remain
+# in Infisical and are resolved by the app at runtime.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -37,19 +37,21 @@ node "$SCRIPT_DIR/merge-local-dev-vars.mjs"
 # tokenless git dependency. The vendored local copy at app/vendor/ is the
 # canonical resolution — no npm registry, no NODE_AUTH_TOKEN, no .npmrc entry.
 # Deterministic install from the committed lockfile (app/package-lock.json).
-# --include=dev forces devDependencies (wrangler, typescript, vitest) even when the
-# cloud env sets NODE_ENV=production — npm would otherwise omit them, breaking the
-# very dev / typecheck / test commands this bootstrap is meant to prepare.
+# --include=dev forces devDependencies (typescript, vitest, leftover local
+# wrangler helper) even when the cloud env sets NODE_ENV=production — npm would
+# otherwise omit them, breaking the typecheck / test commands this bootstrap
+# is meant to prepare.
 echo "==> Installing dependencies (npm ci --include=dev)"
 npm ci --include=dev
 
-# Build the local D1 dev database so `wrangler dev` has a working schema.
-# `--local` operates on a local SQLite file (no Cloudflare login). CI=true keeps
-# wrangler non-interactive so it cannot hang on a confirmation prompt; the
-# fallback keeps a migrate hiccup from failing the whole setup.
-echo "==> Applying local D1 migrations (wrangler d1 ... --local)"
+# Local leftover helper: npm run migrate still shells wrangler d1 --local.
+# That is not production.  Production schema is POST /api/admin/migrate
+# against the Coolify host SQLite file.  CI=true keeps wrangler
+# non-interactive; a migrate hiccup must not fail the whole setup.
+echo "==> Applying local schema helper (npm run migrate; leftover wrangler --local)"
 CI=true npm run migrate || echo "==> migrate skipped — run 'cd app && npm run migrate' manually if needed"
 
 echo "==> Setup complete."
-echo "    Dev:    cd app && npm run dev        (wrangler on http://localhost:8787)"
+echo "    Dev:    cd app && npm run dev        (local Deno on http://localhost:8787)"
 echo "    Verify: cd app && npm run typecheck && npm test"
+echo "    Prod:   Coolify congress-app at https://congress.trade"

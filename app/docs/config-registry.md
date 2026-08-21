@@ -2,9 +2,9 @@
 
 Last updated: 2026-08-16
 
-Every configuration key and knob the Worker reads is routed through the
+Every configuration key and knob the Coolify Deno app reads is routed through the
 Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
-**Env-only** below. Resolution order per key:
+**Env-only** below.  Resolution order per key:
 
 1. **Infisical** — the value set in the Infisical project (env `prod` by
    default). Edits go live within the resolver cache TTL
@@ -13,14 +13,15 @@ Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
    name that exists in both is shadowed by the app row — so fleet-wide
    keys (`AGENT_SYNC_TOKEN`, `AGENT_SYNC_POST_TOKEN`) live **only** in
    shared.  Do not copy them onto the ST or CT app projects.
-2. **Env fallback** — the `wrangler.toml [vars]` value or Worker secret.
+2. **Env fallback** — Coolify / `.dev.vars` process environment.
    Kept so keyless local dev / tests still boot and so an Infisical outage
-   never leaves production unconfigured. Disable with
+   never leaves production unconfigured.  Disable with
    `INFISICAL_ALLOW_ENV_FALLBACK="false"` to hard-require Infisical.
 
-**Operate by editing Infisical, not wrangler.toml.** Audit which source is
-live for every key at any time: `GET /api/admin/config-sources` (admin-gated;
-reports names + sources only, never values).
+**Operate by editing Infisical, not a wrangler.toml.**  There is no production
+`wrangler.toml`.  Audit which source is live for every key at any time:
+`GET /api/admin/config-sources` (admin-gated; reports names + sources only,
+never values).
 
 ## Infisical-tunable (everything here is live-editable)
 
@@ -113,6 +114,9 @@ budget-status polling, see Tunables & flags below)
   `PROBE_SCHEDULE_HOUSE_BUDGET` / `PROBE_SCHEDULE_SENATE_BUDGET` (default `171`
   probes/weekday each — a self-imposed politeness budget, **not** a documented
   Clerk rate limit), `PROBE_SCHEDULE_PROVIDER_BUDGET` (default `240` runs),
+  `PROBE_SCHEDULE_EXECUTIVE_BUDGET` (default `107` weekday probes — 96
+  spendable after 10% headroom = a flat 15-minute coverage floor; there is
+  **no measured OGE arrival-hour sample**, so this is not a 78% peak curve),
   and `PROBE_SCHEDULE_JSON` for a full window-table override.  Every key is
   optional and total: a malformed value degrades to the shipped default rather
   than stalling ingestion, so the windows can be retuned live when Congress
@@ -160,7 +164,16 @@ budget-status polling, see Tunables & flags below)
 
 - Ingestion: `HOUSE_LIVE_SEARCH_ENABLED`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`
 - Executive (OGE 278-T) watcher: `OGE_WATCH_ENABLED`, `OGE_INDEX_URL`,
-  `OGE_POLL_INTERVAL_SEC`, `OGE_MAX_VISION_BYTES`
+  `OGE_MAX_VISION_BYTES`.  Cadence is `probeSchedule` / `decideSourcePoll`
+  (weekday 15-minute coverage floor, weekend hourly like House; politeness
+  floor 60s).  `OGE_POLL_INTERVAL_SEC` is **unused** — a leftover Infisical
+  `21600` must not re-impose 6h.  Fetch is **server-first**: direct
+  `extapps2.oge.gov`, then Mac/scout `POST /fetch-oge` if
+  `OGE_RELAY_URL` / `INGEST_RELAY_URL` is set and direct fails.  House
+  bulk index is the same (direct Clerk, then `/fetch-house`).  Senate
+  eFD stays **relay-first** — Imperva 403s the box.  Failure skip
+  matches House/Senate `last_attempt`
+  (never a shorter-than-success 10-minute backoff).
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
 - OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default
@@ -210,7 +223,9 @@ budget-status polling, see Tunables & flags below)
     without touching the per-minute cascade (default on)
   - `AUTOPILOT_BACKLOG_THRESHOLD` — unresolved-review count that triggers an
     extra same-day run (default `150`; a run always triggers on the first
-    cron tick of each UTC day)
+    cron tick of each UTC day, and also on any tick with claimable
+    eligible-due docs — attempts under cap, next_attempt due, raw bytes,
+    not suppressed/terminal)
   - `AUTOPILOT_DAILY_USD_BUDGET` — per-UTC-day USD spend meter priced via the
     shared benchmark rate card; reservations happen BEFORE model calls and
     the run halts when exhausted (default `5.00`)
@@ -322,11 +337,12 @@ rejected.
 
 ## Not env at all (already hot-configurable elsewhere)
 
-- **Poll cadence / Aggressive Mode** — stored in D1 `poll_config` + KV, edited
-  live from the Admin · Cadence tab.
-- **Site logo style** — admin UI setting (KV).
-- **Bindings** (D1/KV/R2/queues) — infrastructure in `wrangler.toml`, not
-  configuration values.
+- **Poll cadence / Aggressive Mode** — stored in SQLite `poll_config` + Deno KV,
+  edited live from the Admin · Cadence tab.
+- **Site logo style** — admin UI setting (Deno KV).
+- **Runtime resources** (SQLite / Deno KV / R2 / `deno_runtime_queue`) —
+  host + Coolify infrastructure in `app/docker-compose.yml` and
+  `src/deno/main.ts`, not Infisical config values.
 
 ## Conventions
 

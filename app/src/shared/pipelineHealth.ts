@@ -8,7 +8,11 @@
 import type { Env } from './types.ts';
 import { all, get } from './db.ts';
 import { getLastPollAt } from './config.ts';
-import { countEligibleBacklog } from '../extraction/autopilot.ts';
+import {
+  countReviewQueueBuckets,
+  formatReviewQueueHealthDetail,
+  type ReviewQueueHealthCounts,
+} from '../extraction/reviewQueueHealth.ts';
 import { describeAutopilotHaltReason } from '../extraction/providerHealth.ts';
 import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
 import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
@@ -25,13 +29,19 @@ export interface PipelineCheck {
 export interface PipelineHealth {
   status: PipelineStatus;
   checks: PipelineCheck[];
+  /** Disjoint unresolved review-queue buckets.  Absent when uncollected. */
+  reviewQueue?: ReviewQueueHealthCounts | null;
 }
 
 export interface PipelineSignals {
   outboxPending: number | null;
   outboxOldestAt: string | null;
   outboxFailed: number | null;
+  /** ALL unresolved review_queue rows (eligible + suppressed + terminal). */
   reviewBacklog: number | null;
+  reviewEligible: number | null;
+  reviewSuppressed: number | null;
+  reviewTerminal: number | null;
   extractionAttempts24h: number | null;
   extractionOk24h: number | null;
   lastExtractionSuccessAt: string | null;
@@ -100,7 +110,8 @@ export interface PipelineSignals {
 
 export interface PipelineThresholds {
   outboxAgeMinutes: number; // default 90
-  reviewBacklogWarn: number; // default 25
+  /** Unused: any unresolved review item is unhealthy (Jay 2026-08-17). */
+  reviewBacklogWarn: number;
   txAgeHours: number; // default 96 (weekend/recess slack)
   strandedFilingsWarn: number; // default 1 (any is worth a look; sweep clears them hourly)
   /** Max hours since last successful poll before a chamber is stalled. */
@@ -126,8 +137,10 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   // Safe against quiet days: liveness records a *poll* success, not a filing —
   // a poll that returns zero rows still counts (see recordProbeOutcome, where
   // kind:'success' is independent of fetchedRows).
-  // Executive (OGE) self-gates to a ~6h cadence and filings land every few
-  // weeks, so it keeps two missed cycles + slack.
+  // Executive follows the same adaptive probeSchedule as House/Senate
+  // (weekday coverage floor 15 min; weekend hourly). last_poll advances on
+  // empty success, so a working poller never looks stale. The 26h window is
+  // slack for a disabled/broken executive path, not the poll interval.
   pollSuccessMaxAgeHours: { house: 3, senate: 3, executive: 26 },
   latencyObservationMaxAgeHours: 24,
   latencyProviderSilenceHours: 48,
@@ -243,27 +256,30 @@ export function evaluatePipelineSignals(
     }
   }
 
-  // 4. Review queue backlog
+  // 4. Review queue backlog — ANY unresolved human-review item is unhealthy.
   if (s.reviewBacklog === null) {
     checks.push({ id: 'extraction_backlog', status: 'unknown', detail: 'Review backlog uncollected', value: null });
-  } else if (s.reviewBacklog > t.reviewBacklogWarn) {
-    if (s.extractionAttempts24h === 0) {
-      checks.push({
-        id: 'extraction_backlog',
-        status: 'stalled',
-        detail: `Review backlog ${s.reviewBacklog} items unserved with zero 24h extraction attempts`,
-        value: s.reviewBacklog,
-      });
-    } else {
-      checks.push({
-        id: 'extraction_backlog',
-        status: 'degraded',
-        detail: `Elevated review backlog: ${s.reviewBacklog} items (warn threshold ${t.reviewBacklogWarn})`,
-        value: s.reviewBacklog,
-      });
-    }
+  } else if (s.reviewBacklog > 0) {
+    const counts: ReviewQueueHealthCounts = {
+      unresolved: s.reviewBacklog,
+      eligible: s.reviewEligible ?? 0,
+      suppressed: s.reviewSuppressed ?? 0,
+      terminal: s.reviewTerminal ?? 0,
+    };
+    const eligible = s.reviewEligible ?? 0;
+    checks.push({
+      id: 'extraction_backlog',
+      status: eligible > 0 ? 'stalled' : 'degraded',
+      detail: formatReviewQueueHealthDetail(counts),
+      value: s.reviewBacklog,
+    });
   } else {
-    checks.push({ id: 'extraction_backlog', status: 'ok', detail: `Review backlog normal (${s.reviewBacklog} items)`, value: s.reviewBacklog });
+    checks.push({
+      id: 'extraction_backlog',
+      status: 'ok',
+      detail: 'No unresolved human-review items',
+      value: 0,
+    });
   }
 
   // 5. Autopilot halt
@@ -534,6 +550,10 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let outboxOldestAt: string | null = null;
   let outboxFailed: number | null = null;
   let reviewBacklog: number | null = null;
+  let reviewEligible: number | null = null;
+  let reviewSuppressed: number | null = null;
+  let reviewTerminal: number | null = null;
+  let reviewQueue: ReviewQueueHealthCounts | null = null;
   let extractionAttempts24h: number | null = null;
   let extractionOk24h: number | null = null;
   let lastExtractionSuccessAt: string | null = null;
@@ -576,7 +596,13 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   } catch {}
 
   try {
-    reviewBacklog = await countEligibleBacklog(env);
+    reviewQueue = await countReviewQueueBuckets(env);
+    if (reviewQueue) {
+      reviewBacklog = reviewQueue.unresolved;
+      reviewEligible = reviewQueue.eligible;
+      reviewSuppressed = reviewQueue.suppressed;
+      reviewTerminal = reviewQueue.terminal;
+    }
   } catch {}
 
   try {
@@ -729,6 +755,9 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     outboxOldestAt,
     outboxFailed,
     reviewBacklog,
+    reviewEligible,
+    reviewSuppressed,
+    reviewTerminal,
     extractionAttempts24h,
     extractionOk24h,
     lastExtractionSuccessAt,
@@ -742,5 +771,6 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     senateRelay,
   };
 
-  return evaluatePipelineSignals(signals, nowMs);
+  const evaluated = evaluatePipelineSignals(signals, nowMs);
+  return { ...evaluated, reviewQueue };
 }

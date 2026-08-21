@@ -10,6 +10,21 @@ import UserNotifications
 enum AppAppearance {
     private static var windowObserver: NSObjectProtocol?
 
+    /// Sepia was removed (owner 2026-08-21: "too dark of a color that
+    /// doesn't look like old fashioned paper", only half-themed and ugly).
+    /// A visitor who had it selected still has `"sepia"` sitting in
+    /// `UserDefaults` under `app_color_scheme` — rewrite that to `"light"`
+    /// the moment it is seen, everywhere the raw pref is read, so it stops
+    /// failing validation on every launch instead of just falling through to
+    /// an unstyled/undefined case once.  Every other read of this pref
+    /// funnels through `paint`, `colorScheme(for:)`, or `CTPalette.resolved`
+    /// below, so migrating here covers all of them.
+    static func migratedPref(_ pref: String) -> String {
+        guard pref == "sepia" else { return pref }
+        UserDefaults.standard.set("light", forKey: "app_color_scheme")
+        return "light"
+    }
+
     static func apply(_ pref: String) {
         paint(pref)
         // Sheet windows can appear a beat after the tap.  Paint again on the
@@ -28,12 +43,19 @@ enum AppAppearance {
     }
 
     private static func paint(_ pref: String) {
+        let pref = migratedPref(pref)
         let style: UIUserInterfaceStyle
         switch pref {
         case "light": style = .light
         case "dark": style = .dark
         default: style = .unspecified
         }
+        let palette: CTPalette
+        switch pref {
+        case "dark": palette = .dark
+        default: palette = .light
+        }
+        AppTheme.currentPalette = palette
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
@@ -44,11 +66,67 @@ enum AppAppearance {
     }
 
     static func colorScheme(for pref: String) -> ColorScheme? {
-        switch pref {
+        switch migratedPref(pref) {
         case "light": return .light
         case "dark": return .dark
         default: return nil
         }
+    }
+}
+
+enum CTPalette: String {
+    case light, dark
+
+    static func resolved(pref: String, system: ColorScheme) -> CTPalette {
+        switch AppAppearance.migratedPref(pref) {
+        case "dark": return .dark
+        case "light": return .light
+        default: return system == .dark ? .dark : .light
+        }
+    }
+
+    /// Cool light page (#eff3f8) or night navy — never mix.
+    var background: Color {
+        switch self {
+        case .light: return Color(red: 0.937, green: 0.953, blue: 0.973)
+        case .dark: return Color(red: 0.031, green: 0.047, blue: 0.090)
+        }
+    }
+
+    var card: Color {
+        switch self {
+        case .light: return Color.white
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188)
+        }
+    }
+
+    var panel: Color {
+        switch self {
+        case .light: return Color.white.opacity(0.92)
+        case .dark: return Color(red: 0.071, green: 0.106, blue: 0.188).opacity(0.72)
+        }
+    }
+}
+
+private struct CTPaletteKey: EnvironmentKey {
+    static let defaultValue: CTPalette = .light
+}
+
+extension EnvironmentValues {
+    var ctPalette: CTPalette {
+        get { self[CTPaletteKey.self] }
+        set { self[CTPaletteKey.self] = newValue }
+    }
+}
+
+struct CTPaletteInjector: ViewModifier {
+    let pref: String
+    @Environment(\.colorScheme) private var systemScheme
+
+    func body(content: Content) -> some View {
+        let palette = CTPalette.resolved(pref: pref, system: systemScheme)
+        AppTheme.currentPalette = palette
+        return content.environment(\.ctPalette, palette)
     }
 }
 
@@ -75,12 +153,42 @@ struct TickerSheetTarget: Identifiable, Hashable {
 }
 
 enum AppTheme {
-    static let background = Color(uiColor: .systemBackground)
-    static let panel = Color(uiColor: .systemGray6).opacity(0.4)
-    static let panelElevated = Color(uiColor: .systemGray5).opacity(0.6)
+    static var currentPalette: CTPalette = .light
+    static var background: Color { currentPalette.background }
+    static var card: Color { currentPalette.card }
+    static var panel: Color { currentPalette.panel }
+    static var panelElevated: Color { currentPalette.card }
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-    
+
+    /// Neutral "chrome" colour for bare icon glyphs that carry no semantic
+    /// meaning of their own and have no adjacent text — dropdown chevrons,
+    /// the sort-direction flip arrow, disclosure carets.  Same treatment as
+    /// the header ⓘ/≡ buttons' `headerGlyphGrey` (owner: leave those exactly
+    /// as they are; this is the same grey, reused for the rest of the chrome
+    /// family). A concrete `Color`, not the hierarchical `.secondary`
+    /// `ShapeStyle`: hierarchical styles resolve against the environment
+    /// tint, and `MainTabView` sets `.tint(.blue)` (App.swift), so
+    /// `.secondary` inside a `Menu`/`Button` renders accent blue instead of
+    /// grey — see `headerGlyphGrey`'s doc comment below for the fuller story.
+    static let glyphGrey = Color(uiColor: .secondaryLabel)
+
+    /// Ordinary "ink" colour for text words on chrome controls — filter pill
+    /// labels ("House", "D+R", "3 Months"), "Done", "Export CSV", "Subscribe
+    /// with Apple", sort-field names, the rows-per-page value.  Owner
+    /// (2026-08-21): these must read as "very dark grey or almost black",
+    /// comfortably legible — `.secondaryLabel`/`glyphGrey` above is too light
+    /// for text, even though it is fine for a bare glyph.  `.label` clears
+    /// WCAG AA (4.5:1) against `AppTheme.card`/`AppTheme.panel` in both
+    /// themes and inverts correctly in dark mode.  Same concrete-`Color`
+    /// reasoning as `glyphGrey`: hierarchical `.primary` also resolves
+    /// against the blue tint inside a `Menu`/`Button`.
+    static let wordInk = Color(uiColor: .label)
+
+    /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
+    static let siteFooterDisclaimer =
+        "Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency"
+
     // Web app aesthetic alignment
     static let houseColor = Color.blue.opacity(0.8)
     static let senateColor = Color.purple.opacity(0.8)
@@ -89,6 +197,20 @@ enum AppTheme {
     static func border(cornerRadius: CGFloat = 16) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius)
             .stroke(borderColor, lineWidth: 1)
+    }
+}
+
+extension View {
+    func ctThemedForm() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
+            .toolbarBackground(AppTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    func ctThemedRow() -> some View {
+        listRowBackground(AppTheme.card)
     }
 }
 
@@ -122,6 +244,20 @@ extension String {
         default: return self.capitalized
         }
     }
+
+    /// Same as `chamberLabel`, but for an executive-branch filer with a
+    /// curated position on file (`member.title`, sourced server-side from
+    /// `shared/executiveTitles.ts`) shows that position instead of the bare
+    /// branch name — "President" / "Treasury Secretary", never the literal
+    /// word "Executive" (iPad audit P1-4).  Falls back to `chamberLabel`
+    /// whenever no title is available, so House/Senate rows and executive
+    /// filers with no curated title yet render exactly as before.
+    func chamberLabel(title: String?) -> String {
+        if self.lowercased() == "executive", let title, !title.isEmpty {
+            return title
+        }
+        return chamberLabel
+    }
 }
 
 enum MemberPhotoURL {
@@ -150,7 +286,7 @@ struct MemberAvatar: View {
                 .font(.system(size: max(11, size * 0.34), weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
-                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                .background(AppTheme.card, in: Circle())
             if let photoURL {
                 AsyncImage(url: photoURL) { phase in
                     if case .success(let image) = phase {
@@ -274,9 +410,7 @@ struct AssetMark: View {
                         .padding(size * 0.12)
                         .frame(width: size, height: size)
                         .background(
-                            colorScheme == .dark
-                                ? Color(uiColor: .secondarySystemBackground)
-                                : Color.white,
+                            AppTheme.card,
                             in: RoundedRectangle(cornerRadius: size * 0.22)
                         )
                         .overlay(
@@ -753,6 +887,30 @@ extension View {
         self
         #endif
     }
+
+    /// Fills the iPad canvas instead of iPadOS's default "form sheet" card
+    /// (a fixed ~830pt-wide box centered in a sea of dimmed background —
+    /// the pattern behind every sheet flagged in the iPad audit, P1-1).
+    /// Apply this to the content passed to `.sheet` / `.fullScreenCover`.
+    /// Regular width class only: on iPhone's compact class this is a no-op,
+    /// because `.sheet` there already fills the available width and
+    /// `presentationSizing` never runs.
+    @ViewBuilder
+    func iPadFullWidthSheet() -> some View {
+        modifier(IPadFullWidthSheetModifier())
+    }
+}
+
+private struct IPadFullWidthSheetModifier: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), horizontalSizeClass == .regular {
+            content.presentationSizing(.page)
+        } else {
+            content
+        }
+    }
 }
 
 // MARK: - Header chrome (subtle icon buttons + hamburger account menu)
@@ -827,6 +985,7 @@ struct HamburgerMenuButton: View {
             AccountQuickMenu(isPresented: $showMenu)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(AppTheme.background)
         }
     }
 }
@@ -836,10 +995,9 @@ struct HamburgerMenuButton: View {
 /// Premium, theme, legal links, disclaimer.
 ///
 /// It used to be a 290pt popover that could only fit a native Apple button and
-/// a "More Sign-In Options" signpost to the Settings tab; Google and magic-link
-/// lived only in Settings, so the two surfaces drifted. Sign-in is now one
-/// component (`SignInPanel`) used by both, and this sheet has the room to show
-/// it.
+/// a "More Sign-In Options" signpost to the Settings tab; Google lived only in
+/// Settings, so the two surfaces drifted. Sign-in is now one component
+/// (`SignInPanel`) used by both, and this sheet has the room to show it.
 struct AccountQuickMenu: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.openURL) private var openURL
@@ -847,6 +1005,7 @@ struct AccountQuickMenu: View {
     @Binding var isPresented: Bool
     @State private var showPremiumInfo = false
     @State private var showExportSheet = false
+    @State private var showDeleteAccountConfirm = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
 
@@ -855,20 +1014,45 @@ struct AccountQuickMenu: View {
             Form {
                 Section {
                     accountSection
+                } footer: {
+                    if let notice = store.watchlistNotice, !notice.isEmpty {
+                        Text(notice)
+                    }
+                }
+                .ctThemedRow()
+
+                if store.showsAdminRow {
+                    Section {
+                        NavigationLink(value: AdminRoute.panel) {
+                            Label("Admin", systemImage: "gearshape.2")
+                        }
+                    }
+                    .ctThemedRow()
                 }
 
                 Section {
                     TradeDisclosureAlertsToggle()
                 }
+                .ctThemedRow()
 
                 Section {
                     Button {
                         showExportSheet = true
                     } label: {
-                        Label("Export CSV", systemImage: "arrow.down.circle")
+                        // Split colour: bare-glyph grey on the icon, dark
+                        // legible ink on the word (owner 2026-08-21 — words
+                        // must read dark, glyphs can stay the lighter grey).
+                        // Without this the row inherits the app-wide
+                        // `.tint(.blue)` (App.swift) and renders accent blue.
+                        Label {
+                            Text("Export CSV").foregroundStyle(AppTheme.wordInk)
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(AppTheme.glyphGrey)
+                        }
                     }
                     billingRow
                 }
+                .ctThemedRow()
 
                 Section {
                     // No "Theme" caption and no explanation of what Light/Dark
@@ -877,6 +1061,7 @@ struct AccountQuickMenu: View {
                     ThemeSegmentControl(selection: $appColorScheme)
                         .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                 }
+                .ctThemedRow()
 
                 if store.signedIn || store.hasStoredSessionToken {
                     Section {
@@ -888,31 +1073,62 @@ struct AccountQuickMenu: View {
                                 systemImage: "rectangle.portrait.and.arrow.right"
                             )
                         }
-                        .disabled(store.isLoggingOut)
+                        .disabled(store.isLoggingOut || store.isDeletingAccount)
+                        if store.signedIn {
+                            Button(role: .destructive) {
+                                showDeleteAccountConfirm = true
+                            } label: {
+                                Label(
+                                    store.isDeletingAccount ? "Deleting Account…" : "Delete Account",
+                                    systemImage: "trash"
+                                )
+                            }
+                            .disabled(store.isLoggingOut || store.isDeletingAccount)
+                        }
                     }
+                    .ctThemedRow()
                 }
 
                 Section {
                     LegalFooterLinks()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     // Short disclaimer line — mobile-web parity with `.site-footer`.
-                    Text("Congress.Trade is an educational tool for public STOCK Act disclosures.  Not financial advice — dollar figures are estimates from disclosed brackets.")
+                    Text(AppTheme.siteFooterDisclaimer)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .ctThemedRow()
             }
-            .scrollContentBackground(.hidden)
-            .background(AppTheme.background)
+            .ctThemedForm()
             .modifier(ForcedColorScheme(pref: appColorScheme))
+            .modifier(CTPaletteInjector(pref: appColorScheme))
             .navigationTitle("Account")
             .inlineNavigationTitle()
+            .navigationDestination(for: AdminRoute.self) { route in
+                switch route {
+                case .panel:
+                    AdminPanelView()
+                case .reviewQueue:
+                    ReviewQueueView()
+                case .reviewDetail(let docId):
+                    ReviewDetailView(docId: docId)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
+                    // Dark legible ink, not the app-wide blue tint (owner
+                    // 2026-08-21) — `.foregroundStyle` alone is not enough
+                    // here: the toolbar button style re-applies `.tint` over
+                    // it, so both must be set (same defensive pattern as
+                    // `SignInWithGoogleButton` below).
                     Button("Done") { isPresented = false }
+                        .foregroundStyle(AppTheme.wordInk)
+                        .tint(AppTheme.wordInk)
                 }
             }
         }
+        .task { await store.probeAdminAccess() }
         .environment(\.openPremium) { showPremiumInfo = true }
         .sheet(isPresented: $showPremiumInfo) {
             PremiumSheet()
@@ -924,6 +1140,19 @@ struct AccountQuickMenu: View {
                 .environmentObject(store)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("Delete Account?", isPresented: $showDeleteAccountConfirm, titleVisibility: .visible) {
+            Button("Delete Account", role: .destructive) {
+                Task {
+                    await store.deleteAccount()
+                    if !store.signedIn && !store.hasStoredSessionToken {
+                        isPresented = false
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in Settings → Apple ID → Subscriptions.  This cannot be undone.")
         }
     }
 
@@ -1017,8 +1246,8 @@ struct AccountQuickMenu: View {
 
 // MARK: - Sign-in (one implementation, every surface)
 
-/// The app's single sign-in stack: native Apple button, Google button, magic
-/// link — plus the account notice, which is the part that was missing.
+/// The app's single sign-in stack: native Apple button and Google button —
+/// plus the account notice, which is the part that was missing.
 ///
 /// Every failure path in `Store/AppleSignIn.swift` already writes
 /// `setAccountNotice`, but the hamburger popover rendered no notice at all, so
@@ -1033,8 +1262,6 @@ struct SignInPanel: View {
     /// `handleAppleSignIn` on completion. See `Store/AppleSignIn.swift`.
     @State private var currentAppleNonce: String?
     @State private var isAuthenticatingWithGoogle = false
-    @State private var magicEmail = ""
-    @FocusState private var magicEmailFocused: Bool
 
     /// Fired once a session token has actually been stored — used by sheets
     /// that should close themselves on success.
@@ -1067,50 +1294,6 @@ struct SignInPanel: View {
 
             GoogleSignInButton(isBusy: isAuthenticatingWithGoogle) {
                 startGoogleSignIn()
-            }
-
-            HStack(spacing: 8) {
-                // `verbatim:` is load-bearing. A string LITERAL passed to
-                // `Text`/`TextField` is a `LocalizedStringKey`, which SwiftUI
-                // parses as Markdown — and Markdown autolinks a bare email
-                // address, so `"you@example.com"` rendered as a link in the
-                // accent color. It looked like the tint leak that grey-ed the
-                // header glyphs, but it is not: `.foregroundStyle` on the
-                // field, a `prompt:` styled `.secondary`, a `prompt:` styled
-                // with a concrete color, dropping `.roundedBorder`, and
-                // overriding `.tint` were all tried on device and all stayed
-                // blue, because link styling outranks every one of them.
-                // Not parsing it as Markdown is the fix.
-                TextField(
-                    "",
-                    text: $magicEmail,
-                    prompt: Text(verbatim: "you@example.com")
-                )
-                    .foregroundStyle(Color.primary)
-                    .accessibilityLabel("Email address")
-                    .urlKeyboard()
-                    .neverAutocapitalized()
-                    .autocorrectionDisabled()
-                    .focused($magicEmailFocused)
-                    .submitLabel(.done)
-                    .onSubmit { magicEmailFocused = false }
-                Button {
-                    magicEmailFocused = false
-                    Task { await store.requestMagicLink(email: magicEmail) }
-                } label: {
-                    Text("Email Link")
-                        .font(.subheadline.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-                .disabled(magicEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            // The keyboard-dismiss bar travels with the field it serves, so it
-            // works from Settings and from the account sheet alike.
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { magicEmailFocused = false }
-                }
             }
 
             if let notice = store.watchlistNotice, !notice.isEmpty {
@@ -1425,6 +1608,21 @@ enum AppLegal {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: markdown, options: options)) ?? AttributedString(markdown)
     }
+
+    /// Pricing is the same digital good as IAP.  Footer taps must open
+    /// StoreKit, never Safari checkout (Guideline 3.1.1).
+    static func opensSafari(_ destination: Destination) -> Bool {
+        destination.id != "pricing"
+    }
+
+    static func footerDestinations(includePricing: Bool, canOpenInAppPurchase: Bool) -> [Destination] {
+        destinations.filter { destination in
+            if destination.id == "pricing" {
+                return includePricing && canOpenInAppPurchase
+            }
+            return true
+        }
+    }
 }
 
 /// Opens the in-app Premium / StoreKit sheet.  Set at the tab root and on
@@ -1451,9 +1649,10 @@ struct LegalFooterLinks: View {
     var includePricing: Bool = true
 
     var body: some View {
-        let items = includePricing
-            ? AppLegal.destinations
-            : AppLegal.destinations.filter { $0.id != "pricing" }
+        let items = AppLegal.footerDestinations(
+            includePricing: includePricing,
+            canOpenInAppPurchase: openPremium != nil
+        )
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, destination in
                 if index > 0 {
@@ -1463,11 +1662,13 @@ struct LegalFooterLinks: View {
                         .accessibilityHidden(true)
                 }
                 Button(destination.title) {
-                    if destination.id == "pricing", let openPremium {
-                        openPremium()
-                    } else {
-                        openURL(destination.url)
+                    if destination.id == "pricing" {
+                        // Never fall through to Safari /pricing — that is web
+                        // Stripe checkout for the same digital good as IAP.
+                        openPremium?()
+                        return
                     }
+                    openURL(destination.url)
                 }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -1554,7 +1755,7 @@ struct ThemeSegmentControl: View {
                     .background {
                         if selection == option.id {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                                .fill(AppTheme.card)
                                 .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
                         }
                     }
@@ -1572,7 +1773,7 @@ struct ThemeSegmentControl: View {
             }
         }
         .padding(3)
-        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 1)

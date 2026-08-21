@@ -80,6 +80,15 @@ describe('decideDocClass — deterministic tier', () => {
     expect(decideDocClass(signals({ claimsPdf: false, docKind: 'senate_html' }))).toBe('typed');
   });
 
+  it('classifies House electronic DocIDs as typed even when stored as scanned_pdf', () => {
+    expect(decideDocClass(signals({
+      docId: 'H-2025-20030634',
+      hasTextLayer: false,
+      hasImages: true,
+      docKind: 'scanned_pdf',
+    }))).toBe('typed');
+  });
+
   it('classifies empty: zero pages, or no text/images with tiny bytes-per-page', () => {
     expect(decideDocClass(signals({ pageCount: 0 }))).toBe('empty');
     expect(decideDocClass(signals({
@@ -111,6 +120,27 @@ describe('computeDocClassSignals', () => {
     expect(computed.pageCount).toBe(1);
     expect(computed.hasTextLayer).toBe(true);
     expect(decideDocClass(computed)).toBe('typed');
+  });
+
+  it('treats an embedded /Font (compressed text layer) as a text layer', async () => {
+    const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+trailer
+<< /Size 5 /Root 1 0 R >>
+%%EOF`;
+    const computed = await computeDocClassSignals(toArrayBuffer(new TextEncoder().encode(pdf)));
+    expect(computed.hasTextLayer).toBe(true);
   });
 
   it('detects a blank one-page PDF as empty end-to-end', async () => {

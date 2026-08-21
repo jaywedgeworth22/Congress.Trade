@@ -214,15 +214,158 @@ describe('HousePdfExtractor', () => {
     expect(out.transactions[0].ticker).toBe('AAPL');
   });
 
-  it('falls back to vision when House text extraction returns no rows', async () => {
+  it('falls back to vision when a real House scan has no text rows', async () => {
     const text = extractor('textPdf', result([], { extractor: 'textPdf' }));
     const vision = extractor('vision', result([tx({ ticker: 'INTC' })], { extractor: 'vision' }));
     const house = new HousePdfExtractor(text, vision);
 
-    const out = await house.extract({ filing: filing() });
+    const out = await house.extract({
+      filing: filing({ docId: 'H-2025-8221302', docKind: 'scanned_pdf' }),
+    });
 
     expect(out.extractor).toBe('vision');
     expect(out.transactions[0].ticker).toBe('INTC');
+  });
+
+  it('does not call Files/vision on an electronic House PTR with zero text rows', async () => {
+    const text = extractor('textPdf', result([], { extractor: 'textPdf', raw: 'Periodic Transaction Report header only' }));
+    let visionCalls = 0;
+    const vision: Extractor = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        visionCalls += 1;
+        return result([tx({ ticker: 'INTC' })], { extractor: 'vision' });
+      },
+    };
+    const house = new HousePdfExtractor(text, vision);
+
+    const out = await house.extract({
+      filing: filing({ docId: 'H-2025-20030634', docKind: 'scanned_pdf' }),
+    });
+
+    expect(visionCalls).toBe(0);
+    expect(out.extractor).toBe('textPdf');
+    expect(out.transactions).toEqual([]);
+  });
+
+  it('does not escalate a letterhead cheap read to Files/vision', async () => {
+    const letterhead = result([
+      tx({
+        assetName: 'Clerk of the House of Representatives',
+        ticker: null,
+        txDate: null,
+        confidence: 0.15,
+      }),
+    ], { extractor: 'textPdf' });
+    let visionCalls = 0;
+    const vision: Extractor = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        visionCalls += 1;
+        return result([tx()], { extractor: 'vision' });
+      },
+    };
+    const house = new HousePdfExtractor(
+      extractor('textPdf', letterhead),
+      vision,
+    );
+
+    const out = await house.extract({
+      filing: filing({ docId: 'H-2025-20030634', docKind: 'text_pdf' }),
+    });
+
+    expect(visionCalls).toBe(0);
+    expect(out.transactions[0]?.assetName).toMatch(/Clerk of the House/);
+  });
+
+  it('uses cheap text (not Files) when an electronic PTR has a plausible table but zero structured rows', async () => {
+    const emptyText = result([], {
+      extractor: 'textPdf',
+      raw: 'SP  Apple Inc. (AAPL) [ST]\nP  06/14/2024  06/20/2024  $1,001 - $15,000',
+    });
+    let visionCalls = 0;
+    let cheapCalls = 0;
+    const vision: Extractor = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        visionCalls += 1;
+        return result([tx({ ticker: 'MSFT' })], { extractor: 'vision' });
+      },
+    };
+    const cheap: Extractor = {
+      name: 'openRouterText',
+      canHandle: () => true,
+      extract: async (input) => {
+        cheapCalls += 1;
+        expect(input.extractedText).toContain('AAPL');
+        return result([tx({ ticker: 'AAPL' })], { extractor: 'openRouterText' });
+      },
+    };
+    const house = new HousePdfExtractor(extractor('textPdf', emptyText), vision, cheap);
+
+    const out = await house.extract({
+      filing: filing({ docId: 'H-2025-20030634', docKind: 'text_pdf' }),
+    });
+
+    expect(cheapCalls).toBe(1);
+    expect(visionCalls).toBe(0);
+    expect(out.extractor).toBe('openRouterText');
+    expect(out.transactions[0]?.ticker).toBe('AAPL');
+  });
+
+  it('skips a doc when cheap text returns Unauthorized, without Files', async () => {
+    const emptyText = result([], {
+      extractor: 'textPdf',
+      raw: 'SP  Apple Inc. (AAPL) [ST]\nP  06/14/2024  06/20/2024  $1,001 - $15,000',
+    });
+    let visionCalls = 0;
+    const vision: Extractor = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        visionCalls += 1;
+        return result([tx({ ticker: 'MSFT' })], { extractor: 'vision' });
+      },
+    };
+    const cheap: Extractor = {
+      name: 'openRouterText',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('openRouterReply:unauth_reply: 401 Unauthorized');
+      },
+    };
+    const house = new HousePdfExtractor(extractor('textPdf', emptyText), vision, cheap);
+    const out = await house.extract({
+      filing: filing({ docId: 'H-2025-20030634', docKind: 'text_pdf' }),
+    });
+    expect(visionCalls).toBe(0);
+    expect(out.extractor).toBe('textPdf');
+    expect(out.transactions).toEqual([]);
+  });
+
+  it('still fail-closes a proven OpenRouter dead-key rejection', async () => {
+    const emptyText = result([], {
+      extractor: 'textPdf',
+      raw: 'SP  Apple Inc. (AAPL) [ST]\nP  06/14/2024  06/20/2024  $1,001 - $15,000',
+    });
+    const cheap: Extractor = {
+      name: 'openRouterText',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('openRouterText: OpenRouter API 401 Unauthorized {"error":{"message":"User not found.","code":401}}');
+      },
+    };
+    const house = new HousePdfExtractor(
+      extractor('textPdf', emptyText),
+      extractor('vision', result([])),
+      cheap,
+    );
+    await expect(house.extract({
+      filing: filing({ docId: 'H-2025-20030634', docKind: 'text_pdf' }),
+    })).rejects.toThrow(/User not found/);
   });
 
   it('does not claim non-House scanned PDFs', () => {
@@ -247,9 +390,10 @@ describe('buildExtractorPipeline routing', () => {
     expect(firstMatch(filing({ chamber: 'executive', docKind: 'text_pdf' }))).toBe('ogeText');
   });
 
-  it('still routes House text_pdf filings through housePdf (text-first, vision fallback)', () => {
+  it('still routes House text_pdf filings through housePdf (text-first, Files only for real scans)', () => {
     const name = firstMatch(filing({ chamber: 'house', docKind: 'text_pdf' }));
     expect(name).toMatch(/^housePdf\(/);
+    expect(name).toContain('openRouterText');
   });
 
   it('still routes Senate HTML filings to senateHtml', () => {
