@@ -344,15 +344,17 @@ export async function extractParsed(
   }
 
   const breakerName = extractor.circuitBreakerName ?? extractor.name;
-  // HousePdfExtractor tries deterministic text parsing first for text-layer
-  // filings. A vision-provider ban must not block that healthy path before it
-  // gets a chance to run; scanned PDFs still consult the concrete vision ban.
+  // HousePdfExtractor / OgePdfExtractor try deterministic text parsing first.
+  // A vision-provider ban must not block that healthy path before it gets a
+  // chance to run. OgePdf also needs the unpdf attempt on scanned_pdf
+  // (Burns-class misclassifications); its vision fallback is fail-soft.
   // ConfiguredVisionExtractor checks the concrete candidate provider before
   // each primary/failover attempt. The wrapper name is not a valid provider
   // scope, so never consult or write provider_ban:configuredVision here.
   const configuredVisionOwnsBreaker = extractor.name.includes('configuredVision');
   const checkBreaker = !configuredVisionOwnsBreaker
-    && !(extractor.name.startsWith('housePdf(') && filing.docKind === 'text_pdf');
+    && !(extractor.name.startsWith('housePdf(') && filing.docKind === 'text_pdf')
+    && !extractor.name.startsWith('ogePdf(');
   const breakerKey = `provider_ban:${breakerName}`;
   let isBanned: string | null = null;
   if (checkBreaker && env.CONFIG_KV) {
