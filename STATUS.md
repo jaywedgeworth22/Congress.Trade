@@ -1,5 +1,33 @@
 # Current Handoff
 
+## 2026-08-20 CLAUDE — Premium activation alerts, Codex round resolved (PR #2082)
+
+Eight Codex findings fixed.  Highest-value: `sendPushover` had no abort signal,
+so a STALLED Pushover connection could hang the Stripe webhook indefinitely and
+trigger Stripe's retry - now bounded at 5s in the shared helper.  The activation
+claim was consumed before delivery, losing the alert permanently on any failure;
+it is now released on failure, which also covers the migration-window case where
+auto-deploy serves new code before `premium_activation_notices` exists.
+
+Also: `customer.subscription.updated` admitted (card-confirmation subscriptions
+were silently unalerted), a recognised plan required instead of defaulting
+null->monthly, the deprecated Apple confirm route wired, and Apple newness
+re-checked against the persisted owner to close a TOCTOU that could put the
+wrong email in an alert.
+
+Migration is 0093 (renumbered twice by collisions).  AFTER MERGE: run
+`POST /api/admin/migrate`.
+Receipt: `docs/rollouts/2026-08-20-premium-activation-alerts.md`.
+## 2026-08-20 CURSOR — Shared-dep auto-merge: no GH_PAT, no pull_request_target
+
+Jay: do not add `GH_PAT`.  `congress-trading-shared` is public and vendored
+here.  `auto-merge-shared-dependency.yml` (and `auto-merge-prs.yml`) no
+longer use `pull_request_target` or write tokens, skip forks, and do not
+invite a PAT.  Same-repo bumps still land with
+`gh pr merge <n> --squash --auto`.  Required Linux CI runs on fork PRs so
+skipped typecheck is not satisfied.  Receipt:
+`docs/rollouts/2026-08-20-harden-shared-dep-automerge.md`.
+
 ## 2026-08-20 GROK — Review-queue glued PTR rows (#2106)
 
 73 House items still held after #2102.  Seven typed PTRs glued later self-owned
@@ -75,6 +103,13 @@ retired; Mac `mac-xcode26-congress` is iOS-only.  Vendor provenance records the
 CTS `v2.5.2` lock SHA.  `PRICE_PROVIDER=peer` keeps peer-strict auth and uses
 direct Massive as last-resort only (not a parallel primary).  Receipt:
 `docs/rollouts/2026-08-20-cross-app-coordination-followups.md`.
+## 2026-08-20 CURSOR — scout.jays.services answers GET / like mac
+
+Same named tunnel and DNS as `mac.jays.services`.  The 404 on GET `/` was
+the origin: `senate-relay` only treated GET `/health` as liveness.  GET and
+HEAD on `/` and `/health` now return the same JSON.  `/fetch-doc` unchanged.
+Receipt: `docs/rollouts/2026-08-20-scout-tunnel-health.md`.  Activate with
+`pm2 restart senate-relay` on the Mac after pull.
 
 ## 2026-08-20 CURSOR — Monet P0/P1 pack (#2029)
 

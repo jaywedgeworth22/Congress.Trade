@@ -2,6 +2,10 @@
 
 Read `AGENTS.md` first and follow it as the source of truth for this repo.
 
+Attack-surface inventory (hosts, token *names*, Infisical project ids) is in
+the private repo `jaywedgeworth22/fleet-ops` (`ATTACK-MAP.md`). Do not copy
+secret values or the full map into this public file.
+
 Key reminders:
 
 - **Coordinate via Slack `#agent-sync` (channel id `C0BEZDJDNKV`) BY DEFAULT**,
