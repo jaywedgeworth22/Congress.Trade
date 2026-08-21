@@ -583,6 +583,30 @@ final class CongressTradeStore: ObservableObject {
         term.range(of: #"^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$"#, options: .regularExpression) != nil
     }
 
+    /// Cancels the auto-poll timer, in-flight refresh/trends runners, and the
+    /// filter-intent watchdog.  A live screen must not call this; releasing
+    /// the store (or replacing it) should.  Tests rely on deinit running this
+    /// so a previous case's `refreshTrends()` fan-out and
+    /// `scheduleAutoRefresh()` timer cannot land on `MockURLProtocol` after
+    /// that case niled the handler.
+    func cancelOutstandingWork() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        refreshRunner?.cancel()
+        refreshRunner = nil
+        trendsRunner?.cancel()
+        trendsRunner = nil
+        filterIntentWatchdog?.cancel()
+        filterIntentWatchdog = nil
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
+        refreshRunner?.cancel()
+        trendsRunner?.cancel()
+        filterIntentWatchdog?.cancel()
+    }
+
     /// Pauses/resumes the foreground poll timer (backgrounded scenes must not
     /// keep polling). Resuming schedules from the last feed's
     /// `nextPollAfterSec`; the next successful refresh re-arms it anyway.
