@@ -216,7 +216,6 @@ function parseTailRecords(text: string): ParsedTx[] {
   if (matches.length === 0) return [];
 
   const rows: ParsedTx[] = [];
-  let fallbackOwner: Owner | null = null;
   for (let i = 0; i < matches.length; i += 1) {
     const m = matches[i];
     const next = matches[i + 1];
@@ -228,8 +227,9 @@ function parseTailRecords(text: string): ParsedTx[] {
     const prefix = normalized.slice(prevEnd, start);
     const rawText = normalized.slice(prevEnd, end).trim();
     const groups = m.groups ?? {};
-    const identity = identityFromPrefix(prefix, fallbackOwner);
-    fallbackOwner = identity.owner;
+    // Blank Owner is Self on the House form — not "same as the previous row".
+    // Carrying SP/DC/JT forward mis-attributes later unmarked (filer) trades.
+    const identity = identityFromPrefix(prefix);
     const assetType = groups.assetType?.toUpperCase() ?? null;
     const txType = parseTxType(groups.txType ?? '') ?? 'B';
     const txDate = toIsoDate(groups.txDate ?? '');
@@ -308,15 +308,14 @@ function stripPrefixChrome(text: string): string {
 
 function identityFromPrefix(
   prefix: string,
-  fallbackOwner: Owner | null,
 ): { owner: Owner | null; ticker: string | null; assetName: string } {
   let s = prefix.replace(/\s+/g, ' ').trim();
   const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)]
     .filter((m) => !ownerTokenIsLetterhead(s, m));
   const ownerTok = ownerMatches.at(-1);
   const owner = ownerTok
-    ? (OWNER_CODES[ownerTok[1].toUpperCase()] ?? fallbackOwner ?? 'self')
-    : (fallbackOwner ?? 'self');
+    ? (OWNER_CODES[ownerTok[1].toUpperCase()] ?? 'self')
+    : 'self';
   if (ownerTok && ownerTok.index != null) {
     s = s.slice(ownerTok.index + ownerTok[0].length).trim();
   }

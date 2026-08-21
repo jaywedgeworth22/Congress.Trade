@@ -359,6 +359,22 @@ describe('parseHousePtrText', () => {
     expect(result.extractor).toBe('textPdf');
   });
 
+  it('treats a later row with no owner code as self, not the prior SP/DC/JT', () => {
+    const rows = parseHousePtrText(
+      'SP Apple Inc. (AAPL) [ST] P 06/14/2026 06/20/2026 $1,001 - $15,000 ' +
+        'Microsoft Corporation (MSFT) [ST] P 06/15/2026 06/21/2026 $15,001 - $50,000 ' +
+        'DC Tesla, Inc. (TSLA) [ST] S 06/16/2026 06/22/2026 $1,001 - $15,000 ' +
+        'NVIDIA Corporation (NVDA) [ST] P 06/17/2026 06/23/2026 $1,001 - $15,000',
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => [r.ticker, r.owner])).toEqual([
+      ['AAPL', 'spouse'],
+      ['MSFT', 'self'],
+      ['TSLA', 'dependent'],
+      ['NVDA', 'self'],
+    ]);
+  });
+
   it('splits later self-owned rows that omit SP/DC/JT so a muni does not inherit AMZN', () => {
     const rows = parseHousePtrText(
       'ALLEGHENY CNTY PA HOSP DEV AUTH REF-UNIV PITTSBURGH MED CNTR [GS] S 03/27/2025 03/27/2025 $100,001 - $250,000 F S: New S O: JP Morgan Brokerage Account #4 Amazon.com, Inc. - Common Stock (AMZN) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000 F S: New S O: JP Morgan Brokerage Account #2 Broadcom Inc. - Common Stock (AVGO) [ST] S 04/03/2025 04/03/2025 $1,001 - $15,000',
