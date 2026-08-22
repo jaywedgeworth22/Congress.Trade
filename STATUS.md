@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-22 GROK — Disclaimer under title, cold-start 3s
+
+ⓘ always lived in the nav bar but the banner was the first ScrollView
+row, so a tap while scrolled looked broken.  The banner now sits in
+`FeedDisclaimerHeader` under the wordmark and above filters; filters
+slide with it.  Cold start (process launch only, from `MainTabView` so
+Trends fetch cannot delay it) shows it 3 seconds then hides.  Receipt:
+`docs/rollouts/2026-08-22-ios-disclaimer-header.md`.  Board `08b3f53c`.
+
 ## 2026-08-22 GROK — Filter bar in the opaque light header
 
 Owner screenshots: pills sat on the cool page with a gap under the wordmark

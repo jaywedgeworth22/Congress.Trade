@@ -4,13 +4,11 @@ struct TrendsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @EnvironmentObject private var tabRouter: TabRouter
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
+    /// Same `@AppStorage` key as `FeedDashboardView` — the disclaimer's
     /// dismissed/expanded state is one truth across both tabs.  The filter
-    /// strip is glued under the wordmark in the opaque light header (same
-    /// `FeedStickyBar` as Trades) so it does not sit in the cool page or
-    /// leave a gap under the title.
-    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
-    @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
+    /// strip is glued under the wordmark in the opaque light header so it
+    /// does not sit in the cool page or leave a gap under the title.
+    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = false
     @State private var selectedTicker: TickerSheetTarget?
     @State private var selectedPolitician: MemberSheetTarget?
     @State private var volumeMetric: VolumeChartMetric = .count
@@ -19,15 +17,12 @@ struct TrendsView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                FeedStickyBar {
+                FeedDisclaimerHeader(disclaimerExpanded: $disclaimerExpanded) {
                     FeedControlBar(showMetrics: false)
                 }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if disclaimerExpanded {
-                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
-                    }
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
                             .frame(maxWidth: .infinity)
@@ -99,10 +94,9 @@ struct TrendsView: View {
                     AppLegalFooter()
                         .padding(.top, 8)
                 }
-                // Same horizontal/top/bottom insets as Trades so the
-                // disclaimer banner lands at an identical position/size on
-                // both tabs (owner punch list item 2a — was `.padding(16)`
-                // uniformly, 8pt further from the nav bar than Trades).
+                // Same horizontal/top/bottom insets as Trades.  The
+                // disclaimer lives in `FeedDisclaimerHeader` now, not in
+                // this scrolling stack.
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
@@ -120,7 +114,10 @@ struct TrendsView: View {
                         systemImage: "info.circle",
                         accessibilityLabel: "About Congress.Trade"
                     ) {
-                        withAnimation { disclaimerExpanded.toggle() }
+                        DisclaimerColdStart.cancelAutoHide()
+                        withAnimation(.easeInOut(duration: 0.32)) {
+                            disclaimerExpanded.toggle()
+                        }
                     }
                 }
                 ToolbarItem(placement: .principal) {
@@ -133,16 +130,6 @@ struct TrendsView: View {
             .task {
                 if store.analyticsSummary == nil {
                     await store.refreshTrends()
-                }
-                // One-time app-lifetime intro reveal, shared with Trades via
-                // the same AppStorage keys — never re-plays on tab switch.
-                if !disclaimerIntroDone {
-                    disclaimerIntroDone = true
-                    withAnimation { disclaimerExpanded = true }
-                    try? await Task.sleep(for: .seconds(4))
-                    if !Task.isCancelled {
-                        withAnimation { disclaimerExpanded = false }
-                    }
                 }
             }
             .refreshable {

@@ -10,11 +10,10 @@ struct FeedDashboardView: View {
     @State private var selectedTrade: ClientTrade?
     @State private var selectedPolitician: MemberSheetTarget?
     @State private var selectedTicker: TickerSheetTarget?
-    /// Shared with Trends via the same `@AppStorage` keys so the disclaimer's
-    /// dismissed/expanded state is one truth across both tabs (owner punch
-    /// list item 2b) — never a per-view `@State` that resets on tab switch.
-    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
-    @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
+    /// Shared with Trends via the same `@AppStorage` key so the disclaimer's
+    /// dismissed/expanded state is one truth across both tabs — never a
+    /// per-view `@State` that resets on tab switch.
+    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var searchFocused: Bool
     /// True while a debounce window is open that the store has been told about
@@ -147,7 +146,7 @@ struct FeedDashboardView: View {
         let trades = filteredTrades
         return NavigationStack {
             VStack(spacing: 0) {
-                FeedStickyBar {
+                FeedDisclaimerHeader(disclaimerExpanded: $disclaimerExpanded) {
                     VStack(spacing: 6) {
                         FeedControlBar()
                         TradesUnifiedSearchField(
@@ -177,9 +176,6 @@ struct FeedDashboardView: View {
 
             ScrollView {
                 VStack(spacing: 8) {
-                    if disclaimerExpanded {
-                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
-                    }
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
@@ -281,7 +277,10 @@ struct FeedDashboardView: View {
                         systemImage: "info.circle",
                         accessibilityLabel: "About Congress.Trade"
                     ) {
-                        withAnimation { disclaimerExpanded.toggle() }
+                        DisclaimerColdStart.cancelAutoHide()
+                        withAnimation(.easeInOut(duration: 0.32)) {
+                            disclaimerExpanded.toggle()
+                        }
                     }
                 }
                 ToolbarItem(placement: .principal) {
@@ -302,18 +301,6 @@ struct FeedDashboardView: View {
                 }
             }
             .refreshable { await store.refresh() }
-            .task {
-                // One-time app-lifetime intro reveal, shared with Trends via
-                // the same AppStorage keys — never re-plays on tab switch.
-                if !disclaimerIntroDone {
-                    disclaimerIntroDone = true
-                    withAnimation { disclaimerExpanded = true }
-                    try? await Task.sleep(for: .seconds(4))
-                    if !Task.isCancelled {
-                        withAnimation { disclaimerExpanded = false }
-                    }
-                }
-            }
             .overlay {
                 if store.isRefreshing && cachedTrades.isEmpty {
                     ProgressView()
@@ -440,6 +427,77 @@ struct BrandTitle: View {
             .frame(height: 46)
             .frame(maxWidth: 330)
             .accessibilityLabel("Congress.Trade")
+    }
+}
+
+/// Process-lifetime cold-start intro for the header disclaimer.
+///
+/// Plays once per app process (force-quit and reopen), not on tab switch
+/// and not when returning from background.  A tap on ⓘ cancels the
+/// auto-hide so the user keeps whatever they just chose.
+@MainActor
+enum DisclaimerColdStart {
+    private static var playedThisProcess = false
+    private static var hideTask: Task<Void, Never>?
+
+    static func playIfNeeded(
+        _ expanded: Binding<Bool>,
+        hold: Duration = .seconds(3)
+    ) async {
+        guard !playedThisProcess else { return }
+        playedThisProcess = true
+        withAnimation(.easeInOut(duration: 0.32)) {
+            expanded.wrappedValue = true
+        }
+        let task = Task {
+            try? await Task.sleep(for: hold)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.32)) {
+                expanded.wrappedValue = false
+            }
+        }
+        hideTask = task
+        await task.value
+        hideTask = nil
+    }
+
+    static func cancelAutoHide() {
+        hideTask?.cancel()
+        hideTask = nil
+    }
+
+    #if DEBUG
+    static func resetForTests() {
+        hideTask?.cancel()
+        hideTask = nil
+        playedThisProcess = false
+    }
+    #endif
+}
+
+/// Disclaimer under the wordmark, above the filter/search strip.
+///
+/// Lives *outside* the vertical `ScrollView` so ⓘ works at any scroll
+/// offset (the old banner was the first row of the list, so a tap while
+/// scrolled looked like a no-op and glitched the offset).  Expanding it
+/// pushes the filter pills down; collapsing slides them back up under
+/// the title.
+struct FeedDisclaimerHeader<Content: View>: View {
+    @Binding var disclaimerExpanded: Bool
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if disclaimerExpanded {
+                DisclaimerBanner()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            FeedStickyBar(content: content)
+        }
+        .animation(.easeInOut(duration: 0.32), value: disclaimerExpanded)
     }
 }
 
@@ -1260,17 +1318,14 @@ struct SearchField: View {
 
 /// Shared educational disclaimer used on Trades and Trends.
 struct DisclaimerBanner: View {
-    @Binding var isExpanded: Bool
-
     var body: some View {
-        if isExpanded {
-            Text(AppTheme.siteFooterDisclaimer)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
-        }
+        Text(AppTheme.siteFooterDisclaimer)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityLabel("About Congress.Trade")
     }
 }
 

@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Foundation
 import SwiftData
+import SwiftUI
 import UIKit
 import XCTest
 @testable import CongressTrade
@@ -1711,6 +1712,44 @@ final class CongressTradeTests: XCTestCase {
         let links = AppLegal.attributed.runs.compactMap(\.link)
         XCTAssertEqual(links.count, 4)
         XCTAssertEqual(links.last?.absoluteString, "mailto:support@congress.trade")
+    }
+
+    @MainActor
+    func testDisclaimerColdStartPlaysOnceThenHides() async {
+        DisclaimerColdStart.resetForTests()
+        var expanded = false
+        let binding = Binding(
+            get: { expanded },
+            set: { expanded = $0 }
+        )
+        await DisclaimerColdStart.playIfNeeded(binding, hold: .milliseconds(20))
+        XCTAssertFalse(expanded, "cold-start intro should auto-hide after the hold")
+
+        expanded = false
+        await DisclaimerColdStart.playIfNeeded(binding, hold: .milliseconds(20))
+        XCTAssertFalse(expanded, "a second play in the same process must no-op")
+        DisclaimerColdStart.resetForTests()
+    }
+
+    @MainActor
+    func testDisclaimerColdStartCancelKeepsUserToggle() async {
+        DisclaimerColdStart.resetForTests()
+        var expanded = false
+        let binding = Binding(
+            get: { expanded },
+            set: { expanded = $0 }
+        )
+        let play = Task {
+            await DisclaimerColdStart.playIfNeeded(binding, hold: .seconds(2))
+        }
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(expanded)
+        DisclaimerColdStart.cancelAutoHide()
+        expanded = true
+        try? await Task.sleep(for: .milliseconds(80))
+        XCTAssertTrue(expanded, "ⓘ tap during intro must cancel the auto-hide")
+        play.cancel()
+        DisclaimerColdStart.resetForTests()
     }
 
     func testLatencyScorecardHeadlinesMedianAndColorsBySign() {

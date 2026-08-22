@@ -235,6 +235,10 @@ struct MainTabView: View {
     @EnvironmentObject private var tabRouter: TabRouter
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    /// Same key as Trades/Trends.  Cold-start lives here so the 3s intro
+    /// is not delayed by a tab's data fetch (Trends used to await
+    /// `refreshTrends()` before expanding).
+    @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = false
 
     @State private var showSubscribeSheet = CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe")
     @State private var activeTradeDetail: ClientTrade?
@@ -339,6 +343,9 @@ struct MainTabView: View {
         // all arrive here and nowhere else. See Store/AppleIAP.swift.
         .task {
             await store.observeAppleTransactions()
+        }
+        .task {
+            await DisclaimerColdStart.playIfNeeded($disclaimerExpanded)
         }
         .onAppear {
             if CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe") {
