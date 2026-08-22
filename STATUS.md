@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Confirm-then-chunk leftover primary (H-2025-8221264)
+
+Filing detail served 570 rows for Khanna `H-2025-8221264` (209 truncated
+confirm + 361 Gemini chunk, 190 cross-source twins).  Twin-dedupe prefers
+primary, so the public feed kept the truncated copy.  Receipt:
+`docs/rollouts/2026-08-21-supersede-prior-sources.md`.  Board `d66b1f6d`.
+After deploy: `POST /api/admin/review/H-2025-8221264/retire-superseded-sources`
+with the live `reviewRevision`.
+
 ## 2026-08-22 GROK — Filter chrome grey + filing/watchlist push
 
 Owner screenshot: iOS filter pills and "3 Months" were system blue.  Chrome

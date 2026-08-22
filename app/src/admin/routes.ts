@@ -90,6 +90,7 @@ import {
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
 import { storedReviewBlocksSmallerVisionSubmit } from '../extraction/visionSubmitGuard.ts';
+import { PIPELINE_TX_SOURCES_SQL, VISION_SUPERSEDE_REASON } from '../extraction/sourceSupersede.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
@@ -2655,7 +2656,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         [
           `UPDATE transactions
               SET deprecated_at = ?, deprecated_reason = ?
-            WHERE doc_id = ? AND source IN ('primary', 'manual')
+            WHERE doc_id = ? AND source IN (${PIPELINE_TX_SOURCES_SQL})
               AND deprecated_at IS NULL
               AND EXISTS (SELECT 1 FROM review_queue
                 WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
@@ -2820,7 +2821,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?
       AND (SELECT COUNT(*) FROM transactions
-        WHERE doc_id = ? AND source IN ('primary', 'manual')
+        WHERE doc_id = ? AND source IN (${PIPELINE_TX_SOURCES_SQL})
           AND deprecated_at IS NULL) = ?`;
     let persistResults: D1Result[];
     try {
@@ -2997,8 +2998,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /review/:docId/unpublish --------------------------------------
-  // Retract a previously-published filing: soft-delete its primary transactions
-  // (deprecated_at), revert the filing to 'needs_review', and re-open the review
+  // Retract a previously-published filing: soft-delete its pipeline transactions
+  // (primary/manual/local_mac/server_cpu), revert the filing to 'needs_review', and re-open the review
   // item so it returns to the pending queue. Soft-delete (not hard delete) keeps
   // history and lets every feed/analytics/stream read exclude the rows via
   // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
@@ -3044,7 +3045,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const holdReason = 'unpublished: ' + reason;
     const deprecatedSql = `UPDATE transactions
       SET deprecated_at = ?, deprecated_reason = ?
-      WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+      WHERE doc_id = ? AND source IN (${PIPELINE_TX_SOURCES_SQL}) AND deprecated_at IS NULL
         AND EXISTS (SELECT 1 FROM review_queue
           WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
     const filingSql = `UPDATE filings SET ingest_status = ?
@@ -3098,6 +3099,161 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       unpublished: true,
       deprecatedTransactions: deprecated,
       reason,
+      reviewRevision: reviewRevision + 1,
+    });
+  });
+
+  // --- GET /diagnostics/source-overlap -----------------------------------
+  // Same-doc_id live rows in more than one of primary/manual/local_mac/
+  // server_cpu. Confirm-then-chunk leftover (H-2025-8221264) is this class.
+  r.get('/diagnostics/source-overlap', async (c) => {
+    const rows = await all<{
+      doc_id: string;
+      primary_n: number;
+      manual_n: number;
+      local_mac_n: number;
+      server_cpu_n: number;
+    }>(
+      c.env.DB,
+      `SELECT doc_id,
+              SUM(CASE WHEN source = 'primary' THEN 1 ELSE 0 END) AS primary_n,
+              SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) AS manual_n,
+              SUM(CASE WHEN source = 'local_mac' THEN 1 ELSE 0 END) AS local_mac_n,
+              SUM(CASE WHEN source = 'server_cpu' THEN 1 ELSE 0 END) AS server_cpu_n
+         FROM transactions
+        WHERE deprecated_at IS NULL
+          AND source IN (${PIPELINE_TX_SOURCES_SQL})
+        GROUP BY doc_id
+       HAVING (
+                (SUM(CASE WHEN source = 'primary' THEN 1 ELSE 0 END) > 0)
+              + (SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) > 0)
+              + (SUM(CASE WHEN source = 'local_mac' THEN 1 ELSE 0 END) > 0)
+              + (SUM(CASE WHEN source = 'server_cpu' THEN 1 ELSE 0 END) > 0)
+              ) > 1
+        LIMIT 200`,
+      [],
+    );
+    return c.json({
+      count: rows.length,
+      docs: rows.map((row) => ({
+        docId: row.doc_id,
+        primary: Number(row.primary_n) || 0,
+        manual: Number(row.manual_n) || 0,
+        localMac: Number(row.local_mac_n) || 0,
+        serverCpu: Number(row.server_cpu_n) || 0,
+      })),
+    });
+  });
+
+  // --- POST /review/:docId/retire-superseded-sources ---------------------
+  // Repair: a complete local_mac/server_cpu set is already live, but leftover
+  // primary/manual rows from a truncated confirm still sit on the same doc_id.
+  // Soft-deletes those leftovers. Does not reopen review or insert rows.
+  // Body: { reviewRevision: number }
+  r.post('/review/:docId/retire-superseded-sources', async (c) => {
+    const docId = c.req.param('docId');
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
+
+    const review = await get<{
+      resolved: number;
+      review_revision: number;
+      ingest_status: string | null;
+    }>(
+      c.env.DB,
+      `SELECT rq.resolved, rq.review_revision, f.ingest_status
+         FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE rq.doc_id = ?`,
+      [docId],
+    );
+    if (!review) return c.json({ error: 'review item or filing not found' }, 404);
+    if (review.resolved !== 1) return c.json({ error: 'review item is still pending' }, 409);
+    const reviewRevision = Number(body.reviewRevision);
+    if (review.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before retiring sources' }, 409);
+    }
+    if (review.ingest_status !== 'persisted') {
+      return c.json({ error: 'filing is not persisted' }, 409);
+    }
+
+    const live = await get<{ vision_n: number; leftover_n: number }>(
+      c.env.DB,
+      `SELECT
+          SUM(CASE WHEN source IN ('local_mac', 'server_cpu') THEN 1 ELSE 0 END) AS vision_n,
+          SUM(CASE WHEN source IN ('primary', 'manual') THEN 1 ELSE 0 END) AS leftover_n
+         FROM transactions
+        WHERE doc_id = ? AND deprecated_at IS NULL
+          AND source IN (${PIPELINE_TX_SOURCES_SQL})`,
+      [docId],
+    );
+    const visionN = Number(live?.vision_n) || 0;
+    const leftoverN = Number(live?.leftover_n) || 0;
+    if (visionN <= 0) {
+      return c.json({ error: 'no live local_mac/server_cpu rows to keep' }, 409);
+    }
+    if (leftoverN <= 0) {
+      return c.json({
+        docId,
+        retired: false,
+        deprecatedTransactions: 0,
+        reason: 'no leftover primary/manual rows',
+        reviewRevision,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const results = await batch(c.env.DB, [
+      [
+        `UPDATE transactions
+            SET deprecated_at = ?, deprecated_reason = ?
+          WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+            AND EXISTS (SELECT 1 FROM transactions
+              WHERE doc_id = ? AND source IN ('local_mac', 'server_cpu') AND deprecated_at IS NULL)
+            AND EXISTS (SELECT 1 FROM review_queue
+              WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`,
+        [nowIso, VISION_SUPERSEDE_REASON, docId, docId, docId, reviewRevision],
+      ],
+      [
+        `UPDATE review_queue
+            SET review_revision = review_revision + 1
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM transactions
+               WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+            )`,
+        [docId, reviewRevision, docId],
+      ],
+    ]);
+    if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'review item changed or leftover rows did not retire' }, 409);
+    }
+    const deprecated = results[0]?.meta?.changes ?? 0;
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'auto_published',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: 'superseded_prior_sources',
+        payload: { deprecatedTransactions: deprecated, keptVisionRows: visionN },
+        createdAt: nowIso,
+      });
+    } catch (err) {
+      console.error('retire superseded sources: audit receipt failed', docId, (err as Error).message);
+    }
+    return c.json({
+      docId,
+      retired: true,
+      deprecatedTransactions: deprecated,
+      keptVisionRows: visionN,
       reviewRevision: reviewRevision + 1,
     });
   });

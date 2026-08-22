@@ -936,7 +936,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /filings/:docId ------------------------------------------------
   // Detail endpoint on the same public corpus as /transactions: applies the
   // same per-IP daily row budget (a filing detail can carry many transaction
-  // rows) and never hands back internal fields — see toPublicFiling.
+  // rows), hides deprecated_at rows, and never hands back internal fields —
+  // see toPublicFiling.
   r.get('/filings/:docId', async (c) => {
     const docId = c.req.param('docId');
     let filingRow = await get<FilingRow>(
@@ -972,7 +973,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
     const txRows = await all<TransactionRow>(
       c.env.DB,
-      'SELECT * FROM transactions WHERE doc_id = ? ORDER BY cursor_seq ASC',
+      'SELECT * FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL ORDER BY cursor_seq ASC',
       [docId],
     );
     await spendRowBudget(c.env, ip, txRows.length);

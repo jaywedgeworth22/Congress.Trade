@@ -467,6 +467,10 @@ describe('normalize', () => {
     expect(result.transactions).toHaveLength(2);
     expect(cap.insertedTx).toHaveLength(2);
     expect(cap.reviewRows).toHaveLength(0);
+    expect(cap.batches.at(-1)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/deprecated_reason = \?/i),
+      expect.stringMatching(/source IN \('primary', 'manual', 'server_cpu'\)/),
+    ]));
   });
 
   it('local Grok vision does not auto-publish when every row omitted the amount', async () => {
