@@ -1,8 +1,8 @@
 # Checklist for App Store public release — Congress.Trade iOS
 
-Living document.  Last verified against live App Store Connect and GitHub: **2026-08-20**.
+Living document.  Last verified against live App Store Connect and GitHub: **2026-08-22**.
 
-App id `6798076688` · bundle `trade.congress.ios` · team `CC8UTF7ATG` · version `1.0.0`
+App id `6798076688` · bundle `trade.congress.ios` · team `CC8UTF7ATG` · version `1.0.81`
 
 Every claim below was read from the live ASC API or the repo, not assumed.  Where something is
 unverified, it says so.
@@ -13,14 +13,13 @@ unverified, it says so.
 
 | Thing | State | Evidence |
 |---|---|---|
-| App Store version 1.0.0 | **PREPARE_FOR_SUBMISSION** (was REJECTED; attaching the new build cleared it) | ASC `appStoreVersions` → `appStoreState` |
-| Review submission `b61e2a4a` | **UNRESOLVED_ISSUES** — must be cancelled before the version can be resubmitted | ASC `reviewSubmissions` |
-| Build attached to the version | ✅ **`202608202100`** — updated 2026-08-20 by agent | ASC `appStoreVersions/{id}/build` |
-| Newest uploaded build | **`202608202100`** (Aug 20, 14:02 PT) — VALID, contains both App Review fixes | ASC `builds`, ship run sha `4b9694d1` |
-| That build in TestFlight | **Yes — `internalBuildState = IN_BETA_TESTING`** | ASC `buildBetaDetail` |
-| Subscriptions `…premium.monthly` / `…premium.annual` | **READY_TO_SUBMIT**, review screenshots COMPLETE, en-US localizations present — never attached to a submission | ASC `subscriptions` |
+| App Store version 1.0.81 | **WAITING_FOR_REVIEW** (held 10+ min; beta-host binaries flip to Invalid Binary in ~45s) | ASC `appStoreVersions` → `appStoreState` |
+| Review submission `b174dd86` | **WAITING_FOR_REVIEW** — 4 items (app + Premium group + monthly + annual) | ASC `reviewSubmissions` |
+| Build attached | ✅ **`202608220518`** (marketing 1.0.81) from GitHub `macos-26` Tahoe GM, run 32553969173 | ASC `appStoreVersions/{id}/build` |
+| Deletion recording | ✅ `account-deletion-physical-device.mp4` COMPLETE (39s, physical device) | ASC `appStoreReviewAttachments` |
+| Subscriptions monthly / annual | **WAITING_FOR_REVIEW** via `subscriptionVersion` + `subscriptionGroupVersion` (not `subscription`) | ASC `subscriptions` / `subscriptionVersions` |
 
-**Install `202608202100` from TestFlight — that is the build to record and to submit.**
+**Do not attach Mac-runner TestFlight IPAs.**  This Mac is macOS 27.0 beta (`26A5416b`).  App Store review rejects that stamp.  GM path: `.github/workflows/ios-appstore-gm.yml`.
 
 ### What Apple actually asked for (submission `b61e2a4a`, reviewed 2026-08-19 on an iPad Air 11-inch M3)
 
@@ -71,19 +70,12 @@ items above, everything below needs re-planning.
 
 These are safe for an agent with the ASC key.  Marked ✅ when done.
 
-- [x] ✅ **Attached build `202608202100` to version 1.0.0** (HTTP 204), replacing the stale Aug-15 binary.  This also moved the version out of REJECTED into PREPARE_FOR_SUBMISSION.
-- [x] ✅ **Replaced the App Review Information notes** (HTTP 200).  The old 3,906-character notes
-      described an "Email Link" sign-in that PR #2010 removed and a build predating account deletion;
-      the new 3,443-character notes answer Apple's three items point by point.  Source of truth:
-      `.review-shots/asc/REVIEW-NOTES.txt` (rendered from `REVIEW-NOTES-DRAFT.md`).  **Add one line
-      naming your attached recording once it exists.**
-- [ ] **Cancel submission `b61e2a4a`** (state UNRESOLVED_ISSUES).  The previous cycle had to cancel
-      `37412b30` the same way before the version could be added again.
-- [ ] **Create the new review submission with three items**: the app version **and both
-      subscriptions** (`trade.congress.premium.monthly`, `trade.congress.premium.annual`).  Attaching
-      the subscriptions is the entire fix for Guideline 2.1(b).
-- [ ] **Submit** — only after your video is in the notes.
-- [ ] **Watch the state** and report `WAITING_FOR_REVIEW` → `IN_REVIEW` → outcome.
+- [x] ✅ **Attached Tahoe GM build `202608220518` (1.0.81)** after Mac-built `202608202100` flipped Invalid Binary.  GM workflow run 32553969173.
+- [x] ✅ **Replaced the App Review Information notes** and attached the 39s physical-device deletion recording (`account-deletion-physical-device.mp4`).
+- [x] ✅ **Cancelled** `b61e2a4a`, then the two Invalid Binary attempts `95aaef81` and `8be3d7f4`.
+- [x] ✅ **Created review submission `b174dd86`** with the app version, Premium `subscriptionGroupVersion`, and both `subscriptionVersion`s.  The `subscription` relationship name is invalid on `reviewSubmissionItems`.
+- [x] ✅ **Submitted.**  Live at +10 min: version + submission + both products still `WAITING_FOR_REVIEW`.
+- [ ] **Watch** `WAITING_FOR_REVIEW` → `IN_REVIEW` → outcome.  Invalid Binary mail, if any, goes to the App Store Connect mailbox, not Gmail.
 
 ### Agent tasks that are not blockers but should land before submit
 
