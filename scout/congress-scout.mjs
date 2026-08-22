@@ -439,7 +439,13 @@ async function detectSenateViaRelay() {
   const since = new Date(now.getTime() - 45 * 864e5);
   const res = await fetch(`${SENATE_RELAY}/fetch-ptr`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...(process.env.SENATE_RELAY_SECRET
+        ? { authorization: `Bearer ${process.env.SENATE_RELAY_SECRET}` }
+        : {}),
+    },
     body: JSON.stringify({
       submitted_start_date: fmtSenate(since),
       submitted_end_date: fmtSenate(now),

@@ -254,6 +254,30 @@ async function fetchAllRows(sinceIso: string, nowIso: string, pageSize: number):
 }
 
 const port = Number(Deno.args[0]) || 8899;
+const RELAY_SECRET = (Deno.env.get('SENATE_RELAY_SECRET') || Deno.env.get('INGEST_RELAY_SECRET') || '').trim();
+if (!RELAY_SECRET) {
+  console.warn('senate-relay: SENATE_RELAY_SECRET unset; POST /fetch-ptr and /fetch-doc stay public until it is set');
+} else {
+  console.log('senate-relay: POST routes require Bearer SENATE_RELAY_SECRET');
+}
+
+function timingSafeEqualStr(got: string, want: string): boolean {
+  const enc = new TextEncoder();
+  const left = enc.encode(got);
+  const right = enc.encode(want);
+  if (left.byteLength !== right.byteLength) return false;
+  let out = 0;
+  for (let i = 0; i < left.byteLength; i++) out |= left[i] ^ right[i];
+  return out === 0;
+}
+
+function relayAuthorized(req: Request): boolean {
+  if (!RELAY_SECRET) return true;
+  const auth = req.headers.get('authorization') || '';
+  const got = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+  return timingSafeEqualStr(got, RELAY_SECRET);
+}
+
 console.log(`senate-relay listening on 127.0.0.1:${port}`);
 
 const startedAt = Date.now();
@@ -273,6 +297,13 @@ Deno.serve({ port, hostname: '127.0.0.1' }, async (req) => {
   // checks used to 404 while GET /health was 200.
   if (isLivenessProbe(req.method, url.pathname)) {
     return livenessResponse(req.method, Math.round((Date.now() - startedAt) / 1000));
+  }
+
+  if ((req.method === 'POST' && (url.pathname === '/fetch-doc' || url.pathname === '/fetch-ptr')) && !relayAuthorized(req)) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
   }
 
   // Document proxy: fetch one efdsearch PTR/paper document through the

@@ -188,6 +188,11 @@ permanent:
 SENATE_RELAY_URL=https://scout.jays.services
 ```
 
+POST `/fetch-ptr` and `/fetch-doc` on that origin require
+`Authorization: Bearer $SENATE_RELAY_SECRET` (Infisical CT prod + Mac
+`~/.secrets/senate-relay.env`). `GET /health` stays public. Do not rotate the
+URL when adding the secret.
+
 That hostname is served by the **named** Cloudflare tunnel `Jay's Tunnel`
 (`6fa2a97c-b4f8-420d-94ae-bd9858aff4b6`), run by the `senate-tunnel` pm2 entry
 via `scout/run-senate-tunnel.sh`.  Ingress is configured Cloudflare-side

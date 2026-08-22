@@ -271,6 +271,27 @@ describe('fetchSenatePtrFilings', () => {
     expect(out[0].pipelineDocId).toBe('S-relay-1');
   });
 
+  it('sends SENATE_RELAY_SECRET as Bearer on /fetch-ptr', async () => {
+    let auth: string | null = null;
+    const fetchImpl = async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      auth = headers.get('authorization');
+      return new Response(JSON.stringify({ data: [senateRow('auth-1')] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    await fetchSenatePtrFilings(
+      { relayUrl: 'https://scout.jays.services', relaySecret: 'relay-test-secret' },
+      fetchImpl,
+    );
+
+    expect(auth).toBe('Bearer relay-test-secret');
+  });
+
   it('falls back to direct eFD when the named-tunnel relay returns 502', async () => {
     const urls: string[] = [];
     const fetchImpl = async (

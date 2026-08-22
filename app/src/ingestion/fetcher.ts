@@ -24,7 +24,7 @@ import {
   establishSenateSession,
   looksLikeSenateAgreementWall,
 } from './senateSource.ts';
-import { isSenateRelayUnreachable } from './senateRelayHealth.ts';
+import { isSenateRelayUnreachable, senateRelayAuthHeaders } from './senateRelayHealth.ts';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 
@@ -246,7 +246,11 @@ export async function fetchFiling(
     const fetchSenateDocViaRelay = () =>
       trackedFetch(`${senateRelayUrl}/fetch-doc`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: '*/*' },
+        headers: {
+          'content-type': 'application/json',
+          accept: '*/*',
+          ...senateRelayAuthHeaders(env.SENATE_RELAY_SECRET),
+        },
         body: JSON.stringify({ url: sourceUrl }),
         signal: lease?.signal,
       }, { service: 'filing-ingestion', operation: 'fetch-filing-document-relay', dynamicTarget: 'filing-source' });

@@ -690,6 +690,8 @@ export interface Env {
   SENATE_MAX_LOOKBACK_DAYS?: string;
   /** Relay microservice URL (e.g. Oracle Coolify host) for Senate eFD ingestion. */
   SENATE_RELAY_URL?: string;
+  /** Bearer token for Mac scout.jays.services POST /fetch-ptr and /fetch-doc. */
+  SENATE_RELAY_SECRET?: string;
   /** Relay microservice URL (e.g. Oracle Coolify host) for House Clerk ingestion. */
   HOUSE_RELAY_URL?: string;
   /** Relay microservice URL (e.g. Oracle Coolify host) for Executive OGE ingestion. */
