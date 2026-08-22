@@ -39,7 +39,7 @@ ENV_FILE="${ENV_FILE:-/etc/congress-health-recover.env}"
 # shellcheck disable=SC1090
 [[ -r "$ENV_FILE" ]] && { set -a; . "$ENV_FILE"; set +a; }
 
-APP_UUID="${APP_UUID:-c11c5hdhuczureb6w2pg20p0}"
+APP_UUID="${APP_UUID:-${COOLIFY_APP_UUID:-congress-app}}"
 COOLIFY_BASE_URL="${COOLIFY_BASE_URL:-https://host.jays.services}"
 HEALTH_URL="${HEALTH_URL:-https://congress.trade/api/health}"
 MIN_DEPLOY_INTERVAL_SEC="${MIN_DEPLOY_INTERVAL_SEC:-1800}"

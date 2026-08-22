@@ -9,7 +9,7 @@ true)` before `docker compose up`, so the only replica is gone for ~40–60s and
 Cloudflare answers **502**.  UptimeRobot recorded 64 of those windows in 7
 days.  Monet OPSRELIABILITY-01 / issue #2033.
 
-Live Coolify application `c11c5hdhuczureb6w2pg20p0` (read 2026-08-20):
+Live Coolify application `<CT_COOLIFY_APP_UUID>` (read 2026-08-20):
 
 | Field | Value | Meaning |
 |---|---|---|

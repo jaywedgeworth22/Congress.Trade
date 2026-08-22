@@ -41,15 +41,12 @@ backup_one() {
 }
 
 # Socratic: Coolify docker volume
-SOCRATIC_VOL=$(docker volume ls -q | grep 'd83b1aykr03uwr32yhgzaiay.*prod-app-data\|socratic.*prod-app-data' | head -1 || true)
-if [ -z "$SOCRATIC_VOL" ]; then
-  SOCRATIC_VOL=$(docker volume ls -q | grep prod-app-data | head -1 || true)
-fi
+SOCRATIC_VOL=$(docker volume ls -q | grep -E 'socratic.*prod-app-data|prod-app-data' | head -1 || true)
 if [ -n "$SOCRATIC_VOL" ] && [ -f "/var/lib/docker/volumes/${SOCRATIC_VOL}/_data/app.db" ]; then
   backup_one "socratic-app" "/var/lib/docker/volumes/${SOCRATIC_VOL}/_data/app.db" "$ROOT/socratic"
 else
   # try live container path via docker cp
-  C=$(docker ps --format '{{.Names}}' | grep -E 'd83b1aykr03uwr32yhgzaiay|socratic' | head -1 || true)
+  C=$(docker ps --format '{{.Names}}' | grep -E 'socratic-app|socratic' | head -1 || true)
   if [ -n "$C" ]; then
     tmp="/tmp/socratic-app.db"
     docker cp "$C:/app/data/app.db" "$tmp"
@@ -70,7 +67,7 @@ fi
 
 backup_one "usage-monitor" "/data/prod.db" "$ROOT/usage-monitor"
 # Coolify also mounts UM volume - find it
-UM_VOL=$(docker volume ls -q | grep 'yagelvqux9e8l1kztif7bf2o\|usage-data' | head -1 || true)
+UM_VOL=$(docker volume ls -q | grep -E 'usage-data|usage-monitor' | head -1 || true)
 if [ -n "$UM_VOL" ] && [ -f "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" ]; then
   backup_one "usage-monitor-vol" "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" "$ROOT/usage-monitor"
 fi

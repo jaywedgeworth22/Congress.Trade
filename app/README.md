@@ -6,14 +6,14 @@ them to clients via webhook / SSE / REST / APNs.  Live site:
 [congress.trade](https://congress.trade).
 
 > This is the production Coolify app.  It runs as **Deno** (not Node) in
-> the Coolify `congress-app` container on Hetzner `fleet-hetzner-nbg1` /
-> `host.jays.services`, not as a Cloudflare Worker.  Proof:
+> the Coolify `congress-app` container on the production fleet box (see
+> `../AGENTS.md` and `fleet-ops:ATTACK-MAP.md`; `https://host.jays.services`), not as a Cloudflare Worker.  Proof:
 > `../AGENTS.md` Current Shape, `Dockerfile`, `docker-compose.yml`,
 > `src/deno/main.ts`.  `wrangler.toml` is gone.  Leftover only:
 > `wrangler.preview.example.toml`, `@sentry/cloudflare`,
 > `@cloudflare/workers-types`.  Do not reintroduce Worker deploy as
 > production.  **Deno Deploy and Turso are retired.**  Production is Coolify
-> on Hetzner, local SQLite + Litestream, Infisical secrets, paid cron
+> Docker, local SQLite + Litestream, Infisical secrets, paid cron
 > `* * * * *`.  See `../AGENTS.md` for branch/worktree coordination
 > rules before continuing work.
 >
@@ -252,7 +252,7 @@ npm run deploy      # prints that Coolify owns production; does not wrangler-dep
 ```
 
 Pushes to `main` rebuild the Coolify compose project (`app/docker-compose.yml`
-→ `congress-app` on `fleet-hetzner-nbg1`).  `npm run deploy` is a reminder, not
+→ `congress-app` on the production fleet box).  `npm run deploy` is a reminder, not
 a Worker publish.  Production schema is **not** automatic: after the container
 is on the new SHA, run `ADMIN_TOKEN=... bash scripts/ship.sh` or
 `POST /api/admin/migrate` against `https://congress.trade`.  Secrets come from

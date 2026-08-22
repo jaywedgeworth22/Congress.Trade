@@ -590,7 +590,7 @@ All commands below are **operator** steps.  This audit did not run them.  Spoof 
 
 **Steps.**
 
-1. Rotate Infisical prod `ADMIN_TOKEN` (congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290`, env `prod`).  Do not mint a second source of truth.
+1. Rotate Infisical prod `ADMIN_TOKEN` (congress-trade project `<CT_INFISICAL_PROJECT_ID>`, env `prod`).  Do not mint a second source of truth.
 2. Set Coolify runtime so the app does not keep an image-baked value (`INFISICAL_APP_PROJECT_ID` set; wait ~600s cache or `POST /api/admin/diagnostics/secrets/refresh` with the **new** token after Coolify picks it up — chicken-and-egg: prefer container restart after Infisical write).
 3. Update `CT_ADMIN_TOKEN` in the owner secrets file.  Confirm hash match; do not print.
 4. Ask operators to clear dashboard `localStorage` key `congresstrade.adminToken`.

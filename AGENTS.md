@@ -48,9 +48,9 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- The backend app runs on **Coolify (Docker container with Deno runtime)** on the **Hetzner
-  fleet box `fleet-hetzner-nbg1`** (167.233.254.55, x86_64; `ssh coolify` — same box also
-  answers as `host.jays.services`), reading/writing a **local SQLite file** at
+- The backend app runs on **Coolify (Docker container with Deno runtime)** on the **production
+  fleet box** (`ssh coolify`, see private `jaywedgeworth22/fleet-ops:ATTACK-MAP.md`; dashboard
+  at `https://host.jays.services`), reading/writing a **local SQLite file** at
   `/data/congress-trade/db.sqlite` on the host disk (migrated off Turso 2026-07-30;
   `TURSO_DATABASE_URL=file:/data/congress-trade/db.sqlite` is set as a Coolify env override;
   file measured 1.88GB on 2026-08-11).  Litestream replicates that file off-box.
@@ -60,9 +60,8 @@ Effort logs are standardized across all apps: protocol at
   Production is Coolify paid (`CT_COST_PROFILE=paid`, cron `* * * * *` on
   `/api/health`).  **Turso is retired.**  The `TURSO_*` env names are leftovers
   that now point at the local SQLite file.
-  **The Oracle ARM64 host (`141.148.182.224`) that ran this before 2026-08-08 is
-  DECOMMISSIONED — it is gone, not just idle.  Do not ssh to it, do not diagnose "the box is
-  down" against it, and treat any doc/script that still names it as historical.**  See
+  **The historical Oracle host is DECOMMISSIONED** — it is gone, not just idle.  Do not ssh to it, do not diagnose "the box is
+  down" against it, and treat any doc/script that still names it as historical.  See
   `docs/rollouts/2026-08-08-runners-hetzner-migration.md`,
   `docs/rollouts/2026-08-09-offsite-backups-b2-r2.md`, and
   `docs/rollouts/2026-08-10-box-disk-hygiene.md` for the current-truth record.
@@ -150,12 +149,12 @@ npm test
 ```
 
 Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as production-affecting until proven otherwise.
-Note that the backend deployment targets Coolify on the Hetzner fleet box `fleet-hetzner-nbg1`
-(`ssh coolify`) — the Oracle ARM64 host is decommissioned (see "Current Shape" above).
+Note that the backend deployment targets Coolify on the production fleet box
+(`ssh coolify`, see `fleet-ops:ATTACK-MAP.md`).
 
 Preview deploys are leftover isolated Wrangler tooling
 (`app/scripts/deploy-preview.sh`), not the live host.  Production is Coolify
-`congress-app` on `fleet-hetzner-nbg1` serving `https://congress.trade`.  There
+`congress-app` (see `fleet-ops:ATTACK-MAP.md`) serving `https://congress.trade`.  There
 is no production `app/wrangler.toml`.  If a leftover preview config exists
 and the user has asked for preview behavior, keep it isolated from the host
 SQLite file, production R2, `congress.trade`, and Coolify cron.  Per owner

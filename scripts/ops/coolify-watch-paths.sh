@@ -11,7 +11,7 @@
 set -uo pipefail
 
 COOLIFY_BASE_URL="${COOLIFY_BASE_URL:-https://host.jays.services}"
-APP_UUID="${APP_UUID:-c11c5hdhuczureb6w2pg20p0}"
+APP_UUID="${APP_UUID:-${COOLIFY_APP_UUID:-congress-app}}"
 # Repo-root relative.  No leading slash — Coolify strips it and matches the
 # GitHub webhook file list (see Application::parseWatchPaths / globMatch).
 WATCH_PATHS="${WATCH_PATHS:-app/**

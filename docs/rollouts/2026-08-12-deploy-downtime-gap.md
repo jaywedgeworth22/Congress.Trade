@@ -168,7 +168,7 @@ not running.**
 | --- | --- |
 | `scripts/ops/ct-reattach-proxy.sh` | Atomic + no-op-in-steady-state route file.  Removes the `no available server` race. |
 | `services/standby/nginx.conf`, `services/standby/standby.html` | Holding page served with 503 + `Retry-After`. |
-| `scripts/ops/ct-standby.service` | Runs that page as `congress-standby` **outside** the Coolify project, so `docker compose … up` for project `c11c5hdhuczureb6w2pg20p0` cannot remove it. |
+| `scripts/ops/ct-standby.service` | Runs that page as `congress-standby` **outside** the Coolify project, so `docker compose … up` for project `<CT_COOLIFY_APP_UUID>` cannot remove it. |
 
 When `congress-standby` is running, `ct-reattach-proxy.sh` automatically emits a
 Traefik **`failover`** service instead of the plain one, so deploy-window
@@ -265,7 +265,7 @@ above is still set.
 
 ## 2026-08-20 update — docs-only skip is live
 
-`watch_paths` on `c11c5hdhuczureb6w2pg20p0` is now `app/**` + `services/**`.
+`watch_paths` on `<CT_COOLIFY_APP_UUID>` is now `app/**` + `services/**`.
 A docs-only merge no longer queues a compose swap.  Code merges still take
 the origin down until PR #1964 is installed or this app leaves the compose
 build pack.  Receipt: `docs/rollouts/2026-08-20-docs-only-deploy-skip.md`.
@@ -303,7 +303,7 @@ build pack.  Receipt: `docs/rollouts/2026-08-20-docs-only-deploy-skip.md`.
 
 Not fixed by zero-downtime deploys, and worth its own lane.
 
-`fleet-hetzner-nbg1` (167.233.254.55) carries **all** of: the CI runners
+`fleet-hetzner-nbg1` (<PROD_ORIGIN_IP>) carries **all** of: the CI runners
 `hetzner-ct-ci-1/2`, the production app, the 1.88 GB SQLite database, and the
 sibling apps' Coolify workloads.  A six-PR CI burst measurably degraded
 production — `/` took **20 s** while `/api/health` took **0.23 s**, load average

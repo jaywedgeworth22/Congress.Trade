@@ -12,7 +12,7 @@
 #   docs/rollouts/2026-08-12-deploy-downtime-gap.md.
 #
 #   This unit runs a tiny nginx container that is NOT part of the Coolify
-#   project, so `docker compose ... up` for project c11c5hdhuczureb6w2pg20p0
+#   project, so `docker compose ... up` for the app project
 #   cannot stop or remove it.  ct-reattach-proxy.sh notices it is running and
 #   switches the Traefik route to a `failover` service, so requests landing in
 #   the deploy window get the holding page instead of Traefik's raw

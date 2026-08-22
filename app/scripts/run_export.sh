@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id=***REMOVED*** --client-secret=***REMOVED*** --silent --plain)
-infisical export --projectId f61a79de-8d77-4f0b-9361-4b7208598290 --env prod --format dotenv-export > .env.prod
+export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="${INFISICAL_APP_CLIENT_ID}" --client-secret="${INFISICAL_APP_CLIENT_SECRET}" --silent --plain)
+infisical export --projectId "${INFISICAL_APP_PROJECT_ID}" --env "${INFISICAL_ENV:-prod}" --format dotenv-export > .env.prod
 source .env.prod
 deno run -A scripts/export_trades.ts

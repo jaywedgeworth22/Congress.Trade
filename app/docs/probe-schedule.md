@@ -201,7 +201,7 @@ tested invariant.
 ## 5. Where the numbers came from
 
 52-day measurement, 2026-06-21 → 2026-08-11, against the production SQLite
-store on `fleet-hetzner-nbg1` (`ssh coolify`, `/data/congress-trade/db.sqlite`,
+store on the production fleet box (`ssh coolify`, `/data/congress-trade/db.sqlite`,
 read-only).
 
 Raw `filings.first_seen_at` is unusable directly: 4 833 of 5 040 rows arrive in

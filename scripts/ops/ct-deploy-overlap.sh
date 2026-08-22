@@ -18,7 +18,7 @@
 #   container.  After the replacement is healthy, this script removes hold
 #   and reattaches the route.
 #
-#   Hold is deliberately NOT in project c11c5hdhuczureb6w2pg20p0, so
+#   Hold is deliberately NOT in the main Coolify project, so
 #   `docker compose ... up` cannot stop it.  It runs the Deno app directly
 #   (no Litestream) so a second replicator does not fight the live one.
 #
@@ -42,7 +42,7 @@ ENV_FILE="${ENV_FILE:-/etc/congress-health-recover.env}"
 # shellcheck disable=SC1090
 [[ -r "$ENV_FILE" ]] && { set -a; . "$ENV_FILE"; set +a; }
 
-APP_UUID="${APP_UUID:-c11c5hdhuczureb6w2pg20p0}"
+APP_UUID="${APP_UUID:-${COOLIFY_APP_UUID:-congress-app}}"
 export APP_UUID
 COOLIFY_BASE_URL="${COOLIFY_BASE_URL:-https://host.jays.services}"
 HOLD_NAME="${HOLD_NAME:-congress-hold}"

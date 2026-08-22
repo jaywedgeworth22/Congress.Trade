@@ -44,7 +44,7 @@ not keep an API server.  Host install of standby was still un-run as of
 ## Concrete fix in this change
 
 A host unit clones the live app as `congress-hold` **outside** Coolify
-project `c11c5hdhuczureb6w2pg20p0`, so `docker compose … up` cannot remove
+project `<CT_COOLIFY_APP_UUID>`, so `docker compose … up` cannot remove
 it.  `ct-reattach-proxy.sh` then writes a Traefik `failover` service:
 
 1. Primary: `http://congress-app:5000` (in-project container)

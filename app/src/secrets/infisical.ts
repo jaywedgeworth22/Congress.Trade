@@ -100,8 +100,8 @@ function sourceConfigs(env: Env): SourceConfig[] {
   // identity only ever pairs with its own project, so no client-id lookup map
   // is needed (the old KNOWN_PROJECT_IDS literal map was scrubbed, breaking
   // the build with duplicate keys).
-  const sharedProj = env.INFISICAL_SHARED_PROJECT_ID || '18f563a3-9c88-454c-96eb-28fc9678f3ba';
-  const appProj = env.INFISICAL_APP_PROJECT_ID || 'f61a79de-8d77-4f0b-9361-4b7208598290';
+  const sharedProj = env.INFISICAL_SHARED_PROJECT_ID;
+  const appProj = env.INFISICAL_APP_PROJECT_ID;
 
   // Coolify historically set INFISICAL_CLIENT_ID/SECRET (no _APP_). Prefer the
   // explicit APP_* names the rest of the codebase documents; fall back to the

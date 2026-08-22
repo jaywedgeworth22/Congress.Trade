@@ -11,8 +11,7 @@
 #
 # Secrets: the 5 LITESTREAM_S3_* values (bucket/endpoint/region/access-key-id/
 # secret-access-key) live in the same Infisical project the Deno app already
-# reads from in-process (congress-trade prod,
-# f61a79de-8d77-4f0b-9361-4b7208598290 — see src/secrets/infisical.ts), using
+# reads from in-process (congress-trade prod — see src/secrets/infisical.ts), using
 # the SAME bootstrap identity (INFISICAL_APP_CLIENT_ID/SECRET) already present
 # as a Coolify env var for this service. Litestream is an external binary, not
 # part of the Deno process, so it needs real OS env vars before it starts;
@@ -38,7 +37,7 @@ log() {
   echo "[start-with-litestream] $*"
 }
 
-CT_PROJECT_ID="${INFISICAL_APP_PROJECT_ID:-f61a79de-8d77-4f0b-9361-4b7208598290}"
+CT_PROJECT_ID="${INFISICAL_APP_PROJECT_ID:-}"
 CT_ENV="${INFISICAL_ENV:-prod}"
 
 litestream_enabled=false

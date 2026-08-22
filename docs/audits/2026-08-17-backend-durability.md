@@ -306,7 +306,7 @@ The leftover OpenRouter files-prepaid halt, 316 DLQ, and 149h freshness are **pr
 16. Fix D1 shim `rows_read` or stop pretending the row budget sees scans.
 17. Add `Cache-Control: no-store` on `/api/health` (polling/latency/senate-relay already have it).
 18. Optional UptimeRobot slot for `/api/health/senate-relay` when a free-plan slot exists.
-19. Retire Oracle-era comments (`CT_TICK_DEADLINE_MS` "Oracle container", `mac-server-watchdog.sh` still naming `141.148.182.224`).
+19. Retire Oracle-era comments (`CT_TICK_DEADLINE_MS` "Oracle container", `mac-server-watchdog.sh` still naming `<ORACLE_IP_RETIRED>`).
 
 ---
 

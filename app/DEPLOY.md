@@ -4,8 +4,8 @@ Deno-in-Docker service that ingests US STOCK Act disclosures (House + Senate +
 Executive / OGE 278-T), extracts/normalizes trades, and pushes them to clients
 via webhook + SSE, with a dashboard and admin panel.
 
-**Current shape (2026-08):** production is **Coolify Docker on the Hetzner
-fleet box** `fleet-hetzner-nbg1` (`ssh coolify` / `host.jays.services`).
+**Current shape (2026-08):** production is **Coolify Docker on the production
+fleet box** (`ssh coolify` / `host.jays.services`, see `../AGENTS.md` and `fleet-ops:ATTACK-MAP.md`).
 The app process is Deno inside `congress-app`.  The database is a **local
 SQLite file** at `/data/congress-trade/db.sqlite`, replicated by **Litestream**.
 Secrets come from **Infisical**.  See `../AGENTS.md` "Current Shape".
@@ -21,8 +21,8 @@ production path — `wrangler.toml` is local/preview leftover.
 ## 0. Prerequisites
 
 - Node 18+ and npm for local typecheck/test (`cd app && npm ci`).
-- A Coolify login on the Hetzner fleet box, or a merge to `main` (auto-deploy).
-- Infisical congress-trade project `f61a79de-8d77-4f0b-9361-4b7208598290`, env
+- A Coolify login on the fleet box, or a merge to `main` (auto-deploy).
+- Infisical congress-trade project (see `fleet-ops:ATTACK-MAP.md`), env
   `prod`, plus the shared-at-ct project for fleet keys.
 - Verify locally before merging: `npm run typecheck && npm test`.
 

@@ -62,10 +62,10 @@ assert_eq "$(decide 0 0 1 0 1 0 1)" "noop" "steady state"
 
 # --- Coolify deployments parse --------------------------------------------
 parse_ok() {
-  printf '%s' "$1" | APP_UUID=c11c5hdhuczureb6w2pg20p0 bash "$OVERLAP" --parse-active
+  printf '%s' "$1" | APP_UUID=test-app-uuid bash "$OVERLAP" --parse-active
 }
 
-if parse_ok '{"0":{"application_uuid":"c11c5hdhuczureb6w2pg20p0","status":"in_progress"}}'; then
+if parse_ok '{"0":{"application_uuid":"test-app-uuid","status":"in_progress"}}'; then
   echo "ok   parse in_progress object"
 else
   echo "FAIL parse in_progress object"
