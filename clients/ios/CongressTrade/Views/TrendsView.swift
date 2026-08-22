@@ -35,38 +35,78 @@ struct TrendsView: View {
 
                         summaryStrip
 
-                        if !store.tickerLeaderboard.isEmpty {
-                            tickerSection
-                        }
+                        if horizontalSizeClass == .regular {
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 16, alignment: .top), GridItem(.flexible(), spacing: 16, alignment: .top)], spacing: 16) {
+                                if !store.tickerLeaderboard.isEmpty {
+                                    tickerSection
+                                }
 
-                        if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
-                            trendingSection
-                        }
+                                if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
+                                    trendingSection
+                                }
 
-                        if !store.volumeSeries.isEmpty {
-                            volumeSection
-                        }
+                                if !store.volumeSeries.isEmpty {
+                                    volumeSection
+                                }
 
-                        if !store.clusterBuys.isEmpty {
-                            clusterSection
-                        }
+                                if !store.clusterBuys.isEmpty {
+                                    clusterSection
+                                }
 
-                        sectorAndCapSection
+                                sectorFlowCard
 
-                        if !store.topPerformers.isEmpty {
-                            performersSection
-                        }
+                                marketCapCard
 
-                        if !store.memberLeaderboard.isEmpty {
-                            memberSection
-                        }
+                                if !store.topPerformers.isEmpty {
+                                    performersSection
+                                }
 
-                        if !store.conflicts.isEmpty {
-                            conflictsSection
-                        }
+                                if !store.memberLeaderboard.isEmpty {
+                                    memberSection
+                                }
 
-                        if let lag = store.filingLag {
-                            timelinessSection(lag: lag)
+                                if !store.conflicts.isEmpty {
+                                    conflictsSection
+                                }
+
+                                if let lag = store.filingLag {
+                                    timelinessSection(lag: lag)
+                                }
+                            }
+                        } else {
+                            if !store.tickerLeaderboard.isEmpty {
+                                tickerSection
+                            }
+
+                            if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
+                                trendingSection
+                            }
+
+                            if !store.volumeSeries.isEmpty {
+                                volumeSection
+                            }
+
+                            if !store.clusterBuys.isEmpty {
+                                clusterSection
+                            }
+
+                            sectorAndCapSection
+
+                            if !store.topPerformers.isEmpty {
+                                performersSection
+                            }
+
+                            if !store.memberLeaderboard.isEmpty {
+                                memberSection
+                            }
+
+                            if !store.conflicts.isEmpty {
+                                conflictsSection
+                            }
+
+                            if let lag = store.filingLag {
+                                timelinessSection(lag: lag)
+                            }
                         }
 
                         if let summary = store.latencySummary,

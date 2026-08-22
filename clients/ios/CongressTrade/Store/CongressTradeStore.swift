@@ -1043,7 +1043,8 @@ final class CongressTradeStore: ObservableObject {
             to: selectedTimeRange.toDateISO,
             chamber: Self.chamberQueryValue(for: selectedChambers),
             party: Self.partyQueryValue(for: selectedParties),
-            type: Self.tradeTypeQueryValue(for: selectedTradeTypes)
+            type: Self.tradeTypeQueryValue(for: selectedTradeTypes),
+            include: "analytics"
         )
     }
 

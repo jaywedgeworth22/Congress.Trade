@@ -12,6 +12,8 @@ struct TickerDetailView: View {
     @State private var isLoading = true
     @State private var asset: ClientTickerResponse.TickerAsset?
     @State private var summary: ClientTickerResponse.TickerSummary?
+    @State private var analytics: ClientTickerAnalytics?
+    @State private var selectedPolitician: MemberSheetTarget?
     @State private var trades: [ClientTrade] = []
     @State private var error: String?
 
@@ -105,6 +107,172 @@ struct TickerDetailView: View {
                             }
                         }
 
+                        // Congressional Sentiment (Analytics)
+                        if let winSummary = analytics?.summary {
+                            DetailSection("Congressional Sentiment") {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack {
+                                        Text("Buy Pressure")
+                                            .font(.subheadline.weight(.semibold))
+                                        Spacer()
+                                        if let netSentiment = winSummary.netSentiment {
+                                            Text(String(format: "%.0f%%", netSentiment * 100))
+                                                .font(.subheadline.weight(.bold))
+                                                .foregroundStyle(netSentiment >= 0.5 ? Color.green : Color.red)
+                                        } else {
+                                            Text("—")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    if let netSentiment = winSummary.netSentiment {
+                                        GeometryReader { geo in
+                                            ZStack(alignment: .leading) {
+                                                RoundedRectangle(cornerRadius: 4)
+                                                    .fill(Color.red.opacity(0.35))
+                                                    .frame(height: 8)
+                                                RoundedRectangle(cornerRadius: 4)
+                                                    .fill(Color.green)
+                                                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(netSentiment))), height: 8)
+                                            }
+                                        }
+                                        .frame(height: 8)
+                                    }
+                                    HStack {
+                                        Text("\(winSummary.buyCount ?? 0) Buys")
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.green)
+                                        Spacer()
+                                        Text("\(winSummary.sellCount ?? 0) Sells")
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.red)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+
+                        // Top Congressional Buyers
+                        if let buyers = analytics?.topBuyers, !buyers.isEmpty {
+                            DetailSection("Top Buyers") {
+                                VStack(spacing: 8) {
+                                    ForEach(buyers.prefix(5)) { trader in
+                                        Button {
+                                            if let fid = trader.filerId {
+                                                selectedPolitician = MemberSheetTarget(
+                                                    id: fid,
+                                                    name: trader.fullName ?? fid,
+                                                    photoUrl: trader.photoUrl
+                                                )
+                                            }
+                                        } label: {
+                                            HStack(spacing: 12) {
+                                                MemberAvatar(
+                                                    photoURL: MemberPhotoURL.resolve(trader.photoUrl),
+                                                    name: trader.fullName ?? "",
+                                                    size: 36
+                                                )
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(trader.fullName ?? trader.filerId ?? "Unknown")
+                                                        .font(.subheadline.weight(.semibold))
+                                                        .lineLimit(1)
+                                                    if let party = trader.partyBucket {
+                                                        Text(party.uppercased())
+                                                            .font(.caption2.weight(.bold))
+                                                            .foregroundStyle(.secondary)
+                                                    }
+                                                }
+                                                Spacer()
+                                                VStack(alignment: .trailing, spacing: 2) {
+                                                    Text(CompactFormat.usd(trader.estVolumeUsd))
+                                                        .font(.subheadline.weight(.semibold))
+                                                    Text("\(trader.tradeCount ?? 0) buys")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Top Congressional Sellers
+                        if let sellers = analytics?.topSellers, !sellers.isEmpty {
+                            DetailSection("Top Sellers") {
+                                VStack(spacing: 8) {
+                                    ForEach(sellers.prefix(5)) { trader in
+                                        Button {
+                                            if let fid = trader.filerId {
+                                                selectedPolitician = MemberSheetTarget(
+                                                    id: fid,
+                                                    name: trader.fullName ?? fid,
+                                                    photoUrl: trader.photoUrl
+                                                )
+                                            }
+                                        } label: {
+                                            HStack(spacing: 12) {
+                                                MemberAvatar(
+                                                    photoURL: MemberPhotoURL.resolve(trader.photoUrl),
+                                                    name: trader.fullName ?? "",
+                                                    size: 36
+                                                )
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(trader.fullName ?? trader.filerId ?? "Unknown")
+                                                        .font(.subheadline.weight(.semibold))
+                                                        .lineLimit(1)
+                                                    if let party = trader.partyBucket {
+                                                        Text(party.uppercased())
+                                                            .font(.caption2.weight(.bold))
+                                                            .foregroundStyle(.secondary)
+                                                    }
+                                                }
+                                                Spacer()
+                                                VStack(alignment: .trailing, spacing: 2) {
+                                                    Text(CompactFormat.usd(trader.estVolumeUsd))
+                                                        .font(.subheadline.weight(.semibold))
+                                                    Text("\(trader.tradeCount ?? 0) sells")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Performance After Congressional Buys (Backtest)
+                        if let horizons = analytics?.backtest?.horizons, !horizons.isEmpty {
+                            DetailSection("Performance After Buys") {
+                                ForEach(horizons) { h in
+                                    HStack {
+                                        Text(Self.horizonLabel(days: h.days ?? 0))
+                                            .font(.subheadline)
+                                        Spacer()
+                                        if let medRet = h.medianReturn {
+                                            Text(String(format: "%+.1f%%", medRet * 100))
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(medRet >= 0 ? Color.green : Color.red)
+                                        } else {
+                                            Text("—")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        if let excess = h.medianExcess {
+                                            Text(String(format: "(%+.1f%% vs SPX)", excess * 100))
+                                                .font(.caption)
+                                                .foregroundStyle(excess >= 0 ? Color.green : Color.red)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Recent Trades
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Recent Trades")
@@ -133,6 +301,14 @@ struct TickerDetailView: View {
             // KO — owner: "the ticker appears twice ... across four lines".
             .navigationTitle("Ticker")
             .inlineNavigationTitle()
+            .sheet(item: $selectedPolitician) { target in
+                PoliticianDetailView(
+                    memberId: target.id,
+                    memberName: target.name,
+                    seedPhotoUrl: target.photoUrl
+                )
+                .presentationDetents([.medium, .large])
+            }
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     if let shareURL = store.api.shareURL(
@@ -227,6 +403,7 @@ struct TickerDetailView: View {
             if Task.isCancelled { return }
             self.asset = response.asset
             self.summary = response.summary
+            self.analytics = response.analytics
             self.trades = response.items
         } catch is CancellationError {
             return
@@ -245,6 +422,16 @@ struct TickerDetailView: View {
         } catch let error as APIError where error.isRetryable {
             try await Task.sleep(for: .milliseconds(400))
             return try await store.fetchTicker(ticker)
+        }
+    }
+
+    private static func horizonLabel(days: Int) -> String {
+        switch days {
+        case 21: return "1 Month"
+        case 63: return "3 Months"
+        case 126: return "6 Months"
+        case 252: return "1 Year"
+        default: return "\(days) Days"
         }
     }
 }

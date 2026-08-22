@@ -1094,16 +1094,16 @@ struct SidesFilterMenuLabel: View {
             HStack(spacing: 4) {
                 HStack(spacing: 1) {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.caption2.weight(.heavy))
                         .foregroundStyle(isOn(.buy) ? Color.green : dimColor)
                     Image(systemName: "arrow.down")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.caption2.weight(.heavy))
                         .foregroundStyle(isOn(.sell) ? Color.red : dimColor)
                     // Same semi-dark grey as the other filter glyphs (owner
                     // 2026-08-22). Green/red stay on buy/sell because those
                     // colours mean something; exchange does not.
                     Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.caption2.weight(.heavy))
                         .foregroundStyle(isOn(.exchange) ? AppTheme.glyphGrey : dimColor)
                 }
                 if isActive {
@@ -1115,7 +1115,7 @@ struct SidesFilterMenuLabel: View {
                 // lighter grey rather than the word ink above (owner
                 // 2026-08-21), matching every other dropdown caret.
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.caption2.weight(.bold))
                     .foregroundStyle(AppTheme.glyphGrey)
                     .opacity(0.5)
                     .padding(.leading, 2)
@@ -1156,7 +1156,7 @@ struct FilterMenuLabel: View {
                 // chrome glyph, so it keeps the lighter grey (owner
                 // 2026-08-21) rather than the darker word ink above.
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.caption2.weight(.bold))
                     .foregroundStyle(AppTheme.glyphGrey)
                     .opacity(0.5)
                     .padding(.leading, 2)
