@@ -45,6 +45,13 @@ import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { deprecatePredecessorFilingTransactions } from './agreement.ts';
 import { parseAmountRange } from './amounts.ts';
 import { canonicalizeTxType } from '../shared/txType.ts';
+import {
+  PIPELINE_TX_SOURCES_SQL,
+  VISION_SUPERSEDE_REASON,
+  canSupersedeResolvedVision,
+  isVisionTxSource,
+  supersededPipelineSourcesSql,
+} from './sourceSupersede.ts';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -413,10 +420,47 @@ export async function normalize(
     [filing.docId],
   );
 
-  // A completed decision is authoritative. Replaying an older extraction must
-  // not reopen it or append a competing live row set.
+  // A completed decision is authoritative unless a later complete vision
+  // extract is replacing a truncated confirm on the same doc_id. Replaying
+  // an older/smaller extraction must not append a competing live row set.
   if (reviewSnapshot?.resolved === 1) {
-    return { transactions, minConfidence, needsReview: false, published: false };
+    const incomingSource = transactions[0]?.source;
+    const liveBySource = await all<{ source: string; n: number; dated: number }>(
+      env.DB,
+      `SELECT source,
+              COUNT(*) AS n,
+              SUM(CASE WHEN tx_date GLOB '????-??-??' THEN 1 ELSE 0 END) AS dated
+         FROM transactions
+        WHERE doc_id = ? AND deprecated_at IS NULL
+          AND source IN (${PIPELINE_TX_SOURCES_SQL})
+        GROUP BY source`,
+      [filing.docId],
+    );
+    let liveSameSource = 0;
+    let liveOther = 0;
+    let liveOtherDated = 0;
+    for (const row of liveBySource) {
+      const n = Number(row.n) || 0;
+      const dated = Number(row.dated) || 0;
+      if (row.source === incomingSource) liveSameSource += n;
+      else {
+        liveOther += n;
+        liveOtherDated += dated;
+      }
+    }
+    const incomingDatedCount = transactions.filter(
+      (tx) => typeof tx.txDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tx.txDate),
+    ).length;
+    if (!canSupersedeResolvedVision({
+      incomingSource,
+      incomingCount: transactions.length,
+      incomingDatedCount,
+      liveSameSource,
+      liveOther,
+      liveOtherDated,
+    })) {
+      return { transactions, minConfidence, needsReview: false, published: false };
+    }
   }
 
   if (needsReview) {
@@ -1107,73 +1151,99 @@ async function persistNormalizedPublish(
   }
   const insertRowsJson = transactionInsertJson(transactions);
   const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
+  const incomingSource = transactions[0]?.source ?? 'primary';
+  const supersededSourcesSql = supersededPipelineSourcesSql(incomingSource);
+  if (review?.resolved === 1 && !isVisionTxSource(incomingSource)) {
+    return { published: false, insertedIds: [] };
+  }
   const exactLiveSet = `(SELECT COUNT(*) FROM transactions
-      WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac', 'server_cpu')
+      WHERE doc_id = ? AND source IN (${PIPELINE_TX_SOURCES_SQL})
         AND deprecated_at IS NULL) = ?
     AND (SELECT COUNT(*) FROM transactions
       WHERE doc_id = ? AND source IN ('primary', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?`;
-
+  const exactLiveSetParams = [
+    docId, transactions.length,
+    docId, rowKeysJson, transactions.length,
+  ];
 
   const auditPayload = JSON.stringify({
     minConfidence: metadata.confidence,
     extractor: metadata.extractor,
     modelVersion: metadata.modelVersion,
     transactionCount: transactions.length,
+    supersededPriorSources: Boolean(supersededSourcesSql),
   });
+
+  const visionDeprecate = (
+    gateSql: string,
+    gateParams: unknown[],
+  ): [string, unknown[]] | null => {
+    if (!supersededSourcesSql) return null;
+    return [
+      `UPDATE transactions
+          SET deprecated_at = ?, deprecated_reason = ?
+        WHERE doc_id = ? AND source IN (${supersededSourcesSql}) AND deprecated_at IS NULL
+          AND ${gateSql}`,
+      [nowIso, VISION_SUPERSEDE_REASON, docId, ...gateParams],
+    ];
+  };
+
   let statements: Array<[string, any[]]>;
   let transitionIndex: number;
   if (review) {
     const revision = review.review_revision;
+    const expectedResolved = review.resolved === 1 ? 1 : 0;
     // NOTE: do NOT require agreement_suppressed_at IS NULL here.
     // agreement_suppressed_at only gates the multi-model agreement cascade
     // (no OpenRouter / budget ops). Local Grok / server_cpu vision must still
     // be able to publish once rows clear CONFIDENCE_THRESHOLD — otherwise
     // "requeue for local_mac" becomes a permanent dead-end.
+    const reviewGate = `EXISTS (SELECT 1 FROM review_queue
+            WHERE doc_id = ? AND resolved = ${expectedResolved} AND review_revision = ?)`;
+    const reviewGateParams = [docId, revision];
     statements = [
       [
         `${CONDITIONAL_BULK_INSERT_TX_SQL}
-          WHERE EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
-        [insertRowsJson, docId, revision],
+          WHERE ${reviewGate}`,
+        [insertRowsJson, ...reviewGateParams],
       ],
+    ];
+    const deprecate = visionDeprecate(reviewGate, reviewGateParams);
+    if (deprecate) statements.push(deprecate);
+    statements.push(
       [
         `INSERT INTO review_queue (doc_id)
           SELECT ?
-           WHERE EXISTS (SELECT 1 FROM review_queue
-             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
+           WHERE ${reviewGate}
              AND NOT (${exactLiveSet})`,
         [
-          docId, docId, revision,
-          docId, transactions.length,
-          docId, rowKeysJson, transactions.length,
+          docId, ...reviewGateParams,
+          ...exactLiveSetParams,
         ],
       ],
       [
         `${BULK_DELIVERY_OUTBOX_SQL}
-          AND EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
-        [nowIso, nowIso, nowIso, insertRowsJson, docId, revision],
+          AND ${reviewGate}`,
+        [nowIso, nowIso, nowIso, insertRowsJson, ...reviewGateParams],
       ],
       [
         `UPDATE filings
             SET ingest_status = 'persisted', error = NULL,
                 confidence = ?, extractor = ?, model_version = ?
           WHERE doc_id = ?
-            AND EXISTS (SELECT 1 FROM review_queue
-              WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
+            AND ${reviewGate}
             AND ${exactLiveSet}`,
         [
           metadata.confidence, metadata.extractor, metadata.modelVersion,
-          docId, docId, revision,
-          docId, transactions.length,
-          docId, rowKeysJson, transactions.length,
+          docId, ...reviewGateParams,
+          ...exactLiveSetParams,
         ],
       ],
       [
         `INSERT OR IGNORE INTO ingestion_decisions
            (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
-         SELECT ?, ?, 'auto_published', 'pipeline', NULL, 'passed_normalization', ?,
+         SELECT ?, ?, 'auto_published', 'pipeline', NULL, ?, ?,
                 COALESCE((
                   SELECT json_group_array(id) FROM (
                     SELECT id FROM transactions
@@ -1181,17 +1251,37 @@ async function persistNormalizedPublish(
                      ORDER BY id ASC
                   )
                 ), '[]'), ?
-          WHERE EXISTS (SELECT 1 FROM review_queue
-            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
+          WHERE ${reviewGate}
             AND ${exactLiveSet}`,
         [
-          `decision:auto_published:${docId}`, docId, auditPayload, docId, nowIso,
-          docId, revision,
-          docId, transactions.length,
-          docId, rowKeysJson, transactions.length,
+          `decision:auto_published:${docId}`, docId,
+          expectedResolved === 1 ? 'superseded_prior_sources' : 'passed_normalization',
+          auditPayload, docId, nowIso,
+          ...reviewGateParams,
+          ...exactLiveSetParams,
         ],
       ],
-      [
+    );
+    if (expectedResolved === 1) {
+      statements.push([
+        `UPDATE review_queue
+            SET agreement_next_attempt_at = NULL,
+                agreement_claim_token = NULL,
+                agreement_claimed_at = NULL,
+                agreement_suppressed_at = NULL,
+                agreement_suppression_reason = NULL,
+                resolution_kind = 'published',
+                resolution_reason = 'auto_published',
+                review_revision = review_revision + 1
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?
+            AND ${exactLiveSet}`,
+        [
+          docId, revision,
+          ...exactLiveSetParams,
+        ],
+      ]);
+    } else {
+      statements.push([
         `UPDATE review_queue
             SET resolved = 1,
                 agreement_next_attempt_at = NULL,
@@ -1207,27 +1297,30 @@ async function persistNormalizedPublish(
             AND ${exactLiveSet}`,
         [
           docId, revision,
-          docId, transactions.length,
-          docId, rowKeysJson, transactions.length,
+          ...exactLiveSetParams,
         ],
-      ],
-    ];
+      ]);
+    }
     transitionIndex = statements.length - 1;
   } else {
+    const firstPassGate = `NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
+            AND EXISTS (SELECT 1 FROM filings
+              WHERE doc_id = ? AND ingest_status <> 'persisted')`;
+    const firstPassGateParams = [docId, docId];
     statements = [
       [
         `${CONDITIONAL_BULK_INSERT_TX_SQL}
-          WHERE NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
-            AND EXISTS (SELECT 1 FROM filings
-              WHERE doc_id = ? AND ingest_status <> 'persisted')`,
-        [insertRowsJson, docId, docId],
+          WHERE ${firstPassGate}`,
+        [insertRowsJson, ...firstPassGateParams],
       ],
+    ];
+    const firstPassDeprecate = visionDeprecate(firstPassGate, firstPassGateParams);
+    if (firstPassDeprecate) statements.push(firstPassDeprecate);
+    statements.push(
       [
         `INSERT INTO filings (doc_id)
           SELECT ?
-           WHERE NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
-             AND EXISTS (SELECT 1 FROM filings
-               WHERE doc_id = ? AND ingest_status <> 'persisted')
+           WHERE ${firstPassGate}
              AND NOT (${exactLiveSet})`,
         [
           docId, docId, docId,
@@ -1278,8 +1371,9 @@ async function persistNormalizedPublish(
           docId, rowKeysJson, transactions.length,
         ],
       ],
-    ];
-    transitionIndex = 3;
+    );
+    // Filing persisted-status update is the CAS winner (audit is last).
+    transitionIndex = statements.length - 2;
   }
 
   // A bounded FMP recovery may have populated low-fidelity seed rows under the

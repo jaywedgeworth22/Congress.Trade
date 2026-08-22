@@ -699,6 +699,150 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
     });
 
+    it('POST /ingest-local-vision retires leftover primary on a resolved truncated confirm', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'doc-confirm-then-chunk',
+        'house',
+        'P',
+        '2026-08-01',
+        'https://example.com/chunk.pdf',
+        'persisted',
+        'scanned_pdf',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, review_revision, resolution_kind, resolution_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'doc-confirm-then-chunk',
+        'admin_confirmed',
+        1,
+        1,
+        'published',
+        'admin_confirmed',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO transactions (id, doc_id, filer_id, tx_date, owner, asset_name, ticker, tx_type, amount_min, amount_max, source, row_key, created_at, confidence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'tx-truncated-primary',
+        'doc-confirm-then-chunk',
+        'F1',
+        '2026-07-20',
+        'self',
+        'NVIDIA Corporation',
+        'NVDA',
+        'B',
+        1001,
+        15000,
+        'primary',
+        'v1:primary:0:nvda',
+        nowIso,
+        1,
+      ).run();
+
+      const res = await app.request('/ingest-local-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'doc-confirm-then-chunk',
+          workerId: 'local_mac_1',
+          extractor: 'mac_vision_v1',
+          source: 'local_mac',
+          transactions: [
+            {
+              ticker: 'NVDA',
+              assetName: 'NVIDIA Corporation',
+              txType: 'B',
+              txDate: '2026-07-20',
+              amountMin: 1001,
+              amountMax: 15000,
+              confidence: 0.97,
+              rawText: 'NVIDIA Corporation [NVDA] P 07/20/2026 $1,001 - $15,000',
+            },
+            {
+              ticker: 'AAPL',
+              assetName: 'Apple Inc.',
+              txType: 'B',
+              txDate: '2026-07-21',
+              amountMin: 1001,
+              amountMax: 15000,
+              confidence: 0.97,
+              rawText: 'Apple Inc. [AAPL] P 07/21/2026 $1,001 - $15,000',
+            },
+          ],
+        }),
+      }, env as never);
+      expect(res.status).toBe(200);
+      const json = await res.json() as { published: boolean; txCount: number };
+      expect(json.published).toBe(true);
+      expect(json.txCount).toBe(2);
+
+      const leftover = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL`,
+      ).bind('doc-confirm-then-chunk').first<{ n: number }>();
+      const vision = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ? AND source = 'local_mac' AND deprecated_at IS NULL`,
+      ).bind('doc-confirm-then-chunk').first<{ n: number }>();
+      expect(leftover?.n ?? 0).toBe(0);
+      expect(vision?.n ?? 0).toBe(2);
+
+      const review = await d1.prepare(
+        `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+      ).bind('doc-confirm-then-chunk').first<{ resolved: number; review_revision: number }>();
+      expect(review?.resolved).toBe(1);
+      expect(review?.review_revision).toBe(2);
+    });
+
+    it('POST /review/:docId/retire-superseded-sources deprecates leftover primary beside live local_mac', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('doc-overlap-repair', 'house', 'P', '2026-08-01', 'https://example.com/o.pdf', 'persisted', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, review_revision, resolution_kind, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind('doc-overlap-repair', 'auto_published', 1, 3, 'published', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO transactions (id, doc_id, source, tx_date, owner, asset_name, tx_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('tx-p', 'doc-overlap-repair', 'primary', '2026-07-20', 'self', 'NVIDIA', 'B', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO transactions (id, doc_id, source, tx_date, owner, asset_name, tx_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('tx-v', 'doc-overlap-repair', 'local_mac', '2026-07-20', 'self', 'NVIDIA', 'B', nowIso).run();
+
+      const overlap = await app.request('/diagnostics/source-overlap', {
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(overlap.status).toBe(200);
+      const overlapJson = await overlap.json() as { docs: Array<{ docId: string; primary: number; localMac: number }> };
+      expect(overlapJson.docs.some((d) => d.docId === 'doc-overlap-repair' && d.primary === 1 && d.localMac === 1)).toBe(true);
+
+      const res = await app.request('/review/doc-overlap-repair/retire-superseded-sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({ reviewRevision: 3 }),
+      }, env as never);
+      expect(res.status).toBe(200);
+      const json = await res.json() as { retired: boolean; deprecatedTransactions: number };
+      expect(json.retired).toBe(true);
+      expect(json.deprecatedTransactions).toBe(1);
+
+      const leftover = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL`,
+      ).bind('doc-overlap-repair').first<{ n: number }>();
+      const kept = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ? AND source = 'local_mac' AND deprecated_at IS NULL`,
+      ).bind('doc-overlap-repair').first<{ n: number }>();
+      expect(leftover?.n ?? 0).toBe(0);
+      expect(kept?.n ?? 0).toBe(1);
+    });
+
     it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
       const app = createAdminApp();
       const env = makeEnv();
