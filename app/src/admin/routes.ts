@@ -2655,7 +2655,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         [
           `UPDATE transactions
               SET deprecated_at = ?, deprecated_reason = ?
-            WHERE doc_id = ? AND source IN ('primary', 'manual')
+            WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac', 'server_cpu')
               AND deprecated_at IS NULL
               AND EXISTS (SELECT 1 FROM review_queue
                 WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
@@ -2820,7 +2820,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?
       AND (SELECT COUNT(*) FROM transactions
-        WHERE doc_id = ? AND source IN ('primary', 'manual')
+        WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac', 'server_cpu')
           AND deprecated_at IS NULL) = ?`;
     let persistResults: D1Result[];
     try {
@@ -2997,10 +2997,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /review/:docId/unpublish --------------------------------------
-  // Retract a previously-published filing: soft-delete its primary transactions
-  // (deprecated_at), revert the filing to 'needs_review', and re-open the review
-  // item so it returns to the pending queue. Soft-delete (not hard delete) keeps
-  // history and lets every feed/analytics/stream read exclude the rows via
+  // Retract a previously-published filing: soft-delete its live published
+  // transactions (primary / manual / local_mac / server_cpu), revert the filing
+  // to 'needs_review', and re-open the review item so it returns to the pending
+  // queue. Soft-delete (not hard delete) keeps history and lets every
+  // feed/analytics/stream/filing-detail read exclude the rows via
   // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
   // recalled — this stops the rows being served going forward.
   // Body: { reviewRevision: number, reason?: string }
@@ -3044,7 +3045,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const holdReason = 'unpublished: ' + reason;
     const deprecatedSql = `UPDATE transactions
       SET deprecated_at = ?, deprecated_reason = ?
-      WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+      WHERE doc_id = ? AND source IN ('primary', 'manual', 'local_mac', 'server_cpu') AND deprecated_at IS NULL
         AND EXISTS (SELECT 1 FROM review_queue
           WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
     const filingSql = `UPDATE filings SET ingest_status = ?
