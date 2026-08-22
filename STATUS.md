@@ -7,6 +7,16 @@ One undated Gemini row held Khanna `H-2025-8221264` (now 209 live).  Sessions
 blocked later vision submits.  Receipt:
 `docs/rollouts/2026-08-21-review-drain-autonomy.md`.  Board `e9458ef2`.
 
+## 2026-08-21 CURSOR-BUGBOT — PDF-native cascade must see upright pages
+
+#2146 rotated PNG page images only.  After #2142 a 13+ page sideways PTR
+discards the upright CLI extract and sends the original scan to Gemini /
+grok-4.5.  Rebuild an uncapped upright PDF from those PNGs.  Mac
+`source=local_mac` OpenRouter hits use the same omitted-checkbox soften as
+local Grok so a Rogers/Khanna attached-schedule row without an amount box
+does not park the packet.  Live `~/vision-worker/worker.py` still needs a
+copy after merge.  Receipt:
+`docs/rollouts/2026-08-21-upright-pdf-native-cascade.md`.
 ## 2026-08-21 CURSOR-BUGBOT — Score unrotated page before upright-rotate
 
 #2146 scored only 90/270 and defaulted 270 when OCR was silent, so an
