@@ -29,8 +29,13 @@ export function storedReviewTransactionCount(payloadJson: string | null | undefi
     const payload = JSON.parse(payloadJson) as {
       transactions?: unknown;
       transactionCount?: unknown;
+      truncated?: unknown;
     };
     const listed = Array.isArray(payload.transactions) ? payload.transactions.length : 0;
+    // A truncated payload's claimed count is the dropped OCR flood, not a
+    // complete extract.  Using 501 to block a later 409-row Gemini read is
+    // how Khanna H-2024-8220192 / 8220711 stayed in review after #2149.
+    if (payload.truncated === true || payload.truncated === 1) return listed;
     const claimed = typeof payload.transactionCount === 'number' && Number.isFinite(payload.transactionCount)
       ? payload.transactionCount
       : 0;
