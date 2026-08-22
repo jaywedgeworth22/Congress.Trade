@@ -30,7 +30,9 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 | `VISION_ENGINE` | `auto` | `local_cli` \| `openrouter` \| `auto` |
 | `GROK_BIN` | `~/.grok/bin/grok` | Local Grok Build CLI |
 | `GROK_CLI_TIMEOUT_SEC` | `900` | Per-doc local CLI budget |
-| `GROK_CLI_MAX_TURNS` | `8` | Headless turns (page reads) |
+| `GROK_CLI_MAX_TURNS` | `16` | Floor; scaled `4+2*pages` (cap 32) |
+| `GROK_CLI_REASONING_EFFORT` | `medium` | Do not inherit TUI `xhigh` |
+| `GROK_CWD` | `<script>/grok-cwd` | Isolated cwd so `grok -p` does not load `AGENTS.md` |
 | `OPENROUTER_API_KEY` | — | Required for openrouter / auto fallback |
 | `OPENROUTER_MODEL` | `x-ai/grok-4.5` | Last cascade step (native PDF) |
 | `OPENROUTER_CASCADE_MODELS` | `qwen/qwen3-vl-8b-instruct,qwen/qwen3-vl-30b-a3b-instruct,google/gemini-3.7-flash` | Tried after a missed Grok CLI solo pass, before `OPENROUTER_MODEL`. Qwen VL slugs receive raster pages. |

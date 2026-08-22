@@ -2123,6 +2123,53 @@ async function fillBenchmarkProviderFailure(
   );
 }
 
+/**
+ * Keep a doc off GET /scanned-filings/pending?worker=local after the Mac
+ * worker has already submitted a decision (rows, honest empty, or skip).
+ * Unresolved stamp — does not fake-resolve the review row.
+ */
+async function stampLocalVisionSubmitted(
+  db: Env['DB'],
+  docId: string,
+  extraTag?: string,
+): Promise<void> {
+  const tag = extraTag ? `local_vision_submitted,${extraTag}` : 'local_vision_submitted';
+  const nowIso = new Date().toISOString();
+  const open = await get<{ reason: string | null }>(
+    db,
+    `SELECT reason FROM review_queue WHERE doc_id = ? AND resolved = 0 LIMIT 1`,
+    [docId],
+  );
+  if (open) {
+    await run(
+      db,
+      `UPDATE review_queue
+          SET reason = CASE
+            WHEN reason LIKE '%local_vision_submitted%' THEN reason
+            WHEN reason IS NULL OR TRIM(reason) = '' THEN ?
+            ELSE reason || ',' || ?
+          END
+        WHERE doc_id = ? AND resolved = 0`,
+      [tag, tag, docId],
+    );
+  } else {
+    await run(
+      db,
+      `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
+       VALUES (?, ?, ?, ?, 0)`,
+      [docId, tag, JSON.stringify({ kind: 'local_vision_submitted', extraTag: extraTag ?? null, at: nowIso }), nowIso],
+    );
+  }
+  await run(
+    db,
+    `UPDATE filings
+        SET ingest_status = 'needs_review'
+      WHERE doc_id = ?
+        AND ingest_status NOT IN ('persisted', 'extracted')`,
+    [docId],
+  );
+}
+
 export const createAdminApp = buildAdminRouter;
 
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
@@ -5632,6 +5679,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                WHERE rq.doc_id = f.doc_id
                  AND rq.resolved = 1
             )
+            -- Stamp lives on the review row even when ingest_status is still
+            -- classified / extraction_pending_local / error (honest empty
+            -- noRows never used to leave needs_review, so those 1-pagers
+            -- stayed on this list and the Mac worker re-OCR'd them all day).
+            AND NOT EXISTS (
+              SELECT 1 FROM review_queue rq
+               WHERE rq.doc_id = f.doc_id
+                 AND rq.reason LIKE '%local_vision_submitted%'
+            )
             AND NOT EXISTS (
               SELECT 1 FROM transactions tx
                WHERE tx.doc_id = f.doc_id AND tx.deprecated_at IS NULL
@@ -5932,6 +5988,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           parsedTx.filter((tx) => typeof tx.txDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tx.txDate)).length,
         )
       ) {
+        if (txSource === 'local_mac') {
+          await stampLocalVisionSubmitted(c.env.DB, docId);
+        }
         return c.json({
           ok: true,
           docId,
@@ -5939,6 +5998,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           needsReview: true,
           skipped: 'smaller_than_stored_review',
           txCount: parsedTx.length,
+        });
+      }
+
+      const noRows = body.noRows === true;
+      if (noRows && parsedTx.length === 0 && txSource === 'local_mac') {
+        await stampLocalVisionSubmitted(c.env.DB, docId, 'nothing_to_report');
+        return c.json({
+          ok: true,
+          docId,
+          published: false,
+          needsReview: true,
+          noRows: true,
+          txCount: 0,
         });
       }
 
@@ -5970,18 +6042,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         source: txSource,
       });
 
-      if (result.needsReview && parsedTx.length > 0 && txSource === 'local_mac') {
-        await run(
-          c.env.DB,
-          `UPDATE review_queue
-              SET reason = CASE
-                WHEN reason LIKE '%local_vision_submitted%' THEN reason
-                WHEN reason IS NULL OR TRIM(reason) = '' THEN 'local_vision_submitted'
-                ELSE reason || ',local_vision_submitted'
-              END
-            WHERE doc_id = ? AND resolved = 0`,
-          [docId],
-        );
+      if (txSource === 'local_mac' && result.needsReview) {
+        await stampLocalVisionSubmitted(c.env.DB, docId);
       }
 
       return c.json({

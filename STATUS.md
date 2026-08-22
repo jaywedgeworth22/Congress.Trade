@@ -7,6 +7,15 @@ and a blue wash from `ultraThinMaterial`.  They now live in
 `FeedStickyBar` (solid white, glued to the nav bar, outside the scroll).
 Disclaimer is in the scrolling content.  Receipt:
 `docs/rollouts/2026-08-22-filter-header-sticky.md`.  Board `06ddcb30`.
+## 2026-08-21 GROK — Vision-worker loop overhaul (Grok CLI isolation)
+
+443 Grok chats on 2026-08-21 hit ~20 PDFs (Rogers 17-row x189, McCaul 93-row
+x134).  Worker now isolates `grok -p` in `grok-cwd`, medium effort, JSON
+schema, scaled turns; honest `noRows` stamps `local_vision_submitted` instead
+of retrying; pending excludes that stamp on every ingest_status.  `pm2
+vision-worker` is STOPPED until this ships + the live `~/vision-worker`
+copy is updated.  Receipt:
+`docs/rollouts/2026-08-21-vision-loop-overhaul.md`.  Board `72852a1e`.
 
 ## 2026-08-21 GROK — Confirm-then-chunk leftover primary (H-2025-8221264)
 
