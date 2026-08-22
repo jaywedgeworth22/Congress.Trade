@@ -865,13 +865,15 @@ struct SortMenuControl<Key: Hashable>: View {
                     }
                 } label: {
                     ControlChip {
-                        // Sort field name is a word — dark legible ink, not
-                        // the app-wide blue tint (owner 2026-08-21).
+                        // Same ink as the direction arrow (owner 2026-08-22):
+                        // Menu labels pick up `.tint(.blue)` unless both the
+                        // text and the Menu tint are a concrete grey.
                         Text(label(sortKey))
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppTheme.wordInk)
+                            .foregroundStyle(AppTheme.glyphGrey)
                     }
                 }
+                .tint(AppTheme.glyphGrey)
                 .accessibilityLabel("Sort by \(label(sortKey))")
             }
         }
@@ -918,13 +920,13 @@ struct FeedSortControl: View {
                 }
             } label: {
                 ControlChip {
-                    // Sort field name is a word — dark legible ink, not the
-                    // app-wide blue tint (owner 2026-08-21).
+                    // Same ink as the direction arrow (owner 2026-08-22).
                     Text(store.feedSortKey.label)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.wordInk)
+                        .foregroundStyle(AppTheme.glyphGrey)
                 }
             }
+            .tint(AppTheme.glyphGrey)
             .accessibilityLabel("Sort by \(store.feedSortKey.label)")
         }
     }
@@ -1023,12 +1025,10 @@ struct PaginationBar: View {
             } label: {
                 ControlChip {
                     HStack(spacing: 4) {
-                        // Rows-per-page value is a word — dark legible ink,
-                        // not the app-wide blue tint (owner 2026-08-21).
+                        // Same ink as the sort-direction arrow (owner 2026-08-22).
                         Text("\(pageSize)")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppTheme.wordInk)
-                        // Bare chrome glyph — stays the lighter grey.
+                            .foregroundStyle(AppTheme.glyphGrey)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(AppTheme.glyphGrey)
@@ -1037,6 +1037,7 @@ struct PaginationBar: View {
                     }
                 }
             }
+            .tint(AppTheme.glyphGrey)
             .accessibilityLabel("Rows per page, \(pageSize)")
         }
     }

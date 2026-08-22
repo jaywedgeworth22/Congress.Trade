@@ -1922,6 +1922,9 @@ describe('DASHBOARD_HTML', () => {
       );
       // The value is left-aligned at the start of column 2, never pinned right.
       expect(DASHBOARD_HTML).toContain('.flowrow .fval { justify-self: start;');
+      expect(DASHBOARD_HTML).toContain('.flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text);');
+      expect(DASHBOARD_HTML).not.toContain('.flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text-dim);');
       expect(DASHBOARD_HTML).not.toContain('.flowrow .ftop { display: flex;');
       // A label is shortened, never truncated — .flabel must not ellipsize.
       expect(DASHBOARD_HTML).not.toContain('.flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden;');
@@ -2666,6 +2669,13 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(canonSector('Health Care')).toBe('Healthcare');
     expect(canonSector('Healthcare')).toBe('Healthcare');
     expect(canonSector('Energy')).toBe('Energy'); // untouched passthrough
+  });
+
+  it('titles the web sector card By Sector because the large figure is total volume', () => {
+    expect(DASHBOARD_HTML).toContain('<summary class="tf-h">By Sector<span class="fold-cue" aria-hidden="true"></span></summary>');
+    expect(DASHBOARD_HTML).not.toContain('<summary class="tf-h">Net Flow by Sector');
+    expect(DASHBOARD_HTML).toContain('.brand { font-size: 15px; margin-left: 1ch; }');
+    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand { margin-left: 1ch; }');
   });
 
   it('merges canonicalized sector rows and sorts Net Flow by Sector by signed net flow', () => {
