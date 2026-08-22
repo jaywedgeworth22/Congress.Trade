@@ -32,7 +32,9 @@ Env:
   VISION_ENGINE            (auto|local_cli|openrouter, default auto)
   GROK_BIN                 (default: which grok / ~/.grok/bin/grok)
   GROK_CLI_TIMEOUT_SEC     (per-doc local CLI budget, default 900)
-  GROK_CLI_MAX_TURNS       (default 8 — room to read multipage scans)
+  GROK_CLI_MAX_TURNS       (floor, default 16; scaled 4+2*pages, cap 32)
+  GROK_CLI_REASONING_EFFORT (default medium — not the TUI xhigh default)
+  GROK_CWD                 (isolated dir without AGENTS.md; default <script>/grok-cwd)
   OPENROUTER_API_KEY       (required only for openrouter / auto fallback)
   OPENROUTER_MODEL         (default x-ai/grok-4.5) — last cascade step
   OPENROUTER_CASCADE_MODELS  comma list tried AFTER a missed Grok CLI solo
@@ -59,6 +61,7 @@ xAI subscription quota and flooded Grok Build session history. Max attempts
 from __future__ import annotations  # py3.9: lazy annotations (dict | None etc.)
 
 import base64
+import fcntl
 import json
 import logging
 import os
@@ -85,7 +88,49 @@ POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "30"))
 HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "60"))
 VISION_ENGINE = (os.getenv("VISION_ENGINE", "auto") or "auto").strip().lower()
 GROK_CLI_TIMEOUT_SEC = int(os.getenv("GROK_CLI_TIMEOUT_SEC", "900"))
-GROK_CLI_MAX_TURNS = int(os.getenv("GROK_CLI_MAX_TURNS", "8"))
+GROK_CLI_MAX_TURNS = int(os.getenv("GROK_CLI_MAX_TURNS", "16"))
+GROK_CLI_REASONING_EFFORT = (os.getenv("GROK_CLI_REASONING_EFFORT", "medium") or "medium").strip().lower()
+GROK_CWD = os.path.expanduser(
+    os.getenv(
+        "GROK_CWD",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "grok-cwd"),
+    )
+)
+GROK_CLI_SYSTEM_PROMPT = (
+    "You transcribe scanned U.S. financial disclosure forms into JSON. "
+    "Use the read_file tool on every listed page image. Do not use other tools, "
+    "skills, MCP servers, git, Slack, or session-start. Do not write files. "
+    "Reply with only the JSON object described in the user prompt."
+)
+GROK_TX_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["transactions"],
+    "properties": {
+        "noRows": {"type": "boolean"},
+        "transactions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["asset", "txType"],
+                "properties": {
+                    "owner": {"enum": ["self", "spouse", "joint", "dependent"]},
+                    "asset": {"type": "string"},
+                    "ticker": {"type": ["string", "null"]},
+                    "txType": {"enum": ["P", "S", "E"]},
+                    "txDate": {"type": ["string", "null"]},
+                    "notifDate": {"type": ["string", "null"]},
+                    "amountMin": {"type": ["integer", "null"]},
+                    "amountMax": {"type": ["integer", "null"]},
+                    "bracket": {"type": ["string", "null"]},
+                    "note": {"type": ["string", "null"]},
+                },
+            },
+        },
+    },
+}
+_WORKER_LOCK_FD = None
 OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "600"))
 MAX_DOCS_PER_POLL = int(os.getenv("MAX_DOCS_PER_POLL", "2"))
 MAX_PAGES = int(os.getenv("MAX_PAGES", "12"))
@@ -126,6 +171,91 @@ def grok_bin() -> str:
             return cand
     found = shutil.which("grok")
     return found or "grok"
+
+
+def grok_cli_max_turns(page_count: int) -> int:
+    """Rotated multipage PTRs burn one turn per page plus re-reads.
+
+    Floor is GROK_CLI_MAX_TURNS (16).  Scale 4 + 2*pages, cap 32.
+    """
+    n = max(0, int(page_count or 0))
+    return min(32, max(GROK_CLI_MAX_TURNS, 4 + 2 * n))
+
+
+def ensure_grok_cwd(path: str | None = None) -> str:
+    """Scratch cwd so grok -p does not load Congress.Trade AGENTS.md."""
+    dest = os.path.abspath(path or GROK_CWD)
+    os.makedirs(dest, exist_ok=True)
+    grok_md = os.path.join(dest, "GROK.md")
+    if not os.path.exists(grok_md):
+        with open(grok_md, "w", encoding="utf-8") as fh:
+            fh.write(
+                "# Vision transcription only\n\n"
+                "Read the listed page images with read_file and emit the JSON "
+                "object. Do not load project skills, MCP, git, or Slack.\n"
+            )
+    return dest
+
+
+def acquire_worker_lock() -> None:
+    """One live worker.  A second copy exits 0 so pm2 does not crash-loop."""
+    global _WORKER_LOCK_FD
+    lock_path = STATE_FILE + ".lock"
+    os.makedirs(os.path.dirname(os.path.abspath(lock_path)) or ".", exist_ok=True)
+    _WORKER_LOCK_FD = open(lock_path, "a", encoding="utf-8")
+    try:
+        fcntl.flock(_WORKER_LOCK_FD.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.error("another vision-worker holds %s — exiting", lock_path)
+        sys.exit(0)
+
+
+ASSET_VERB_RE = re.compile(
+    r"^(?:sell(?:ing)?|sale|purchase(?:d)?|buy(?:ing)?|bought|sold)\s+",
+    re.I,
+)
+ASSET_TYPE_LETTER_RE = re.compile(r"^[PSE]\s+")
+TICKER_PARENS_RE = re.compile(r"\(([A-Z][A-Z0-9.]{0,6})\)\s*$")
+
+
+def clean_asset_name(asset: str) -> tuple[str, str | None]:
+    """Drop handwritten P/S/E verbs; pull a trailing (TICKER)."""
+    s = (asset or "").strip()
+    ticker = None
+    m = TICKER_PARENS_RE.search(s)
+    if m:
+        ticker = m.group(1)
+        s = TICKER_PARENS_RE.sub("", s).strip()
+    s = ASSET_VERB_RE.sub("", s).strip()
+    s = ASSET_TYPE_LETTER_RE.sub("", s).strip()
+    return s, ticker
+
+
+def build_local_cli_cmd(pages: list, filing: dict) -> list[str]:
+    """Headless grok -p argv. Isolated cwd, medium effort, JSON schema."""
+    core = PROMPT_CORE.format(
+        form_hint=form_hint_for(filing),
+        filed_date=filing.get("filed_date") or "unknown",
+    )
+    image_list = "\n".join(f"- {p}" for p in pages)
+    prompt = LOCAL_CLI_PROMPT.format(core=core, image_list=image_list)
+    cwd = ensure_grok_cwd()
+    return [
+        grok_bin(),
+        "-p", prompt,
+        "--cwd", cwd,
+        "--output-format", "plain",
+        "--max-turns", str(grok_cli_max_turns(len(pages))),
+        "--tools", "read_file",
+        "--always-approve",
+        "--no-memory",
+        "--no-subagents",
+        "--no-plan",
+        "--disable-web-search",
+        "--reasoning-effort", GROK_CLI_REASONING_EFFORT,
+        "--system-prompt-override", GROK_CLI_SYSTEM_PROMPT,
+        "--json-schema", json.dumps(GROK_TX_JSON_SCHEMA, separators=(",", ":")),
+    ]
 
 
 def active_engine_label() -> str:
@@ -331,8 +461,11 @@ Each transaction is a grid/table row with fields like:
   A leading TRUST/account-name column may exist — identical
   (asset,date,type,amount) rows under different trusts/owners are REAL distinct
   rows; transcribe all of them, never dedupe.
-- FULL ASSET NAME (ticker may be in parentheses).
+- FULL ASSET NAME (ticker may be in parentheses). Put the security name
+  only in "asset". Do not copy PURCHASE/SALE/EXCHANGE/Sell/Buy into asset.
+  If a ticker is in parentheses, also set "ticker".
 - TYPE OF TRANSACTION: PURCHASE / SALE / EXCHANGE (or P/S/E checkboxes).
+  That belongs in txType (P/S/E), never in the asset string.
 - DATE OF TRANSACTION and DATE NOTIFIED (M/D/YY style; assume 20xx).
 - AMOUNT: checkbox ranges, usually:
   A=$1,001-$15,000 (some forms print A=$1,000-$15,000: then use 1000),
@@ -348,6 +481,8 @@ Each transaction is a grid/table row with fields like:
 
 Rules: tx_date must be on/before the filing's filed date ({filed_date}).
 Never invent rows. Put uncertainty in each row's "note".
+Do not run session-start, Slack, git, or any skill. Read the page images
+and emit JSON.
 
 Reply with ONLY a JSON object (no prose, no markdown fences):
 {{"transactions":[{{"owner":"self|spouse|joint|dependent","asset":"...","ticker":"ABC"|null,
@@ -757,6 +892,8 @@ def validate_rows(rows) -> list:
         if tx_type not in ("P", "S", "E"):
             continue
         asset = (o.get("asset") or o.get("assetName") or o.get("asset_name") or "").strip()
+        parsed_ticker = None
+        asset, parsed_ticker = clean_asset_name(asset)
         if len(asset) < 3:
             continue
         amin, amax = o.get("amountMin", o.get("amount_min")), o.get("amountMax", o.get("amount_max"))
@@ -773,7 +910,7 @@ def validate_rows(rows) -> list:
             "txDate": o.get("txDate") or o.get("tx_date"),
             "owner": o.get("owner") if o.get("owner") in ("self", "spouse", "joint", "dependent") else None,
             "assetName": asset[:500],
-            "ticker": (o.get("ticker") or None),
+            "ticker": (o.get("ticker") or parsed_ticker or None),
             "assetType": None,
             "txType": tx_type,
             "amountMin": amin_i,
@@ -932,29 +1069,12 @@ def transcribe_with_local_cli(pages: list, filing: dict) -> list | None:
         logger.error("no page images for local CLI vision")
         return None
 
-    core = PROMPT_CORE.format(
-        form_hint=form_hint_for(filing),
-        filed_date=filing.get("filed_date") or "unknown",
-    )
-    image_list = "\n".join(f"- {p}" for p in pages)
-    prompt = LOCAL_CLI_PROMPT.format(core=core, image_list=image_list)
-
-    # Headless: single-turn agentic loop with read_file only so the model can
-    # open each PNG with multimodal vision under the subscription pool.
-    cmd = [
-        bin_path,
-        "-p", prompt,
-        "--output-format", "plain",
-        "--max-turns", str(GROK_CLI_MAX_TURNS),
-        "--tools", "read_file",
-        "--always-approve",
-        "--no-memory",
-        "--no-subagents",
-        "--disable-web-search",
-    ]
+    cmd = build_local_cli_cmd(pages, filing)
+    grok_cwd = ensure_grok_cwd()
     logger.info(
-        "local grok CLI: %s pages=%d timeout=%ss",
-        bin_path, len(pages), GROK_CLI_TIMEOUT_SEC,
+        "local grok CLI: %s pages=%d turns=%s effort=%s cwd=%s timeout=%ss",
+        bin_path, len(pages), grok_cli_max_turns(len(pages)),
+        GROK_CLI_REASONING_EFFORT, grok_cwd, GROK_CLI_TIMEOUT_SEC,
     )
     try:
         rc = subprocess.run(
@@ -962,6 +1082,7 @@ def transcribe_with_local_cli(pages: list, filing: dict) -> list | None:
             capture_output=True,
             text=True,
             timeout=GROK_CLI_TIMEOUT_SEC,
+            cwd=grok_cwd,
             env=dict(os.environ),
         )
     except subprocess.TimeoutExpired:
@@ -1271,6 +1392,19 @@ def clear_attempts(state: dict, doc_id: str) -> None:
         save_attempt_state(state)
 
 
+def mark_doc_done(state: dict, doc_id: str, last_error: str) -> None:
+    """Keep the doc out of the next poll.  Never forget a successful submit.
+
+    clear_attempts on publish used to drop the local skip, so pending?worker=local
+    re-advertised the same 17/93-row extracts (443 Grok chats on 2026-08-21).
+    """
+    entry = doc_entry(state, doc_id)
+    entry["review_submitted"] = True
+    entry["completed"] = True
+    entry["last_error"] = last_error
+    save_attempt_state(state)
+
+
 def process_filing(filing: dict, state: dict) -> str:
     """
     Process one filing. Returns outcome tag:
@@ -1291,7 +1425,7 @@ def process_filing(filing: dict, state: dict) -> str:
 
     entry = doc_entry(state, doc_id)
     now = time.time()
-    if entry.get("review_submitted"):
+    if entry.get("review_submitted") or entry.get("completed"):
         logger.info("cap: skip already-submitted-to-review doc=%s", doc_id)
         return "skipped_review_submitted"
     if entry.get("exhausted"):
@@ -1341,19 +1475,18 @@ def process_filing(filing: dict, state: dict) -> str:
         record_failure(state, doc_id, "transcription_failed", extractor)
         return "failed"
 
-    # Zero-row "success" is still a failed local-vision attempt for retry
-    # purposes — those docs re-entered pending via extract_empty and spun forever.
-    # Final attempt parks via local-vision-park (honest class), not extract_empty.
-    if len(rows) == 0:
-        record_failure(state, doc_id, "zero_transactions", extractor)
-        return "failed"
-
+    # Honest empty (noRows:true) is a finished read — "Nothing to report",
+    # cover-only page, etc.  Submitting stamps local_vision_submitted so
+    # pending will not re-advertise the doc.  Treating [] as zero_transactions
+    # retried the same 50 one-pagers all afternoon on 2026-08-21.
+    empty = len(rows) == 0
     res = send_request(
         f"{API_BASE_URL}/api/admin/ingest-local-vision",
         method="POST",
         payload={
             "docId": doc_id,
             "transactions": rows,
+            "noRows": empty,
             "workerId": WORKER_ID,
             "extractor": extractor,
             "source": "local_mac",
@@ -1364,30 +1497,26 @@ def process_filing(filing: dict, state: dict) -> str:
         published = bool(res.get("published"))
         needs_review = bool(res.get("needsReview"))
         logger.info(
-            "%s submitted via %s: %d txs, published=%s needsReview=%s",
-            doc_id, extractor, len(rows), published, needs_review,
+            "%s submitted via %s: %d txs, published=%s needsReview=%s noRows=%s",
+            doc_id, extractor, len(rows), published, needs_review, empty,
         )
         if published:
-            clear_attempts(state, doc_id)
+            mark_doc_done(state, doc_id, "published")
             send_pushover(
                 "CT local vision: published",
                 f"{doc_id}: {len(rows)} tx via {extractor}",
             )
             return "published"
-        # Rows landed in review.  Do not clear state — pending?worker=local
-        # would advertise the same doc again and re-OCR it forever
-        # (prod 2026-08-21: H-2025-9115689 + H-2025-8221302 looped all afternoon).
-        entry = doc_entry(state, doc_id)
-        entry["review_submitted"] = True
-        entry["last_error"] = "review_submitted"
-        save_attempt_state(state)
-        return "needs_review_with_rows"
+        mark_doc_done(state, doc_id, "empty_norows" if empty else "review_submitted")
+        return "empty_submitted" if empty else "needs_review_with_rows"
     logger.error("Submission failed for %s: %s", doc_id, res.get("error"))
     record_failure(state, doc_id, f"submit_failed:{res.get('error')}", extractor)
     return "failed"
 
 
 def main():
+    acquire_worker_lock()
+    ensure_grok_cwd()
     if VISION_ENGINE in ("openrouter", "auto") and not OPENROUTER_API_KEY and VISION_ENGINE == "openrouter":
         logger.error("OPENROUTER_API_KEY required when VISION_ENGINE=openrouter")
         sys.exit(2)
@@ -1441,7 +1570,7 @@ def main():
                     doc_id = f.get("doc_id")
                     entry = state.get("docs", {}).get(doc_id) if doc_id else None
                     if entry:
-                        if entry.get("review_submitted"):
+                        if entry.get("review_submitted") or entry.get("completed"):
                             skipped += 1
                             continue
                         if entry.get("exhausted"):

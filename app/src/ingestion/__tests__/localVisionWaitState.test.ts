@@ -520,6 +520,82 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(localIds).not.toContain('scan-submitted-1');
     });
 
+    it('GET /scanned-filings/pending?worker=local skips classified docs stamped local_vision_submitted', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('scan-empty-cover-1', 'house', 'https://example.com/c.pdf', 'raw/c.pdf', 'classified', 'scanned_pdf', nowIso).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, resolved, created_at) VALUES (?, ?, ?, ?)`,
+      ).bind('scan-empty-cover-1', 'local_vision_submitted,nothing_to_report', 0, nowIso).run();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind('scan-still-open-1', 'house', 'https://example.com/o.pdf', 'raw/o.pdf', 'classified', 'scanned_pdf', nowIso).run();
+
+      const local = await app.request('/scanned-filings/pending?worker=local_mac', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      expect(local.status).toBe(200);
+      const localJson = await local.json() as { filings: Array<{ doc_id: string }> };
+      const localIds = localJson.filings.map((f) => f.doc_id);
+      expect(localIds).toContain('scan-still-open-1');
+      expect(localIds).not.toContain('scan-empty-cover-1');
+    });
+
+    it('POST /ingest-local-vision noRows stamps local_vision_submitted and leaves pending', async () => {
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'scan-norows-1',
+        'house',
+        'P',
+        '2025-08-27',
+        'https://example.com/n.pdf',
+        'raw/n.pdf',
+        'extraction_pending_local',
+        'scanned_pdf',
+        nowIso,
+      ).run();
+
+      const res = await app.request('/ingest-local-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'scan-norows-1',
+          transactions: [],
+          noRows: true,
+          workerId: 'local_mac_1',
+          extractor: 'local_grok_cli_v1',
+          source: 'local_mac',
+        }),
+      }, env as never);
+      expect(res.status).toBe(200);
+      const json = await res.json() as { ok: boolean; noRows?: boolean; published: boolean };
+      expect(json.ok).toBe(true);
+      expect(json.noRows).toBe(true);
+      expect(json.published).toBe(false);
+
+      const review = await d1.prepare(
+        `SELECT reason, resolved FROM review_queue WHERE doc_id = ?`,
+      ).bind('scan-norows-1').first<{ reason: string; resolved: number }>();
+      expect(review?.resolved).toBe(0);
+      expect(review?.reason).toMatch(/local_vision_submitted/);
+      expect(review?.reason).toMatch(/nothing_to_report/);
+
+      const pending = await app.request('/scanned-filings/pending?worker=local_mac', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-admin-token' },
+      }, env as never);
+      const pendingJson = await pending.json() as { filings: Array<{ doc_id: string }> };
+      expect(pendingJson.filings.map((f) => f.doc_id)).not.toContain('scan-norows-1');
+    });
+
     it('POST /ingest-local-vision refuses a shorter OCR over a stored cascade payload', async () => {
       // #2107 advertises cascade scans to ?worker=local. The Mac worker stamps
       // confidence 0.97, so a 12-row OCR would publish (or overwrite) a 40-row
@@ -600,7 +676,8 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
         `SELECT reason, payload, resolved FROM review_queue WHERE doc_id = ?`,
       ).bind('scan-cascade-shrink-1').first<{ reason: string; payload: string; resolved: number }>();
       expect(review?.resolved).toBe(0);
-      expect(review?.reason).toBe('agreement_cascade_unresolved');
+      expect(review?.reason).toMatch(/agreement_cascade_unresolved/);
+      expect(review?.reason).toMatch(/local_vision_submitted/);
       expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
     });
 
@@ -695,7 +772,8 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
         `SELECT reason, payload, resolved FROM review_queue WHERE doc_id = ?`,
       ).bind('scan-cascade-date-pad-1').first<{ reason: string; payload: string; resolved: number }>();
       expect(review?.resolved).toBe(0);
-      expect(review?.reason).toBe('agreement_cascade_unresolved');
+      expect(review?.reason).toMatch(/agreement_cascade_unresolved/);
+      expect(review?.reason).toMatch(/local_vision_submitted/);
       expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
     });
 

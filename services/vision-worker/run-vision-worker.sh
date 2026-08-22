@@ -31,9 +31,13 @@ export EXHAUSTED_ALERT_THRESHOLD="${EXHAUSTED_ALERT_THRESHOLD:-5}"
 export STATE_FILE="${STATE_FILE:-$HOME/vision-worker/attempt-state.json}"
 # PRIMARY: local Grok CLI on owner xAI subscription. OpenRouter is fallback.
 export VISION_ENGINE="${VISION_ENGINE:-auto}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
 export GROK_BIN="${GROK_BIN:-$HOME/.grok/bin/grok}"
 export GROK_CLI_TIMEOUT_SEC="${GROK_CLI_TIMEOUT_SEC:-900}"
-export GROK_CLI_MAX_TURNS="${GROK_CLI_MAX_TURNS:-8}"
+export GROK_CLI_MAX_TURNS="${GROK_CLI_MAX_TURNS:-16}"
+export GROK_CLI_REASONING_EFFORT="${GROK_CLI_REASONING_EFFORT:-medium}"
+export GROK_CWD="${GROK_CWD:-$HERE/grok-cwd}"
 export OPENROUTER_MODEL="${OPENROUTER_MODEL:-x-ai/grok-4.5}"
 # Cheap VL after a missed Grok CLI solo pass. Qwen gets page images, not PDF.
 export OPENROUTER_CASCADE_MODELS="${OPENROUTER_CASCADE_MODELS:-qwen/qwen3-vl-8b-instruct,qwen/qwen3-vl-30b-a3b-instruct,google/gemini-3.7-flash}"
@@ -73,4 +77,4 @@ PYTHON_BIN="$(command -v python3 || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
   PYTHON_BIN="/usr/bin/python3"
 fi
-exec "$PYTHON_BIN" "$(dirname "$0")/worker.py"
+exec "$PYTHON_BIN" "$HERE/worker.py"

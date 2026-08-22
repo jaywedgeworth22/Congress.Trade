@@ -569,5 +569,81 @@ class UprightRotateTest(unittest.TestCase):
             )
 
 
+class IsolatedGrokCliTest(unittest.TestCase):
+    def test_turns_scale_with_page_count(self):
+        previous = worker.GROK_CLI_MAX_TURNS
+        try:
+            worker.GROK_CLI_MAX_TURNS = 16
+            self.assertEqual(worker.grok_cli_max_turns(1), 16)
+            self.assertEqual(worker.grok_cli_max_turns(4), 16)
+            self.assertEqual(worker.grok_cli_max_turns(8), 20)
+            self.assertEqual(worker.grok_cli_max_turns(20), 32)
+        finally:
+            worker.GROK_CLI_MAX_TURNS = previous
+
+    def test_clean_asset_strips_sell_and_ticker_parens(self):
+        name, ticker = worker.clean_asset_name("Sell Vng Growth Index @ 473.42 (VUG)")
+        self.assertEqual(name, "Vng Growth Index @ 473.42")
+        self.assertEqual(ticker, "VUG")
+        name, ticker = worker.clean_asset_name("Dallas TX ISD 5% 2/15/2031")
+        self.assertEqual(name, "Dallas TX ISD 5% 2/15/2031")
+        self.assertIsNone(ticker)
+
+    def test_validate_rows_drops_handwritten_sell_prefix(self):
+        rows = worker.validate_rows([{
+            "owner": "self",
+            "asset": "Sell Vng Growth Index @ 473.42",
+            "txType": "S",
+            "txDate": "2025-09-26",
+            "amountMin": 1000,
+            "amountMax": 15000,
+            "bracket": "A",
+        }])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["assetName"], "Vng Growth Index @ 473.42")
+        self.assertEqual(rows[0]["txType"], "S")
+
+    def test_local_cli_cmd_isolates_cwd_and_caps_reasoning(self):
+        with tempfile.TemporaryDirectory() as td:
+            previous_cwd = worker.GROK_CWD
+            previous_effort = worker.GROK_CLI_REASONING_EFFORT
+            try:
+                worker.GROK_CWD = os.path.join(td, "grok-cwd")
+                worker.GROK_CLI_REASONING_EFFORT = "medium"
+                pages = [os.path.join(td, f"page-{i}.png") for i in range(1, 5)]
+                cmd = worker.build_local_cli_cmd(
+                    pages,
+                    {"chamber": "house", "filed_date": "2025-10-16"},
+                )
+            finally:
+                worker.GROK_CWD = previous_cwd
+                worker.GROK_CLI_REASONING_EFFORT = previous_effort
+            joined = " ".join(cmd)
+            self.assertIn("--cwd", cmd)
+            self.assertIn("--no-plan", cmd)
+            self.assertIn("--reasoning-effort", cmd)
+            self.assertIn("medium", cmd)
+            self.assertIn("--json-schema", cmd)
+            self.assertIn("--system-prompt-override", cmd)
+            self.assertIn("--max-turns", cmd)
+            turns = cmd[cmd.index("--max-turns") + 1]
+            self.assertEqual(turns, "16")
+            self.assertTrue(os.path.isdir(os.path.join(td, "grok-cwd")))
+            self.assertNotIn("Congress.Trade", joined)
+
+    def test_mark_doc_done_skips_later_polls(self):
+        previous = worker.STATE_FILE
+        with tempfile.TemporaryDirectory() as td:
+            worker.STATE_FILE = os.path.join(td, "state.json")
+            try:
+                state = {"docs": {}}
+                worker.mark_doc_done(state, "H-2025-9115689", "published")
+                entry = state["docs"]["H-2025-9115689"]
+                self.assertTrue(entry["completed"])
+                self.assertTrue(entry["review_submitted"])
+            finally:
+                worker.STATE_FILE = previous
+
+
 if __name__ == "__main__":
     unittest.main()
