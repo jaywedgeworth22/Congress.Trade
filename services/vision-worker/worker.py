@@ -979,8 +979,13 @@ def transcribe_pdf_native_chunked(
             chunk_pdf, [], filing, model, work_dir, prompt_extra=extra,
         )
         if rows is None:
+            # HTTP/parse miss on one window.  Sibling chunks must not publish
+            # as a complete 0.97 extract — drain then skips scanned_pdf and
+            # the missed schedule pages never land.  Empty [] is a real
+            # cover-only window and is fine.
             logger.warning("PDF-native chunk miss pages=%d-%d model=%s", offset, end, model)
-        elif rows:
+            return None
+        if rows:
             any_hit = True
             merged.extend(rows)
         offset = end + 1
