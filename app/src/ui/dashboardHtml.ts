@@ -432,7 +432,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .card .v .bp-n { font-size: 28px; font-weight: 700; }
   .card .v .bp-pct { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: 0; }
   .card .v .bp-w { font-size: 16px; font-weight: 600; margin-left: 0.12em; color: var(--text-dim); }
-  .kpi-note { font-size: 10px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
+  .kpi-note { font-size: 10px; font-weight: 500; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
+  /* Trends snapshot: extras (option footnote, sparkline) live inside .v so
+     the figure + extra center as one group under a top-pinned heading. */
+  #trKpis .card .v {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .kpi-spark {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1.5px;
+    width: 100%;
+    height: 14px;
+    margin-top: 8px;
+    opacity: 0.8;
+    pointer-events: none;
+    flex: 0 0 auto;
+  }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
@@ -1256,7 +1276,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      regardless of source order (see CSS-cascade note in AGENTS.md), without
      touching #view-trends' own dedicated card styling. */
   #detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }
-  #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }
+  #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; flex-direction:column; align-items:center; justify-content:center; }
   /* Owner punch list #18(c): .table-wrap's padding-right:60px exists to clear
      the big Trades table's custom scrollbar gutter — pure waste in a ~440px-wide
      drawer's mini table, so the Recent Trades table reads narrower than the
@@ -2196,9 +2216,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .tbars { gap: 1px; height: 130px; }
     #view-trends .tbars i { max-width: 5px; }
     #view-trends .tlbl { display: block; height: 11px; line-height: 11px; font-size: 8px; max-width: 100%; overflow: hidden; }
-    /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
-       (like desktop) — only the button sizing shrinks to fit. */
-    #view-trends #trTimeMetric.seg button { padding: 4px 5px; font-size: 10px; }
+    /* #/$ metric toggles stay on the SAME line as the heading.  What Is
+       Being Traded and Buys vs Sells share one size — do not shrink the
+       Buys vs Sells pair below the ticker-rank pair. */
     /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
     #view-trends summary.tchart-summary { gap: 5px; }
     #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
@@ -2581,16 +2601,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
 }
 
-/* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe) */
+/* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe)
+   What Is Being Traded (#trTickerMetric) and Buys vs Sells (#trTimeMetric)
+   share one size and ink: a little larger than the default 12px dim
+   segment, and black (var(--text)) in both selected and idle states. */
+#trTickerMetric.seg,
 #trTimeMetric.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+#trTickerMetric.seg button,
 #trTimeMetric.seg button {
+  color: var(--text);
+  font: 700 14px var(--sans);
+  padding: 5px 10px;
   letter-spacing: .02em;
   transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
 }
+#trTickerMetric.seg button.on,
 #trTimeMetric.seg button.on {
+  color: var(--text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
+#trTickerMetric.seg button:hover:not(.on),
+#trTimeMetric.seg button:hover:not(.on) { color: var(--text); }
+#trTickerMetric.seg button:focus-visible,
 #trTimeMetric.seg button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
@@ -9866,7 +9899,7 @@ function buySellText(buys, sells) {
 	}
 	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
 	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
-	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + (extraHtml || '') + '</div></div>';
 	}
 var trTickerSortVal = 'trades';
 function setTickerSort(val) {
@@ -9893,7 +9926,7 @@ function sparklineHtml(series, metric) {
   } else {
     max = 1; min = 0;
   }
-  return '<div style="position:absolute; bottom:6px; left:12px; right:12px; height:12px; display:flex; align-items:flex-end; gap:1px; opacity:0.8; pointer-events:none">' +
+  return '<div class="kpi-spark">' +
     vals.map(function(v, i) {
       var h, color;
       if (metric === 'netflow') {

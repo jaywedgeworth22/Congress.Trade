@@ -2058,6 +2058,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain("'<td class=\"rank\">' + (i + 1) + '</td>'");
   });
 
+  it('sizes What Is Being Traded and Buys vs Sells #/$ toggles the same, in black', () => {
+    expect(DASHBOARD_HTML).toContain('#trTickerMetric.seg button,\n#trTimeMetric.seg button {');
+    expect(DASHBOARD_HTML).toContain('color: var(--text);\n  font: 700 14px var(--sans);\n  padding: 5px 10px;');
+    expect(DASHBOARD_HTML).toContain('#trTickerMetric.seg button.on,\n#trTimeMetric.seg button.on {');
+    expect(DASHBOARD_HTML).not.toContain('#view-trends #trTimeMetric.seg button { padding: 4px 5px; font-size: 10px; }');
+  });
+
+  it('centers Trends KPI figures under pinned headings with extras inside .v', () => {
+    expect(DASHBOARD_HTML).toContain('#trKpis .card .v {\n    flex-direction: column;\n    align-items: center;\n    justify-content: center;');
+    expect(DASHBOARD_HTML).toContain("return '<div' + attr + '><div class=\"k\">' + infoLabel(k, tip) + '</div><div class=\"v\">' + v + (extraHtml || '') + '</div></div>';");
+    expect(DASHBOARD_HTML).toContain("return '<div class=\"kpi-spark\">'");
+    expect(DASHBOARD_HTML).not.toContain("style=\"position:absolute; bottom:6px;");
+  });
+
   it('does not put an explainer under Consensus Moves or Rising Activity', () => {
     expect(DASHBOARD_HTML).not.toContain('trConsensusPhrase');
     expect(DASHBOARD_HTML).not.toContain('Assets where several different politicians happened to trade the same direction');
@@ -4717,7 +4731,7 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
 
   it('#18(a) centers the ticker-drawer stat card values and shrinks the card height', () => {
     expect(DASHBOARD_HTML).toContain('#detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }');
-    expect(DASHBOARD_HTML).toContain('#detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }');
+    expect(DASHBOARD_HTML).toContain('#detailDrawerBody .grid-cards .card .v { flex:1 1 auto; flex-direction:column; align-items:center; justify-content:center; }');
   });
 
   it('#18(b) labels weekly chart buckets with the week-start date instead of the raw "YYYY-Wnn" bucket', () => {
