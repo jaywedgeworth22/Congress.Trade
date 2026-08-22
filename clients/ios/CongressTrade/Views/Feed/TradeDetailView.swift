@@ -511,7 +511,7 @@ private struct IdentifiedFileURL: Identifiable {
     var id: String { url.absoluteString }
 }
 
-private struct FilingPDFQuickLook: UIViewControllerRepresentable {
+struct FilingPDFQuickLook: UIViewControllerRepresentable {
     let url: URL
 
     func makeCoordinator() -> Coordinator {
@@ -535,6 +535,117 @@ private struct FilingPDFQuickLook: UIViewControllerRepresentable {
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
             url as QLPreviewItem
+        }
+    }
+}
+
+struct FilingPDFSheet: View {
+    let docId: String
+    @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openPremium) private var openPremium
+    @State private var fileURL: URL?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var showPremiumSheet = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let fileURL {
+                    FilingPDFQuickLook(url: fileURL)
+                } else if isLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading filing PDF…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage {
+                    ContentUnavailableView {
+                        Label("Could Not Load Filing", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("Retry") {
+                            Task { await loadPDF() }
+                        }
+                    }
+                }
+            }
+            .background(AppTheme.background)
+            .navigationTitle("Filing PDF")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showPremiumSheet) {
+            PremiumSheet()
+                .environmentObject(store)
+        }
+        .task {
+            await loadPDF()
+        }
+    }
+
+    private func loadPDF() async {
+        let cleanDocId = docId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanDocId.isEmpty else {
+            errorMessage = "Invalid document ID."
+            isLoading = false
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+
+        switch FilingPDFAccess.action(isPremium: store.premiumFeatureAccess) {
+        case .showPremiumSheet:
+            isLoading = false
+            if let openPremium {
+                openPremium()
+            } else {
+                showPremiumSheet = true
+            }
+        case .fetchInApp:
+            do {
+                let fetched = try await store.api.fetchDocumentPDF(docId: cleanDocId)
+                let url = try store.api.writeDocumentPDFPreviewFile(
+                    docId: cleanDocId,
+                    data: fetched.data,
+                    contentType: fetched.contentType
+                )
+                await MainActor.run {
+                    fileURL = url
+                    isLoading = false
+                }
+            } catch let error as APIError {
+                await MainActor.run {
+                    isLoading = false
+                    if case .server(let status, _, _) = error, status == 402 {
+                        if let openPremium {
+                            openPremium()
+                        } else {
+                            showPremiumSheet = true
+                        }
+                    } else {
+                        errorMessage = error.errorDescription ?? "Could not open the filing PDF."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Could not open the filing PDF."
+                }
+            }
         }
     }
 }

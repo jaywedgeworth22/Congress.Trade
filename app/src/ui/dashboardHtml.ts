@@ -95,7 +95,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <head>
 %GA_SCRIPT%
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>%TITLE%</title>
 <meta name="description" content="%META_DESCRIPTION%" />
 <link rel="canonical" href="%CANONICAL_URL%" />
@@ -320,6 +320,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin: 0; background: radial-gradient(1200px 600px at 70% -10%, var(--bg-2), var(--bg));
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
   }
+  body.drawer-open { overflow: hidden; }
   a { color: var(--accent); text-decoration: none; }
   :root { --ct-header-h: 68px; --ct-main-pad: 35px; --trends-gap: 24px; }
   html { overflow-x: clip; }
@@ -610,9 +611,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .avatar.party-D::after { border: 2px solid var(--party-d); }
   .avatar.party-R::after { border: 2px solid var(--party-r); }
   .avatar.party-O::after { border: 2px solid var(--party-o); }  .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
-  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
+  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); color: #080c17; }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
-  .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }
+  .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); color: #080c17; }
   .conf { font-family: var(--mono); font-size: 12px; }
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
@@ -3193,10 +3194,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTrending">
             <thead>
               <tr>
-                <th style="min-width: 90px;">Asset</th>
-                <th>Trades</th>
-                <th>Change</th>
-                <th>Politicians</th>
+                <th scope="col" style="min-width: 90px;">Asset</th>
+                <th scope="col">Trades</th>
+                <th scope="col">Change</th>
+                <th scope="col">Politicians</th>
               </tr>
             </thead>
             <tbody id="trTrending"></tbody>
@@ -3207,17 +3208,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Buys vs sells: directly under Rising Activity (owner 2026-08-15). -->
     <details class="section trends-fold" open>
-      <summary class="tf-h tchart-summary">
-        <span class="tchart-summary-title">Buys vs Sells</span>
-        <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
-          <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
-            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
-            <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
-          </div>
+      <summary class="tf-h">Buys vs Sells<span class="fold-cue" aria-hidden="true"></span></summary>
+      <div class="tchart-head" style="margin-bottom:6px;">
+        <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
+        <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
+          <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
+          <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
         </div>
-        <span class="fold-cue" aria-hidden="true"></span>
-      </summary>
-      <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
+      </div>
       <div id="trTime"></div>
     </details>
 
@@ -3281,7 +3279,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="timeliness-panel">
           <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Average Lag)</h3>
           <div class="late-filers-wrap"><table>
-            <thead><tr><th>Politician</th><th>Avg</th><th>Max</th><th>Late</th></tr></thead>
+            <thead><tr><th scope="col">Politician</th><th scope="col">Avg</th><th scope="col">Max</th><th scope="col">Late</th></tr></thead>
             <tbody id="trLateFilers"></tbody>
           </table></div>
         </div>
@@ -3293,7 +3291,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <summary class="tf-h">Committee Sector Conflicts<span class="fold-cue" aria-hidden="true"></span></summary>
       <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Politician</th><th>Committee</th><th>Sector</th><th>Asset</th><th>Side</th><th>Est. $</th></tr></thead>
+        <thead><tr><th scope="col">Politician</th><th scope="col">Committee</th><th scope="col">Sector</th><th scope="col">Asset</th><th scope="col">Side</th><th scope="col">Est. $</th></tr></thead>
         <tbody id="trConflicts"><tr><td colspan="6" class="state">Loading…</td></tr></tbody>
       </table></div>
     </details>
@@ -3324,18 +3322,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th class="col-fill" data-sort="name" aria-sort="none" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th class="col-fit" data-sort="chamber" aria-sort="none" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th class="col-num" data-sort="trades" aria-sort="none" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" tabindex="0" role="button" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fit" data-sort="chamber" aria-sort="none" tabindex="0" role="button" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" tabindex="0" role="button" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="peopleCount"></p>
       <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
         <thead><tr id="assetsHead">
-          <th class="col-fill" data-sort="name" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="trades" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind"></span></th>
-          <th class="col-num" data-sort="members" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind"></span></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind" aria-hidden="true"></span></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></th>
+          <th scope="col" class="col-num" data-sort="members" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind" aria-hidden="true"></span></th>
         </tr></thead>
         <tbody id="assetsBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -4234,12 +4232,24 @@ function compactDateText(s) {
   return Number(m[2]) + '-' + Number(m[3]) + '-' + m[1].slice(2);
 }
 function timeText(s) {
-  var t = /(?:T|\\s)(\\d{2}):(\\d{2})/.exec(String(s || ''));
-  if (!t) return '';
-  var h = Number(t[1]);
+  if (!s) return '';
+  var str = String(s).trim();
+  if (!/(?:T|\\s|\\d{2}:)/.test(str)) return '';
+  var dt = new Date(str);
+  if (isNaN(dt.getTime())) {
+    var t = /(?:T|\\s)(\\d{2}):(\\d{2})/.exec(str);
+    if (!t) return '';
+    var h0 = Number(t[1]);
+    var ampm0 = h0 >= 12 ? 'pm' : 'am';
+    h0 = h0 % 12 || 12;
+    return h0 + (t[2] === '00' ? '' : ':' + t[2]) + ampm0;
+  }
+  var h = dt.getHours();
+  var m = dt.getMinutes();
   var ampm = h >= 12 ? 'pm' : 'am';
   h = h % 12 || 12;
-  return h + (t[2] === '00' ? '' : ':' + t[2]) + ampm;
+  var minStr = m < 10 ? '0' + m : String(m);
+  return h + (minStr === '00' ? '' : ':' + minStr) + ampm;
 }
 function dateTimeText(s) {
   if (!s) return '—';
@@ -5077,6 +5087,20 @@ function tradesSearchQuery() {
   var t = el('qTicker') ? String(el('qTicker').value || '').trim() : '';
   return [m, t].filter(Boolean).join(' ');
 }
+var COMMON_POLITICIAN_NAMES = {
+  adams: 1, alexander: 1, allen: 1, apple: 1, bacon: 1, bailey: 1, baker: 1, banks: 1,
+  barnes: 1, bell: 1, bennett: 1, brooks: 1, brown: 1, bryant: 1, butler: 1, campbell: 1,
+  carter: 1, coleman: 1, collins: 1, cook: 1, cooper: 1, cox: 1, crane: 1, diaz: 1,
+  edwards: 1, evans: 1, flores: 1, foster: 1, gonzales: 1, gonzalez: 1, gray: 1, green: 1,
+  griffin: 1, hall: 1, hayes: 1, henderson: 1, hill: 1, howard: 1, hughes: 1, james: 1,
+  jenkins: 1, kelly: 1, king: 1, lee: 1, long: 1, luna: 1, mace: 1, mitchell: 1,
+  moore: 1, morgan: 1, morris: 1, murphy: 1, nehls: 1, nelson: 1, omar: 1, parker: 1,
+  patterson: 1, perez: 1, perry: 1, peterson: 1, phillips: 1, powell: 1, price: 1, ramirez: 1,
+  reed: 1, richardson: 1, rivera: 1, roberts: 1, rogers: 1, ross: 1, ruiz: 1, russell: 1,
+  sanchez: 1, sanders: 1, scott: 1, simmons: 1, smith: 1, stewart: 1, taylor: 1, torres: 1,
+  turner: 1, vance: 1, walsh: 1, ward: 1, washington: 1, watson: 1, welch: 1, white: 1,
+  wood: 1, wright: 1, young: 1
+};
 /** Heuristic server params from unified query (OR-ish fetch; client re-filters). */
 function applySearchToServerParams(p, q) {
   var raw = String(q || '').trim();
@@ -5084,22 +5108,22 @@ function applySearchToServerParams(p, q) {
   var tokens = raw.split(/\\s+/).filter(Boolean);
   var nameBits = [];
   var tickerHint = '';
+  var polDict = (typeof COMMON_POLITICIAN_NAMES !== 'undefined') ? COMMON_POLITICIAN_NAMES : {};
   for (var i = 0; i < tokens.length; i++) {
     var tok = tokens[i];
     var up = tok.toUpperCase();
-    // Ticker-like: 1–5 alnum, not a state abbr, not party word
     var tokL = tok.toLowerCase();
     var isState = (typeof US_STATE_ABBR !== 'undefined' && US_STATE_ABBR[tokL]) ||
       (typeof US_STATE_NAME_TO_ABBR !== 'undefined' && US_STATE_NAME_TO_ABBR[tokL]);
-    if (/^[A-Za-z]{1,5}$/.test(tok) && !isState &&
-        !/^(dem|rep|ind|gop|other|democrat|republican|independent)s?$/i.test(tok)) {
-      // Prefer pure tickers when entire query is one ticker-like token
-      if (tokens.length === 1) tickerHint = up;
-      else if (!tickerHint && up === tok.toUpperCase() && tok === tok.toUpperCase()) tickerHint = up;
+    var isParty = /^(dem|rep|ind|gop|other|democrat|republican|independent)s?$/i.test(tok);
+    var isPolitician = !!polDict[tokL];
+    var isAllUpper = tok === up && /^[A-Z0-9]{1,5}$/.test(tok);
+    if (isAllUpper && !isState && !isParty && !isPolitician) {
+      if (!tickerHint) tickerHint = up;
       else nameBits.push(tok);
     } else if (isState) {
       // state — client filter only (server has no state= on public feed)
-    } else if (/^(dem|rep|ind|gop|other|democrat|republican|independent)/i.test(tok)) {
+    } else if (isParty) {
       // party — client filter
     } else {
       nameBits.push(tok);
@@ -5796,6 +5820,15 @@ function restoreFiltersFromUrl() {
           if (s.options[i].value === fw) { s.value = fw; break; }
         }
       });
+    }
+    var dmode = sp.get('dmode') || sp.get('mode');
+    if (dmode === 'assets' || dmode === 'people') {
+      if (typeof setDirectoryMode === 'function') setDirectoryMode(dmode);
+    }
+    var dq = sp.get('dq') || sp.get('peopleQ');
+    if (dq && el('peopleQ')) {
+      el('peopleQ').value = dq;
+      if (typeof filterDirectory === 'function') filterDirectory();
     }
   } catch (e) {}
 }
@@ -9879,13 +9912,20 @@ function aGet(path) {
 }
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
 function usdC(n) {
-  n = Number(n || 0); var s = n < 0 ? '-' : ''; n = Math.abs(n); var o;
+  n = Number(n || 0);
+  if (!isFinite(n) || Object.is(n, -0)) n = 0;
+  var isNeg = n < 0;
+  n = Math.abs(n);
+  var o;
   if (n >= 1e12) o = (n / 1e12).toFixed(1) + 't';
   else if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'b';
   else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'm';
   else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
   else o = String(Math.round(n));
-  return s + '$' + o;
+  if (parseFloat(o) === 0 || o === '0' || o === '0.0k' || o === '0k' || o === '0.0m' || o === '0.0b' || o === '0.0t') {
+    return '$0';
+  }
+  return (isNeg ? '-' : '') + '$' + o;
 }
 	function estUsd(n) {
 	  return '<span class="est-money" title="' + esc(EST_VOLUME_TIP) + '">~' + usdC(n) + '</span>';
@@ -10385,6 +10425,19 @@ function filterPeopleDirectory() {
 var DIRECTORY_MODE = 'people';
 var DIR_SUB_PEOPLE = 'Look up members of Congress and executive filers.\\u00a0 Search by name, state (full or abbrev), or party.\\u00a0 Click a column heading to sort; click a name for their profile and trades.\\u00a0 Trade counts cover the full record, not the timeframe set on Trades or Trends.';
 var DIR_SUB_ASSETS = 'Every ticker Congress has disclosed a trade in.\\u00a0 Search by ticker or company name.\\u00a0 Click a column heading to sort; click a row to open its profile.\\u00a0 Trade counts cover the full record, not the timeframe set on Trades or Trends.';
+var directorySearchTimer = null;
+function syncDirectoryUrl() {
+  try {
+    var u = new URL(window.location.href);
+    var qEl = el('peopleQ');
+    var q = qEl ? String(qEl.value || '').trim() : '';
+    if (DIRECTORY_MODE && DIRECTORY_MODE !== 'people') u.searchParams.set('dmode', DIRECTORY_MODE);
+    else u.searchParams.delete('dmode');
+    if (q) u.searchParams.set('dq', q);
+    else u.searchParams.delete('dq');
+    window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+  } catch (e) {}
+}
 function setDirectoryMode(mode) {
   if (mode !== 'people' && mode !== 'assets') return;
   DIRECTORY_MODE = mode;
@@ -10411,12 +10464,17 @@ function setDirectoryMode(mode) {
   if (chamberSel) chamberSel.style.display = isAssets ? 'none' : '';
   if (qEl) qEl.placeholder = isAssets ? 'Search ticker or company…' : 'Search name, state, party… any order';
   if (subEl) subEl.textContent = isAssets ? DIR_SUB_ASSETS : DIR_SUB_PEOPLE;
+  syncDirectoryUrl();
   if (isAssets) loadAssetsDirectory();
   else filterPeopleDirectory();
 }
 function filterDirectory() {
-  if (DIRECTORY_MODE === 'assets') filterAssetsDirectory();
-  else filterPeopleDirectory();
+  if (directorySearchTimer) clearTimeout(directorySearchTimer);
+  directorySearchTimer = setTimeout(function () {
+    if (DIRECTORY_MODE === 'assets') filterAssetsDirectory();
+    else filterPeopleDirectory();
+    syncDirectoryUrl();
+  }, 150);
 }
 function refreshDirectory() {
   if (DIRECTORY_MODE === 'assets') loadAssetsDirectory();
@@ -10485,6 +10543,9 @@ function syncAssetsSortIndicators() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.getAttribute('data-sort') === ASSETS_SORT.key) {
       th.classList.add(ASSETS_SORT.dir > 0 ? 'sort-asc' : 'sort-desc');
+      th.setAttribute('aria-sort', ASSETS_SORT.dir > 0 ? 'ascending' : 'descending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
     }
   }
 }
@@ -11389,6 +11450,10 @@ function openOverlayContainer() {
   var openModal = document.querySelector('.overlay.open .modal');
   return openModal || null;
 }
+function syncBodyScrollLock() {
+  var isOpen = !!openOverlayContainer();
+  document.body.classList.toggle('drawer-open', isOpen);
+}
 document.addEventListener('keydown', function (e) {
   if (e.key !== 'Tab') return;
   var container = openOverlayContainer();
@@ -11485,6 +11550,7 @@ function openDrawer(html, topbarTitle) {
     p.style.transform = '';
   }
   drawer.classList.add('open');
+  syncBodyScrollLock();
   if (p) {
     void p.offsetWidth;
     p.style.transition = '';
@@ -11498,6 +11564,7 @@ function closeDrawer() {
   if (drawerHeroCleanup) { drawerHeroCleanup(); drawerHeroCleanup = null; }
   var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawer').classList.remove('open');
+  syncBodyScrollLock();
   if (wasOpen) releaseFocusTrap();
   // SEOSOCIAL-04: undo the drawer-open title change back to whatever the
   // active tab's title is (or the bare site name for Trends/no tab active).
@@ -12396,6 +12463,7 @@ document.addEventListener('click', function (e) {
 function openLogin() {
   focusTrapReturnEl = document.activeElement;
   el('loginOverlay').classList.add('open');
+  syncBodyScrollLock();
   el('loginMsg').textContent = '';
   var g = document.querySelector('#loginOverlay .gbtn');
   if (g) setTimeout(function () { g.focus(); }, 50);
@@ -12403,6 +12471,7 @@ function openLogin() {
 function closeLogin() {
   var wasOpen = el('loginOverlay').classList.contains('open');
   el('loginOverlay').classList.remove('open');
+  syncBodyScrollLock();
   if (wasOpen) releaseFocusTrap();
 }
 function loginGoogle() {
@@ -12529,6 +12598,7 @@ function openPricing(intent) {
   applyPricingAvailability();
   if (!ME.billingReady) loadMe();
   el('pricingOverlay').classList.add('open');
+  syncBodyScrollLock();
   var pricingModal = document.querySelector('#pricingOverlay .modal');
   var pricingFocusable = focusableEls(pricingModal);
   if (pricingFocusable.length) pricingFocusable[0].focus();
@@ -12536,6 +12606,7 @@ function openPricing(intent) {
 function closePricing() {
   var wasOpen = el('pricingOverlay').classList.contains('open');
   el('pricingOverlay').classList.remove('open');
+  syncBodyScrollLock();
   if (wasOpen) releaseFocusTrap();
 }
 function selectPlan(p) {

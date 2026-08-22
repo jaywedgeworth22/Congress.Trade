@@ -237,6 +237,10 @@ struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showSubscribeSheet = CommandLine.arguments.contains("-screenshotPaywall") || CommandLine.arguments.contains("-showSubscribe")
+    @State private var activeTradeDetail: ClientTrade?
+    @State private var activePolitician: MemberSheetTarget?
+    @State private var activeTicker: TickerSheetTarget?
+    @State private var activeFiling: FilingSheetTarget?
 
     var body: some View {
         TabView(selection: $tabRouter.selection) {
@@ -273,6 +277,46 @@ struct MainTabView: View {
         .sheet(isPresented: $showSubscribeSheet) {
             PremiumSheet()
                 .environmentObject(store)
+        }
+        .sheet(item: $activeTradeDetail) { trade in
+            TradeDetailView(trade: trade)
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(18)
+                .presentationContentInteraction(.resizes)
+                .iPadFullWidthSheet()
+        }
+        .sheet(item: $activePolitician) { target in
+            PoliticianDetailView(
+                memberId: target.id,
+                memberName: target.name,
+                seedPhotoUrl: target.photoUrl
+            )
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(18)
+                .presentationContentInteraction(.resizes)
+                .iPadFullWidthSheet()
+        }
+        .sheet(item: $activeTicker) { target in
+            TickerDetailView(ticker: target.ticker)
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(18)
+                .presentationContentInteraction(.resizes)
+                .iPadFullWidthSheet()
+        }
+        .sheet(item: $activeFiling) { target in
+            FilingPDFSheet(docId: target.docId)
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(18)
+                .presentationContentInteraction(.resizes)
+                .iPadFullWidthSheet()
         }
         // Truth-table row 4 (owner directive 2026-08-21): a signed-in
         // account whose device already holds an UNCLAIMED Apple purchase is
@@ -314,21 +358,210 @@ struct MainTabView: View {
         .onChange(of: scenePhase) { _, phase in
             store.setAutoRefreshPaused(phase != .active)
         }
-        // congresstrade:// deep links. The auth callback
-        // (congresstrade://auth?token=…) arrives here on cold opens
-        // while ASWebAuthenticationSession intercepts it for in-app OAuth.
+        // Push notification tap handlers
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenTradeFromPush"))) { notification in
+            guard let tradeId = (notification.userInfo?["trade_id"] as? String) ?? (notification.userInfo?["tradeId"] as? String),
+                  !tradeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let cleanId = tradeId.trimmingCharacters(in: .whitespacesAndNewlines)
+            tabRouter.selection = .trades
+            Task {
+                if let trade = await store.fetchTrade(id: cleanId) {
+                    activeTradeDetail = trade
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenFilingFromPush"))) { notification in
+            guard let docId = (notification.userInfo?["doc_id"] as? String) ?? (notification.userInfo?["docId"] as? String),
+                  !docId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let cleanDoc = docId.trimmingCharacters(in: .whitespacesAndNewlines)
+            tabRouter.selection = .trades
+            activeFiling = FilingSheetTarget(docId: cleanDoc)
+        }
+        // Universal deep links and congresstrade:// links.
         .onOpenURL { url in
-            // Only accept session handoff on congresstrade://auth?token=…
-            // (never any arbitrary deep link that happens to carry ?token=).
-            guard url.scheme?.lowercased() == "congresstrade" else { return }
-            let host = (url.host ?? "").lowercased()
-            guard host == "auth" || host.isEmpty && url.path.contains("auth") else { return }
-            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value,
-                  !token.isEmpty else { return }
-            _ = store.saveSessionToken(token)
+            handleOpenURL(url)
         }
     }
+
+    private func handleOpenURL(_ url: URL) {
+        let scheme = url.scheme?.lowercased() ?? ""
+        guard scheme == "congresstrade" || scheme == "http" || scheme == "https" else { return }
+
+        let host = (url.host ?? "").lowercased()
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let pathComponents = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryItems = components?.queryItems ?? []
+
+        // Auth token handoff: congresstrade://auth?token=…
+        if scheme == "congresstrade" && (host == "auth" || (host.isEmpty && path.hasPrefix("auth"))) {
+            if let token = queryItems.first(where: { $0.name == "token" })?.value, !token.isEmpty {
+                _ = store.saveSessionToken(token)
+            }
+            return
+        }
+
+        // 1. Query-param based universal links (?trade=…, ?member=…, ?ticker=…, ?filing=…, ?delivery)
+        if let tradeId = queryItems.first(where: { $0.name == "trade" || $0.name == "trade_id" })?.value,
+           !tradeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let cleanId = tradeId.trimmingCharacters(in: .whitespacesAndNewlines)
+            tabRouter.selection = .trades
+            Task {
+                if let trade = await store.fetchTrade(id: cleanId) {
+                    activeTradeDetail = trade
+                }
+            }
+            return
+        }
+
+        if let memberVal = queryItems.first(where: { $0.name == "member" || $0.name == "politician" })?.value,
+           !memberVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolveAndOpenMember(memberVal)
+            return
+        }
+
+        if let tickerVal = queryItems.first(where: { $0.name == "ticker" || $0.name == "asset" })?.value,
+           !tickerVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let symbol = tickerVal.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            activeTicker = TickerSheetTarget(ticker: symbol)
+            return
+        }
+
+        if let docVal = queryItems.first(where: { $0.name == "filing" || $0.name == "doc" || $0.name == "doc_id" })?.value,
+           !docVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let cleanDoc = docVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            tabRouter.selection = .trades
+            activeFiling = FilingSheetTarget(docId: cleanDoc)
+            return
+        }
+
+        if queryItems.contains(where: { $0.name == "delivery" }) {
+            tabRouter.selection = .delivery
+            return
+        }
+
+        // 2. Custom scheme path-based: congresstrade://trade/:id, congresstrade://member/:id, etc.
+        if scheme == "congresstrade" {
+            if host == "trade", !path.isEmpty {
+                let cleanId = path.trimmingCharacters(in: .whitespacesAndNewlines)
+                tabRouter.selection = .trades
+                Task {
+                    if let trade = await store.fetchTrade(id: cleanId) {
+                        activeTradeDetail = trade
+                    }
+                }
+                return
+            }
+            if host == "member" || host == "politician", !path.isEmpty {
+                resolveAndOpenMember(path)
+                return
+            }
+            if host == "ticker", !path.isEmpty {
+                let symbol = path.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                activeTicker = TickerSheetTarget(ticker: symbol)
+                return
+            }
+            if host == "filing" || host == "doc", !path.isEmpty {
+                let cleanDoc = path.trimmingCharacters(in: .whitespacesAndNewlines)
+                tabRouter.selection = .trades
+                activeFiling = FilingSheetTarget(docId: cleanDoc)
+                return
+            }
+            if host == "delivery" {
+                tabRouter.selection = .delivery
+                return
+            }
+            if host == "trends" {
+                tabRouter.selection = .trends
+                return
+            }
+            if host == "trades" {
+                tabRouter.selection = .trades
+                return
+            }
+            if host == "people" || host == "directory" {
+                tabRouter.selection = .people
+                return
+            }
+        }
+
+        // 3. Universal links path-based: https://congress.trade/trade/:id, /member/:idOrName, /ticker/:symbol, /filing/:docId
+        if let firstIdx = pathComponents.firstIndex(where: {
+            ["trade", "member", "politician", "ticker", "filing", "doc", "delivery", "trends", "trades", "people", "directory"].contains($0.lowercased())
+        }) {
+            let section = pathComponents[firstIdx].lowercased()
+            let nextVal = firstIdx + 1 < pathComponents.count ? pathComponents[firstIdx + 1] : nil
+
+            switch section {
+            case "trade":
+                if let id = nextVal, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                    tabRouter.selection = .trades
+                    Task {
+                        if let trade = await store.fetchTrade(id: cleanId) {
+                            activeTradeDetail = trade
+                        }
+                    }
+                }
+            case "member", "politician":
+                if let val = nextVal, !val.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    resolveAndOpenMember(val)
+                }
+            case "ticker":
+                if let symbol = nextVal, !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    activeTicker = TickerSheetTarget(ticker: symbol.uppercased().trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            case "filing", "doc":
+                if let docId = nextVal, !docId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let cleanDoc = docId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    tabRouter.selection = .trades
+                    activeFiling = FilingSheetTarget(docId: cleanDoc)
+                }
+            case "delivery":
+                tabRouter.selection = .delivery
+            case "trends":
+                tabRouter.selection = .trends
+            case "trades":
+                tabRouter.selection = .trades
+            case "people", "directory":
+                tabRouter.selection = .people
+            default:
+                break
+            }
+        }
+    }
+
+    private func resolveAndOpenMember(_ raw: String) {
+        let unescaped = raw.removingPercentEncoding ?? raw
+        let target = unescaped.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+
+        Task {
+            if store.members.isEmpty {
+                await store.loadMembersDirectory()
+            }
+            if let match = store.members.first(where: {
+                $0.filerId.caseInsensitiveCompare(target) == .orderedSame ||
+                $0.fullName?.caseInsensitiveCompare(target) == .orderedSame
+            }) {
+                activePolitician = MemberSheetTarget(
+                    id: match.filerId,
+                    name: match.fullName ?? match.filerId,
+                    photoUrl: match.photoUrl
+                )
+            } else {
+                activePolitician = MemberSheetTarget(
+                    id: target,
+                    name: target
+                )
+            }
+        }
+    }
+}
+
+struct FilingSheetTarget: Identifiable, Hashable {
+    let docId: String
+    var id: String { docId }
 }
 
 // MARK: - AppUpdatePrompt (canonical: /Users/jay/apps/ios-fleet/AppUpdatePrompt.swift)

@@ -43,6 +43,7 @@ export function buildPeerPriceClient(
   // stays usable against an open peer.
   const headers: Record<string, string> = {
     'user-agent': 'congress.trade/0.1 (+https://congress.trade) PeerClient',
+    'accept': 'application/json',
   };
   if (authToken) headers['authorization'] = `Bearer ${authToken}`;
 
@@ -60,7 +61,15 @@ export function buildPeerPriceClient(
         return [];
       }
       const data = await res.json() as { closes?: Close[] };
-      return data.closes ?? [];
+      const rawCloses = Array.isArray(data?.closes) ? data.closes : [];
+      return rawCloses.filter(
+        (c): c is Close =>
+          Boolean(c) &&
+          typeof c.date === 'string' &&
+          typeof c.close === 'number' &&
+          Number.isFinite(c.close) &&
+          c.close > 0,
+      );
     } catch (e) {
       if (e instanceof Error && e.message.startsWith('PEER_HTTP_')) throw e;
       if (strict) {
@@ -81,12 +90,13 @@ export function buildPeerPriceClient(
   }
 
   async function eodHistory(symbol: string, from: string, to: string): Promise<Close[]> {
-    const url = `${origin}/api/market/prices/${encodeURIComponent(symbol)}?from=${from}&to=${to}`;
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    const url = `${origin}/api/market/prices/${encodeURIComponent(normalizedSymbol)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
     return descending(await getCloses(url, 'fetch-peer-price-history'));
   }
 
   async function spxHistory(from: string, to: string): Promise<Close[]> {
-    const url = `${origin}/api/market/spx?from=${from}&to=${to}`;
+    const url = `${origin}/api/market/spx?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
     return descending(await getCloses(url, 'fetch-peer-spx-history'));
   }
 

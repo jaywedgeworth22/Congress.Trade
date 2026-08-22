@@ -57,9 +57,31 @@ describe('buildPeerPriceClient — bearer auth', () => {
     await expect(client.eodHistory('AAPL', '2024-01-01', '2024-02-01')).rejects.toThrow(/PEER_HTTP_401/);
   });
 
-  it('returns [] on 404 even in strict mode (ticker simply missing on peer)', async () => {
-    const notFound = (async () => new Response('', { status: 404 })) as unknown as typeof fetch;
-    const client = buildPeerPriceClient('https://peer.example', notFound, DUMMY_TOKEN, { strict: true });
-    expect(await client.eodHistory('ZZZZ', '2024-01-01', '2024-02-01')).toEqual([]);
+  it('filters out malformed or non-numeric closes from peer responses', async () => {
+    const malformed = (async () =>
+      new Response(
+        JSON.stringify({
+          closes: [
+            { date: '2024-01-03', close: 15.5 },
+            { date: '2024-01-02', close: 'invalid' },
+            { date: '2024-01-01', close: 0 },
+            { date: '2023-12-31', close: null },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const client = buildPeerPriceClient('https://peer.example', malformed, DUMMY_TOKEN);
+    const closes = await client.eodHistory('aapl', '2023-12-31', '2024-01-03');
+    expect(closes).toEqual([{ date: '2024-01-03', close: 15.5 }]);
+  });
+
+  it('normalizes lowercase ticker symbols and encodes query parameters', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = buildPeerPriceClient('https://peer.example', recordingFetch(calls), DUMMY_TOKEN);
+    await client.eodHistory('nvda', '2024-01-01', '2024-02-01');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://peer.example/api/market/prices/NVDA?from=2024-01-01&to=2024-02-01');
+    expect(headersOf(calls[0].init)['accept']).toBe('application/json');
   });
 });
+

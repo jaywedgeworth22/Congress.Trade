@@ -313,6 +313,7 @@ struct MemberAvatar: View {
 struct MetricTile: View {
     let title: String
     let value: String
+    var tint: Color? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -321,6 +322,7 @@ struct MetricTile: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline.weight(.bold))
+                .foregroundStyle(tint ?? .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -786,21 +788,30 @@ enum DisplayFormatters {
 }
 
 @MainActor
+extension String {
+    var shortDate: String {
+        let raw = String(prefix(10))
+        guard let date = DisplayFormatters.inputDate.date(from: raw) else { return self }
+        return DisplayFormatters.shortDate.string(from: date)
+    }
+
+    var longDate: String {
+        let raw = String(prefix(10))
+        guard let date = DisplayFormatters.inputDate.date(from: raw) else { return self }
+        return DisplayFormatters.longDate.string(from: date)
+    }
+}
+
+@MainActor
 extension Optional where Wrapped == String {
     var shortDate: String {
         guard let self, !self.isEmpty else { return "Unavailable" }
-        return Self.format(self, using: DisplayFormatters.shortDate)
+        return self.shortDate
     }
 
     var longDate: String {
         guard let self, !self.isEmpty else { return "Unavailable" }
-        return Self.format(self, using: DisplayFormatters.longDate)
-    }
-
-    private static func format(_ value: String, using output: DateFormatter) -> String {
-        let raw = String(value.prefix(10))
-        guard let date = DisplayFormatters.inputDate.date(from: raw) else { return value }
-        return output.string(from: date)
+        return self.longDate
     }
 }
 

@@ -22,7 +22,18 @@ const kvPath = Deno.env.get('DENO_KV_PATH') || undefined;
 const kv = await Deno.openKv(kvPath);
 const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
+// Global unhandled error & promise rejection listeners for runtime stability
+globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+  console.error('Global unhandled rejection:', e.reason);
+});
+globalThis.addEventListener('error', (e: ErrorEvent) => {
+  console.error('Global uncaught error:', e.error || e.message);
+});
+
+let cachedEnvValues: Record<string, string | undefined> | null = null;
+
 function buildEnvironmentValues(): Record<string, string | undefined> {
+  if (cachedEnvValues) return cachedEnvValues;
   const envObj: Record<string, string | undefined> = {};
   const paths = ['.prod.vars', './.prod.vars', 'app/.prod.vars', '/app/.prod.vars'];
   for (const p of paths) {
@@ -44,6 +55,7 @@ function buildEnvironmentValues(): Record<string, string | undefined> {
     const v = Deno.env.get(key);
     if (v) envObj[key] = v;
   }
+  cachedEnvValues = envObj;
   return envObj;
 }
 
@@ -83,7 +95,16 @@ const libsqlClient = createClient({
   url: tursoUrl || 'libsql://dummy-url.turso.io', // Provide a valid dummy URL to prevent crash at boot
   authToken: tursoToken,
 });
-await libsqlClient.execute("PRAGMA busy_timeout = 10000;").catch(() => {});
+
+// Execute connection pragmas for performance and concurrency resilience
+async function initSqlite(client: typeof libsqlClient) {
+  await client.execute("PRAGMA busy_timeout = 10000;").catch(() => {});
+  await client.execute("PRAGMA synchronous = NORMAL;").catch(() => {});
+  await client.execute("PRAGMA cache_size = -64000;").catch(() => {});
+  await client.execute("PRAGMA mmap_size = 268435456;").catch(() => {});
+}
+await initSqlite(libsqlClient);
+
 const dbShim = new D1DatabaseShim(libsqlClient);
 tursoDbShim = dbShim;
 const durableQueueDb = dbShim as unknown as D1Database;
