@@ -432,7 +432,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .card .v .bp-n { font-size: 28px; font-weight: 700; }
   .card .v .bp-pct { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: 0; }
   .card .v .bp-w { font-size: 16px; font-weight: 600; margin-left: 0.12em; color: var(--text-dim); }
-  .kpi-note { font-size: 10px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
+  .kpi-note { font-size: 10px; font-weight: 500; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
+  /* Trends snapshot: extras (option footnote, sparkline) live inside .v so
+     the figure + extra center as one group under a top-pinned heading. */
+  #trKpis .card .v {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .kpi-spark {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1.5px;
+    width: 100%;
+    height: 14px;
+    margin-top: 8px;
+    opacity: 0.8;
+    pointer-events: none;
+    flex: 0 0 auto;
+  }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
@@ -1214,8 +1234,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-topbar-title {
     flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:13px; font-weight:600; color:var(--text); opacity:.92;
+    transition: opacity .22s ease, transform .22s ease;
   }
   .drawer-topbar-title .muted { font-weight:400; }
+  /* Live heroes (company / politician) occupy the topbar once stuck, so the
+     duplicate text next to ✕ stays invisible.  Swap heroes (trade) fade that
+     summary in only after the heading would have scrolled away. */
+  .drawer-topbar.has-hero-live .drawer-topbar-title { opacity:0; transform:translateY(6px); }
+  .drawer-topbar.has-hero-swap .drawer-topbar-title { opacity:0; transform:translateY(6px); }
+  .drawer-topbar.has-hero-swap.is-compact .drawer-topbar-title { opacity:.92; transform:none; }
+  .drawer-hero {
+    position:sticky; top:8px; z-index:3;
+    background:var(--panel); padding:2px 52px 8px 0; margin:0;
+    transition: padding .22s ease, gap .22s ease, min-height .22s ease;
+  }
+  .drawer-hero.drawer-company-title .tkr-logo,
+  .drawer-hero.drawer-member-title .avatar {
+    transition: width .22s ease, height .22s ease, font-size .22s ease;
+  }
+  .drawer-hero .drawer-title-line,
+  .drawer-hero .drawer-member-name,
+  .drawer-hero .drawer-trade-headline { transition: font-size .22s ease; }
+  .drawer-hero.drawer-member-title .avatar { width:34px; height:34px; font-size:12px; }
+  .drawer-hero.is-compact { padding-top:10px; padding-bottom:10px; min-height:44px; gap:8px; }
+  .drawer-hero.is-compact.drawer-company-title .tkr-logo { width:22px; height:22px; }
+  .drawer-hero.is-compact.drawer-company-title .tkr-logo.glyph { font-size:16px; }
+  .drawer-hero.is-compact .drawer-title-line { font-size:14px; flex-wrap:nowrap; white-space:nowrap; }
+  .drawer-hero.is-compact .drawer-title-line .company-name { overflow:hidden; text-overflow:ellipsis; }
+  .drawer-hero.is-compact.drawer-member-title .avatar { width:22px; height:22px; font-size:9px; }
+  .drawer-hero.is-compact .drawer-member-name { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .drawer-hero.is-compact .dsub { display:none; }
+  .drawer-hero-swap { position:static; padding-right:0; background:transparent; }
+  @media (prefers-reduced-motion: reduce) {
+    .drawer-topbar-title,
+    .drawer-hero,
+    .drawer-hero.drawer-company-title .tkr-logo,
+    .drawer-hero.drawer-member-title .avatar,
+    .drawer-hero .drawer-title-line,
+    .drawer-hero .drawer-member-name,
+    .drawer-hero .drawer-trade-headline { transition: none; }
+  }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
     width:48px; height:48px; margin:0; cursor:pointer; color:var(--text);
@@ -1225,7 +1283,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
   #detailDrawerBody { margin-top:0; padding-top:8px; padding-right:36px; }
   .drawer-title-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding-right:4px; }
-  .drawer-title-line .tkr { color:var(--accent); }
+  .drawer-title-line .tkr { color:var(--text); }
+  .drawer .tkr { color:var(--text); }
   .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; color:var(--text); }
   .drawer h2 { margin:0 0 2px; font-size:19px; color:var(--text); }
   .drawer-member-title { display:flex; align-items:center; gap:11px; min-width:0; }
@@ -1256,7 +1315,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      regardless of source order (see CSS-cascade note in AGENTS.md), without
      touching #view-trends' own dedicated card styling. */
   #detailDrawerBody .grid-cards .card { display:flex; flex-direction:column; padding:14px 16px; min-height:0; }
-  #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; align-items:center; justify-content:center; }
+  #detailDrawerBody .grid-cards .card .v { flex:1 1 auto; flex-direction:column; align-items:center; justify-content:center; }
   /* Owner punch list #18(c): .table-wrap's padding-right:60px exists to clear
      the big Trades table's custom scrollbar gutter — pure waste in a ~440px-wide
      drawer's mini table, so the Recent Trades table reads narrower than the
@@ -2196,9 +2255,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .tbars { gap: 1px; height: 130px; }
     #view-trends .tbars i { max-width: 5px; }
     #view-trends .tlbl { display: block; height: 11px; line-height: 11px; font-size: 8px; max-width: 100%; overflow: hidden; }
-    /* Buys vs Sells toggle groups stay on the SAME line as the heading, top-right
-       (like desktop) — only the button sizing shrinks to fit. */
-    #view-trends #trTimeMetric.seg button { padding: 4px 5px; font-size: 10px; }
+    /* #/$ metric toggles stay on the SAME line as the heading.  What Is
+       Being Traded and Buys vs Sells share one size — do not shrink the
+       Buys vs Sells pair below the ticker-rank pair. */
     /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
     #view-trends summary.tchart-summary { gap: 5px; }
     #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
@@ -2581,16 +2640,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
 }
 
-/* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe) */
+/* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe)
+   What Is Being Traded (#trTickerMetric) and Buys vs Sells (#trTimeMetric)
+   share one size and ink: a little larger than the default 12px dim
+   segment, and black (var(--text)) in both selected and idle states. */
+#trTickerMetric.seg,
 #trTimeMetric.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+#trTickerMetric.seg button,
 #trTimeMetric.seg button {
+  color: var(--text);
+  font: 700 14px var(--sans);
+  padding: 5px 10px;
   letter-spacing: .02em;
   transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
 }
+#trTickerMetric.seg button.on,
 #trTimeMetric.seg button.on {
+  color: var(--text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
+#trTickerMetric.seg button:hover:not(.on),
+#trTimeMetric.seg button:hover:not(.on) { color: var(--text); }
+#trTickerMetric.seg button:focus-visible,
 #trTimeMetric.seg button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
@@ -9866,7 +9938,7 @@ function buySellText(buys, sells) {
 	}
 	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
 	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
-	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + (extraHtml || '') + '</div></div>';
 	}
 var trTickerSortVal = 'trades';
 function setTickerSort(val) {
@@ -9893,7 +9965,7 @@ function sparklineHtml(series, metric) {
   } else {
     max = 1; min = 0;
   }
-  return '<div style="position:absolute; bottom:6px; left:12px; right:12px; height:12px; display:flex; align-items:flex-end; gap:1px; opacity:0.8; pointer-events:none">' +
+  return '<div class="kpi-spark">' +
     vals.map(function(v, i) {
       var h, color;
       if (metric === 'netflow') {
@@ -11325,6 +11397,50 @@ document.addEventListener('keydown', function (e) {
 // Last-resort accessible name for the drawer dialog (see openDrawer() below) —
 // every current call site passes its own state-specific title instead.
 var DRAWER_DEFAULT_TITLE = 'Details';
+var drawerHeroCleanup = null;
+var drawerHeroRaf = 0;
+function bindDrawerHero(panel) {
+  if (drawerHeroCleanup) { drawerHeroCleanup(); drawerHeroCleanup = null; }
+  var topbar = panel ? panel.querySelector('.drawer-topbar') : null;
+  var body = el('detailDrawerBody');
+  var hero = body ? body.querySelector('.drawer-hero') : null;
+  if (topbar) {
+    topbar.classList.toggle('has-hero-live', !!(hero && hero.classList.contains('drawer-hero-live')));
+    topbar.classList.toggle('has-hero-swap', !!(hero && hero.classList.contains('drawer-hero-swap')));
+    topbar.classList.remove('is-compact');
+  }
+  if (hero) hero.classList.remove('is-compact');
+  if (!panel || !hero || !topbar) return;
+  function measure() {
+    var live = hero.classList.contains('drawer-hero-live');
+    var compact;
+    if (live) {
+      var pin = parseFloat(getComputedStyle(hero).top) || 8;
+      compact = hero.getBoundingClientRect().top <= panel.getBoundingClientRect().top + pin + 0.5;
+    } else {
+      compact = hero.getBoundingClientRect().bottom <= topbar.getBoundingClientRect().bottom + 0.5;
+    }
+    hero.classList.toggle('is-compact', compact);
+    topbar.classList.toggle('is-compact', compact);
+  }
+  function onScroll() {
+    if (drawerHeroRaf) return;
+    drawerHeroRaf = requestAnimationFrame(function () {
+      drawerHeroRaf = 0;
+      measure();
+    });
+  }
+  panel.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  measure();
+  drawerHeroCleanup = function () {
+    panel.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+    if (drawerHeroRaf) { cancelAnimationFrame(drawerHeroRaf); drawerHeroRaf = 0; }
+    hero.classList.remove('is-compact');
+    topbar.classList.remove('is-compact', 'has-hero-live', 'has-hero-swap');
+  };
+}
 function openDrawer(html, topbarTitle) {
   closePanels();
   // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
@@ -11365,8 +11481,10 @@ function openDrawer(html, topbarTitle) {
   }
   if (wasOpen) { var els = focusableEls(p); if (els.length) els[0].focus(); }
   else trapFocusIn(p);
+  bindDrawerHero(p);
 }
 function closeDrawer() {
+  if (drawerHeroCleanup) { drawerHeroCleanup(); drawerHeroCleanup = null; }
   var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawer').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
@@ -11589,7 +11707,7 @@ function drawerCompanyTitle(ticker, name) {
   // separated by "  |  ", not a dot.
   var label = fmtCompany(name || ticker || 'Company');
   var sameAsTicker = label === ticker;
-  return '<div class="drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
+  return '<div class="drawer-hero drawer-hero-live drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
     (ticker && !sameAsTicker ? '<span class="dot-sep">  |  </span>' : '') +
     (sameAsTicker ? '' : '<span class="company-name">' + esc(label) + '</span>') + '</h2></div></div>';
@@ -11810,7 +11928,7 @@ function openMember(filerId) {
     }).join('');
     setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
+      '<div class="drawer-hero drawer-hero-live drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       // Same shared chips as Trends (window/chamber/party/side) via trParams().
       '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
@@ -11938,7 +12056,7 @@ function openTrade(row) {
   // the midpoint used elsewhere is an estimate — so the old "estimated
   // bracket" caption was misleading and is gone.
   var head =
-    '<div class="drawer-trade-head">' +
+    '<div class="drawer-hero drawer-hero-swap drawer-trade-head">' +
       '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
       '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' +
       '<div class="drawer-trade-identity">' + personCard + assetCard + '</div>' +
