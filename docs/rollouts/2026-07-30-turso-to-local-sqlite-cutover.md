@@ -16,7 +16,7 @@ A staged copy (`db.sqlite`, synced from Turso at 05:07Z, ~20h stale / 1,025
 transactions behind) already existed on the host. To avoid losing the gap, a
 fresh full sync was performed instead of using the stale file.
 
-## Steps performed (host `141.148.182.224`)
+## Steps performed (host `<ORACLE_IP_RETIRED>`)
 
 1. Stopped the app container (maintenance window ~15 min, single writer).
 2. Moved the stale copy aside to `db.sqlite.stale-20260730`.

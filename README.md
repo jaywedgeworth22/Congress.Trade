@@ -6,7 +6,7 @@ Executive Branch OGE 278-T), extracts and normalizes trades, and serves a
 public dashboard plus REST, webhook, SSE, and APNs delivery.
 
 **Deno Deploy and Turso are retired.**  Production is Coolify Docker on
-Hetzner `fleet-hetzner-nbg1` (same box as `host.jays.services`), Deno inside
+the production fleet box (see private `jaywedgeworth22/fleet-ops:ATTACK-MAP.md`; `ssh coolify`), Deno inside
 the `congress-app` container, host SQLite at `/data/congress-trade/db.sqlite`
 (Litestream-replicated), Infisical secrets.  Cloudflare DNS routes
 `https://congress.trade`; it is not the application runtime.

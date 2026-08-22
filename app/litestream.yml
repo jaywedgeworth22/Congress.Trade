@@ -18,7 +18,7 @@
 #   - Env vars are expanded with Go's os.Getenv (NOT bash), so `${VAR:-default}`
 #     does NOT work — use a bare `${VAR}`. All values below are injected at
 #     container start by scripts/start-with-litestream.sh, which fetches them
-#     from Infisical (project f61a79de-8d77-4f0b-9361-4b7208598290, env prod)
+#     from Infisical (congress-trade project, env prod)
 #     using the same INFISICAL_APP_CLIENT_ID/SECRET bootstrap identity the
 #     Deno app already uses in-process for its own AWS_S3_* (R2 PDF storage)
 #     secrets. No secrets live in this file.

@@ -42,7 +42,7 @@ if [[ "$HTTP_CODE" != "200" ]]; then
   log "WARNING: Server ${TARGET_URL}/health returned HTTP ${HTTP_CODE}. Attempting automated self-healing restart..."
   
   if [[ -n "$COOLIFY_TOKEN" ]]; then
-    RESTART_RESP="$(curl -s -X POST "https://141.148.182.224:8000/api/v1/applications/congress-trade/restart" \
+    RESTART_RESP="$(curl -s -X POST "${COOLIFY_BASE_URL:-https://host.jays.services}/api/v1/applications/congress-trade/restart" \
       -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
       -H "Content-Type: application/json" --insecure || echo '{"error":"request failed"}')"
     log "Coolify API restart triggered: ${RESTART_RESP}"

@@ -70,7 +70,7 @@ Rebuilt the **in-container** pattern (litestream as a sibling process inside
 
 `LITESTREAM_S3_BUCKET` / `_ENDPOINT` / `_REGION` / `_ACCESS_KEY_ID` /
 `_SECRET_ACCESS_KEY` are **new** Infisical secrets (added to the
-congress-trade prod project, `f61a79de-8d77-4f0b-9361-4b7208598290`) — not a
+congress-trade prod project, `<CT_INFISICAL_PROJECT_ID>`) — not a
 repoint of the app's existing `AWS_S3_BUCKET_NAME` /
 `AWS_S3_ENDPOINT`/`AWS_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`.
 Those existing secrets already point at Cloudflare R2 and back the `raw/`

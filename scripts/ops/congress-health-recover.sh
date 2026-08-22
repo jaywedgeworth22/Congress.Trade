@@ -29,7 +29,7 @@
 #   FAIL_THRESHOLD      default 2
 #   RESTART_COOLDOWN_SEC default 300
 #   MAX_RESTARTS_PER_HOUR default 4
-#   APP_UUID            default c11c5hdhuczureb6w2pg20p0
+#   APP_UUID            default from COOLIFY_APP_UUID or congress-app
 #   COOLIFY_BASE_URL    default https://host.jays.services
 #   COOLIFY_TOKEN       optional Bearer for Coolify API restart
 #   STATE_DIR           default /var/lib/congress-health-recover
@@ -43,7 +43,7 @@ CHECK_INTERVAL_SEC="${CHECK_INTERVAL_SEC:-30}"
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
 RESTART_COOLDOWN_SEC="${RESTART_COOLDOWN_SEC:-300}"
 MAX_RESTARTS_PER_HOUR="${MAX_RESTARTS_PER_HOUR:-4}"
-APP_UUID="${APP_UUID:-c11c5hdhuczureb6w2pg20p0}"
+APP_UUID="${APP_UUID:-${COOLIFY_APP_UUID:-congress-app}}"
 COOLIFY_BASE_URL="${COOLIFY_BASE_URL:-https://host.jays.services}"
 STATE_DIR="${STATE_DIR:-/var/lib/congress-health-recover}"
 LOG_TAG="${LOG_TAG:-congress-health-recover}"

@@ -203,7 +203,7 @@ Receipt: `docs/rollouts/2026-08-20-probe-run-brackets.md`.
 
 Production is **not** a Cloudflare Worker / D1 / `wrangler.toml` app.
 Live site: [https://congress.trade](https://congress.trade).  The app in
-`app/` runs as Deno in Coolify `congress-app` on `fleet-hetzner-nbg1`,
+`app/` runs as Deno in Coolify `congress-app` on the production fleet box,
 SQLite at `/data/congress-trade/db.sqlite`, Deno KV at
 `/data/congress-trade/kv.sqlite`, filing PDFs in R2, queues in
 `deno_runtime_queue`.  Proof: `app/Dockerfile`, `app/docker-compose.yml`,

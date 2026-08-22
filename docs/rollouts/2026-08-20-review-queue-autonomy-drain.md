@@ -53,7 +53,7 @@ distinct causes, three of which were blocking the queue from draining at all:
 ## Ops actions taken
 
 - Coolify: marked 8 stuck `queued` deployment rows `failed` in `application_deployment_queues`
-  (application `c11c5hdhuczureb6w2pg20p0`), restarted dockerd to release the pinned
+  (application `<CT_COOLIFY_APP_UUID>`), restarted dockerd to release the pinned
   BuildKit cache, pruned 14GB of cache.  Disk: 97% → 65% (51G free).  Redeployed
   congress-app to `4b9694d1`; `bash app/scripts/ship.sh` applied migrations (0 failed,
   readiness ok/db/schema) and verified the live SHA.
