@@ -35,7 +35,7 @@
 
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import * as cheerio from 'cheerio';
-import { isSenateRelayUnreachable } from './senateRelayHealth.ts';
+import { isSenateRelayUnreachable, senateRelayAuthHeaders } from './senateRelayHealth.ts';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -251,6 +251,8 @@ export interface FetchSenatePtrFilingsOptions {
   kv?: any;
   /** Optional Oracle/microservice relay URL (e.g. http://oracle-host:8788). */
   relayUrl?: string;
+  /** Shared bearer for Mac scout.jays.services POST /fetch-ptr and /fetch-doc. */
+  relaySecret?: string;
   /** Optional proxy URL for routing Senate requests. */
   proxyUrl?: string;
 }
@@ -377,6 +379,7 @@ export async function fetchSenatePtrFilings(
   // relied solely on it intermittently took the direct path and hit the 403
   // even with the container env var set.
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
+  const relaySecret = opts.relaySecret ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_SECRET : undefined);
   if (relayUrl) {
     try {
       const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
@@ -384,6 +387,7 @@ export async function fetchSenatePtrFilings(
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
+          ...senateRelayAuthHeaders(relaySecret),
         },
         body: JSON.stringify({
           submitted_start_date: formatSenateDate(since),

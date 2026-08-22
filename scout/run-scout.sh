@@ -21,6 +21,12 @@ if [[ -f "$SCOUT_DIR/.env" ]]; then
   source "$SCOUT_DIR/.env"
   set +a
 fi
+if [[ -f "${HOME}/.secrets/senate-relay.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${HOME}/.secrets/senate-relay.env"
+  set +a
+fi
 
 # Global secrets file (FMP / RapidAPI / UW / Quiver) — names only; values stay in env.
 # Never `source` the whole file: one unquoted value can be parsed as a shell command

@@ -9,6 +9,7 @@ function envForFetch(opts: {
   chamber?: string;
   sourceUrl?: string;
   relayUrl?: string;
+  relaySecret?: string;
 } = {}) {
   const updates: unknown[][] = [];
   const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
@@ -18,6 +19,7 @@ function envForFetch(opts: {
     env: {
       RAW_FILES: { put },
       SENATE_RELAY_URL: opts.relayUrl,
+      SENATE_RELAY_SECRET: opts.relaySecret,
       DB: {
         // Branch on the SQL text: the fetcher looks up the filings row, then
         // the reviewQueueGuard checks review_queue.resolved before doing any
@@ -141,6 +143,22 @@ describe('senate document fetch via relay (2026-08-10 regression)', () => {
     expect(put).toHaveBeenCalledWith('raw/S-doc_1', expect.any(Uint8Array), {
       httpMetadata: { contentType: 'text/html; charset=utf-8' },
     });
+  });
+
+  it('sends SENATE_RELAY_SECRET as Bearer on /fetch-doc', async () => {
+    const { env } = envForFetch({
+      chamber: 'senate',
+      sourceUrl: SENATE_DOC,
+      relayUrl: RELAY,
+      relaySecret: 'relay-test-secret',
+    });
+    const fetchMock = vi.fn(async () => new Response('<html>Periodic Transaction Report</html>', {
+      status: 200, headers: { 'content-type': 'text/html; charset=utf-8' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchFiling(env, 'S-doc_1');
+    const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+    expect(headers.get('authorization')).toBe('Bearer relay-test-secret');
   });
 
   it('retries through the relay (not direct) when the agreement wall leaks through', async () => {

@@ -48,6 +48,12 @@ export function senateRelayBaseUrl(raw: string | undefined): string | undefined 
   return trimmed.replace(/\/$/, '');
 }
 
+export function senateRelayAuthHeaders(secret: string | undefined): Record<string, string> {
+  const token = secret?.trim();
+  if (!token) return {};
+  return { authorization: `Bearer ${token}` };
+}
+
 export function senateRelayHost(raw: string | undefined): string | null {
   const base = senateRelayBaseUrl(raw);
   if (!base) return null;

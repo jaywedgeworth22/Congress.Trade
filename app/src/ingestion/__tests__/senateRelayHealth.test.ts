@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isSenateRelayUnreachable,
+  senateRelayAuthHeaders,
   senateRelayHost,
   senateRelayBaseUrl,
 } from '../senateRelayHealth.ts';
@@ -19,9 +20,8 @@ describe('isSenateRelayUnreachable', () => {
     expect(isSenateRelayUnreachable(new Response('ok', { status: 200 }))).toBe(false);
   });
 
-  it('treats thrown fetch errors as unreachable', () => {
-    expect(isSenateRelayUnreachable(null, new Error('connect ECONNREFUSED'))).toBe(true);
-    expect(isSenateRelayUnreachable(null)).toBe(true);
+  it('does not treat 401 as unreachable (misconfigured relay secret)', () => {
+    expect(isSenateRelayUnreachable(new Response('', { status: 401 }))).toBe(false);
   });
 });
 
@@ -34,5 +34,16 @@ describe('senateRelay URL helpers', () => {
   it('returns undefined/null when unset', () => {
     expect(senateRelayBaseUrl(undefined)).toBeUndefined();
     expect(senateRelayHost('')).toBeNull();
+  });
+});
+
+describe('senateRelayAuthHeaders', () => {
+  it('omits Authorization when the secret is blank', () => {
+    expect(senateRelayAuthHeaders(undefined)).toEqual({});
+    expect(senateRelayAuthHeaders('  ')).toEqual({});
+  });
+
+  it('sends a Bearer token when set', () => {
+    expect(senateRelayAuthHeaders('abc')).toEqual({ authorization: 'Bearer abc' });
   });
 });
