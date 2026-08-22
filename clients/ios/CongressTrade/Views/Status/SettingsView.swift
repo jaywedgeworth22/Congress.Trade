@@ -98,8 +98,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    LegalFooterLinks()
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    SiteFooterStack()
                 }
             }
             .scrollDismissesKeyboard(.interactively)

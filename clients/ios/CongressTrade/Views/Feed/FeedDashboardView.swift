@@ -669,9 +669,10 @@ struct FeedControlBar: View {
 // coexist on main without a duplicate-declaration break, and swapping these
 // call sites for the shared versions afterwards is a mechanical rename.
 
-/// Privacy / Terms / Pricing / Support, small and grey, closing every tab.
-/// App Store review expects these reachable from inside the app, and the owner
-/// asked for them on all tabs rather than buried in Settings.
+/// Website-tab footer on every iOS tab: disclaimer, then Privacy / Terms /
+/// Pricing / Support.  App Store review expects the links reachable from
+/// inside the app, and the owner asked for them on all tabs rather than
+/// buried in Settings.
 ///
 /// Buttons (`LegalFooterLinks`), not Markdown `Text`.  SwiftUI only parses
 /// Markdown for string *literals*; a concatenated `[label](url)` string
@@ -679,8 +680,7 @@ struct FeedControlBar: View {
 /// can still fall back to that raw source if parsing throws.  Buttons cannot.
 struct AppLegalFooter: View {
     var body: some View {
-        LegalFooterLinks()
-            .frame(maxWidth: .infinity)
+        SiteFooterStack()
             .padding(.vertical, 6)
     }
 }

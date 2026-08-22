@@ -1074,13 +1074,9 @@ struct AccountQuickMenu: View {
                 }
 
                 Section {
-                    LegalFooterLinks()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    // Short disclaimer line — mobile-web parity with `.site-footer`.
-                    Text(AppTheme.siteFooterDisclaimer)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // Same stack as website `footer.site-footer`: disclaimer
+                    // first, then the link row.  Was reversed here.
+                    SiteFooterStack()
                 }
                 .ctThemedRow()
             }
@@ -1764,6 +1760,24 @@ extension EnvironmentValues {
     var openPremium: (() -> Void)? {
         get { self[OpenPremiumActionKey.self] }
         set { self[OpenPremiumActionKey.self] = newValue }
+    }
+}
+
+/// Website `footer.site-footer` stack: the combined disclaimer, then the
+/// Privacy / Terms / Pricing / Support row.  Centered, caption-sized, dim.
+struct SiteFooterStack: View {
+    var includePricing: Bool = true
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(AppTheme.siteFooterDisclaimer)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            LegalFooterLinks(includePricing: includePricing)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
