@@ -102,6 +102,28 @@ describe('storedReviewBlocksSmallerVisionSubmit', () => {
     )).toBe(true);
   });
 
+  it('blocks a padded incoming whose persistable dated rows are shorter than the stored extract', () => {
+    const stored = JSON.stringify({
+      transactionCount: 40,
+      transactions: Array.from({ length: 40 }, (_, i) => ({
+        assetName: `City of El Paso TX GO ${i}`,
+        txDate: '2024-01-01',
+      })),
+    });
+    // 40 raw rows, 12 dated — #2151 would publish the 12 and resolve review.
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      stored,
+      40,
+      12,
+    )).toBe(true);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      stored,
+      40,
+    )).toBe(false);
+  });
+
   it('does not let a truncated 200-of-501 payload block a complete 265/409 vision read', () => {
     const truncated = JSON.stringify({
       truncated: true,

@@ -73,5 +73,13 @@ export function storedReviewBlocksSmallerVisionSubmit(
   ) {
     return false;
   }
-  return storedReviewTransactionCount(payloadJson) > incomingCount;
+  // After #2151, local vision persists only dated rows and drops the rest.
+  // Comparing raw incoming length would let a 300-row submit with 180 dates
+  // look "larger" than a stored 250-lot extract, publish 180, and lock the
+  // filing — remaining trades never land because drain skips scanned_pdf.
+  const persistableIncoming =
+    typeof incomingDatedCount === 'number' && Number.isFinite(incomingDatedCount)
+      ? incomingDatedCount
+      : incomingCount;
+  return storedReviewTransactionCount(payloadJson) > persistableIncoming;
 }

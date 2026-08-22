@@ -603,6 +603,102 @@ describe('Local Vision Worker & Bounded Wait State (M1 / R1)', () => {
       expect(review?.reason).toBe('agreement_cascade_unresolved');
       expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
     });
+
+    it('POST /ingest-local-vision refuses a date-padded OCR that would persist fewer lots than stored', async () => {
+      // #2151 drops undated siblings on publish.  A 40-row Gemini submit with
+      // 12 dates would look as large as the stored cascade payload, publish
+      // 12, and lock the filing.
+      const app = createAdminApp();
+      const env = makeEnv();
+      const nowIso = new Date().toISOString();
+      const stored = Array.from({ length: 40 }, (_, i) => ({
+        txDate: '2024-01-01',
+        owner: 'self',
+        assetName: `City of El Paso TX GO ${i}`,
+        ticker: null,
+        assetType: 'GS',
+        txType: 'B',
+        amountMin: 1001,
+        amountMax: 15000,
+      }));
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, filing_type, filed_date, source_url, raw_object_key, ingest_status, doc_kind, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'scan-cascade-date-pad-1',
+        'house',
+        'P',
+        '2024-06-01',
+        'https://example.com/cascade.pdf',
+        'raw/cascade.pdf',
+        'needs_review',
+        'scanned_pdf',
+        nowIso,
+      ).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, resolved, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(
+        'scan-cascade-date-pad-1',
+        'agreement_cascade_unresolved',
+        JSON.stringify({ transactionCount: 40, transactions: stored }),
+        0,
+        nowIso,
+      ).run();
+
+      const incoming = Array.from({ length: 40 }, (_, i) => i < 12
+        ? {
+          ticker: null,
+          assetName: `Dated lot ${i}`,
+          txType: 'B',
+          txDate: '2024-05-01',
+          amountMin: 1001,
+          amountMax: 15000,
+          confidence: 0.97,
+          rawText: `Dated lot ${i} P 05/01/2024 $1,001 - $15,000`,
+        }
+        : {
+          ticker: null,
+          assetName: `Undated chrome ${i}`,
+          txType: 'B',
+          txDate: null,
+          amountMin: null,
+          amountMax: null,
+          confidence: 0.97,
+          rawText: `Undated chrome ${i}`,
+        });
+      const res = await app.request('/ingest-local-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin-token' },
+        body: JSON.stringify({
+          docId: 'scan-cascade-date-pad-1',
+          transactions: incoming,
+          workerId: 'local_mac_1',
+          extractor: 'local_grok_cli',
+          source: 'local_mac',
+        }),
+      }, env as never);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        published: boolean;
+        needsReview: boolean;
+        skipped?: string;
+      };
+      expect(json.published).toBe(false);
+      expect(json.needsReview).toBe(true);
+      expect(json.skipped).toBe('smaller_than_stored_review');
+
+      const live = await d1.prepare(
+        `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ?`,
+      ).bind('scan-cascade-date-pad-1').first<{ n: number }>();
+      expect(live?.n ?? 0).toBe(0);
+
+      const review = await d1.prepare(
+        `SELECT reason, payload, resolved FROM review_queue WHERE doc_id = ?`,
+      ).bind('scan-cascade-date-pad-1').first<{ reason: string; payload: string; resolved: number }>();
+      expect(review?.resolved).toBe(0);
+      expect(review?.reason).toBe('agreement_cascade_unresolved');
+      expect(JSON.parse(review?.payload ?? '{}').transactionCount).toBe(40);
+    });
+
     it('POST /api/admin/local-vision-park stamps needs_review + unresolved local_vision_exhausted', async () => {
       const app = createAdminApp();
       const env = makeEnv();
