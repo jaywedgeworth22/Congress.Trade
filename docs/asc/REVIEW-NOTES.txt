@@ -1,0 +1,41 @@
+What changed since the build you last reviewed
+
+The binary you reviewed was 1.0.15 (202608150702), built Aug 15.  This submission is 1.0.81 (202608220518) with the following changes, all made in response to your notes.
+
+Guideline 5.1.1(v) — registration is no longer required to purchase.
+Premium can now be bought with no Congress.Trade account at all.  Launch the app, open Premium from the ≡ menu, and both plans are purchasable immediately while signed out.  The purchase is recognised on the device from the App Store transaction itself.
+
+Signing in remains available and is presented as optional.  We explain what it adds — using the subscription on your other devices, and setting up Delivery alerts — rather than requiring it.
+
+Two Premium features remain tied to an account, and we believe this is the account-based case your guideline describes:
+- Delivery alerts — a standing, quota-tracked server-side subscription that sends filings to a webhook or SSE stream belonging to one specific person.
+- Push notifications — device registration so the server knows where to deliver.
+
+Everything else Premium unlocks — the original filing PDF and the full-history CSV export — is public disclosure content with nothing person-specific in it, and now requires no registration.
+
+Guideline 5.1.1(v) — account deletion.
+Account deletion is in this build.  Sign in, open the ≡ menu, and choose Delete Account.  It asks for confirmation, then deletes the account, its session, its registered push devices and its delivery subscriptions, and signs the device out.  There is no email, phone call or website step.  A 39-second physical-device screen recording of the full Delete Account flow is attached (portrait, recorded on a TestFlight install of this app).
+
+Guideline 2.1(b) — In-App Purchase products.
+Both subscriptions are submitted with this version:
+- trade.congress.premium.monthly — Premium Monthly
+- trade.congress.premium.annual — Premium Annual
+They are in the "Premium" subscription group with review screenshots and localized descriptions attached.  They were prepared but not attached to the previous submission; that is why you could not review them.
+
+Reviewing on iPad
+
+You reviewed on an iPad Air 11-inch (M3).  This build fixes iPad layout issues we found on that exact device: detail and settings sheets now use the full width instead of a narrow floating card, the Assets directory uses the two-column grid the other lists already used, Delivery's text is capped to a readable measure, and the account menu is reachable from every tab.
+
+What the app is
+
+Congress.Trade publishes stock-trade disclosures that U.S. House and Senate members, and some executive-branch officials, are required to file publicly under the STOCK Act (2012).  All underlying data comes from public government records.  Dollar figures are estimates derived from the disclosure brackets those filings use, which is stated in the app.  It is an educational and informational tool, not investment advice, and it is not affiliated with the U.S.  Congress or any government agency.
+
+Demo account
+
+Not required — the app is fully browsable without an account, and Premium can now be purchased without one.
+
+If you would like to exercise the account-based features (Delivery alerts, push) or the deletion flow yourself, sign in with any Apple ID via Sign in with Apple on the Account screen; no invitation or allowlist is needed, and you can delete the account afterwards from the same menu.
+
+Contact
+
+Reply in App Store Connect and we will respond same day.
