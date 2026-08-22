@@ -1234,8 +1234,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-topbar-title {
     flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:13px; font-weight:600; color:var(--text); opacity:.92;
+    transition: opacity .22s ease, transform .22s ease;
   }
   .drawer-topbar-title .muted { font-weight:400; }
+  /* Live heroes (company / politician) occupy the topbar once stuck, so the
+     duplicate text next to ✕ stays invisible.  Swap heroes (trade) fade that
+     summary in only after the heading would have scrolled away. */
+  .drawer-topbar.has-hero-live .drawer-topbar-title { opacity:0; transform:translateY(6px); }
+  .drawer-topbar.has-hero-swap .drawer-topbar-title { opacity:0; transform:translateY(6px); }
+  .drawer-topbar.has-hero-swap.is-compact .drawer-topbar-title { opacity:.92; transform:none; }
+  .drawer-hero {
+    position:sticky; top:8px; z-index:3;
+    background:var(--panel); padding:2px 52px 8px 0; margin:0;
+    transition: padding .22s ease, gap .22s ease, min-height .22s ease;
+  }
+  .drawer-hero.drawer-company-title .tkr-logo,
+  .drawer-hero.drawer-member-title .avatar {
+    transition: width .22s ease, height .22s ease, font-size .22s ease;
+  }
+  .drawer-hero .drawer-title-line,
+  .drawer-hero .drawer-member-name,
+  .drawer-hero .drawer-trade-headline { transition: font-size .22s ease; }
+  .drawer-hero.drawer-member-title .avatar { width:34px; height:34px; font-size:12px; }
+  .drawer-hero.is-compact { padding-top:10px; padding-bottom:10px; min-height:44px; gap:8px; }
+  .drawer-hero.is-compact.drawer-company-title .tkr-logo { width:22px; height:22px; }
+  .drawer-hero.is-compact.drawer-company-title .tkr-logo.glyph { font-size:16px; }
+  .drawer-hero.is-compact .drawer-title-line { font-size:14px; flex-wrap:nowrap; white-space:nowrap; }
+  .drawer-hero.is-compact .drawer-title-line .company-name { overflow:hidden; text-overflow:ellipsis; }
+  .drawer-hero.is-compact.drawer-member-title .avatar { width:22px; height:22px; font-size:9px; }
+  .drawer-hero.is-compact .drawer-member-name { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .drawer-hero.is-compact .dsub { display:none; }
+  .drawer-hero-swap { position:static; padding-right:0; background:transparent; }
+  @media (prefers-reduced-motion: reduce) {
+    .drawer-topbar-title,
+    .drawer-hero,
+    .drawer-hero.drawer-company-title .tkr-logo,
+    .drawer-hero.drawer-member-title .avatar,
+    .drawer-hero .drawer-title-line,
+    .drawer-hero .drawer-member-name,
+    .drawer-hero .drawer-trade-headline { transition: none; }
+  }
   .drawer-close {
     pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
     width:48px; height:48px; margin:0; cursor:pointer; color:var(--text);
@@ -1245,7 +1283,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
   #detailDrawerBody { margin-top:0; padding-top:8px; padding-right:36px; }
   .drawer-title-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding-right:4px; }
-  .drawer-title-line .tkr { color:var(--accent); }
+  .drawer-title-line .tkr { color:var(--text); }
+  .drawer .tkr { color:var(--text); }
   .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; color:var(--text); }
   .drawer h2 { margin:0 0 2px; font-size:19px; color:var(--text); }
   .drawer-member-title { display:flex; align-items:center; gap:11px; min-width:0; }
@@ -11358,6 +11397,50 @@ document.addEventListener('keydown', function (e) {
 // Last-resort accessible name for the drawer dialog (see openDrawer() below) —
 // every current call site passes its own state-specific title instead.
 var DRAWER_DEFAULT_TITLE = 'Details';
+var drawerHeroCleanup = null;
+var drawerHeroRaf = 0;
+function bindDrawerHero(panel) {
+  if (drawerHeroCleanup) { drawerHeroCleanup(); drawerHeroCleanup = null; }
+  var topbar = panel ? panel.querySelector('.drawer-topbar') : null;
+  var body = el('detailDrawerBody');
+  var hero = body ? body.querySelector('.drawer-hero') : null;
+  if (topbar) {
+    topbar.classList.toggle('has-hero-live', !!(hero && hero.classList.contains('drawer-hero-live')));
+    topbar.classList.toggle('has-hero-swap', !!(hero && hero.classList.contains('drawer-hero-swap')));
+    topbar.classList.remove('is-compact');
+  }
+  if (hero) hero.classList.remove('is-compact');
+  if (!panel || !hero || !topbar) return;
+  function measure() {
+    var live = hero.classList.contains('drawer-hero-live');
+    var compact;
+    if (live) {
+      var pin = parseFloat(getComputedStyle(hero).top) || 8;
+      compact = hero.getBoundingClientRect().top <= panel.getBoundingClientRect().top + pin + 0.5;
+    } else {
+      compact = hero.getBoundingClientRect().bottom <= topbar.getBoundingClientRect().bottom + 0.5;
+    }
+    hero.classList.toggle('is-compact', compact);
+    topbar.classList.toggle('is-compact', compact);
+  }
+  function onScroll() {
+    if (drawerHeroRaf) return;
+    drawerHeroRaf = requestAnimationFrame(function () {
+      drawerHeroRaf = 0;
+      measure();
+    });
+  }
+  panel.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  measure();
+  drawerHeroCleanup = function () {
+    panel.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+    if (drawerHeroRaf) { cancelAnimationFrame(drawerHeroRaf); drawerHeroRaf = 0; }
+    hero.classList.remove('is-compact');
+    topbar.classList.remove('is-compact', 'has-hero-live', 'has-hero-swap');
+  };
+}
 function openDrawer(html, topbarTitle) {
   closePanels();
   // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
@@ -11398,8 +11481,10 @@ function openDrawer(html, topbarTitle) {
   }
   if (wasOpen) { var els = focusableEls(p); if (els.length) els[0].focus(); }
   else trapFocusIn(p);
+  bindDrawerHero(p);
 }
 function closeDrawer() {
+  if (drawerHeroCleanup) { drawerHeroCleanup(); drawerHeroCleanup = null; }
   var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawer').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
@@ -11622,7 +11707,7 @@ function drawerCompanyTitle(ticker, name) {
   // separated by "  |  ", not a dot.
   var label = fmtCompany(name || ticker || 'Company');
   var sameAsTicker = label === ticker;
-  return '<div class="drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
+  return '<div class="drawer-hero drawer-hero-live drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
     (ticker && !sameAsTicker ? '<span class="dot-sep">  |  </span>' : '') +
     (sameAsTicker ? '' : '<span class="company-name">' + esc(label) + '</span>') + '</h2></div></div>';
@@ -11843,7 +11928,7 @@ function openMember(filerId) {
     }).join('');
     setDocumentTitle(name); // SEOSOCIAL-04: drawer-open path
     openDrawer(
-      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
+      '<div class="drawer-hero drawer-hero-live drawer-member-title">' + memberAvatarHtml(name, p.photoUrl, p.partyBucket || p.party, true) +
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       // Same shared chips as Trends (window/chamber/party/side) via trParams().
       '<div class="drawer-section"><h3>Trade Stats (' + esc(windowLabel(getTrWindow())) + ')</h3><dl class="drawer-kv">' +
@@ -11971,7 +12056,7 @@ function openTrade(row) {
   // the midpoint used elsewhere is an estimate — so the old "estimated
   // bracket" caption was misleading and is gone.
   var head =
-    '<div class="drawer-trade-head">' +
+    '<div class="drawer-hero drawer-hero-swap drawer-trade-head">' +
       '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
       '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) + '</h2>' +
       '<div class="drawer-trade-identity">' + personCard + assetCard + '</div>' +

@@ -4631,6 +4631,15 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     expect(DASHBOARD_HTML).toContain('<span class="drawer-topbar-title" id="drawerTopbarTitle" aria-hidden="true"></span>');
     expect(DASHBOARD_HTML).toContain('function openDrawer(html, topbarTitle) {');
     expect(DASHBOARD_HTML).toContain("if (titleEl) titleEl.innerHTML = topbarTitle || DRAWER_DEFAULT_TITLE;");
+    expect(DASHBOARD_HTML).toContain('function bindDrawerHero(panel) {');
+    expect(DASHBOARD_HTML).toContain('drawer-hero drawer-hero-live drawer-company-title');
+    expect(DASHBOARD_HTML).toContain('drawer-hero drawer-hero-live drawer-member-title');
+    expect(DASHBOARD_HTML).toContain('drawer-hero drawer-hero-swap drawer-trade-head');
+    expect(DASHBOARD_HTML).toContain('.drawer-topbar.has-hero-live .drawer-topbar-title { opacity:0;');
+    expect(DASHBOARD_HTML).toContain('.drawer-topbar.has-hero-swap.is-compact .drawer-topbar-title { opacity:.92;');
+    expect(DASHBOARD_HTML).toContain('bindDrawerHero(p);');
+    expect(DASHBOARD_HTML).toContain('.drawer-title-line .tkr { color:var(--text); }');
+    expect(DASHBOARD_HTML).not.toContain('.drawer-title-line .tkr { color:var(--accent); }');
     // Trade drawer: "SOLD  $1k-$15k  of  ARCC  |  Ares Capital Corp." style summary.
     expect(DASHBOARD_HTML).toContain(
       "var topbarTitle = '<strong>' + esc(sideWord.toUpperCase()) + '</strong> ' + esc(amountText(row.min, row.max)) +\n    (topbarAsset ? ' <span class=\"muted\">of</span> ' + esc(topbarAsset) : '');",
