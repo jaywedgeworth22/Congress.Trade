@@ -96,7 +96,24 @@ do not consume the SSE/webhook subscription quota.
 - **Legacy:** older iOS builds sent `create_subscription` with `delivery: "apns"`
   and `targetUrl` = device token. The backend rewrites that to `register_device`
   so those clients stop failing with `delivery must be 'sse' or 'webhook'`.
-- Actual APNs HTTP/2 trade fan-out is a follow-up (needs Apple `.p8` credentials).
+- Product APNs fan-out (`delivery/apnsFanout.ts`) sends **one digest per new
+  filing**, not one alert per trade. Copy is `{Name}, {Position}` /
+  `Filed N trades (B buys, S sells, E exchanges).`
+- `update_preferences.notificationSettings` shape (missing keys default to
+  filing digests, never a per-trade firehose):
+
+```json
+{
+  "pushMode": "off" | "filings" | "watchlist",
+  "watchlistRules": {
+    "NVDA": { "minAmount": 50001, "sides": "all" | "buys" | "sells" }
+  }
+}
+```
+
+  `minAmount` is a STOCK Act bracket floor (`1001`, `15001`, `50001`, …).
+  Watchlist mode also requires `watchlist: ["NVDA", …]` on the same
+  preferences row. Review-queue rows are not sent to product devices.
 
 ### Sign in with Apple (2026-08-09)
 

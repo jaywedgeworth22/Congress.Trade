@@ -463,6 +463,7 @@ struct FeedControlBar: View {
                                 Text(range.label)
                                 if store.selectedTimeRange == range {
                                     Image(systemName: "checkmark")
+                                        .foregroundStyle(Color.blue)
                                 }
                             }
                         }
@@ -476,6 +477,7 @@ struct FeedControlBar: View {
                         accessibilityLabel: "Time range, \(store.selectedTimeRange.label)"
                     )
                 }
+                .tint(AppTheme.glyphGrey)
 
                 // Branch/Chamber Filter — multi-select: each row is a Toggle
                 // (not a Button) so tapping it flips membership without
@@ -495,6 +497,7 @@ struct FeedControlBar: View {
                         Toggle(isOn: chamberBinding(for: chamber)) {
                             Text(chamber.label)
                         }
+                        .tint(.blue)
                         .accessibilityLabel(chamber.label)
                         .accessibilityValue(store.selectedChambers.contains(chamber) ? "Selected" : "Not selected")
                     }
@@ -513,6 +516,7 @@ struct FeedControlBar: View {
                         accessibilityLabel: "Branch filter, \(store.selectedChambers.isEmpty ? "all" : ChamberFilter.allCases.filter { store.selectedChambers.contains($0) }.map(\.label).joined(separator: ", "))"
                     )
                 }
+                .tint(AppTheme.glyphGrey)
 
                 // Party Filter — multi-select. Server `party=` is CSV
                 // (`asPartyBuckets`); Trends and detail sheets get the same
@@ -534,6 +538,7 @@ struct FeedControlBar: View {
                                     .frame(width: 8, height: 8)
                             }
                         }
+                        .tint(.blue)
                         .accessibilityLabel(party.label)
                         .accessibilityValue(store.selectedParties.contains(party) ? "Selected" : "Not selected")
                     }
@@ -550,6 +555,7 @@ struct FeedControlBar: View {
                         accessibilityLabel: "Party filter, \(store.selectedParties.isEmpty ? "all" : PartyFilter.allCases.filter { store.selectedParties.contains($0) }.map(\.label).joined(separator: ", "))"
                     )
                 }
+                .tint(AppTheme.glyphGrey)
 
                 // Side/Trade Type Filter (Buy/Sell/Exchange) — multi-select.
                 // Server `type=` accepts CSV (`asTxTypes`).
@@ -564,6 +570,7 @@ struct FeedControlBar: View {
                         Toggle(isOn: tradeTypeBinding(for: type)) {
                             Text(type.label)
                         }
+                        .tint(.blue)
                         .accessibilityLabel(type.label)
                         .accessibilityValue(store.selectedTradeTypes.contains(type) ? "Selected" : "Not selected")
                     }
@@ -579,6 +586,7 @@ struct FeedControlBar: View {
                         selected: store.selectedTradeTypes
                     )
                 }
+                .tint(AppTheme.glyphGrey)
 
             }
             .padding(.horizontal, 2)
@@ -1014,20 +1022,17 @@ struct SidesFilterMenuLabel: View {
                     Image(systemName: "arrow.down")
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(isOn(.sell) ? Color.red : dimColor)
-                    // Black rather than orange, matching the buy/sell arrows'
-                    // treatment (owner). `Color.primary`, not a literal
-                    // `.black`, because a literal black arrow is invisible on
-                    // the dark-mode chip. Size and weight now match the two
-                    // siblings exactly; the exchange glyph was a point
-                    // smaller, which read as a rendering slip.
+                    // Same semi-dark grey as the other filter glyphs (owner
+                    // 2026-08-22). Green/red stay on buy/sell because those
+                    // colours mean something; exchange does not.
                     Image(systemName: "arrow.left.arrow.right")
                         .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(isOn(.exchange) ? Color.primary : dimColor)
+                        .foregroundStyle(isOn(.exchange) ? AppTheme.glyphGrey : dimColor)
                 }
                 if isActive {
                     Text(title)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.wordInk)
+                        .foregroundStyle(AppTheme.glyphGrey)
                 }
                 // Bare chrome glyph, no meaning of its own — stays the
                 // lighter grey rather than the word ink above (owner
@@ -1059,21 +1064,16 @@ struct FilterMenuLabel: View {
     var body: some View {
         ControlChip(isActive: isActive, compact: !showsLabel) {
             HStack(spacing: 4) {
-                // Chamber/party/timeframe have no natural colour of their
-                // own, so the icon and its value both take the ordinary
-                // dark label colour (owner 2026-08-21) — a container-level
-                // `.foregroundStyle(.primary)` (see `ControlChip`) is not
-                // enough: hierarchical styles resolve against the app-wide
-                // `.tint(.blue)` (App.swift) inside a `Menu`, so every one of
-                // these rendered accent blue until each leaf got its own
-                // concrete `Color`.
+                // Owner 2026-08-22: filter glyphs, "3 Months", and the caret
+                // are one semi-dark grey. Concrete Color so Menu cannot
+                // re-tint them with the app-wide `.tint(.blue)`.
                 Image(systemName: icon)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(AppTheme.wordInk)
+                    .foregroundStyle(AppTheme.glyphGrey)
                 if showsLabel {
                     Text(title)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.wordInk)
+                        .foregroundStyle(AppTheme.glyphGrey)
                 }
                 // The dropdown caret carries no meaning of its own — bare
                 // chrome glyph, so it keeps the lighter grey (owner

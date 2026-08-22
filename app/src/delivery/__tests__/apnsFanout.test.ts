@@ -27,6 +27,11 @@ function mockEnv(opts: {
   devices?: Array<{ token: string; env?: string; userId?: string; active?: number }>;
   trades?: Array<Record<string, unknown>>;
   reviews?: Array<Record<string, unknown>>;
+  preferences?: Array<{
+    userId: string;
+    watchlist?: unknown;
+    notificationSettings?: unknown;
+  }>;
   prepared?: string[];
 }): Env {
   const prepared = opts.prepared;
@@ -43,6 +48,14 @@ function mockEnv(opts: {
   }));
   const trades = opts.trades ?? [];
   const reviews = opts.reviews ?? [];
+  const preferences = (opts.preferences ?? []).map((p) => ({
+    user_id: p.userId,
+    saved_filters: '{}',
+    watchlist: JSON.stringify(p.watchlist ?? []),
+    notification_settings: JSON.stringify(p.notificationSettings ?? {}),
+    default_window: null as string | null,
+    updated_at: '2026-08-13T00:00:00.000Z',
+  }));
 
   const prepare = (sql: string) => {
     prepared?.push(sql);
@@ -70,6 +83,13 @@ function mockEnv(opts: {
       async all<T>() {
         if (/FROM push_devices\s+WHERE platform = 'apns' AND active = 1/i.test(sql)) {
           return { results: devices.filter((d) => d.active === 1) as T[], meta: {} };
+        }
+        if (/FROM user_preferences/i.test(sql)) {
+          const wanted = new Set(this.params.map((p) => String(p)));
+          return {
+            results: preferences.filter((p) => wanted.has(p.user_id)) as T[],
+            meta: {},
+          };
         }
         if (/FROM delivery_outbox o/i.test(sql)) {
           const since = String(this.params[0] ?? '');
@@ -132,7 +152,7 @@ describe('fanOutApnsProductEvents', () => {
     expect(result.skipped).toBe('not_configured');
   });
 
-  it('sends official-trade and review-needed pushes through the mocked transport', async () => {
+  it('sends one filing digest per disclosure, not a review-queue page to users', async () => {
     const env = mockEnv({
       devices: [
         { token: liveToken, env: 'production' },
@@ -177,12 +197,16 @@ describe('fanOutApnsProductEvents', () => {
     expect(result.skipped).toBeUndefined();
     expect(result.trades).toBe(1);
     expect(result.reviews).toBe(1);
-    expect(result.delivered).toBe(2);
-    expect(result.retired).toBe(2);
-    expect(calls).toHaveLength(4);
-    const titles = calls.map((c) => (JSON.parse(c.body) as { aps: { alert: { title: string } } }).aps.alert.title);
-    expect(titles).toContain('Jane Pelosi bought NVDA');
-    expect(titles).toContain('Review needed');
+    expect(result.delivered).toBe(1);
+    expect(result.retired).toBe(1);
+    expect(calls).toHaveLength(2);
+    const alerts = calls.map((c) => {
+      const body = JSON.parse(c.body) as { aps: { alert: { title: string; body: string } } };
+      return body.aps.alert;
+    });
+    expect(alerts.every((a) => a.title === 'Jane Pelosi')).toBe(true);
+    expect(alerts.every((a) => a.body === 'Filed 1 trade (1 buy).')).toBe(true);
+    expect(alerts.some((a) => /bought|Review needed/i.test(`${a.title} ${a.body}`))).toBe(false);
     expect(calls[0]?.headers['apns-topic']).toBe('trade.congress.ios');
   });
 
@@ -583,8 +607,195 @@ describe('APNS_FANOUT_TRADE_SQL against real migrations', () => {
     expect(result.skipped).toBeUndefined();
     expect(result.trades).toBe(1);
     expect(result.delivered).toBe(1);
-    const title = (JSON.parse(calls[0]?.body ?? '{}') as { aps: { alert: { title: string } } }).aps.alert.title;
-    expect(title).toBe('Nancy Pelosi bought NVDA');
+    const alert = (JSON.parse(calls[0]?.body ?? '{}') as { aps: { alert: { title: string; body: string } } }).aps.alert;
+    expect(alert.title).toBe('Nancy Pelosi, Representative');
+    expect(alert.body).toBe('Filed 1 trade (1 buy).');
     await expect(readApnsFanoutLastError(env)).resolves.toBeNull();
+  });
+});
+
+function alertFrom(req: ApnsHttpRequest): { title: string; body: string } {
+  return (JSON.parse(req.body) as { aps: { alert: { title: string; body: string } } }).aps.alert;
+}
+
+describe('fanOutApnsProductEvents targeting', () => {
+  it('collapses two trades on one filing into a single digest', async () => {
+    const env = mockEnv({
+      devices: [{ token: liveToken }],
+      trades: [
+        {
+          id: 'tx_1',
+          doc_id: 'H-1',
+          ticker: 'NVDA',
+          tx_type: 'P',
+          amount_min: 1001,
+          created_at: '2026-08-13T17:30:00.000Z',
+          filer_name: 'Nancy Pelosi',
+          chamber: 'house',
+          state: 'CA',
+          district: '11',
+        },
+        {
+          id: 'tx_2',
+          doc_id: 'H-1',
+          ticker: 'AAPL',
+          tx_type: 'S',
+          amount_min: 15001,
+          created_at: '2026-08-13T17:31:00.000Z',
+          filer_name: 'Nancy Pelosi',
+          chamber: 'house',
+          state: 'CA',
+          district: '11',
+        },
+      ],
+    });
+    const calls: ApnsHttpRequest[] = [];
+    const result = await fanOutApnsProductEvents(env, {
+      loadConfig: () => config,
+      now: new Date('2026-08-13T18:00:00.000Z'),
+      readState: async () => ({
+        lastTradeAt: '2026-08-13T16:00:00.000Z',
+        lastReviewAt: '2026-08-13T16:00:00.000Z',
+      }),
+      writeState: async () => undefined,
+      transport: async (req) => {
+        calls.push(req);
+        return { status: 200, body: '' };
+      },
+    });
+    expect(result.trades).toBe(2);
+    expect(result.delivered).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(alertFrom(calls[0]!)).toEqual({
+      title: "Nancy Pelosi, Representative from California's 11th District",
+      body: 'Filed 2 trades (1 buy, 1 sell).',
+    });
+  });
+
+  it('does not push when the account chose Off', async () => {
+    const env = mockEnv({
+      devices: [{ token: liveToken, userId: 'user_off' }],
+      preferences: [{ userId: 'user_off', notificationSettings: { pushMode: 'off' } }],
+      trades: [
+        {
+          id: 'tx_1',
+          ticker: 'NVDA',
+          tx_type: 'P',
+          created_at: '2026-08-13T17:30:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+      ],
+    });
+    const calls: ApnsHttpRequest[] = [];
+    const result = await fanOutApnsProductEvents(env, {
+      loadConfig: () => config,
+      now: new Date('2026-08-13T18:00:00.000Z'),
+      readState: async () => ({
+        lastTradeAt: '2026-08-13T16:00:00.000Z',
+        lastReviewAt: '2026-08-13T16:00:00.000Z',
+      }),
+      writeState: async () => undefined,
+      transport: async (req) => {
+        calls.push(req);
+        return { status: 200, body: '' };
+      },
+    });
+    expect(result.delivered).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('watchlist mode keeps only matching ticker/side/amount rows', async () => {
+    const env = mockEnv({
+      devices: [{ token: liveToken, userId: 'user_w' }],
+      preferences: [{
+        userId: 'user_w',
+        watchlist: ['NVDA'],
+        notificationSettings: {
+          pushMode: 'watchlist',
+          watchlistRules: { NVDA: { minAmount: 50001, sides: 'buys' } },
+        },
+      }],
+      trades: [
+        {
+          id: 'tx_keep',
+          doc_id: 'H-1',
+          ticker: 'NVDA',
+          tx_type: 'P',
+          amount_min: 50001,
+          created_at: '2026-08-13T17:30:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+        {
+          id: 'tx_small',
+          doc_id: 'H-1',
+          ticker: 'NVDA',
+          tx_type: 'P',
+          amount_min: 1001,
+          created_at: '2026-08-13T17:31:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+        {
+          id: 'tx_other',
+          doc_id: 'H-2',
+          ticker: 'AAPL',
+          tx_type: 'P',
+          amount_min: 50001,
+          created_at: '2026-08-13T17:32:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+      ],
+    });
+    const calls: ApnsHttpRequest[] = [];
+    await fanOutApnsProductEvents(env, {
+      loadConfig: () => config,
+      now: new Date('2026-08-13T18:00:00.000Z'),
+      readState: async () => ({
+        lastTradeAt: '2026-08-13T16:00:00.000Z',
+        lastReviewAt: '2026-08-13T16:00:00.000Z',
+      }),
+      writeState: async () => undefined,
+      transport: async (req) => {
+        calls.push(req);
+        return { status: 200, body: '' };
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(alertFrom(calls[0]!)).toEqual({
+      title: 'Jane Pelosi',
+      body: 'Filed 1 trade (1 buy).',
+    });
+  });
+
+  it('does not announce an exchange as a purchase', async () => {
+    const env = mockEnv({
+      devices: [{ token: liveToken }],
+      trades: [
+        {
+          id: 'tx_e',
+          ticker: 'NVDA',
+          tx_type: 'E',
+          created_at: '2026-08-13T17:30:00.000Z',
+          filer_name: 'Jane Pelosi',
+        },
+      ],
+    });
+    const calls: ApnsHttpRequest[] = [];
+    await fanOutApnsProductEvents(env, {
+      loadConfig: () => config,
+      now: new Date('2026-08-13T18:00:00.000Z'),
+      readState: async () => ({
+        lastTradeAt: '2026-08-13T16:00:00.000Z',
+        lastReviewAt: '2026-08-13T16:00:00.000Z',
+      }),
+      writeState: async () => undefined,
+      transport: async (req) => {
+        calls.push(req);
+        return { status: 200, body: '' };
+      },
+    });
+    expect(alertFrom(calls[0]!)).toEqual({
+      title: 'Jane Pelosi',
+      body: 'Filed 1 trade (1 exchange).',
+    });
   });
 });

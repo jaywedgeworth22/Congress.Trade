@@ -3293,7 +3293,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-subs" role="tabpanel" aria-labelledby="tab-subs" aria-hidden="true">
     <div class="section" id="subsPush">
       <h3>Push Notifications</h3>
-      <p class="sub">Phone push alerts are set in the iOS app under Delivery.&nbsp; On the web, create a webhook or live stream below.</p>
+      <p class="sub">Phone push alerts are set in the iOS app: Off, one digest per new filing (name, position, and trade counts), or a ticker watchlist with a minimum amount and buys or sells.&nbsp; On the web, create a webhook or live stream below.</p>
     </div>
     <!-- Public marketing/education: how the two paid delivery methods work.
          Visible to everyone, including signed-out visitors; creating a delivery

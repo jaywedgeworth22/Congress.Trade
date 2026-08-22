@@ -46,6 +46,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var commands: [ClientCommand] = []
     @Published private(set) var watchlist: [String] = []
+    @Published private(set) var pushSettings: PushSettings = .default
     @Published private(set) var isRefreshing = false
     @Published private(set) var isSavingWatchlist = false
     @Published private(set) var isCreatingDelivery = false
@@ -759,6 +760,7 @@ final class CongressTradeStore: ObservableObject {
                 subscriptions = []
                 commands = []
                 watchlist = []
+                pushSettings = .default
                 adminAccessGranted = false
             }
         } catch {
@@ -1083,7 +1085,9 @@ final class CongressTradeStore: ObservableObject {
             async let preferencesTask = api.preferences()
             subscriptions = try await subscriptionsTask.subscriptions
             commands = try await commandsTask.commands
-            watchlist = try await preferencesTask.preferences.watchlist
+            let prefs = try await preferencesTask.preferences
+            watchlist = prefs.watchlist
+            pushSettings = PushSettings(from: prefs.notificationSettings)
         } catch {
             if signedIn {
                 commandNotice = error.localizedDescription
@@ -1101,17 +1105,48 @@ final class CongressTradeStore: ObservableObject {
         isSavingWatchlist = true
         watchlistNotice = nil
         do {
+            let pruned = pushSettings.pruned(to: tickers)
             let response = try await api.updatePreferences(
                 tickers: tickers,
+                notificationSettings: pruned.asJSONObject(),
                 idempotencyKey: mutation.idempotencyKey
             )
             pendingWatchlistMutation = nil
             lastCommand = response.command
-            watchlist = response.result?.preferences.watchlist ?? tickers
+            if let prefs = response.result?.preferences {
+                watchlist = prefs.watchlist
+                pushSettings = PushSettings(from: prefs.notificationSettings).pruned(to: prefs.watchlist)
+            } else {
+                watchlist = tickers
+            }
             watchlistNotice = response.replayed == true ? "Preferences already saved." : "Watchlist saved."
             await refreshCommandHistory()
         } catch {
             watchlistNotice = "Could not save. Retry will safely reuse this request: \(error.localizedDescription)"
+        }
+        isSavingWatchlist = false
+    }
+
+    func savePushSettings(_ settings: PushSettings) async {
+        let pruned = settings.pruned(to: watchlist)
+        isSavingWatchlist = true
+        watchlistNotice = nil
+        do {
+            let response = try await api.updatePreferences(
+                notificationSettings: pruned.asJSONObject(),
+                idempotencyKey: UUID().uuidString
+            )
+            lastCommand = response.command
+            if let prefs = response.result?.preferences {
+                watchlist = prefs.watchlist
+                pushSettings = PushSettings(from: prefs.notificationSettings).pruned(to: prefs.watchlist)
+            } else {
+                pushSettings = pruned
+            }
+            watchlistNotice = "Alert settings saved."
+            await refreshCommandHistory()
+        } catch {
+            watchlistNotice = "Could not save alert settings: \(error.localizedDescription)"
         }
         isSavingWatchlist = false
     }
@@ -1464,6 +1499,7 @@ final class CongressTradeStore: ObservableObject {
             subscriptions = []
             commands = []
             watchlist = []
+            pushSettings = .default
             watchlistNotice = "Account deleted."
             await refresh()
         } catch {
@@ -1484,6 +1520,7 @@ final class CongressTradeStore: ObservableObject {
             subscriptions = []
             commands = []
             watchlist = []
+            pushSettings = .default
             watchlistNotice = "Signed out."
             await refresh()
         } catch {
@@ -1494,6 +1531,7 @@ final class CongressTradeStore: ObservableObject {
             subscriptions = []
             commands = []
             watchlist = []
+            pushSettings = .default
             watchlistNotice = "Signed out locally. Server revoke may have failed: \(error.localizedDescription)"
             await probeAdminAccess()
         }

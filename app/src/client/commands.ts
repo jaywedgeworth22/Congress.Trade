@@ -11,6 +11,7 @@ import {
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
 import { rateLimit } from '../shared/rateLimit.ts';
 import { getCommand, updateCommandStatus, upsertPreferences } from './state.ts';
+import { parsePushSettings, serializePushSettings } from '../shared/pushSettings.ts';
 import { getUserById } from '../auth/users.ts';
 import {
   asDelivery,
@@ -69,7 +70,9 @@ export function normalizePreferencePatch(input: Record<string, unknown>) {
     ) {
       throw new ClientInputError('notificationSettings must be an object');
     }
-    patch.notificationSettings = input.notificationSettings as Record<string, unknown>;
+    patch.notificationSettings = serializePushSettings(
+      parsePushSettings(input.notificationSettings),
+    );
   }
   if (input.defaultWindow !== undefined) {
     patch.defaultWindow = input.defaultWindow == null ? null : String(input.defaultWindow);

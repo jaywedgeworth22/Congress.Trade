@@ -545,16 +545,22 @@ final class CongressTradeAPIClient {
     }
 
     func updatePreferences(
-        tickers: [String],
+        tickers: [String]? = nil,
+        notificationSettings: [String: Any]? = nil,
         idempotencyKey: String
     ) async throws -> ClientCommandResponse<PreferencesCommandResult> {
-        try await postCommand(
+        var payload: [String: Any] = [:]
+        if let tickers {
+            payload["watchlist"] = tickers
+        }
+        if let notificationSettings {
+            payload["notificationSettings"] = notificationSettings
+        }
+        return try await postCommand(
             idempotencyKey: idempotencyKey,
             body: [
                 "type": "update_preferences",
-                "payload": [
-                    "watchlist": tickers
-                ]
+                "payload": payload
             ]
         )
     }

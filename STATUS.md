@@ -1,5 +1,15 @@
 # Current Handoff
 
+## 2026-08-22 GROK — Filter chrome grey + filing/watchlist push
+
+Owner screenshot: iOS filter pills and "3 Months" were system blue.  Chrome
+is now one semi-dark grey (ⓘ, hamburger, chevrons, glyphs, exchange arrows,
+filter words).  Green/red buy/sell stay.  Phone alerts: Off / New Filings
+digest / Watchlist (per-ticker min amount at STOCK Act floors + buys/sells).
+APNs fans out per user and collapses a filing to one push.  Receipt:
+`docs/rollouts/2026-08-22-filter-chrome-push-settings.md`.  Board `e235bb0e`
+`655eccbf`.
+
 ## 2026-08-21 GROK — Review-queue autonomy (blank row / filed-date)
 
 One undated Gemini row held Khanna `H-2025-8221264` (now 209 live).  Sessions
