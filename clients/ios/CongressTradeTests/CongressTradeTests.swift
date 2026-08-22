@@ -2313,6 +2313,189 @@ final class CongressTradeTests: XCTestCase {
         store.cancelOutstandingWork()
     }
 
+    func testTickerAnalyticsDecoding() throws {
+        let json = """
+        {
+          "ticker": "AAPL",
+          "asset": {
+            "ticker": "AAPL",
+            "companyName": "Apple Inc.",
+            "logoUrl": "https://example.test/aapl.png",
+            "sector": "Technology",
+            "industry": "Consumer Electronics",
+            "assetClass": "stock",
+            "exchangeShort": "NASDAQ",
+            "currency": "USD",
+            "marketCap": 3450000000000.0,
+            "marketCapBucket": "mega",
+            "currentPrice": 224.5
+          },
+          "summary": {
+            "totalTrades": 42,
+            "buyCount": 28,
+            "sellCount": 14,
+            "exchangeCount": 0,
+            "estimatedVolumeUsd": 5200000.0,
+            "estimatedNetFlowUsd": 1800000.0,
+            "firstTrade": "2023-01-15",
+            "lastTrade": "2026-08-10",
+            "memberCount": 18
+          },
+          "items": [],
+          "cursor": 0,
+          "count": 0,
+          "total": 0,
+          "analytics": {
+            "window": "3m",
+            "granularity": "week",
+            "asOf": "2026-08-20T00:00:00Z",
+            "estimatedAmounts": true,
+            "summary": {
+              "totalTrades": 10,
+              "buyCount": 7,
+              "sellCount": 3,
+              "memberCount": 6,
+              "estVolumeUsd": 1200000.0,
+              "estNetFlowUsd": 400000.0,
+              "netSentiment": 0.7,
+              "firstTrade": "2026-05-20",
+              "lastTrade": "2026-08-10"
+            },
+            "series": [
+              {
+                "period": "2026-W30",
+                "buys": 3,
+                "sells": 1,
+                "estBuyVolUsd": 450000.0,
+                "estSellVolUsd": 100000.0
+              }
+            ],
+            "topBuyers": [
+              {
+                "filerId": "P000197",
+                "fullName": "Nancy Pelosi",
+                "partyBucket": "D",
+                "photoUrl": "https://example.test/pelosi.jpg",
+                "tradeCount": 4,
+                "estVolumeUsd": 650000.0
+              }
+            ],
+            "topSellers": [
+              {
+                "filerId": "M001157",
+                "fullName": "Michael T. McCaul",
+                "partyBucket": "R",
+                "photoUrl": null,
+                "tradeCount": 2,
+                "estVolumeUsd": 200000.0
+              }
+            ],
+            "backtest": {
+              "totalBuyEvents": 24,
+              "pricedDays": 500,
+              "minN": 5,
+              "horizons": [
+                {
+                  "days": 21,
+                  "tradeCount": 24,
+                  "n": 22,
+                  "medianReturn": 0.045,
+                  "avgReturn": 0.052,
+                  "winRate": 0.68,
+                  "medianExcess": 0.021,
+                  "avgExcess": 0.025
+                }
+              ]
+            }
+          }
+        }
+        """
+        let decoded = try JSONDecoder().decode(ClientTickerResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.ticker, "AAPL")
+        XCTAssertEqual(decoded.asset.companyName, "Apple Inc.")
+        XCTAssertEqual(decoded.summary.totalTrades, 42)
+        let analytics = try XCTUnwrap(decoded.analytics)
+        XCTAssertEqual(analytics.window, "3m")
+        XCTAssertEqual(analytics.granularity, "week")
+        XCTAssertEqual(analytics.summary?.buyCount, 7)
+        XCTAssertEqual(analytics.summary?.netSentiment, 0.7)
+        XCTAssertEqual(analytics.series?.first?.period, "2026-W30")
+        XCTAssertEqual(analytics.topBuyers?.first?.fullName, "Nancy Pelosi")
+        XCTAssertEqual(analytics.topSellers?.first?.filerId, "M001157")
+        XCTAssertEqual(analytics.backtest?.horizons?.first?.days, 21)
+        XCTAssertEqual(analytics.backtest?.horizons?.first?.winRate, 0.68)
+    }
+
+    func testAmountRangeFilterMatching() throws {
+        let rangeFilter = SubscriptionFilters(minAmount: 1001, maxAmount: 50000)
+        let rangePayload = rangeFilter.commandPayload
+        XCTAssertEqual(rangePayload["minAmount"] as? Int, 1001)
+        XCTAssertEqual(rangePayload["maxAmount"] as? Int, 50000)
+
+        let minOnlyFilter = SubscriptionFilters(minAmount: 50001, maxAmount: nil)
+        let minPayload = minOnlyFilter.commandPayload
+        XCTAssertEqual(minPayload["minAmount"] as? Int, 50001)
+        XCTAssertNil(minPayload["maxAmount"])
+
+        let maxOnlyFilter = SubscriptionFilters(minAmount: nil, maxAmount: 100000)
+        let maxPayload = maxOnlyFilter.commandPayload
+        XCTAssertNil(maxPayload["minAmount"])
+        XCTAssertEqual(maxPayload["maxAmount"] as? Int, 100000)
+
+        let emptyFilter = SubscriptionFilters(minAmount: nil, maxAmount: nil)
+        let emptyPayload = emptyFilter.commandPayload
+        XCTAssertNil(emptyPayload["minAmount"])
+        XCTAssertNil(emptyPayload["maxAmount"])
+    }
+
+    func testTickerIncludeAnalyticsQueryParam() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: nil),
+            session: session
+        )
+        let capture = RequestCapture()
+        MockURLProtocol.handler = { request in
+            capture.record(request.url)
+            return Self.response(
+                for: request,
+                json: """
+                {
+                  "ticker": "NVDA",
+                  "asset": { "ticker": "NVDA" },
+                  "summary": {},
+                  "items": [],
+                  "cursor": 0,
+                  "count": 0,
+                  "total": 0,
+                  "analytics": {
+                    "window": "1y",
+                    "granularity": "month",
+                    "estimatedAmounts": true
+                  }
+                }
+                """
+            )
+        }
+
+        let result = try await client.ticker(
+            "NVDA",
+            window: "1y",
+            include: "analytics"
+        )
+
+        let recordedURL = try XCTUnwrap(capture.last(pathContains: "/ticker/NVDA"))
+        let components = URLComponents(url: recordedURL, resolvingAgainstBaseURL: false)
+        let includeParam = components?.queryItems?.first(where: { $0.name == "include" })?.value
+        let windowParam = components?.queryItems?.first(where: { $0.name == "window" })?.value
+
+        XCTAssertEqual(includeParam, "analytics")
+        XCTAssertEqual(windowParam, "1y")
+        XCTAssertEqual(result.ticker, "NVDA")
+        XCTAssertEqual(result.analytics?.window, "1y")
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

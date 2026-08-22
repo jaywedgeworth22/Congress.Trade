@@ -333,7 +333,8 @@ final class CongressTradeAPIClient {
         to: String? = nil,
         chamber: String? = nil,
         party: String? = nil,
-        type: String? = nil
+        type: String? = nil,
+        include: String? = nil
     ) async throws -> ClientTickerResponse {
         let encoded = ticker.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ticker
         guard var components = URLComponents(
@@ -347,6 +348,7 @@ final class CongressTradeAPIClient {
         if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
         if let party, !party.isEmpty { items.append(URLQueryItem(name: "party", value: party)) }
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let include, !include.isEmpty { items.append(URLQueryItem(name: "include", value: include)) }
         if !items.isEmpty { components.queryItems = items }
         guard let url = components.url else { throw APIError.invalidResponse }
         return try await request(url)
@@ -473,6 +475,23 @@ final class CongressTradeAPIClient {
             }
             throw error
         }
+    }
+
+    /// Fetches a single trade by ID (`GET /api/client/v1/trade/:id`).
+    func trade(id: String) async throws -> ClientTrade {
+        let envelope: SingleTradeEnvelope = try await get("trade/\(id)")
+        if let item = envelope.item {
+            return item
+        }
+        if let first = envelope.items?.first {
+            return first
+        }
+        throw APIError.invalidResponse
+    }
+
+    private struct SingleTradeEnvelope: Decodable {
+        let item: ClientTrade?
+        let items: [ClientTrade]?
     }
 
     private struct Ack: Decodable {}

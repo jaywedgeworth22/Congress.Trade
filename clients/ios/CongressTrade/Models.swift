@@ -610,6 +610,23 @@ struct ClientTickerResponse: Decodable {
     let cursor: Int
     let count: Int
     let total: Int
+    let analytics: ClientTickerAnalytics?
+
+    enum CodingKeys: String, CodingKey {
+        case ticker, asset, summary, items, cursor, count, total, analytics
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ticker = try container.decode(String.self, forKey: .ticker)
+        asset = try container.decode(TickerAsset.self, forKey: .asset)
+        summary = try container.decode(TickerSummary.self, forKey: .summary)
+        items = try container.decodeIfPresent([ClientTrade].self, forKey: .items) ?? []
+        cursor = try container.decodeIfPresent(Int.self, forKey: .cursor) ?? 0
+        count = try container.decodeIfPresent(Int.self, forKey: .count) ?? items.count
+        total = try container.decodeIfPresent(Int.self, forKey: .total) ?? items.count
+        analytics = try container.decodeIfPresent(ClientTickerAnalytics.self, forKey: .analytics)
+    }
 
     struct TickerAsset: Decodable {
         let ticker: String
@@ -635,6 +652,65 @@ struct ClientTickerResponse: Decodable {
         let firstTrade: String?
         let lastTrade: String?
         let memberCount: Int?
+    }
+}
+
+struct ClientTickerAnalytics: Decodable {
+    let window: String?
+    let granularity: String?
+    let asOf: String?
+    let estimatedAmounts: Bool?
+    let summary: WindowSummary?
+    let series: [SeriesPoint]?
+    let topBuyers: [Trader]?
+    let topSellers: [Trader]?
+    let backtest: Backtest?
+
+    struct WindowSummary: Decodable {
+        let totalTrades: Int?
+        let buyCount: Int?
+        let sellCount: Int?
+        let memberCount: Int?
+        let estVolumeUsd: Double?
+        let estNetFlowUsd: Double?
+        let netSentiment: Double?
+        let firstTrade: String?
+        let lastTrade: String?
+    }
+
+    struct SeriesPoint: Decodable {
+        let period: String?
+        let buys: Int?
+        let sells: Int?
+        let estBuyVolUsd: Double?
+        let estSellVolUsd: Double?
+    }
+
+    struct Trader: Decodable {
+        let filerId: String?
+        let fullName: String?
+        let partyBucket: String?
+        let photoUrl: String?
+        let tradeCount: Int?
+        let estVolumeUsd: Double?
+    }
+
+    struct Backtest: Decodable {
+        let totalBuyEvents: Int?
+        let pricedDays: Int?
+        let minN: Int?
+        let horizons: [Horizon]?
+
+        struct Horizon: Decodable {
+            let days: Int?
+            let tradeCount: Int?
+            let n: Int?
+            let medianReturn: Double?
+            let avgReturn: Double?
+            let winRate: Double?
+            let medianExcess: Double?
+            let avgExcess: Double?
+        }
     }
 }
 

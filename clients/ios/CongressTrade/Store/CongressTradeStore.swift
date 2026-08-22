@@ -973,6 +973,30 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    /// Retrieves a trade by ID, checking the local SwiftData cache first,
+    /// then in-memory feed items, and falling back to `GET /trade/:id`.
+    func fetchTrade(id: String) async -> ClientTrade? {
+        let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanId.isEmpty else { return nil }
+
+        if let context = modelContext {
+            let descriptor = FetchDescriptor<ClientTrade>(
+                predicate: #Predicate { $0.id == cleanId }
+            )
+            if let cached = try? context.fetch(descriptor).first {
+                return cached
+            }
+        }
+        if let memoryTrade = feed?.items.first(where: { $0.id == cleanId }) {
+            return memoryTrade
+        }
+        do {
+            return try await api.trade(id: cleanId)
+        } catch {
+            return nil
+        }
+    }
+
     private static func syncFilterKey(
         chambers: Set<ChamberFilter>,
         range: TimeRange,

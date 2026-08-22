@@ -6356,3 +6356,82 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     expect(DASHBOARD_HTML).toContain('.acct-hamburger {\n    width:44px; height:44px;');
   });
 });
+
+describe('web frontend bug fixes, accessibility enhancements, and mobile polish', () => {
+  it('routes common politician names and mixed-case queries to memberName rather than ticker', () => {
+    const chamberAll = DASHBOARD_HTML.match(/var CHAMBER_ALL = \[[^\]]*\];/);
+    const polDict = DASHBOARD_HTML.match(/var COMMON_POLITICIAN_NAMES = \{[\s\S]*?\n\};/);
+    if (!chamberAll || !polDict) throw new Error('Declarations not found in DASHBOARD_HTML');
+    const [applySearchToServerParamsSrc] = loadDashboardFunctions(['applySearchToServerParams']);
+    const factory = new Function(
+      'US_STATE_ABBR',
+      'US_STATE_NAME_TO_ABBR',
+      [chamberAll[0], polDict[0], applySearchToServerParamsSrc].join('\n\n') + '\nreturn applySearchToServerParams;',
+    );
+    const applySearchToServerParams = factory({}, {}) as (p: URLSearchParams, q: string) => void;
+
+    // Common politician names -> memberName, not ticker
+    for (const name of ['Brown', 'brown', 'BROWN', 'Scott', 'scott', 'SCOTT', 'Young', 'young', 'YOUNG', 'Pelosi', 'Nancy Pelosi']) {
+      const p = new URLSearchParams();
+      applySearchToServerParams(p, name);
+      expect(p.get('memberName'), `Expected "${name}" to set memberName`).toBe(name);
+      expect(p.has('ticker'), `Expected "${name}" not to set ticker`).toBe(false);
+    }
+
+    // Explicit all-uppercase ticker symbols not in politician list -> ticker
+    for (const tkr of ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'GOOGL']) {
+      const p = new URLSearchParams();
+      applySearchToServerParams(p, tkr);
+      expect(p.get('ticker'), `Expected "${tkr}" to set ticker`).toBe(tkr);
+      expect(p.has('memberName'), `Expected "${tkr}" not to set memberName`).toBe(false);
+    }
+
+    // Multi-token: name + ticker
+    const pMulti = new URLSearchParams();
+    applySearchToServerParams(pMulti, 'Pelosi NVDA');
+    expect(pMulti.get('memberName')).toBe('Pelosi');
+    expect(pMulti.get('ticker')).toBe('NVDA');
+  });
+
+  it('includes viewport-fit=cover in the dashboard viewport meta tag', () => {
+    expect(DASHBOARD_HTML).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />');
+  });
+
+  it('ensures dark mode badge contrast by setting .tag.B, .tag.P and .tag.E to dark text', () => {
+    expect(DASHBOARD_HTML).toMatch(/\.tag\.B,\s*\.tag\.P\s*\{[^}]*color:\s*#080c17/);
+    expect(DASHBOARD_HTML).toMatch(/\.tag\.E\s*\{[^}]*color:\s*#080c17/);
+  });
+
+  it('provides accessibility attributes (th scope="col", aria-sort, role="button", tabindex="0") on secondary and directory table headers', () => {
+    expect(DASHBOARD_HTML).toContain('<tr id="peopleHead">');
+    expect(DASHBOARD_HTML).toContain('<tr id="assetsHead">');
+    expect(DASHBOARD_HTML).toMatch(/<th[^>]*scope="col"[^>]*data-sort="name"[^>]*aria-sort="none"[^>]*tabindex="0"[^>]*role="button"/);
+    expect(DASHBOARD_HTML).toContain('syncAssetsSortIndicators');
+    expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', ASSETS_SORT.dir > 0 ? 'ascending' : 'descending');");
+    expect(DASHBOARD_HTML).toMatch(/<table id="tableTrTrending">[\s\S]*?<th scope="col"/);
+  });
+
+  it('formats usdC currency without negative zero', () => {
+    const [usdCSrc] = loadDashboardFunctions(['usdC']);
+    const usdC = new Function(usdCSrc + '\nreturn usdC;')() as (n: number) => string;
+
+    expect(usdC(0)).toBe('$0');
+    expect(usdC(-0)).toBe('$0');
+    expect(usdC(-0.01)).toBe('$0');
+    expect(usdC(-0.4)).toBe('$0');
+    expect(usdC(-1000)).toBe('-$1.0k');
+    expect(usdC(1500000)).toBe('$1.5m');
+  });
+
+  it('locks body scroll when drawers and modals are opened', () => {
+    expect(DASHBOARD_HTML).toContain('body.drawer-open { overflow: hidden; }');
+    expect(DASHBOARD_HTML).toContain('syncBodyScrollLock()');
+  });
+
+  it('debounces directory search by 150ms and syncs directory mode and query to URL', () => {
+    expect(DASHBOARD_HTML).toContain('directorySearchTimer = setTimeout(');
+    expect(DASHBOARD_HTML).toContain('150);');
+    expect(DASHBOARD_HTML).toContain('syncDirectoryUrl()');
+    expect(DASHBOARD_HTML).toContain("u.searchParams.set('dmode', DIRECTORY_MODE)");
+  });
+});
