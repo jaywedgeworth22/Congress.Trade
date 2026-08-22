@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Foundation
 import SwiftData
+import UIKit
 import XCTest
 @testable import CongressTrade
 
@@ -119,6 +120,18 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertTrue(line.hasSuffix("agency"))
         XCTAssertFalse(line.hasSuffix("."))
         XCTAssertTrue(line.contains("independent/private service not affiliated"))
+    }
+
+    func testHeaderChromeIsOpaqueCardNotTranslucentPanel() {
+        AppTheme.currentPalette = .light
+        // Solid white header/filter chrome.  panel is 92% white and composites
+        // over the cool page as a blue wash (owner screenshots 2026-08-22).
+        XCTAssertEqual(UIColor(AppTheme.headerChrome).cgColor.alpha, 1.0, accuracy: 0.001)
+        XCTAssertEqual(UIColor(AppTheme.card).cgColor.alpha, 1.0, accuracy: 0.001)
+        XCTAssertLessThan(UIColor(AppTheme.panel).cgColor.alpha, 0.99)
+        AppTheme.currentPalette = .dark
+        XCTAssertEqual(UIColor(AppTheme.headerChrome).cgColor.alpha, 1.0, accuracy: 0.001)
+        AppTheme.currentPalette = .light
     }
 
     func testSignedFlowFormatUsesUnicodeMinusOnOneLine() {

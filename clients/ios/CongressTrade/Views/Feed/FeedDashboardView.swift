@@ -147,41 +147,39 @@ struct FeedDashboardView: View {
         let trades = filteredTrades
         return NavigationStack {
             VStack(spacing: 0) {
-                DisclaimerBanner(isExpanded: $disclaimerExpanded)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-
-                VStack(spacing: 6) {
-                    FeedControlBar()
-                    TradesUnifiedSearchField(
-                        text: $searchText,
-                        countLabel: tradeCountLabel(showing: trades.count),
-                        focused: $searchFocused,
-                        status: tradesSearchSlotStatus,
-                        onSubmit: { applyUnifiedSearch() },
-                        onClear: {
-                            searchText = ""
-                            Task {
-                                await store.setSearch(nil)
-                                await store.setPoliticianFilter("")
-                                await store.setAssetFilter("")
-                            }
-                        },
-                        onReload: { Task { await store.refresh() } }
-                    )
-                    .onChange(of: searchText) { _, _ in
-                        scheduleSearchDebounce()
-                    }
-                    .onChange(of: tradesSearchSlotStatus) { _, status in
-                        if status != nil { searchFocused = false }
+                FeedStickyBar {
+                    VStack(spacing: 6) {
+                        FeedControlBar()
+                        TradesUnifiedSearchField(
+                            text: $searchText,
+                            countLabel: tradeCountLabel(showing: trades.count),
+                            focused: $searchFocused,
+                            status: tradesSearchSlotStatus,
+                            onSubmit: { applyUnifiedSearch() },
+                            onClear: {
+                                searchText = ""
+                                Task {
+                                    await store.setSearch(nil)
+                                    await store.setPoliticianFilter("")
+                                    await store.setAssetFilter("")
+                                }
+                            },
+                            onReload: { Task { await store.refresh() } }
+                        )
+                        .onChange(of: searchText) { _, _ in
+                            scheduleSearchDebounce()
+                        }
+                        .onChange(of: tradesSearchSlotStatus) { _, status in
+                            if status != nil { searchFocused = false }
+                        }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
 
             ScrollView {
                 VStack(spacing: 8) {
+                    if disclaimerExpanded {
+                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    }
                     if trades.isEmpty && !store.isRefreshing {
                         ContentUnavailableView {
                             Label(
@@ -269,6 +267,7 @@ struct FeedDashboardView: View {
             }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
+            .ctSolidFeedHeader()
             .toolbar {
                 // Exactly Trends' three slots — ⓘ leading, brand principal,
                 // hamburger trailing. CSV export moved to the header menu and
@@ -441,6 +440,26 @@ struct BrandTitle: View {
             .frame(height: 46)
             .frame(maxWidth: 330)
             .accessibilityLabel("Congress.Trade")
+    }
+}
+
+/// Opaque strip that pins the filter pills under the wordmark.
+///
+/// Not `ultraThinMaterial` and not `AppTheme.panel` (92% white): both
+/// composite over the cool page and read as a blue wash (owner screenshots
+/// 2026-08-22).  Keep this *outside* the vertical `ScrollView` so the pills
+/// stay put on scroll, glued to the light header instead of sitting in the
+/// grey page with a gap under the title.
+struct FeedStickyBar<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, 16)
+            .padding(.top, 2)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.headerChrome)
     }
 }
 

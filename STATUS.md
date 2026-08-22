@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-22 GROK — Filter bar in the opaque light header
+
+Owner screenshots: pills sat on the cool page with a gap under the wordmark
+and a blue wash from `ultraThinMaterial`.  They now live in
+`FeedStickyBar` (solid white, glued to the nav bar, outside the scroll).
+Disclaimer is in the scrolling content.  Receipt:
+`docs/rollouts/2026-08-22-filter-header-sticky.md`.  Board `06ddcb30`.
+
 ## 2026-08-21 GROK — Confirm-then-chunk leftover primary (H-2025-8221264)
 
 Filing detail served 570 rows for Khanna `H-2025-8221264` (209 truncated
