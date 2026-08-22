@@ -2999,9 +2999,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
   // --- POST /review/:docId/unpublish --------------------------------------
   // Retract a previously-published filing: soft-delete its pipeline transactions
-  // (primary/manual/local_mac/server_cpu), revert the filing to 'needs_review', and re-open the review
-  // item so it returns to the pending queue. Soft-delete (not hard delete) keeps
-  // history and lets every feed/analytics/stream read exclude the rows via
+  // (primary/manual/local_mac/server_cpu), revert the filing to 'needs_review',
+  // and re-open the review item so it returns to the pending queue. Soft-delete
+  // (not hard delete) keeps history and lets every feed/analytics/stream/filing-detail
+  // read exclude the rows via
   // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
   // recalled — this stops the rows being served going forward.
   // Body: { reviewRevision: number, reason?: string }
