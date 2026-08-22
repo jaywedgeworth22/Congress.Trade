@@ -19,6 +19,15 @@ describe('storedReviewTransactionCount', () => {
     expect(storedReviewTransactionCount(null)).toBe(0);
     expect(storedReviewTransactionCount('not-json')).toBe(0);
   });
+
+  it('ignores claimed transactionCount when the stored payload is truncated', () => {
+    const truncated = JSON.stringify({
+      truncated: true,
+      transactionCount: 501,
+      transactions: Array.from({ length: 200 }, (_, i) => ({ assetName: `Row ${i}` })),
+    });
+    expect(storedReviewTransactionCount(truncated)).toBe(200);
+  });
 });
 
 describe('storedReviewBlocksSmallerVisionSubmit', () => {
@@ -91,5 +100,23 @@ describe('storedReviewBlocksSmallerVisionSubmit', () => {
       chrome,
       40,
     )).toBe(true);
+  });
+
+  it('does not let a truncated 200-of-501 payload block a complete 265/409 vision read', () => {
+    const truncated = JSON.stringify({
+      truncated: true,
+      transactionCount: 501,
+      transactions: Array.from({ length: 200 }, (_, i) => ({ assetName: `Row ${i}` })),
+    });
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      truncated,
+      265,
+    )).toBe(false);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      truncated,
+      409,
+    )).toBe(false);
   });
 });
