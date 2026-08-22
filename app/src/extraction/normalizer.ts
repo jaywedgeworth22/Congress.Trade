@@ -140,7 +140,10 @@ function hardFlagsBlockingPublish(
   localVision: boolean,
 ): string[] {
   return flags.filter((flag) => {
-    if (localVision && flag === 'no_amount') return false;
+    // Local Grok/Gemini reads of long PTR grids often miss one checkbox or
+    // date.  Holding the whole filing for that one row is how Khanna
+    // H-2025-8221264 (209 dated lots + one blank SAP line) sat in review.
+    if (localVision && (flag === 'no_amount' || flag === 'missing_tx_date')) return false;
     return HARD_FAILURE_FLAG_SET.has(flag);
   });
 }
@@ -341,7 +344,8 @@ export async function normalize(
   const localVision = isLocalVisionExtractor(extractorName);
   const gateRows = localVision
     ? flagged.filter((f) => hardFlagsBlockingPublish(f.flags, true).length === 0
-      && !f.flags.includes('no_amount'))
+      && !f.flags.includes('no_amount')
+      && !f.flags.includes('missing_tx_date'))
     : flagged;
   const gateMinConfidence = gateRows.length
     ? Math.min(...gateRows.map((f) => f.tx.confidence))
@@ -387,7 +391,12 @@ export async function normalize(
     }
   }
 
-  const transactions = flagged.map((f) => f.tx);
+  // Local vision: persist siblings even when one grid row omitted a date.
+  // Do not insert the undated row into the live feed.
+  const persistFlagged = localVision
+    ? flagged.filter((f) => !f.flags.includes('missing_tx_date'))
+    : flagged;
+  const transactions = persistFlagged.map((f) => f.tx);
 
   // Capture the queue version before any material state transition. The
   // review-open and publish batches below are conditional on this snapshot, so
@@ -779,7 +788,11 @@ export function scoreFields(
     txType = 'B';
   }
 
-  // --- tx_date sanity: must be <= filed_date and <= today -------------------
+  // --- tx_date sanity -------------------------------------------------------
+  // Hard-fail only dates that have not happened yet.  A PTR can list a trade
+  // a few days after Clerk's filed_date (signature stamp vs transaction
+  // box) — Pete Sessions H-2025-20033330 signed 2025-10-22 with a 10/24/2025
+  // purchase.  Parking that as future_tx_date hid a real disclosed lot.
   const today = new Date().toISOString().slice(0, 10);
   if (!fields.txDate) {
     flags.push('missing_tx_date');
@@ -788,7 +801,7 @@ export function scoreFields(
     flags.push('future_tx_date');
     confidence *= PENALTY_FUTURE_TX_DATE;
   } else if (filedDate && fields.txDate > filedDate) {
-    flags.push('future_tx_date');
+    flags.push('tx_after_filed_date');
     confidence *= PENALTY_FUTURE_TX_DATE;
   }
 

@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-21 GROK — Review-queue autonomy (blank row / filed-date)
+
+One undated Gemini row held Khanna `H-2025-8221264` (now 209 live).  Sessions
+`H-2025-20033330` parked because 10/24 > filed 10/22.  CPU chrome floods
+blocked later vision submits.  Receipt:
+`docs/rollouts/2026-08-21-review-drain-autonomy.md`.  Board `e9458ef2`.
+
 ## 2026-08-21 CURSOR-BUGBOT — Score unrotated page before upright-rotate
 
 #2146 scored only 90/270 and defaulted 270 when OCR was silent, so an

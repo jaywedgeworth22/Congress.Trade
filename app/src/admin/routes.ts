@@ -1016,9 +1016,8 @@ function validateReviewEdits(
     if (!validCalendarDate(txDate)) {
       return { error: `edits[${index}].txDate must be a valid non-future YYYY-MM-DD date` };
     }
-    if (filedDate && txDate > filedDate.slice(0, 10)) {
-      return { error: `edits[${index}].txDate cannot be later than the filing date` };
-    }
+    // Allow a disclosed trade a few days after Clerk's filed_date (signature
+    // stamp).  Still refuse dates that have not happened yet.
     const ticker = typeof e.ticker === 'string' ? e.ticker.trim() : '';
     const assetName = typeof e.assetName === 'string' ? e.assetName.trim() : '';
     if (!ticker && !assetName) {
@@ -5773,6 +5772,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           existingReview.reason,
           existingReview.payload,
           parsedTx.length,
+          parsedTx.filter((tx) => typeof tx.txDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tx.txDate)).length,
         )
       ) {
         return c.json({

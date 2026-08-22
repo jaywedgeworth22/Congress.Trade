@@ -6053,7 +6053,8 @@ var REASON_LABELS = {
   invalid_bracket: 'Dollar amount didn’t match a standard disclosure range',
   no_amount: 'No dollar amount could be read',
   invalid_amount: 'Dollar amount looked malformed (couldn’t be read as a range)',
-  future_tx_date: 'Trade date is after the filing date',
+  future_tx_date: 'Trade date is in the future',
+  tx_after_filed_date: 'Trade date is after the filing stamp',
   bad_tx_type: 'Transaction type was unclear (not buy / sell / exchange)'
 };
 function parseReviewPayload(payload) {
