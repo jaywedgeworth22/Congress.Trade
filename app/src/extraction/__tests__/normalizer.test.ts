@@ -614,14 +614,14 @@ describe('normalize', () => {
     expect(cap.insertedTx).toHaveLength(1);
   });
 
-  it('flags a tx_date after the filing filed_date', async () => {
-    const { env } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+  it('does not park a disclosed trade a few days after Clerk filed_date', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const result = await normalize(env, filing({ filedDate: '2024-06-01' }), [
       tx({ txDate: '2024-06-14' }),
     ]);
-    // 0.97 * 0.7 (future date) = 0.679 < threshold => review.
-    expect(result.needsReview).toBe(true);
-    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
   });
 
   it('routes empty extraction to review', async () => {
@@ -753,15 +753,71 @@ describe('normalize', () => {
     expect(result1.needsReview).toBe(true);
     expect(String(cap1.reviewRows[0][1])).toContain('invalid_amount');
 
-    // 2. Future trade date (txDate > filedDate)
+    // 2. Trade date after today still parks (a date that has not happened).
     const { env: env2, cap: cap2 } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
     const result2 = await normalize(env2, filing({ filedDate: '2024-05-01' }), [
       tx({
-        txDate: '2024-05-15',
+        txDate: '2099-05-15',
       }),
     ]);
     expect(result2.needsReview).toBe(true);
     expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
+  });
+
+  it('local vision publishes dated siblings when one grid row omitted the date', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'META', name: 'Meta Platforms', aliases: '[]' }]);
+    const result = await normalize(
+      env,
+      filing({ docKind: 'scanned_pdf', extractor: 'local_grok_cli_v1', filedDate: '2025-12-08' }),
+      [
+        tx({
+          assetName: 'Meta Platforms, Inc. -Class A CMN Class A',
+          ticker: 'META',
+          txDate: '2025-11-07',
+          amountMin: 15001,
+          amountMax: 50000,
+          confidence: 0.97,
+          rawText: 'Meta Platforms, Inc. -Class A CMN Class A P $15,001 - $50,000',
+        }),
+        tx({
+          assetName: 'Sap Ag CMN',
+          ticker: null,
+          txDate: null,
+          amountMin: null,
+          amountMax: null,
+          confidence: 0.97,
+          rawText: 'Sap Ag CMN',
+        }),
+      ],
+      { extractor: 'local_grok_cli_v1', source: 'local_mac' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
+  });
+
+  it('publishes a disclosed trade a few days after Clerk filed_date when the date is not in the future', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({ filedDate: '2025-10-22', docKind: 'text_pdf', extractor: 'textPdf' }),
+      [
+        tx({
+          assetName: 'VLG FL CDD #14 SPL Assmnt Rev',
+          ticker: null,
+          txDate: '2025-10-24',
+          txType: 'P',
+          amountMin: 15001,
+          amountMax: 50000,
+          confidence: 0.9,
+          rawText: 'JT VLG FL CDD #14 SPL ASSMNT REV [CS] P 10/24/2025 $15,001 - $50,000',
+        }),
+      ],
+      { extractor: 'textPdf' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(cap.insertedTx).toHaveLength(1);
   });
 
   it('publishes an oversized extraction of distinct, varied-confidence rows', async () => {

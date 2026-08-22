@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   storedReviewBlocksSmallerVisionSubmit,
+  storedReviewDatedCount,
   storedReviewTransactionCount,
 } from '../visionSubmitGuard.ts';
 
@@ -68,5 +69,27 @@ describe('storedReviewBlocksSmallerVisionSubmit', () => {
       payload(12),
       14,
     )).toBe(false);
+  });
+
+  it('allows a shorter vision submit when it has more dated rows than a chrome flood', () => {
+    const chrome = JSON.stringify({
+      transactionCount: 421,
+      transactions: Array.from({ length: 200 }, (_, i) => ({
+        assetName: i < 3 ? 'Public Offering?' : `Row ${i}`,
+        txDate: i === 0 ? '2025-01-02' : null,
+      })),
+    });
+    expect(storedReviewDatedCount(chrome)).toBe(1);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      chrome,
+      40,
+      38,
+    )).toBe(false);
+    expect(storedReviewBlocksSmallerVisionSubmit(
+      'agreement_cascade_unresolved',
+      chrome,
+      40,
+    )).toBe(true);
   });
 });

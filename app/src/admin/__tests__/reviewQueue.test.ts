@@ -363,7 +363,7 @@ describe('review queue admin API', () => {
       { ...base, txDate: undefined },
       { ...base, owner: 'somebody' },
       { ...base, isOption: 'false' },
-      { ...base, txDate: '2026-06-21' },
+      { ...base, txDate: '2099-01-01' },
     ];
     for (const edit of invalid) {
       const res = await app.request(
