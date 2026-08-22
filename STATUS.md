@@ -16,6 +16,13 @@ of retrying; pending excludes that stamp on every ingest_status.  `pm2
 vision-worker` is STOPPED until this ships + the live `~/vision-worker`
 copy is updated.  Receipt:
 `docs/rollouts/2026-08-21-vision-loop-overhaul.md`.  Board `72852a1e`.
+## 2026-08-21 GROK — Web filter chips in the white header
+
+Owner screenshots: on the website the pills sat on cool-grey `#eff3f8`, too
+far under CONGRESS TRADE, and on scroll pinned on the header divider.
+Web strip is now opaque white, flush under the lockup, sticky at
+`--ct-header-h`.  iOS for the same shots is #2170.  Receipt:
+`docs/rollouts/2026-08-21-filter-sticky-white.md`.  Board `ee0a55b3`.
 
 ## 2026-08-21 GROK — Confirm-then-chunk leftover primary (H-2025-8221264)
 

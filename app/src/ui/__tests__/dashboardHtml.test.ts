@@ -2626,10 +2626,10 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
     expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
-    expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
     expect(DASHBOARD_HTML).toContain("if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);");
     expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
-    expect(DASHBOARD_HTML).toContain('main { max-width: none; min-width:0; overflow-x:clip;');
+    expect(DASHBOARD_HTML).not.toContain('main { max-width: none; min-width:0; overflow-x:clip;');
   });
 
   it('spells Top Performers scope as 5+ buys and +/-200% cap per trade', () => {
@@ -4404,7 +4404,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     // The <=720px block used a `padding:` SHORTHAND that silently reset
     // padding-bottom to 22px for nearly every phone (a real regression, not
     // just "overshoot") — it now re-asserts the same 70px explicitly.
-    expect(DASHBOARD_HTML).toContain('main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
+    expect(DASHBOARD_HTML).toContain('main { padding: 0 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
     // Footer gets its OWN extra ~2 lines (~32px) of bottom padding on top of
     // its own base, independent of main's general buffer, at both mobile
     // breakpoints (base 30px -> 62px total; tighter 26px block -> 58px total).
@@ -5707,13 +5707,16 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
     expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
-    expect(DASHBOARD_HTML).toContain('margin-top: calc(-1 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
     expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
     expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');
-    expect(DASHBOARD_HTML).toContain(':root { --ct-main-pad: 22px; }');
+    expect(DASHBOARD_HTML).toContain(':root { --ct-main-pad: 14px; }');
+    expect(DASHBOARD_HTML).toContain('main { padding: 0 var(--ct-main-pad, 35px) var(--ct-main-pad, 35px);');
+    expect(DASHBOARD_HTML).toContain('#view-people, #view-review, #view-subs, #view-admin {\n    padding-top: var(--ct-main-pad, 35px);');
     expect(DASHBOARD_HTML).toContain('function syncChromeMetrics()');
     expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-header-h'");
     expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-main-pad'");
+    expect(DASHBOARD_HTML).toContain('getComputedStyle(mainEl).paddingLeft');
   });
 
   it('defines showView so account-menu Delivery / Admin / Review actually switch tabs', () => {
