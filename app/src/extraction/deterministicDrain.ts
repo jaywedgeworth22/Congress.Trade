@@ -295,7 +295,8 @@ export async function maybeRunDeterministicReviewDrain(
 /**
  * A5 / C8: re-queue rejected scanned filings that still have raw bytes for
  * local vision (never OpenRouter). Bounded, idempotent, one attempt budget
- * stamp so we do not loop forever.
+ * stamp so we do not loop forever.  Skip `local_vision_exhausted` — the Mac
+ * worker already spent its three tries (often a genuine NOTHING TO REPORT).
  */
 export interface LocalVisionRequeueResult {
   requeued: number;
@@ -323,7 +324,6 @@ export async function sweepRejectedScannedForLocalVision(
         )
         AND (
           COALESCE(f.error, '') LIKE '%ocr_unusable%'
-          OR COALESCE(f.error, '') LIKE '%local_vision_exhausted%'
           OR COALESCE(f.error, '') LIKE '%server_cpu%'
           OR COALESCE(rq.reason, '') LIKE '%ocr_unusable%'
           OR COALESCE(rq.reason, '') LIKE '%form_chrome%'
@@ -332,6 +332,7 @@ export async function sweepRejectedScannedForLocalVision(
           OR COALESCE(rq.resolution_reason, '') LIKE '%form_chrome%'
         )
         AND COALESCE(f.error, '') NOT LIKE '%local_vision_requeue_once%'
+        AND COALESCE(f.error, '') NOT LIKE '%local_vision_exhausted%'
       ORDER BY f.first_seen_at ASC
       LIMIT ?`,
     [limit],

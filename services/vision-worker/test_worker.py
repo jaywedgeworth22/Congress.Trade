@@ -306,6 +306,55 @@ class TruncatedLocalCliTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(label, "local_grok_cli_v1")
 
+    def test_auto_skips_local_cli_when_over_max_pages(self):
+        previous_key = worker.OPENROUTER_API_KEY
+        previous_engine = worker.VISION_ENGINE
+        previous_cascade = worker.OPENROUTER_CASCADE_MODELS
+        previous_model = worker.OPENROUTER_MODEL
+        called: list[str] = []
+        cli_called = {"n": 0}
+
+        def fake_cli(_pages, _filing):
+            cli_called["n"] += 1
+            return [{"assetName": "should-not-run", "txType": "P"}]
+
+        def fake_openrouter(_pdf, _pages, _filing, model, _work_dir):
+            called.append(model)
+            if worker.model_uses_page_images(model):
+                return [{"assetName": "qwen-truncated", "txType": "P"}]
+            return [{"assetName": "page-20 stock", "txType": "P"}]
+
+        worker.OPENROUTER_API_KEY = "test-key"
+        worker.VISION_ENGINE = "auto"
+        worker.OPENROUTER_CASCADE_MODELS = worker.DEFAULT_CASCADE_MODELS
+        worker.OPENROUTER_MODEL = "x-ai/grok-4.5"
+        original_cli = worker.transcribe_with_local_cli
+        original_or = worker.transcribe_with_openrouter
+        worker.transcribe_with_local_cli = fake_cli
+        worker.transcribe_with_openrouter = fake_openrouter
+        try:
+            rows, label = worker.transcribe(
+                "/tmp/filing.pdf",
+                [f"/tmp/page-{i}.png" for i in range(12)],
+                {"doc_id": "khanna-24p", "chamber": "house"},
+                "/tmp",
+                total_pages=24,
+            )
+        finally:
+            worker.transcribe_with_local_cli = original_cli
+            worker.transcribe_with_openrouter = original_or
+            worker.OPENROUTER_API_KEY = previous_key
+            worker.VISION_ENGINE = previous_engine
+            worker.OPENROUTER_CASCADE_MODELS = previous_cascade
+            worker.OPENROUTER_MODEL = previous_model
+
+        self.assertEqual(cli_called["n"], 0)
+        self.assertEqual(called[0], "google/gemini-3.7-flash")
+        self.assertNotIn("qwen/qwen3-vl-8b-instruct", called)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["assetName"], "page-20 stock")
+        self.assertEqual(label, worker.extractor_label_for_model("google/gemini-3.7-flash"))
+
 
 class ParseAndValidateTest(unittest.TestCase):
     def test_wagner_ptr_gold_two_joint_muni_purchases(self):

@@ -44,6 +44,7 @@ Env:
   OPENROUTER_TIMEOUT_SEC   (default 600)
   MAX_DOCS_PER_POLL        (default 2)
   MAX_PAGES                (default 12 — cap page images sent to local CLI)
+  PDF_NATIVE_CHUNK_PAGES   (default 10 — split long PDFs for Gemini/Grok)
   MAX_ATTEMPTS             (default 3 — per-doc local-vision retries before park)
   BACKOFF_BASE_SEC         (default 90 — exponential: base * 2^(attempt-1))
   STATE_FILE               (default ~/vision-worker/attempt-state.json)
@@ -88,6 +89,9 @@ GROK_CLI_MAX_TURNS = int(os.getenv("GROK_CLI_MAX_TURNS", "8"))
 OPENROUTER_TIMEOUT_SEC = int(os.getenv("OPENROUTER_TIMEOUT_SEC", "600"))
 MAX_DOCS_PER_POLL = int(os.getenv("MAX_DOCS_PER_POLL", "2"))
 MAX_PAGES = int(os.getenv("MAX_PAGES", "12"))
+# Long attached-schedule PTRs (Khanna 15–34 pages) overflow one Gemini JSON
+# reply.  Chunk the PDF so each native-PDF call sees a bounded page window.
+PDF_NATIVE_CHUNK_PAGES = max(4, int(os.getenv("PDF_NATIVE_CHUNK_PAGES", "10")))
 MAX_ATTEMPTS = max(1, int(os.getenv("MAX_ATTEMPTS", "3")))
 BACKOFF_BASE_SEC = max(15, int(os.getenv("BACKOFF_BASE_SEC", "90")))
 EXHAUSTED_ALERT_THRESHOLD = max(1, int(os.getenv("EXHAUSTED_ALERT_THRESHOLD", "5")))
@@ -613,6 +617,74 @@ def render_pages(pdf_path: str, out_dir: str) -> tuple[list, int, str | None]:
     return pages, total, upright_pdf
 
 
+def pdfinfo_pages(pdf_path: str) -> int:
+    """Page count from poppler pdfinfo.  0 if the tool misses."""
+    try:
+        rc = subprocess.run(
+            ["pdfinfo", pdf_path],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    for line in (rc.stdout or "").splitlines():
+        if line.lower().startswith("pages:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return 0
+    return 0
+
+
+def split_pdf_chunks(pdf_path: str, work_dir: str, chunk_pages: int) -> list[str]:
+    """Split a PDF into sequential chunk files via pdfseparate/pdfunite.
+
+    Returns [original] when the file is already within chunk_pages or
+    poppler is missing — the caller then sends the whole PDF once.
+    """
+    total = pdfinfo_pages(pdf_path)
+    if total <= 0 or total <= chunk_pages:
+        return [pdf_path]
+    if not shutil.which("pdfseparate") or not shutil.which("pdfunite"):
+        logger.warning("pdfseparate/pdfunite missing — sending whole PDF (%d pages)", total)
+        return [pdf_path]
+    pages_dir = os.path.join(work_dir, "pdf-pages")
+    os.makedirs(pages_dir, exist_ok=True)
+    prefix = os.path.join(pages_dir, "p")
+    rc = subprocess.run(
+        ["pdfseparate", pdf_path, prefix + "-%d.pdf"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if rc.returncode != 0:
+        logger.warning("pdfseparate failed: %s", (rc.stderr or "")[:200])
+        return [pdf_path]
+    singles = []
+    for name in os.listdir(pages_dir):
+        if not name.startswith("p-") or not name.endswith(".pdf"):
+            continue
+        try:
+            n = int(name[2:-4])
+        except ValueError:
+            continue
+        singles.append((n, os.path.join(pages_dir, name)))
+    singles.sort()
+    if not singles:
+        return [pdf_path]
+    chunks: list[str] = []
+    for i in range(0, len(singles), chunk_pages):
+        group = [p for _, p in singles[i:i + chunk_pages]]
+        out = os.path.join(work_dir, f"chunk-{i // chunk_pages:02d}.pdf")
+        un = subprocess.run(
+            ["pdfunite", *group, out],
+            capture_output=True, text=True, timeout=60,
+        )
+        if un.returncode != 0 or not os.path.exists(out):
+            logger.warning("pdfunite failed chunk %s: %s", i, (un.stderr or "")[:200])
+            return [pdf_path]
+        chunks.append(out)
+    logger.info("split %s into %d PDF chunks of <=%d pages", pdf_path, len(chunks), chunk_pages)
+    return chunks
+
+
 def cascade_hit_is_terminal(model: str, total_pages: int, image_pages_available: int) -> bool:
     """False when a page-image model did not see every PDF page.
 
@@ -693,8 +765,8 @@ def validate_rows(rows) -> list:
             "txType": tx_type,
             "amountMin": amin_i,
             "amountMax": amax_i,
-            "isOption": bool(re.search(r"\b(put|call|option)\b", asset, re.I)),
-            "capGainsOver200": False,
+            "isOption": bool(o.get("isOption") or re.search(r"\b(put|call|option)\b", asset, re.I)),
+            "capGainsOver200": bool(o.get("capGainsOver200") or o.get("cap_gains_over_200")),
             "confidence": 0.97,
             "rawText": raw[:800],
             "description": note,
@@ -919,6 +991,64 @@ def transcribe_with_openrouter(
         logger.error("OPENROUTER_API_KEY is not set — cannot run OpenRouter fallback")
         return None
 
+    if not model_uses_page_images(model):
+        n_pages = pdfinfo_pages(pdf_path)
+        if n_pages > PDF_NATIVE_CHUNK_PAGES:
+            return transcribe_pdf_native_chunked(pdf_path, filing, model, work_dir, n_pages)
+
+    return transcribe_openrouter_one(pdf_path, pages, filing, model, work_dir)
+
+
+def transcribe_pdf_native_chunked(
+    pdf_path: str,
+    filing: dict,
+    model: str,
+    work_dir: str,
+    n_pages: int,
+) -> list | None:
+    """Gemini/Grok PDF-native over page chunks so a 34-page Khanna packet is complete."""
+    chunks = split_pdf_chunks(pdf_path, work_dir, PDF_NATIVE_CHUNK_PAGES)
+    if len(chunks) <= 1:
+        return transcribe_openrouter_one(pdf_path, [], filing, model, work_dir)
+    merged: list = []
+    any_hit = False
+    offset = 1
+    for chunk_pdf in chunks:
+        chunk_n = pdfinfo_pages(chunk_pdf) or PDF_NATIVE_CHUNK_PAGES
+        end = min(offset + chunk_n - 1, n_pages)
+        logger.info(
+            "PDF-native chunk model=%s pages=%d-%d/%d file=%s",
+            model, offset, end, n_pages, os.path.basename(chunk_pdf),
+        )
+        extra = (
+            f"\nThis attachment is pages {offset}-{end} of a {n_pages}-page filing. "
+            "Extract every transaction row on THESE pages only. "
+            "A cover that only says 'Please see the attached' has no rows.\n"
+        )
+        rows = transcribe_openrouter_one(
+            chunk_pdf, [], filing, model, work_dir, prompt_extra=extra,
+        )
+        if rows is None:
+            logger.warning("PDF-native chunk miss pages=%d-%d model=%s", offset, end, model)
+        elif rows:
+            any_hit = True
+            merged.extend(rows)
+        offset = end + 1
+    if any_hit:
+        logger.info("PDF-native chunked rows=%d model=%s pages=%d", len(merged), model, n_pages)
+        return merged
+    return None
+
+
+def transcribe_openrouter_one(
+    pdf_path: str,
+    pages: list,
+    filing: dict,
+    model: str,
+    work_dir: str,
+    prompt_extra: str = "",
+) -> list | None:
+    """Single OpenRouter completion for one PDF or one page-image set."""
     core = PROMPT_CORE.format(
         form_hint=form_hint_for(filing),
         filed_date=filing.get("filed_date") or "unknown",
@@ -931,6 +1061,8 @@ def transcribe_with_openrouter(
         ) + "\nPage images are attached in order. Forms may be rotated.\n"
     else:
         prompt = OPENROUTER_PROMPT.format(core=core)
+    if prompt_extra:
+        prompt = prompt + prompt_extra
 
     content_parts = openrouter_user_content(prompt, pdf_path, pages, model, work_dir)
     if not content_parts:
@@ -1014,10 +1146,25 @@ def transcribe(
         engine = "auto"
 
     skip_page_image_models = False
-    if engine in ("auto", "local_cli"):
+    page_total = len(pages) if total_pages is None else total_pages
+    # Khanna-style attached schedules are 15–34 pages.  Local CLI is capped
+    # at MAX_PAGES (12), so starting it burns up to GROK_CLI_TIMEOUT_SEC on
+    # a truncated read we will discard.  Skip straight to PDF-native.
+    skip_local_cli = (
+        engine == "auto"
+        and bool(OPENROUTER_API_KEY)
+        and MAX_PAGES > 0
+        and page_total > MAX_PAGES
+    )
+    if skip_local_cli:
+        logger.warning(
+            "skipping local CLI: %d pages exceeds MAX_PAGES=%d — PDF-native cascade",
+            page_total, MAX_PAGES,
+        )
+        skip_page_image_models = True
+    elif engine in ("auto", "local_cli"):
         rows = transcribe_with_local_cli(pages, filing)
         if rows is not None:
-            page_total = len(pages) if total_pages is None else total_pages
             # Same lock as a truncated Qwen hit (#2141): MAX_PAGES (12) is
             # short of a 13+ page scan, ingest publishes at 0.97, drain
             # skips scanned_pdf, later-page trades never land.  PDF-native
