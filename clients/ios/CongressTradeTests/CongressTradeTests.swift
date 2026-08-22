@@ -254,6 +254,27 @@ final class CongressTradeTests: XCTestCase {
 
         let response = try await client.preferences()
         XCTAssertEqual(response.preferences.watchlist, ["TSLA", "AMD"])
+        XCTAssertEqual(PushSettings(from: response.preferences.notificationSettings).mode, .filings)
+    }
+
+    func testPushSettingsParseWatchlistRulesAndAmountLabels() {
+        let json: [String: JSONValue] = [
+            "pushMode": .string("watchlist"),
+            "watchlistRules": .object([
+                "nvda": .object([
+                    "minAmount": .number(50001),
+                    "sides": .string("buys"),
+                ]),
+            ]),
+        ]
+        let settings = PushSettings(from: json)
+        XCTAssertEqual(settings.mode, .watchlist)
+        XCTAssertEqual(settings.watchlistRules["NVDA"]?.minAmount, 50001)
+        XCTAssertEqual(settings.watchlistRules["NVDA"]?.sides, .buys)
+        XCTAssertEqual(PushSettings.amountLabel(nil), "Any Amount")
+        XCTAssertEqual(PushSettings.amountLabel(15001), "$15,001+")
+        XCTAssertEqual(PushSettings.amountCutoffs.first, 1001)
+        XCTAssertEqual(PushAlertMode.allCases.map(\.label), ["Off", "New Filings", "Watchlist"])
     }
 
     func testRelativeStreamURLResolvesAgainstAPIOrigin() {

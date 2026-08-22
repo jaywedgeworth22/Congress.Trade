@@ -161,28 +161,19 @@ enum AppTheme {
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
-    /// Neutral "chrome" colour for bare icon glyphs that carry no semantic
-    /// meaning of their own and have no adjacent text — dropdown chevrons,
-    /// the sort-direction flip arrow, disclosure carets.  Same treatment as
-    /// the header ⓘ/≡ buttons' `headerGlyphGrey` (owner: leave those exactly
-    /// as they are; this is the same grey, reused for the rest of the chrome
-    /// family). A concrete `Color`, not the hierarchical `.secondary`
-    /// `ShapeStyle`: hierarchical styles resolve against the environment
-    /// tint, and `MainTabView` sets `.tint(.blue)` (App.swift), so
-    /// `.secondary` inside a `Menu`/`Button` renders accent blue instead of
-    /// grey — see `headerGlyphGrey`'s doc comment below for the fuller story.
+    /// One semi-dark grey for filter/header chrome: dropdown chevrons, filter
+    /// glyphs, "3 Months" (and other filter words), the exchange arrows, the
+    /// header ⓘ, and the hamburger.  Owner (2026-08-22): nothing in that
+    /// family should be system blue; selected-option marks inside an *open*
+    /// dropdown may stay accent blue.  A concrete `Color`, not hierarchical
+    /// `.secondary` — `MainTabView` sets `.tint(.blue)` (App.swift), so
+    /// `.secondary` inside a `Menu`/`Button` renders accent blue.
     static let glyphGrey = Color(uiColor: .secondaryLabel)
 
-    /// Ordinary "ink" colour for text words on chrome controls — filter pill
-    /// labels ("House", "D+R", "3 Months"), "Done", "Export CSV", "Subscribe
-    /// with Apple", sort-field names, the rows-per-page value.  Owner
-    /// (2026-08-21): these must read as "very dark grey or almost black",
-    /// comfortably legible — `.secondaryLabel`/`glyphGrey` above is too light
-    /// for text, even though it is fine for a bare glyph.  `.label` clears
-    /// WCAG AA (4.5:1) against `AppTheme.card`/`AppTheme.panel` in both
-    /// themes and inverts correctly in dark mode.  Same concrete-`Color`
-    /// reasoning as `glyphGrey`: hierarchical `.primary` also resolves
-    /// against the blue tint inside a `Menu`/`Button`.
+    /// Near-black ink for words that are not filter chrome — "Done", "Export
+    /// CSV", "Subscribe with Apple", sort-field names, rows-per-page.  Filter
+    /// pill labels use `glyphGrey` so they match the chevrons and glyphs.
+    /// Concrete `Color` so hierarchical `.primary` cannot pick up the blue tint.
     static let wordInk = Color(uiColor: .label)
 
     /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
@@ -915,14 +906,7 @@ private struct IPadFullWidthSheetModifier: ViewModifier {
 
 // MARK: - Header chrome (subtle icon buttons + hamburger account menu)
 
-/// The grey the header glyphs actually render in.
-///
-/// A concrete `Color`, deliberately, not the hierarchical `.secondary`
-/// `ShapeStyle`: hierarchical styles resolve against the environment's tint,
-/// and `MainTabView` sets `.tint(.blue)` (App.swift), so `.foregroundStyle(.secondary)`
-/// inside a toolbar `Button` came back accent blue. That is the fix that was
-/// already tried and lost; this one cannot be re-tinted.
-private let headerGlyphGrey = Color(uiColor: .secondaryLabel)
+/// Header ⓘ / hamburger share `AppTheme.glyphGrey` with the filter pills.
 
 /// Subtle header circle button used for the ⓘ / export-arrow controls on
 /// Trades and Trends: no tinted stroke (the SF Symbol's own `.circle` glyph
@@ -931,7 +915,7 @@ private let headerGlyphGrey = Color(uiColor: .secondaryLabel)
 ///
 /// Grey is defended twice, because one defence has already failed in shipped
 /// builds: `.buttonStyle(.plain)` stops the button style re-applying the
-/// inherited tint to its label, and `headerGlyphGrey` is a concrete color that
+/// inherited tint to its label, and `AppTheme.glyphGrey` is a concrete color that
 /// nothing downstream can resolve against the accent.
 struct HeaderIconButton: View {
     let systemImage: String
@@ -944,7 +928,7 @@ struct HeaderIconButton: View {
                 // `.title3` (not a fixed point size) so the "slightly larger"
                 // glyph still scales with Dynamic Type.
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(headerGlyphGrey)
+                .foregroundStyle(AppTheme.glyphGrey)
                 // minWidth/minHeight (not a fixed frame) so the tap target can
                 // grow past 34pt for large Dynamic Type sizes instead of
                 // clipping the glyph.
@@ -952,7 +936,7 @@ struct HeaderIconButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .tint(headerGlyphGrey)
+        .tint(AppTheme.glyphGrey)
         .accessibilityLabel(accessibilityLabel)
     }
 }
@@ -974,12 +958,12 @@ struct HamburgerMenuButton: View {
         } label: {
             Image(systemName: "line.3.horizontal")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(headerGlyphGrey)
+                .foregroundStyle(AppTheme.glyphGrey)
                 .frame(minWidth: 34, minHeight: 34)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .tint(headerGlyphGrey)
+        .tint(AppTheme.glyphGrey)
         .accessibilityLabel("Menu")
         .sheet(isPresented: $showMenu) {
             AccountQuickMenu(isPresented: $showMenu)
@@ -1480,9 +1464,10 @@ struct TradeDisclosureAlertsToggle: View {
     @EnvironmentObject private var pushManager: PushNotificationManager
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    @State private var newTicker = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 10) {
             Toggle("Trade Disclosure Alerts", isOn: Binding(
                 get: { pushManager.isAuthorized },
                 set: { wantsOn in Task { await setEnabled(wantsOn) } }
@@ -1501,6 +1486,25 @@ struct TradeDisclosureAlertsToggle: View {
                     .buttonStyle(.borderless)
                 }
             }
+
+            if pushManager.isAuthorized, store.signedIn {
+                Picker("Alert Type", selection: modeBinding) {
+                    ForEach(PushAlertMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Alert Type")
+
+                Text(modeCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if store.pushSettings.mode == .watchlist {
+                    PushWatchlistEditor(newTicker: $newTicker)
+                }
+            }
         }
         // The status is only trustworthy if it is re-read after the user has
         // been to iOS Settings and come back.
@@ -1508,6 +1512,28 @@ struct TradeDisclosureAlertsToggle: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await pushManager.checkPermissionStatus() }
+        }
+    }
+
+    private var modeBinding: Binding<PushAlertMode> {
+        Binding(
+            get: { store.pushSettings.mode },
+            set: { mode in
+                var next = store.pushSettings
+                next.mode = mode
+                Task { await store.savePushSettings(next) }
+            }
+        )
+    }
+
+    private var modeCaption: String {
+        switch store.pushSettings.mode {
+        case .off:
+            return "this device stays registered but will not get pushes"
+        case .filings:
+            return "one alert per new filing, with the filer's name, position, and trade counts"
+        case .watchlist:
+            return "only tickers on your watchlist; set a minimum amount and buys or sells per symbol"
         }
     }
 
@@ -1571,6 +1597,108 @@ struct TradeDisclosureAlertsToggle: View {
     private func openSystemNotificationSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
+    }
+}
+
+/// Per-ticker watchlist used by phone-push Watchlist mode.  Same ticker list
+/// as Delivery; min-amount and side filters apply only to pushes.
+struct PushWatchlistEditor: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @Binding var newTicker: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if store.watchlist.isEmpty {
+                Text("no tickers yet — add a symbol to get watchlist alerts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(store.watchlist, id: \.self) { ticker in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(ticker)
+                            .font(.body.weight(.semibold).monospaced())
+                        Spacer()
+                        Button(role: .destructive) {
+                            remove(ticker)
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                        .accessibilityLabel("Remove \(ticker)")
+                    }
+                    Picker("Sides", selection: sidesBinding(ticker)) {
+                        ForEach(PushAlertSides.allCases) { side in
+                            Text(side.label).tag(side)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("\(ticker) sides")
+                    Picker("Minimum Amount", selection: minBinding(ticker)) {
+                        Text(PushSettings.amountLabel(nil)).tag(Optional<Int>.none)
+                        ForEach(PushSettings.amountCutoffs, id: \.self) { cutoff in
+                            Text(PushSettings.amountLabel(cutoff)).tag(Optional(cutoff))
+                        }
+                    }
+                    .accessibilityLabel("\(ticker) minimum amount")
+                }
+                .padding(.vertical, 4)
+            }
+            HStack {
+                TextField("Add ticker (e.g. NVDA)", text: $newTicker)
+                    .tickerAutocapitalized()
+                    .autocorrectionDisabled()
+                Button("Add") {
+                    addTickers()
+                }
+                .disabled(CongressTradeStore.parseTickers(newTicker).isEmpty)
+            }
+        }
+    }
+
+    private func rule(for ticker: String) -> TickerAlertRule {
+        store.pushSettings.watchlistRules[ticker] ?? .default
+    }
+
+    private func sidesBinding(_ ticker: String) -> Binding<PushAlertSides> {
+        Binding(
+            get: { rule(for: ticker).sides },
+            set: { sides in
+                var next = store.pushSettings
+                var row = next.watchlistRules[ticker] ?? .default
+                row.sides = sides
+                next.watchlistRules[ticker] = row
+                Task { await store.savePushSettings(next) }
+            }
+        )
+    }
+
+    private func minBinding(_ ticker: String) -> Binding<Int?> {
+        Binding(
+            get: { rule(for: ticker).minAmount },
+            set: { min in
+                var next = store.pushSettings
+                var row = next.watchlistRules[ticker] ?? .default
+                row.minAmount = min
+                next.watchlistRules[ticker] = row
+                Task { await store.savePushSettings(next) }
+            }
+        )
+    }
+
+    private func addTickers() {
+        let parsed = CongressTradeStore.parseTickers(newTicker)
+        var tickers = store.watchlist
+        for ticker in parsed where !tickers.contains(ticker) {
+            tickers.append(ticker)
+        }
+        newTicker = ""
+        Task { await store.saveWatchlist(tickers.joined(separator: ",")) }
+    }
+
+    private func remove(_ ticker: String) {
+        let tickers = store.watchlist.filter { $0 != ticker }
+        Task { await store.saveWatchlist(tickers.joined(separator: ",")) }
     }
 }
 

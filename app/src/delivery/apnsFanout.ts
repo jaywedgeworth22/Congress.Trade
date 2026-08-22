@@ -6,6 +6,15 @@
 import type { Env } from '../shared/types.ts';
 import { all, run } from '../shared/db.ts';
 import { deactivatePushDevice, listAllActiveApnsDevices } from '../client/pushDevices.ts';
+import { listPreferencesByUserIds } from '../client/state.ts';
+import {
+  filingAlertCopy,
+  filingGroupKey,
+  groupTradesByFiling,
+  matchesWatchlistTrade,
+  parsePushSettings,
+  type PushSettings,
+} from '../shared/pushSettings.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import {
   apnsConfigured,
@@ -23,8 +32,10 @@ const STATE_ID = 'default';
 const LAST_ERROR_KV_KEY = 'apns:fanout:last_error';
 
 /** Official-trade query. filers PK is bioguide_id, not f.id. */
-export const APNS_FANOUT_TRADE_SQL = `SELECT t.id, t.ticker, t.tx_type, t.asset_name, t.created_at,
-            COALESCE(f.display_name, f.full_name) AS filer_name
+export const APNS_FANOUT_TRADE_SQL = `SELECT t.id, t.doc_id, t.ticker, t.tx_type, t.asset_name, t.amount_min,
+            t.created_at, t.filer_id,
+            COALESCE(f.display_name, f.full_name) AS filer_name,
+            f.chamber AS chamber, f.state AS state, f.district AS district
        FROM delivery_outbox o
        JOIN transactions t ON t.id = o.tx_id
        LEFT JOIN filers f ON f.bioguide_id = t.filer_id
@@ -89,11 +100,17 @@ export interface ApnsFanoutResult {
 
 interface TradeRow {
   id: string;
+  doc_id: string | null;
   ticker: string | null;
   tx_type: string | null;
   asset_name: string | null;
+  amount_min: number | null;
   created_at: string;
+  filer_id: string | null;
   filer_name: string | null;
+  chamber: string | null;
+  state: string | null;
+  district: string | null;
 }
 
 interface ReviewRow {
@@ -314,19 +331,19 @@ function laterIso(a: string, b: string): string {
   return a > b ? a : b;
 }
 
-function tradeTitle(row: TradeRow): string {
-  const member = row.filer_name?.trim() || 'Member';
-  const side = (row.tx_type ?? '').toUpperCase() === 'S' ? 'sold' : 'bought';
-  const symbol = row.ticker?.trim() || row.asset_name?.trim() || 'a holding';
-  return `${member} ${side} ${symbol}`;
+function asWatchlist(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item ?? '').trim().toUpperCase()).filter(Boolean);
 }
 
-function tradeBody(row: TradeRow): string {
-  const asset = row.asset_name?.trim();
-  if (asset && row.ticker && asset.toUpperCase() !== row.ticker.toUpperCase()) {
-    return `New official trade: ${asset} (${row.ticker}).`;
-  }
-  return 'New official trade is on the Congress.Trade feed.';
+function matchingFilingRows(
+  group: TradeRow[],
+  settings: PushSettings,
+  watchlist: string[],
+): TradeRow[] {
+  if (settings.pushMode === 'off') return [];
+  if (settings.pushMode === 'filings') return group;
+  return group.filter((row) => matchesWatchlistTrade(row, watchlist, settings));
 }
 
 export async function fanOutApnsProductEvents(
@@ -360,14 +377,17 @@ export async function fanOutApnsProductEvents(
     let lastTradeAt = stored.lastTradeAt;
     let lastReviewAt = stored.lastReviewAt;
 
-    const sendAll = async (alert: {
-      title: string;
-      body: string;
-      collapseId: string;
-      data: Record<string, unknown>;
-    }): Promise<string | null> => {
+    const sendTo = async (
+      targets: typeof devices,
+      alert: {
+        title: string;
+        body: string;
+        collapseId: string;
+        data: Record<string, unknown>;
+      },
+    ): Promise<string | null> => {
       let laneError: string | null = null;
-      for (const device of devices) {
+      for (const device of targets) {
         const result = await sendApnsPush(
           {
             deviceToken: device.token,
@@ -395,27 +415,48 @@ export async function fanOutApnsProductEvents(
       return laneError;
     };
 
+    const devicesByUser = new Map<string, typeof devices>();
+    for (const device of devices) {
+      const list = devicesByUser.get(device.userId);
+      if (list) list.push(device);
+      else devicesByUser.set(device.userId, [device]);
+    }
+    const prefsByUser = await listPreferencesByUserIds(env, [...devicesByUser.keys()]);
+    const filings = groupTradesByFiling(trades);
+
     let sendError: string | null = null;
-    for (const trade of trades) {
-      sendError = await sendAll({
-        title: tradeTitle(trade),
-        body: tradeBody(trade),
-        collapseId: `trade-${trade.id}`.slice(0, 64),
-        data: { kind: 'official_trade', txId: trade.id, ticker: trade.ticker },
-      });
-      if (sendError) break;
-      if (trade.created_at > lastTradeAt) lastTradeAt = trade.created_at;
+    userLoop: for (const [userId, userDevices] of devicesByUser) {
+      const prefs = prefsByUser.get(userId);
+      const settings = parsePushSettings(prefs?.notificationSettings);
+      if (settings.pushMode === 'off') continue;
+      const watchlist = asWatchlist(prefs?.watchlist);
+      for (const group of filings) {
+        const rows = matchingFilingRows(group, settings, watchlist);
+        if (rows.length === 0) continue;
+        const copy = filingAlertCopy(rows);
+        const first = rows[0]!;
+        sendError = await sendTo(userDevices, {
+          title: copy.title,
+          body: copy.body,
+          collapseId: filingGroupKey(first).slice(0, 64),
+          data: {
+            kind: 'official_filing',
+            docId: first.doc_id,
+            txIds: rows.map((r) => r.id),
+            tickers: rows.map((r) => r.ticker).filter(Boolean),
+          },
+        });
+        if (sendError) break userLoop;
+      }
     }
 
     if (!sendError) {
+      for (const trade of trades) {
+        if (trade.created_at > lastTradeAt) lastTradeAt = trade.created_at;
+      }
+      // Review-queue rows are operator work, not a product alert. Advance the
+      // cursor so a later re-enable does not replay a backlog at users.
       for (const review of reviews) {
-        sendError = await sendAll({
-          title: 'Review needed',
-          body: review.reason?.trim() || `Filing ${review.doc_id} needs review.`,
-          collapseId: `review-${review.doc_id}`.slice(0, 64),
-          data: { kind: 'review_needed', docId: review.doc_id },
-        });
-        if (sendError) break;
         if (review.created_at > lastReviewAt) lastReviewAt = review.created_at;
       }
     }

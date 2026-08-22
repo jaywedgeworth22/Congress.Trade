@@ -412,6 +412,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="subsMarketing"');
     expect(DASHBOARD_HTML).toContain('id="subsPush"');
     expect(DASHBOARD_HTML).toContain('<h3>Push Notifications</h3>');
+    expect(DASHBOARD_HTML).toContain('one digest per new filing');
     expect(DASHBOARD_HTML).toContain('<h3>Alerts</h3>');
     expect(DASHBOARD_HTML).toContain('Get the Filing First');
     expect(DASHBOARD_HTML).toContain('Signed Webhooks');

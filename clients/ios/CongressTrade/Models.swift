@@ -452,6 +452,114 @@ struct ClientPreferences: Decodable, Equatable {
     let updatedAt: String
 }
 
+/// Phone-push preferences stored in `notificationSettings`.
+/// Mirrors `app/src/shared/pushSettings.ts`.
+enum PushAlertMode: String, CaseIterable, Identifiable {
+    case off
+    case filings
+    case watchlist
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .filings: return "New Filings"
+        case .watchlist: return "Watchlist"
+        }
+    }
+}
+
+enum PushAlertSides: String, CaseIterable, Identifiable {
+    case all
+    case buys
+    case sells
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .buys: return "Buys"
+        case .sells: return "Sells"
+        }
+    }
+}
+
+struct TickerAlertRule: Equatable {
+    var minAmount: Int?
+    var sides: PushAlertSides
+
+    static let `default` = TickerAlertRule(minAmount: nil, sides: .all)
+}
+
+struct PushSettings: Equatable {
+    var mode: PushAlertMode
+    var watchlistRules: [String: TickerAlertRule]
+
+    static let `default` = PushSettings(mode: .filings, watchlistRules: [:])
+
+    /// STOCK Act bracket floors except the $0–$1,000 product tier
+    /// (`app/vendor/congress-trading-shared/src/brackets.ts`).
+    static let amountCutoffs: [Int] = [
+        1_001, 15_001, 50_001, 100_001, 250_001, 500_001,
+        1_000_001, 5_000_001, 25_000_001, 50_000_001,
+    ]
+
+    static func amountLabel(_ min: Int?) -> String {
+        guard let min, min > 0 else { return "Any Amount" }
+        let formatted = min.formatted(.number.grouping(.automatic))
+        return "$\(formatted)+"
+    }
+
+    init(mode: PushAlertMode, watchlistRules: [String: TickerAlertRule]) {
+        self.mode = mode
+        self.watchlistRules = watchlistRules
+    }
+
+    init(from json: [String: JSONValue]) {
+        if let raw = json["pushMode"]?.stringValue, let mode = PushAlertMode(rawValue: raw) {
+            self.mode = mode
+        } else {
+            self.mode = .filings
+        }
+        var rules: [String: TickerAlertRule] = [:]
+        if let object = json["watchlistRules"]?.objectValue {
+            for (ticker, value) in object {
+                let symbol = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                guard !symbol.isEmpty else { continue }
+                let fields = value.objectValue ?? [:]
+                let min = fields["minAmount"]?.doubleValue.flatMap { Int($0) }
+                let sides = fields["sides"]?.stringValue.flatMap(PushAlertSides.init(rawValue:)) ?? .all
+                rules[symbol] = TickerAlertRule(minAmount: (min ?? 0) > 0 ? min : nil, sides: sides)
+            }
+        }
+        self.watchlistRules = rules
+    }
+
+    func asJSONObject() -> [String: Any] {
+        var rules: [String: Any] = [:]
+        for (ticker, rule) in watchlistRules {
+            var row: [String: Any] = ["sides": rule.sides.rawValue]
+            if let min = rule.minAmount {
+                row["minAmount"] = min
+            } else {
+                row["minAmount"] = NSNull()
+            }
+            rules[ticker] = row
+        }
+        return ["pushMode": mode.rawValue, "watchlistRules": rules]
+    }
+
+    func pruned(to tickers: [String]) -> PushSettings {
+        let keep = Set(tickers)
+        return PushSettings(
+            mode: mode,
+            watchlistRules: watchlistRules.filter { keep.contains($0.key) }
+        )
+    }
+}
+
 struct CommandListResponse: Decodable {
     let commands: [ClientCommand]
 }
