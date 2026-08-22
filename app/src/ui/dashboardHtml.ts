@@ -324,7 +324,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   :root { --ct-header-h: 68px; --ct-main-pad: 35px; --trends-gap: 24px; }
   html { overflow-x: clip; }
   header.top {
-    display: flex; align-items: center; gap: 16px; padding: 14px 35px;
+    display: flex; align-items: center; gap: 16px; padding: 14px 35px 4px;
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
@@ -392,7 +392,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     vertical-align: middle;
   }
   .tab-count-badge.is-on { display: inline-block; }
-  main { padding: var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
+  /* Top pad is 0 so Trends/Trades filter chrome sits in the white header
+     band. Directory / Delivery / Admin / Review restore their own top pad. */
+  main { padding: 0 var(--ct-main-pad, 35px) var(--ct-main-pad, 35px); max-width: 1800px; margin: 0 auto; }
+  #view-people, #view-review, #view-subs, #view-admin {
+    padding-top: var(--ct-main-pad, 35px);
+  }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 29px;
@@ -1794,10 +1799,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
   .shared-filters { margin-bottom:10px; }
   .trades-only-filters { margin-bottom:14px; }
-  /* Filter chrome: flush under the header, viewport-full-bleed, already at
-     the sticky rest position so it does not slide-then-pin through main's
-     padding. White (or --panel) paint goes edge to edge; chips keep the
-     same 35px inset as the header wordmark. */
+  /* Filter chrome: sits in the white header band (main padding-top is 0),
+     viewport-full-bleed, already at the sticky rest position so it does
+     not slide-then-pin.  A negative-margin pull-up against main
+     overflow-x:clip used to clip the white strip and leave a cool-grey
+     gap; chips then jumped onto the header divider on scroll.  White
+     (or --panel) paint goes edge to edge; chips keep the same inset as
+     the header wordmark, a few pixels under the title. */
   .trades-toolbars, #trendsSharedFilters {
     position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
     box-sizing: border-box;
@@ -1805,8 +1813,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     max-width: none;
     margin-left: calc(-1 * var(--ct-main-pad, 35px));
     margin-right: calc(-1 * var(--ct-main-pad, 35px));
-    margin-top: calc(-1 * var(--ct-main-pad, 35px)); margin-bottom: 12px;
-    padding: 10px var(--ct-main-pad, 35px) 12px;
+    margin-top: 0; margin-bottom: 12px;
+    padding: 4px var(--ct-main-pad, 35px) 10px;
     background: var(--panel);
     border-bottom: none;
     overflow: visible;
@@ -2017,7 +2025,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     :root { --ct-header-h: 52px; --ct-main-pad: 12px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
-      padding: 6px 10px; align-items: center; backdrop-filter: none;
+      padding: 6px 10px 0; align-items: center; backdrop-filter: none;
     }
     .brand { font-size: 15px; }
     .pill { padding: 3px 7px; }
@@ -2109,7 +2117,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .acct .email, .acct .badge { display: none; }
     /* Owner punch list #5: nav.tabs is ~56px tall before safe-area.  70px
        content padding still clears the dock without a floating-pill gap. */
-    main { max-width: none; min-width:0; overflow-x:clip; padding: 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+    /* Do not clip overflow on main: clip on one axis computes the other
+       to clip as well, which ate the filter strip's white paint and left
+       chips sitting on --bg.  html/body still clip horizontal overflow. */
+    main { max-width: none; min-width:0; padding: 0 12px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
     .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
     .section { overflow:hidden; }
     .section p.sub { font-size:12px; line-height:1.45; }
@@ -2196,7 +2207,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     #tradesToolbars, #trendsSharedFilters {
       position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
-      padding: 8px 12px 10px;
+      padding: 4px 12px 8px;
       overflow: visible;
       border-bottom: none;
     }
@@ -2833,7 +2844,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 720px), (hover: none) and (pointer: coarse) {
     /* Keep the compact 52px header.  The old 14px 22px padding here made
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
-    header.top { padding: 6px 10px; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    header.top { padding: 6px 10px 0; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
@@ -2866,11 +2877,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        for every phone <=720px (the width nearly all phones report in
        portrait) — footer/last content ended up hidden behind the fixed tab
        bar. Re-assert padding-bottom explicitly so it survives here too.
-       Keep --ct-main-pad in lockstep: the sticky filter bar pulls itself
-       up by that token, and a 12px token against 22px padding left a
-       moving gap between the header and the search row. */
-    :root { --ct-main-pad: 22px; }
-    main { padding: 22px 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+       Horizontal pad is the --ct-main-pad token (filter full-bleed).  Top
+       pad stays 0 so the white filter strip sits under the title. */
+    :root { --ct-main-pad: 14px; }
+    main { padding: 0 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+    #tradesToolbars, #trendsSharedFilters { padding: 4px 14px 8px; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
     .toolbar .trends-filter-row { flex: 0 1 auto; }
@@ -13088,7 +13099,9 @@ function syncChromeMetrics() {
     document.documentElement.style.setProperty('--ct-header-h', header.getBoundingClientRect().height + 'px');
   }
   if (mainEl) {
-    document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingTop);
+    /* Horizontal inset, not padding-top (that is 0 so the filter strip
+       can sit in the white header). */
+    document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingLeft);
   }
 }
 function refreshIosFilterSummaries() {
