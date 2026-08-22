@@ -280,4 +280,12 @@ describe('sweepRejectedScannedForLocalVision', () => {
     expect(r.requeued).toBe(1);
     expect(queue).toEqual([{ type: 'filing.local_wait_check', docId: 'H-scan-1' }]);
   });
+
+  it('does not treat local_vision_exhausted as a reason to reopen the queue', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('../deterministicDrain.ts', import.meta.url), 'utf8'),
+    );
+    expect(src).toContain("NOT LIKE '%local_vision_exhausted%'");
+    expect(src).not.toMatch(/OR COALESCE\(f\.error, ''\) LIKE '%local_vision_exhausted%'/);
+  });
 });
