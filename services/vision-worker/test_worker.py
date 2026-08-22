@@ -603,6 +603,43 @@ class IsolatedGrokCliTest(unittest.TestCase):
         self.assertEqual(rows[0]["assetName"], "Vng Growth Index @ 473.42")
         self.assertEqual(rows[0]["txType"], "S")
 
+    def test_validate_rows_keeps_short_ticker_after_verb_strip(self):
+        """#2165 clean_asset_name + len<3 dropped Sell BA / Buy F / S GE."""
+        rows = worker.validate_rows([
+            {
+                "owner": "self",
+                "asset": "Sell BA",
+                "txType": "S",
+                "txDate": "2025-09-26",
+                "amountMin": 1001,
+                "amountMax": 15000,
+            },
+            {
+                "owner": "self",
+                "asset": "Buy F",
+                "txType": "P",
+                "txDate": "2025-09-26",
+                "amountMin": 1001,
+                "amountMax": 15000,
+            },
+            {
+                "owner": "self",
+                "asset": "S GE",
+                "txType": "S",
+                "txDate": "2025-09-26",
+                "amountMin": 1001,
+                "amountMax": 15000,
+            },
+        ])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["assetName"], "BA")
+        self.assertEqual(rows[0]["ticker"], "BA")
+        self.assertEqual(rows[0]["txType"], "S")
+        self.assertEqual(rows[1]["assetName"], "F")
+        self.assertEqual(rows[1]["ticker"], "F")
+        self.assertEqual(rows[2]["assetName"], "GE")
+        self.assertEqual(rows[2]["ticker"], "GE")
+
     def test_local_cli_cmd_isolates_cwd_and_caps_reasoning(self):
         with tempfile.TemporaryDirectory() as td:
             previous_cwd = worker.GROK_CWD
