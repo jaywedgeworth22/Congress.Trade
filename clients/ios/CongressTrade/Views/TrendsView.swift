@@ -6,8 +6,9 @@ struct TrendsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Same `@AppStorage` keys as `FeedDashboardView` — the disclaimer's
     /// dismissed/expanded state is one truth across both tabs.  The filter
-    /// strip lives in the same place as Trades (after the disclaimer, same
-    /// 12pt gap, same 16/8 insets) so the chips and the top background match.
+    /// strip is glued under the wordmark in the opaque light header (same
+    /// `FeedStickyBar` as Trades) so it does not sit in the cool page or
+    /// leave a gap under the title.
     @AppStorage("ct_disclaimer_expanded") private var disclaimerExpanded = true
     @AppStorage("ct_disclaimer_intro_done") private var disclaimerIntroDone = false
     @State private var selectedTicker: TickerSheetTarget?
@@ -18,16 +19,15 @@ struct TrendsView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DisclaimerBanner(isExpanded: $disclaimerExpanded)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                FeedControlBar(showMetrics: false)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
+                FeedStickyBar {
+                    FeedControlBar(showMetrics: false)
+                }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if disclaimerExpanded {
+                        DisclaimerBanner(isExpanded: $disclaimerExpanded)
+                    }
                     if store.isLoadingTrends && store.analyticsSummary == nil {
                         ProgressView("Loading trends…")
                             .frame(maxWidth: .infinity)
@@ -110,6 +110,7 @@ struct TrendsView: View {
             }
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
+            .ctSolidFeedHeader()
             .toolbar {
                 // ⓘ now leads (swapped to match Trades' post-swap side —
                 // owner punch list item 3); brand centers via .principal;

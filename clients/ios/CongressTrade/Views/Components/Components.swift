@@ -176,6 +176,13 @@ enum AppTheme {
     /// Concrete `Color` so hierarchical `.primary` cannot pick up the blue tint.
     static let wordInk = Color(uiColor: .label)
 
+    /// Opaque wordmark + sticky filter chrome.  `panel` is 92% white and
+    /// `ultraThinMaterial` both composite over the cool page (`#eff3f8`) so
+    /// the filter row reads as a blue wash (owner screenshots 2026-08-22).
+    /// `card` is solid white in light / navy in dark — the same "light part
+    /// at the top" as `header.top` on the website.
+    static var headerChrome: Color { currentPalette.card }
+
     /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
     static let siteFooterDisclaimer =
         "Congress.Trade  ·  educational tool for public STOCK Act (2012) disclosures  ·  not financial advice  ·  $ estimated from brackets  ·  independent/private service not affiliated with or endorsed/sponsored by any government agency"
@@ -202,6 +209,15 @@ extension View {
 
     func ctThemedRow() -> some View {
         listRowBackground(AppTheme.card)
+    }
+
+    /// Paint the navigation bar the same opaque white/navy as `FeedStickyBar`
+    /// so the wordmark and the filter pills read as one light header, not a
+    /// white island over the cool page.
+    func ctSolidFeedHeader() -> some View {
+        self
+            .toolbarBackground(AppTheme.headerChrome, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 

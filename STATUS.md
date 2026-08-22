@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-22 GROK — Filter bar in the opaque light header
+
+Owner screenshots: pills sat on the cool page with a gap under the wordmark
+and a blue wash from `ultraThinMaterial`.  They now live in
+`FeedStickyBar` (solid white, glued to the nav bar, outside the scroll).
+Disclaimer is in the scrolling content.  Receipt:
+`docs/rollouts/2026-08-22-filter-header-sticky.md`.  Board `06ddcb30`.
 ## 2026-08-21 GROK — Vision-worker loop overhaul (Grok CLI isolation)
 
 443 Grok chats on 2026-08-21 hit ~20 PDFs (Rogers 17-row x189, McCaul 93-row
