@@ -2966,8 +2966,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
         <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Day</option>
-          <option value="7d">Week</option>
           <option value="30d">Month</option>
           <option value="90d" selected>3 Months</option>
           <option value="180d">6 Months</option>
@@ -3103,8 +3101,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
       <span class="pill-select pill-cal">
         <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="1d">Day</option>
-          <option value="7d">Week</option>
           <option value="30d">Month</option>
           <option value="90d" selected>3 Months</option>
           <option value="180d">6 Months</option>
@@ -9864,7 +9860,7 @@ function trParams() {
   if (ty) p += '&type=' + encodeURIComponent(ty);
   return p;
 }
-var TR_WINDOW_LABELS = { '1d': 'Day', '7d': 'Week', '30d': 'Month', '90d': '3 Months', '180d': '6 Months', '365d': 'Year', '1825d': '5 Years', 'this_cy': 'This Year', 'last_cy': 'Last Year', 'all': 'All Time' };
+var TR_WINDOW_LABELS = { '30d': 'Month', '90d': '3 Months', '180d': '6 Months', '365d': 'Year', '1825d': '5 Years', 'this_cy': 'This Year', 'last_cy': 'Last Year', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
 /* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
    the single control for timeframe filtering. Headings no longer stamp the

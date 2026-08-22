@@ -106,7 +106,7 @@ final class CongressTradeTests: XCTestCase {
     }
 
     func testTimeRangeLabelsMatchWebsiteWithoutPastPrefix() {
-        XCTAssertEqual(TimeRange.oneDay.label, "Day")
+        XCTAssertEqual(TimeRange.thirtyDays.label, "Month")
         XCTAssertEqual(TimeRange.ninetyDays.label, "3 Months")
         XCTAssertEqual(TimeRange.all.label, "All Time")
         for range in TimeRange.allCases {

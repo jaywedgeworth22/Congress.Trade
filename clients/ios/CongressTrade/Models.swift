@@ -686,7 +686,8 @@ struct ClientTickerAnalytics: Decodable {
         let estSellVolUsd: Double?
     }
 
-    struct Trader: Decodable {
+    struct Trader: Decodable, Identifiable {
+        var id: String { filerId ?? (fullName ?? UUID().uuidString) }
         let filerId: String?
         let fullName: String?
         let partyBucket: String?
@@ -701,7 +702,8 @@ struct ClientTickerAnalytics: Decodable {
         let minN: Int?
         let horizons: [Horizon]?
 
-        struct Horizon: Decodable {
+        struct Horizon: Decodable, Identifiable {
+            var id: Int { days ?? 0 }
             let days: Int?
             let tradeCount: Int?
             let n: Int?
@@ -1276,8 +1278,6 @@ struct LatencySummary: Decodable {
 /// (`app/src/ui/dashboardHtml.ts` TR_WINDOW_LABELS / default `90d`) plus
 /// calendar-year options requested for iOS parity.
 enum TimeRange: String, CaseIterable, Identifiable, Codable {
-    case oneDay = "1d"
-    case sevenDays = "7d"
     case thirtyDays = "30d"
     case ninetyDays = "90d"
     case sixMonths = "180d"
@@ -1291,8 +1291,6 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
-        case .oneDay: return "Day"
-        case .sevenDays: return "Week"
         case .thirtyDays: return "Month"
         case .ninetyDays: return "3 Months"
         case .sixMonths: return "6 Months"
@@ -1301,6 +1299,18 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
         case .thisCalendarYear: return "This Year"
         case .lastCalendarYear: return "Last Year"
         case .all: return "All Time"
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        if let match = TimeRange(rawValue: raw) {
+            self = match
+        } else if raw == "1d" || raw == "7d" {
+            self = .thirtyDays
+        } else {
+            self = .ninetyDays
         }
     }
 
@@ -1342,11 +1352,9 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
             comps.day = 1
             guard let date = cal.date(from: comps) else { return nil }
             return formatter.string(from: date)
-        case .oneDay, .sevenDays, .thirtyDays, .ninetyDays, .sixMonths, .oneYear, .fiveYears:
+        case .thirtyDays, .ninetyDays, .sixMonths, .oneYear, .fiveYears:
             let days: Int
             switch self {
-            case .oneDay: days = 1
-            case .sevenDays: days = 7
             case .thirtyDays: days = 30
             case .ninetyDays: days = 90
             case .sixMonths: days = 180
