@@ -480,9 +480,11 @@ def tesseract_upright_score(path: str) -> int:
 def choose_upright_cw_degrees(sample_path: str, score_fn=tesseract_upright_score) -> int:
     """Portrait page images of landscape House PTRs need a 90 or 270 CW spin.
 
-    Landscape renders (already upright, e.g. 8220834) stay at 0.  When both
-    trial scores are 0, default 270 CW — that is the rotation that stood up
-    every sideways McCaul/LaMalfa scan in the 2026-08-21 drain.
+    Landscape renders (already upright, e.g. 8220834) stay at 0.  Score the
+    unrotated page too — an already-upright portrait (OGE 278, Senate FD,
+    House cover) must beat a silent 90/270.  When every score is 0, leave
+    the page alone.  Guessing 270 CW on silence stood up one drain and
+    would invert every already-readable portrait.
     """
     try:
         width, height = _png_size(sample_path)
@@ -490,8 +492,11 @@ def choose_upright_cw_degrees(sample_path: str, score_fn=tesseract_upright_score
         return 0
     if width >= height:
         return 0
-    import shutil
-    scores: dict[int, int] = {}
+    scores: dict[int, int] = {0: 0, 90: 0, 270: 0}
+    try:
+        scores[0] = int(score_fn(sample_path) or 0)
+    except Exception:
+        scores[0] = 0
     for deg in (90, 270):
         trial = f"{sample_path}.rot{deg}.png"
         try:
@@ -505,24 +510,32 @@ def choose_upright_cw_degrees(sample_path: str, score_fn=tesseract_upright_score
                 os.remove(trial)
             except OSError:
                 pass
-    best = max(scores, key=lambda d: (scores[d], 1 if d == 270 else 0))
+    best = max(scores, key=lambda d: (scores[d], 1 if d == 0 else 0))
     if scores[best] <= 0:
-        return 270
+        return 0
     return best
 
 
 def upright_pages(pages: list[str], score_fn=tesseract_upright_score) -> list[str]:
-    """Rotate every page of a doc the same way so Grok/Qwen see upright grids."""
+    """Rotate portrait pages of a doc the same way so Grok/Qwen see upright grids.
+
+    Landscape pages stay put even when a portrait cover chose a spin — mixed
+    House PTRs (letter cover + landscape grid) would otherwise go sideways.
+    """
     if not pages:
         return pages
     degrees = choose_upright_cw_degrees(pages[0], score_fn=score_fn)
-    if degrees:
-        logger.info("upright-rotate deg=%s pages=%s sample=%s", degrees, len(pages), pages[0])
-        for path in pages:
-            try:
-                rotate_png_cw(path, degrees)
-            except Exception as err:
-                logger.warning("upright-rotate failed %s: %s", path, err)
+    if not degrees:
+        return pages
+    logger.info("upright-rotate deg=%s pages=%s sample=%s", degrees, len(pages), pages[0])
+    for path in pages:
+        try:
+            width, height = _png_size(path)
+            if width >= height:
+                continue
+            rotate_png_cw(path, degrees)
+        except Exception as err:
+            logger.warning("upright-rotate failed %s: %s", path, err)
     return pages
 
 
@@ -1029,8 +1042,13 @@ def transcribe_pdf_native_chunked(
             chunk_pdf, [], filing, model, work_dir, prompt_extra=extra,
         )
         if rows is None:
+            # HTTP/parse miss on one window.  Sibling chunks must not publish
+            # as a complete 0.97 extract — drain then skips scanned_pdf and
+            # the missed schedule pages never land.  Empty [] is a real
+            # cover-only window and is fine.
             logger.warning("PDF-native chunk miss pages=%d-%d model=%s", offset, end, model)
-        elif rows:
+            return None
+        if rows:
             any_hit = True
             merged.extend(rows)
         offset = end + 1

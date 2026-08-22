@@ -355,6 +355,76 @@ class TruncatedLocalCliTest(unittest.TestCase):
         self.assertEqual(rows[0]["assetName"], "page-20 stock")
         self.assertEqual(label, worker.extractor_label_for_model("google/gemini-3.7-flash"))
 
+    def test_pdf_native_chunk_miss_is_not_terminal(self):
+        calls = {"n": 0}
+
+        def fake_split(_pdf, _work, _n):
+            return ["/tmp/chunk-00.pdf", "/tmp/chunk-01.pdf", "/tmp/chunk-02.pdf"]
+
+        def fake_one(_pdf, _pages, _filing, _model, _work, prompt_extra=""):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                return None
+            return [{"assetName": f"chunk-{calls['n']} stock", "txType": "P"}]
+
+        original_split = worker.split_pdf_chunks
+        original_one = worker.transcribe_openrouter_one
+        original_pdfinfo = worker.pdfinfo_pages
+        worker.split_pdf_chunks = fake_split
+        worker.transcribe_openrouter_one = fake_one
+        worker.pdfinfo_pages = lambda _p: 10
+        try:
+            rows = worker.transcribe_pdf_native_chunked(
+                "/tmp/filing.pdf",
+                {"doc_id": "khanna-24p", "chamber": "house"},
+                "google/gemini-3.7-flash",
+                "/tmp",
+                24,
+            )
+        finally:
+            worker.split_pdf_chunks = original_split
+            worker.transcribe_openrouter_one = original_one
+            worker.pdfinfo_pages = original_pdfinfo
+
+        self.assertIsNone(rows)
+        self.assertEqual(calls["n"], 2)
+
+    def test_pdf_native_empty_cover_chunk_still_merges(self):
+        calls = {"n": 0}
+
+        def fake_split(_pdf, _work, _n):
+            return ["/tmp/chunk-00.pdf", "/tmp/chunk-01.pdf"]
+
+        def fake_one(_pdf, _pages, _filing, _model, _work, prompt_extra=""):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return []
+            return [{"assetName": "page-20 stock", "txType": "P"}]
+
+        original_split = worker.split_pdf_chunks
+        original_one = worker.transcribe_openrouter_one
+        original_pdfinfo = worker.pdfinfo_pages
+        worker.split_pdf_chunks = fake_split
+        worker.transcribe_openrouter_one = fake_one
+        worker.pdfinfo_pages = lambda _p: 10
+        try:
+            rows = worker.transcribe_pdf_native_chunked(
+                "/tmp/filing.pdf",
+                {"doc_id": "khanna-cover", "chamber": "house"},
+                "google/gemini-3.7-flash",
+                "/tmp",
+                20,
+            )
+        finally:
+            worker.split_pdf_chunks = original_split
+            worker.transcribe_openrouter_one = original_one
+            worker.pdfinfo_pages = original_pdfinfo
+
+        self.assertIsNotNone(rows)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["assetName"], "page-20 stock")
+        self.assertEqual(calls["n"], 2)
+
 
 class ParseAndValidateTest(unittest.TestCase):
     def test_wagner_ptr_gold_two_joint_muni_purchases(self):
@@ -429,12 +499,21 @@ class UprightRotateTest(unittest.TestCase):
 
             self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=score), 90)
 
-    def test_portrait_defaults_to_270_when_ocr_is_silent(self):
+    def test_portrait_prefers_unrotated_when_it_scores_highest(self):
         with tempfile.TemporaryDirectory() as td:
             page = self._png(os.path.join(td, "page-1.png"), 20, 40)
-            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 0), 270)
 
-    def test_upright_pages_rotates_every_page_the_same_way(self):
+            def score(path: str) -> int:
+                return 0 if ".rot" in os.path.basename(path) else 4
+
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=score), 0)
+
+    def test_portrait_stays_put_when_ocr_is_silent(self):
+        with tempfile.TemporaryDirectory() as td:
+            page = self._png(os.path.join(td, "page-1.png"), 20, 40)
+            self.assertEqual(worker.choose_upright_cw_degrees(page, score_fn=lambda _p: 0), 0)
+
+    def test_upright_pages_leaves_silent_portrait_alone(self):
         with tempfile.TemporaryDirectory() as td:
             pages = [
                 self._png(os.path.join(td, "page-1.png"), 20, 40),
@@ -444,7 +523,22 @@ class UprightRotateTest(unittest.TestCase):
             from PIL import Image
             for path in pages:
                 with Image.open(path) as im:
-                    self.assertEqual(im.size, (40, 20))
+                    self.assertEqual(im.size, (20, 40))
+
+    def test_landscape_sibling_is_not_rotated_when_cover_spins(self):
+        with tempfile.TemporaryDirectory() as td:
+            cover = self._png(os.path.join(td, "page-1.png"), 20, 40)
+            grid = self._png(os.path.join(td, "page-2.png"), 40, 20)
+
+            def score(path: str) -> int:
+                return 6 if path.endswith(".rot270.png") else 0
+
+            worker.upright_pages([cover, grid], score_fn=score)
+            from PIL import Image
+            with Image.open(cover) as im:
+                self.assertEqual(im.size, (40, 20))
+            with Image.open(grid) as im:
+                self.assertEqual(im.size, (40, 20))
 
     def test_write_upright_pdf_includes_pages_past_cli_cap(self):
         with tempfile.TemporaryDirectory() as td:
