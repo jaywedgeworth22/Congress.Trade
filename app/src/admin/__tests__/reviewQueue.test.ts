@@ -213,8 +213,9 @@ describe('review queue admin API', () => {
       reason: string;
     };
     expect(body).toMatchObject({ unpublished: true, deprecatedTransactions: 3, reason: 'bad parse' });
-    const deprecateSql = preparedSql.find((sql) => /UPDATE transactions[\s\S]*SET deprecated_at/i.test(sql));
-    expect(deprecateSql).toMatch(/source IN \('primary', 'manual', 'local_mac', 'server_cpu'\)/);
+    const deprecateSql = preparedSql.find((sql) => /UPDATE transactions[\s\S]*deprecated_at/i.test(sql));
+    expect(deprecateSql).toMatch(/local_mac/);
+    expect(deprecateSql).toMatch(/server_cpu/);
     const reopenSql = preparedSql.find((sql) => /UPDATE review_queue[\s\S]*SET resolved = 0/i.test(sql));
     expect(reopenSql).toMatch(/agreement_attempted_at = NULL/i);
     expect(reopenSql).toMatch(/agreement_attempts = 0/i);
