@@ -20,6 +20,7 @@ Kimi CLI was retired (hard provider billing 403). Do not reintroduce it.
 - After `pdftoppm`, portrait page images of landscape House PTRs are rotated upright (tesseract header score, else 270° CW) so Grok/Qwen see the grid instead of sideways pixels
 - When a PDF has more pages than `MAX_PAGES` (Khanna attached-schedule packets, 15–34 pages), skip the local Grok CLI (it would only see 12 pages) and send the full PDF to Gemini/Grok in `PDF_NATIVE_CHUNK_PAGES` slices so later-page trades land
 - After `pdftoppm`, portrait page images of landscape House PTRs are rotated upright when tesseract header phrases score a 90°/270° trial above the unrotated page.  Silent OCR and already-landscape pages stay put.
+- PDF-native cascade (Gemini / Grok 4.5) attaches a rebuild from those upright PNGs, including pages past `MAX_PAGES`, not the original sideways scan
 - Submits → `POST /api/admin/ingest-local-vision` (`source=local_mac`)
 
 ## Env
