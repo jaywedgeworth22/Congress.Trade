@@ -39,6 +39,9 @@ export function canSupersedeResolvedVision(opts: {
   // retire-superseded-sources repair, not a second insert.
   if (opts.liveSameSource > 0) return false;
   if (opts.liveOther <= 0) return false;
-  return opts.incomingDatedCount > opts.liveOtherDated
-    || opts.incomingCount > opts.liveOther;
+  // Raw length is not a size signal.  Local vision still persists placeholder
+  // dates ("N/A", "—") that increment incomingCount; comparing that would let
+  // a 361-row submit with 180 ISO dates retire a 209-lot confirmed set.
+  // Same invariant as storedReviewBlocksSmallerVisionSubmit (#2154).
+  return opts.incomingDatedCount > opts.liveOtherDated;
 }

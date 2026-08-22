@@ -44,4 +44,15 @@ describe('sourceSupersede', () => {
       liveOtherDated: 209,
     })).toBe(false);
   });
+
+  it('does not retire a dated confirm because placeholder dates padded the incoming count', () => {
+    expect(canSupersedeResolvedVision({
+      incomingSource: 'local_mac',
+      incomingCount: 361,
+      incomingDatedCount: 180,
+      liveSameSource: 0,
+      liveOther: 209,
+      liveOtherDated: 209,
+    })).toBe(false);
+  });
 });
