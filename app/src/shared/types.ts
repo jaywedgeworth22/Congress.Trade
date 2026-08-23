@@ -353,6 +353,8 @@ export interface User {
   googleSub: string | null;
   /** Apple `sub` claim when the user has linked Sign in with Apple; null otherwise. */
   appleSub: string | null;
+  /** X (Twitter) `sub` / user ID when linked; null otherwise. */
+  xSub: string | null;
   emailVerified: boolean;
   createdAt: string;
   lastLoginAt: string | null;
@@ -783,6 +785,9 @@ export interface Env {
   /** Google OAuth client credentials for "Sign in with Google". */
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  /** X (Twitter) OAuth client credentials for "Sign in with X". */
+  X_OAUTH_CLIENT_ID?: string;
+  X_OAUTH_CLIENT_SECRET?: string;
   /** Resend API key + verified from-address for magic-link sign-in emails. */
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
