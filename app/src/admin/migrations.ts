@@ -888,6 +888,17 @@ export const APPLE_SIGNIN_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
+ * 0094_x_auth.sql — "Sign in with X (Twitter)": link a user to their stable
+ * X `sub` claim.
+ */
+export const X_AUTH_SCHEMA_STATEMENTS = [
+  'ALTER TABLE users ADD COLUMN x_sub TEXT',
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_x_sub
+     ON users (x_sub)
+     WHERE x_sub IS NOT NULL`,
+] as const;
+
+/**
  * 0081_apple_iap.sql — Apple In-App Purchase (StoreKit 2) subscription ledger
  * + App Store Server Notifications V2 webhook idempotency ledger. See
  * migrations/0081_apple_iap.sql for the full design note (why this table is
@@ -1425,6 +1436,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LATENCY_PRICE_SNAPSHOT_REPAIR_SCHEMA_STATEMENTS,
   // 0093_premium_activation_alerts.sql
   ...PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS,
+  // 0094_x_auth.sql
+  ...X_AUTH_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
