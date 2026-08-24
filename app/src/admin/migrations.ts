@@ -1308,6 +1308,14 @@ export const PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS = [
      ON apple_subscriptions (status, expires_date)`,
 ] as const;
 
+
+/**
+ * 0095_latency_snapshot_12h_sweep.sql
+ */
+export const LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS = [
+  `ALTER TABLE latency_price_snapshots ADD COLUMN swept_12h INTEGER NOT NULL DEFAULT 0;`
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1438,6 +1446,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...PREMIUM_ACTIVATION_ALERT_SCHEMA_STATEMENTS,
   // 0094_x_auth.sql
   ...X_AUTH_SCHEMA_STATEMENTS,
+  // 0095_latency_snapshot_12h_sweep.sql
+  ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
