@@ -39,6 +39,8 @@ import {
 
 export const LATENCY_PRICE_EVENTS = [
   'ct_publish',
+  'provider_minus_30m',
+  'provider_minus_15m',
   'provider_publish',
   'provider_plus_5m',
   'provider_plus_15m',
@@ -51,6 +53,8 @@ export type LatencyPriceEvent = (typeof LATENCY_PRICE_EVENTS)[number];
 type FollowUpEvent = Exclude<LatencyPriceEvent, 'ct_publish' | 'provider_publish'>;
 
 const FOLLOW_EVENTS: readonly FollowUpEvent[] = [
+  'provider_minus_30m',
+  'provider_minus_15m',
   'provider_plus_5m',
   'provider_plus_15m',
   'provider_plus_30m',
@@ -58,6 +62,8 @@ const FOLLOW_EVENTS: readonly FollowUpEvent[] = [
 ];
 
 const FOLLOW_MS: Record<FollowUpEvent, number> = {
+  provider_minus_30m: -30 * 60_000,
+  provider_minus_15m: -15 * 60_000,
   provider_plus_5m: 5 * 60_000,
   provider_plus_15m: 15 * 60_000,
   provider_plus_30m: 30 * 60_000,
@@ -118,16 +124,14 @@ export function snapshotPlan(row: MatchRow): SnapshotPlanEntry[] {
     out.push({ event: 'ct_publish', dueAt: row.congress_first_seen_at, confidence: 'exact', uncertaintySec: 0 });
   }
 
-  const providerAt = row.provider_published_at || row.provider_first_seen_at;
+  const providerAt = row.provider_first_seen_at || row.provider_published_at;
   if (providerAt) {
     let confidence: SnapshotConfidence;
     let uncertaintySec: number | null;
-    if (row.provider_published_at) {
-      // The provider told us when it went out — exact wins even if a probe
-      // bracket also happens to be recorded.
-      confidence = 'exact';
-      uncertaintySec = 0;
-    } else if (row.provider_window_start) {
+    
+    // Confidence is about how certain we are of the true publish time.
+    // We use provider_first_seen_at (our observation) for the offsets.
+    if (row.provider_window_start) {
       confidence = 'bracketed';
       const startMs = Date.parse(row.provider_window_start);
       const endMs = Date.parse(row.provider_window_end || providerAt);
@@ -135,6 +139,10 @@ export function snapshotPlan(row: MatchRow): SnapshotPlanEntry[] {
         Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
           ? Math.round((endMs - startMs) / 1000)
           : null;
+    } else if (row.provider_published_at && providerAt === row.provider_published_at) {
+      // We only have the provider's claimed time, no observation bracket
+      confidence = 'exact';
+      uncertaintySec = 0;
     } else {
       confidence = 'unbounded';
       uncertaintySec = null;
@@ -300,6 +308,23 @@ export async function captureDueLatencyPriceSnapshots(
   fetchImpl: typeof fetch = fetch,
 ): Promise<CaptureResult> {
   const nowIso = now.toISOString();
+
+  // Sweep 12h-aged failed snapshots for exactly ONE full retry cycle
+  const sweepThresholdIso = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
+  await run(
+    env.DB,
+    `UPDATE latency_price_snapshots
+        SET captured_at = NULL,
+            error = NULL,
+            backfill_attempts = 0,
+            swept_12h = 1
+      WHERE error IN ('confirmed_no_bars', 'backfill_exhausted', 'unavailable')
+        AND due_at <= ?
+        AND swept_12h = 0`,
+    [sweepThresholdIso],
+  );
+
+  // Find all pending snapshot rows that are due (or overdue) for capture.
   const nowMs = now.getTime();
   const empty: CaptureResult = { liveCaptured: 0, backfillCaptured: 0, terminalNoData: 0, deferred: 0, errors: 0 };
 
@@ -498,7 +523,7 @@ export async function summarizeProviderPublishBump(env: Env): Promise<PriceEdgeB
          ON later.trade_hash = pub.trade_hash
         AND later.provider = pub.provider
       WHERE pub.event = 'provider_publish'
-        AND later.event IN ('provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m')
+        AND later.event IN ('provider_minus_30m', 'provider_minus_15m', 'provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m')
         AND pub.price IS NOT NULL AND pub.price > 0
         AND later.price IS NOT NULL
         AND pub.market_session = 'regular'
