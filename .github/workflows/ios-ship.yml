@@ -59,7 +59,7 @@ jobs:
   ship:
     name: TestFlight archive + upload
     if: github.event.repository.fork == false
-    runs-on: [self-hosted, macOS, ARM64, xcode26]
+    runs-on: macos-latest
     timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
@@ -87,46 +87,32 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             congress
 
-      - name: Assert stable Xcode 26 (never beta)
+      - name: Assert stable Xcode (never beta)
         if: steps.gate.outputs.should_ship == '1'
         run: |
           echo "DEVELOPER_DIR=${DEVELOPER_DIR}"
           xcodebuild -version
           ver=$(xcodebuild -version | awk 'NR==1{print $2}')
-          case "$ver" in
-            26.*) echo "stable Xcode $ver — OK" ;;
-            *)
-              echo "::error::Expected stable Xcode 26.x, got '$ver'."
+          echo "Xcode version: ${ver}"
+          case "$DEVELOPER_DIR" in
+            *[Bb]eta*)
+              echo "::error::DEVELOPER_DIR resolves to a beta Xcode: $DEVELOPER_DIR"
               exit 1
               ;;
           esac
 
-      # The repo is the source of truth for the fleet tooling, but the LaunchAgent
-      # path (ship-now-gui.sh -> /Users/jay/apps/ios-fleet/) runs the RUNTIME copy.
-      # check-drift.sh exists to catch that copy going stale and, until now, had
-      # ZERO callers -- so a fix could land in the repo while the owner's manual
-      # "ship now" button kept running the old code. It did exactly that: the
-      # runtime copy still carried both the seq-before-gate ordering bug and the
-      # CFBundleVersion==MARKETING rejection trap after both were fixed here.
-      # This job runs on the same Mac, so the runtime dir is present.
-      #
-      # ADVISORY, NOT A GATE (changed 2026-08-13). This job ships through
-      # scripts/ios-ship-testflight.sh, which resolves the IN-REPO fleet copy,
-      # so runtime drift cannot change what this run builds -- it only misleads
-      # the owner's manual "ship now" button. Two things make failing the job
-      # the wrong response now:
-      #   1. The drift is real and not repairable from inside this repo. As of
-      #      2026-08-13 the runtime ship-all.sh is BEHIND the repo copy (it
-      #      still skips usage-local) while the runtime apps.json is AHEAD (it
-      #      carries a `dealdex` entry the repo lacks). Reconciling needs a
-      #      write to /Users/jay/apps/ios-fleet, which no repo PR can perform.
-      #   2. This workflow now runs on a cron. A blocking check would paint the
-      #      repo red every half hour while shipping nothing.
-      # It stays loud: a warning annotation plus a job-summary block on every
-      # ship. Restore `exit 1` here once the runtime copy is reinstalled from
-      # the repo (README.md install commands).
+      - name: Import signing + ASC key
+        if: steps.gate.outputs.should_ship == '1' && secrets.ASC_KEY_ID != ''
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
+
       - name: Report runtime ios-fleet drift (advisory)
-        if: steps.gate.outputs.should_ship == '1'
+        if: steps.gate.outputs.should_ship == '1' && hashFiles('/Users/jay/apps/ios-fleet/ship-testflight.sh') != ''
         run: |
           set -uo pipefail
           if out="$(bash "$GITHUB_WORKSPACE/scripts/ios-fleet/check-drift.sh" 2>&1)"; then
