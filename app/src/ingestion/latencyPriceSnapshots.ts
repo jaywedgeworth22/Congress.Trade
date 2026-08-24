@@ -307,21 +307,22 @@ export async function captureDueLatencyPriceSnapshots(
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
 ): Promise<CaptureResult> {
-  const db = getDb(env);
   const nowIso = now.toISOString();
 
   // Sweep 12h-aged failed snapshots for exactly ONE full retry cycle
   const sweepThresholdIso = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
-  await db.execute(`
-    UPDATE latency_price_snapshots
-       SET captured_at = NULL,
-           error = NULL,
-           backfill_attempts = 0,
-           swept_12h = 1
-     WHERE error IN ('confirmed_no_bars', 'backfill_exhausted', 'unavailable')
-       AND due_at <= $threshold
-       AND swept_12h = 0
-  `, { threshold: sweepThresholdIso });
+  await run(
+    env.DB,
+    `UPDATE latency_price_snapshots
+        SET captured_at = NULL,
+            error = NULL,
+            backfill_attempts = 0,
+            swept_12h = 1
+      WHERE error IN ('confirmed_no_bars', 'backfill_exhausted', 'unavailable')
+        AND due_at <= ?
+        AND swept_12h = 0`,
+    [sweepThresholdIso],
+  );
 
   // Find all pending snapshot rows that are due (or overdue) for capture.
   const nowMs = now.getTime();
