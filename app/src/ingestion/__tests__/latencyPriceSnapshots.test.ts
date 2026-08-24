@@ -61,7 +61,7 @@ describe('snapshotPlan', () => {
       provider_first_seen_at: null, provider_published_at: null,
       provider_window_start: null, provider_window_end: null,
     });
-    expect(plan).toEqual([{ event: 'ct_publish', dueAt: '2026-08-16T15:00:00.000Z', confidence: 'exact', uncertaintySec: 0 }]);
+    expect(plan).toEqual([{ event: 'ct_publish', dueAt: '2026-08-16T15:00:00.000Z', confidence: 'system', uncertaintySec: 0 }]);
   });
 
   it('provider_publish family uses provider_first_seen_at for offsets and bracketed confidence even if provider_published_at exists', () => {
@@ -75,12 +75,13 @@ describe('snapshotPlan', () => {
     });
     const pub = plan.find((p) => p.event === 'provider_publish')!;
     expect(pub.dueAt).toBe('2026-08-16T15:12:00.000Z');
-    expect(pub.confidence).toBe('bracketed');
+    expect(pub.confidence).toBe('observed');
     expect(pub.uncertaintySec).toBe(4320); // 15:12 - 14:00 (72 minutes)
     expect(plan.find((p) => p.event === 'provider_plus_5m')?.dueAt).toBe(addMs('2026-08-16T15:12:00.000Z', 5 * 60_000));
+    expect(plan.find((p) => p.event === 'provider_plus_5m')?.confidence).toBe('observed');
   });
 
-  it('provider_publish family is bracketed with the window width when only a probe bracket exists', () => {
+  it('provider_publish family is observed with the window width when only a probe bracket exists', () => {
     const plan = snapshotPlan({
       trade_hash: 'h1', ticker: 'AAPL', provider: 'quiver',
       congress_first_seen_at: '2026-08-16T15:00:00.000Z',
@@ -91,10 +92,10 @@ describe('snapshotPlan', () => {
     });
     const pub = plan.find((p) => p.event === 'provider_publish')!;
     expect(pub.dueAt).toBe('2026-08-16T15:30:00.000Z');
-    expect(pub.confidence).toBe('bracketed');
+    expect(pub.confidence).toBe('observed');
     expect(pub.uncertaintySec).toBe(1800);
     // Every follow-up inherits the same confidence.
-    expect(plan.filter((p) => p.event !== 'ct_publish').every((p) => p.confidence === 'bracketed')).toBe(true);
+    expect(plan.filter((p) => p.event !== 'ct_publish').every((p) => p.confidence === 'observed')).toBe(true);
   });
 
   it('provider_publish family is unbounded when neither a published time nor a probe bracket exists', () => {

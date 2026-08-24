@@ -1316,6 +1316,16 @@ export const LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS = [
   `ALTER TABLE latency_price_snapshots ADD COLUMN swept_12h INTEGER NOT NULL DEFAULT 0;`
 ] as const;
 
+
+/**
+ * 0096_latency_confidence_relabel.sql
+ */
+export const LATENCY_CONFIDENCE_RELABEL_SCHEMA_STATEMENTS = [
+  `UPDATE latency_price_snapshots SET confidence = 'system' WHERE event = 'ct_publish';`,
+  `UPDATE latency_price_snapshots SET confidence = 'observed' WHERE confidence = 'bracketed';`,
+  `UPDATE latency_price_snapshots SET confidence = 'claimed' WHERE confidence = 'exact' AND event != 'ct_publish';`
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1448,6 +1458,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...X_AUTH_SCHEMA_STATEMENTS,
   // 0095_latency_snapshot_12h_sweep.sql
   ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
+  // 0096_latency_confidence_relabel.sql
+  ...LATENCY_CONFIDENCE_RELABEL_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
