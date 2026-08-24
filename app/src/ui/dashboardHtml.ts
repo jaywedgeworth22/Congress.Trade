@@ -3703,6 +3703,12 @@ ${speedProofSectionHtml(true)}
       </svg>
       Sign In with Apple
     </a>
+    <a class="xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#000;color:#fff;border-radius:8px;padding:10px;text-decoration:none;font-weight:600;margin-top:8px">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+      </svg>
+      Sign In with X
+    </a>
     <p class="note" id="loginMsg"></p>
   </div>
 </div>
@@ -12499,6 +12505,10 @@ function loginApple() {
   var msg = el('loginMsg');
   if (msg) msg.textContent = 'Connecting to Apple…';
   window.location.href = '/auth/apple/start';
+}
+function loginX() {
+  var msg = el('loginMsg');
+  if (msg) msg.textContent = 'Connecting to X…';
 }
 function syncAppleSignInButton() {
   var btn = el('appleSignInBtn');
