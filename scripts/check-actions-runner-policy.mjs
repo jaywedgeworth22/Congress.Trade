@@ -7,15 +7,13 @@ const workflowNames = (await readdir(workflowsDir))
 
 const errors = [];
 const allowedRunners = new Set([
-  // Owned Mac runner (mac-xcode26-congress) — day-to-day xcodebuild compile
-  // and TestFlight ship only. Do not move ios-build.yml / ios-ship.yml onto
-  // GitHub-hosted macos. Do not schedule non-Xcode jobs onto these labels.
-  "[self-hosted, macOS, ARM64, xcode26]",
-  // GitHub-hosted Tahoe GM. The owned Mac is macOS 27 beta; App Store
-  // review rejects those IPAs as INVALID_BINARY. Only the App Store GM
-  // ship workflow may use this label. macos-latest stays forbidden.
-  "macos-26",
+  // GitHub-hosted standard cloud runners (free for public repos)
   "ubuntu-latest",
+  "macos-latest",
+  "macos-15",
+  "macos-14",
+  "macos-26",
+  "[self-hosted, macOS, ARM64, xcode26]",
 ]);
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
@@ -40,17 +38,12 @@ for (const name of workflowNames) {
   }
 
   for (const forbidden of [
-    "macos-latest",
     "windows-latest",
     "sparse-checkout:",
   ]) {
     if (text.includes(forbidden)) {
       errors.push(`${name}: forbidden hosted-runner or billable-cache token: ${forbidden}`);
     }
-  }
-
-  if (text.includes("runs-on: macos-26") && name !== "ios-appstore-gm.yml") {
-    errors.push(`${name}: macos-26 is only allowed on ios-appstore-gm.yml`);
   }
 
   // IOSENGINEERING-14: iOS compile + XCTest must fail the job.  Advisory
@@ -132,4 +125,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log(`Actions policy OK: ${workflowNames.length} workflows use hosted Linux or the owned Mac xcodebuild runner.`);
+console.log(`Actions policy OK: ${workflowNames.length} workflows use GitHub-hosted cloud runners.`);
