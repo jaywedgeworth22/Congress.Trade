@@ -27,9 +27,9 @@
       "marketingVersion": "1.0.1",
       "appleId": 6802474288
     },
-    "com.topspin.ios": {
-      "displayName": "TopSpin",
-      "marketingVersion": "1.0.0"
+    "codes.autorotate": {
+      "displayName": "Autorotate",
+      "marketingVersion": "1.0.1"
     }
   }
 }
