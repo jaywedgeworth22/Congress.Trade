@@ -1201,8 +1201,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow { margin: 11px 0; }
   .flowrow:first-child { margin-top: 2px; }
   .flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr; align-items: baseline; column-gap: 14px; margin-bottom: 5px; }
-  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; }
-  .flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }
+  .flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
@@ -2028,7 +2028,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 6px 10px 0; align-items: center; backdrop-filter: none;
     }
-    .brand { font-size: 15px; }
+    .brand { font-size: 15px; margin-left: 1ch; }
     .pill { padding: 3px 7px; }
     /* Full-bleed dock like Socratic.Trade console — not a floating glass pill.
        bottom:0 with safe-area padding INSIDE the painted bar so it sits
@@ -2622,7 +2622,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 }
 
 /* ---- 8. Flow rows: tidy stack, quiet chip caption --------------------- */
-#view-trends .flowrow .flabel { letter-spacing: -.005em; }
+#view-trends .flowrow .flabel,
+#view-trends .flowrow .fval { letter-spacing: -.005em; color: var(--text); }
 #view-trends .flowrow .fchip {
   margin-top: 6px;
   line-height: 1.5;
@@ -2856,6 +2857,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   html.phone-chrome .acct-desktop { display: none !important; }
   html.phone-chrome .acct-mobile { display: inline-flex !important; }
+  html.phone-chrome .brand { margin-left: 1ch; }
   @media (max-width: 720px), (hover: none) and (pointer: coarse) {
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
@@ -3224,7 +3226,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <details class="section trends-fold" open>
-        <summary class="tf-h">Net Flow by Sector<span class="fold-cue" aria-hidden="true"></span></summary>
+        <summary class="tf-h">By Sector<span class="fold-cue" aria-hidden="true"></span></summary>
         <div id="trSectorFlow"></div>
       </details>
       <details class="section trends-fold" open>
@@ -11126,8 +11128,9 @@ function loadTrSectorFlow() {
       m.uniqueTickers = Math.max(m.uniqueTickers, Number(r.uniqueTickers || 0));
     });
     rows = order.map(function (k) { return merged[k]; });
-    // Card title is Net Flow by Sector — rank by signed net (biggest buy
-    // first, biggest sell last). Market-cap next door keeps CAP_ORDER.
+    // Web title is By Sector (the large figure is total volume, not net).
+    // rank by signed net (biggest buy first, biggest sell last).
+    // Market-cap next door keeps CAP_ORDER.
     rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
     box.innerHTML = rows.map(function (r) { return flowRowHtml(r.sector, r, max); }).join('');
