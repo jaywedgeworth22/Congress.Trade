@@ -106,6 +106,13 @@ import { mapFiling } from '../delivery/rows.ts';
 import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings.ts';
+import {
+  applyLogoJuryVerdict,
+  importLogoJuryMap,
+  logoJuryHtml,
+  logoJuryQueue,
+} from '../ui/logoJury.ts';
+import { readLogoPolicyOverlay } from '../ui/tickerLogoPolicy.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import {
@@ -4833,6 +4840,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const logoDisplay = await setLogoDisplay(c.env, body.logoDisplay);
     return c.json({ logoDisplay });
+  });
+
+  // --- Logo jury (top-N A/B/C/D plates) -----------------------------------
+  r.get('/logo-jury', (c) =>
+    c.html(logoJuryHtml()),
+  );
+  r.get('/logo-jury/queue', async (c) => {
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 200)));
+    return c.json(await logoJuryQueue(c.env, limit));
+  });
+  r.get('/logo-jury/overlay', async (c) => {
+    return c.json({ overlay: await readLogoPolicyOverlay(c.env) });
+  });
+  r.put('/logo-jury/verdict', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const result = await applyLogoJuryVerdict(c.env, body);
+    if (!result.ok) return c.json({ error: 'error' in result ? result.error : 'verdict failed' }, 400);
+    return c.json(result);
+  });
+  r.put('/logo-jury/overlay', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const result = await importLogoJuryMap(c.env, body);
+    if (!result.ok) return c.json({ error: 'error' in result ? result.error : 'import failed' }, 400);
+    return c.json(result);
   });
 
   // --- GET /admins ----------------------------------------------------------
