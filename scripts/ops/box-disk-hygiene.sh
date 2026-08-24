@@ -33,6 +33,11 @@
 #   STATE_DIR                 default /var/lib/box-disk-hygiene
 #   LOG_TAG                   default box-disk-hygiene
 #   ALERT_WEBHOOK_URL         optional POST JSON on critical (Slack/ntfy/etc.)
+#   BACKUP_DATA_DIR           default /data/backups (host sqlite snapshots)
+#   BACKUP_KEEP_COUNT         default 4 (per-app prefix; oldest deleted when above)
+#   SCRATCH_DATA_DIR          default /data/scratch (restore drills; prune >7d)
+#   PUSHOVER_APP_TOKEN        fleet Pushover app (prefer PUSHOVER_USAGE_API_TOKEN)
+#   PUSHOVER_USER_KEY         recipient user key
 #   DRY_RUN                   default 0
 
 set -euo pipefail
@@ -46,10 +51,24 @@ LIGHT_BUILDER_UNTIL="${LIGHT_BUILDER_UNTIL:-12h}"
 AGGRESSIVE_COOLDOWN_SEC="${AGGRESSIVE_COOLDOWN_SEC:-1800}"
 PRUNE_VOLUMES="${PRUNE_VOLUMES:-0}"
 CT_DATA_DIR="${CT_DATA_DIR:-/data/congress-trade}"
+BACKUP_DATA_DIR="${BACKUP_DATA_DIR:-/data/backups}"
+BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-4}"
+SCRATCH_DATA_DIR="${SCRATCH_DATA_DIR:-/data/scratch}"
 STATE_DIR="${STATE_DIR:-/var/lib/box-disk-hygiene}"
 LOG_TAG="${LOG_TAG:-box-disk-hygiene}"
 ALERT_WEBHOOK_URL="${ALERT_WEBHOOK_URL:-}"
 DRY_RUN="${DRY_RUN:-0}"
+
+# Optional Pushover creds (install copies congress-health-recover.env or sets these).
+if [[ -f /etc/box-disk-hygiene.env ]]; then
+  # shellcheck disable=SC1091
+  set -a; source /etc/box-disk-hygiene.env; set +a
+fi
+if [[ -f /etc/congress-health-recover.env ]]; then
+  # shellcheck disable=SC1091
+  set -a; source /etc/congress-health-recover.env; set +a
+fi
+PUSHOVER_APP_TOKEN="${PUSHOVER_USAGE_API_TOKEN:-${PUSHOVER_APP_TOKEN:-}}"
 
 mkdir -p "$STATE_DIR"
 
@@ -113,6 +132,60 @@ report_docker() {
   done || log "docker: system df failed"
 }
 
+report_builder_cache() {
+  BUILDER_CACHE_BYTES=0
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+  local cache_line
+  cache_line=$(docker system df 2>/dev/null | awk '/Build Cache/ {print $4; exit}')
+  if [[ -n "$cache_line" ]]; then
+    if command -v numfmt >/dev/null 2>&1; then
+      BUILDER_CACHE_BYTES=$(numfmt --from=iec "$cache_line" 2>/dev/null || echo 0)
+    else
+      BUILDER_CACHE_BYTES=0
+    fi
+  fi
+  log "builder-cache: ${cache_line:-unknown}"
+}
+
+report_backup_dir() {
+  if [[ ! -d "$BACKUP_DATA_DIR" ]]; then
+    log "backups: $BACKUP_DATA_DIR absent"
+    return 0
+  fi
+  local total
+  total=$(du -sb "$BACKUP_DATA_DIR" 2>/dev/null | awk '{print $1}')
+  log "backups: dir=$BACKUP_DATA_DIR size=$(awk -v n="${total:-0}" 'BEGIN{printf "%.1fGiB", n/1024/1024/1024}')"
+}
+
+prune_old_backups() {
+  if [[ ! -d "$BACKUP_DATA_DIR" ]]; then
+    return 0
+  fi
+  local keep_days=14
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "dry-run: prune backups in $BACKUP_DATA_DIR older than ${keep_days}d"
+    return 0
+  fi
+  find "$BACKUP_DATA_DIR" -type f \( -name '*.db' -o -name '*.db.gz' -o -name '*.sqlite' \) -mtime +"${keep_days}" -print -delete 2>/dev/null | while IFS= read -r path; do
+    log "backup-prune: deleted $path"
+  done || true
+}
+
+prune_old_scratch() {
+  if [[ ! -d "$SCRATCH_DATA_DIR" ]]; then
+    return 0
+  fi
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "dry-run: find $SCRATCH_DATA_DIR -mindepth 1 -mtime +7"
+    return 0
+  fi
+  find "$SCRATCH_DATA_DIR" -mindepth 1 -mtime +7 -print -exec rm -rf {} + 2>/dev/null | while IFS= read -r path; do
+    log "scratch-prune: removed $path"
+  done || true
+}
+
 run_cmd() {
   if [[ "$DRY_RUN" == "1" ]]; then
     log "dry-run: $*"
@@ -144,9 +217,41 @@ mark_aggressive() {
   echo "$(now)" >"$STATE_DIR/last_aggressive"
 }
 
+alert_pushover() {
+  local severity="$1"
+  local body="$2"
+  if [[ -z "${PUSHOVER_APP_TOKEN:-}" || -z "${PUSHOVER_USER_KEY:-}" ]]; then
+    return 0
+  fi
+  local title="Coolify disk ${severity}"
+  curl -fsS -m 15 \
+    --form-string "token=${PUSHOVER_APP_TOKEN}" \
+    --form-string "user=${PUSHOVER_USER_KEY}" \
+    --form-string "title=${title}" \
+    --form-string "message=${body}" \
+    --form-string "priority=$([[ "$severity" == crit ]] && echo 1 || echo 0)" \
+    https://api.pushover.net/1/messages.json >/dev/null 2>&1 \
+    || log "warn: pushover notify failed"
+}
+
+alert_warn() {
+  local body="$1"
+  log "ALERT warn: $body"
+  alert_pushover warn "$body"
+  if [[ -z "$ALERT_WEBHOOK_URL" ]]; then
+    return 0
+  fi
+  local payload
+  payload=$(printf '{"text":"[%s] %s"}' "$LOG_TAG" "$body")
+  curl -fsS -m 15 -X POST -H 'Content-Type: application/json' \
+    -d "$payload" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 \
+    || log "warn: alert webhook failed"
+}
+
 alert_critical() {
   local body="$1"
   log "ALERT critical: $body"
+  alert_pushover crit "$body"
   if [[ -z "$ALERT_WEBHOOK_URL" ]]; then
     return 0
   fi
@@ -156,6 +261,14 @@ alert_critical() {
   curl -fsS -m 15 -X POST -H 'Content-Type: application/json' \
     -d "$payload" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 \
     || log "warn: alert webhook failed"
+}
+
+disk_alert_suffix() {
+  local cache_note="${BUILDER_CACHE_BYTES:-0}"
+  if [[ "$cache_note" == "0" ]]; then
+    cache_note=$(docker system df 2>/dev/null | awk '/Build Cache/ {print $4; exit}')
+  fi
+  printf '(builder cache %s; check %s)' "${cache_note:-0B}" "$BACKUP_DATA_DIR"
 }
 
 light_prune() {
@@ -212,10 +325,16 @@ main() {
   log "disk: path=$ROOT_PATH used=${USED_PCT}% (${USED_GB}G/${TOTAL_GB}G) free=${FREE_GB}G"
   report_sqlite
   report_docker
+  report_builder_cache
+  report_backup_dir
 
   local level
   level=$(level_for "$USED_PCT" "$FREE_GB")
   log "level=$level"
+
+  if [[ "$level" == "warn" ]]; then
+    alert_warn "disk warn used=${USED_PCT}% free=${FREE_GB}G on $(hostname) $(disk_alert_suffix)"
+  fi
 
   if is_deploy_active; then
     log "prune: skipped (Coolify build/deploy active)"
@@ -232,6 +351,8 @@ main() {
       light_prune
       ;;
     warn)
+      prune_old_backups
+      prune_old_scratch
       if cooldown_ok; then
         soft_prune
         mark_aggressive
@@ -241,7 +362,9 @@ main() {
       fi
       ;;
     crit)
-      alert_critical "disk critical used=${USED_PCT}% free=${FREE_GB}G on $(hostname) — pruning"
+      alert_critical "disk critical used=${USED_PCT}% free=${FREE_GB}G on $(hostname) — pruning $(disk_alert_suffix)"
+      prune_old_backups
+      prune_old_scratch
       if cooldown_ok; then
         aggressive_prune
         mark_aggressive
@@ -260,7 +383,7 @@ main() {
   local level_after
   level_after=$(level_for "$USED_PCT" "$FREE_GB")
   if [[ "$level_after" == "crit" ]]; then
-    alert_critical "disk STILL critical after prune used=${USED_PCT}% free=${FREE_GB}G on $(hostname) — manual intervention needed (check /data/backups, large logs)"
+    alert_critical "disk STILL critical after reclaim used=${USED_PCT}% free=${FREE_GB}G on $(hostname) $(disk_alert_suffix). Needs a human if this repeats."
   fi
 
   echo "$level_after" >"$STATE_DIR/last_level"
