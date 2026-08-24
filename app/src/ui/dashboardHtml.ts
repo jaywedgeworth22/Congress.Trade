@@ -3496,6 +3496,7 @@ ${speedProofSectionHtml(true)}
         </select>
         <button class="btn" onclick="saveLogoDisplay()">Save for Everyone</button>
         <span id="logoMsg" class="note"></span>
+        <a class="btn ghost" href="/api/admin/logo-jury">Logo jury (A/B/C/D)</a>
       </div>
     </div>
     <div class="section">
@@ -4448,6 +4449,24 @@ function themeRowHtml(pref, hideLabel) {
   // keeps the label (unchanged), so hideLabel is opt-in per call site.
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
+function currentLogoTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function tickerLogoSrc(sym) {
+  return '/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '&theme=' + currentLogoTheme();
+}
+function syncTickerLogoThemes(theme) {
+  document.querySelectorAll('.tkr-logo img[src*="/api/logos/ticker"]').forEach(function (img) {
+    var raw = img.getAttribute('src');
+    if (!raw) return;
+    try {
+      var u = new URL(raw, location.origin);
+      if (u.searchParams.get('theme') === theme) return;
+      u.searchParams.set('theme', theme);
+      img.setAttribute('src', u.pathname + u.search);
+    } catch (e) {}
+  });
+}
 function applyTheme(effective) {
   var theme = effective === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', theme);
@@ -4456,6 +4475,7 @@ function applyTheme(effective) {
     var next = theme === 'dark' ? logo.getAttribute('data-src-dark') : logo.getAttribute('data-src-light');
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
+  syncTickerLogoThemes(theme);
   var meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   syncThemeSegUI();
@@ -4535,7 +4555,7 @@ function tickerLogoHtml(ticker, company) {
   }
   var mono = esc(sym.slice(0, 2));
   return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
-    '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
+    '<img src="' + tickerLogoSrc(sym) + '" alt="" ' +
     'loading="lazy" decoding="async" ' +
     // Empty 200 PNGs (cached blank provider bodies) never fire onerror — treat
     // zero naturalWidth as a miss so monogram fallback still runs.
