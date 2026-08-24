@@ -82,6 +82,7 @@ import {
 } from './subscriptions.ts';
 import { openSseStream } from './sse.ts';
 import { handleTickerLogoRequest } from '../ui/tickerLogos.ts';
+import { readLogoPolicyOverlay } from '../ui/tickerLogoPolicy.ts';
 import { handleMemberPhotoRequest } from '../enrichment/memberPhotoPack.ts';
 import { getSecretResolverStatus, resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
@@ -924,7 +925,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       ? undefined
       : (await resolveSecret(c.env, 'LOGO_DEV_TOKEN')).value
         ?? (typeof c.env.LOGO_DEV_TOKEN === 'string' ? c.env.LOGO_DEV_TOKEN : undefined);
-    return handleTickerLogoRequest(new URL(c.req.url), primary ?? alias);
+    const overlay = await readLogoPolicyOverlay(c.env);
+    return handleTickerLogoRequest(new URL(c.req.url), primary ?? alias, overlay);
   });
 
   // --- GET /photos/member -------------------------------------------------
