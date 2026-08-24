@@ -61,15 +61,21 @@ export async function sendPushover(
   let userKey = creds?.userKey;
   if (!appToken?.trim() || !userKey?.trim()) {
     try {
-      const secrets = await resolveSecrets(env, ['PUSHOVER_APP_TOKEN', 'PUSHOVER_USER_KEY']);
-      appToken = appToken?.trim() ? appToken : secrets.PUSHOVER_APP_TOKEN;
+      const secrets = await resolveSecrets(env, [
+        'PUSHOVER_CT_API_TOKEN',
+        'PUSHOVER_APP_TOKEN',
+        'PUSHOVER_USER_KEY',
+      ]);
+      appToken = appToken?.trim()
+        ? appToken
+        : secrets.PUSHOVER_CT_API_TOKEN?.trim() || secrets.PUSHOVER_APP_TOKEN;
       userKey = userKey?.trim() ? userKey : secrets.PUSHOVER_USER_KEY;
     } catch {
       /* resolution failure is indistinguishable from unconfigured — no-op */
     }
   }
   if (!appToken?.trim() || !userKey?.trim()) {
-    return { sent: false, reason: 'PUSHOVER_APP_TOKEN / PUSHOVER_USER_KEY not configured' };
+    return { sent: false, reason: 'PUSHOVER_CT_API_TOKEN / PUSHOVER_APP_TOKEN / PUSHOVER_USER_KEY not configured' };
   }
 
   const form = new URLSearchParams({
