@@ -59,15 +59,15 @@
       "marketingVersionDefault": "1.0.1",
       "notes": "Native iPhone app. Bundle ID online.dealdex (resource R2FAW69NPD, not a team id). Team CC8UTF7ATG. ASC app DealDex SKU dealdex id 6802474288. Do not upload me.grok.dealdex."
     },
-    "topspin": {
-      "displayName": "TopSpin",
-      "bundleId": "com.topspin.ios",
-      "scheme": "TopSpin-iOS",
-      "projectRel": "apple/TopSpin.xcodeproj",
+    "autorotate": {
+      "displayName": "Autorotate",
+      "bundleId": "codes.autorotate",
+      "scheme": "Autorotate-iOS",
+      "projectRel": "apple/Autorotate.xcodeproj",
       "xcodegenDir": "apple",
-      "worktreeHint": "~/apps/topspin-grok",
-      "marketingVersionDefault": "1.0.0",
-      "notes": "Pre-TestFlight: app targets never compiled (TopSpinCore 22/22 green). XcodeGen project covers iOS + macOS (com.topspin.macos). No ASC record yet — owner dashboard item. Keychain group com.topspin.shared pre-declared in entitlements."
+      "worktreeHint": "~/apps/autorotate-grok",
+      "marketingVersionDefault": "1.0.1",
+      "notes": "Autorotate (formerly TopSpin). XcodeGen covers iOS (codes.autorotate) + macOS (codes.autorotate.macos). Keychain group codes.autorotate.shared."
     }
   }
 }
