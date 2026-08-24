@@ -50,7 +50,7 @@ litestream_enabled=false
 # perfectly while replication silently switched itself off — nothing would
 # look broken until a restore was needed.
 BOOTSTRAP_CLIENT_ID="${INFISICAL_APP_CLIENT_ID:-${INFISICAL_CLIENT_ID:-}}"
-BOOTSTRAP_CLIENT_SECRET="${INFISICAL_APP_CLIENT_SECRET:-${INFISICAL_CLIENT_SECRET:-}}"
+BOOTSTRAP_CLIENT_SECRET="${INFISICAL_CLIENT_SECRET:-${INFISICAL_APP_CLIENT_SECRET:-}}"
 
 if [[ -z "${BOOTSTRAP_CLIENT_ID}" || -z "${BOOTSTRAP_CLIENT_SECRET}" ]]; then
   log "no Infisical bootstrap identity (INFISICAL_APP_CLIENT_ID/SECRET or INFISICAL_CLIENT_ID/SECRET) — running without Litestream (expected for local/preview)."
