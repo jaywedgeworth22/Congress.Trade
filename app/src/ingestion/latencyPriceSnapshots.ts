@@ -40,10 +40,12 @@ import {
 export const LATENCY_PRICE_EVENTS = [
   'ct_publish',
   'provider_publish',
+  'provider_minus_15m',
   'provider_plus_5m',
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
+  'provider_plus_12h',
 ] as const;
 
 export type LatencyPriceEvent = (typeof LATENCY_PRICE_EVENTS)[number];
@@ -51,17 +53,21 @@ export type LatencyPriceEvent = (typeof LATENCY_PRICE_EVENTS)[number];
 type FollowUpEvent = Exclude<LatencyPriceEvent, 'ct_publish' | 'provider_publish'>;
 
 const FOLLOW_EVENTS: readonly FollowUpEvent[] = [
+  'provider_minus_15m',
   'provider_plus_5m',
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
+  'provider_plus_12h',
 ];
 
 const FOLLOW_MS: Record<FollowUpEvent, number> = {
+  provider_minus_15m: -15 * 60_000,
   provider_plus_5m: 5 * 60_000,
   provider_plus_15m: 15 * 60_000,
   provider_plus_30m: 30 * 60_000,
   provider_plus_60m: 60 * 60_000,
+  provider_plus_12h: 12 * 3600_000,
 };
 
 /** Do not ask for a live quote for an event that already aged out. */
@@ -498,7 +504,7 @@ export async function summarizeProviderPublishBump(env: Env): Promise<PriceEdgeB
          ON later.trade_hash = pub.trade_hash
         AND later.provider = pub.provider
       WHERE pub.event = 'provider_publish'
-        AND later.event IN ('provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m')
+        AND later.event IN ('provider_minus_15m', 'provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m', 'provider_plus_12h')
         AND pub.price IS NOT NULL AND pub.price > 0
         AND later.price IS NOT NULL
         AND pub.market_session = 'regular'

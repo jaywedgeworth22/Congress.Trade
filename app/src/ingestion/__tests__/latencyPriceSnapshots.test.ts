@@ -37,17 +37,21 @@ describe('snapshotPlan', () => {
     expect(plan.map((p) => p.event)).toEqual([
       'ct_publish',
       'provider_publish',
+      'provider_minus_15m',
       'provider_plus_5m',
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_12h',
     ]);
-    expect(plan[0]!.dueAt).toBe('2026-08-16T15:00:00.000Z');
-    expect(plan[1]!.dueAt).toBe('2026-08-16T15:10:00.000Z');
-    expect(plan[2]!.dueAt).toBe('2026-08-16T15:15:00.000Z');
-    expect(plan[3]!.dueAt).toBe('2026-08-16T15:25:00.000Z');
-    expect(plan[4]!.dueAt).toBe('2026-08-16T15:40:00.000Z');
-    expect(plan[5]!.dueAt).toBe('2026-08-16T16:10:00.000Z');
+    expect(plan[0]!.dueAt).toBe('2026-08-16T15:00:00.000Z'); // ct_publish
+    expect(plan[1]!.dueAt).toBe('2026-08-16T15:10:00.000Z'); // provider_publish
+    expect(plan[2]!.dueAt).toBe('2026-08-16T14:55:00.000Z'); // minus_15m
+    expect(plan[3]!.dueAt).toBe('2026-08-16T15:15:00.000Z'); // plus_5m
+    expect(plan[4]!.dueAt).toBe('2026-08-16T15:25:00.000Z'); // plus_15m
+    expect(plan[5]!.dueAt).toBe('2026-08-16T15:40:00.000Z'); // plus_30m
+    expect(plan[6]!.dueAt).toBe('2026-08-16T16:10:00.000Z'); // plus_60m
+    expect(plan[7]!.dueAt).toBe('2026-08-17T03:10:00.000Z'); // plus_12h
   });
 
   it('ct_publish is always exact confidence with zero uncertainty', () => {
@@ -489,10 +493,12 @@ describe('summarizeProviderPublishBump', () => {
   it('includes the +15m rung in its output', async () => {
     const buckets = await summarizeProviderPublishBump(env);
     expect(buckets.map((b) => b.event)).toEqual([
+      'provider_minus_15m',
       'provider_plus_5m',
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_12h',
     ]);
   });
 });

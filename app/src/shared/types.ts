@@ -195,6 +195,11 @@ export interface Transaction {
   refCountry?: string | null;
   refExchangeShort?: string | null;
   refAssetClass?: string | null;
+
+  // --- Optional Latency Probe Identity (feed only) ------------------------
+  latencyProbeHealth?: string | null;
+  latencyProbeDelayMs?: number | null;
+  providerPublishedAt?: string | null;
 }
 
 /**

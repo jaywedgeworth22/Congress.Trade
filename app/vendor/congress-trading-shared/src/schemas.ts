@@ -152,6 +152,9 @@ export const CongressTransactionSchema = z.object({
   refCountry: z.string().nullable().optional(),
   refExchangeShort: z.string().nullable().optional(),
   refAssetClass: z.string().nullable().optional(),
+  latencyProbeHealth: z.string().nullable().optional(),
+  latencyProbeDelayMs: z.number().nullable().optional(),
+  providerPublishedAt: z.string().nullable().optional(),
 });
 export type CongressTransaction = z.infer<typeof CongressTransactionSchema>;
 

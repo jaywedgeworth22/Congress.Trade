@@ -107,6 +107,11 @@ export interface FeedTransactionRow extends TransactionRow {
   ref_country?: string | null;
   ref_exchange_short?: string | null;
   ref_asset_class?: string | null;
+
+  // Added for latency tracking
+  latency_probe_health?: string | null;
+  latency_probe_delay_ms?: number | null;
+  latency_provider_published_at?: string | null;
 }
 
 export interface SubscriptionRow {
@@ -248,9 +253,12 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     refSector: row.ref_sector,
     refMarketCap: row.ref_market_cap,
     refMarketCapBucket: row.ref_market_cap_bucket,
-    refCountry: row.ref_country,
-    refExchangeShort: row.ref_exchange_short,
-    refAssetClass: row.ref_asset_class,
+    refCountry: row.ref_country ?? null,
+    refExchangeShort: row.ref_exchange_short ?? null,
+    refAssetClass: row.ref_asset_class ?? null,
+    latencyProbeHealth: row.latency_probe_health ?? null,
+    latencyProbeDelayMs: row.latency_probe_delay_ms ?? null,
+    providerPublishedAt: row.latency_provider_published_at ?? null,
   });
 }
 
@@ -872,17 +880,25 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
       ? `t.cursor_seq ${direction}`
       : `${orderExpr} ${direction}, t.cursor_seq ${direction}`;
 
+  const LATENCY_SELECT = 
+    'tlc.provider_published_at AS latency_provider_published_at, ' +
+    'CASE WHEN tlc.provider_window_start IS NOT NULL AND tlc.provider_window_end IS NOT NULL THEN (JULIANDAY(tlc.provider_window_end) - JULIANDAY(tlc.provider_window_start)) * 86400000 ELSE NULL END AS latency_probe_delay_ms, ' +
+    'CASE WHEN tlc.provider_window_start IS NOT NULL AND tlc.provider_window_end IS NOT NULL THEN CASE WHEN (JULIANDAY(tlc.provider_window_end) - JULIANDAY(tlc.provider_window_start)) * 86400000 <= 600000 THEN \'healthy\' ELSE \'degraded\' END ELSE NULL END AS latency_probe_health ';
+
   const selectList =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, COALESCE(fl.display_name, fl.full_name) AS __member_name, fl.party AS __party, ` +
     'COALESCE(fl.display_name, fl.full_name) AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, fl.resolved_bioguide_id AS filer_bioguide_id, ' +
     REF_SELECT +
-    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key, ' +
+    LATENCY_SELECT;
 
   const pageLimitClause =
     `LIMIT ${limit}` + (offset > 0 ? ` OFFSET ${offset}` : '');
   const candidateLimit = twinCandidateLimit(limit, offset);
   const cheapWhere = where.join(' AND ');
+
+  const LATENCY_JOIN = 'LEFT JOIN (SELECT doc_id, ticker, tx_date, tx_type, MIN(provider_published_at) as provider_published_at, MIN(provider_window_start) as provider_window_start, MAX(provider_window_end) as provider_window_end FROM trade_latency_candidates WHERE status = \'published\' GROUP BY doc_id, ticker, tx_date, tx_type) tlc ON tlc.doc_id = t.doc_id AND (tlc.ticker = t.ticker OR (tlc.ticker IS NULL AND t.ticker IS NULL)) AND (tlc.tx_date = t.tx_date OR (tlc.tx_date IS NULL AND t.tx_date IS NULL)) AND (tlc.tx_type = t.tx_type OR (tlc.tx_type IS NULL AND t.tx_type IS NULL)) ';
 
   // Walk the cheap live filters to a bounded candidate page FIRST, then
   // collapse source-twins. NOT EXISTS still reads the full table for each
@@ -905,7 +921,8 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
       ') t ' +
       'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
       'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
-      'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker';
+      'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+      LATENCY_JOIN;
     return { sql, params, limit, offset };
   }
 
@@ -921,6 +938,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
     'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
     'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    LATENCY_JOIN +
     `WHERE ${TWIN_DEDUPE_SQL} ` +
     `ORDER BY ${orderClause} ` +
     pageLimitClause;
