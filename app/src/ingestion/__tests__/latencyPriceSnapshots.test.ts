@@ -37,17 +37,23 @@ describe('snapshotPlan', () => {
     expect(plan.map((p) => p.event)).toEqual([
       'ct_publish',
       'provider_publish',
+      'provider_minus_30m',
+      'provider_minus_15m',
       'provider_plus_5m',
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_12h',
     ]);
-    expect(plan[0]!.dueAt).toBe('2026-08-16T15:00:00.000Z');
-    expect(plan[1]!.dueAt).toBe('2026-08-16T15:10:00.000Z');
-    expect(plan[2]!.dueAt).toBe('2026-08-16T15:15:00.000Z');
-    expect(plan[3]!.dueAt).toBe('2026-08-16T15:25:00.000Z');
-    expect(plan[4]!.dueAt).toBe('2026-08-16T15:40:00.000Z');
-    expect(plan[5]!.dueAt).toBe('2026-08-16T16:10:00.000Z');
+    expect(plan[0]!.dueAt).toBe('2026-08-16T15:00:00.000Z'); // ct_publish
+    expect(plan[1]!.dueAt).toBe('2026-08-16T15:10:00.000Z'); // provider_publish
+    expect(plan[2]!.dueAt).toBe('2026-08-16T14:40:00.000Z'); // -30m
+    expect(plan[3]!.dueAt).toBe('2026-08-16T14:55:00.000Z'); // -15m
+    expect(plan[4]!.dueAt).toBe('2026-08-16T15:15:00.000Z'); // +5m
+    expect(plan[5]!.dueAt).toBe('2026-08-16T15:25:00.000Z'); // +15m
+    expect(plan[6]!.dueAt).toBe('2026-08-16T15:40:00.000Z'); // +30m
+    expect(plan[7]!.dueAt).toBe('2026-08-16T16:10:00.000Z'); // +60m
+    expect(plan[8]!.dueAt).toBe('2026-08-17T03:10:00.000Z'); // +12h
   });
 
   it('ct_publish is always exact confidence with zero uncertainty', () => {
@@ -60,7 +66,7 @@ describe('snapshotPlan', () => {
     expect(plan).toEqual([{ event: 'ct_publish', dueAt: '2026-08-16T15:00:00.000Z', confidence: 'exact', uncertaintySec: 0 }]);
   });
 
-  it('provider_publish family is exact when the provider reported its own publish time, even with a window also present', () => {
+  it('provider_publish family uses provider_first_seen_at for offsets and bracketed confidence even if provider_published_at exists', () => {
     const plan = snapshotPlan({
       trade_hash: 'h1', ticker: 'AAPL', provider: 'unusual_whales',
       congress_first_seen_at: '2026-08-16T15:00:00.000Z',
@@ -70,10 +76,10 @@ describe('snapshotPlan', () => {
       provider_window_end: '2026-08-16T15:12:00.000Z',
     });
     const pub = plan.find((p) => p.event === 'provider_publish')!;
-    expect(pub.dueAt).toBe('2026-08-16T15:11:00.000Z');
-    expect(pub.confidence).toBe('exact');
-    expect(pub.uncertaintySec).toBe(0);
-    expect(plan.find((p) => p.event === 'provider_plus_5m')?.dueAt).toBe(addMs('2026-08-16T15:11:00.000Z', 5 * 60_000));
+    expect(pub.dueAt).toBe('2026-08-16T15:12:00.000Z');
+    expect(pub.confidence).toBe('bracketed');
+    expect(pub.uncertaintySec).toBe(4320); // 15:12 - 14:00 (72 minutes)
+    expect(plan.find((p) => p.event === 'provider_plus_5m')?.dueAt).toBe(addMs('2026-08-16T15:12:00.000Z', 5 * 60_000));
   });
 
   it('provider_publish family is bracketed with the window width when only a probe bracket exists', () => {
@@ -489,10 +495,13 @@ describe('summarizeProviderPublishBump', () => {
   it('includes the +15m rung in its output', async () => {
     const buckets = await summarizeProviderPublishBump(env);
     expect(buckets.map((b) => b.event)).toEqual([
+      'provider_minus_30m',
+      'provider_minus_15m',
       'provider_plus_5m',
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_12h',
     ]);
   });
 });
