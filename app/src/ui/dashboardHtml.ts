@@ -11129,7 +11129,7 @@ function loadTrSectorFlow() {
     });
     rows = order.map(function (k) { return merged[k]; });
     // Web title is By Sector (the large figure is total volume, not net).
-    // Rank by signed net (biggest buy first, biggest sell last).
+    // rank by signed net (biggest buy first, biggest sell last).
     // Market-cap next door keeps CAP_ORDER.
     rows.sort(function (a, b) { return Number(b.estNetFlowUsd || 0) - Number(a.estNetFlowUsd || 0); });
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
