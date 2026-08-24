@@ -55,7 +55,7 @@ async function createInMemoryD1(): Promise<D1Database> {
     ALTER TABLE filers ADD COLUMN display_name TEXT;
     ALTER TABLE filings ADD COLUMN filing_status TEXT;
     ALTER TABLE transactions ADD COLUMN deprecated_at TEXT;
-    CREATE TABLE IF NOT EXISTS trade_latency_candidates (doc_id TEXT, ticker TEXT, tx_date TEXT, tx_type TEXT, status TEXT, provider_published_at TEXT, provider_window_start TEXT, provider_window_end TEXT);
+    CREATE TABLE IF NOT EXISTS trade_latency_candidates (doc_id TEXT, ticker TEXT, tx_date TEXT, tx_type TEXT, status TEXT, provider_published_at TEXT, provider_window_start TEXT, provider_window_end TEXT, provider TEXT, congress_first_seen_at TEXT, created_at TEXT, updated_at TEXT);
   `);
 
   return {

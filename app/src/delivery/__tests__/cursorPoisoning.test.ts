@@ -39,7 +39,7 @@ async function createInMemoryD1(): Promise<D1Database> {
     ALTER TABLE filers ADD COLUMN display_name TEXT;
     ALTER TABLE filings ADD COLUMN filing_status TEXT;
     ALTER TABLE transactions ADD COLUMN deprecated_at TEXT;
-    CREATE TABLE IF NOT EXISTS trade_latency_candidates (doc_id TEXT, ticker TEXT, tx_date TEXT, tx_type TEXT, status TEXT, provider_published_at TEXT, provider_window_start TEXT, provider_window_end TEXT);
+    CREATE TABLE IF NOT EXISTS trade_latency_candidates (doc_id TEXT, ticker TEXT, tx_date TEXT, tx_type TEXT, status TEXT, provider_published_at TEXT, provider_window_start TEXT, provider_window_end TEXT, provider TEXT, congress_first_seen_at TEXT, created_at TEXT, updated_at TEXT);
   `);
 
   return {
@@ -95,6 +95,7 @@ describe('P0-1 cursor poisoning remediation and self-healing', () => {
 
     // User supplies a poisoned since value (e.g. 1.78e12)
     const res = await app.request('/api/transactions?since=1784939101315', {}, { DB: db } as never);
+    if (res.status !== 200) console.error("MIGRATE ERROR:", await res.json());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { cursor: number; transactions: any[] };
     expect(body.transactions).toHaveLength(0);
@@ -122,6 +123,7 @@ describe('P0-1 cursor poisoning remediation and self-healing', () => {
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
 
+    if (res.status !== 200) console.error("MIGRATE ERROR:", await res.json());
     expect(res.status).toBe(200);
 
     // Verify subscriptions cursor was repaired down to normal high-water mark (1)
