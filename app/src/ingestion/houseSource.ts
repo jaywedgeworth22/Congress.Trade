@@ -148,7 +148,7 @@ export function parseHouseIndexXml(xml: string, defaultYear: string): HouseFilin
  */
 export async function fetchHouseIndex(
   year: number | string,
-  opts: { relayUrl?: string; fetchImpl?: typeof fetch } = {},
+  opts: { relayUrl?: string; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<HouseFiling[]> {
   const url = houseBulkZipUrl(year);
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.HOUSE_RELAY_URL || process.env?.INGEST_RELAY_URL : undefined);
@@ -163,6 +163,7 @@ export async function fetchHouseIndex(
         'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
         accept: 'application/zip,application/octet-stream,*/*',
       },
+      signal: opts.signal,
     }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' }, opts.fetchImpl);
     if (res.ok) {
       zipBytes = new Uint8Array(await res.arrayBuffer());
