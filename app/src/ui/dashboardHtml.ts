@@ -3496,6 +3496,7 @@ ${speedProofSectionHtml(true)}
         </select>
         <button class="btn" onclick="saveLogoDisplay()">Save for Everyone</button>
         <span id="logoMsg" class="note"></span>
+        <a class="btn ghost" href="/api/admin/logo-jury">Logo jury (A/B/C/D)</a>
       </div>
     </div>
     <div class="section">
@@ -3701,6 +3702,12 @@ ${speedProofSectionHtml(true)}
         <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
       </svg>
       Sign In with Apple
+    </a>
+    <a class="xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#000;color:#fff;border-radius:8px;padding:10px;text-decoration:none;font-weight:600;margin-top:8px">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+      </svg>
+      Sign In with X
     </a>
     <p class="note" id="loginMsg"></p>
   </div>
@@ -4448,6 +4455,24 @@ function themeRowHtml(pref, hideLabel) {
   // keeps the label (unchanged), so hideLabel is opt-in per call site.
   return '<div class="theme-row">' + (hideLabel ? '' : '<span class="theme-row-label">Theme</span>') + themeSegHtml(pref) + '</div>';
 }
+function currentLogoTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function tickerLogoSrc(sym) {
+  return '/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '&theme=' + currentLogoTheme();
+}
+function syncTickerLogoThemes(theme) {
+  document.querySelectorAll('.tkr-logo img[src*="/api/logos/ticker"]').forEach(function (img) {
+    var raw = img.getAttribute('src');
+    if (!raw) return;
+    try {
+      var u = new URL(raw, location.origin);
+      if (u.searchParams.get('theme') === theme) return;
+      u.searchParams.set('theme', theme);
+      img.setAttribute('src', u.pathname + u.search);
+    } catch (e) {}
+  });
+}
 function applyTheme(effective) {
   var theme = effective === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', theme);
@@ -4456,6 +4481,7 @@ function applyTheme(effective) {
     var next = theme === 'dark' ? logo.getAttribute('data-src-dark') : logo.getAttribute('data-src-light');
     if (next && logo.getAttribute('src') !== next) logo.setAttribute('src', next);
   }
+  syncTickerLogoThemes(theme);
   var meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   syncThemeSegUI();
@@ -4535,7 +4561,7 @@ function tickerLogoHtml(ticker, company) {
   }
   var mono = esc(sym.slice(0, 2));
   return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
-    '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
+    '<img src="' + tickerLogoSrc(sym) + '" alt="" ' +
     'loading="lazy" decoding="async" ' +
     // Empty 200 PNGs (cached blank provider bodies) never fire onerror — treat
     // zero naturalWidth as a miss so monogram fallback still runs.
@@ -12479,6 +12505,10 @@ function loginApple() {
   var msg = el('loginMsg');
   if (msg) msg.textContent = 'Connecting to Apple…';
   window.location.href = '/auth/apple/start';
+}
+function loginX() {
+  var msg = el('loginMsg');
+  if (msg) msg.textContent = 'Connecting to X…';
 }
 function syncAppleSignInButton() {
   var btn = el('appleSignInBtn');
