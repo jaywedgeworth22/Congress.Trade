@@ -51,7 +51,7 @@ describe('auth router', () => {
       user: null,
       entitlement: ANONYMOUS_ENTITLEMENT,
       admin: { allowed: false },
-      auth: { appleWeb: false },
+      auth: { appleWeb: false, xWeb: false },
       billing: { configured: false, checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
     });
   });
@@ -154,6 +154,23 @@ describe('auth router', () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get('location') ?? '').toContain('accounts.google.com');
+  });
+
+  it('GET /x/start is 503 when X is not configured', async () => {
+    const app = buildAuthRouter();
+    const res = await app.request('http://localhost/x/start', {}, fakeEnv());
+    expect(res.status).toBe(503);
+  });
+
+  it('GET /x/start redirects to X authorization URL when configured', async () => {
+    const app = buildAuthRouter();
+    const res = await app.request(
+      'http://localhost/x/start',
+      {},
+      fakeEnv({ X_OAUTH_CLIENT_ID: 'x_cid' }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location') ?? '').toContain('twitter.com/i/oauth2/authorize');
   });
 
   it('POST /magic/request rejects an invalid email', async () => {

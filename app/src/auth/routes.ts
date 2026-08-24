@@ -33,7 +33,7 @@ import {
   getSafeRedirectUrl,
 } from './session.ts';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google.ts';
-import { upsertUserFromGoogle, upsertUserByEmail, upsertUserFromApple } from './users.ts';
+import { upsertUserFromGoogle, upsertUserByEmail, upsertUserFromApple, upsertUserFromX, linkXSubToUser } from './users.ts';
 import { deleteUserAccount } from './deleteAccount.ts';
 import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic.ts';
 import { sendEmail } from './email.ts';
@@ -50,8 +50,16 @@ import {
   AppleIdentityVerificationError,
 } from './appleIdentity.ts';
 import { loadAppleWebConfig, buildAppleAuthUrl, exchangeAppleCode } from './appleWeb.ts';
+import {
+  buildXAuthUrl,
+  exchangeXCode,
+  fetchXProfile,
+  generateCodeVerifier,
+  generateCodeChallenge,
+} from './x.ts';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
+const OAUTH_VERIFIER_COOKIE = 'ct_oauth_code_verifier';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Public-facing origin for redirects + links (APP_BASE_URL, else request origin). */
@@ -102,12 +110,13 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
 
     const appleEnabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
     const appleWeb = appleEnabled && Boolean(await loadAppleWebConfig(c.env));
+    const xWeb = Boolean((await resolveSecret(c.env, 'X_OAUTH_CLIENT_ID')).value);
 
     return c.json({
       user: user ? publicUser(user) : null,
       entitlement: await resolveEntitlementAsync(c.env, user),
       admin: { allowed: adminAllowed },
-      auth: { appleWeb },
+      auth: { appleWeb, xWeb },
       billing: {
         ...(await billingCapabilitiesAsync(c.env)),
         hasCustomer: Boolean(user?.stripeCustomerId),
@@ -122,6 +131,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const enabled = (await resolveSecret(c.env, 'APPLE_SIGNIN_ENABLED')).value === 'true';
     const web = enabled && Boolean(await loadAppleWebConfig(c.env));
     return c.json({ enabled, web });
+  });
+
+  // --- GET /auth/x/status --------------------------------------------------
+  r.get('/x/status', async (c) => {
+    const configured = Boolean((await resolveSecret(c.env, 'X_OAUTH_CLIENT_ID')).value);
+    return c.json({ enabled: configured, configured });
   });
 
   // --- POST /auth/logout --------------------------------------------------
@@ -472,6 +487,125 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       user: publicUser(user),
       entitlement: await resolveEntitlementAsync(c.env, user),
     });
+  });
+
+  // --- GET /auth/x/start --------------------------------------------------
+  r.get('/x/start', async (c) => {
+    if (!(await resolveSecret(c.env, 'X_OAUTH_CLIENT_ID')).value) {
+      const accept = c.req.header('Accept') || '';
+      if (accept.includes('text/html')) {
+        return c.redirect('/?auth_error=x_not_configured');
+      }
+      return c.json({ error: 'x login not configured' }, 503);
+    }
+    const base = await baseUrl(c);
+    const reqHost = c.req.header('X-Forwarded-Host') || c.req.header('Host') || new URL(c.req.url).host;
+    const reqProto = c.req.header('X-Forwarded-Proto') || new URL(c.req.url).protocol.replace(':', '');
+    const publicReqOrigin = `${reqProto}://${reqHost}`;
+    const callbackBase = new URL(base);
+
+    if (publicReqOrigin !== callbackBase.origin) {
+      const redirectTarget = new URL(c.req.url);
+      redirectTarget.protocol = callbackBase.protocol;
+      redirectTarget.host = callbackBase.host;
+      return c.redirect(redirectTarget.toString());
+    }
+
+    const state = randomToken(16);
+    const verifier = generateCodeVerifier();
+    const challenge = await generateCodeChallenge(verifier);
+
+    const clientParam = new URL(c.req.url).searchParams.get('client');
+    const referer = c.req.header('Referer');
+    let requestOrigin = publicReqOrigin;
+    if (clientParam === 'ios') {
+      requestOrigin = 'congresstrade://auth';
+    } else if (referer) {
+      try {
+        requestOrigin = new URL(referer).origin;
+      } catch {}
+    }
+    const isSecure = isSecureRequest(c);
+
+    setCookie(c, 'ct_auth_origin', requestOrigin, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
+    });
+
+    setCookie(c, OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
+    });
+
+    setCookie(c, OAUTH_VERIFIER_COOKIE, verifier, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      prefix: isSecure ? 'host' : undefined,
+    });
+
+    const url = await buildXAuthUrl(c.env, `${base}/auth/x/callback`, state, challenge);
+    return c.redirect(url);
+  });
+
+  // --- GET /auth/x/callback -----------------------------------------------
+  r.get('/x/callback', async (c) => {
+    const url = new URL(c.req.url);
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+
+    const cookieState = getCookie(c, OAUTH_STATE_COOKIE, 'host') ?? getCookie(c, OAUTH_STATE_COOKIE);
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', prefix: 'host' });
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
+
+    const cookieVerifier = getCookie(c, OAUTH_VERIFIER_COOKIE, 'host') ?? getCookie(c, OAUTH_VERIFIER_COOKIE);
+    deleteCookie(c, OAUTH_VERIFIER_COOKIE, { path: '/', prefix: 'host' });
+    deleteCookie(c, OAUTH_VERIFIER_COOKIE, { path: '/' });
+
+    const authOrigin = getCookie(c, 'ct_auth_origin', 'host') ?? getCookie(c, 'ct_auth_origin');
+    deleteCookie(c, 'ct_auth_origin', { path: '/', prefix: 'host' });
+    deleteCookie(c, 'ct_auth_origin', { path: '/' });
+
+    const base = await baseUrl(c);
+    const targetOrigin = getSafeRedirectUrl(authOrigin, base);
+
+    if (!code || !state || !cookieState || !cookieVerifier || !(await constantTimeEqual(state, cookieState))) {
+      return c.redirect(`${targetOrigin}/?login=error`);
+    }
+
+    try {
+      const redirectUri = `${base}/auth/x/callback`;
+      const accessToken = await exchangeXCode(c.env, code, redirectUri, cookieVerifier);
+      const profile = await fetchXProfile(accessToken);
+
+      const currentUser = await getCurrentUserFromRequest(c);
+      let user: User;
+      if (currentUser) {
+        user = await linkXSubToUser(c.env, currentUser.id, profile.sub);
+      } else {
+        user = await upsertUserFromX(c.env, profile);
+      }
+
+      const sessionToken = await createSession(c.env, user.id);
+      await setSessionCookie(c, sessionToken);
+      if (targetOrigin.startsWith('congresstrade://')) {
+        return c.redirect(`${targetOrigin}?token=${encodeURIComponent(sessionToken)}`);
+      }
+      return c.redirect(`${targetOrigin}/?login=ok`);
+    } catch (err) {
+      console.error('x callback failed:', (err as Error).message);
+      return c.redirect(`${targetOrigin}/?login=error`);
+    }
   });
 
   return r;
