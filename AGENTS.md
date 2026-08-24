@@ -22,7 +22,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ## Execution Workflow
 
-- **CI/CD Runners Policy**: Fleet CI is GitHub-hosted `ubuntu-latest` only.  Self-hosted Oracle/Coolify runners (`oracle-ci`, `socratic-ci`, `hetzner-ct-ci-*`, and `runs-on: self-hosted` for the JS/Deno verify gate) are RETIRED.  Do not resurrect them, re-register them, or point verify workflows at Coolify/Oracle labels.  The Mac `mac-xcode26-congress` runner stays for iOS/Xcode jobs only — never for the verify JS/Deno gate.
+- **CI/CD Runners Policy**: Fleet CI and all GitHub Actions workflows are GitHub-hosted cloud runners only (`ubuntu-latest` for backend/JS/Deno gates, `macos-latest` for iOS builds and shipping). Self-hosted Oracle/Coolify/Mac runners are retired now that the repository is public with free unlimited hosted runner minutes.
 
 
 - **Always Tagged**: Always explicitly identify as AG or Antigravity in Slack messages and commits to avoid "untagged" ghost work.
@@ -31,7 +31,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 - **Socialize First**: For cross-app changes (like API SDKs or UX overhauls), socialize the design in #agent-sync before executing.
 - **Never Say "Can Be Viewed Locally"**: NEVER tell the user that a task is finished and that it "can be viewed locally" (unless explicitly told to build local-only). Work is NOT finished until it is merged to `main` and fully deployed to production. Saying a task is done when it is only runnable locally leads to duplicate work and confusion. Always merge and run the production deployment script (`bash app/scripts/ship.sh`) as part of completing the task.
 - **Always Keep Branches Updated with Main**: All agents MUST merge or rebase `main` into their feature branch (`git fetch origin main && git merge origin/main`) before running final verification, before requesting review, and immediately before merging. Never leave active feature branches or PRs lagging behind `main`.
-- **CI Runner Policy (GitHub-hosted verify)**: The JS/Deno verify gate (`typecheck`, `npm test`, pin-check, lint) MUST use `runs-on: ubuntu-latest`.  Do not send it to Coolify self-hosted runners, `oracle-ci`, `socratic-ci`, `hetzner-ct-ci-*`, or a generic `self-hosted` label.  Those Oracle/Coolify listeners are retired.  The owned Mac runner (`mac-xcode26-congress`, labels `self-hosted, macOS, ARM64, xcode26`) is for iOS archive/TestFlight only.  Never start, spawn, or re-enable the retired Mac product runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`) for any job.
+- **CI Runner Policy (GitHub-hosted cloud)**: All workflows use GitHub-hosted runners (`ubuntu-latest` for JS/Deno/Linux, `macos-latest` for iOS). Do not point workflows to self-hosted listeners.
 
 
 At session start in any repo, run one agent-sync poll pass:
