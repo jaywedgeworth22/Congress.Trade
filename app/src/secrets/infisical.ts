@@ -9,7 +9,6 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export type SourceName = 'app' | 'shared';
 
@@ -164,12 +163,12 @@ async function login(
   source: SourceConfig,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await trackedFetch(`${baseUrl}/api/v1/auth/universal-auth/login`, {
+  const res = await fetch(`${baseUrl}/api/v1/auth/universal-auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientId: source.clientId, clientSecret: source.clientSecret }),
     signal,
-  }, { service: 'secret-management', operation: 'authenticate', dynamicTarget: 'infisical' });
+  });
   const body = (await res.json().catch(() => ({}))) as { accessToken?: string; token?: string; message?: string };
   if (!res.ok) throw new Error(`Infisical ${source.name} auth failed: HTTP ${res.status} ${body.message || ''}`.trim());
   const token = body.accessToken || body.token;
@@ -220,9 +219,9 @@ async function fetchSourceSecrets(
     include_imports: includeImports ? 'true' : 'false',
     recursive: 'true',
   });
-  const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
+  const res = await fetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
     headers: { authorization: `Bearer ${token}` },
-  }, { service: 'secret-management', operation: 'read-secrets', dynamicTarget: 'infisical' });
+  });
   const body = (await res.json().catch(() => ({}))) as { message?: string };
   if (!res.ok) throw new Error(`Infisical ${source.name} secrets failed: HTTP ${res.status} ${body.message || ''}`.trim());
   return Object.fromEntries(secretEntries(body).map((entry) => [entry.key, entry.value]));
@@ -331,7 +330,7 @@ export async function updateSecret(
     type: 'shared'
   };
 
-  let res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+  let res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
     method: 'PATCH',
     headers: {
       'authorization': `Bearer ${token}`,
@@ -339,11 +338,11 @@ export async function updateSecret(
     },
     body: JSON.stringify(payload),
     signal: options.signal,
-  }, { service: 'secret-management', operation: 'update-secret', dynamicTarget: 'infisical' });
+  });
 
   if (!res.ok) {
     if (res.status === 404 || res.status === 400) {
-      res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+      res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
         method: 'POST',
         headers: {
           'authorization': `Bearer ${token}`,
@@ -351,7 +350,7 @@ export async function updateSecret(
         },
         body: JSON.stringify(payload),
         signal: options.signal,
-      }, { service: 'secret-management', operation: 'create-secret', dynamicTarget: 'infisical' });
+      });
     }
 
     if (!res.ok) {
@@ -373,7 +372,7 @@ export async function deleteSecret(
   const source = configuredSource(env, sourceName);
   const baseUrl = cleanBaseUrl(env.INFISICAL_BASE_URL);
   const token = await login(baseUrl, source, options.signal);
-  const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+  const res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
     method: 'DELETE',
     headers: {
       authorization: `Bearer ${token}`,
@@ -386,7 +385,7 @@ export async function deleteSecret(
       type: 'shared',
     }),
     signal: options.signal,
-  }, { service: 'secret-management', operation: 'delete-secret', dynamicTarget: 'infisical' });
+  });
   if (!res.ok && res.status !== 404) {
     const body = (await res.json().catch(() => ({}))) as { message?: string };
     throw new Error(`Failed to delete secret ${secretKey}: ${res.status} ${body.message || ''}`.trim());
