@@ -722,6 +722,14 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('brand-logo-light.png');
   });
 
+  it('requests separate light and dark ticker logos and swaps them with theme', () => {
+    expect(DASHBOARD_HTML).toContain('function tickerLogoSrc(sym)');
+    expect(DASHBOARD_HTML).toContain("'&theme=' + currentLogoTheme()");
+    expect(DASHBOARD_HTML).toContain('function syncTickerLogoThemes(theme)');
+    expect(DASHBOARD_HTML).toContain('syncTickerLogoThemes(theme)');
+    expect(DASHBOARD_HTML).toContain("u.searchParams.set('theme', theme)");
+  });
+
   // Owner 2026-08-21: "just delete the option" — Sepia was half-implemented
   // (only Trades/Trends were properly themed) and looked ugly, not like
   // paper.  Assert the palette, the picker entry, and every
@@ -5767,6 +5775,10 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).toContain(
       "if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      initialView = 'trends';\n    }",
     );
+  });
+
+  it('links admins to the A/B/C/D ticker logo jury', () => {
+    expect(DASHBOARD_HTML).toContain('href="/api/admin/logo-jury"');
   });
 
   it('uses fat mask arrows with green up and red down on the side filter', () => {
