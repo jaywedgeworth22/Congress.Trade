@@ -891,11 +891,29 @@ def validate_rows(rows) -> list:
                 tx_type = "E"
         if tx_type not in ("P", "S", "E"):
             continue
-        asset = (o.get("asset") or o.get("assetName") or o.get("asset_name") or "").strip()
+        raw_asset = (o.get("asset") or o.get("assetName") or o.get("asset_name") or "").strip()
         parsed_ticker = None
-        asset, parsed_ticker = clean_asset_name(asset)
+        asset, parsed_ticker = clean_asset_name(raw_asset)
+        raw_ticker = o.get("ticker")
+        if isinstance(raw_ticker, str):
+            raw_ticker = raw_ticker.strip() or None
+        else:
+            raw_ticker = None
+        ticker = raw_ticker or parsed_ticker
         if len(asset) < 3:
-            continue
+            # "Sell BA" / "Buy F" / "S GE" collapse to a 1–2 char ticker.
+            # Dropping that lot publishes the rest of the PTR at 0.97 and
+            # locks the short-ticker rows out (drain skips scanned_pdf).
+            remnant = (asset or "").strip().upper()
+            if remnant and re.fullmatch(r"[A-Z]{1,2}", remnant):
+                ticker = ticker or remnant
+                asset = remnant
+            elif ticker:
+                asset = str(ticker)
+            elif len(raw_asset) >= 3:
+                asset = raw_asset
+            else:
+                continue
         amin, amax = o.get("amountMin", o.get("amount_min")), o.get("amountMax", o.get("amount_max"))
         if amin is not None and amax is not None and isinstance(amin, (int, float)) and isinstance(amax, (int, float)) and amin > amax:
             continue
@@ -910,7 +928,7 @@ def validate_rows(rows) -> list:
             "txDate": o.get("txDate") or o.get("tx_date"),
             "owner": o.get("owner") if o.get("owner") in ("self", "spouse", "joint", "dependent") else None,
             "assetName": asset[:500],
-            "ticker": (o.get("ticker") or parsed_ticker or None),
+            "ticker": ticker,
             "assetType": None,
             "txType": tx_type,
             "amountMin": amin_i,
