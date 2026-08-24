@@ -107,7 +107,7 @@ function sourceConfigs(env: Env): SourceConfig[] {
   // explicit APP_* names the rest of the codebase documents; fall back to the
   // legacy CLIENT_* pair so a missing rename does not 401 the app project.
   const appClientId = env.INFISICAL_APP_CLIENT_ID || env.INFISICAL_CLIENT_ID;
-  const appClientSecret = env.INFISICAL_APP_CLIENT_SECRET || env.INFISICAL_CLIENT_SECRET;
+  const appClientSecret = env.INFISICAL_CLIENT_SECRET || env.INFISICAL_APP_CLIENT_SECRET;
 
   // Merge order: shared first, then app.  App wins on a name collision, so
   // fleet-wide keys (AGENT_SYNC_TOKEN, AGENT_SYNC_POST_TOKEN) MUST live only

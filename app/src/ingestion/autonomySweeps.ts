@@ -181,11 +181,11 @@ export interface FiledDateBackfillResult {
 export async function sweepFiledDateBackfill(
   env: Env,
   now = new Date(),
-  opts: { staleHours?: number; limit?: number; maxYears?: number; fetchImpl?: typeof fetch } = {},
+  opts: { staleHours?: number; limit?: number; maxYears?: number; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<FiledDateBackfillResult> {
   const staleHours = opts.staleHours ?? 72;
   const limit = opts.limit ?? 300;
-  const maxYears = opts.maxYears ?? 2;
+  const maxYears = opts.maxYears ?? 1;
   const cutoff = new Date(now.getTime() - staleHours * 3600_000).toISOString();
 
   const stuck = await all<{ doc_id: string }>(
@@ -214,16 +214,22 @@ export async function sweepFiledDateBackfill(
 
   const filedDateByDocId = new Map<string, string>();
   for (const year of years) {
+    if (opts.signal?.aborted) break;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15_000);
     try {
       const index = await fetchHouseIndex(year, {
         fetchImpl: opts.fetchImpl,
         relayUrl: env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL,
+        signal: controller.signal,
       });
       for (const f of index) {
         if (f.filingDate) filedDateByDocId.set(f.pipelineDocId, f.filingDate);
       }
     } catch (err) {
       console.warn(`autonomySweep: filed-date backfill fetch failed for year ${year}:`, (err as Error).message);
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -641,7 +647,7 @@ export async function runAutonomySweeps(
 
   try {
     throwIfAborted();
-    result.filedDateBackfill = await sweepFiledDateBackfill(env, now);
+    result.filedDateBackfill = await sweepFiledDateBackfill(env, now, { signal: opts.signal });
   } catch (err) {
     errors.push(`filedDateBackfill: ${(err as Error).message}`);
   }
