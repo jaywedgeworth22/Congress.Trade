@@ -46,7 +46,6 @@ export const LATENCY_PRICE_EVENTS = [
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
-  'provider_plus_12h',
 ] as const;
 
 export type LatencyPriceEvent = (typeof LATENCY_PRICE_EVENTS)[number];
@@ -60,7 +59,6 @@ const FOLLOW_EVENTS: readonly FollowUpEvent[] = [
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
-  'provider_plus_12h',
 ];
 
 const FOLLOW_MS: Record<FollowUpEvent, number> = {
@@ -70,7 +68,6 @@ const FOLLOW_MS: Record<FollowUpEvent, number> = {
   provider_plus_15m: 15 * 60_000,
   provider_plus_30m: 30 * 60_000,
   provider_plus_60m: 60 * 60_000,
-  provider_plus_12h: 12 * 60 * 60_000,
 };
 
 /** Do not ask for a live quote for an event that already aged out. */
@@ -310,7 +307,23 @@ export async function captureDueLatencyPriceSnapshots(
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
 ): Promise<CaptureResult> {
+  const db = getDb(env);
   const nowIso = now.toISOString();
+
+  // Sweep 12h-aged failed snapshots for exactly ONE full retry cycle
+  const sweepThresholdIso = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
+  await db.execute(`
+    UPDATE latency_price_snapshots
+       SET captured_at = NULL,
+           error = NULL,
+           backfill_attempts = 0,
+           swept_12h = 1
+     WHERE error IN ('confirmed_no_bars', 'backfill_exhausted', 'unavailable')
+       AND due_at <= $threshold
+       AND swept_12h = 0
+  `, { threshold: sweepThresholdIso });
+
+  // Find all pending snapshot rows that are due (or overdue) for capture.
   const nowMs = now.getTime();
   const empty: CaptureResult = { liveCaptured: 0, backfillCaptured: 0, terminalNoData: 0, deferred: 0, errors: 0 };
 
@@ -509,7 +522,7 @@ export async function summarizeProviderPublishBump(env: Env): Promise<PriceEdgeB
          ON later.trade_hash = pub.trade_hash
         AND later.provider = pub.provider
       WHERE pub.event = 'provider_publish'
-        AND later.event IN ('provider_minus_30m', 'provider_minus_15m', 'provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m', 'provider_plus_12h')
+        AND later.event IN ('provider_minus_30m', 'provider_minus_15m', 'provider_plus_5m', 'provider_plus_15m', 'provider_plus_30m', 'provider_plus_60m')
         AND pub.price IS NOT NULL AND pub.price > 0
         AND later.price IS NOT NULL
         AND pub.market_session = 'regular'
