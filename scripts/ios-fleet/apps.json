@@ -67,7 +67,7 @@
       "xcodegenDir": "apple",
       "worktreeHint": "~/apps/autorotate-grok",
       "marketingVersionDefault": "1.0.1",
-      "notes": "Autorotate (formerly TopSpin). XcodeGen covers iOS (codes.autorotate) + macOS (codes.autorotate.macos). Keychain group codes.autorotate.shared."
+      "notes": "Autorotate. XcodeGen covers iOS (codes.autorotate) + macOS (codes.autorotate.macos). Keychain group codes.autorotate.shared."
     }
   }
 }

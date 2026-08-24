@@ -212,20 +212,27 @@ async function fetchSourceSecrets(
   source: SourceConfig,
   includeImports = true,
 ): Promise<Record<string, string>> {
-  const token = await login(baseUrl, source);
-  const params = new URLSearchParams({
-    workspaceId: source.projectId || '',
-    environment: infisicalEnv,
-    secretPath: source.secretPath || '/',
-    include_imports: includeImports ? 'true' : 'false',
-    recursive: 'true',
-  });
-  const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
-    headers: { authorization: `Bearer ${token}` },
-  }, { service: 'secret-management', operation: 'read-secrets', dynamicTarget: 'infisical' });
-  const body = (await res.json().catch(() => ({}))) as { message?: string };
-  if (!res.ok) throw new Error(`Infisical ${source.name} secrets failed: HTTP ${res.status} ${body.message || ''}`.trim());
-  return Object.fromEntries(secretEntries(body).map((entry) => [entry.key, entry.value]));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const token = await login(baseUrl, source, controller.signal);
+    const params = new URLSearchParams({
+      workspaceId: source.projectId || '',
+      environment: infisicalEnv,
+      secretPath: source.secretPath || '/',
+      include_imports: includeImports ? 'true' : 'false',
+      recursive: 'true',
+    });
+    const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    }, { service: 'secret-management', operation: 'read-secrets', dynamicTarget: 'infisical' });
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    if (!res.ok) throw new Error(`Infisical ${source.name} secrets failed: HTTP ${res.status} ${body.message || ''}`.trim());
+    return Object.fromEntries(secretEntries(body).map((entry) => [entry.key, entry.value]));
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function configuredSource(env: Env, sourceName: SourceName): SourceConfig {

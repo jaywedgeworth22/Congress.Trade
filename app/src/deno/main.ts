@@ -70,7 +70,7 @@ const secretEnv = {
 // 2. Resolve Infisical secrets at boot, then init Sentry for this Coolify
 // container (Deno-in-Docker on Hetzner).  Not Deno Deploy — no deployctl,
 // no Deploy APIs.  Missing Coolify/Infisical SENTRY_DSN is fail-soft.
-await refreshSecrets(secretEnv);
+await refreshSecrets(secretEnv).catch((err) => console.warn('Boot secret refresh warning:', (err as Error).message));
 const sentryResolved = await resolveProductionSentryEnv(secretEnv, resolveSecret);
 const sentryBoot = initProductionSentry(sentryResolved);
 console.log(
