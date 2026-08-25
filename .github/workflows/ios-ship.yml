@@ -143,7 +143,7 @@ jobs:
           esac
 
       - name: Import signing + ASC key
-        if: steps.gate.outputs.should_ship == '1' && secrets.ASC_KEY_ID != ''
+        if: steps.gate.outputs.should_ship == '1'
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
