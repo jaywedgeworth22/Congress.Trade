@@ -12,6 +12,8 @@ import { runScheduledTick } from './scheduledTick.ts';
 import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
+import { datadogCaptureException, initProductionDatadog } from '../shared/datadog.ts';
+import { resolveProductionDatadogEnv } from '../shared/datadogRuntime.ts';
 import { captureException, initProductionSentry } from '#sentry';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
@@ -77,6 +79,18 @@ console.log(
   sentryBoot.initialized
     ? `Sentry initialized (${sentryResolved.SENTRY_ENVIRONMENT || 'production'})`
     : `Sentry disabled (${sentryBoot.reason})`,
+);
+const datadogResolved = await resolveProductionDatadogEnv(secretEnv, resolveSecret);
+const datadogBoot = initProductionDatadog(datadogResolved);
+console.log(
+  datadogBoot.logs
+    ? `Datadog logs+APM initialized (${datadogResolved.DD_ENV || datadogResolved.SENTRY_ENVIRONMENT || 'production'})`
+    : `Datadog logs+APM disabled (${datadogBoot.backendReason})`,
+);
+console.log(
+  datadogBoot.rum
+    ? 'Datadog RUM enabled for public HTML'
+    : `Datadog RUM disabled (${datadogBoot.rumReason})`,
 );
 const tursoUrlRes = await resolveSecret(secretEnv, 'TURSO_DATABASE_URL');
 const tursoTokenRes = await resolveSecret(secretEnv, 'TURSO_AUTH_TOKEN');
@@ -158,6 +172,7 @@ function buildEnv(): Env {
   return {
     ...buildEnvironmentValues(),
     ...sentryResolved,
+    ...datadogResolved,
     CONFIG_KV: configKvShim as any,
     DB: dbShim as any,
     RAW_FILES: s3Shim as any,
@@ -242,6 +257,7 @@ if (!costProfile.disableInternalCron) {
     } catch (err) {
       console.error('Deno cron tick caught error:', err);
       captureException(err, { tags: { cron: 'deno-tick' } });
+      datadogCaptureException(err, { cron: 'deno-tick' });
     } finally {
       tickInFlight = false;
     }

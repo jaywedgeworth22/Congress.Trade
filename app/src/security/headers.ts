@@ -16,24 +16,48 @@
  */
 
 import type { MiddlewareHandler } from 'hono';
+import { DATADOG_RUM_SCRIPT_ORIGIN } from '../shared/datadogRum.ts';
+import { getDatadogInitInput } from '../shared/datadog.ts';
+import { resolveDatadogRum } from '../shared/datadogRuntime.ts';
+import type { Env } from '../shared/types.ts';
 import { isSecureRequest, isSecureRequestParts } from './requestProtocol.ts';
 
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "frame-ancestors 'none'",
-  "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https:",
-  "font-src 'self' data:",
-  // Auto-injected Web Analytics loads from static.cloudflareinsights.com
-  // (script-src) and beacons to cloudflareinsights.com — or, on a proxied
-  // zone, to same-origin /cdn-cgi/rum ('self'). Allow both so the beacon
-  // is not CSP-blocked on every anonymous load (issue #1457).
-  "connect-src 'self' https://cloudflareinsights.com https://static.cloudflareinsights.com",
-  "form-action 'self'",
-].join('; ');
+export function buildContentSecurityPolicy(opts: {
+  rumScriptSrc?: string;
+  rumConnectOrigins?: readonly string[];
+} = {}): string {
+  const script = [
+    "'self'",
+    "'unsafe-inline'",
+    'https://static.cloudflareinsights.com',
+    ...(opts.rumScriptSrc ? [DATADOG_RUM_SCRIPT_ORIGIN] : []),
+  ].join(' ');
+  const connect = [
+    "'self'",
+    'https://cloudflareinsights.com',
+    'https://static.cloudflareinsights.com',
+    ...(opts.rumConnectOrigins ?? []),
+  ].join(' ');
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    `script-src ${script}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    // Auto-injected Web Analytics loads from static.cloudflareinsights.com
+    // (script-src) and beacons to cloudflareinsights.com — or, on a proxied
+    // zone, to same-origin /cdn-cgi/rum ('self'). Allow both so the beacon
+    // is not CSP-blocked on every anonymous load (issue #1457).
+    // Datadog RUM origins are added only when a complete public RUM config exists.
+    `connect-src ${connect}`,
+    "form-action 'self'",
+  ].join('; ');
+}
+
+const CONTENT_SECURITY_POLICY = buildContentSecurityPolicy();
 
 const BASE_HEADERS: Readonly<Record<string, string>> = {
   'Content-Security-Policy': CONTENT_SECURITY_POLICY,
@@ -49,8 +73,21 @@ const BASE_HEADERS: Readonly<Record<string, string>> = {
  *   proxy the socket URL is always `http:`, so inferring it from `requestUrl`
  *   alone silently drops HSTS. See ./requestProtocol.ts.
  */
-export function browserSecurityHeaders(requestUrl: string, opts: { secure?: boolean } = {}): Headers {
+export function browserSecurityHeaders(requestUrl: string, opts: {
+  secure?: boolean;
+  rumScriptSrc?: string;
+  rumConnectOrigins?: readonly string[];
+} = {}): Headers {
   const headers = new Headers(BASE_HEADERS);
+  if (opts.rumScriptSrc || (opts.rumConnectOrigins && opts.rumConnectOrigins.length > 0)) {
+    headers.set(
+      'Content-Security-Policy',
+      buildContentSecurityPolicy({
+        rumScriptSrc: opts.rumScriptSrc,
+        rumConnectOrigins: opts.rumConnectOrigins,
+      }),
+    );
+  }
   const secure = opts.secure ?? isSecureRequestParts(undefined, undefined, requestUrl);
   if (secure) {
     // Deliberately omit includeSubDomains/preload until every sibling hostname
@@ -62,7 +99,15 @@ export function browserSecurityHeaders(requestUrl: string, opts: { secure?: bool
 
 export const browserSecurityHeadersMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
-  for (const [name, value] of browserSecurityHeaders(c.req.url, { secure: isSecureRequest(c) })) {
+  const rum = resolveDatadogRum({
+    ...(getDatadogInitInput() ?? {}),
+    ...(c.env as Env),
+  });
+  for (const [name, value] of browserSecurityHeaders(c.req.url, {
+    secure: isSecureRequest(c),
+    rumScriptSrc: rum.enabled ? rum.scriptSrc : undefined,
+    rumConnectOrigins: rum.enabled ? rum.connectOrigins : undefined,
+  })) {
     c.header(name, value);
   }
 };

@@ -214,6 +214,8 @@ const HOST_PROVIDERS = new Map<string, string>([
 const HOST_SUFFIX_PROVIDERS: Array<[suffix: string, provider: string]> = [
   ['.cloudflareaccess.com', 'cloudflare-access'],
   ['.sentry.io', 'sentry'],
+  ['.datadoghq.com', 'datadog'],
+  ['.datadoghq.eu', 'datadog'],
 ];
 
 const DYNAMIC_PROVIDERS: Record<DynamicThirdPartyTarget, string> = {

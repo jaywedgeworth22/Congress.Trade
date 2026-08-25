@@ -1,0 +1,253 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  datadogLogsIntakeUrl,
+  datadogPublicStatus,
+  datadogRumConnectOrigins,
+  datadogRumScriptSrc,
+  datadogTracesIntakeUrl,
+  normalizeDatadogSite,
+  resolveDatadogBackend,
+  resolveDatadogRum,
+  resolveProductionDatadogEnv,
+} from '../datadogRuntime.ts';
+import {
+  createDatadogTransport,
+  shouldSampleDatadogTrace,
+} from '../datadogTransport.ts';
+import { renderDatadogRumScript } from '../datadogRum.ts';
+import { datadogRequestMiddleware, initProductionDatadog, resetDatadogForTests } from '../datadog.ts';
+import { Hono } from 'hono';
+
+afterEach(() => {
+  resetDatadogForTests();
+});
+
+describe('Datadog site + intake mapping', () => {
+  it('accepts known fleet sites and rejects unknown hosts', () => {
+    expect(normalizeDatadogSite('us5.datadoghq.com')).toBe('us5.datadoghq.com');
+    expect(normalizeDatadogSite('https://datadoghq.com/')).toBe('datadoghq.com');
+    expect(normalizeDatadogSite('datadog.example')).toBeUndefined();
+    expect(normalizeDatadogSite('')).toBeUndefined();
+  });
+
+  it('maps US5 and US1 intake hosts without inventing a default site', () => {
+    expect(datadogLogsIntakeUrl('us5.datadoghq.com')).toBe(
+      'https://http-intake.logs.us5.datadoghq.com/api/v2/logs',
+    );
+    expect(datadogTracesIntakeUrl('us5.datadoghq.com')).toBe(
+      'https://trace.agent.us5.datadoghq.com/api/v0.2/traces',
+    );
+    expect(datadogLogsIntakeUrl('datadoghq.com')).toBe(
+      'https://http-intake.logs.datadoghq.com/api/v2/logs',
+    );
+    expect(datadogRumScriptSrc('us5.datadoghq.com')).toBe(
+      'https://www.datadoghq-browser-agent.com/us5/v5/datadog-rum.js',
+    );
+    expect(datadogRumConnectOrigins('us5.datadoghq.com')).toEqual([
+      'https://browser-intake-us5-datadoghq.com',
+    ]);
+  });
+});
+
+describe('fail-closed Datadog backend config', () => {
+  it('enables logs+APM only when API key and a known site are both set', () => {
+    const ready = resolveDatadogBackend({
+      DD_API_KEY: 'abc123',
+      DD_SITE: 'us5.datadoghq.com',
+      DD_ENV: 'production',
+    });
+    expect(ready).toMatchObject({
+      enabled: true,
+      reason: 'ready',
+      service: 'congress-trade',
+      env: 'production',
+      site: 'us5.datadoghq.com',
+    });
+    if (ready.enabled) expect(ready.apiKey).toBe('abc123');
+  });
+
+  it('no-ops when keys and site are missing', () => {
+    expect(resolveDatadogBackend({})).toEqual({ enabled: false, reason: 'missing-api-key' });
+    expect(resolveDatadogBackend({ DD_API_KEY: '   ' })).toEqual({
+      enabled: false,
+      reason: 'missing-api-key',
+    });
+  });
+
+  it('fails closed on partial or unknown site instead of inventing us1', () => {
+    expect(resolveDatadogBackend({ DD_API_KEY: 'abc' })).toEqual({
+      enabled: false,
+      reason: 'missing-site',
+    });
+    expect(resolveDatadogBackend({ DD_SITE: 'us5.datadoghq.com' })).toEqual({
+      enabled: false,
+      reason: 'partial',
+    });
+    expect(resolveDatadogBackend({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'made-up.datadog.example',
+    })).toEqual({ enabled: false, reason: 'invalid-site' });
+  });
+
+  it('does not require DD_APP_KEY to send', () => {
+    const ready = resolveDatadogBackend({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'datadoghq.com',
+    });
+    expect(ready.enabled).toBe(true);
+  });
+});
+
+describe('fail-closed Datadog RUM config', () => {
+  it('enables RUM only with client token, application id, and site', () => {
+    const rum = resolveDatadogRum({
+      DD_CLIENT_TOKEN: 'pub_token',
+      DD_APPLICATION_ID: 'app-id-1',
+      DD_SITE: 'us5.datadoghq.com',
+    });
+    expect(rum).toMatchObject({
+      enabled: true,
+      service: 'congress-trade-web',
+      site: 'us5.datadoghq.com',
+    });
+  });
+
+  it('accepts NEXT_PUBLIC_DD_* aliases used by other fleet apps', () => {
+    const rum = resolveDatadogRum({
+      NEXT_PUBLIC_DD_CLIENT_TOKEN: 'pub_next',
+      NEXT_PUBLIC_DD_APPLICATION_ID: 'app-next',
+      NEXT_PUBLIC_DD_SITE: 'us5.datadoghq.com',
+    });
+    expect(rum.enabled).toBe(true);
+    if (rum.enabled) {
+      expect(rum.clientToken).toBe('pub_next');
+      expect(rum.applicationId).toBe('app-next');
+    }
+  });
+
+  it('fails closed on partial RUM keys', () => {
+    expect(resolveDatadogRum({ DD_CLIENT_TOKEN: 'pub' })).toEqual({
+      enabled: false,
+      reason: 'partial',
+    });
+    expect(resolveDatadogRum({})).toEqual({
+      enabled: false,
+      reason: 'missing-client-token',
+    });
+  });
+
+  it('never puts the API key in the public snippet', () => {
+    const html = renderDatadogRumScript(resolveDatadogRum({
+      DD_API_KEY: 'secret-api-key-must-not-leak',
+      DD_CLIENT_TOKEN: 'pub_token',
+      DD_APPLICATION_ID: 'app-id-1',
+      DD_SITE: 'us5.datadoghq.com',
+    }));
+    expect(html).toContain('pub_token');
+    expect(html).toContain('app-id-1');
+    expect(html).toContain('sessionReplaySampleRate":0');
+    expect(html).not.toContain('secret-api-key-must-not-leak');
+    expect(renderDatadogRumScript({ enabled: false, reason: 'partial' })).toBe('');
+  });
+});
+
+describe('Datadog HTTP transport', () => {
+  it('no-ops when backend is disabled', async () => {
+    const fetchImpl = vi.fn();
+    const transport = createDatadogTransport({ enabled: false }, fetchImpl as never);
+    transport.log({ status: 'error', message: 'boom' });
+    transport.span({
+      name: 'web.request',
+      resource: 'GET /x',
+      startMs: 1,
+      durationMs: 2,
+      error: true,
+    });
+    await transport.flush();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('posts logs and sampled error traces to the configured site', async () => {
+    const fetchImpl = vi.fn(async () => new Response('ok', { status: 202 }));
+    const backend = resolveDatadogBackend({
+      DD_API_KEY: 'abc123',
+      DD_SITE: 'us5.datadoghq.com',
+    });
+    expect(backend.enabled).toBe(true);
+    if (!backend.enabled) return;
+    const transport = createDatadogTransport(backend, fetchImpl as never, {
+      sampleRate: 0,
+      random: () => 0.99,
+    });
+    transport.log({ status: 'error', message: 'tick failed?token=super-secret' });
+    transport.span({
+      name: 'web.request',
+      resource: 'GET /api/transactions',
+      startMs: 1_000,
+      durationMs: 12,
+      error: true,
+      meta: { 'http.status_code': '500' },
+    });
+    await transport.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const logCall = fetchImpl.mock.calls[0];
+    expect(logCall[0]).toBe('https://http-intake.logs.us5.datadoghq.com/api/v2/logs');
+    expect((logCall[1] as RequestInit).headers).toMatchObject({ 'DD-API-KEY': 'abc123' });
+    const logBody = JSON.parse(String((logCall[1] as RequestInit).body));
+    expect(JSON.stringify(logBody)).not.toContain('super-secret');
+    expect(JSON.stringify(logBody)).toContain('[Filtered]');
+    const traceCall = fetchImpl.mock.calls[1];
+    expect(traceCall[0]).toBe('https://trace.agent.us5.datadoghq.com/api/v0.2/traces');
+  });
+
+  it('samples successful traces and always keeps errors', () => {
+    expect(shouldSampleDatadogTrace(true, 0, () => 0.99)).toBe(true);
+    expect(shouldSampleDatadogTrace(false, 0.2, () => 0.19)).toBe(true);
+    expect(shouldSampleDatadogTrace(false, 0.2, () => 0.21)).toBe(false);
+  });
+});
+
+describe('Datadog process init + request middleware', () => {
+  it('reports public-safe status without leaking keys', () => {
+    const status = datadogPublicStatus({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'us5.datadoghq.com',
+    });
+    expect(status).toEqual({ logs: true, apm: true, rum: false });
+    expect(JSON.stringify(status)).not.toContain('abc');
+  });
+
+  it('swallows intake failures so a request still completes', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('intake exploded');
+    });
+    const backend = resolveDatadogBackend({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'us5.datadoghq.com',
+    });
+    expect(backend.enabled).toBe(true);
+    if (!backend.enabled) return;
+    const transport = createDatadogTransport(backend, fetchImpl as never);
+    transport.log({ status: 'error', message: 'later' });
+    await expect(transport.flush()).resolves.toBeUndefined();
+  });
+
+  it('request middleware no-ops when Datadog is off', async () => {
+    const fetchImpl = vi.fn();
+    initProductionDatadog({}, fetchImpl as never);
+    const app = new Hono();
+    app.use('*', datadogRequestMiddleware());
+    app.get('/api/transactions', (c) => c.json({ ok: true }));
+    const res = await app.request('http://localhost/api/transactions');
+    expect(res.status).toBe(200);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('resolves Infisical values over empty env', async () => {
+    const resolved = await resolveProductionDatadogEnv(
+      {} as never,
+      async (_env, key) => (key === 'DD_API_KEY' ? { value: 'from-infisical' } : {}),
+    );
+    expect(resolved.DD_API_KEY).toBe('from-infisical');
+  });
+});

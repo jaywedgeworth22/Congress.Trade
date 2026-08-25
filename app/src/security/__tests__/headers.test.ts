@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { browserSecurityHeaders, browserSecurityHeadersMiddleware } from '../headers.ts';
+import { browserSecurityHeaders, browserSecurityHeadersMiddleware, buildContentSecurityPolicy } from '../headers.ts';
 
 describe('browserSecurityHeaders', () => {
   it('sets clickjacking, MIME, referrer, permissions, and CSP defenses', () => {
@@ -35,6 +35,19 @@ describe('browserSecurityHeaders', () => {
     expect(csp).not.toContain('fonts.gstatic.com');
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).toContain("font-src 'self' data:");
+  });
+
+  it('adds Datadog RUM origins only when a complete public config is supplied', () => {
+    const off = buildContentSecurityPolicy();
+    expect(off).not.toContain('datadoghq-browser-agent.com');
+    expect(off).not.toContain('browser-intake');
+    const on = buildContentSecurityPolicy({
+      rumScriptSrc: 'https://www.datadoghq-browser-agent.com/us5/v5/datadog-rum.js',
+      rumConnectOrigins: ['https://browser-intake-us5-datadoghq.com'],
+    });
+    expect(on).toContain('https://www.datadoghq-browser-agent.com');
+    expect(on).toContain('https://browser-intake-us5-datadoghq.com');
+    expect(on).not.toContain('*');
   });
 
   it('attaches headers to a completed Hono response', async () => {

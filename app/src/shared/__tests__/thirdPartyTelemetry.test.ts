@@ -229,6 +229,7 @@ describe('third-party usage telemetry', () => {
     expect(providerForThirdPartyRequest('https://api.openai.com.evil.example/v1')).toBe('external-api');
     expect(providerForThirdPartyRequest('https://tenant.cloudflareaccess.com/cdn-cgi/access/certs')).toBe('cloudflare-access');
     expect(providerForThirdPartyRequest('https://o123.ingest.us.sentry.io/api/1/envelope/')).toBe('sentry');
+    expect(providerForThirdPartyRequest('https://http-intake.logs.us5.datadoghq.com/api/v2/logs')).toBe('datadog');
     expect(providerForThirdPartyRequest('https://customer.example/hook', 'subscriber-webhook')).toBe('webhook');
   });
 

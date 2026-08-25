@@ -43,6 +43,9 @@ import { mountAppLinks } from './appLinks.ts';
 import { DEFAULT_EXECUTIVE_TITLE, executiveTitleFor } from '../shared/executiveTitles.ts';
 import { getSitemapXml } from './sitemap.ts';
 import { TICKER_RESOLVED_SQL } from '../analytics/sql.ts';
+import { getDatadogInitInput } from '../shared/datadog.ts';
+import { resolveDatadogRum } from '../shared/datadogRuntime.ts';
+import { renderDatadogRumScript } from '../shared/datadogRum.ts';
 
 /**
  * Analytics injection was removed (CT-AUD-P1-15).
@@ -312,13 +315,20 @@ async function renderDashboard(env: Env, requestUrl: string): Promise<string> {
   });
   let html = DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
-    .split('%GA_SCRIPT%').join('');
+    .split('%GA_SCRIPT%').join(datadogRumScript(env));
   html = applyOgMeta(html, og);
   return html;
 }
 
-function renderLegalHtml(html: string, _env: Env): string {
-  return html.split('%GA_SCRIPT%').join('');
+function datadogRumScript(env: Env): string {
+  return renderDatadogRumScript(resolveDatadogRum({
+    ...(getDatadogInitInput() ?? {}),
+    ...env,
+  }));
+}
+
+function renderLegalHtml(html: string, env: Env): string {
+  return html.split('%GA_SCRIPT%').join(datadogRumScript(env));
 }
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
