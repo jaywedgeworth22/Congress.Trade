@@ -50,12 +50,6 @@ enum AppAppearance {
         case "dark": style = .dark
         default: style = .unspecified
         }
-        let palette: CTPalette
-        switch pref {
-        case "dark": palette = .dark
-        default: palette = .light
-        }
-        AppTheme.currentPalette = palette
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
@@ -125,7 +119,6 @@ struct CTPaletteInjector: ViewModifier {
 
     func body(content: Content) -> some View {
         let palette = CTPalette.resolved(pref: pref, system: systemScheme)
-        AppTheme.currentPalette = palette
         return content.environment(\.ctPalette, palette)
     }
 }
@@ -153,11 +146,31 @@ struct TickerSheetTarget: Identifiable, Hashable {
 }
 
 enum AppTheme {
-    static var currentPalette: CTPalette = .light
-    static var background: Color { currentPalette.background }
-    static var card: Color { currentPalette.card }
-    static var panel: Color { currentPalette.panel }
-    static var panelElevated: Color { currentPalette.card }
+    static var background: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.031, green: 0.047, blue: 0.090, alpha: 1.0)
+                : UIColor(red: 0.937, green: 0.953, blue: 0.973, alpha: 1.0)
+        })
+    }
+
+    static var card: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.071, green: 0.106, blue: 0.188, alpha: 1.0)
+                : UIColor.white
+        })
+    }
+
+    static var panel: Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.071, green: 0.106, blue: 0.188, alpha: 0.72)
+                : UIColor(white: 1.0, alpha: 0.92)
+        })
+    }
+
+    static var panelElevated: Color { card }
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
@@ -181,7 +194,7 @@ enum AppTheme {
     /// the filter row reads as a blue wash (owner screenshots 2026-08-22).
     /// `card` is solid white in light / navy in dark — the same "light part
     /// at the top" as `header.top` on the website.
-    static var headerChrome: Color { currentPalette.card }
+    static var headerChrome: Color { card }
 
     /// Site-footer combined line (web + iOS).  Two spaces around each ·, no trailing period.
     static let siteFooterDisclaimer =
@@ -1028,6 +1041,7 @@ struct AccountQuickMenu: View {
                 } footer: {
                     if let notice = store.watchlistNotice, !notice.isEmpty {
                         Text(notice)
+                            .padding(.top, 6)
                     }
                 }
                 .ctThemedRow()
@@ -1302,15 +1316,6 @@ struct SignInPanel: View {
             GoogleSignInButton(isBusy: isAuthenticatingWithGoogle) {
                 startGoogleSignIn()
             }
-
-            if let notice = store.watchlistNotice, !notice.isEmpty {
-                Text(notice)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isStaticText)
-            }
         }
     }
 
@@ -1475,57 +1480,72 @@ struct GoogleMark: View {
 
 // MARK: - Trade disclosure alerts
 
-/// The device-notification switch, in the owner's words rather than the
-/// platform's: "Trade Disclosure Alerts", one sentence-case status line, and
-/// no "APNs" anywhere on screen.
+/// The device-notification switch: "Push Alerts - Trade Filings".
 ///
-/// The switch reflects the *system* permission, which the app can grant-request
-/// but never revoke — so "off" and a denied permission both route to iOS
-/// Settings rather than flipping a switch that would silently do nothing.
+/// If not signed in, the switch is disabled and off, displaying "Push alerts are a Premium feature."
+/// When signed in:
+/// - Toggling on: requests permission if not determined, opens system settings if denied, or sets mode = .filings.
+/// - Toggling off: sets mode = .off (and does NOT bounce to system settings).
 struct TradeDisclosureAlertsToggle: View {
     @EnvironmentObject private var store: CongressTradeStore
     @EnvironmentObject private var pushManager: PushNotificationManager
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    var isCompact: Bool = false
     @State private var newTicker = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Trade Disclosure Alerts", isOn: Binding(
-                get: { pushManager.isAuthorized },
+            Toggle("Push Alerts - Trade Filings", isOn: Binding(
+                get: { store.signedIn && pushManager.isAuthorized && store.pushSettings.mode != .off },
                 set: { wantsOn in Task { await setEnabled(wantsOn) } }
             ))
+            .disabled(!store.signedIn)
 
-            HStack(spacing: 10) {
-                Text(statusLine)
-                    .font(.caption)
-                    .foregroundStyle(statusColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                if showsRetry {
-                    Button("Retry") {
-                        Task { await pushManager.syncTokenWithBackend(api: store.api, force: true) }
-                    }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.borderless)
-                }
-            }
-
-            if pushManager.isAuthorized, store.signedIn {
-                Picker("Alert Type", selection: modeBinding) {
-                    ForEach(PushAlertMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Alert Type")
-
-                Text(modeCaption)
+            if !store.signedIn {
+                Text("Push alerts are a Premium feature.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else {
+                if pushManager.authorizationStatus == .denied {
+                    Button {
+                        openSystemNotificationSettings()
+                    } label: {
+                        Text("turned off for this app in iOS Settings — tap to open")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .buttonStyle(.plain)
+                } else if !pushManager.isAuthorized {
+                    Text("not enabled on this device")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if pushManager.lastError != nil {
+                    HStack(spacing: 8) {
+                        Text("registration failed")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        Button("Retry") {
+                            Task { await pushManager.syncTokenWithBackend(api: store.api, force: true) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderless)
+                    }
+                }
 
-                if store.pushSettings.mode == .watchlist {
-                    PushWatchlistEditor(newTicker: $newTicker)
+                if !isCompact && pushManager.isAuthorized && store.pushSettings.mode != .off {
+                    Picker("Alert Type", selection: modeBinding) {
+                        Text("New Filings").tag(PushAlertMode.filings)
+                        Text("Watchlist").tag(PushAlertMode.watchlist)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Alert Type")
+
+                    if store.pushSettings.mode == .watchlist {
+                        PushWatchlistEditor(newTicker: $newTicker)
+                    }
                 }
             }
         }
@@ -1540,7 +1560,7 @@ struct TradeDisclosureAlertsToggle: View {
 
     private var modeBinding: Binding<PushAlertMode> {
         Binding(
-            get: { store.pushSettings.mode },
+            get: { store.pushSettings.mode == .watchlist ? .watchlist : .filings },
             set: { mode in
                 var next = store.pushSettings
                 next.mode = mode
@@ -1549,71 +1569,31 @@ struct TradeDisclosureAlertsToggle: View {
         )
     }
 
-    private var modeCaption: String {
-        switch store.pushSettings.mode {
-        case .off:
-            return "this device stays registered but will not get pushes"
-        case .filings:
-            return "one alert per new filing, with the filer's name, position, and trade counts"
-        case .watchlist:
-            return "only tickers on your watchlist; set a minimum amount and buys or sells per symbol"
-        }
-    }
-
-    private var showsRetry: Bool {
-        pushManager.isAuthorized && store.signedIn && pushManager.lastError != nil
-    }
-
-    /// Secondary status lines are sentence case per `FLEET-UI-COPY.md`.
-    private var statusLine: String {
-        if pushManager.authorizationStatus == .denied {
-            return "turned off for this app in iOS Settings — tap to open"
-        }
-        if !pushManager.isAuthorized {
-            return "not enabled on this device"
-        }
-        if !store.signedIn {
-            return "sign in to receive alerts on this device"
-        }
-        if pushManager.isBackendSynced {
-            return "this device is registered"
-        }
-        if pushManager.isRegistering {
-            return "registering this device…"
-        }
-        if pushManager.lastError != nil {
-            return "registration failed"
-        }
-        return "waiting to register this device"
-    }
-
-    private var statusColor: Color {
-        if pushManager.isAuthorized, store.signedIn {
-            if pushManager.isBackendSynced { return .green }
-            if pushManager.lastError != nil { return .red }
-        }
-        return .secondary
-    }
-
     private func setEnabled(_ on: Bool) async {
+        guard store.signedIn else { return }
+        if !on {
+            var next = store.pushSettings
+            next.mode = .off
+            await store.savePushSettings(next)
+            return
+        }
+
         switch pushManager.authorizationStatus {
         case .notDetermined:
-            guard on else { return }
             await pushManager.requestAuthorization()
-            if pushManager.isAuthorized, store.signedIn {
+            if pushManager.isAuthorized {
+                var next = store.pushSettings
+                if next.mode == .off { next.mode = .filings }
+                await store.savePushSettings(next)
                 await pushManager.syncTokenWithBackend(api: store.api)
             }
         case .denied:
-            // Never pretend: the app cannot re-enable a denied permission.
             openSystemNotificationSettings()
         default:
-            if on {
-                if store.signedIn {
-                    await pushManager.syncTokenWithBackend(api: store.api, force: true)
-                }
-            } else {
-                openSystemNotificationSettings()
-            }
+            var next = store.pushSettings
+            if next.mode == .off { next.mode = .filings }
+            await store.savePushSettings(next)
+            await pushManager.syncTokenWithBackend(api: store.api, force: true)
         }
     }
 
@@ -1623,33 +1603,63 @@ struct TradeDisclosureAlertsToggle: View {
     }
 }
 
-/// Per-ticker watchlist used by phone-push Watchlist mode.  Same ticker list
-/// as Delivery; min-amount and side filters apply only to pushes.
+/// Per-ticker watchlist used by phone-push Watchlist mode.
 struct PushWatchlistEditor: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Binding var newTicker: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             if store.watchlist.isEmpty {
                 Text("no tickers yet — add a symbol to get watchlist alerts")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
             }
-            ForEach(store.watchlist, id: \.self) { ticker in
+            ForEach(Array(store.watchlist.enumerated()), id: \.element) { index, ticker in
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
+                    HStack(spacing: 0) {
                         Text(ticker)
                             .font(.body.weight(.semibold).monospaced())
-                        Spacer()
+                        Text("    ")
+                            .font(.body.weight(.semibold).monospaced())
+                        Text("Minimum:  ")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        Menu {
+                            Button {
+                                updateMinAmount(for: ticker, min: nil)
+                            } label: {
+                                Text("None")
+                            }
+                            ForEach(PushSettings.amountCutoffs, id: \.self) { cutoff in
+                                Button {
+                                    updateMinAmount(for: ticker, min: cutoff)
+                                } label: {
+                                    Text(PushSettings.amountLabel(cutoff))
+                                }
+                            }
+                        } label: {
+                            Text(PushSettings.amountLabel(rule(for: ticker).minAmount) + "⭥")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.blue)
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 4)
+
                         Button(role: .destructive) {
                             remove(ticker)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                                 .foregroundStyle(.red)
+                                .font(.body)
                         }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Remove \(ticker)")
                     }
+
                     Picker("Sides", selection: sidesBinding(ticker)) {
                         ForEach(PushAlertSides.allCases) { side in
                             Text(side.label).tag(side)
@@ -1657,30 +1667,35 @@ struct PushWatchlistEditor: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityLabel("\(ticker) sides")
-                    Picker("Minimum Amount", selection: minBinding(ticker)) {
-                        Text(PushSettings.amountLabel(nil)).tag(Optional<Int>.none)
-                        ForEach(PushSettings.amountCutoffs, id: \.self) { cutoff in
-                            Text(PushSettings.amountLabel(cutoff)).tag(Optional(cutoff))
-                        }
-                    }
-                    .accessibilityLabel("\(ticker) minimum amount")
                 }
                 .padding(.vertical, 4)
+                .padding(.bottom, index == store.watchlist.count - 1 ? 16 : 5)
             }
-            HStack {
-                TextField("Add ticker (e.g. NVDA)", text: $newTicker)
+
+            HStack(spacing: 8) {
+                TextField("ticker (e.g. NVDA)", text: $newTicker)
                     .tickerAutocapitalized()
                     .autocorrectionDisabled()
                 Button("Add") {
                     addTickers()
                 }
+                .buttonStyle(.borderless)
                 .disabled(CongressTradeStore.parseTickers(newTicker).isEmpty)
             }
+            .padding(.top, 4)
         }
     }
 
     private func rule(for ticker: String) -> TickerAlertRule {
         store.pushSettings.watchlistRules[ticker] ?? .default
+    }
+
+    private func updateMinAmount(for ticker: String, min: Int?) {
+        var next = store.pushSettings
+        var row = next.watchlistRules[ticker] ?? .default
+        row.minAmount = min
+        next.watchlistRules[ticker] = row
+        Task { await store.savePushSettings(next) }
     }
 
     private func sidesBinding(_ ticker: String) -> Binding<PushAlertSides> {
@@ -1690,19 +1705,6 @@ struct PushWatchlistEditor: View {
                 var next = store.pushSettings
                 var row = next.watchlistRules[ticker] ?? .default
                 row.sides = sides
-                next.watchlistRules[ticker] = row
-                Task { await store.savePushSettings(next) }
-            }
-        )
-    }
-
-    private func minBinding(_ ticker: String) -> Binding<Int?> {
-        Binding(
-            get: { rule(for: ticker).minAmount },
-            set: { min in
-                var next = store.pushSettings
-                var row = next.watchlistRules[ticker] ?? .default
-                row.minAmount = min
                 next.watchlistRules[ticker] = row
                 Task { await store.savePushSettings(next) }
             }
@@ -1753,7 +1755,7 @@ enum AppLegal {
 
     static let markdown = destinations
         .map { "[\($0.title)](\($0.url.absoluteString))" }
-        .joined(separator: "  •  ")
+        .joined(separator: "   •   ")
 
     static var attributed: AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -1796,13 +1798,15 @@ struct SiteFooterStack: View {
     var includePricing: Bool = true
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 16) {
             Text(AppTheme.siteFooterDisclaimer)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
             LegalFooterLinks(includePricing: includePricing)
+                .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity)
     }
@@ -1825,7 +1829,7 @@ struct LegalFooterLinks: View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, destination in
                 if index > 0 {
-                    Text("  •  ")
+                    Text("   •   ")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
@@ -1845,6 +1849,36 @@ struct LegalFooterLinks: View {
                     .tint(Color(uiColor: .secondaryLabel))
             }
         }
+    }
+}
+
+/// High-contrast "Subscribe with Apple" prominent button.
+///
+/// In Light mode: solid dark background, white text, white Apple logo.
+/// In Dark mode: solid white background, black text, black Apple logo.
+struct SubscribeWithAppleProminentButton: View {
+    var action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
+                Text("Subscribe with Apple")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                colorScheme == .dark ? Color.white : Color(red: 0.08, green: 0.08, blue: 0.08),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Subscribe with Apple")
     }
 }
 

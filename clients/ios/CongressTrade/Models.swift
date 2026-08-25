@@ -507,9 +507,27 @@ struct PushSettings: Equatable {
     ]
 
     static func amountLabel(_ min: Int?) -> String {
-        guard let min, min > 0 else { return "Any Amount" }
-        let formatted = min.formatted(.number.grouping(.automatic))
-        return "$\(formatted)+"
+        guard let min, min > 0 else { return "None" }
+        switch min {
+        case 1_001: return "$1k"
+        case 15_001: return "$15k"
+        case 50_001: return "$50k"
+        case 100_001: return "$100k"
+        case 250_001: return "$250k"
+        case 500_001: return "$500k"
+        case 1_000_001: return "$1m"
+        case 5_000_001: return "$5m"
+        case 25_000_001: return "$25m"
+        case 50_000_001: return "$50m"
+        default:
+            if min >= 1_000_000 {
+                return "$\(min / 1_000_000)m"
+            } else if min >= 1_000 {
+                return "$\(min / 1_000)k"
+            } else {
+                return "$\(min)"
+            }
+        }
     }
 
     init(mode: PushAlertMode, watchlistRules: [String: TickerAlertRule]) {
