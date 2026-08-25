@@ -47,9 +47,15 @@ function shouldSampleTrace(error: boolean, sampleRate: number, random = Math.ran
   return random() < sampleRate;
 }
 
+const LOOSE_CREDENTIAL_QUERY = /([?&](?:api[_-]?key|token|access[_-]?token|auth[_-]?token|secret|password|authorization|session(?:id)?|sig(?:nature)?|code)=)[^&\s<>"']+/gi;
+
+function redactLooseCredentialQuery(value: string): string {
+  return value.replace(LOOSE_CREDENTIAL_QUERY, `$1${SENTRY_FILTERED_VALUE}`);
+}
+
 function safeText(value: string): string {
   const scrubbed = scrubSentryEvent({ message: value }) as { message?: string };
-  return String(scrubbed.message ?? value)
+  return redactLooseCredentialQuery(String(scrubbed.message ?? value))
     .replace(/pub_[A-Za-z0-9_-]{8,}/g, SENTRY_FILTERED_VALUE)
     .slice(0, 4_000);
 }
@@ -64,11 +70,12 @@ function safeMeta(meta: Record<string, string> | undefined): Record<string, stri
 }
 
 function randomId(): number {
-  const bytes = new Uint8Array(7);
+  // 48-bit ids stay inside Number.MAX_SAFE_INTEGER so JSON intake is exact.
+  const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
-  let value = 1;
+  let value = 0;
   for (const byte of bytes) value = (value * 256) + byte;
-  return value;
+  return value || 1;
 }
 
 export function createDatadogTransport(

@@ -1776,13 +1776,24 @@ function rawFetchViolations(relative: string, source: string): string[] {
         relative === 'scripts/usage-telemetry.mjs'
         && ts.isIdentifier(callee)
         && callee.text === 'fetchImpl';
+      // Agentless Datadog intake is unmetered on purpose: routing it through
+      // trackedFetch would recurse if a later meter classified Datadog hosts.
+      const isDatadogIntakePrimitive =
+        relative === 'shared/datadogTransport.ts'
+        && ts.isIdentifier(callee)
+        && callee.text === 'fetchImpl';
       const isInternalHonoDispatch =
         relative === 'index.ts'
         && ts.isPropertyAccessExpression(callee)
         && ts.isIdentifier(callee.expression)
         && callee.expression.text === 'app'
         && callee.name.text === 'fetch';
-      if (!isTelemetryPrimitive && !isOperatorTelemetryPrimitive && !isInternalHonoDispatch) {
+      if (
+        !isTelemetryPrimitive
+        && !isOperatorTelemetryPrimitive
+        && !isDatadogIntakePrimitive
+        && !isInternalHonoDispatch
+      ) {
         const pos = ast.getLineAndCharacterOfPosition(node.getStart(ast));
         violations.push(`${relative}:${pos.line + 1}:${callee.getText(ast)}`);
       }
@@ -1848,6 +1859,10 @@ describe('outbound-call inventory enforcement', () => {
     ]);
     expect(rawFetchViolations(
       'shared/thirdPartyTelemetry.ts',
+      'async function transport(fetchImpl: typeof fetch) { return fetchImpl("https://example.test"); }',
+    )).toEqual([]);
+    expect(rawFetchViolations(
+      'shared/datadogTransport.ts',
       'async function transport(fetchImpl: typeof fetch) { return fetchImpl("https://example.test"); }',
     )).toEqual([]);
   });
