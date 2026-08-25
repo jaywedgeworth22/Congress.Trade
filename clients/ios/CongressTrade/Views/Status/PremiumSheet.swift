@@ -137,6 +137,7 @@ struct PremiumSheet: View {
             .navigationTitle("Premium")
             .inlineNavigationTitle()
         }
+        .iPadFullWidthSheet()
         .task { await loadProducts() }
         .sheet(isPresented: $showSignIn) {
             NavigationStack {
@@ -437,14 +438,17 @@ struct PremiumSheet: View {
 
     private func loadProducts() async {
         isLoadingProducts = true
+        defer { isLoadingProducts = false }
         do {
             let ids = Set(AppleIAPProduct.allCases.map(\.rawValue))
             products = try await Product.products(for: ids).sorted { $0.price < $1.price }
+            if products.isEmpty {
+                purchaseError = PremiumPricing.emptyCatalogMessage
+            }
         } catch {
             products = []
-            purchaseError = error.localizedDescription
+            purchaseError = PremiumPricing.catalogLoadFailureMessage(error)
         }
-        isLoadingProducts = false
     }
 
     private func purchase(_ product: Product) async {
@@ -458,22 +462,26 @@ struct PremiumSheet: View {
             case .success(let verification):
                 let transaction = try checkVerified(verification)
                 notice = "Purchase confirmed.  Unlocking Premium…"
-                // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
-                // Guideline 5.1.1(v): no account required to buy — signed in,
-                // this attaches to the account; signed out, it records the
-                // purchase against this device and the transaction is finished
-                // here (redeemAppleTransaction finishes the signed-in path
-                // itself; the anonymous path does not, so it is finished here).
-                if store.signedIn {
-                    try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
-                    notice = "Premium unlocked.  You can create Delivery alerts now."
-                } else {
-                    try await store.redeemAppleTransactionAnonymously(jws: verification.jwsRepresentation)
-                    await transaction.finish()
-                    notice = "Premium unlocked on this device.  Sign in any time to use it on your other devices too."
+                do {
+                    // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
+                    // Guideline 5.1.1(v): no account required to buy — signed in,
+                    // this attaches to the account; signed out, it records the
+                    // purchase against this device and the transaction is finished
+                    // here (redeemAppleTransaction finishes the signed-in path
+                    // itself; the anonymous path does not, so it is finished here).
+                    if store.signedIn {
+                        try await store.redeemAppleTransaction(transaction, jws: verification.jwsRepresentation)
+                        notice = "Premium unlocked.  You can create Delivery alerts now."
+                    } else {
+                        try await store.redeemAppleTransactionAnonymously(jws: verification.jwsRepresentation)
+                        await transaction.finish()
+                        notice = "Premium unlocked on this device.  Sign in any time to use it on your other devices too."
+                    }
+                    try? await Task.sleep(for: .seconds(1.2))
+                    dismiss()
+                } catch {
+                    purchaseError = PremiumPricing.redeemFailureMessage(error)
                 }
-                try? await Task.sleep(for: .seconds(1.2))
-                dismiss()
             case .userCancelled:
                 notice = nil
             case .pending:
@@ -482,7 +490,11 @@ struct PremiumSheet: View {
                 notice = "Purchase finished with an unknown status."
             }
         } catch {
-            purchaseError = PremiumPricing.redeemFailureMessage(error)
+            if PremiumPricing.isQuietPurchaseCancellation(error) {
+                notice = nil
+            } else {
+                purchaseError = PremiumPricing.purchaseFailureMessage(error)
+            }
         }
     }
 
@@ -569,6 +581,62 @@ enum PremiumPricing {
     /// Empty StoreKit catalog: Restore stays, website checkout does not.
     /// Guideline 3.1.1 — same digital good as IAP.
     static let emptyCatalogMessage = "In-app purchase isn't available.  Try again later."
+
+    /// StoreKit could not load the product list (network/App Store hiccup).
+    static func catalogLoadFailureMessage(_ error: Error) -> String {
+        "Couldn't load subscription plans from the App Store.  Check your connection and try again, or tap Restore Purchases if you already subscribed.  ("
+            + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription) + ")"
+    }
+
+    /// StoreKit rejected or aborted the purchase sheet before Apple charged
+    /// anyone.  Must not use the post-charge redeem copy.
+    static func purchaseFailureMessage(_ error: Error) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .transport:
+                return apiError.isOffline
+                    ? "You're offline.  Reconnect and try the purchase again."
+                    : "Couldn't reach the App Store.  Try again in a moment."
+            case .server(let status, let message, _):
+                if status == 429 {
+                    return "Too many purchase attempts.  Wait a minute and try again."
+                }
+                if !message.isEmpty, message != "Request failed" {
+                    return "Couldn't complete the purchase.  \(message)"
+                }
+                return "Couldn't complete the purchase (error \(status)).  Try again or tap Restore Purchases."
+            case .invalidResponse:
+                return "Couldn't complete the purchase.  Try again in a moment."
+            }
+        }
+        if let storeKit = error as? StoreKitError {
+            switch storeKit {
+            case .networkError:
+                return "Couldn't reach the App Store.  Check your connection and try again."
+            case .notAvailableInStorefront:
+                return "These plans aren't available in your App Store region yet."
+            case .notEntitled:
+                return "This Apple ID can't purchase subscriptions right now.  Check Screen Time or payment restrictions in Settings."
+            case .userCancelled:
+                return ""
+            default:
+                break
+            }
+        }
+        let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return "Couldn't start the App Store purchase.  Try again in a moment, or tap Restore Purchases if you already subscribed.  ("
+            + detail + ")"
+    }
+
+    /// True when StoreKit reported a user cancel that surfaced as a thrown
+    /// error instead of `.userCancelled` on the purchase result.
+    static func isQuietPurchaseCancellation(_ error: Error) -> Bool {
+        if let storeKit = error as? StoreKitError, case .userCancelled = storeKit {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == SKErrorDomain && nsError.code == SKError.paymentCancelled.rawValue
+    }
 
     /// Delivery paywall.  In-App Purchase only — no website Stripe CTA.
     static let deliveryUpgradeMessage =

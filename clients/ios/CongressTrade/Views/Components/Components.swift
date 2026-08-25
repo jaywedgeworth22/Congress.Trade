@@ -1283,38 +1283,73 @@ struct SignInPanel: View {
     /// `handleAppleSignIn` on completion. See `Store/AppleSignIn.swift`.
     @State private var currentAppleNonce: String?
     @State private var isAuthenticatingWithGoogle = false
+    @State private var isAuthenticatingWithApple = false
 
     /// Fired once a session token has actually been stored — used by sheets
     /// that should close themselves on success.
     var onSignedIn: () -> Void = {}
 
+    private var isAuthenticating: Bool { isAuthenticatingWithApple || isAuthenticatingWithGoogle }
+
     var body: some View {
         VStack(spacing: 12) {
-            SignInWithAppleButton(.signIn) { request in
-                // Request name + email on first authorization so the backend
-                // can store a display name (email also lands in the JWT).
-                request.requestedScopes = [.fullName, .email]
-                let nonce = AppleSignInNonce.generate()
-                currentAppleNonce = nonce
-                request.nonce = nonce
-            } onCompletion: { result in
-                Task {
-                    // `signedIn` only flips after the bootstrap refresh that
-                    // `saveSessionToken` kicks off, so success is measured on
-                    // the token landing, not on the user object arriving.
-                    let hadToken = store.hasStoredSessionToken
-                    await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
-                    currentAppleNonce = nil
-                    if store.hasStoredSessionToken, !hadToken { onSignedIn() }
+            ZStack {
+                SignInWithAppleButton(.signIn) { request in
+                    // Request name + email on first authorization so the backend
+                    // can store a display name (email also lands in the JWT).
+                    request.requestedScopes = [.fullName, .email]
+                    let nonce = AppleSignInNonce.generate()
+                    currentAppleNonce = nonce
+                    request.nonce = nonce
+                } onCompletion: { result in
+                    Task {
+                        isAuthenticatingWithApple = true
+                        defer {
+                            isAuthenticatingWithApple = false
+                            currentAppleNonce = nil
+                        }
+                        // `signedIn` only flips after the bootstrap refresh that
+                        // `saveSessionToken` kicks off, so success is measured on
+                        // the token landing, not on the user object arriving.
+                        let hadToken = store.hasStoredSessionToken
+                        await store.handleAppleSignIn(result, rawNonce: currentAppleNonce)
+                        if store.hasStoredSessionToken, !hadToken { onSignedIn() }
+                    }
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(height: 50)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityLabel("Sign in with Apple")
+                .allowsHitTesting(!isAuthenticating)
+
+                if isAuthenticatingWithApple {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.35 : 0.12))
+                    ProgressView()
+                        .accessibilityLabel("Signing in with Apple")
                 }
             }
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 50)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .accessibilityLabel("Sign in with Apple")
 
             GoogleSignInButton(isBusy: isAuthenticatingWithGoogle) {
                 startGoogleSignIn()
+            }
+            .disabled(isAuthenticating)
+
+            if isAuthenticating {
+                Text("Signing in…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLiveRegion(.polite)
+            }
+
+            if let notice = store.watchlistNotice, !notice.isEmpty {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(notice == "Signed in." ? .secondary : .red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLiveRegion(.polite)
             }
         }
     }
@@ -1323,7 +1358,7 @@ struct SignInPanel: View {
     /// Lived in `SettingsView` before, which is why the hamburger could not
     /// offer Google at all.
     private func startGoogleSignIn() {
-        guard !isAuthenticatingWithGoogle else { return }
+        guard !isAuthenticating else { return }
 
         // Honor the configured API base URL (CONGRESS_TRADE_API_BASE_URL) so
         // non-prod backends get the OAuth round trip too.
