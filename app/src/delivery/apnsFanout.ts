@@ -346,6 +346,30 @@ function matchingFilingRows(
   return group.filter((row) => matchesWatchlistTrade(row, watchlist, settings));
 }
 
+/**
+ * Custom APNs keys for a filing digest.
+ *
+ * Shipped iOS (`AppDelegate`) only reads `trade_id` / `doc_id`.  The
+ * original payload sent camelCase `docId` / `txIds` only, so a tap on
+ * the notification never opened the filing.  Send both spellings.
+ */
+export function officialFilingPushData(
+  rows: Array<{ id: string; doc_id: string | null; ticker: string | null }>,
+): Record<string, unknown> {
+  const first = rows[0];
+  const docId = first?.doc_id ?? null;
+  const tradeId = first?.id ?? null;
+  return {
+    kind: 'official_filing',
+    docId,
+    doc_id: docId,
+    txIds: rows.map((row) => row.id),
+    tradeId,
+    trade_id: tradeId,
+    tickers: rows.map((row) => row.ticker).filter(Boolean),
+  };
+}
+
 export async function fanOutApnsProductEvents(
   env: Env,
   deps: ApnsFanoutDeps = {},
@@ -439,12 +463,7 @@ export async function fanOutApnsProductEvents(
           title: copy.title,
           body: copy.body,
           collapseId: filingGroupKey(first).slice(0, 64),
-          data: {
-            kind: 'official_filing',
-            docId: first.doc_id,
-            txIds: rows.map((r) => r.id),
-            tickers: rows.map((r) => r.ticker).filter(Boolean),
-          },
+          data: officialFilingPushData(rows),
         });
         if (sendError) break userLoop;
       }

@@ -1418,6 +1418,23 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
+    func testPushNotificationOpenReadsShippedFanoutCamelCaseAndSnakeCase() {
+        XCTAssertEqual(
+            PushNotificationOpen.parse(["docId": "H-1", "txIds": ["tx_1", "tx_2"]]),
+            .trade(id: "tx_1")
+        )
+        XCTAssertEqual(
+            PushNotificationOpen.parse(["trade_id": "tx_9", "doc_id": "H-2"]),
+            .trade(id: "tx_9")
+        )
+        XCTAssertEqual(
+            PushNotificationOpen.parse(["docId": "H-3"]),
+            .filing(docId: "H-3")
+        )
+        XCTAssertNil(PushNotificationOpen.parse(["kind": "official_filing"]))
+        XCTAssertNil(PushNotificationOpen.parse(["docId": "  "]))
+    }
+
     func testAppDeepLinkStaysHonestOnMissingOrUnknownQueries() {
         XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/")!))
         XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/?trade=")!))
