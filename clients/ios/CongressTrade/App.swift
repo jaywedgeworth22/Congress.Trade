@@ -22,6 +22,126 @@ final class TabRouter: ObservableObject {
         ProcessInfo.processInfo.arguments.contains("-startOnTrades") ? .trades : .trends
 }
 
+/// Inbound share / Universal Link / custom-scheme destinations that already
+/// exist in the app.  Missing or unknown queries stay `nil` — we do not
+/// invent a tab or sheet.  `congresstrade://auth` is session handoff only.
+///
+/// Associated Domains (`applinks:congress.trade`) still has to be flipped on
+/// in Xcode's capability UI — do not hand-edit the entitlements file.
+enum AppDeepLink: Equatable {
+    case auth(token: String)
+    case trade(id: String)
+    case member(id: String)
+    case ticker(symbol: String)
+    case filing(docId: String)
+    case tab(AppTab)
+
+    static func parse(_ url: URL) -> AppDeepLink? {
+        let scheme = url.scheme?.lowercased() ?? ""
+        guard scheme == "congresstrade" || scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        let host = (url.host ?? "").lowercased()
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let pathComponents = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+
+        if scheme == "congresstrade" && (host == "auth" || (host.isEmpty && path.hasPrefix("auth"))) {
+            guard let token = queryValue(queryItems, names: "token") else { return nil }
+            return .auth(token: token)
+        }
+
+        // Website open-from-URL priority: ticker, then member, then trade.
+        if let ticker = queryValue(queryItems, names: "ticker", "asset") {
+            return .ticker(symbol: ticker.uppercased())
+        }
+        if let member = queryValue(queryItems, names: "member", "politician") {
+            return .member(id: member.removingPercentEncoding ?? member)
+        }
+        if let trade = queryValue(queryItems, names: "trade", "trade_id") {
+            return .trade(id: trade)
+        }
+        if let docId = queryValue(queryItems, names: "filing", "doc", "doc_id") {
+            return .filing(docId: docId)
+        }
+        if let view = queryValue(queryItems, names: "view") {
+            return tab(fromToken: view)
+        }
+        if queryItems.contains(where: { $0.name.caseInsensitiveCompare("delivery") == .orderedSame }) {
+            return .tab(.delivery)
+        }
+
+        if scheme == "congresstrade" {
+            if let link = entity(host: host, remainder: path) { return link }
+            if let tabLink = tab(fromToken: host) { return tabLink }
+            if host.isEmpty, let first = pathComponents.first {
+                let rest = pathComponents.dropFirst().joined(separator: "/")
+                if let link = entity(host: first.lowercased(), remainder: rest) { return link }
+                if let tabLink = tab(fromToken: first) { return tabLink }
+            }
+            return nil
+        }
+
+        if let firstIdx = pathComponents.firstIndex(where: {
+            Self.recognizedPathTokens.contains($0.lowercased())
+        }) {
+            let section = pathComponents[firstIdx].lowercased()
+            let nextVal = firstIdx + 1 < pathComponents.count ? pathComponents[firstIdx + 1] : ""
+            if let link = entity(host: section, remainder: nextVal) { return link }
+            return tab(fromToken: section)
+        }
+
+        return nil
+    }
+
+    private static let recognizedPathTokens: Set<String> = [
+        "trade", "member", "politician", "ticker", "filing", "doc",
+        "delivery", "trends", "trades", "feed", "people", "directory", "subs"
+    ]
+
+    private static func queryValue(_ items: [URLQueryItem], names: String...) -> String? {
+        for name in names {
+            guard let raw = items.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })?.value
+            else { continue }
+            let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty { return cleaned }
+        }
+        return nil
+    }
+
+    private static func entity(host: String, remainder: String) -> AppDeepLink? {
+        let cleaned = remainder.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch host {
+        case "trade":
+            return cleaned.isEmpty ? nil : .trade(id: cleaned)
+        case "member", "politician":
+            return cleaned.isEmpty ? nil : .member(id: cleaned.removingPercentEncoding ?? cleaned)
+        case "ticker":
+            return cleaned.isEmpty ? nil : .ticker(symbol: cleaned.uppercased())
+        case "filing", "doc":
+            return cleaned.isEmpty ? nil : .filing(docId: cleaned)
+        default:
+            return nil
+        }
+    }
+
+    private static func tab(fromToken raw: String) -> AppDeepLink? {
+        switch raw.lowercased() {
+        case "trends":
+            return .tab(.trends)
+        case "trades", "feed":
+            return .tab(.trades)
+        case "people", "directory":
+            return .tab(.people)
+        case "delivery", "subs":
+            return .tab(.delivery)
+        default:
+            return nil
+        }
+    }
+}
+
 @main
 struct CongressTradeApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -384,157 +504,39 @@ struct MainTabView: View {
             tabRouter.selection = .trades
             activeFiling = FilingSheetTarget(docId: cleanDoc)
         }
-        // Universal deep links and congresstrade:// links.
+        // Universal Links arrive as a browsing-web activity; custom-scheme
+        // and some https handoffs also hit onOpenURL.  Same parser for both.
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            if let url = activity.webpageURL {
+                handleOpenURL(url)
+            }
+        }
         .onOpenURL { url in
             handleOpenURL(url)
         }
     }
 
     private func handleOpenURL(_ url: URL) {
-        let scheme = url.scheme?.lowercased() ?? ""
-        guard scheme == "congresstrade" || scheme == "http" || scheme == "https" else { return }
-
-        let host = (url.host ?? "").lowercased()
-        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let pathComponents = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let queryItems = components?.queryItems ?? []
-
-        // Auth token handoff: congresstrade://auth?token=…
-        if scheme == "congresstrade" && (host == "auth" || (host.isEmpty && path.hasPrefix("auth"))) {
-            if let token = queryItems.first(where: { $0.name == "token" })?.value, !token.isEmpty {
-                _ = store.saveSessionToken(token)
-            }
-            return
-        }
-
-        // 1. Query-param based universal links (?trade=…, ?member=…, ?ticker=…, ?filing=…, ?delivery)
-        if let tradeId = queryItems.first(where: { $0.name == "trade" || $0.name == "trade_id" })?.value,
-           !tradeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let cleanId = tradeId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let link = AppDeepLink.parse(url) else { return }
+        switch link {
+        case .auth(let token):
+            _ = store.saveSessionToken(token)
+        case .trade(let id):
             tabRouter.selection = .trades
             Task {
-                if let trade = await store.fetchTrade(id: cleanId) {
+                if let trade = await store.fetchInboundTrade(id: id) {
                     activeTradeDetail = trade
                 }
             }
-            return
-        }
-
-        if let memberVal = queryItems.first(where: { $0.name == "member" || $0.name == "politician" })?.value,
-           !memberVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            resolveAndOpenMember(memberVal)
-            return
-        }
-
-        if let tickerVal = queryItems.first(where: { $0.name == "ticker" || $0.name == "asset" })?.value,
-           !tickerVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let symbol = tickerVal.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        case .member(let id):
+            resolveAndOpenMember(id)
+        case .ticker(let symbol):
             activeTicker = TickerSheetTarget(ticker: symbol)
-            return
-        }
-
-        if let docVal = queryItems.first(where: { $0.name == "filing" || $0.name == "doc" || $0.name == "doc_id" })?.value,
-           !docVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let cleanDoc = docVal.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .filing(let docId):
             tabRouter.selection = .trades
-            activeFiling = FilingSheetTarget(docId: cleanDoc)
-            return
-        }
-
-        if queryItems.contains(where: { $0.name == "delivery" }) {
-            tabRouter.selection = .delivery
-            return
-        }
-
-        // 2. Custom scheme path-based: congresstrade://trade/:id, congresstrade://member/:id, etc.
-        if scheme == "congresstrade" {
-            if host == "trade", !path.isEmpty {
-                let cleanId = path.trimmingCharacters(in: .whitespacesAndNewlines)
-                tabRouter.selection = .trades
-                Task {
-                    if let trade = await store.fetchTrade(id: cleanId) {
-                        activeTradeDetail = trade
-                    }
-                }
-                return
-            }
-            if host == "member" || host == "politician", !path.isEmpty {
-                resolveAndOpenMember(path)
-                return
-            }
-            if host == "ticker", !path.isEmpty {
-                let symbol = path.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-                activeTicker = TickerSheetTarget(ticker: symbol)
-                return
-            }
-            if host == "filing" || host == "doc", !path.isEmpty {
-                let cleanDoc = path.trimmingCharacters(in: .whitespacesAndNewlines)
-                tabRouter.selection = .trades
-                activeFiling = FilingSheetTarget(docId: cleanDoc)
-                return
-            }
-            if host == "delivery" {
-                tabRouter.selection = .delivery
-                return
-            }
-            if host == "trends" {
-                tabRouter.selection = .trends
-                return
-            }
-            if host == "trades" {
-                tabRouter.selection = .trades
-                return
-            }
-            if host == "people" || host == "directory" {
-                tabRouter.selection = .people
-                return
-            }
-        }
-
-        // 3. Universal links path-based: https://congress.trade/trade/:id, /member/:idOrName, /ticker/:symbol, /filing/:docId
-        if let firstIdx = pathComponents.firstIndex(where: {
-            ["trade", "member", "politician", "ticker", "filing", "doc", "delivery", "trends", "trades", "people", "directory"].contains($0.lowercased())
-        }) {
-            let section = pathComponents[firstIdx].lowercased()
-            let nextVal = firstIdx + 1 < pathComponents.count ? pathComponents[firstIdx + 1] : nil
-
-            switch section {
-            case "trade":
-                if let id = nextVal, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
-                    tabRouter.selection = .trades
-                    Task {
-                        if let trade = await store.fetchTrade(id: cleanId) {
-                            activeTradeDetail = trade
-                        }
-                    }
-                }
-            case "member", "politician":
-                if let val = nextVal, !val.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    resolveAndOpenMember(val)
-                }
-            case "ticker":
-                if let symbol = nextVal, !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    activeTicker = TickerSheetTarget(ticker: symbol.uppercased().trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-            case "filing", "doc":
-                if let docId = nextVal, !docId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let cleanDoc = docId.trimmingCharacters(in: .whitespacesAndNewlines)
-                    tabRouter.selection = .trades
-                    activeFiling = FilingSheetTarget(docId: cleanDoc)
-                }
-            case "delivery":
-                tabRouter.selection = .delivery
-            case "trends":
-                tabRouter.selection = .trends
-            case "trades":
-                tabRouter.selection = .trades
-            case "people", "directory":
-                tabRouter.selection = .people
-            default:
-                break
-            }
+            activeFiling = FilingSheetTarget(docId: docId)
+        case .tab(let tab):
+            tabRouter.selection = tab
         }
     }
 

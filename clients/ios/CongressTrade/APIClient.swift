@@ -1129,4 +1129,29 @@ enum APIError: LocalizedError {
             return error.localizedDescription
         }
     }
+
+    /// Human Trends / inbound-link copy.  Never the raw transport phrase
+    /// (`Request failed`, `The Internet connection appears to be offline.`).
+    var userFacingMessage: String {
+        switch self {
+        case .server(let status, let message, _):
+            if status == 429 {
+                return "Too many requests.  Pull to refresh."
+            }
+            if (500...599).contains(status) {
+                return "The site is updating.  Pull to refresh."
+            }
+            if message.isEmpty || message == "Request failed" {
+                return "Could not load this page.  Pull to refresh."
+            }
+            return message
+        case .transport:
+            if isOffline {
+                return "You are offline."
+            }
+            return "Could not reach the server.  Pull to refresh."
+        case .invalidResponse:
+            return "Invalid server response."
+        }
+    }
 }

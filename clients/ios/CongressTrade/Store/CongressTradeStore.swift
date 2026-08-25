@@ -863,61 +863,82 @@ final class CongressTradeStore: ObservableObject {
         let skipRising = selectedTimeRange == .all
 
         do {
-            async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, sort: "volume")
-            async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let trendingTask: [TrendingItem] = {
-                if skipRising { return [] }
-                return (try? await api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam))?.trending ?? []
-            }()
-            async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
-            // Latency is independent of trends filters; load it fail-soft so a
-            // slow/failed scoreboard never blanks the rest of Trends.
-            async let latencyTask = api.latencySummary()
-
-            analyticsSummary = try await summaryTask
-            tickerLeaderboard = try await tickersTask.tickers
-            volumeSeries = try await volumeTask.series
-            sectorFlow = try await sectorsTask.sectors
-            memberLeaderboard = try await membersTask.members
-            clusterBuys = try await clustersTask.clusters
-            trendingAssets = await trendingTask
-            topPerformers = (try? await topPerformersTask)?.members ?? []
-            marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
-            partySplit = try? await partySplitTask
-            filingLag = try? await filingLagTask
-            conflicts = (try? await conflictsTask)?.conflicts ?? []
-            do {
-                latencySummary = try await latencyTask
-            } catch {
-                if let apiError = error as? APIError, apiError.isCancellation {
-                    // ignore
-                } else {
-                    latencySummary = nil
-                }
+            try await withRetry {
+                try await self.loadTrendsFanout(
+                    analyticsWindow: analyticsWindow,
+                    partyParam: partyParam,
+                    chamberParam: chamberParam,
+                    typeParam: typeParam,
+                    skipRising: skipRising
+                )
             }
         } catch {
             if Task.isCancelled { /* ignore */ }
             else if let apiError = error as? APIError, apiError.isCancellation {
                 // Normal Task cancel — do not paint a grey "cancelled" banner.
+            } else if let apiError = error as? APIError {
+                trendsNotice = apiError.userFacingMessage
             } else {
-                trendsNotice = error.localizedDescription
+                trendsNotice = "Could not load Trends.  Pull to refresh."
             }
         }
     }
 
-    private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
+    private func loadTrendsFanout(
+        analyticsWindow: String,
+        partyParam: String?,
+        chamberParam: String?,
+        typeParam: String?,
+        skipRising: Bool
+    ) async throws {
+        async let summaryTask = api.analyticsSummary(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam, sort: "volume")
+        async let volumeTask = api.volumeOverTime(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let sectorsTask = api.sectorFlow(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let membersTask = api.memberLeaderboard(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let clustersTask = api.clusterBuys(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let trendingTask: [TrendingItem] = {
+            if skipRising { return [] }
+            return (try? await api.trending(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam))?.trending ?? []
+        }()
+        async let topPerformersTask = api.topPerformers(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let marketCapTask = api.marketCapBreakdown(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let partySplitTask = api.partySplit(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let filingLagTask = api.filingLag(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        async let conflictsTask = api.conflicts(window: analyticsWindow, party: partyParam, chamber: chamberParam, type: typeParam)
+        // Latency is independent of trends filters; load it fail-soft so a
+        // slow/failed scoreboard never blanks the rest of Trends.
+        async let latencyTask = api.latencySummary()
+
+        analyticsSummary = try await summaryTask
+        tickerLeaderboard = try await tickersTask.tickers
+        volumeSeries = try await volumeTask.series
+        sectorFlow = try await sectorsTask.sectors
+        memberLeaderboard = try await membersTask.members
+        clusterBuys = try await clustersTask.clusters
+        trendingAssets = await trendingTask
+        topPerformers = (try? await topPerformersTask)?.members ?? []
+        marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
+        partySplit = try? await partySplitTask
+        filingLag = try? await filingLagTask
+        conflicts = (try? await conflictsTask)?.conflicts ?? []
+        do {
+            latencySummary = try await latencyTask
+        } catch {
+            if let apiError = error as? APIError, apiError.isCancellation {
+                // ignore
+            } else {
+                latencySummary = nil
+            }
+        }
+    }
+
+    /// Shared 429 / 5xx / transport retry used by Trades and Trends.
+    private func withRetry<T>(_ work: () async throws -> T) async throws -> T {
         var attempt = 0
         while true {
             do {
-                return try await api.feed(query: query)
+                return try await work()
             } catch let error as APIError {
                 attempt += 1
                 guard error.isRetryable, attempt < Self.maxAttemptsPerPage else { throw error }
@@ -925,6 +946,12 @@ final class CongressTradeStore: ObservableObject {
                 guard backoffSeconds <= 15.0 else { throw error }
                 await sleeper(backoffSeconds)
             }
+        }
+    }
+
+    private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
+        try await withRetry {
+            try await api.feed(query: query)
         }
     }
 
@@ -979,6 +1006,48 @@ final class CongressTradeStore: ObservableObject {
         let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanId.isEmpty else { return nil }
 
+        if let cached = cachedTrade(id: cleanId) {
+            return cached
+        }
+        do {
+            return try await api.trade(id: cleanId)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Same lookup as `fetchTrade`, but inbound share / Universal Links stay
+    /// honest: a 404 is "not found", a transport miss is a human retry string,
+    /// and we never open an empty sheet.
+    func fetchInboundTrade(id: String) async -> ClientTrade? {
+        let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanId.isEmpty else { return nil }
+
+        if let cached = cachedTrade(id: cleanId) {
+            return cached
+        }
+        do {
+            return try await api.trade(id: cleanId)
+        } catch let error as APIError {
+            if case .server(let status, _, _) = error, status == 404 {
+                noteInboundLinkMiss(
+                    "That trade was not found.  It may have been retracted or the share link is outdated."
+                )
+            } else {
+                noteInboundLinkMiss(error.userFacingMessage)
+            }
+            return nil
+        } catch {
+            noteInboundLinkMiss("Could not load that trade.  Pull to refresh.")
+            return nil
+        }
+    }
+
+    func noteInboundLinkMiss(_ message: String) {
+        feedNotice = message
+    }
+
+    private func cachedTrade(id cleanId: String) -> ClientTrade? {
         if let context = modelContext {
             let descriptor = FetchDescriptor<ClientTrade>(
                 predicate: #Predicate { $0.id == cleanId }
@@ -987,14 +1056,7 @@ final class CongressTradeStore: ObservableObject {
                 return cached
             }
         }
-        if let memoryTrade = feed?.items.first(where: { $0.id == cleanId }) {
-            return memoryTrade
-        }
-        do {
-            return try await api.trade(id: cleanId)
-        } catch {
-            return nil
-        }
+        return feed?.items.first(where: { $0.id == cleanId })
     }
 
     private static func syncFilterKey(
