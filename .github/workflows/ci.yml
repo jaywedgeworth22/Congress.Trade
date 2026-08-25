@@ -327,7 +327,11 @@ jobs:
           bash -n scripts/ios-fleet/test-scheduled-ship-gate.sh
           bash -n scripts/ios-ship-testflight.sh
           bash -n scripts/ios-ci-xctest.sh
+          bash -n scripts/ios-fleet/publish-ios-versions.sh
           node --check scripts/ios-fleet/asc-api.mjs
+
+      - name: Fleet version publish guard
+        run: node --test scripts/ios-fleet/publish-ios-versions.test.mjs
 
       - name: Build-number + ship-gate tests
         run: bash scripts/ios-fleet/test-ship-seq.sh
