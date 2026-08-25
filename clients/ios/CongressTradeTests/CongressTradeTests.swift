@@ -735,6 +735,91 @@ final class CongressTradeTests: XCTestCase {
     }
 
     @MainActor
+    func testTrendsTransient502IsRetriedThenSucceeds() async throws {
+        var summaryAttempts = 0
+        var recordedDelays: [Double] = []
+        MockURLProtocol.handler = { request in
+            if request.url?.path.contains("/api/analytics/summary") == true {
+                summaryAttempts += 1
+                if summaryAttempts == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 502,
+                        httpVersion: nil,
+                        headerFields: [:]
+                    )!
+                    return (response, Data("{\"error\":\"Request failed\"}".utf8))
+                }
+                return Self.response(for: request, json: #"{"totalTrades":4}"#)
+            }
+            return Self.trendsEndpointResponse(for: request)
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { seconds in recordedDelays.append(seconds) }
+        )
+        await store.refreshTrends()
+
+        XCTAssertEqual(summaryAttempts, 2, "A transient Trends 502 should be retried once before succeeding")
+        XCTAssertEqual(recordedDelays.count, 1)
+        XCTAssertNil(store.trendsNotice)
+        XCTAssertEqual(store.analyticsSummary?.totalTrades, 4)
+    }
+
+    @MainActor
+    func testTrendsExhausted502UsesHumanCopyNotRequestFailed() async throws {
+        var summaryAttempts = 0
+        MockURLProtocol.handler = { request in
+            if request.url?.path.contains("/api/analytics/summary") == true {
+                summaryAttempts += 1
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 502,
+                    httpVersion: nil,
+                    headerFields: [:]
+                )!
+                return (response, Data("{\"error\":\"Request failed\"}".utf8))
+            }
+            return Self.trendsEndpointResponse(for: request)
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.refreshTrends()
+
+        XCTAssertEqual(summaryAttempts, 3)
+        XCTAssertEqual(store.trendsNotice, "The site is updating.  Pull to refresh.")
+        XCTAssertFalse((store.trendsNotice ?? "").contains("Request failed"))
+    }
+
+    @MainActor
+    func testInboundTrade404UsesHonestNotFoundCopy() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertTrue(request.url?.path.hasSuffix("/trade/missing") == true)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: [:])!
+            return (response, Data("{\"error\":\"trade not found\"}".utf8))
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        let trade = await store.fetchInboundTrade(id: "missing")
+
+        XCTAssertNil(trade)
+        XCTAssertEqual(
+            store.feedNotice,
+            "That trade was not found.  It may have been retracted or the share link is outdated."
+        )
+    }
+
+    @MainActor
     func testMemberRequestPutsSortOnTheQueryNotThePath() async throws {
         // Regression: get("member/id?sort=tx_date") encoded `?` into the path
         // and the server 404'd "member not found" on the first politician tap.
@@ -1260,6 +1345,89 @@ final class CongressTradeTests: XCTestCase {
         let offline = APIError.transport(URLError(.notConnectedToInternet))
         XCTAssertFalse(offline.isCancellation)
         XCTAssertTrue(offline.isOffline)
+    }
+
+    func testAPIErrorUserFacingMessageHidesRawTransportPhrase() {
+        let updating = APIError.server(status: 502, message: "Request failed", retryAfterSeconds: nil)
+        XCTAssertEqual(updating.userFacingMessage, "The site is updating.  Pull to refresh.")
+        XCTAssertEqual(
+            APIError.server(status: 503, message: "try again", retryAfterSeconds: nil).userFacingMessage,
+            "The site is updating.  Pull to refresh."
+        )
+        XCTAssertEqual(
+            APIError.server(status: 429, message: "Request failed", retryAfterSeconds: 2).userFacingMessage,
+            "Too many requests.  Pull to refresh."
+        )
+        XCTAssertEqual(
+            APIError.server(status: 400, message: "bad request", retryAfterSeconds: nil).userFacingMessage,
+            "bad request"
+        )
+        XCTAssertEqual(
+            APIError.server(status: 400, message: "Request failed", retryAfterSeconds: nil).userFacingMessage,
+            "Could not load this page.  Pull to refresh."
+        )
+        XCTAssertEqual(
+            APIError.transport(URLError(.notConnectedToInternet)).userFacingMessage,
+            "You are offline."
+        )
+        XCTAssertEqual(
+            APIError.transport(URLError(.timedOut)).userFacingMessage,
+            "Could not reach the server.  Pull to refresh."
+        )
+        XCTAssertNotEqual(
+            APIError.transport(URLError(.timedOut)).userFacingMessage,
+            URLError(.timedOut).localizedDescription
+        )
+    }
+
+    func testAppDeepLinkParsesWebsiteQueryAndCustomSchemeEquivalents() {
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "https://congress.trade/?trade=tx_1")!),
+            .trade(id: "tx_1")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "https://congress.trade/?member=P000197")!),
+            .member(id: "P000197")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "https://www.congress.trade/?ticker=nvda")!),
+            .ticker(symbol: "NVDA")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "congresstrade://?trade=tx_1")!),
+            .trade(id: "tx_1")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "congresstrade://member/P000197")!),
+            .member(id: "P000197")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "congresstrade://ticker/msft")!),
+            .ticker(symbol: "MSFT")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "congresstrade://auth?token=abc")!),
+            .auth(token: "abc")
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "https://congress.trade/?view=directory")!),
+            .tab(.people)
+        )
+        XCTAssertEqual(
+            AppDeepLink.parse(URL(string: "https://congress.trade/?ticker=NVDA&trade=tx_1")!),
+            .ticker(symbol: "NVDA")
+        )
+    }
+
+    func testAppDeepLinkStaysHonestOnMissingOrUnknownQueries() {
+        XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/?trade=")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/?member=%20")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/?foo=bar")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "https://congress.trade/?view=review")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "congresstrade://auth")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "congresstrade://unknown/xyz")!))
+        XCTAssertNil(AppDeepLink.parse(URL(string: "mailto:support@congress.trade")!))
     }
 
     func testTradePerformanceResponseDecodesAvailableAndEmpty() throws {
@@ -2550,6 +2718,33 @@ final class CongressTradeTests: XCTestCase {
 
     private static func feedJSON(items: [String], cursor: Int, count: Int, total: Int, limit: Int) -> String {
         "{\"items\":[\(items.joined(separator: ","))],\"cursor\":\(cursor),\"count\":\(count),\"total\":\(total),\"limit\":\(limit),\"nextPollAfterSec\":30}"
+    }
+
+    /// Enough empty analytics envelopes for the Trends fan-out `try await`s.
+    private static func trendsEndpointResponse(for request: URLRequest) -> (HTTPURLResponse, Data) {
+        let path = request.url?.path ?? ""
+        if path.hasSuffix("/bootstrap") {
+            return response(for: request, json: bootstrapJSON)
+        }
+        if path.contains("/feed") {
+            return response(for: request, json: feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
+        }
+        if path.contains("/api/analytics/ticker-leaderboard") {
+            return response(for: request, json: #"{"tickers":[]}"#)
+        }
+        if path.contains("/api/analytics/volume-over-time") {
+            return response(for: request, json: #"{"series":[]}"#)
+        }
+        if path.contains("/api/analytics/sector-flow") {
+            return response(for: request, json: #"{"sectors":[]}"#)
+        }
+        if path.contains("/api/analytics/member-leaderboard") {
+            return response(for: request, json: #"{"members":[]}"#)
+        }
+        if path.contains("/api/analytics/cluster-buys") {
+            return response(for: request, json: #"{"clusters":[]}"#)
+        }
+        return response(for: request, json: "{}")
     }
 
     private static func tradeJSON(id: String, cursor: Int) -> String {
