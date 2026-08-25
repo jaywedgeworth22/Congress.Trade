@@ -43,6 +43,11 @@ on:
       - 'clients/ios/**'
       - '.github/workflows/ios-ship.yml'
   workflow_dispatch:
+    inputs:
+      copy_st_signing:
+        description: Copy existing ASC/P12 secrets to Socratic.Trade (no TestFlight)
+        type: boolean
+        default: false
   schedule:
     # Twice an hour, offset from Socratic.Trade's '*/30' so the shared Mac
     # runner is not asked to start three fleet ships on the same minute.
@@ -56,9 +61,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  copy-st-signing:
+    name: Copy signing secrets to Socratic.Trade
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.copy_st_signing == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Copy signing secrets (values never printed)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: |
+          set +x
+          set -eu
+          dest=jaywedgeworth22/Socratic.Trade
+          missing=0
+          for k in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD; do
+            eval "v=\${$k-}"
+            if [ -z "$v" ]; then
+              echo "missing $k on this repo"
+              missing=1
+            else
+              echo "present $k len=${#v}"
+            fi
+          done
+          test "$missing" -eq 0
+          printf '%s' "$ASC_KEY_ID" | gh secret set ASC_KEY_ID --repo "$dest"
+          printf '%s' "$ASC_ISSUER_ID" | gh secret set ASC_ISSUER_ID --repo "$dest"
+          printf '%s' "$ASC_KEY_P8" | gh secret set ASC_KEY_P8 --repo "$dest"
+          printf '%s' "$IOS_DIST_P12_BASE64" | gh secret set IOS_DIST_P12_BASE64 --repo "$dest"
+          printf '%s' "$IOS_DIST_P12_PASSWORD" | gh secret set IOS_DIST_P12_PASSWORD --repo "$dest"
+          echo "copied five signing secret names to $dest"
+
   ship:
     name: TestFlight archive + upload
-    if: github.event.repository.fork == false
+    if: github.event.repository.fork == false && github.event.inputs.copy_st_signing != 'true' 
     runs-on: macos-latest
     timeout-minutes: 90
     env:
