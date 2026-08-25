@@ -1,5 +1,12 @@
 # Current Handoff
 
+## 2026-08-25 CURSOR — Mirror 2026-08-23 full-stack review onto git effort log
+
+Live review already filed on THE BOARD + GH #2180–#2187.  This lane only
+mirrors the Planned children row into `docs/EFFORT-LOG.md` so cloud seats
+see it.  No product code.  Receipt:
+`docs/rollouts/2026-08-25-review-effort-log-mirror.md`.
+
 ## 2026-08-22 GROK — Disclaimer under title, cold-start 3s
 
 ⓘ always lived in the nav bar but the banner was the first ScrollView
