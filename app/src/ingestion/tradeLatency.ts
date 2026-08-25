@@ -32,6 +32,7 @@ import {
 import { logProbeCadence } from './probeCadenceLog.ts';
 import { ALL_CHAMBERS, previousSuccessfulProbeAt, recordProbeRun } from './probeRunLog.ts';
 import { scheduleCtPublishSnapshot } from './latencyPriceSnapshots.ts';
+import { closeProviderMissingStubIfOfficialPersisted, findOfficialCounterpartDocIdForObservation } from './providerMissingStubClose.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -2184,13 +2185,13 @@ async function routeProviderOnlyObservationsToReview(
   for (const row of rows) {
     if (row.chamber !== 'house' && row.chamber !== 'senate') continue;
     const docId = providerOnlyDocId(row);
+    const closeResult = await closeProviderMissingStubIfOfficialPersisted(env, row, docId, nowIso);
+    if (closeResult.officialDocId) continue;
+
+    if (await findOfficialCounterpartDocIdForObservation(env.DB, row)) continue;
+
     const exists1 = await get<{ doc_id: string }>(env.DB, `SELECT doc_id FROM filings WHERE doc_id = ? LIMIT 1`, [docId]);
     if (exists1) continue;
-
-    if (row.sourceUrl) {
-      const exists2 = await get<{ doc_id: string }>(env.DB, `SELECT doc_id FROM filings WHERE source_url = ? LIMIT 1`, [row.sourceUrl]);
-      if (exists2) continue;
-    }
 
     const exists3 = await get<{ doc_id: string }>(
       env.DB,
