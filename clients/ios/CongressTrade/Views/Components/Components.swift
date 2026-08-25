@@ -1340,7 +1340,6 @@ struct SignInPanel: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLiveRegion(.polite)
             }
 
             if let notice = store.watchlistNotice, !notice.isEmpty {
@@ -1349,7 +1348,6 @@ struct SignInPanel: View {
                     .foregroundStyle(notice == "Signed in." ? .secondary : .red)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLiveRegion(.polite)
             }
         }
     }
