@@ -912,6 +912,10 @@ export interface Env {
   ADMIN_TOKEN?: string;
   /** Admin email allowlist for site-session admin access and Cloudflare Access. */
   ADMIN_EMAILS?: string;
+  /** HTTPS webhook that wakes Grok Bot Publisher on review_queue entry. */
+  REVIEW_QUEUE_PUBLISHER_WEBHOOK_URL?: string;
+  /** HMAC secret for REVIEW_QUEUE_PUBLISHER_WEBHOOK_URL payloads. */
+  REVIEW_QUEUE_PUBLISHER_WEBHOOK_SECRET?: string;
   /** Cloudflare Access team name/hostname for admin API JWT verification. */
   ACCESS_TEAM_DOMAIN?: string;
   /** Cloudflare Access application AUD tag for admin API JWT verification. */

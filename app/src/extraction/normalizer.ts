@@ -26,6 +26,7 @@ import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES 
 import { prepareExtractedTx } from './prepareTx.ts';
 import { uuid } from '../shared/ids.ts';
 import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
+import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { computeDisclosureLagDays, computeStockActStatus } from '../shared/stockAct.ts';
 import {
@@ -1537,7 +1538,16 @@ async function routeToReview(
       ],
     ],
   ]);
-  return (results[0]?.meta?.changes ?? 0) > 0;
+  const entered = (results[0]?.meta?.changes ?? 0) > 0;
+  if (entered && !review) {
+    void notifyReviewQueuePublisher(env, {
+      docId: filing.docId,
+      reason,
+      kind: 'insert',
+      at: nowIso,
+    });
+  }
+  return entered;
 }
 
 function reviewReason(

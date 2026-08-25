@@ -253,6 +253,7 @@ import {
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
 import { runFilingsHygiene } from '../ingestion/reviewStatusReconcile.ts';
+import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
 import {
   grantAdmin,
   revokeAdmin,
@@ -2129,20 +2130,20 @@ async function fillBenchmarkProviderFailure(
  * Unresolved stamp — does not fake-resolve the review row.
  */
 async function stampLocalVisionSubmitted(
-  db: Env['DB'],
+  env: Env,
   docId: string,
   extraTag?: string,
 ): Promise<void> {
   const tag = extraTag ? `local_vision_submitted,${extraTag}` : 'local_vision_submitted';
   const nowIso = new Date().toISOString();
   const open = await get<{ reason: string | null }>(
-    db,
+    env.DB,
     `SELECT reason FROM review_queue WHERE doc_id = ? AND resolved = 0 LIMIT 1`,
     [docId],
   );
   if (open) {
     await run(
-      db,
+      env.DB,
       `UPDATE review_queue
           SET reason = CASE
             WHEN reason LIKE '%local_vision_submitted%' THEN reason
@@ -2153,15 +2154,23 @@ async function stampLocalVisionSubmitted(
       [tag, tag, docId],
     );
   } else {
-    await run(
-      db,
+    const insertResult = await run(
+      env.DB,
       `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
        VALUES (?, ?, ?, ?, 0)`,
       [docId, tag, JSON.stringify({ kind: 'local_vision_submitted', extraTag: extraTag ?? null, at: nowIso }), nowIso],
     );
+    if ((insertResult.meta?.changes ?? 0) > 0) {
+      void notifyReviewQueuePublisher(env, {
+        docId,
+        reason: tag,
+        kind: 'insert',
+        at: nowIso,
+      });
+    }
   }
   await run(
-    db,
+    env.DB,
     `UPDATE filings
         SET ingest_status = 'needs_review'
       WHERE doc_id = ?
@@ -3127,6 +3136,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'review item changed before it could be unpublished' }, 409);
     }
     const deprecated = results[0]?.meta?.changes ?? 0;
+    void notifyReviewQueuePublisher(c.env, {
+      docId,
+      reason: holdReason,
+      kind: 'reopen',
+      at: nowIso,
+    });
 
     try {
       await recordIngestionDecision(c.env.DB, {
@@ -3692,6 +3707,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ],
       'auth-billing': [
         'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_MAINTENANCE_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
+        'REVIEW_QUEUE_PUBLISHER_WEBHOOK_URL', 'REVIEW_QUEUE_PUBLISHER_WEBHOOK_SECRET',
         'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'WEBHOOK_SIGNING_KEY',
         'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL',
         'STRIPE_TRIAL_DAYS', 'STRIPE_MANAGED_PAYMENTS', 'RESEND_API_KEY', 'EMAIL_FROM', 'ALERT_EMAIL',
@@ -5897,12 +5913,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           [reason, payload, docId],
         );
       } else {
-        await run(
+        const insertResult = await run(
           c.env.DB,
           `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
            VALUES (?, ?, ?, ?, 0)`,
           [docId, reason, payload, nowIso],
         );
+        if ((insertResult.meta?.changes ?? 0) > 0) {
+          void notifyReviewQueuePublisher(c.env, {
+            docId,
+            reason,
+            kind: 'insert',
+            at: nowIso,
+          });
+        }
         // If a resolved row already owns the PK, leave it alone (do not reopen).
         // Integrity prefers not resurrecting closed reviews.
       }
@@ -5993,7 +6017,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         )
       ) {
         if (txSource === 'local_mac') {
-          await stampLocalVisionSubmitted(c.env.DB, docId);
+          await stampLocalVisionSubmitted(c.env, docId);
         }
         return c.json({
           ok: true,
@@ -6007,7 +6031,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
       const noRows = body.noRows === true;
       if (noRows && parsedTx.length === 0 && txSource === 'local_mac') {
-        await stampLocalVisionSubmitted(c.env.DB, docId, 'nothing_to_report');
+        await stampLocalVisionSubmitted(c.env, docId, 'nothing_to_report');
         return c.json({
           ok: true,
           docId,
@@ -6047,7 +6071,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
 
       if (txSource === 'local_mac' && result.needsReview) {
-        await stampLocalVisionSubmitted(c.env.DB, docId);
+        await stampLocalVisionSubmitted(c.env, docId);
       }
 
       return c.json({

@@ -3464,13 +3464,7 @@ ${speedProofSectionHtml(false)}
 ${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
-      <p class="sub">Admin tools (poll cadence, review queue, backfill) require admin access.&nbsp; Paste your admin access token once — it stays in this browser and is sent with admin requests.&nbsp; <strong>Save Token</strong> checks the value against the server and reports accepted vs rejected.&nbsp; Leave blank if no token is required.&nbsp; If you already signed in with an account that has admin access, you do not need a token here.</p>
-      <div class="row-flex">
-        <input id="adminToken" type="password" autocomplete="off" placeholder="Admin access token" style="flex:1;min-width:240px" />
-        <button class="btn" onclick="saveAdminToken()">Save Token</button>
-        <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
-        <span id="adminTokenMsg" class="note" role="status" aria-live="polite"></span>
-      </div>
+      <p class="sub">Admin tools (poll cadence, review queue, backfill) are available when you are signed in with an email that has admin access.&nbsp; Premium does not grant admin access.</p>
     </div>
     <div class="section">
       <h3>Admin Access Control</h3>
@@ -4883,7 +4877,7 @@ var TRADES_COLS = [
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
 var COL_ORDER_KEY = 'feed-cols-order-v3';
 function isAdminView() {
-  return typeof ME !== 'undefined' && !!((ME.admin && ME.admin.allowed) || hasAdminToken());
+  return typeof ME !== 'undefined' && !!(ME.admin && ME.admin.allowed);
 }
 function canUseColumn(c) {
   if (c.tier === 'admin') return isAdminView();
@@ -6345,12 +6339,11 @@ function openStoredFiling(docId) {
   var id = String(docId || '').trim();
   if (!id) return;
   var url = storedFilingHref(id);
-  // credentials:include so Google session cookies reach admin auth when the
-  // operator is on ADMIN_EMAILS without a pasted bearer token.
+  // credentials:include so Google session cookies reach admin auth for allowlisted emails.
   fetch(url, { headers: adminHeaders(), credentials: 'include' })
     .then(function (r) {
       if (r.status === 401 || r.status === 403) {
-        throw new Error('Admin access required — save a valid admin access token (or sign in with an account that has admin access).');
+        throw new Error('Admin access required — sign in with an account that has admin access.');
       }
       if (r.status === 404) {
         throw new Error('Stored copy not available for ' + id + ' (not fetched into R2 yet).');
@@ -7519,131 +7512,19 @@ function createSubscription() {
     });
 }
 
-/* ============================ ADMIN AUTH ============================ */
-var ADMIN_TOKEN_KEY = 'congresstrade.adminToken';
-function getAdminToken() {
-  try { return localStorage.getItem(ADMIN_TOKEN_KEY) || ''; } catch (e) { return ''; }
-}
-// Build request headers for /api/admin/* calls, attaching the bearer token if set.
+/* ============================ ADMIN REQUESTS ============================ */
+// Session cookies carry admin identity for allowlisted emails.
 function adminHeaders(extra) {
-  var h = extra || {};
-  var t = getAdminToken();
-  if (t) h['Authorization'] = 'Bearer ' + t;
-  return h;
+  return extra || {};
 }
-// Turn a 401 into an actionable message instead of a bare "HTTP 401".
 function adminOk(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin access token in the Admin Access box.');
+  if (r.status === 401) throw new Error('Admin access required — sign in with an account that has admin access.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r;
 }
-// Like adminOk but only intercepts 401 — lets the caller parse a JSON {error} body for other statuses.
 function admin401(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin access token in the Admin Access box.');
+  if (r.status === 401) throw new Error('Admin access required — sign in with an account that has admin access.');
   return r;
-}
-function setAdminTokenMsg(text, kind) {
-  var msg = el('adminTokenMsg');
-  if (!msg) return;
-  msg.textContent = text || '';
-  // kind: 'ok' | 'err' | '' (neutral)
-  msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
-}
-/* Shared core: persist the token (or clear it) and refresh every UI surface
-   that depends on admin visibility.  Used by BOTH the Admin tab's own box
-   and the standalone Admin Sign-In dialog (openAdminTokenDialog) below —
-   the dialog is how a signed-in, non-admin user reaches token bootstrap
-   WITHOUT the Admin tab ever becoming visible first (see adminMenuHtml). */
-function persistAdminToken(raw) {
-  var v = (raw || '').trim();
-  try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
-  applyAdminVisibility();
-  renderAccount();
-  renderTradesHeader(); renderColChooser(); renderTrades();
-  return v;
-}
-/* Probe a cheap admin GET so a wrong/missing value is reported right where
-   it was pasted, instead of only failing later on a random panel. onMsg
-   is either setAdminTokenMsg or setAdminTokenDialogMsg; onAccepted is an
-   optional extra callback (the dialog uses it to auto-close). */
-function verifyAdminToken(v, onMsg, onAccepted) {
-  if (!v) {
-    onMsg('Cleared — no admin token stored in this browser.', '');
-    setTimeout(function () { onMsg('', ''); }, 3500);
-    return;
-  }
-  onMsg('Checking token…', '');
-  // API HOOK: GET /api/admin/poll-config — lightweight auth probe (same gate as other admin reads).
-  fetch('/api/admin/poll-config', { headers: adminHeaders() })
-    .then(function (r) {
-      if (r.status === 401 || r.status === 403) {
-        onMsg('Token rejected — wrong value, expired, or this server has no matching admin access token or granted email.', 'err');
-        return null;
-      }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      onMsg('Token accepted — saved in this browser.', 'ok');
-      setTimeout(function () { onMsg('', ''); }, 4000);
-      if (typeof onAccepted === 'function') onAccepted();
-      loadReview();
-      loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
-      loadLogoSetting();
-      loadAdminList();
-      return r;
-    })
-    .catch(function (e) {
-      onMsg('Could not verify token: ' + (e && e.message ? e.message : 'network error'), 'err');
-    });
-}
-function saveAdminToken() {
-  var v = persistAdminToken(el('adminToken') ? el('adminToken').value : '');
-  verifyAdminToken(v, setAdminTokenMsg);
-}
-function clearAdminToken() {
-  persistAdminToken('');
-  if (el('adminToken')) el('adminToken').value = '';
-  setAdminTokenMsg('Cleared — no admin token stored in this browser.', '');
-  setTimeout(function () { setAdminTokenMsg('', ''); }, 3500);
-}
-// Populate the field from storage when the Admin tab opens.
-function initAdminToken() {
-  var t = getAdminToken();
-  if (t && el('adminToken')) el('adminToken').value = t;
-}
-
-/* ---- Standalone "Admin Sign-In" dialog (token bootstrap) ----
-   Reachable from the account menu for ANY signed-in user (adminMenuHtml),
-   independent of the gated Admin tab — pasting ADMIN_TOKEN here is the only
-   way a legitimate operator can unlock Admin/Review Queue without already
-   being one, now that those tabs no longer show for a non-admin. */
-function openAdminTokenDialog() {
-  var d = el('adminTokenDialog');
-  if (!d) return;
-  var input = el('adminTokenDialogInput');
-  if (input) input.value = getAdminToken();
-  setAdminTokenDialogMsg('', '');
-  if (d.parentElement && d.parentElement !== document.body) document.body.appendChild(d);
-  try { if (d.showModal) d.showModal(); } catch (e) {}
-}
-function setAdminTokenDialogMsg(text, kind) {
-  var msg = el('adminTokenDialogMsg');
-  if (!msg) return;
-  msg.textContent = text || '';
-  msg.style.color = kind === 'ok' ? 'var(--good)' : (kind === 'err' ? 'var(--sell)' : '');
-}
-function saveAdminTokenFromDialog() {
-  var v = persistAdminToken(el('adminTokenDialogInput') ? el('adminTokenDialogInput').value : '');
-  if (el('adminToken')) el('adminToken').value = v; // keep the Admin tab's own box in sync once it's reachable
-  verifyAdminToken(v, setAdminTokenDialogMsg, function () {
-    var d = el('adminTokenDialog');
-    if (d && d.close) setTimeout(function () { d.close(); }, 900);
-  });
-}
-function clearAdminTokenFromDialog() {
-  persistAdminToken('');
-  if (el('adminTokenDialogInput')) el('adminTokenDialogInput').value = '';
-  if (el('adminToken')) el('adminToken').value = '';
-  setAdminTokenDialogMsg('Cleared — no admin token stored in this browser.', '');
-  setTimeout(function () { setAdminTokenDialogMsg('', ''); }, 3500);
 }
 
 /* ============================ ADMIN · ACCESS CONTROL ============================
@@ -12290,8 +12171,7 @@ function portalConfigured() { return !!(ME.billing && ME.billing.portalConfigure
 function hasBillingAccount() {
   return !!(ME.billing && ME.billing.hasCustomer) || !!(ME.entitlement && ME.entitlement.status);
 }
-function hasAdminToken() { return !!getAdminToken(); }
-function canUseAdmin() { return !!((ME.admin && ME.admin.allowed) || hasAdminToken()); }
+function canUseAdmin() { return !!(ME.admin && ME.admin.allowed); }
 function updatePremiumCues() {
   var unlocked = isPremium() || isAdminView();
   document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked || !checkoutConfigured(); });
@@ -12357,22 +12237,11 @@ function acctMobileDisclaimerHtml() {
   return '<div class="footer-disclaimer">' + esc(FOOTER_DISCLAIMER_TEXT) + '</div>';
 }
 function adminMenuHtml(closeCall) {
-  // Premium alone never grants Admin / Review Queue — only a real admin
-  // (ME.admin.allowed, i.e. ADMIN_EMAILS or a granted email) or a valid
-  // stored ADMIN_TOKEN does (canUseAdmin()).
-  if (canUseAdmin()) {
-    return '<div class="menu-section-label">Admin</div>' +
-      '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
-      '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
-  }
-  // Not an admin: never show the Admin / Review Queue entries.  Signed-in
-  // users still get a lightweight bootstrap entry so a legitimate operator
-  // can paste ADMIN_TOKEN — the token box itself lives in a standalone
-  // dialog (openAdminTokenDialog), not inside the gated Admin view, so
-  // pasting a token never requires the Admin tab to be visible first.
-  if (!ME.user) return '';
+  // Premium alone never grants Admin / Review Queue — only a real admin email does.
+  if (!canUseAdmin()) return '';
   return '<div class="menu-section-label">Admin</div>' +
-    '<button type="button" onclick="' + closeCall + 'openAdminTokenDialog()">Admin Sign-In</button>';
+    '<button type="button" onclick="' + closeCall + 'showView(\\'admin\\')">Admin</button>' +
+    '<button type="button" onclick="' + closeCall + 'showView(\\'review\\')">Review Queue</button>';
 }
 function canManageSubscription() {
   return !!(ME.user && (hasBillingAccount() || isPremium() || (ME.entitlement && ME.entitlement.source)));
@@ -12927,7 +12796,7 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
       loadSubs();
       renderSpeedProof();
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (b.dataset.view === 'admin') { loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   };
 });
 
@@ -13673,7 +13542,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }
@@ -13683,7 +13552,7 @@ handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
 loadTrades().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
 // /api/admin/poll-config 401s for every anonymous visitor (console noise —
 // issue #1457). It now only loads from inside loadMe().then() above, gated
-// on canUseAdmin() (session admin OR a saved bearer token) — never fired
+// on canUseAdmin() (session admin email allowlist) — never fired
 // unconditionally at boot.
 
 /* Global interactive chart tooltip */
@@ -13728,16 +13597,6 @@ document.addEventListener('mouseover', function(e) {
   <label class="lbl" for="qTo">To</label>
   <input id="qTo" type="date" aria-label="Trade date to" />
   <button class="btn sm" type="button" onclick="exportCsv()">Download CSV</button>
-</dialog>
-<dialog class="search-panel" id="adminTokenDialog" onclick="if(event.target === this) this.close()">
-  <div class="panel-head"><span class="panel-title">Admin Sign-In</span><button class="panel-close" onclick="el('adminTokenDialog').close()" aria-label="Close">×</button></div>
-  <p class="note" style="margin:0 0 10px">Paste your admin access token to unlock Admin and Review Queue in this browser.&nbsp; Premium does not grant admin access — only a token, or an email an admin has granted, does.</p>
-  <input id="adminTokenDialogInput" type="password" autocomplete="off" placeholder="Admin access token" style="width:100%" />
-  <div class="row-flex" style="margin-top:10px">
-    <button class="btn" type="button" onclick="saveAdminTokenFromDialog()">Save Token</button>
-    <button class="btn ghost sm" type="button" onclick="clearAdminTokenFromDialog()">Clear</button>
-    <span id="adminTokenDialogMsg" class="note" role="status" aria-live="polite"></span>
-  </div>
 </dialog>
 </body>
 </html>`;

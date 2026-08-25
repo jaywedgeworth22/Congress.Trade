@@ -115,6 +115,9 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
           if (/SELECT payload, review_revision FROM review_queue/i.test(sql)) {
             return { payload: null, review_revision: review.revision } as T;
           }
+          if (/SELECT review_revision, resolved FROM review_queue/i.test(sql)) {
+            return { review_revision: review.revision, resolved: review.resolved } as T;
+          }
           if (/SELECT review_revision FROM review_queue/i.test(sql)) {
             return { review_revision: review.revision } as T;
           }
