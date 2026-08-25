@@ -101,15 +101,25 @@ jobs:
               ;;
           esac
 
+      # Do not use `secrets.*` in `if:` -- GitHub's dispatch parser rejects
+      # that named-value (HTTP 422: Unrecognized named-value: 'secrets') and
+      # the whole workflow dies at 0s with 0 jobs.  Same class as DealDex #175
+      # and Usage-Monitor #1343. Check ASC_KEY_ID from step env after mapping.
       - name: Import signing + ASC key
-        if: steps.gate.outputs.should_ship == '1' && secrets.ASC_KEY_ID != ''
+        if: steps.gate.outputs.should_ship == '1'
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
           IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
-        run: bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
+        run: |
+          # Empty env means the secret is unset. Do not mint a new key.
+          if [ -z "${ASC_KEY_ID}" ]; then
+            echo "::error::ASC_KEY_ID repo secret is empty. Map the existing team secrets (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD). Do not mint a new key."
+            exit 1
+          fi
+          bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
 
       - name: Report runtime ios-fleet drift (advisory)
         if: steps.gate.outputs.should_ship == '1' && hashFiles('/Users/jay/apps/ios-fleet/ship-testflight.sh') != ''

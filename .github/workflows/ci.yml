@@ -333,6 +333,9 @@ jobs:
       - name: Fleet version publish guard
         run: node --test scripts/ios-fleet/publish-ios-versions.test.mjs
 
+      - name: ios-ship workflow contract
+        run: node --test scripts/ios-ship-workflow.test.mjs
+
       - name: Build-number + ship-gate tests
         run: bash scripts/ios-fleet/test-ship-seq.sh
 
