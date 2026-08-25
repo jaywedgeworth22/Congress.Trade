@@ -35,6 +35,7 @@ clients/ios/
 ├── CongressTrade.xcodeproj/            # do not hand-edit
 ├── CongressTrade/
 │   ├── App.swift                       # App entry
+│   ├── AppUpdatePrompt.swift           # Copied pin from scripts/ios-fleet/
 │   ├── AppDelegate.swift               # APNs / launch
 │   ├── APIClient.swift                 # /api/client/v1 HTTP
 │   ├── Models.swift                    # Decodable types (fail-soft optionals)

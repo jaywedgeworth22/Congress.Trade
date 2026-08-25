@@ -6,7 +6,8 @@ This directory is the **source of truth** for the fleet-wide TestFlight ship scr
 
 - `ship-testflight.sh` — archive + export + upload a single app to TestFlight without the Xcode UI.
 - `ship-all.sh` — ship all three fleet apps sequentially.
-- `apps.json` — per-app registry (bundle id, scheme, project paths, team id).
+- `apps.json` — per-app registry (bundle id, scheme, project paths, team id).  Live DealDex is `net.dealdex` / appleId `6802474288`.
+- `AppUpdatePrompt.swift` — pinned first-launch update prompt.  Copy into each iOS target.  Apple IDs stay in `apps.json` / `versions.json`, not in this file.
 - `asc-api.mjs` — minimal App Store Connect API client (ES256 JWT, no dependencies).  Used by `ship-testflight.sh` for export-compliance (`ensure-tf-ready`) and for build-number verification (`latest-build-seq`).
 - `appstore-connect.env.example` — template for `~/.secrets/appstore-connect.env`; variable **names** only, no values.
 - `ExportOptions-appstore.plist` — export options for `destination=upload`.
@@ -25,6 +26,7 @@ install -m 0644 scripts/ios-fleet/asc-api.mjs /Users/jay/apps/ios-fleet/asc-api.
 install -m 0644 scripts/ios-fleet/appstore-connect.env.example /Users/jay/apps/ios-fleet/appstore-connect.env.example
 install -m 0644 scripts/ios-fleet/ExportOptions-appstore.plist /Users/jay/apps/ios-fleet/ExportOptions-appstore.plist
 install -m 0644 scripts/ios-fleet/ExportOptions-export-ipa.plist /Users/jay/apps/ios-fleet/ExportOptions-export-ipa.plist
+install -m 0644 scripts/ios-fleet/AppUpdatePrompt.swift /Users/jay/apps/ios-fleet/AppUpdatePrompt.swift
 ```
 
 Edit the runtime copy only through this repo: change the file here, land the PR, then re-run the `install` commands above to sync `/Users/jay/apps/ios-fleet/`.
@@ -101,8 +103,15 @@ It exits 0 with a warning (not a failure) when `/Users/jay/apps/ios-fleet/` does
 ## In-app update prompt
 
 Every fleet iOS app copies `AppUpdatePrompt.swift` from this directory (canonical
-runtime: `/Users/jay/apps/ios-fleet/AppUpdatePrompt.swift`) and calls
-`.appUpdatePrompt()` on the root view.  TestFlight versions are published to
+runtime: `/Users/jay/apps/ios-fleet/AppUpdatePrompt.swift`) into the app target
+as a real Swift file and calls `.appUpdatePrompt()` on the root view.  Do not
+inline the type in `App.swift`.  Do not make a Swift package.  Congress.Trade
+keeps its copy at `clients/ios/CongressTrade/AppUpdatePrompt.swift`.
+
+Numeric Apple IDs live in `apps.json` and
 https://raw.githubusercontent.com/jaywedgeworth22/ios-app-versions/main/versions.json
-by `publish-ios-versions.sh` after a successful ship.
+— not in the Swift pin.  Live DealDex is `net.dealdex` (appleId 6802474288).
+`online.dealdex` is a stale leftover, not live.  Do not upload `me.grok.dealdex`.
+TestFlight versions are published to that manifest by `publish-ios-versions.sh`
+after a successful ship.
 
