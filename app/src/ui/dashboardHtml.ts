@@ -3464,9 +3464,9 @@ ${speedProofSectionHtml(false)}
 ${speedProofSectionHtml(true)}
     <div class="section">
       <h3>Admin Access</h3>
-      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token.&nbsp; Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests.&nbsp; <strong>Save Token</strong> checks the value against the server and reports accepted vs rejected.&nbsp; Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
+      <p class="sub">Admin tools (poll cadence, review queue, backfill) require admin access.&nbsp; Paste your admin access token once — it stays in this browser and is sent with admin requests.&nbsp; <strong>Save Token</strong> checks the value against the server and reports accepted vs rejected.&nbsp; Leave blank if no token is required.&nbsp; If you already signed in with an account that has admin access, you do not need a token here.</p>
       <div class="row-flex">
-        <input id="adminToken" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="flex:1;min-width:240px" />
+        <input id="adminToken" type="password" autocomplete="off" placeholder="Admin access token" style="flex:1;min-width:240px" />
         <button class="btn" onclick="saveAdminToken()">Save Token</button>
         <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
         <span id="adminTokenMsg" class="note" role="status" aria-live="polite"></span>
@@ -6350,7 +6350,7 @@ function openStoredFiling(docId) {
   fetch(url, { headers: adminHeaders(), credentials: 'include' })
     .then(function (r) {
       if (r.status === 401 || r.status === 403) {
-        throw new Error('Admin auth required — save a valid ADMIN_TOKEN (or sign in with an allowlisted account).');
+        throw new Error('Admin access required — save a valid admin access token (or sign in with an account that has admin access).');
       }
       if (r.status === 404) {
         throw new Error('Stored copy not available for ' + id + ' (not fetched into R2 yet).');
@@ -7533,13 +7533,13 @@ function adminHeaders(extra) {
 }
 // Turn a 401 into an actionable message instead of a bare "HTTP 401".
 function adminOk(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin tab access box.');
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin access token in the Admin Access box.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r;
 }
 // Like adminOk but only intercepts 401 — lets the caller parse a JSON {error} body for other statuses.
 function admin401(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin tab access box.');
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin access token in the Admin Access box.');
   return r;
 }
 function setAdminTokenMsg(text, kind) {
@@ -7577,7 +7577,7 @@ function verifyAdminToken(v, onMsg, onAccepted) {
   fetch('/api/admin/poll-config', { headers: adminHeaders() })
     .then(function (r) {
       if (r.status === 401 || r.status === 403) {
-        onMsg('Token rejected — wrong value, expired, or server has no matching ADMIN_TOKEN / Access allowlist.', 'err');
+        onMsg('Token rejected — wrong value, expired, or this server has no matching admin access token or granted email.', 'err');
         return null;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -13731,8 +13731,8 @@ document.addEventListener('mouseover', function(e) {
 </dialog>
 <dialog class="search-panel" id="adminTokenDialog" onclick="if(event.target === this) this.close()">
   <div class="panel-head"><span class="panel-title">Admin Sign-In</span><button class="panel-close" onclick="el('adminTokenDialog').close()" aria-label="Close">×</button></div>
-  <p class="note" style="margin:0 0 10px">Paste your <code>ADMIN_TOKEN</code> to unlock Admin + Review Queue in this browser.&nbsp; Premium does not grant admin access — only a token, or an email an admin has granted, does.</p>
-  <input id="adminTokenDialogInput" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="width:100%" />
+  <p class="note" style="margin:0 0 10px">Paste your admin access token to unlock Admin and Review Queue in this browser.&nbsp; Premium does not grant admin access — only a token, or an email an admin has granted, does.</p>
+  <input id="adminTokenDialogInput" type="password" autocomplete="off" placeholder="Admin access token" style="width:100%" />
   <div class="row-flex" style="margin-top:10px">
     <button class="btn" type="button" onclick="saveAdminTokenFromDialog()">Save Token</button>
     <button class="btn ghost sm" type="button" onclick="clearAdminTokenFromDialog()">Clear</button>

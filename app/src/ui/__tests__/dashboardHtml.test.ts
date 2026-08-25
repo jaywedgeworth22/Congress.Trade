@@ -5087,7 +5087,7 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('id="adminTokenMsg"');
     expect(DASHBOARD_HTML).toContain('role="status"');
     // Still uses the actionable 401 copy on other admin probes.
-    expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin token in the Admin tab access box.");
+    expect(DASHBOARD_HTML).toContain("Unauthorized — paste your admin access token in the Admin Access box.");
   });
 
   it('exposes a standalone Admin Sign-In dialog so token bootstrap never requires the gated Admin tab', () => {
@@ -5098,6 +5098,22 @@ describe('owner feedback 2026-08-10: spelled-out buys/sells + Trends card layout
     expect(DASHBOARD_HTML).toContain('id="adminTokenDialogInput"');
     expect(DASHBOARD_HTML).toContain('id="adminTokenDialogMsg"');
     expect(DASHBOARD_HTML).toContain('openAdminTokenDialog()">Admin Sign-In');
+  });
+
+  it('uses ordinary language for public Admin Sign-In and Admin Access copy', () => {
+    expect(DASHBOARD_HTML).toContain('placeholder="Admin access token"');
+    expect(DASHBOARD_HTML).toContain('Paste your admin access token once');
+    expect(DASHBOARD_HTML).toContain('Paste your admin access token to unlock Admin and Review Queue');
+    expect(DASHBOARD_HTML).toContain('Admin access required — save a valid admin access token');
+    expect(DASHBOARD_HTML).toContain('no matching admin access token or granted email');
+    expect(DASHBOARD_HTML).not.toContain('placeholder="ADMIN_TOKEN"');
+    expect(DASHBOARD_HTML).not.toContain('<code>ADMIN_TOKEN</code>');
+    expect(DASHBOARD_HTML).not.toContain('gated by a bearer token');
+    expect(DASHBOARD_HTML).not.toContain('Cloudflare Access');
+    expect(DASHBOARD_HTML).not.toContain('save a valid ADMIN_TOKEN');
+    expect(DASHBOARD_HTML).not.toContain('matching ADMIN_TOKEN');
+    expect(DASHBOARD_HTML).not.toContain('kept in this browser only (localStorage)');
+    expect(DASHBOARD_HTML).not.toContain('Authorization: Bearer …');
   });
 
   it('renders an Admin Access Control section to grant/revoke admin emails, with ADMIN_EMAILS read-only', () => {
