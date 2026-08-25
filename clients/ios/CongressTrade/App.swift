@@ -480,9 +480,12 @@ struct MainTabView: View {
             // never recorded server-side. No-op for everyone already Premium.
             await store.reconcileAppleEntitlementsQuietly()
         }
-        // Pause the nextPollAfterSec poll loop while backgrounded.
-        .onChange(of: scenePhase) { _, phase in
-            store.setAutoRefreshPaused(phase != .active)
+        // Pause the nextPollAfterSec poll loop while backgrounded, and play disclaimer intro on foreground.
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            store.setAutoRefreshPaused(newPhase != .active)
+            if newPhase == .active && oldPhase == .background {
+                DisclaimerColdStart.triggerFromForeground($disclaimerExpanded)
+            }
         }
         // Push notification tap handlers
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenTradeFromPush"))) { notification in

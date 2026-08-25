@@ -359,9 +359,6 @@ struct AssetDirectoryView: View {
                             assetPager(page: page, pages: pages)
                                 .padding(.top, 4)
                         }
-
-                        AppLegalFooter()
-                            .padding(.top, 8)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 8)

@@ -430,22 +430,22 @@ struct BrandTitle: View {
     }
 }
 
-/// Process-lifetime cold-start intro for the header disclaimer.
+/// Process-lifetime cold-start and foreground intro for the header disclaimer.
 ///
-/// Plays once per app process (force-quit and reopen), not on tab switch
-/// and not when returning from background.  A tap on ⓘ cancels the
-/// auto-hide so the user keeps whatever they just chose.
+/// Plays on initial app launch (4s auto-hide) and upon returning from background.
+/// Shared across the entire app so switching tabs preserves the 4s timer and
+/// auto-hides simultaneously on all tabs. A tap on ⓘ cancels auto-hide.
 @MainActor
 enum DisclaimerColdStart {
-    private static var playedThisProcess = false
+    private static var isPlaying = false
     private static var hideTask: Task<Void, Never>?
 
     static func playIfNeeded(
         _ expanded: Binding<Bool>,
-        hold: Duration = .seconds(3)
+        hold: Duration = .seconds(4)
     ) async {
-        guard !playedThisProcess else { return }
-        playedThisProcess = true
+        cancelAutoHide()
+        isPlaying = true
         withAnimation(.easeInOut(duration: 0.32)) {
             expanded.wrappedValue = true
         }
@@ -455,6 +455,7 @@ enum DisclaimerColdStart {
             withAnimation(.easeInOut(duration: 0.32)) {
                 expanded.wrappedValue = false
             }
+            isPlaying = false
         }
         hideTask = task
         await task.value
@@ -464,13 +465,19 @@ enum DisclaimerColdStart {
     static func cancelAutoHide() {
         hideTask?.cancel()
         hideTask = nil
+        isPlaying = false
+    }
+
+    static func triggerFromForeground(_ expanded: Binding<Bool>) {
+        cancelAutoHide()
+        Task {
+            await playIfNeeded(expanded, hold: .seconds(4))
+        }
     }
 
     #if DEBUG
     static func resetForTests() {
-        hideTask?.cancel()
-        hideTask = nil
-        playedThisProcess = false
+        cancelAutoHide()
     }
     #endif
 }

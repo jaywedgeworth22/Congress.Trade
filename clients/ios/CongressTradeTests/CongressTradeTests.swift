@@ -124,15 +124,14 @@ final class CongressTradeTests: XCTestCase {
     }
 
     func testHeaderChromeIsOpaqueCardNotTranslucentPanel() {
-        AppTheme.currentPalette = .light
-        // Solid white header/filter chrome.  panel is 92% white and composites
-        // over the cool page as a blue wash (owner screenshots 2026-08-22).
-        XCTAssertEqual(UIColor(AppTheme.headerChrome).cgColor.alpha, 1.0, accuracy: 0.001)
-        XCTAssertEqual(UIColor(AppTheme.card).cgColor.alpha, 1.0, accuracy: 0.001)
-        XCTAssertLessThan(UIColor(AppTheme.panel).cgColor.alpha, 0.99)
-        AppTheme.currentPalette = .dark
-        XCTAssertEqual(UIColor(AppTheme.headerChrome).cgColor.alpha, 1.0, accuracy: 0.001)
-        AppTheme.currentPalette = .light
+        let lightTraits = UITraitCollection(userInterfaceStyle: .light)
+        let darkTraits = UITraitCollection(userInterfaceStyle: .dark)
+        // Solid header/filter chrome in both light and dark.
+        XCTAssertEqual(UIColor(AppTheme.headerChrome).resolvedColor(with: lightTraits).cgColor.alpha, 1.0, accuracy: 0.001)
+        XCTAssertEqual(UIColor(AppTheme.card).resolvedColor(with: lightTraits).cgColor.alpha, 1.0, accuracy: 0.001)
+        XCTAssertLessThan(UIColor(AppTheme.panel).resolvedColor(with: lightTraits).cgColor.alpha, 0.99)
+        XCTAssertEqual(UIColor(AppTheme.headerChrome).resolvedColor(with: darkTraits).cgColor.alpha, 1.0, accuracy: 0.001)
+        XCTAssertEqual(UIColor(AppTheme.card).resolvedColor(with: darkTraits).cgColor.alpha, 1.0, accuracy: 0.001)
     }
 
     func testSignedFlowFormatUsesUnicodeMinusOnOneLine() {
@@ -285,8 +284,8 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(settings.mode, .watchlist)
         XCTAssertEqual(settings.watchlistRules["NVDA"]?.minAmount, 50001)
         XCTAssertEqual(settings.watchlistRules["NVDA"]?.sides, .buys)
-        XCTAssertEqual(PushSettings.amountLabel(nil), "Any Amount")
-        XCTAssertEqual(PushSettings.amountLabel(15001), "$15,001+")
+        XCTAssertEqual(PushSettings.amountLabel(nil), "None")
+        XCTAssertEqual(PushSettings.amountLabel(15001), "$15k")
         XCTAssertEqual(PushSettings.amountCutoffs.first, 1001)
         XCTAssertEqual(PushAlertMode.allCases.map(\.label), ["Off", "New Filings", "Watchlist"])
     }
