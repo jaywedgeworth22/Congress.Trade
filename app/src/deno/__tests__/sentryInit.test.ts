@@ -185,6 +185,14 @@ describe('production entry wiring', () => {
     expect(src).not.toContain('sentryDummy');
   });
 
+  it('boots Datadog from Infisical/env and fail-closes when keys are missing', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/deno/main.ts'), 'utf8');
+    expect(src).toContain('resolveProductionDatadogEnv');
+    expect(src).toContain('initProductionDatadog');
+    expect(src).toContain('datadogCaptureException');
+    expect(src).not.toContain('dd-trace');
+  });
+
   it('does not add Deno Deploy, deployctl, or Deploy-only APIs', () => {
     const files = [
       'src/deno/sentry.ts',

@@ -33,6 +33,7 @@ import {
   handleAutopilotTick,
   markAutopilotRunHalted,
 } from './extraction/autopilot.ts';
+import { datadogRequestMiddleware } from './shared/datadog.ts';
 import { browserSecurityHeadersMiddleware } from './security/headers.ts';
 import { publicApiGuard } from './security/botDefense.ts';
 import { mountApiRouters } from './apiRouters.ts';
@@ -62,6 +63,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Attach defense-in-depth browser headers to every Worker-generated response,
 // including error and redirect responses. HSTS is added only for HTTPS.
 app.use('*', browserSecurityHeadersMiddleware);
+app.use('*', datadogRequestMiddleware());
 
 // Anti-scraping guard for the public data API (user-agent blocklist + per-IP
 // request budget + X-Robots-Tag). Runs before the feature routers; token-gated

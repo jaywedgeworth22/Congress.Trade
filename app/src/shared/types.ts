@@ -778,6 +778,27 @@ export interface Env {
   PREVIEW_DEPLOYMENT?: string;
   /** Uniform trace sampling rate (0-1) for the Sentry Cloudflare SDK; overrides the code default. */
   SENTRY_TRACES_SAMPLE_RATE?: string;
+  /** Datadog API key for agentless logs + APM intake.  Fail-closed if missing with DD_SITE. */
+  DD_API_KEY?: string;
+  /** Datadog application key (fleet registry / synthetics).  Not required to send logs or traces. */
+  DD_APP_KEY?: string;
+  /** Datadog site, e.g. us5.datadoghq.com.  No default — missing site disables send. */
+  DD_SITE?: string;
+  /** Optional APM/log service override.  Default congress-trade. */
+  DD_SERVICE?: string;
+  /** Optional Datadog env tag.  Falls back to SENTRY_ENVIRONMENT / USAGE_MONITOR_ENVIRONMENT. */
+  DD_ENV?: string;
+  /** Public RUM client token.  Aliases: DD_RUM_CLIENT_TOKEN, NEXT_PUBLIC_DD_CLIENT_TOKEN. */
+  DD_CLIENT_TOKEN?: string;
+  DD_RUM_CLIENT_TOKEN?: string;
+  NEXT_PUBLIC_DD_CLIENT_TOKEN?: string;
+  NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN?: string;
+  /** Public RUM application id.  Aliases: DD_RUM_APPLICATION_ID, NEXT_PUBLIC_DD_APPLICATION_ID. */
+  DD_APPLICATION_ID?: string;
+  DD_RUM_APPLICATION_ID?: string;
+  NEXT_PUBLIC_DD_APPLICATION_ID?: string;
+  NEXT_PUBLIC_DD_RUM_APPLICATION_ID?: string;
+  NEXT_PUBLIC_DD_SITE?: string;
   /** Cloudflare Workers version metadata binding; used by Sentry to auto-tag the release. */
   CF_VERSION_METADATA?: { id: string; tag: string; timestamp?: string };
 

@@ -9,7 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { Hono } from 'hono';
 import { buildUiRouter } from '../routes.ts';
+import { browserSecurityHeadersMiddleware } from '../../security/headers.ts';
 import { resetSitemapCacheForTests } from '../sitemap.ts';
 
 describe('/robots.txt', () => {
@@ -128,5 +130,46 @@ describe('SEOSOCIAL-05: ?trade= permalinks get a real share card', () => {
     const app = buildUiRouter();
     const res = await app.request('http://localhost/?trade=aa349372-0000', {}, env);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('Datadog RUM injection', () => {
+  it('leaves public HTML without a RUM snippet when keys are missing', async () => {
+    const app = buildUiRouter();
+    const home = await app.request('http://localhost/', {}, {} as never);
+    const legal = await app.request('http://localhost/privacy-policy', {}, {} as never);
+    const homeHtml = await home.text();
+    const legalHtml = await legal.text();
+    expect(homeHtml).not.toContain('%GA_SCRIPT%');
+    expect(homeHtml).not.toContain('DD_RUM');
+    expect(legalHtml).not.toContain('DD_RUM');
+  });
+
+  it('injects RUM on public pages when client token, application id, and site exist', async () => {
+    const env = {
+      DD_CLIENT_TOKEN: 'pub_token',
+      DD_APPLICATION_ID: 'app-id-1',
+      DD_SITE: 'us5.datadoghq.com',
+      DD_API_KEY: 'secret-api-key-must-not-leak',
+    } as never;
+    const app = buildUiRouter();
+    const home = await app.request('http://localhost/', {}, env);
+    const legal = await app.request('http://localhost/terms-of-service', {}, env);
+    const homeHtml = await home.text();
+    const legalHtml = await legal.text();
+    expect(homeHtml).toContain('DD_RUM');
+    expect(homeHtml).toContain('pub_token');
+    expect(homeHtml).toContain('www.datadoghq-browser-agent.com/us5/v5/datadog-rum.js');
+    expect(homeHtml).not.toContain('secret-api-key-must-not-leak');
+    expect(legalHtml).toContain('DD_RUM');
+    expect(legalHtml).not.toContain('secret-api-key-must-not-leak');
+
+    const wrapped = new Hono();
+    wrapped.use('*', browserSecurityHeadersMiddleware);
+    wrapped.route('/', app);
+    const guarded = await wrapped.request('http://localhost/', {}, env);
+    const csp = guarded.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain('https://www.datadoghq-browser-agent.com');
+    expect(csp).toContain('https://browser-intake-us5-datadoghq.com');
   });
 });

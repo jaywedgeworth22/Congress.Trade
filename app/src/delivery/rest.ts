@@ -28,6 +28,8 @@ import { all, first, get } from '../shared/db.ts';
 import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import { readBuildInfo } from '../shared/buildInfo.ts';
+import { datadogPublicStatus } from '../shared/datadogRuntime.ts';
+import { getDatadogInitInput } from '../shared/datadog.ts';
 import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
 import { probeSenateRelay } from '../ingestion/senateRelayHealth.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
@@ -512,6 +514,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         // and checks.storage.r2Weekly.
         checks: {
           storage: { ...storage, r2Weekly },
+          datadog: datadogPublicStatus({
+            ...(getDatadogInitInput() ?? {}),
+            ...envx,
+          }),
           secrets: {
             enabled: secrets.enabled,
             cacheReady: secrets.cacheReady,

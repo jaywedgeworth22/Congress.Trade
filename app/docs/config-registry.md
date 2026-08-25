@@ -76,6 +76,28 @@ Rotate in the shared project; never duplicate onto `socratic-trade` or
 `USAGE_MONITOR_ENVIRONMENT`², `USAGE_MONITOR_READ_TOKEN` (optional; read-only
 budget-status polling, see Tunables & flags below)
 
+### Datadog (existing fleet account — no new plan)
+Coolify / Infisical names only.  Values are never invented.  Missing or
+partial keys fail closed (the app boots; nothing is sent).
+
+Backend logs + APM (agentless HTTP intake from the Deno container):
+`DD_API_KEY`, `DD_SITE` (required together; known sites only, e.g.
+`us5.datadoghq.com`).  Optional: `DD_SERVICE` (default `congress-trade`),
+`DD_ENV` (falls back to `SENTRY_ENVIRONMENT` / `USAGE_MONITOR_ENVIRONMENT`).
+`DD_APP_KEY` is accepted for fleet registry completeness and is **not**
+required to send logs or traces.
+
+Public RUM (injected into `/`, legal pages, and the shared dashboard document
+via `%GA_SCRIPT%` — not Admin copy).  Requires all three: a client token, an
+application id, and a site.  Canonical: `DD_CLIENT_TOKEN`,
+`DD_APPLICATION_ID`, `DD_SITE`.  Aliases also accepted:
+`DD_RUM_CLIENT_TOKEN`, `NEXT_PUBLIC_DD_CLIENT_TOKEN`,
+`NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`, `DD_RUM_APPLICATION_ID`,
+`NEXT_PUBLIC_DD_APPLICATION_ID`, `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`,
+`NEXT_PUBLIC_DD_SITE`.  Session Replay stays off.  Do not mint a new RUM
+application from this repo; reuse an existing Browser RUM app on the
+current Datadog account.
+
 ### Tunables & flags
 - Budgets/pacers: `FMP_DAILY_CALL_CAP`, `FMP_MAX_PER_MINUTE`,
   `EDGAR_MAX_PER_MINUTE`

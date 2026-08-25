@@ -105,6 +105,20 @@ operator knobs; leftover `DENO_*` aliases are local-test only.
 Production Sentry is a Coolify/Infisical `SENTRY_DSN` concern, not a
 `wrangler secret put`.  `SENTRY_ENVIRONMENT=production` is the live value.
 
+## 3a.1 Datadog
+
+Reuse the existing fleet Datadog account.  Do not buy a new plan.  Set these
+Coolify / Infisical names (values never belong in git):
+
+- `DD_API_KEY` + `DD_SITE` — required together for Deno logs + APM.  Missing
+  or unknown site fails closed.
+- `DD_APP_KEY` — optional; not used to send.
+- `DD_CLIENT_TOKEN` + `DD_APPLICATION_ID` + `DD_SITE` — required together
+  for public-web RUM.  `NEXT_PUBLIC_DD_*` aliases are accepted.
+
+Session Replay is off.  Host agent collection on `fleet-hetzner-nbg1` is
+unchanged.
+
 ## 3b. Auth + Stripe
 
 Google OAuth, Stripe products/webhook, Resend, and Cloudflare Access for
