@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C19828CDAFE62F809DF6C27 /* App.swift */; };
+		C0A7E000A110DA7E00000002 /* AppUpdatePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A7E000A110DA7E00000001 /* AppUpdatePrompt.swift */; };
 		46330F4471E179775BED47C5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88525FFED7FEDE1EF0D7D06 /* SettingsView.swift */; };
 		DC167BC4DFF045BC868A4FFC /* PremiumSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6481AE88834E358CE3569B /* PremiumSheet.swift */; };
 		4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */; };
@@ -48,6 +49,7 @@
 
 /* Begin PBXFileReference section */
 		2C19828CDAFE62F809DF6C27 /* App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		C0A7E000A110DA7E00000001 /* AppUpdatePrompt.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppUpdatePrompt.swift; sourceTree = "<group>"; };
 		56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/PoliticianDetailView.swift; sourceTree = SOURCE_ROOT; };
 		56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/TickerDetailView.swift; sourceTree = SOURCE_ROOT; };
 		EA61E5001A55B0C1D2E30002 /* CongressTrade/Views/Components/EagleSplashView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Components/EagleSplashView.swift; sourceTree = SOURCE_ROOT; };
@@ -141,6 +143,7 @@
 				9407BA8E4B7D846ED5BD3BA1 /* MemberDirectorySearch.swift */,
 				22EA0601D7D0B9B96A739A93 /* Store */,
 				2C19828CDAFE62F809DF6C27 /* App.swift */,
+				C0A7E000A110DA7E00000001 /* AppUpdatePrompt.swift */,
 				D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */,
 				BA007774B8855D3EDA7286EE /* Views */,
 			);
@@ -327,6 +330,7 @@
 				5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */,
 				4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */,
 				09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */,
+				C0A7E000A110DA7E00000002 /* AppUpdatePrompt.swift in Sources */,
 				D1A2B3C4D5E6F7A8B9C0D1E3 /* TrendsView.swift in Sources */,
 				F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */,
 				D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */,

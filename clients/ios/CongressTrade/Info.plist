@@ -72,5 +72,7 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>AppUpdateAppleId</key>
+	<integer>6798076688</integer>
 </dict>
 </plist>
