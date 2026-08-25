@@ -19,6 +19,7 @@ import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { notifyReviewQueuePublisher } from './reviewQueueNotify.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
 import {
@@ -2209,7 +2210,7 @@ async function routeProviderOnlyObservationsToReview(
       payload: row.payload,
     }).slice(0, PAYLOAD_LIMIT);
 
-    await batch(env.DB, [
+    const results = await batch(env.DB, [
       [
         `INSERT OR IGNORE INTO filings
            (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
@@ -2233,6 +2234,14 @@ async function routeProviderOnlyObservationsToReview(
         [docId, payload, nowIso],
       ],
     ]);
+    if ((results[1]?.meta?.changes ?? 0) > 0) {
+      void notifyReviewQueuePublisher(env, {
+        docId,
+        reason: 'provider_discovered_missing_official',
+        kind: 'insert',
+        at: nowIso,
+      });
+    }
   }
 }
 

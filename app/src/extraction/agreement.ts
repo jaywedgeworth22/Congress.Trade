@@ -99,6 +99,7 @@ import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { recordProviderHealth } from './providerHealth.ts';
 import { shouldSkipAgreementForReviewReason } from './extractRouting.ts';
+import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -1307,13 +1308,15 @@ export async function markExtractEmptyFailure(
   };
 
   let existingRevision: number | null = null;
+  let wasResolved: number | null = null;
   try {
-    const row = await get<{ review_revision: number }>(
+    const row = await get<{ review_revision: number; resolved: number }>(
       env.DB,
-      'SELECT review_revision FROM review_queue WHERE doc_id = ?',
+      'SELECT review_revision, resolved FROM review_queue WHERE doc_id = ?',
       [docId],
     );
     existingRevision = row?.review_revision ?? null;
+    wasResolved = row?.resolved ?? null;
   } catch (err) {
     console.warn('markExtractEmptyFailure failed to read review_revision:', docId, (err as Error).message);
   }
@@ -1338,14 +1341,30 @@ export async function markExtractEmptyFailure(
       const reviewParams = claimToken
         ? ['extract_empty_failure', JSON.stringify(payload), docId, claimToken, existingRevision]
         : ['extract_empty_failure', JSON.stringify(payload), docId, existingRevision];
-      await run(env.DB, reviewSql, reviewParams);
+      const reviewResult = await run(env.DB, reviewSql, reviewParams);
+      if ((reviewResult.meta?.changes ?? 0) > 0 && wasResolved === 1) {
+        void notifyReviewQueuePublisher(env, {
+          docId,
+          reason: 'extract_empty_failure',
+          kind: 'reopen',
+          at: nowIso,
+        });
+      }
     } else {
-      await run(
+      const insertResult = await run(
         env.DB,
         `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
          VALUES (?, ?, ?, ?, 0)`,
         [docId, 'extract_empty_failure', JSON.stringify(payload), nowIso],
       );
+      if ((insertResult.meta?.changes ?? 0) > 0) {
+        void notifyReviewQueuePublisher(env, {
+          docId,
+          reason: 'extract_empty_failure',
+          kind: 'insert',
+          at: nowIso,
+        });
+      }
     }
 
     await run(
