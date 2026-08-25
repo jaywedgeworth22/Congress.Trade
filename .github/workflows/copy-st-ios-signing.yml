@@ -1,0 +1,42 @@
+name: Copy iOS signing secrets to Socratic.Trade
+# One-shot. Same team CC8UTF7ATG credentials already on this repo.
+# Never prints secret values. Do not mint a new App Store Connect key.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  copy:
+    name: Copy ASC + distribution secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Copy signing secrets (values never printed)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: |
+          set +x
+          set -eu
+          dest=jaywedgeworth22/Socratic.Trade
+          missing=0
+          for k in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD; do
+            eval "v=\${$k-}"
+            if [ -z "$v" ]; then
+              echo "missing $k on this repo"
+              missing=1
+            else
+              echo "present $k len=${#v}"
+            fi
+          done
+          test "$missing" -eq 0
+          printf '%s' "$ASC_KEY_ID" | gh secret set ASC_KEY_ID --repo "$dest"
+          printf '%s' "$ASC_ISSUER_ID" | gh secret set ASC_ISSUER_ID --repo "$dest"
+          printf '%s' "$ASC_KEY_P8" | gh secret set ASC_KEY_P8 --repo "$dest"
+          printf '%s' "$IOS_DIST_P12_BASE64" | gh secret set IOS_DIST_P12_BASE64 --repo "$dest"
+          printf '%s' "$IOS_DIST_P12_PASSWORD" | gh secret set IOS_DIST_P12_PASSWORD --repo "$dest"
+          echo "copied five signing secret names to $dest"
