@@ -15,6 +15,7 @@ import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
 import { datadogCaptureException, initProductionDatadog } from '../shared/datadog.ts';
 import { resolveProductionDatadogEnv } from '../shared/datadogRuntime.ts';
 import { captureException, initProductionSentry } from '#sentry';
+import { isExpectedPdfParseNoise } from '../shared/pdfParseErrors.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -24,9 +25,14 @@ const kvPath = Deno.env.get('DENO_KV_PATH') || undefined;
 const kv = await Deno.openKv(kvPath);
 const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
-// Global unhandled error & promise rejection listeners for runtime stability
+// Keep the isolate alive, but do not report expected pdf.js XRef noise
+// (CONGRESS-TRADE-1C).  extractPdfText already fail-softs those PDFs.
 globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
   e.preventDefault();
+  if (isExpectedPdfParseNoise(e.reason)) {
+    console.warn('Global unhandled rejection (expected PDF parse noise):', e.reason);
+    return;
+  }
   console.error('Global unhandled rejection:', e.reason);
   try {
     captureException(e.reason);
@@ -34,7 +40,12 @@ globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => 
 });
 globalThis.addEventListener('error', (e: ErrorEvent) => {
   e.preventDefault();
-  console.error('Global uncaught error:', e.error || e.message);
+  const reason = e.error || e.message;
+  if (isExpectedPdfParseNoise(reason)) {
+    console.warn('Global uncaught error (expected PDF parse noise):', reason);
+    return;
+  }
+  console.error('Global uncaught error:', reason);
   try {
     captureException(e.error || new Error(String(e.message)));
   } catch {}
