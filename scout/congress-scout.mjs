@@ -467,7 +467,9 @@ async function detectSenate() {
     return out;
   } catch (relayErr) {
     log(`~ senate: local relay failed (${relayErr?.message || relayErr}) — direct eFD only if breaker closed`);
-    if (breakerOpen('senate')) return [];
+    // Not a successful absence check.  cycle() only advances lastPollAt.senate
+    // when detectSenate() returns an array from a real relay/direct probe.
+    if (breakerOpen('senate')) return null;
     try {
       const out = await detectSenateOnce();
       await recordSuccess('senate');
@@ -1130,7 +1132,6 @@ async function cycle(state) {
       try {
         const frontier = await detectHouseFrontier(state);
         detections.push(...frontier);
-        houseOk = true;
       } catch (e) {
         warn('house-frontier', e);
       }
@@ -1167,9 +1168,6 @@ async function cycle(state) {
       log('DETECT', d.source.padEnd(6), d.key, d.name || '');
     }
   }
-  if (SOURCES.has('house')) state.lastPollAt.house = cycleStart;
-  if (SOURCES.has('senate')) state.lastPollAt.senate = cycleStart;
-
   // Only advance source probe timestamp when the probe successfully checked the source
   if (houseOk) state.lastPollAt.house = cycleStart;
   if (senateOk) state.lastPollAt.senate = cycleStart;
