@@ -87,16 +87,24 @@ async function extractPdfText(bytes: ArrayBuffer): Promise<PdfTextExtraction> {
   // the caller's buffer detached and break the HousePdfExtractor vision fallback,
   // which reuses the same ArrayBuffer after text extraction. Do not remove the copy
   // (regression guard for Sentry CONGRESS-TRADE-2).
-  const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
-  const { text } = await extractText(pdf, { mergePages: true });
-  const pageCount = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : null;
-  // Cleanup the memory to prevent OOM
-  if (typeof (pdf as any).destroy === 'function') (pdf as any).destroy();
-  else if (typeof (pdf as any).cleanup === 'function') (pdf as any).cleanup();
-  return {
-    text: typeof text === 'string' ? text : (text as string[]).join('\n'),
-    pageCount,
-  };
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
+    const { text } = await extractText(pdf, { mergePages: true });
+    const pageCount = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : null;
+    // Cleanup the memory to prevent OOM
+    if (typeof (pdf as any).destroy === 'function') (pdf as any).destroy();
+    else if (typeof (pdf as any).cleanup === 'function') (pdf as any).cleanup();
+    return {
+      text: typeof text === 'string' ? text : (text as string[]).join('\n'),
+      pageCount,
+    };
+  } catch (err) {
+    console.warn('[textPdf] unpdf extraction failed:', err);
+    return {
+      text: '',
+      pageCount: null,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
