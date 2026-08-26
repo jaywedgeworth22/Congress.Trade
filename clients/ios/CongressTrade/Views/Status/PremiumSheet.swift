@@ -460,9 +460,13 @@ struct PremiumSheet: View {
             let result = try await product.purchase()
             switch result {
             case .success(let verification):
-                let transaction = try checkVerified(verification)
-                notice = "Purchase confirmed.  Unlocking Premium…"
+                // Everything after StoreKit returns `.success` is post-charge:
+                // verification failure and redeem failure both use
+                // `redeemFailureMessage` so a charged customer is steered to
+                // recovery instead of "purchase could not start / try again".
                 do {
+                    let transaction = try checkVerified(verification)
+                    notice = "Purchase confirmed.  Unlocking Premium…"
                     // StoreKit 2 VerificationResult.jwsRepresentation is the App Store JWS.
                     // Guideline 5.1.1(v): no account required to buy — signed in,
                     // this attaches to the account; signed out, it records the

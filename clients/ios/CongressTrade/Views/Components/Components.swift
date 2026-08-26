@@ -1291,6 +1291,25 @@ struct SignInPanel: View {
 
     private var isAuthenticating: Bool { isAuthenticatingWithApple || isAuthenticatingWithGoogle }
 
+    /// `watchlistNotice` is shared with watchlist/alert/sign-out copy.  Only
+    /// authentication results belong under these buttons — otherwise a leftover
+    /// `"Signed out."` renders as a red auth error.
+    private var authenticationNotice: String? {
+        guard let notice = store.watchlistNotice, !notice.isEmpty else { return nil }
+        return Self.isAuthenticationNotice(notice) ? notice : nil
+    }
+
+    private static func isAuthenticationNotice(_ notice: String) -> Bool {
+        let n = notice.lowercased()
+        if n.hasPrefix("signed out") { return false }
+        if n == "signed in." { return true }
+        if n.hasPrefix("enter a session") { return true }
+        if n.contains("failed to save session") { return true }
+        if n.contains("sign in") || n.contains("sign-in") { return true }
+        if n.contains("apple id") || n.contains("identity token") { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             ZStack {
@@ -1342,7 +1361,7 @@ struct SignInPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if let notice = store.watchlistNotice, !notice.isEmpty {
+            if let notice = authenticationNotice {
                 Text(notice)
                     .font(.footnote)
                     .foregroundStyle(notice == "Signed in." ? .secondary : .red)
