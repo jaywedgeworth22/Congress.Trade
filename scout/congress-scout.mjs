@@ -1115,12 +1115,39 @@ async function cycle(state) {
 
   const detections = [];
   state.lastPollAt = state.lastPollAt || {};
+  let houseOk = false;
+  let senateOk = false;
   const cycleStart = nowIso();
   if (SOURCES.has('house')) {
-    try { detections.push(...(await detectHouseLiveSearch())); } catch (e) { warn('house-live', e); }
-    if (FRONTIER) { try { detections.push(...(await detectHouseFrontier(state))); } catch (e) { warn('house-frontier', e); } }
+    try {
+      const live = await detectHouseLiveSearch();
+      detections.push(...live);
+      houseOk = true;
+    } catch (e) {
+      warn('house-live', e);
+    }
+    if (FRONTIER) {
+      try {
+        const frontier = await detectHouseFrontier(state);
+        detections.push(...frontier);
+        houseOk = true;
+      } catch (e) {
+        warn('house-frontier', e);
+      }
+    }
   }
-  if (SOURCES.has('senate')) { try { detections.push(...(await detectSenate())); } catch (e) { warn('senate', e); } }
+
+  if (SOURCES.has('senate')) {
+    try {
+      const senate = await detectSenate();
+      if (Array.isArray(senate)) {
+        detections.push(...senate);
+        senateOk = true;
+      }
+    } catch (e) {
+      warn('senate', e);
+    }
+  }
 
   for (const d of detections) {
     if (d.key.startsWith('H-')) { const n = Number(d.key.split('-').pop()); if (n > state.houseMaxDocId) state.houseMaxDocId = n; }
@@ -1142,6 +1169,10 @@ async function cycle(state) {
   }
   if (SOURCES.has('house')) state.lastPollAt.house = cycleStart;
   if (SOURCES.has('senate')) state.lastPollAt.senate = cycleStart;
+
+  // Only advance source probe timestamp when the probe successfully checked the source
+  if (houseOk) state.lastPollAt.house = cycleStart;
+  if (senateOk) state.lastPollAt.senate = cycleStart;
 
   // Post (or retry a previously-failed post for) every detection, skipping the
   // baseline cycle entirely so pre-existing filings never reach the app as
