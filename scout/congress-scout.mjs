@@ -972,6 +972,8 @@ async function maybePost(d, ts) {
         docKey: d.key,
         link: d.link,
         detectedAt: ts,
+        prevProbeAt: d.prevProbeAt || d.prevCheckedAt || undefined,
+        probeIntervalSec: d.probeIntervalSec || undefined,
         filerName: d.name || undefined,
         filedDate: d.filedDate || undefined,
         // Default server-side is ingest-when-link-present; send explicitly so
@@ -1112,6 +1114,8 @@ async function cycle(state) {
   }
 
   const detections = [];
+  state.lastPollAt = state.lastPollAt || {};
+  const cycleStart = nowIso();
   if (SOURCES.has('house')) {
     try { detections.push(...(await detectHouseLiveSearch())); } catch (e) { warn('house-live', e); }
     if (FRONTIER) { try { detections.push(...(await detectHouseFrontier(state))); } catch (e) { warn('house-frontier', e); } }
@@ -1122,10 +1126,22 @@ async function cycle(state) {
     if (d.key.startsWith('H-')) { const n = Number(d.key.split('-').pop()); if (n > state.houseMaxDocId) state.houseMaxDocId = n; }
     if (!state.ourSeen[d.key]) {
       const at = nowIso();
-      state.ourSeen[d.key] = { at, source: d.source, link: d.link, name: d.name || null, filedDate: d.filedDate || null };
+      const prevProbeAt = state.lastPollAt[d.source] || null;
+      const probeIntervalSec = prevProbeAt ? Math.max(0, Math.round((Date.parse(at) - Date.parse(prevProbeAt)) / 1000)) : null;
+      state.ourSeen[d.key] = {
+        at,
+        source: d.source,
+        link: d.link,
+        name: d.name || null,
+        filedDate: d.filedDate || null,
+        prevProbeAt,
+        probeIntervalSec,
+      };
       log('DETECT', d.source.padEnd(6), d.key, d.name || '');
     }
   }
+  if (SOURCES.has('house')) state.lastPollAt.house = cycleStart;
+  if (SOURCES.has('senate')) state.lastPollAt.senate = cycleStart;
 
   // Post (or retry a previously-failed post for) every detection, skipping the
   // baseline cycle entirely so pre-existing filings never reach the app as
@@ -1135,7 +1151,15 @@ async function cycle(state) {
   if (!isBaselineCycle) {
     for (const [key, entry] of Object.entries(state.ourSeen)) {
       if (state.posted[key]) continue;
-      const ok = await maybePost({ source: entry.source, key, link: entry.link, name: entry.name, filedDate: entry.filedDate }, entry.at);
+      const ok = await maybePost({
+        source: entry.source,
+        key,
+        link: entry.link,
+        name: entry.name,
+        filedDate: entry.filedDate,
+        prevProbeAt: entry.prevProbeAt,
+        probeIntervalSec: entry.probeIntervalSec,
+      }, entry.at);
       if (ok) {
         state.posted[key] = true;
         // Residential download → R2 when server may be IP-blocked.
