@@ -26,10 +26,18 @@ const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
 // Global unhandled error & promise rejection listeners for runtime stability
 globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+  e.preventDefault();
   console.error('Global unhandled rejection:', e.reason);
+  try {
+    captureException(e.reason);
+  } catch {}
 });
 globalThis.addEventListener('error', (e: ErrorEvent) => {
+  e.preventDefault();
   console.error('Global uncaught error:', e.error || e.message);
+  try {
+    captureException(e.error || new Error(String(e.message)));
+  } catch {}
 });
 
 let cachedEnvValues: Record<string, string | undefined> | null = null;
