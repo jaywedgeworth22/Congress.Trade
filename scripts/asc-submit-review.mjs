@@ -17,12 +17,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const APPLY = process.argv.includes("--apply");
+const buildArgIdx = process.argv.indexOf("--build");
+const TARGET_BUILD = (buildArgIdx !== -1 && process.argv[buildArgIdx + 1])
+  || process.env.ASC_TARGET_BUILD
+  || "";
 const APP = "6798076688";
 const VERSION_ID = "7824c023-3f0c-41fa-abf6-be24d7fe217b";
 const DETAIL_ID = "6bdc976e-ac42-44fd-9a95-4b33a4c14ac5";
 const MONTHLY_ID = "6798078775";
 const ANNUAL_ID = "6798078776";
-const TARGET_BUILD = process.env.ASC_TARGET_BUILD || ""; // If empty, auto-detect latest valid build
 const VIDEO_PATH = process.env.ASC_DELETION_VIDEO
   || join(homedir(), "apps/ios-fleet/artifacts/ct-account-deletion-2026-08-21.mp4");
 const VIDEO_NAME = "account-deletion-physical-device.mp4";
@@ -113,18 +116,28 @@ async function main() {
   const vString = version.parsed.data?.attributes?.versionString;
   console.log(`version ${vString} state=${vState}`);
 
-  // Fetch recent builds
-  const buildsRes = needOk("builds", await api("GET", `/v1/builds?filter[app]=${APP}&sort=-uploadedDate&limit=10`));
-  const validBuilds = (buildsRes.parsed.data || []).filter((b) => b.attributes?.processingState === "VALID");
-  if (validBuilds.length === 0) {
-    console.error("no VALID builds found in ASC");
-    process.exit(1);
+  // Fetch recent builds with polling if a specific target build was requested
+  let selectedBuild = null;
+  const deadline = Date.now() + (TARGET_BUILD ? 300_000 : 10_000);
+  while (Date.now() < deadline) {
+    const buildsRes = needOk("builds", await api("GET", `/v1/builds?filter[app]=${APP}&sort=-uploadedDate&limit=10`));
+    const validBuilds = (buildsRes.parsed.data || []).filter((b) => b.attributes?.processingState === "VALID");
+    if (TARGET_BUILD) {
+      selectedBuild = validBuilds.find((b) => b.attributes?.version === TARGET_BUILD);
+      if (selectedBuild) break;
+      console.log(`waiting for target build ${TARGET_BUILD} to reach VALID... (visible valid: ${validBuilds.map((b) => b.attributes?.version).join(", ") || "none"})`);
+      await sleep(6000);
+    } else {
+      if (validBuilds.length > 0) {
+        selectedBuild = validBuilds[0];
+        break;
+      }
+      console.log("waiting for a valid build...");
+      await sleep(4000);
+    }
   }
-  const selectedBuild = TARGET_BUILD
-    ? validBuilds.find((b) => b.attributes?.version === TARGET_BUILD)
-    : validBuilds[0];
   if (!selectedBuild) {
-    console.error(`target build ${TARGET_BUILD} not found among VALID builds: ${validBuilds.map((b) => b.attributes?.version).join(", ")}`);
+    console.error(`target build ${TARGET_BUILD || "latest"} not found in VALID state`);
     process.exit(1);
   }
   console.log(`selected build version=${selectedBuild.attributes.version} id=${selectedBuild.id} uploaded=${selectedBuild.attributes.uploadedDate}`);
@@ -188,8 +201,9 @@ async function main() {
     console.error("missing Premium subscription ids");
     process.exit(1);
   }
-  if (monthly.attributes.state !== "READY_TO_SUBMIT" || annual.attributes.state !== "READY_TO_SUBMIT") {
-    console.error("subscriptions are not READY_TO_SUBMIT — Guideline 2.1(b) would fail again");
+  const validSubStates = ["READY_TO_SUBMIT", "WAITING_FOR_REVIEW", "IN_REVIEW", "APPROVED"];
+  if (!validSubStates.includes(monthly.attributes.state) || !validSubStates.includes(annual.attributes.state)) {
+    console.error(`subscriptions in unexpected state: monthly=${monthly.attributes.state}, annual=${annual.attributes.state} — Guideline 2.1(b) requirement`);
     process.exit(1);
   }
 
@@ -318,17 +332,33 @@ async function main() {
 
   async function cancelStale() {
     const listed = needOk("submissions-before-cancel", await api("GET", `/v1/reviewSubmissions?filter[app]=${APP}&filter[platform]=IOS&limit=10`));
-    const unres = (listed.parsed.data || []).filter((s) => s.attributes?.state === "UNRESOLVED_ISSUES");
+    const unres = (listed.parsed.data || []).filter((s) => s.attributes?.state === "UNRESOLVED_ISSUES" || s.attributes?.state === "CANCELING");
     for (const s of unres) {
-      console.log(`canceling unresolved submission ${s.id}`);
+      if (s.attributes?.state !== "CANCELING") {
+        console.log(`canceling unresolved submission ${s.id}`);
+        if (APPLY) {
+          const cancelRes = await api("PATCH", `/v1/reviewSubmissions/${s.id}`, {
+            data: {
+              type: "reviewSubmissions",
+              id: s.id,
+              attributes: { canceled: true },
+            },
+          });
+          if (!cancelRes.ok) {
+            console.error(`cancel submission ${s.id}: HTTP ${cancelRes.status} ${errSummary(cancelRes.parsed)}`);
+            process.exit(2);
+          }
+        }
+      }
       if (APPLY) {
-        await api("PATCH", `/v1/reviewSubmissions/${s.id}`, {
-          data: {
-            type: "reviewSubmissions",
-            id: s.id,
-            attributes: { canceled: true },
-          },
-        });
+        const deadline = Date.now() + 180_000;
+        while (Date.now() < deadline) {
+          const poll = await api("GET", `/v1/reviewSubmissions/${s.id}`);
+          const stt = poll.parsed.data?.attributes?.state;
+          console.log(`submission ${s.id} state=${stt}`);
+          if (stt === "CANCELLED" || stt === "COMPLETE") break;
+          await sleep(4000);
+        }
       }
     }
   }
