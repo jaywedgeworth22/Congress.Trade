@@ -43,6 +43,9 @@ describe('snapshotPlan', () => {
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_6h',
+      'provider_plus_12h',
+      'provider_plus_24h',
     ]);
     expect(plan[0]!.dueAt).toBe('2026-08-16T15:00:00.000Z'); // ct_publish
     expect(plan[1]!.dueAt).toBe('2026-08-16T15:10:00.000Z'); // provider_publish
@@ -52,6 +55,9 @@ describe('snapshotPlan', () => {
     expect(plan[5]!.dueAt).toBe('2026-08-16T15:25:00.000Z'); // +15m
     expect(plan[6]!.dueAt).toBe('2026-08-16T15:40:00.000Z'); // +30m
     expect(plan[7]!.dueAt).toBe('2026-08-16T16:10:00.000Z'); // +60m
+    expect(plan[8]!.dueAt).toBe('2026-08-16T21:10:00.000Z'); // +6h
+    expect(plan[9]!.dueAt).toBe('2026-08-17T03:10:00.000Z'); // +12h
+    expect(plan[10]!.dueAt).toBe('2026-08-17T15:10:00.000Z'); // +24h
   });
 
   it('ct_publish is always exact confidence with zero uncertainty', () => {
@@ -499,6 +505,9 @@ describe('summarizeProviderPublishBump', () => {
       'provider_plus_15m',
       'provider_plus_30m',
       'provider_plus_60m',
+      'provider_plus_6h',
+      'provider_plus_12h',
+      'provider_plus_24h',
     ]);
   });
 });

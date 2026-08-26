@@ -2327,6 +2327,7 @@ interface TradeLatencyTxContext {
   tx_type: string | null;
   filed_date: string | null;
   first_seen_at: string | null;
+  prev_probe_at: string | null;
   chamber: Chamber | null;
   source_url: string | null;
   filer_name: string | null;
@@ -2352,6 +2353,7 @@ async function loadTradeLatencyTxContexts(
       `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.source AS source,
               COALESCE(t.filed_date, f.filed_date) AS filed_date,
               COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+              f.prev_probe_at AS prev_probe_at,
               f.chamber AS chamber,
               f.source_url AS source_url,
               fil.full_name AS filer_name
@@ -2410,13 +2412,14 @@ export async function recordTradeLatencyCandidates(
       if (!extractLastName(filerName)) continue;
       // Keep the real first_seen for live imports (no clamp-to-now for recent stamps).
       const firstSeen = raceFirstSeenAt(firstSeenRaw, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
+      const congressWindowStart = ctx?.prev_probe_at || null;
       mintedHashes.add(trade_hash);
       ctPublishRows.push({ trade_hash, ticker: tx.ticker || ctx?.ticker || null, provider, congress_first_seen_at: firstSeen });
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
-            congress_first_seen_at, status, attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+            congress_first_seen_at, congress_window_start, status, attempts, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
          ON CONFLICT(trade_hash, provider) DO UPDATE SET
            doc_id = excluded.doc_id,
            chamber = excluded.chamber,
@@ -2433,6 +2436,7 @@ export async function recordTradeLatencyCandidates(
              THEN excluded.congress_first_seen_at
              ELSE trade_latency_candidates.congress_first_seen_at
            END,
+           congress_window_start = COALESCE(trade_latency_candidates.congress_window_start, excluded.congress_window_start),
            updated_at = excluded.updated_at`,
         [
           trade_hash,
@@ -2446,6 +2450,7 @@ export async function recordTradeLatencyCandidates(
           tx.txDate || ctx?.tx_date || null,
           tx.txType || ctx?.tx_type || null,
           firstSeen,
+          congressWindowStart,
           nowIso,
           nowIso,
         ],
