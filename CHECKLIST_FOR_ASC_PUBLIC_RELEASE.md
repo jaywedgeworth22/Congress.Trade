@@ -2,7 +2,7 @@
 
 Living document.  Last verified against live App Store Connect and GitHub: **2026-08-26**.
 
-App id `6798076688` · bundle `trade.congress.ios` · team `CC8UTF7ATG` · version `1.0.81`
+App id `6798076688` · bundle `trade.congress.ios` · team `CC8UTF7ATG` · version `1.0.177`
 
 Every claim below was read from the live ASC API or the repo, not assumed.  Where something is
 unverified, it says so.
@@ -13,12 +13,12 @@ unverified, it says so.
 
 | Thing | State | Evidence |
 |---|---|---|
-| App Store version 1.0.81 | **REJECTED** (Reviewed by Apple; submission `b174dd86` moved to `UNRESOLVED_ISSUES`) | ASC `appStoreVersions` → `appStoreState` |
-| Review submission `b174dd86` | **UNRESOLVED_ISSUES** — 4 items (app version REJECTED, subscription group and 2 versions READY_FOR_REVIEW) | ASC `reviewSubmissions` |
-| Build attached to v1.0.81 | **`202608220518`** (marketing 1.0.81) from GitHub `macos-latest` Tahoe GM, run 32553969173 | ASC `appStoreVersions/{id}/build` |
-| Latest main TestFlight build | **`202608260601`** (marketing 1.0.4, auto-shipped from GitHub `ios-ship.yml`) | ASC `builds` list |
+| App Store version 1.0.177 | **WAITING_FOR_REVIEW** (Submitted with Guideline 2.1(a) and 2.1(b) fixes) | ASC `appStoreVersions` → `appStoreState` |
+| Review submission `760c9667` | **WAITING_FOR_REVIEW** — 4 items (app version 1.0.177, Premium subscription group `22287016`, monthly subscription `6798078775`, annual subscription `6798078776`) | ASC `reviewSubmissions` |
+| Build attached to v1.0.177 | **`202608262138`** (marketing 1.0.177) from GitHub `macos-latest` Tahoe GM, run 33016281432 | ASC `appStoreVersions/{id}/build` |
+| Latest main TestFlight build | **`202608262138`** (marketing 1.0.177, Tahoe GM Xcode 26.6) | ASC `builds` list |
 | Deletion recording | ✅ `account-deletion-physical-device.mp4` COMPLETE (39s, physical device attached to review notes) | ASC `appStoreReviewAttachments` |
-| Subscriptions monthly / annual | Group `22287016` ("Premium"), `trade.congress.premium.monthly` ($5/mo) and `trade.congress.premium.annual` ($50/yr) attached in group with localized descriptions and review screenshots | ASC `subscriptions` / `subscriptionVersions` |
+| Subscriptions monthly / annual | Group `22287016` ("Premium"), `trade.congress.premium.monthly` ($5/mo, 2-week trial) and `trade.congress.premium.annual` ($50/yr, 2-week trial) attached in group with localized descriptions and review screenshots | ASC `subscriptions` / `subscriptionVersions` |
 
 **Do not attach Mac-runner TestFlight IPAs directly to App Store versions.**  The local Mac runner is macOS 27.0 beta (`26A5416b`).  App Store review rejects that build host stamp as `INVALID_BINARY`.  The production GM build path is `.github/workflows/ios-appstore-gm.yml` (GitHub-hosted `macos-latest` Tahoe GM + Xcode 26.6).
 
@@ -42,6 +42,8 @@ unverified, it says so.
 | 5.1.1(v) registration before purchase | Premium is purchasable with no account; sign-in is optional and explains what it adds.  Delivery alerts and push stay legitimately account-tied. | #2087, #2120 |
 | 5.1.1(v) account deletion | In-app Delete Account with confirmation; deletes session, push devices, delivery subscriptions, and user row. | #2041 |
 | 5.1.1(v) deletion recording | 39-second physical-device deletion video captured, uploaded, and verified `COMPLETE` in ASC. | — |
+| 2.1(a) Login responsiveness | Immediate spinner overlay on Sign In with Apple/Google, disabled button states during auth, and styled inline error notices. | #2222, #2229 |
+| 2.1(b) IAP purchase error handling | StoreKit catalog load errors and pre-charge vs post-charge failures clearly distinguished; Restore Purchases guidance surfaced. | #2222 |
 | 2.1(b) IAP products in submission | Monthly and Annual subscription versions and subscription group versions are properly configured and attached to review submissions. | — |
 | iPad Air 11-inch responsive layout | Full-width sheets (`.iPadFullWidthSheet()`), Assets two-column grid, Delivery text measure capped, account menu on all tabs. | #2094, #2178 |
 | Deep links & Universal links | Handled in Swift via `AppDeepLink` and `.onContinueUserActivity(NSUserActivityTypeBrowsingWeb)` for tickers, members, trades, filings, tabs, and auth tokens. | #2209 |
@@ -76,17 +78,16 @@ After PR #2222 lands and the fresh Tahoe GM archive workflow runs, review and su
 
 These are safe for an agent with the ASC key and repo access.  Marked ✅ when done.
 
-- [x] ✅ **Attached Tahoe GM build `202608220518` (1.0.81)** via GM workflow run 32553969173.
-- [x] ✅ **Replaced App Review Information notes** and attached 39s physical-device deletion recording (`account-deletion-physical-device.mp4`).
-- [x] ✅ **Created review submission `b174dd86`** with app version, Premium subscription group version, and both subscription versions.
-- [x] ✅ **Submitted to App Store review.**
-- [x] ✅ **Monitored review outcome:** Apple completed review with notes on 2.1(a) (login responsiveness) and 2.1(b) (IAP purchase errors).
+- [x] ✅ **Attached Tahoe GM build `202608262138` (1.0.177)** via GM workflow run 33016281432.
+- [x] ✅ **Replaced App Review Information notes** with Guideline 2.1(a) and 2.1(b) resolutions and verified 39s physical-device deletion recording (`account-deletion-physical-device.mp4`).
+- [x] ✅ **Created review submission `760c9667`** with app version 1.0.177, Premium subscription group version `3a37da1c`, monthly subscription version `efbef974`, and annual subscription version `f85b493e`.
+- [x] ✅ **Submitted to App Store review.** (Status: `WAITING_FOR_REVIEW`).
+- [x] ✅ **Merged PR #2222 and #2229:** Addresses 2.1(a) login busy state / spinner overlay, 2.1(b) IAP purchase failure vs redeem failure error reporting, and iPad presentation context.
+- [x] ✅ **Triggered GM ship workflow:** Ran `.github/workflows/ios-appstore-gm.yml` (run 33016281432) to produce App Store eligible binary.
+- [x] ✅ **Attached new GM build to App Store Connect version:** Updated version `1.0.177` and resubmitted for App Review.
 - [x] ✅ **Merged web PRs:** #2072 (a11y) and #2082 (Pushover premium alerts).
 - [x] ✅ **Implemented Swift universal links and deep links routing:** PR #2209.
-- [x] ✅ **Applied `.iPadFullWidthSheet()` to modal sheets:** PR #2094, #2178.
-- [ ] **Land PR #2222:** Addresses 2.1(a) login busy state / spinner overlay, 2.1(b) IAP purchase failure vs redeem failure error reporting, and iPad presentation context.
-- [ ] **Trigger GM ship workflow:** Run `.github/workflows/ios-appstore-gm.yml` to produce a fresh App Store eligible binary.
-- [ ] **Attach new GM build to App Store Connect version:** Update submission and resubmit for App Review.
+- [x] ✅ **Applied `.iPadFullWidthSheet()` to modal sheets:** PR #2094, #2178, #2222.
 
 ---
 
