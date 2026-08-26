@@ -23,7 +23,7 @@ import type { Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes.ts';
 import { parseAmountRange } from './amounts.ts';
 import { detectOption } from './senateHtml.ts';
-import { ptrTailRe } from './ptrTails.ts';
+import { ptrColumnTailRe, ptrTailRe } from './ptrTails.ts';
 
 export { countHousePtrTails } from './ptrTails.ts';
 
@@ -158,7 +158,18 @@ export function parseHousePtrText(text: string): ParsedTx[] {
   // rawText (wrong ticker, two $ brackets → invalid_amount). Split on every
   // `[TYPE] P/S/E date date $amount` tail first.
   const tailRows = parseTailRecords(cleaned);
-  if (tailRows.length > 0) return tailRows;
+  const columnRows = parseColumnTailRecords(cleaned);
+  const completeCount = (rows: ParsedTx[]) =>
+    rows.filter((row) =>
+      Boolean(row.assetName && row.assetName !== '(unknown)' && row.txDate && row.txType && row.amountMin != null)
+    ).length;
+  // Prefer the `[TYPE] P/S/E date` tail when it already has a complete lineup.
+  // Use the column-order parser only when it recovers more complete rows
+  // (EO.Pdf wraps `[ST]` onto the next line after Type/Date/Amount).
+  if (tailRows.length > 0 && completeCount(tailRows) >= completeCount(columnRows)) {
+    return tailRows;
+  }
+  if (columnRows.length > 0) return columnRows;
 
   if (HOUSE_TABLE_HEADER_RE.test(cleaned)) {
     const inlineRows = parseInlineRecords(cleaned);
@@ -182,11 +193,25 @@ export function parseHousePtrText(text: string): ParsedTx[] {
 }
 
 function cleanPdfText(text: string): string {
-  return text
+  return expandHousePtrLayout(text
     // Some House PDFs expose a text layer with NUL bytes between letters.
     // Remove them before line grouping so "S\0P" is parsed as owner code "SP".
     .replace(/\u0000/g, '')
-    .replace(/\u00a0/g, ' ');
+    .replace(/\u00a0/g, ' '));
+}
+
+/** EO.Pdf letter-spacing + wrapped `$100,001 -` / `$250,000` amount columns. */
+function expandHousePtrLayout(text: string): string {
+  return text
+    .replace(/\bF\s+S\s*:\s*/gi, 'Filing Status: ')
+    .replace(/\bS\s+O\s*:\s*/gi, 'Subholding Of: ');
+}
+
+function joinWrappedAmountRanges(text: string): string {
+  return text.replace(
+    /(\$[\d,]+)\s*-\s+((?:(?!\$)[\s\S]{0,80}?))(\$[\d,]+)/g,
+    '$1 - $3 $2',
+  );
 }
 
 function stripHouseTableHeaders(text: string): string {
@@ -297,10 +322,81 @@ function parseTailRecords(text: string): ParsedTx[] {
   return rows;
 }
 
+function parseColumnTailRecords(text: string): ParsedTx[] {
+  const normalized = joinWrappedAmountRanges(
+    stripHouseTableHeaders(cleanPdfText(text)).replace(/\s+/g, ' ').trim(),
+  );
+  const matches = [...normalized.matchAll(ptrColumnTailRe())];
+  if (matches.length === 0) return [];
+
+  const rows: ParsedTx[] = [];
+  for (let i = 0; i < matches.length; i += 1) {
+    const m = matches[i];
+    const next = matches[i + 1];
+    const start = m.index ?? 0;
+    const end = next?.index ?? normalized.length;
+    const prevEnd = i > 0
+      ? (matches[i - 1].index ?? 0) + (matches[i - 1][0].length)
+      : 0;
+    let prefix = normalized.slice(prevEnd, start);
+    if (i > 0) {
+      prefix = prefix
+        .replace(/^[\s\S]*\b(?:Filing\s+Status|Subholding\s+Of|Location|Description):/i, '')
+        .replace(/^[\s\S]*\bD\s*:\s+/i, '')
+        .replace(/^[A-Za-z][A-Za-z .,&'/-]{0,40}?\s+(?=[A-Z])/i, '')
+        .trim();
+    }
+    let suffix = normalized.slice(start + m[0].length, end);
+    suffix = suffix.replace(/\s+\d{7,}\s+(?:SP|DC|JT|SELF)\b[\s\S]*$/i, '');
+    const identitySlice = suffix
+      .replace(/\b(?:Filing\s+Status|Subholding\s+Of|Location|Description):[\s\S]*$/i, '')
+      .replace(ASSET_TYPE_RE, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const rawText = `${prefix} ${m[0]} ${suffix}`.replace(/\s+/g, ' ').trim();
+    const groups = m.groups ?? {};
+    const identity = identityFromPrefix(`${prefix} ${identitySlice}`);
+    const suffixTicker = normalizeTicker((suffix.match(TICKER_RE) ?? identitySlice.match(TICKER_RE) ?? [])[1] ?? null);
+    const typeMatch = suffix.match(ASSET_TYPE_RE) ?? prefix.match(ASSET_TYPE_RE);
+    const assetType = typeMatch?.[1]?.toUpperCase() ?? groups.assetType?.toUpperCase() ?? null;
+    const txType = parseTxType(groups.txType ?? '') ?? 'B';
+    const txDate = toIsoDate(groups.txDate ?? '');
+    const { min, max } = parseAmountRange(groups.amount ?? '');
+    const details = parseHouseRowDetails(suffix);
+    const ticker = identity.ticker ?? suffixTicker;
+    const confidence = calculateRowConfidence({
+      owner: identity.owner,
+      assetName: identity.assetName,
+      ticker,
+      txType,
+      txDate,
+      amountMin: min,
+    });
+    rows.push({
+      txDate,
+      owner: identity.owner,
+      assetName: identity.assetName,
+      ticker,
+      assetType,
+      assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
+      txType,
+      amountMin: min,
+      amountMax: max,
+      isOption: assetType === 'OP' || detectOption(rawText),
+      capGainsOver200: parseCapGainsOver200(rawText),
+      rawText,
+      ...details,
+      confidence,
+    });
+  }
+  return rows;
+}
+
 function identityFromPrefix(
   prefix: string,
 ): { owner: Owner | null; ticker: string | null; assetName: string } {
   let s = stripHousePtrPreamble(prefix);
+  s = s.replace(/^\d{7,}\s+/, '');
   const ownerMatches = [...s.matchAll(/\b(SP|DC|JT|SELF)\b/gi)];
   const ownerTok = ownerMatches.at(-1);
   const owner = ownerTok
@@ -532,7 +628,7 @@ function extractDetail(text: string, label: RegExp): string | null {
   const start = m.index + m[0].length;
   const rest = text.slice(start);
   const stop = rest.search(
-    /\b(?:Filing\s+Status|Subholding\s+Of|Location|Description):|\bCap\.?\s*Gains\b|\b(?:S\s+O|L|D):|\s+(?:SP|DC|JT|SELF)\b/i,
+    /\b(?:Filing\s+Status|Subholding\s+Of|Location|Description):|\bCap\.?\s*Gains\b|\b(?:S\s+O|L|D):|\s+(?:SP|DC|JT|SELF)\b|\s+[PSE]\s+\d{1,2}\/\d{1,2}\/\d{2,4}|\bD\s*:/i,
   );
   return stop >= 0 ? rest.slice(0, stop) : rest;
 }

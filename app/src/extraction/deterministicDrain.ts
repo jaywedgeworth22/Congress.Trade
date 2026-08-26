@@ -13,6 +13,7 @@ import { extractAndNormalize, extractParsed } from './orchestrator.ts';
 import { isDeterministicExtractor, normalize } from './normalizer.ts';
 import { countHousePtrTails } from './ptrTails.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
+import { DEFAULT_AGREEMENT_ATTEMPT_CAP } from './reviewQueueHealth.ts';
 
 export interface DeterministicDrainResult {
   scanned: number;
@@ -169,12 +170,13 @@ export async function maybeRunDeterministicReviewDrain(
     extractor: string | null;
     reason: string | null;
     payload: string | null;
+    agreement_attempts: number | null;
   }>;
   try {
     rows = await all(
       env.DB,
       `SELECT f.doc_id, f.raw_object_key, f.doc_kind, f.extractor,
-              rq.reason, rq.payload
+              rq.reason, rq.payload, rq.agreement_attempts
          FROM review_queue rq
          JOIN filings f ON f.doc_id = rq.doc_id
         WHERE rq.resolved = 0
@@ -186,6 +188,14 @@ export async function maybeRunDeterministicReviewDrain(
           -- every minute is pure churn (observed 2026-08-20: H-2025-20033330
           -- revision climbing ~1/min for days).
           AND COALESCE(rq.reason, '') NOT LIKE '%future_tx_date%'
+          -- Attempt-capped cascade disagreement is human-review terminal.
+          -- Re-extracting the same textPdf every minute (live 2026-08-26:
+          -- H-2026-20035235 revision 3600+, H-2026-20035196 2700+) only
+          -- re-opens the cascade receipt. Uncapped cascade rows still drain.
+          AND NOT (
+            COALESCE(rq.reason, '') = 'agreement_cascade_unresolved'
+            AND COALESCE(rq.agreement_attempts, 0) >= ${DEFAULT_AGREEMENT_ATTEMPT_CAP}
+          )
           AND LOWER(COALESCE(f.doc_kind, '')) <> 'scanned_pdf'
           AND (
             LOWER(COALESCE(f.doc_kind, '')) IN ('text_pdf', 'senate_html', 'oge_html', 'oge_text')
@@ -225,6 +235,13 @@ export async function maybeRunDeterministicReviewDrain(
     // Belt-and-braces: a scanned_pdf must never be re-extracted by the
     // deterministic path even if the extractor string looks text-ish.
     if ((row.doc_kind ?? '').trim().toLowerCase() === 'scanned_pdf') {
+      out.skipped++;
+      continue;
+    }
+    if (
+      (row.reason ?? '').trim() === 'agreement_cascade_unresolved'
+      && (Number(row.agreement_attempts) || 0) >= DEFAULT_AGREEMENT_ATTEMPT_CAP
+    ) {
       out.skipped++;
       continue;
     }

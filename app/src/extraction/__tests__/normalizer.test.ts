@@ -640,6 +640,55 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).not.toContain('low_confidence');
   });
 
+  it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(env, filing(), [
+      tx({
+        assetName: 'Exemplje Mega Corp Common Stock',
+        ticker: null,
+        txDate: '2012-08-14',
+        txType: 'S',
+        amountMin: 1001,
+        amountMax: 15000,
+        confidence: 0.6,
+      }),
+      tx({
+        assetName: 'Nothing to report for July 2026',
+        ticker: null,
+        txDate: null,
+        txType: 'S',
+        amountMin: null,
+        amountMax: null,
+        confidence: 0.2,
+      }),
+    ]);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(false);
+    expect(result.reviewReason).toBe('nothing_to_report');
+    expect(cap.insertedTx).toHaveLength(0);
+  });
+
+  it('does not insert Deleted PTR rows as live trades', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'VSNT', name: 'Versant Media Group, Inc.', aliases: '[]' }]);
+    const result = await normalize(env, filing({ filerId: 'house-ok01-kevin-hern' }), [
+      tx({
+        ticker: 'VSNT',
+        assetName: 'Versant Media Group, Inc. Class A',
+        txType: 'S',
+        txDate: '2026-08-05',
+        amountMin: 1001,
+        amountMax: 15000,
+        filingStatus: 'Deleted',
+        owner: 'joint',
+        confidence: 0.97,
+      }),
+    ]);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.reviewReason).toBe('deleted_rows_applied');
+  });
+
   it('drops pure form-chrome rows as extract_empty (not fake review trades)', async () => {
     const { env, cap } = makeEnv([{ ticker: 'GD', name: 'General Dynamics Corporation', aliases: '[]' }]);
     const result = await normalize(env, filing(), [
