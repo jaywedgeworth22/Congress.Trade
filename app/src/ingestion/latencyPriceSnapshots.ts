@@ -46,6 +46,9 @@ export const LATENCY_PRICE_EVENTS = [
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
+  'provider_plus_6h',
+  'provider_plus_12h',
+  'provider_plus_24h',
 ] as const;
 
 export type LatencyPriceEvent = (typeof LATENCY_PRICE_EVENTS)[number];
@@ -59,6 +62,9 @@ const FOLLOW_EVENTS: readonly FollowUpEvent[] = [
   'provider_plus_15m',
   'provider_plus_30m',
   'provider_plus_60m',
+  'provider_plus_6h',
+  'provider_plus_12h',
+  'provider_plus_24h',
 ];
 
 const FOLLOW_MS: Record<FollowUpEvent, number> = {
@@ -68,6 +74,9 @@ const FOLLOW_MS: Record<FollowUpEvent, number> = {
   provider_plus_15m: 15 * 60_000,
   provider_plus_30m: 30 * 60_000,
   provider_plus_60m: 60 * 60_000,
+  provider_plus_6h: 6 * 3600_000,
+  provider_plus_12h: 12 * 3600_000,
+  provider_plus_24h: 24 * 3600_000,
 };
 
 /** Do not ask for a live quote for an event that already aged out. */

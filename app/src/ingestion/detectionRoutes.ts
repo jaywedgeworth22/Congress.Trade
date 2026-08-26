@@ -62,7 +62,9 @@ import {
 } from './watcher.ts';
 
 async function requireIngestToken(c: { env: Env; req: { header: (name: string) => string | undefined } }): Promise<Response | null> {
-  const token = (await resolveSecret(c.env, 'INGEST_TOKEN')).value;
+  const token =
+    (await resolveSecret(c.env, 'INGEST_TOKEN')).value ||
+    (await resolveSecret(c.env, 'CT_INGEST_TOKEN' as keyof Env & string)).value;
   if (!token || !(await constantTimeEqual(c.req.header('Authorization') ?? '', `Bearer ${token}`))) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -414,7 +416,17 @@ export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
       }
 
       try {
-        insert = await insertFilingIfNew(c.env, filing, detectedAt);
+        const prevProbeAt =
+          typeof body.prevProbeAt === 'string' && body.prevProbeAt.trim()
+            ? body.prevProbeAt.trim()
+            : typeof body.prevCheckedAt === 'string' && body.prevCheckedAt.trim()
+            ? body.prevCheckedAt.trim()
+            : null;
+        const probeIntervalSec =
+          typeof body.probeIntervalSec === 'number' && Number.isFinite(body.probeIntervalSec)
+            ? Math.max(0, Math.round(body.probeIntervalSec))
+            : null;
+        insert = await insertFilingIfNew(c.env, filing, detectedAt, { prevProbeAt, probeIntervalSec });
       } catch (err) {
         return c.json({ error: (err as Error).message }, 500);
       }

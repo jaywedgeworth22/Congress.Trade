@@ -1316,6 +1316,15 @@ export const LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS = [
   `ALTER TABLE latency_price_snapshots ADD COLUMN swept_12h INTEGER NOT NULL DEFAULT 0;`
 ] as const;
 
+/**
+ * 0096_gov_probe_intervals_and_24h_snapshots.sql
+ */
+export const GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filings ADD COLUMN prev_probe_at TEXT',
+  'ALTER TABLE filings ADD COLUMN probe_interval_sec INTEGER',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN congress_window_start TEXT',
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1448,6 +1457,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...X_AUTH_SCHEMA_STATEMENTS,
   // 0095_latency_snapshot_12h_sweep.sql
   ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
+  // 0096_gov_probe_intervals_and_24h_snapshots.sql
+  ...GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [

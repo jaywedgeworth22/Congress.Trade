@@ -266,10 +266,30 @@ async function resolveIngestFilerId(
   return filerId;
 }
 
+export async function getPreviousSuccessfulSourceAttemptAt(
+  env: Env,
+  source: 'house' | 'senate' | 'executive',
+  beforeIso: string,
+): Promise<string | null> {
+  try {
+    const row = await get<{ attempted_at: string }>(
+      env.DB,
+      `SELECT attempted_at FROM source_attempts
+        WHERE source = ? AND outcome = 'success' AND attempted_at < ?
+        ORDER BY attempted_at DESC LIMIT 1`,
+      [source, beforeIso],
+    );
+    return row?.attempted_at ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function insertFilingIfNew(
   env: Env,
   f: DiscoveredFiling,
   nowIso: string,
+  opts?: { prevProbeAt?: string | null; probeIntervalSec?: number | null },
 ): Promise<InsertFilingResult> {
   // GOVERNOR 2: discovery upserts are a known storm writer (a source that
   // suddenly returns thousands of "new" rows, or a crawler loop). Past the
@@ -316,10 +336,10 @@ export async function insertFilingIfNew(
       `INSERT OR IGNORE INTO filings
        (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
         raw_object_key, ingest_status, doc_kind, extractor, model_version,
-        confidence, first_seen_at, source_updated_at, error)
+        confidence, first_seen_at, source_updated_at, error, prev_probe_at, probe_interval_sec)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', ?, NULL, NULL,
-             NULL, ?, NULL, NULL)`,
-      [f.docId, f.chamber, filerId ?? null, filedDate, f.sourceUrl, docKind, nowIso],
+             NULL, ?, NULL, NULL, ?, ?)`,
+      [f.docId, f.chamber, filerId ?? null, filedDate, f.sourceUrl, docKind, nowIso, opts?.prevProbeAt ?? null, opts?.probeIntervalSec ?? null],
     ],
     ingestionOutboxInsertForDoc(f.docId, nowIso),
   ]);
@@ -421,12 +441,15 @@ async function persistAndEnqueue(
   env: Env,
   filings: DiscoveredFiling[],
   nowIso: string,
-  opts: { maxNew?: number } = {},
+  opts: { maxNew?: number; prevProbeAt?: string | null; probeIntervalSec?: number | null } = {},
 ): Promise<number> {
   let newCount = 0;
   for (const f of filings) {
     if (opts.maxNew !== undefined && newCount >= opts.maxNew) break;
-    const insertResult = await insertFilingIfNew(env, f, nowIso);
+    const insertResult = await insertFilingIfNew(env, f, nowIso, {
+      prevProbeAt: opts.prevProbeAt,
+      probeIntervalSec: opts.probeIntervalSec,
+    });
     if (insertResult === 'inserted') {
       await recordDisclosureLatencyCandidate(env, f, nowIso);
       await enqueueFilingNew(env, f);
@@ -638,7 +661,11 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   }
 
   const discovered: DiscoveredFiling[] = Array.from(byDoc.values());
-  const newCount = await persistAndEnqueue(env, discovered, nowIso);
+  const prevAttemptAt = await getPreviousSuccessfulSourceAttemptAt(env, 'house', nowIso);
+  const probeIntervalSec = prevAttemptAt
+    ? Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(prevAttemptAt)) / 1000))
+    : null;
+  const newCount = await persistAndEnqueue(env, discovered, nowIso, { prevProbeAt: prevAttemptAt, probeIntervalSec });
   await logPoll(env, 'house', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'house', now);
   await recordSourceAttempt(env, 'house', nowIso, 'success', newCount, null);
@@ -733,7 +760,11 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
       filerName,
     };
   });
-  const newCount = await persistAndEnqueue(env, discovered, nowIso);
+  const prevAttemptAt = await getPreviousSuccessfulSourceAttemptAt(env, 'senate', nowIso);
+  const probeIntervalSec = prevAttemptAt
+    ? Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(prevAttemptAt)) / 1000))
+    : null;
+  const newCount = await persistAndEnqueue(env, discovered, nowIso, { prevProbeAt: prevAttemptAt, probeIntervalSec });
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'senate', now);
   await recordSourceAttempt(env, 'senate', nowIso, 'success', newCount, null);
@@ -782,7 +813,11 @@ export async function pollExecutive(
   if (filings === null) return null;
   const maxFilings = Math.min(Math.max(Math.floor(opts.maxFilings ?? 100), 1), 500);
   if (opts.dryRun) return Math.min(filings.length, maxFilings);
-  const newCount = await persistAndEnqueue(env, filings, nowIso, { maxNew: maxFilings });
+  const prevAttemptAt = await getPreviousSuccessfulSourceAttemptAt(env, 'executive', nowIso);
+  const probeIntervalSec = prevAttemptAt
+    ? Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(prevAttemptAt)) / 1000))
+    : null;
+  const newCount = await persistAndEnqueue(env, filings, nowIso, { maxNew: maxFilings, prevProbeAt: prevAttemptAt, probeIntervalSec });
   await setLastPollAt(env, 'oge', now);
   await logPoll(env, 'oge', nowIso, newCount, nowIso);
   // Liveness receipt (owner 2026-08-10: polling must never be silently off
