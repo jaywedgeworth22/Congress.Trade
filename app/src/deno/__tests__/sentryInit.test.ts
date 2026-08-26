@@ -118,6 +118,38 @@ describe('production Sentry init', () => {
     expect(sentry.captureException(new Error('later'))).toBeUndefined();
   });
 
+  it('drops expected pdf.js XRef noise before send (CONGRESS-TRADE-1C)', () => {
+    const options = buildSentryInitOptions(
+      { SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1' },
+      0.1,
+    );
+    const beforeSend = options.beforeSend as (event: Record<string, unknown>) => unknown;
+    expect(beforeSend({
+      exception: {
+        values: [{
+          type: 'XRefEntryException',
+          value: 'Bad (uncompressed) XRef entry: 13R',
+        }],
+      },
+    })).toBeNull();
+  });
+
+  it('does not capture expected pdf.js XRef exceptions after init', () => {
+    const sdk = fakeSdk();
+    const sentry = createSentryBindings(sdk);
+    sentry.initProductionSentry({
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+    });
+    const err = Object.assign(new Error('Bad (uncompressed) XRef entry: 14R'), {
+      name: 'XRefEntryException',
+    });
+    expect(sentry.captureException(err)).toBeUndefined();
+    expect(sdk.captureException).not.toHaveBeenCalled();
+    const real = new Error('Deno cron tick exceeded 45000ms deadline');
+    sentry.captureException(real);
+    expect(sdk.captureException).toHaveBeenCalledWith(real, undefined);
+  });
+
   it('scrubs secrets from events before send', () => {
     const credential = 'do-not-serialize-this-credential';
     const options = buildSentryInitOptions(
@@ -182,6 +214,7 @@ describe('production entry wiring', () => {
     expect(src).toContain('resolveProductionSentryEnv');
     expect(src).toContain('initProductionSentry');
     expect(src).toContain('captureException(err, { tags: { cron: \'deno-tick\' } })');
+    expect(src).toContain('isExpectedPdfParseNoise');
     expect(src).not.toContain('sentryDummy');
   });
 

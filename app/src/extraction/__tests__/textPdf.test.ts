@@ -482,6 +482,24 @@ describe('TextPdfExtractor page count', () => {
     expect(result.pageCount).toBeNull();
   });
 
+  it('fail-softs when unpdf throws XRefEntryException (CONGRESS-TRADE-1C)', async () => {
+    unpdfMocks.getDocumentProxy.mockRejectedValue(
+      Object.assign(new Error('Bad (uncompressed) XRef entry: 13R'), {
+        name: 'XRefEntryException',
+      }),
+    );
+
+    const extractor = new TextPdfExtractor();
+    const result = await extractor.extract({
+      filing: textPdfFiling(),
+      bytes: new ArrayBuffer(8),
+    });
+
+    expect(result.transactions).toEqual([]);
+    expect(result.raw).toBe('');
+    expect((result as { pageCount?: number | null }).pageCount).toBeNull();
+  });
+
   it('does not detach the caller-supplied ArrayBuffer (regression guard for Sentry CONGRESS-TRADE-2)', async () => {
     unpdfMocks.getDocumentProxy.mockImplementation(async (view: Uint8Array) => {
       structuredClone(view.buffer, { transfer: [view.buffer] });

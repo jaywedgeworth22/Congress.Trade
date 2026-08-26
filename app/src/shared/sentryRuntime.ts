@@ -9,6 +9,7 @@
  */
 
 import { readBuildInfo } from './buildInfo.ts';
+import { isExpectedPdfParseNoise, sentryEventLooksLikePdfParseNoise } from './pdfParseErrors.ts';
 import { scrubSentryEvent } from './sentryScrub.ts';
 import type { Env } from './types.ts';
 
@@ -86,7 +87,11 @@ export function buildSentryInitOptions(
     initialScope: {
       tags: { runtime: 'coolify-docker' },
     },
-    beforeSend: <T>(event: T) => scrubSentryEvent(event),
+    beforeSend: <T>(event: T) => {
+      const scrubbed = scrubSentryEvent(event);
+      if (sentryEventLooksLikePdfParseNoise(scrubbed)) return null;
+      return scrubbed;
+    },
     beforeSendTransaction: <T>(event: T) => scrubSentryEvent(event),
     beforeSendLog: <T>(log: T) => scrubSentryEvent(log),
     enableLogs: true,
@@ -189,6 +194,7 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
 
   const captureException = (err: unknown, options?: unknown): unknown => {
     if (!initialized) return undefined;
+    if (isExpectedPdfParseNoise(err)) return undefined;
     try {
       return sdk.captureException(err, options);
     } catch {
