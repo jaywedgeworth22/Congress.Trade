@@ -375,13 +375,24 @@ export async function insertFilingIfNew(
               model_version = NULL,
               confidence = NULL,
               first_seen_at = ?,
+              prev_probe_at = COALESCE(?, prev_probe_at),
+              probe_interval_sec = COALESCE(?, probe_interval_sec),
               source_updated_at = NULL,
               error = NULL
         WHERE doc_id = ?
           AND ingest_status = 'provider_seeded'
           AND extractor = 'fmp-senate-latest'
           AND raw_object_key IS NULL`,
-        [f.chamber, filerId ?? null, filedDate, f.sourceUrl, nowIso, f.docId],
+        [
+          f.chamber,
+          filerId ?? null,
+          filedDate,
+          f.sourceUrl,
+          nowIso,
+          opts?.prevProbeAt ?? null,
+          opts?.probeIntervalSec ?? null,
+          f.docId,
+        ],
       );
       upgradedProviderSeed = (upgrade.meta?.changes ?? 0) > 0;
     }
