@@ -1364,7 +1364,7 @@ struct SignInPanel: View {
             if let notice = authenticationNotice {
                 Text(notice)
                     .font(.footnote)
-                    .foregroundStyle(notice == "Signed in." ? .secondary : .red)
+                    .foregroundStyle(notice == "Signed in." ? Color.secondary : Color.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
