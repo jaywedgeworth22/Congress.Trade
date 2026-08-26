@@ -21,12 +21,21 @@ class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextP
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        if let window = scenes
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows
-            .first(where: { $0.isKeyWindow })
-        {
-            return window
+        let activeScene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        if let scene = activeScene {
+            // Prefer the key window, then any visible normal-level window.
+            // On iPad a sheet can be frontmost while `isKeyWindow` is still
+            // false for the hosting window — falling through to an empty
+            // `ASPresentationAnchor()` made Google sign-in look hung.
+            if let window = scene.windows.first(where: { $0.isKeyWindow }) {
+                return window
+            }
+            if let window = scene.windows.first(where: { $0.windowLevel == .normal && !$0.isHidden }) {
+                return window
+            }
+            if let window = scene.windows.first {
+                return window
+            }
         }
         if let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow }) {
             return window

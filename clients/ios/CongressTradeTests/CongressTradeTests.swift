@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import StoreKit
 import SwiftData
 import SwiftUI
 import UIKit
@@ -2061,6 +2062,25 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertFalse(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("website"))
         XCTAssertFalse(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("congress.trade"))
         XCTAssertTrue(PremiumPricing.deliveryUpgradeMessage.localizedCaseInsensitiveContains("in-app purchase"))
+
+        let purchaseMsg = PremiumPricing.purchaseFailureMessage(
+            APIError.transport(URLError(.notConnectedToInternet))
+        )
+        XCTAssertTrue(purchaseMsg.localizedCaseInsensitiveContains("offline"))
+        XCTAssertFalse(purchaseMsg.localizedCaseInsensitiveContains("Apple took the purchase"))
+
+        let redeemMsg = PremiumPricing.redeemFailureMessage(
+            APIError.server(status: 400, message: "Command failed", retryAfterSeconds: nil)
+        )
+        XCTAssertTrue(redeemMsg.localizedCaseInsensitiveContains("Apple took the purchase"))
+        XCTAssertTrue(redeemMsg.localizedCaseInsensitiveContains("Restore Purchases"))
+
+        XCTAssertTrue(PremiumPricing.isQuietPurchaseCancellation(
+            NSError(domain: SKErrorDomain, code: SKError.paymentCancelled.rawValue)
+        ))
+        XCTAssertFalse(PremiumPricing.isQuietPurchaseCancellation(
+            APIError.server(status: 400, message: "nope", retryAfterSeconds: nil)
+        ))
 
         let pricing = AppLegal.destinations.first { $0.id == "pricing" }
         XCTAssertEqual(pricing?.id, "pricing")
