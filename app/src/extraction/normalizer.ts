@@ -344,7 +344,6 @@ export async function normalize(
     && !looksLikeNothingToReport(p.assetName)
   );
   const droppedFormChrome = parsed.length - usableParsed.length;
-  const droppedFormSample = parsed.some((p) => looksLikePtrFormSampleAsset(p.assetName));
   const sawNothingToReport = parsed.some((p) =>
     looksLikeNothingToReport(p.assetName) || looksLikeNothingToReport(p.rawText)
   );
@@ -475,12 +474,27 @@ export async function normalize(
       liveOther,
       liveOtherDated,
     })) {
+      // textPdf Deleted amendments are not vision supersedes.  A hand-rejected
+      // later official PTR (Hern H-2026-20035196) must still unpublish the
+      // matching live row on reprocess after deploy.
+      if (deletedFlagged.length > 0) {
+        await deprecateDeletedMatches(env, filing, deletedFlagged, nowIso);
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: 'deleted_rows_applied',
+        };
+      }
       return { transactions, minConfidence, needsReview: false, published: false };
     }
   }
 
   if (needsReview) {
-    if (flagged.length === 0 && (sawNothingToReport || droppedFormSample)) {
+    // Form-sample chrome alone is not NTR.  Example Mega Corp is printed on
+    // every House PTR; OCR often reads it and misses the real trades.
+    if (flagged.length === 0 && sawNothingToReport) {
       const closed = await resolveVerifiedEmpty(
         env,
         filing,
@@ -512,7 +526,7 @@ export async function normalize(
           transactions: [],
           minConfidence: 0,
           needsReview: false,
-          published: true,
+          published: false,
           reviewReason: 'deleted_rows_applied',
         };
       }
@@ -599,7 +613,7 @@ export async function normalize(
       transactions: [],
       minConfidence,
       needsReview: !closed,
-      published: closed,
+      published: false,
       reviewReason: deletedFlagged.length > 0 ? 'deleted_rows_applied' : 'amendment_already_persisted',
     };
   }
@@ -1727,10 +1741,13 @@ async function resolveProcessedNoNewRows(
   review: ReviewSnapshot | null,
   resolutionReason: string,
 ): Promise<boolean> {
+  // This doc inserted zero live rows.  trg_review_queue_honest_resolution
+  // aborts resolved=1 + published unless a live transaction exists on THIS
+  // doc_id.  verified_empty is the honest close (migration 0082).
   return writeResolvedReview(env, filing, nowIso, review, {
-    resolutionKind: 'published',
+    resolutionKind: 'verified_empty',
     resolutionReason,
-    ingestStatus: 'persisted',
+    ingestStatus: 'verified_empty',
     reason: resolutionReason,
   });
 }

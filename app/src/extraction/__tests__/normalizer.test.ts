@@ -36,11 +36,15 @@ interface Captured {
   batches: string[][];
   auditRows: unknown[][];
   masterReads: number;
+  deprecated: unknown[][];
 }
 
 function makeEnv(
   securities: Array<{ ticker: string; name: string | null; aliases: string | null }>,
-  opts: { failAudit?: boolean } = {},
+  opts: {
+    failAudit?: boolean;
+    resolvedReview?: { resolved: number; review_revision: number; agreement_suppressed_at: string | null };
+  } = {},
 ) {
   const cap: Captured = {
     insertedTx: [],
@@ -51,6 +55,7 @@ function makeEnv(
     batches: [],
     auditRows: [],
     masterReads: 0,
+    deprecated: [],
   };
   const insertedByRowKey = new Map<string, Record<string, unknown>>();
   const outboxSeen = new Set<string>();
@@ -73,7 +78,7 @@ function makeEnv(
       },
       async first<T>() {
         if (/SELECT resolved, review_revision, agreement_suppressed_at/i.test(sql)) {
-          return null as T | null;
+          return (opts.resolvedReview ?? null) as T | null;
         }
         return null as T | null;
       },
@@ -107,6 +112,7 @@ function makeEnv(
         }
         else if (/INSERT(?: OR IGNORE)? INTO ingestion_decisions/i.test(sql)) cap.auditRows.push(this._params);
         else if (/UPDATE filings/i.test(sql)) cap.filingUpdates.push(this._params);
+        else if (/SET deprecated_at/i.test(sql)) cap.deprecated.push(this._params);
         return { success: true, meta: { changes } } as unknown;
       },
     };
@@ -685,8 +691,68 @@ describe('normalize', () => {
     ]);
     expect(cap.insertedTx).toHaveLength(0);
     expect(result.needsReview).toBe(false);
-    expect(result.published).toBe(true);
+    expect(result.published).toBe(false);
     expect(result.reviewReason).toBe('deleted_rows_applied');
+    expect(cap.reviewRows[0]).toEqual(expect.arrayContaining(['verified_empty', 'deleted_rows_applied']));
+    expect(cap.filingUpdates[0][0]).toBe('verified_empty');
+    expect(cap.reviewSql.some((sql) => /resolution_kind = 'published'/.test(sql))).toBe(false);
+  });
+
+  it('parks a form-sample-only extract for review instead of verified_empty', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(env, filing(), [
+      tx({
+        assetName: 'Example Mega Corp Common Stock',
+        ticker: null,
+        txDate: '2012-08-14',
+        txType: 'S',
+        amountMin: 1001,
+        amountMax: 15000,
+        confidence: 0.6,
+      }),
+    ]);
+    expect(result.needsReview).toBe(true);
+    expect(result.published).toBe(false);
+    expect(result.reviewReason).not.toBe('nothing_to_report');
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(String(cap.reviewRows[0][1])).toContain('form_chrome_only');
+  });
+
+  it('still deprecates matching live rows when the Deleted amendment was already rejected', async () => {
+    const { env, cap } = makeEnv(
+      [{ ticker: 'VSNT', name: 'Versant Media Group, Inc.', aliases: '[]' }],
+      {
+        resolvedReview: {
+          resolved: 1,
+          review_revision: 4,
+          agreement_suppressed_at: null,
+        },
+      },
+    );
+    const result = await normalize(env, filing({ filerId: 'house-ok01-kevin-hern' }), [
+      tx({
+        ticker: 'VSNT',
+        assetName: 'Versant Media Group, Inc. Class A',
+        txType: 'S',
+        txDate: '2026-08-05',
+        amountMin: 1001,
+        amountMax: 15000,
+        filingStatus: 'Deleted',
+        owner: 'joint',
+        confidence: 0.97,
+      }),
+    ]);
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(false);
+    expect(result.reviewReason).toBe('deleted_rows_applied');
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(cap.deprecated).toHaveLength(1);
+    expect(cap.deprecated[0]).toEqual(expect.arrayContaining([
+      'house-ok01-kevin-hern',
+      '2026-08-05',
+      'S',
+      'VSNT',
+    ]));
   });
 
   it('drops pure form-chrome rows as extract_empty (not fake review trades)', async () => {
