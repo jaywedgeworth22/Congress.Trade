@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-27 CLAUDE — Litestream B2 multipart hardening (part-size 10MB)
+
+Preventive port of the ST fix after Usage-Monitor's identical B2 L1-compaction
+retry storm (119 checksum-mismatch multiparts in ~2h on 2026-08-27) burned the
+shared Backblaze daily transaction caps.  `app/litestream.yml` adds
+`part-size: 10MB` and `concurrency: 2` (was 5MB default / 1).  Config-only;
+no schema change.  Rollout: `docs/rollouts/2026-08-27-litestream-b2-part-size.md`.
+
 ## 2026-08-26 CURSOR — Provider-missing stub auto-close is live (#2221)
 
 Live observation path rejects open `provider-missing-*` review stubs when
