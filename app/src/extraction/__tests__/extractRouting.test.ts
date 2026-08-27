@@ -9,6 +9,10 @@ import {
   isHouseElectronicDocId,
   isHousePaperScanDocId,
   looksLikePlausibleTradeTable,
+  looksLikeHeaderContaminatedAsset,
+  looksLikePtrFormSampleAsset,
+  looksLikeNothingToReport,
+  isDeletedFilingStatus,
   shouldEnqueueAgreement,
   shouldSkipAgreementForReviewReason,
 } from '../extractRouting.ts';
@@ -88,6 +92,15 @@ describe('classifyHouseExtractRoute / allowOpenRouterFiles', () => {
 });
 
 describe('evaluateExtractQuality — hard-stops', () => {
+  it('treats the printed PTR Example Mega Corp sample as form chrome', () => {
+    expect(looksLikePtrFormSampleAsset('Example Mega Corp Common Stock')).toBe(true);
+    expect(looksLikePtrFormSampleAsset('Exemplje Mega Corp.')).toBe(true);
+    expect(looksLikeHeaderContaminatedAsset('Exemplje Mega Corp Common Stock')).toBe(true);
+    expect(looksLikeNothingToReport('Nothing to report for July 2026')).toBe(true);
+    expect(isDeletedFilingStatus('Deleted')).toBe(true);
+    expect(isDeletedFilingStatus('New')).toBe(false);
+  });
+
   it('hard-stops letterhead-as-asset (Clerk / B81 Cannon)', () => {
     const junk = [
       tx({

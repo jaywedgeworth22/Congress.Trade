@@ -112,7 +112,25 @@ export function looksLikeHeaderContaminatedAsset(assetName: string | null): bool
   if (!assetName) return false;
   return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:|\bMember of the U\.?S\.?\s+House\b|\bOfficer or Employee\b|\bOffice Telephone\b|\bEmploying Off(?:ice)?\b|\bunreadable asset\b|HOUSE OF\s+REP|\bCfficar\b|\bDiotict\b|Use oSucem|I certify that|Signature of Reporting|\bFULL ASSET NAME\b|\bif you answered\b|\bfiled in error\b|\bpreviously and erroneously filed\b|\bplease contact\b|\bChief of Staff\b|\bServing the .+ Valley\b)/i.test(
     assetName,
-  );
+  ) || looksLikePtrFormSampleAsset(assetName);
+}
+
+/**
+ * Printed House PTR sample row ("Example Mega Corp", dated 8/14/12). OCR
+ * often reads it as Exemplje. It is form chrome, never a real trade.
+ */
+export function looksLikePtrFormSampleAsset(assetName: string | null): boolean {
+  if (!assetName) return false;
+  return /exempl(?:je|e)\s+mega\s+corp|\bexample\s+mega\s+corp/i.test(assetName);
+}
+
+export function looksLikeNothingToReport(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /nothing\s+to\s+report/i.test(text);
+}
+
+export function isDeletedFilingStatus(status: string | null | undefined): boolean {
+  return typeof status === 'string' && /\bdeleted\b/i.test(status.trim());
 }
 
 export function looksLikeColumnHeaderAsset(assetName: string | null): boolean {
