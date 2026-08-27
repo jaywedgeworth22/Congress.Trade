@@ -21,6 +21,7 @@ import {
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { LegacyUsageTelemetryOutboxEventInput } from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from '../secrets/infisical.ts';
+import { getDatadogTransport } from './datadog.ts';
 import type { Env, ThirdPartyUsageTelemetryEvent } from './types.ts';
 
 interface TelemetryContext {
@@ -1086,6 +1087,22 @@ export async function trackedFetch(
   const startedAt = Date.now();
   try {
     const response = await fetchImpl(input, init);
+    const transport = getDatadogTransport();
+    if (transport.enabled) {
+      transport.span({
+        name: 'http.client.request',
+        resource: `${descriptor.service}.${descriptor.operation}`,
+        startMs: startedAt,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error: !response.ok,
+        meta: {
+          'outbound.provider': mapped.provider,
+          'outbound.service': descriptor.service,
+          'outbound.operation': descriptor.operation,
+          'http.status_code': String(response.status),
+        },
+      });
+    }
     if (env) {
       const event = baseEvent(env, {
         provider: mapped.provider,
@@ -1112,6 +1129,22 @@ export async function trackedFetch(
     }
     return response;
   } catch (error) {
+    const transport = getDatadogTransport();
+    if (transport.enabled) {
+      transport.span({
+        name: 'http.client.request',
+        resource: `${descriptor.service}.${descriptor.operation}`,
+        startMs: startedAt,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error: true,
+        meta: {
+          'outbound.provider': mapped.provider,
+          'outbound.service': descriptor.service,
+          'outbound.operation': descriptor.operation,
+          'error.type': error instanceof Error ? error.name : 'unknown',
+        },
+      });
+    }
     if (env) {
       const event = baseEvent(env, {
         provider: mapped.provider,

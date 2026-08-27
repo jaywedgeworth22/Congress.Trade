@@ -15,7 +15,13 @@ import {
   shouldSampleDatadogTrace,
 } from '../datadogTransport.ts';
 import { renderDatadogRumScript } from '../datadogRum.ts';
-import { datadogRequestMiddleware, initProductionDatadog, resetDatadogForTests } from '../datadog.ts';
+import {
+  datadogRequestMiddleware,
+  initProductionDatadog,
+  resetDatadogForTests,
+  startDatadogSpan,
+  traceDatadogOperation,
+} from '../datadog.ts';
 import { Hono } from 'hono';
 
 afterEach(() => {
@@ -50,10 +56,9 @@ describe('Datadog site + intake mapping', () => {
 });
 
 describe('fail-closed Datadog backend config', () => {
-  it('enables logs+APM only when API key and a known site are both set', () => {
+  it('enables logs+APM with API key and defaults to us5.datadoghq.com', () => {
     const ready = resolveDatadogBackend({
       DD_API_KEY: 'abc123',
-      DD_SITE: 'us5.datadoghq.com',
       DD_ENV: 'production',
     });
     expect(ready).toMatchObject({
@@ -66,7 +71,34 @@ describe('fail-closed Datadog backend config', () => {
     if (ready.enabled) expect(ready.apiKey).toBe('abc123');
   });
 
-  it('no-ops when keys and site are missing', () => {
+  it('accepts DATADOG_API_KEY alias and explicit site', () => {
+    const ready = resolveDatadogBackend({
+      DATADOG_API_KEY: 'alt_key_123',
+      DD_SITE: 'datadoghq.com',
+      DD_ENV: 'staging',
+    });
+    expect(ready).toMatchObject({
+      enabled: true,
+      reason: 'ready',
+      site: 'datadoghq.com',
+      env: 'staging',
+    });
+    if (ready.enabled) expect(ready.apiKey).toBe('alt_key_123');
+  });
+
+  it('accepts DD_AGENT_HOST without API key', () => {
+    const ready = resolveDatadogBackend({
+      DD_AGENT_HOST: '127.0.0.1',
+    });
+    expect(ready).toMatchObject({
+      enabled: true,
+      reason: 'ready',
+      site: 'us5.datadoghq.com',
+    });
+    if (ready.enabled) expect(ready.agentHost).toBe('127.0.0.1');
+  });
+
+  it('no-ops when keys, agent host, and site are missing', () => {
     expect(resolveDatadogBackend({})).toEqual({ enabled: false, reason: 'missing-api-key' });
     expect(resolveDatadogBackend({ DD_API_KEY: '   ' })).toEqual({
       enabled: false,
@@ -74,15 +106,7 @@ describe('fail-closed Datadog backend config', () => {
     });
   });
 
-  it('fails closed on partial or unknown site instead of inventing us1', () => {
-    expect(resolveDatadogBackend({ DD_API_KEY: 'abc' })).toEqual({
-      enabled: false,
-      reason: 'missing-site',
-    });
-    expect(resolveDatadogBackend({ DD_SITE: 'us5.datadoghq.com' })).toEqual({
-      enabled: false,
-      reason: 'partial',
-    });
+  it('fails closed on invalid site host', () => {
     expect(resolveDatadogBackend({
       DD_API_KEY: 'abc',
       DD_SITE: 'made-up.datadog.example',
@@ -99,11 +123,10 @@ describe('fail-closed Datadog backend config', () => {
 });
 
 describe('fail-closed Datadog RUM config', () => {
-  it('enables RUM only with client token, application id, and site', () => {
+  it('enables RUM with client token, application id, and defaults site to us5', () => {
     const rum = resolveDatadogRum({
       DD_CLIENT_TOKEN: 'pub_token',
       DD_APPLICATION_ID: 'app-id-1',
-      DD_SITE: 'us5.datadoghq.com',
     });
     expect(rum).toMatchObject({
       enabled: true,
@@ -116,19 +139,20 @@ describe('fail-closed Datadog RUM config', () => {
     const rum = resolveDatadogRum({
       NEXT_PUBLIC_DD_CLIENT_TOKEN: 'pub_next',
       NEXT_PUBLIC_DD_APPLICATION_ID: 'app-next',
-      NEXT_PUBLIC_DD_SITE: 'us5.datadoghq.com',
+      NEXT_PUBLIC_DD_SITE: 'datadoghq.com',
     });
     expect(rum.enabled).toBe(true);
     if (rum.enabled) {
       expect(rum.clientToken).toBe('pub_next');
       expect(rum.applicationId).toBe('app-next');
+      expect(rum.site).toBe('datadoghq.com');
     }
   });
 
   it('fails closed on partial RUM keys', () => {
     expect(resolveDatadogRum({ DD_CLIENT_TOKEN: 'pub' })).toEqual({
       enabled: false,
-      reason: 'partial',
+      reason: 'missing-application-id',
     });
     expect(resolveDatadogRum({})).toEqual({
       enabled: false,
@@ -249,5 +273,19 @@ describe('Datadog process init + request middleware', () => {
       async (_env, key) => (key === 'DD_API_KEY' ? { value: 'from-infisical' } : {}),
     );
     expect(resolved.DD_API_KEY).toBe('from-infisical');
+  });
+
+  it('supports traceDatadogOperation and startDatadogSpan', async () => {
+    const fetchImpl = vi.fn(async () => new Response('ok', { status: 202 }));
+    initProductionDatadog({ DD_API_KEY: 'abc123' }, fetchImpl as never);
+
+    const result = await traceDatadogOperation('custom.task', 'queue.process', async () => {
+      const span = startDatadogSpan('sub.task', { resource: 'db.query' });
+      span.setTag('query.table', 'transactions');
+      span.finish();
+      return 'processed';
+    });
+
+    expect(result).toBe('processed');
   });
 });

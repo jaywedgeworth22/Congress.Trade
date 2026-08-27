@@ -778,16 +778,25 @@ export interface Env {
   PREVIEW_DEPLOYMENT?: string;
   /** Uniform trace sampling rate (0-1) for the Sentry Cloudflare SDK; overrides the code default. */
   SENTRY_TRACES_SAMPLE_RATE?: string;
-  /** Datadog API key for agentless logs + APM intake.  Fail-closed if missing with DD_SITE. */
+  /** Datadog API key for agentless logs + APM intake. */
   DD_API_KEY?: string;
+  DATADOG_API_KEY?: string;
   /** Datadog application key (fleet registry / synthetics).  Not required to send logs or traces. */
   DD_APP_KEY?: string;
-  /** Datadog site, e.g. us5.datadoghq.com.  No default — missing site disables send. */
+  DATADOG_APP_KEY?: string;
+  /** Datadog site, e.g. us5.datadoghq.com. Defaults to us5.datadoghq.com. */
   DD_SITE?: string;
   /** Optional APM/log service override.  Default congress-trade. */
   DD_SERVICE?: string;
   /** Optional Datadog env tag.  Falls back to SENTRY_ENVIRONMENT / USAGE_MONITOR_ENVIRONMENT. */
   DD_ENV?: string;
+  /** Optional Datadog Agent host / URL (e.g. 127.0.0.1 or http://127.0.0.1:8126). */
+  DD_AGENT_HOST?: string;
+  DD_TRACE_AGENT_URL?: string;
+  DD_TRACE_AGENT_HOSTNAME?: string;
+  DD_TRACE_URL?: string;
+  /** Optional APM trace sample rate (0.0 to 1.0, defaults to 0.2). */
+  DD_TRACE_SAMPLE_RATE?: string;
   /** Public RUM client token.  Aliases: DD_RUM_CLIENT_TOKEN, NEXT_PUBLIC_DD_CLIENT_TOKEN. */
   DD_CLIENT_TOKEN?: string;
   DD_RUM_CLIENT_TOKEN?: string;

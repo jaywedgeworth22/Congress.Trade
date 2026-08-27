@@ -120,14 +120,17 @@ export function createDatadogTransport(
   const postJson = async (url: string, body: unknown, extraHeaders: Record<string, string> = {}) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      ...extraHeaders,
+    };
+    if (config.apiKey) {
+      headers['DD-API-KEY'] = config.apiKey;
+    }
     try {
       await fetchImpl(url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'DD-API-KEY': config.apiKey,
-          ...extraHeaders,
-        },
+        headers,
         body: JSON.stringify(body),
         signal: controller.signal,
       });
