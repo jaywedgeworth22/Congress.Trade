@@ -27,16 +27,9 @@ struct DeliveryView: View {
                     Section {
                         TradeDisclosureAlertsToggle(isCompact: true)
                     } footer: {
-                        HStack(alignment: .top, spacing: 3) {
-                            Text("To setup and customize push alerts, click")
-                            Image(systemName: "line.3.horizontal")
-                                .font(.caption2.weight(.bold))
-                                .padding(2)
-                                .background(AppTheme.glyphGrey.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                            Text("in the top right to find extra customizable push alert features.")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text("Customize push alerts in the \(Image(systemName: "line.3.horizontal")) menu at top right.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     // Export sits beside the upgrade entry point on purpose (owner
@@ -78,17 +71,10 @@ struct DeliveryView: View {
                                 SubscribeWithAppleProminentButton {
                                     showSubscribe = true
                                 }
-                                HStack(alignment: .top, spacing: 3) {
-                                    Text("These deliveries are used to connect your server or app to our real-time data.  Configure Push Alerts via")
-                                    Image(systemName: "line.3.horizontal")
-                                        .font(.caption2.weight(.bold))
-                                        .padding(2)
-                                        .background(AppTheme.glyphGrey.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                                    Text("in the top right.")
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 2)
+                                Text("Deliveries connect your server or app to real-time data. Configure push alerts in the \(Image(systemName: "line.3.horizontal")) menu.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 2)
                             }
                             .padding(.vertical, 4)
                         } else {
@@ -168,16 +154,9 @@ struct DeliveryView: View {
                         Text("Create Delivery")
                     } footer: {
                         if store.signedIn && store.isPremium {
-                            HStack(alignment: .top, spacing: 3) {
-                                Text("These deliveries are used to connect your server or app to our real-time data.  Configure Push Alerts via")
-                                Image(systemName: "line.3.horizontal")
-                                    .font(.caption2.weight(.bold))
-                                    .padding(2)
-                                    .background(AppTheme.glyphGrey.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                                Text("in the top right.")
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            Text("Deliveries connect your server or app to real-time data. Configure push alerts in the \(Image(systemName: "line.3.horizontal")) menu.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
@@ -216,6 +195,8 @@ struct DeliveryView: View {
             .frame(maxWidth: .infinity)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            .navigationBarTitleDisplayMode(.inline)
+            .ctSolidFeedHeader()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HeaderIconButton(
@@ -276,8 +257,8 @@ struct DeliveryView: View {
 struct DeliveryMethodExplainer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Webhooks: we POST each new filing to your URL, HMAC-signed.")
-            Text("Live stream (SSE): one open connection that pushes filings as they land.")
+            Text("Webhooks: POST new filings to your URL (HMAC signed).")
+            Text("SSE: Live stream over an open connection.")
         }
         .font(.caption)
         .foregroundStyle(.secondary)

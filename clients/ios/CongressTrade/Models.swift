@@ -1490,6 +1490,7 @@ struct MemberLeaderboardItem: Decodable, Identifiable {
     let party: String?
     let chamber: String?
     let state: String?
+    let photoUrl: String?
     let tradeCount: Int?
     let buyCount: Int?
     let sellCount: Int?

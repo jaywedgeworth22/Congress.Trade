@@ -1097,7 +1097,7 @@ final class CongressTradeStore: ObservableObject {
 
     /// Shared chips (window/chamber/party/side) forwarded onto ticker and
     /// politician sheets so those functions honor the same filters as Trends.
-    func fetchTicker(_ symbol: String) async throws -> ClientTickerResponse {
+    func fetchTicker(_ symbol: String, includeAnalytics: Bool = true) async throws -> ClientTickerResponse {
         try await api.ticker(
             symbol,
             window: selectedTimeRange.analyticsWindow,
@@ -1106,7 +1106,7 @@ final class CongressTradeStore: ObservableObject {
             chamber: Self.chamberQueryValue(for: selectedChambers),
             party: Self.partyQueryValue(for: selectedParties),
             type: Self.tradeTypeQueryValue(for: selectedTradeTypes),
-            include: "analytics"
+            include: includeAnalytics ? "analytics" : nil
         )
     }
 

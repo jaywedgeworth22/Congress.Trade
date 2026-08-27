@@ -212,16 +212,23 @@ struct TrendsView: View {
 
     private var summaryStrip: some View {
         let s = store.analyticsSummary
-        return VStack(alignment: .leading, spacing: 10) {
-            trendsHeading("Market Snapshot", extraTop: 0)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        return ViewThatFits(in: .horizontal) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 TrendKPI(title: "Trades", value: CompactFormat.count(s?.totalTrades))
                 TrendKPI(title: "Politicians", value: CompactFormat.count(s?.uniqueMembers))
                 TrendKPI(title: "Est. Volume", value: CompactFormat.usd(s?.estimatedVolumeUsd))
-                // Signed, not colour-only: red/green alone fails for anyone who
-                // can't separate the two, and the owner asked for the sign to
-                // be readable. `SignedFlowFormat` also keeps a real $0 unsigned
-                // and a missing value an em-dash — two different facts.
+                TrendKPI(
+                    title: "Net Flow",
+                    value: SignedFlowFormat.usd(s?.estimatedNetFlowUsd),
+                    tint: SignedFlowFormat.tint(s?.estimatedNetFlowUsd)
+                )
+                TrendKPI(title: "Buys", value: CompactFormat.count(s?.buyCount), tint: .green)
+                TrendKPI(title: "Sells", value: CompactFormat.count(s?.sellCount), tint: .red)
+            }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                TrendKPI(title: "Trades", value: CompactFormat.count(s?.totalTrades))
+                TrendKPI(title: "Politicians", value: CompactFormat.count(s?.uniqueMembers))
+                TrendKPI(title: "Est. Volume", value: CompactFormat.usd(s?.estimatedVolumeUsd))
                 TrendKPI(
                     title: "Net Flow",
                     value: SignedFlowFormat.usd(s?.estimatedNetFlowUsd),
@@ -442,7 +449,8 @@ struct TrendsView: View {
                     Button {
                         selectedTicker = TickerSheetTarget(ticker: c.ticker)
                     } label: {
-                        HStack {
+                        HStack(spacing: 10) {
+                            AssetMark(symbol: c.ticker, isTicker: true, size: 28)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(c.ticker)
                                     .font(.subheadline.weight(.bold))
@@ -615,7 +623,12 @@ struct TrendsView: View {
                     Button {
                         selectedPolitician = MemberSheetTarget(id: p.filerId, name: p.fullName ?? p.filerId, photoUrl: p.photoUrl)
                     } label: {
-                        HStack {
+                        HStack(spacing: 10) {
+                            MemberAvatar(
+                                photoURL: MemberPhotoURL.resolve(p.photoUrl),
+                                name: p.fullName ?? "",
+                                size: 28
+                            )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(p.fullName ?? p.filerId)
                                     .font(.subheadline.weight(.semibold))
@@ -661,9 +674,14 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(store.memberLeaderboard.prefix(10).enumerated()), id: \.element.id) { idx, m in
                     Button {
-                        selectedPolitician = MemberSheetTarget(id: m.filerId, name: m.fullName ?? m.filerId)
+                        selectedPolitician = MemberSheetTarget(id: m.filerId, name: m.fullName ?? m.filerId, photoUrl: m.photoUrl)
                     } label: {
-                        HStack {
+                        HStack(spacing: 10) {
+                            MemberAvatar(
+                                photoURL: MemberPhotoURL.resolve(m.photoUrl),
+                                name: m.fullName ?? "",
+                                size: 28
+                            )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(m.fullName ?? m.filerId)
                                     .font(.subheadline.weight(.semibold))
@@ -708,7 +726,12 @@ struct TrendsView: View {
                     Button {
                         selectedPolitician = MemberSheetTarget(id: c.bioguideId, name: c.memberName ?? c.bioguideId, photoUrl: c.photoUrl)
                     } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            MemberAvatar(
+                                photoURL: MemberPhotoURL.resolve(c.photoUrl),
+                                name: c.memberName ?? "",
+                                size: 28
+                            )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(c.memberName ?? c.bioguideId)
                                     .font(.subheadline.weight(.semibold))
@@ -719,14 +742,17 @@ struct TrendsView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(c.ticker)
-                                    .font(.caption.weight(.bold))
-                                StatusPill(
-                                    text: c.txType == "B" ? "Buy" : (c.txType == "S" ? "Sell" : "Exchange"),
-                                    color: c.txType == "B" ? .green : (c.txType == "S" ? .red : .blue),
-                                    compact: true
-                                )
+                            HStack(spacing: 6) {
+                                AssetMark(symbol: c.ticker, isTicker: true, size: 22)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(c.ticker)
+                                        .font(.caption.weight(.bold))
+                                    StatusPill(
+                                        text: c.txType == "B" ? "Buy" : (c.txType == "S" ? "Sell" : "Exchange"),
+                                        color: c.txType == "B" ? .green : (c.txType == "S" ? .red : .blue),
+                                        compact: true
+                                    )
+                                }
                             }
                         }
                         .padding(.vertical, 8)
@@ -783,7 +809,12 @@ struct TrendsView: View {
                         Button {
                             selectedPolitician = MemberSheetTarget(id: f.filerId, name: f.fullName ?? f.filerId, photoUrl: f.photoUrl)
                         } label: {
-                            HStack {
+                            HStack(spacing: 10) {
+                                MemberAvatar(
+                                    photoURL: MemberPhotoURL.resolve(f.photoUrl),
+                                    name: f.fullName ?? "",
+                                    size: 28
+                                )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(f.fullName ?? f.filerId)
                                         .font(.subheadline.weight(.medium))
@@ -1070,18 +1101,21 @@ struct TrendKPI: View {
     var tint: Color = .primary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(value)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.65)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
         .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 12))
     }
 }

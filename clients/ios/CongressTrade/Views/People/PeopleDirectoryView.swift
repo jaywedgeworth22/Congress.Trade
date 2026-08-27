@@ -18,10 +18,10 @@ struct PeopleDirectoryView: View {
     /// rendering 379 cards at once — it must never become a request.
     @State private var currentPage = 0
     @State private var pageSize = 50
-    @State private var directoryMode: DirectoryMode = .people
+    @State private var directoryMode: DirectoryMode = .politicians
 
     private enum DirectoryMode: String, CaseIterable {
-        case people = "People"
+        case politicians = "Politicians"
         case assets = "Assets"
     }
 
@@ -79,6 +79,8 @@ struct PeopleDirectoryView: View {
             }
             .animation(.easeInOut(duration: 0.32), value: disclaimerExpanded)
             .background(AppTheme.background)
+            .navigationBarTitleDisplayMode(.inline)
+            .ctSolidFeedHeader()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HeaderIconButton(
