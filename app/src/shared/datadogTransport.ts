@@ -83,7 +83,7 @@ export function createDatadogTransport(
   fetchImpl: typeof fetch = fetch,
   options: { sampleRate?: number; now?: () => number; random?: () => number } = {},
 ): DatadogTransport {
-  if (!config.enabled) {
+  if (!config.enabled || !config.apiKey) {
     return {
       enabled: false,
       log: () => undefined,
@@ -92,7 +92,7 @@ export function createDatadogTransport(
     };
   }
 
-  const sampleRate = options.sampleRate ?? DATADOG_TRACE_SAMPLE_RATE;
+  const sampleRate = options.sampleRate ?? config.sampleRate ?? DATADOG_TRACE_SAMPLE_RATE;
   const now = options.now ?? Date.now;
   const random = options.random ?? Math.random;
   const logs: DatadogLogEvent[] = [];
@@ -125,7 +125,7 @@ export function createDatadogTransport(
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'DD-API-KEY': config.apiKey,
+          'DD-API-KEY': config.apiKey!,
           ...extraHeaders,
         },
         body: JSON.stringify(body),

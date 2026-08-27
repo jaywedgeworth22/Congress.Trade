@@ -7,6 +7,7 @@ import type { MiddlewareHandler } from 'hono';
 import {
   resolveDatadogBackend,
   resolveDatadogRum,
+  type DatadogBackendConfig,
   type DatadogBackendReason,
   type DatadogInitInput,
   type DatadogRumReason,
@@ -22,6 +23,19 @@ export interface DatadogInitResult {
   rumReason: DatadogRumReason;
 }
 
+type DdSpan = {
+  setTag: (key: string, value: unknown) => DdSpan;
+  finish: () => void;
+  context: () => unknown;
+};
+
+type DdTracer = {
+  init: (options?: Record<string, unknown>) => void;
+  startSpan: (name: string, options?: Record<string, unknown>) => DdSpan;
+  trace: <T>(name: string, options: Record<string, unknown>, fn: (span: DdSpan) => Promise<T> | T) => Promise<T>;
+  scope: () => { active: () => DdSpan | null };
+};
+
 const noopTransport: DatadogTransport = {
   enabled: false,
   log: () => undefined,
@@ -31,6 +45,7 @@ const noopTransport: DatadogTransport = {
 
 let transport: DatadogTransport = noopTransport;
 let initializedInput: DatadogInitInput | undefined;
+let activeTracer: DdTracer | null = null;
 let consoleHooked = false;
 const originalWarn = console.warn.bind(console);
 const originalError = console.error.bind(console);
@@ -65,10 +80,49 @@ function formatConsoleArgs(args: unknown[]): string {
 export function resetDatadogForTests(): void {
   transport = noopTransport;
   initializedInput = undefined;
+  activeTracer = null;
   if (consoleHooked) {
     console.warn = originalWarn;
     console.error = originalError;
     consoleHooked = false;
+  }
+}
+
+export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<DdTracer | null> {
+  if (activeTracer) return activeTracer;
+  try {
+    const mod = await import('npm:dd-trace');
+    const tracer = (mod.default || mod) as DdTracer;
+    const proc = (globalThis as any).process;
+    if (proc?.env) {
+      if (backend.agentUrl) {
+        proc.env.DD_TRACE_AGENT_URL = backend.agentUrl;
+      } else if (backend.agentHost) {
+        proc.env.DD_AGENT_HOST = backend.agentHost;
+      } else if (backend.apiKey) {
+        proc.env.DD_API_KEY = backend.apiKey;
+        proc.env.DD_TRACE_EXPERIMENTAL_EXPORTER = 'agentless';
+      }
+      proc.env.DD_SITE = backend.site;
+    }
+    const initOptions: Record<string, unknown> = {
+      service: backend.service,
+      env: backend.env,
+      version: backend.version,
+      sampleRate: backend.sampleRate,
+      logInjection: true,
+      runtimeMetrics: true,
+    };
+    if (backend.agentUrl) {
+      initOptions.url = backend.agentUrl;
+    } else if (backend.agentHost) {
+      initOptions.hostname = backend.agentHost;
+    }
+    tracer.init(initOptions);
+    activeTracer = tracer;
+    return activeTracer;
+  } catch {
+    return null;
   }
 }
 
@@ -79,12 +133,24 @@ export function initProductionDatadog(
   initializedInput = input;
   const backend = resolveDatadogBackend(input);
   const rum = resolveDatadogRum(input);
-  try {
-    transport = createDatadogTransport(backend, fetchImpl);
-    if (transport.enabled) hookConsole();
+  if (!backend.enabled) {
+    transport = noopTransport;
     return {
-      logs: backend.enabled,
-      apm: backend.enabled,
+      logs: false,
+      apm: false,
+      rum: rum.enabled,
+      backendReason: backend.reason,
+      rumReason: rum.reason,
+    };
+  }
+
+  try {
+    transport = createDatadogTransport(backend, fetchImpl, { sampleRate: backend.sampleRate });
+    if (transport.enabled) hookConsole();
+    void tryInitDdTracer(backend);
+    return {
+      logs: Boolean(backend.apiKey),
+      apm: true,
       rum: rum.enabled,
       backendReason: backend.reason,
       rumReason: rum.reason,
@@ -109,6 +175,10 @@ export function getDatadogInitInput(): DatadogInitInput | undefined {
   return initializedInput;
 }
 
+export function getActiveDdTracer(): DdTracer | null {
+  return activeTracer;
+}
+
 export function datadogLog(status: 'warn' | 'error', message: string): void {
   transport.log({ status, message });
 }
@@ -120,6 +190,90 @@ export function datadogCaptureException(err: unknown, attributes?: Record<string
     message,
     attributes: attributes as Record<string, string | number | boolean> | undefined,
   });
+}
+
+export interface DatadogSpanHandle {
+  setTag: (key: string, value: unknown) => void;
+  finish: () => void;
+}
+
+export function startDatadogSpan(
+  name: string,
+  options: { resource?: string; type?: string; tags?: Record<string, unknown> } = {},
+): DatadogSpanHandle {
+  const startedAt = Date.now();
+  const tags: Record<string, unknown> = { ...(options.tags ?? {}) };
+  if (options.resource) tags.resource = options.resource;
+  if (options.type) tags.type = options.type;
+
+  let rawSpan: DdSpan | null = null;
+  if (activeTracer) {
+    try {
+      rawSpan = activeTracer.startSpan(name, {
+        tags,
+      });
+      if (options.resource && (rawSpan as any)?.setTag) {
+        (rawSpan as any).setTag('resource.name', options.resource);
+      }
+    } catch {
+      rawSpan = null;
+    }
+  }
+
+  return {
+    setTag: (key: string, value: unknown) => {
+      tags[key] = value;
+      if (rawSpan && (rawSpan as any)?.setTag) {
+        try {
+          (rawSpan as any).setTag(key, value);
+        } catch {
+          // ignore
+        }
+      }
+    },
+    finish: () => {
+      if (rawSpan && (rawSpan as any)?.finish) {
+        try {
+          (rawSpan as any).finish();
+        } catch {
+          // ignore
+        }
+      }
+      if (transport.enabled) {
+        const error = Boolean(tags.error);
+        const meta: Record<string, string> = {};
+        for (const [k, v] of Object.entries(tags)) {
+          if (v != null) meta[k] = String(v);
+        }
+        transport.span({
+          name,
+          resource: options.resource || name,
+          startMs: startedAt,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          error,
+          meta,
+        });
+      }
+    },
+  };
+}
+
+export async function traceDatadogOperation<T>(
+  name: string,
+  resource: string,
+  fn: () => Promise<T> | T,
+): Promise<T> {
+  const span = startDatadogSpan(name, { resource });
+  try {
+    const result = await fn();
+    span.finish();
+    return result;
+  } catch (error) {
+    span.setTag('error', true);
+    span.setTag('error.message', error instanceof Error ? error.message : String(error));
+    span.finish();
+    throw error;
+  }
 }
 
 function requestPath(url: string): string {
@@ -136,33 +290,39 @@ function skipQuietHealth(path: string, status: number): boolean {
 
 export function datadogRequestMiddleware(): MiddlewareHandler<{ Bindings: Env }> {
   return async (c, next) => {
-    const started = Date.now();
+    const path = requestPath(c.req.url);
+    const method = c.req.method;
+    const resource = `${method} ${path}`;
+    const span = startDatadogSpan('web.request', {
+      resource,
+      type: 'web',
+      tags: {
+        'http.method': method,
+        'http.url': path,
+      },
+    });
+
     try {
       await next();
+    } catch (err) {
+      span.setTag('error', true);
+      span.setTag('error.message', err instanceof Error ? err.message : String(err));
+      throw err;
     } finally {
-      if (!transport.enabled) return;
-      const path = requestPath(c.req.url);
       const status = c.res?.status ?? 500;
-      if (skipQuietHealth(path, status)) return;
-      const error = status >= 400;
-      transport.span({
-        name: 'web.request',
-        resource: `${c.req.method} ${path}`,
-        startMs: started,
-        durationMs: Math.max(0, Date.now() - started),
-        error,
-        meta: {
-          'http.method': c.req.method,
-          'http.status_code': String(status),
-          'http.url': path,
-        },
-      });
-      if (error) {
-        transport.log({
-          status: status >= 500 ? 'error' : 'warn',
-          message: `${c.req.method} ${path} ${status}`,
-          attributes: { status, path },
-        });
+      span.setTag('http.status_code', String(status));
+      if (status >= 400) {
+        span.setTag('error', true);
+        if (transport.enabled) {
+          transport.log({
+            status: status >= 500 ? 'error' : 'warn',
+            message: `${method} ${path} ${status}`,
+            attributes: { status, path },
+          });
+        }
+      }
+      if (!skipQuietHealth(path, status)) {
+        span.finish();
       }
     }
   };
