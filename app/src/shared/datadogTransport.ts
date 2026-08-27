@@ -83,7 +83,7 @@ export function createDatadogTransport(
   fetchImpl: typeof fetch = fetch,
   options: { sampleRate?: number; now?: () => number; random?: () => number } = {},
 ): DatadogTransport {
-  if (!config.enabled) {
+  if (!config.enabled || !config.apiKey) {
     return {
       enabled: false,
       log: () => undefined,
@@ -92,7 +92,7 @@ export function createDatadogTransport(
     };
   }
 
-  const sampleRate = options.sampleRate ?? DATADOG_TRACE_SAMPLE_RATE;
+  const sampleRate = options.sampleRate ?? config.sampleRate ?? DATADOG_TRACE_SAMPLE_RATE;
   const now = options.now ?? Date.now;
   const random = options.random ?? Math.random;
   const logs: DatadogLogEvent[] = [];
@@ -120,17 +120,14 @@ export function createDatadogTransport(
   const postJson = async (url: string, body: unknown, extraHeaders: Record<string, string> = {}) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      ...extraHeaders,
-    };
-    if (config.apiKey) {
-      headers['DD-API-KEY'] = config.apiKey;
-    }
     try {
       await fetchImpl(url, {
         method: 'POST',
-        headers,
+        headers: {
+          'content-type': 'application/json',
+          'DD-API-KEY': config.apiKey!,
+          ...extraHeaders,
+        },
         body: JSON.stringify(body),
         signal: controller.signal,
       });

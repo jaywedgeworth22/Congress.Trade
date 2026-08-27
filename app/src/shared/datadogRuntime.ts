@@ -25,10 +25,9 @@ export const DATADOG_SITES = [
 
 export type DatadogSite = (typeof DATADOG_SITES)[number];
 
-export const DEFAULT_DATADOG_SITE: DatadogSite = 'us5.datadoghq.com';
-
 export const DATADOG_BACKEND_SERVICE = 'congress-trade';
 export const DATADOG_RUM_SERVICE = 'congress-trade-web';
+export const DEFAULT_DATADOG_SITE: DatadogSite = 'us5.datadoghq.com';
 export const DATADOG_TRACE_SAMPLE_RATE = 0.2;
 
 export type DatadogBackendReason =
@@ -59,7 +58,7 @@ export interface DatadogInitInput {
   DD_TRACE_AGENT_URL?: string;
   DD_TRACE_AGENT_HOSTNAME?: string;
   DD_TRACE_URL?: string;
-  DD_TRACE_SAMPLE_RATE?: string | number;
+  DD_TRACE_SAMPLE_RATE?: string;
   DD_CLIENT_TOKEN?: string;
   DD_RUM_CLIENT_TOKEN?: string;
   NEXT_PUBLIC_DD_CLIENT_TOKEN?: string;
@@ -80,11 +79,12 @@ export interface DatadogBackendConfig {
   reason: 'ready';
   apiKey?: string;
   agentHost?: string;
+  agentUrl?: string;
+  sampleRate: number;
   site: DatadogSite;
   service: string;
   env: string;
   version?: string;
-  sampleRate: number;
   logsIntakeUrl: string;
   tracesIntakeUrl: string;
 }
@@ -153,23 +153,6 @@ export function resolveDatadogVersion(input: DatadogInitInput | undefined): stri
   return build.sha === 'unknown' ? undefined : build.sha;
 }
 
-export function resolveDatadogApiKey(input: DatadogInitInput | undefined): string {
-  return firstNonEmpty(input?.DD_API_KEY, input?.DATADOG_API_KEY);
-}
-
-export function resolveDatadogAppKey(input: DatadogInitInput | undefined): string {
-  return firstNonEmpty(input?.DD_APP_KEY, input?.DATADOG_APP_KEY);
-}
-
-export function resolveDatadogAgentHost(input: DatadogInitInput | undefined): string {
-  return firstNonEmpty(
-    input?.DD_AGENT_HOST,
-    input?.DD_TRACE_AGENT_HOSTNAME,
-    input?.DD_TRACE_AGENT_URL,
-    input?.DD_TRACE_URL,
-  );
-}
-
 export function resolveDatadogClientToken(input: DatadogInitInput | undefined): string {
   return firstNonEmpty(
     input?.DD_CLIENT_TOKEN,
@@ -190,11 +173,6 @@ export function resolveDatadogApplicationId(input: DatadogInitInput | undefined)
 
 export function resolveDatadogSiteRaw(input: DatadogInitInput | undefined): string {
   return firstNonEmpty(input?.DD_SITE, input?.NEXT_PUBLIC_DD_SITE);
-}
-
-export function resolveDatadogSite(input: DatadogInitInput | undefined): DatadogSite {
-  const raw = resolveDatadogSiteRaw(input);
-  return normalizeDatadogSite(raw) ?? DEFAULT_DATADOG_SITE;
 }
 
 export function datadogLogsIntakeUrl(site: DatadogSite): string {
@@ -242,34 +220,27 @@ function rumServiceName(service: string | undefined): string {
 }
 
 export function resolveDatadogBackend(input: DatadogInitInput | undefined): DatadogBackendResolution {
-  const apiKey = resolveDatadogApiKey(input);
-  const agentHost = resolveDatadogAgentHost(input);
+  const apiKey = firstNonEmpty(input?.DD_API_KEY, input?.DATADOG_API_KEY);
+  const agentHost = firstNonEmpty(input?.DD_AGENT_HOST, input?.DD_TRACE_AGENT_HOSTNAME);
+  const agentUrl = firstNonEmpty(input?.DD_TRACE_AGENT_URL, input?.DD_TRACE_URL);
   const siteRaw = resolveDatadogSiteRaw(input);
+  const site = siteRaw ? normalizeDatadogSite(siteRaw) : DEFAULT_DATADOG_SITE;
+  const sampleRate = input?.DD_TRACE_SAMPLE_RATE ? parseFloat(input.DD_TRACE_SAMPLE_RATE) : DATADOG_TRACE_SAMPLE_RATE;
 
-  if (siteRaw && !normalizeDatadogSite(siteRaw)) {
-    return { enabled: false, reason: 'invalid-site' };
-  }
-
-  if (!apiKey && !agentHost) {
-    return { enabled: false, reason: 'missing-api-key' };
-  }
-
-  const site = resolveDatadogSite(input);
-  const sampleRateNum = Number(input?.DD_TRACE_SAMPLE_RATE ?? DATADOG_TRACE_SAMPLE_RATE);
-  const sampleRate = Number.isFinite(sampleRateNum) && sampleRateNum >= 0 && sampleRateNum <= 1
-    ? sampleRateNum
-    : DATADOG_TRACE_SAMPLE_RATE;
+  if (!apiKey && !agentHost && !agentUrl) return { enabled: false, reason: 'missing-api-key' };
+  if (!site) return { enabled: false, reason: 'invalid-site' };
 
   return {
     enabled: true,
     reason: 'ready',
-    ...(apiKey ? { apiKey } : {}),
-    ...(agentHost ? { agentHost } : {}),
+    apiKey: apiKey || undefined,
+    agentHost: agentHost || undefined,
+    agentUrl: agentUrl || undefined,
+    sampleRate: Number.isFinite(sampleRate) && sampleRate >= 0 && sampleRate <= 1 ? sampleRate : DATADOG_TRACE_SAMPLE_RATE,
     site,
     service: firstNonEmpty(input?.DD_SERVICE, DATADOG_BACKEND_SERVICE),
     env: resolveDatadogEnvName(input),
     version: resolveDatadogVersion(input),
-    sampleRate,
     logsIntakeUrl: datadogLogsIntakeUrl(site),
     tracesIntakeUrl: datadogTracesIntakeUrl(site),
   };
@@ -279,18 +250,13 @@ export function resolveDatadogRum(input: DatadogInitInput | undefined): DatadogR
   const clientToken = resolveDatadogClientToken(input);
   const applicationId = resolveDatadogApplicationId(input);
   const siteRaw = resolveDatadogSiteRaw(input);
+  const site = siteRaw ? normalizeDatadogSite(siteRaw) : DEFAULT_DATADOG_SITE;
 
-  if (siteRaw && !normalizeDatadogSite(siteRaw)) {
-    return { enabled: false, reason: 'invalid-site' };
-  }
-
-  const present = [Boolean(clientToken), Boolean(applicationId)];
-  const presentCount = present.filter(Boolean).length;
-  if (presentCount === 0) return { enabled: false, reason: 'missing-client-token' };
+  if (!clientToken && !applicationId) return { enabled: false, reason: 'missing-client-token' };
   if (!clientToken) return { enabled: false, reason: 'missing-client-token' };
   if (!applicationId) return { enabled: false, reason: 'missing-application-id' };
+  if (!site) return { enabled: false, reason: 'invalid-site' };
 
-  const site = resolveDatadogSite(input);
   return {
     enabled: true,
     reason: 'ready',
@@ -313,7 +279,7 @@ export function datadogPublicStatus(input: DatadogInitInput | undefined): {
   const backend = resolveDatadogBackend(input);
   const rum = resolveDatadogRum(input);
   return {
-    logs: backend.enabled,
+    logs: backend.enabled && Boolean(backend.apiKey),
     apm: backend.enabled,
     rum: rum.enabled,
   };
@@ -354,18 +320,18 @@ export async function resolveProductionDatadogEnv(
   );
   const fromInfisical = Object.fromEntries(resolved) as Record<DatadogSecretKey, string | undefined>;
   return {
-    DD_API_KEY: fromInfisical.DD_API_KEY || (env as any).DD_API_KEY,
-    DATADOG_API_KEY: fromInfisical.DATADOG_API_KEY || (env as any).DATADOG_API_KEY,
-    DD_APP_KEY: fromInfisical.DD_APP_KEY || (env as any).DD_APP_KEY,
-    DATADOG_APP_KEY: fromInfisical.DATADOG_APP_KEY || (env as any).DATADOG_APP_KEY,
+    DD_API_KEY: fromInfisical.DD_API_KEY || env.DD_API_KEY,
+    DATADOG_API_KEY: fromInfisical.DATADOG_API_KEY || env.DATADOG_API_KEY,
+    DD_APP_KEY: fromInfisical.DD_APP_KEY || env.DD_APP_KEY,
+    DATADOG_APP_KEY: fromInfisical.DATADOG_APP_KEY || env.DATADOG_APP_KEY,
     DD_SITE: fromInfisical.DD_SITE || env.DD_SITE,
     DD_SERVICE: fromInfisical.DD_SERVICE || env.DD_SERVICE,
     DD_ENV: fromInfisical.DD_ENV || env.DD_ENV,
-    DD_AGENT_HOST: fromInfisical.DD_AGENT_HOST || (env as any).DD_AGENT_HOST,
-    DD_TRACE_AGENT_URL: fromInfisical.DD_TRACE_AGENT_URL || (env as any).DD_TRACE_AGENT_URL,
-    DD_TRACE_AGENT_HOSTNAME: fromInfisical.DD_TRACE_AGENT_HOSTNAME || (env as any).DD_TRACE_AGENT_HOSTNAME,
-    DD_TRACE_URL: fromInfisical.DD_TRACE_URL || (env as any).DD_TRACE_URL,
-    DD_TRACE_SAMPLE_RATE: fromInfisical.DD_TRACE_SAMPLE_RATE || (env as any).DD_TRACE_SAMPLE_RATE,
+    DD_AGENT_HOST: fromInfisical.DD_AGENT_HOST || env.DD_AGENT_HOST,
+    DD_TRACE_AGENT_URL: fromInfisical.DD_TRACE_AGENT_URL || env.DD_TRACE_AGENT_URL,
+    DD_TRACE_AGENT_HOSTNAME: fromInfisical.DD_TRACE_AGENT_HOSTNAME || env.DD_TRACE_AGENT_HOSTNAME,
+    DD_TRACE_URL: fromInfisical.DD_TRACE_URL || env.DD_TRACE_URL,
+    DD_TRACE_SAMPLE_RATE: fromInfisical.DD_TRACE_SAMPLE_RATE || env.DD_TRACE_SAMPLE_RATE,
     DD_CLIENT_TOKEN: fromInfisical.DD_CLIENT_TOKEN || env.DD_CLIENT_TOKEN,
     DD_RUM_CLIENT_TOKEN: fromInfisical.DD_RUM_CLIENT_TOKEN || env.DD_RUM_CLIENT_TOKEN,
     NEXT_PUBLIC_DD_CLIENT_TOKEN: fromInfisical.NEXT_PUBLIC_DD_CLIENT_TOKEN || env.NEXT_PUBLIC_DD_CLIENT_TOKEN,

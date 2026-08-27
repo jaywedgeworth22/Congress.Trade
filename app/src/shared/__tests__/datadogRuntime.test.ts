@@ -98,6 +98,18 @@ describe('fail-closed Datadog backend config', () => {
     if (ready.enabled) expect(ready.agentHost).toBe('127.0.0.1');
   });
 
+  it('accepts DD_TRACE_AGENT_URL as distinct from agentHost', () => {
+    const ready = resolveDatadogBackend({
+      DD_TRACE_AGENT_URL: 'http://agent:8126',
+    });
+    expect(ready).toMatchObject({
+      enabled: true,
+      reason: 'ready',
+      agentUrl: 'http://agent:8126',
+      site: 'us5.datadoghq.com',
+    });
+  });
+
   it('no-ops when keys, agent host, and site are missing', () => {
     expect(resolveDatadogBackend({})).toEqual({ enabled: false, reason: 'missing-api-key' });
     expect(resolveDatadogBackend({ DD_API_KEY: '   ' })).toEqual({
@@ -239,6 +251,11 @@ describe('Datadog process init + request middleware', () => {
     });
     expect(status).toEqual({ logs: true, apm: true, rum: false });
     expect(JSON.stringify(status)).not.toContain('abc');
+
+    const agentOnly = datadogPublicStatus({
+      DD_AGENT_HOST: '127.0.0.1',
+    });
+    expect(agentOnly).toEqual({ logs: false, apm: true, rum: false });
   });
 
   it('swallows intake failures so a request still completes', async () => {
