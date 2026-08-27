@@ -3,8 +3,11 @@
 # cloud/remote sandbox, GitHub Codespaces, devcontainer, or any throwaway clone).
 # Idempotent — safe to re-run.
 #
-# Point your environment's "setup script" field at this file:
-#   bash scripts/cloud-setup.sh
+# IMPORTANT (Claude Code Cloud): Setup script cwd is the PARENT of the clone
+# (`/home/user`), not the repo root. A bare `bash scripts/cloud-setup.sh` fails
+# with exit 127. Use the fleet locator from
+# ai-fleet-coordinator/docs/CLAUDE-CODE-CLOUD-ENVIRONMENTS.md, or:
+#   cd Congress.Trade && bash scripts/cloud-setup.sh
 #
 # The runnable app lives in app/ (Coolify Deno process), NOT the repo root — so a
 # plain `npm ci` from the root fails.  This script cd's into app/ for you.
@@ -31,7 +34,9 @@ unset CT_LOCAL_BOOTSTRAP_TEST_MODE
 unset CT_LOCAL_BOOTSTRAP_TEST_APP_DIR
 unset CT_LOCAL_BOOTSTRAP_TEST_DEV_VARS_FILE
 unset CT_LOCAL_BOOTSTRAP_TEST_GLOBAL_KEYS_FILE
-node "$SCRIPT_DIR/merge-local-dev-vars.mjs"
+# Cloud VMs do not have ~/.secrets/global-api-keys. Missing identities are
+# expected; do not fail the whole session setup for a keyless checkout.
+node "$SCRIPT_DIR/merge-local-dev-vars.mjs" || echo "==> Infisical local bootstrap skipped (ok in keyless cloud)"
 
 # @jaywedgeworth22/congress-trading-shared is a public repo consumed as a
 # tokenless git dependency. The vendored local copy at app/vendor/ is the
