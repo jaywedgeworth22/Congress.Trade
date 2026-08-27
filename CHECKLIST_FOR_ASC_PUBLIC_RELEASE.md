@@ -1,6 +1,6 @@
 # Checklist for App Store public release — Congress.Trade iOS
 
-Living document.  Last verified against live App Store Connect and GitHub: **2026-08-26**.
+Living document.  Last verified against live App Store Connect and GitHub: **2026-08-26** (prices, trial, submission state and build attachment re-read from the live API).
 
 App id `6798076688` · bundle `trade.congress.ios` · team `CC8UTF7ATG` · version `1.0.177`
 
@@ -62,12 +62,16 @@ unverified, it says so.
 ### 1a.  Read Resolution Center message in App Store Connect
 Check the exact message text in App Store Connect for submission `b174dd86`.  Verify if Apple provided specific reproduction steps or screenshots for the Guideline 2.1(a) / 2.1(b) notes beyond what is addressed in PR #2222.
 
-### 1b.  Confirm product configuration in ASC
-- **Free trial**: Confirm 2-week introductory offer is configured on both monthly and annual subscriptions in ASC to match paywall copy.
-- **Prices**: Confirm $5/month and $50/year in the ASC subscription configuration.
+### 1b.  Confirm product configuration in ASC — ✅ VERIFIED 2026-08-26 by agent, no action needed
+Read directly from the ASC API (`scripts/asc/asc_subs.py`, `scripts/asc/asc_price_map.py` — read-only, see `scripts/asc/README.md`):
+- **Free trial**: both products carry `offerMode=FREE_TRIAL`, `duration=TWO_WEEKS`, `numberOfPeriods=1`, active since 2026-08-12 with no end date.  Matches the paywall copy.
+- **Prices (USA territory)**: `trade.congress.premium.monthly` = **$5.00**, `trade.congress.premium.annual` = **$50.00**.  Matches the copy.
+- Note for anyone re-checking: the raw `prices` endpoint also returns $19.99 / $199.99 rows.  Those are OTHER territories' price points, not the US price — map each price row to its `territory` relationship before reading it, or you will misreport the live price.
 
-### 1c.  Approve resubmission when GM binary is ready
-After PR #2222 lands and the fresh Tahoe GM archive workflow runs, review and submit the new App Store version submission in ASC.
+### 1c.  Approve resubmission when GM binary is ready — ✅ DONE
+Version 1.0.177 with GM build `202608262138` was submitted; submission `760c9667` and both subscriptions are `WAITING_FOR_REVIEW` as of 2026-08-26.  Nothing further until Apple responds.
+
+**Do not attach a newer build while the submission is in review.**  Builds `202608262059`, `202608261823` and `202608270037` exist and are VALID, but swapping the attached binary now would reset the submission and send it back to the end of Apple's queue.
 
 ### 1d.  After public release approval
 - Set `IOS_APP_STORE_ID=6798076688` in the production environment (Infisical / Coolify).  This activates the Safari smart app banner and website download banners (PR #2077).
