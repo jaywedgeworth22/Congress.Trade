@@ -296,10 +296,7 @@ struct TickerDetailView: View {
                 .padding(.bottom, 24)
             }
             .background(AppTheme.background)
-            // Nav bar carries the entity CLASS, the hero carries the identity.
-            // The bar used to read "KO" directly above a hero that already said
-            // KO — owner: "the ticker appears twice ... across four lines".
-            .navigationTitle("Ticker")
+            .navigationTitle(heroTitle)
             .inlineNavigationTitle()
             .sheet(item: $selectedPolitician) { target in
                 PoliticianDetailView(
@@ -349,28 +346,26 @@ struct TickerDetailView: View {
     /// when the provider filed the same string as the sector (KO shipped
     /// "KO · NYSE · Beverages · Beverages").
     private var headerMetaLine: String {
-        let symbol = ticker.uppercased()
-        return [
-            heroTitle == symbol ? nil : symbol,
-            asset?.exchangeShort,
-            sectorValue,
-            distinctIndustryValue
-        ]
-        .compactMap { $0 }
-        .filter { !$0.isEmpty }
-        .joined(separator: "  •  ")
+        let symbol = heroTitle == ticker.uppercased() ? nil : ticker.uppercased()
+        let exchange = asset?.exchangeShort?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let sector = sectorValue
+        let industry = distinctIndustryValue
+        return [symbol, exchange, sector, industry].compactMap { $0 }.joined(separator: "  •  ")
     }
 
     private var sectorValue: String? {
         asset?.sector?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
-    /// Industry only when it says something the sector row does not.
+    /// Drops the industry when it matches the sector case-insensitively (FMP
+    /// filed KO as sector=Beverages, industry=Beverages - Non-Alcoholic, which
+    /// both trimmed to "Beverages" under simple normalization).
     private var distinctIndustryValue: String? {
-        guard let industry = asset?.industry?
-            .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else { return nil }
-        guard let sector = sectorValue else { return industry }
-        return sector.caseInsensitiveCompare(industry) == .orderedSame ? nil : industry
+        guard let ind = asset?.industry?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else { return nil }
+        if let sec = sectorValue, ind.localizedCaseInsensitiveContains(sec) || sec.localizedCaseInsensitiveContains(ind) {
+            return nil
+        }
+        return ind
     }
 
     /// One Market Cap row, not a bucket row plus a "Market Cap ($)" row: the
@@ -418,10 +413,12 @@ struct TickerDetailView: View {
 
     private func fetchTicker() async throws -> ClientTickerResponse {
         do {
-            return try await store.fetchTicker(ticker)
-        } catch let error as APIError where error.isRetryable {
-            try await Task.sleep(for: .milliseconds(400))
-            return try await store.fetchTicker(ticker)
+            return try await store.fetchTicker(ticker, includeAnalytics: true)
+        } catch {
+            if Task.isCancelled { throw error }
+            // If the analytics payload fails, fallback to basic ticker profile
+            // without analytics so the drawer still displays gracefully.
+            return try await store.fetchTicker(ticker, includeAnalytics: false)
         }
     }
 

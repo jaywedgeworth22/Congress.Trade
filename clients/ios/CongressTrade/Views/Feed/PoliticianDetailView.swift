@@ -149,10 +149,7 @@ struct PoliticianDetailView: View {
                 .padding(.bottom, 24)
             }
             .background(AppTheme.background)
-            // Nav bar carries the entity CLASS, the hero carries the identity —
-            // titling the bar with the member's name restated the hero one line
-            // below it (owner, on the same duplication in the ticker sheet).
-            .navigationTitle("Politician")
+            .navigationTitle(memberName)
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {

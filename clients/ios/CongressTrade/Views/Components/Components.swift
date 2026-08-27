@@ -174,14 +174,10 @@ enum AppTheme {
     static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
-    /// One semi-dark grey for filter/header chrome: dropdown chevrons, filter
+    /// Dark readable ink for filter/header chrome: dropdown chevrons, filter
     /// glyphs, "3 Months" (and other filter words), the exchange arrows, the
-    /// header ⓘ, and the hamburger.  Owner (2026-08-22): nothing in that
-    /// family should be system blue; selected-option marks inside an *open*
-    /// dropdown may stay accent blue.  A concrete `Color`, not hierarchical
-    /// `.secondary` — `MainTabView` sets `.tint(.blue)` (App.swift), so
-    /// `.secondary` inside a `Menu`/`Button` renders accent blue.
-    static let glyphGrey = Color(uiColor: .secondaryLabel)
+    /// header ⓘ, and the hamburger.
+    static let glyphGrey = Color(uiColor: .label)
 
     /// Near-black ink for words that are not filter chrome — "Done", "Export
     /// CSV", "Subscribe with Apple", sort-field names, rows-per-page.  Filter

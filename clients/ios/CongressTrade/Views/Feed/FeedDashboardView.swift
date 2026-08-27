@@ -1125,7 +1125,7 @@ struct SidesFilterMenuLabel: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(AppTheme.glyphGrey)
-                    .opacity(0.5)
+                    .opacity(0.8)
                     .padding(.leading, 2)
             }
         }
@@ -1149,9 +1149,6 @@ struct FilterMenuLabel: View {
     var body: some View {
         ControlChip(isActive: isActive, compact: !showsLabel) {
             HStack(spacing: 4) {
-                // Owner 2026-08-22: filter glyphs, "3 Months", and the caret
-                // are one semi-dark grey. Concrete Color so Menu cannot
-                // re-tint them with the app-wide `.tint(.blue)`.
                 Image(systemName: icon)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(AppTheme.glyphGrey)
@@ -1160,13 +1157,10 @@ struct FilterMenuLabel: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppTheme.glyphGrey)
                 }
-                // The dropdown caret carries no meaning of its own — bare
-                // chrome glyph, so it keeps the lighter grey (owner
-                // 2026-08-21) rather than the darker word ink above.
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(AppTheme.glyphGrey)
-                    .opacity(0.5)
+                    .opacity(0.8)
                     .padding(.leading, 2)
             }
         }
