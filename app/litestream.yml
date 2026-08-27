@@ -76,4 +76,12 @@ dbs:
       # larger parts cut request count, concurrency 2 keeps memory modest.
       part-size: 10MB
       concurrency: 2
-      sync-interval: 5m
+      # 15m (owner 2026-08-27): all three fleet apps share ONE Backblaze
+      # account, so its daily Class B/C caps are fleet-wide — UM's corrupt-L0
+      # retry storm froze every app's backups at once.  CT's data is
+      # re-ingestable, so a coarser RPO costs little while cutting quiet-period
+      # object count (and the downstream compaction re-reads) 3x vs 5m.  Note
+      # the burst caveat above still applies: heavy ingestion writes produce
+      # L0 objects per commit regardless of this interval.  ST deliberately
+      # stays at 300s (live trading DB); UM is 1h.
+      sync-interval: 15m
