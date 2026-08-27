@@ -1,5 +1,13 @@
 # Current Handoff
 
+## 2026-08-26 CURSOR — Provider-missing stub auto-close is live (#2221)
+
+Live observation path rejects open `provider-missing-*` review stubs when
+the matching official `S-` / `H-` filing is already `persisted`.  It does
+not confirm the stub, merge txs, or sweep historic leftovers.  Creation
+is still the July 22 provider-gap router.  Receipt:
+`docs/rollouts/2026-08-25-provider-missing-stub-close.md`.
+
 ## 2026-08-25 CURSOR — Mirror 2026-08-23 full-stack review onto git effort log
 
 Live review already filed on THE BOARD + GH #2180–#2187.  This lane only
