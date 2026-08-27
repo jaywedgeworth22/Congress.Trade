@@ -324,6 +324,13 @@ The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
 `npm ci` in `app/` + applies local schema helpers).  After it runs, the dev
 environment is ready; do not re-install deps to start services.
 
+Claude Code Cloud is different: the Setup script field runs from the **parent**
+of the clone (`/home/user`), so a bare `bash scripts/cloud-setup.sh` exits 127.
+Paste the fleet locator from
+`ai-fleet-coordinator/docs/CLAUDE-CODE-CLOUD-ENVIRONMENTS.md`, or
+`cd Congress.Trade && bash scripts/cloud-setup.sh`. Devcontainer
+`postCreateCommand` stays the bare form (workspace is already the repo root).
+
 ### Cursor Cloud environment (`.cursor/environment.json`)
 
 Cursor Cloud agents boot from `.cursor/environment.json`, which drives the
