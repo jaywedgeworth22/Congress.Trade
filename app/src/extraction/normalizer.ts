@@ -19,8 +19,13 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType, TxSource } from '../shared/types.ts';
-import { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
-import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
+import {
+  isDeletedFilingStatus,
+  looksLikeHeaderContaminatedAsset,
+  looksLikeNothingToReport,
+  looksLikePtrFormSampleAsset,
+} from './extractRouting.ts';
+import { all, batch, fromBool, get, parseJson, run } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
 import { prepareExtractedTx } from './prepareTx.ts';
@@ -333,10 +338,19 @@ export async function normalize(
   // Drop form-chrome rows up front. Pure letterhead OCR floods were parking
   // hundreds of "Clerk of the House…" fakes in review_queue and burning the
   // agreement cascade budget on documents with zero real trades.
-  const usableParsed = parsed.filter((p) => !looksLikeHeaderContaminatedAsset(p.assetName));
+  const usableParsed = parsed.filter((p) =>
+    !looksLikeHeaderContaminatedAsset(p.assetName)
+    && !looksLikePtrFormSampleAsset(p.assetName)
+    && !looksLikeNothingToReport(p.assetName)
+  );
   const droppedFormChrome = parsed.length - usableParsed.length;
+  const sawNothingToReport = parsed.some((p) =>
+    looksLikeNothingToReport(p.assetName) || looksLikeNothingToReport(p.rawText)
+  );
 
-  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, usableParsed, source);
+  const allFlagged: FlaggedTx[] = await recomputeTransactions(env, filing, usableParsed, source);
+  const deletedFlagged = allFlagged.filter((f) => isDeletedFilingStatus(f.tx.filingStatus));
+  const flagged = allFlagged.filter((f) => !isDeletedFilingStatus(f.tx.filingStatus));
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
@@ -460,11 +474,63 @@ export async function normalize(
       liveOther,
       liveOtherDated,
     })) {
+      // textPdf Deleted amendments are not vision supersedes.  A hand-rejected
+      // later official PTR (Hern H-2026-20035196) must still unpublish the
+      // matching live row on reprocess after deploy.
+      if (deletedFlagged.length > 0) {
+        await deprecateDeletedMatches(env, filing, deletedFlagged, nowIso);
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: 'deleted_rows_applied',
+        };
+      }
       return { transactions, minConfidence, needsReview: false, published: false };
     }
   }
 
   if (needsReview) {
+    // Form-sample chrome alone is not NTR.  Example Mega Corp is printed on
+    // every House PTR; OCR often reads it and misses the real trades.
+    if (flagged.length === 0 && sawNothingToReport) {
+      const closed = await resolveVerifiedEmpty(
+        env,
+        filing,
+        nowIso,
+        reviewSnapshot,
+        'nothing_to_report',
+      );
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: 'nothing_to_report',
+        };
+      }
+    }
+    if (flagged.length === 0 && deletedFlagged.length > 0) {
+      await deprecateDeletedMatches(env, filing, deletedFlagged, nowIso);
+      const closed = await resolveProcessedNoNewRows(
+        env,
+        filing,
+        nowIso,
+        reviewSnapshot,
+        'deleted_rows_applied',
+      );
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: 'deleted_rows_applied',
+        };
+      }
+    }
     let reason = exceedsPublishLimit
       ? classifyRowLimitReason(flagged)
       : reviewReason(flagged, minConfidence, confThreshold);
@@ -527,10 +593,35 @@ export async function normalize(
     };
   }
 
+  const persistable: Transaction[] = [];
+  for (const tx of transactions) {
+    if (await matchingLiveTransactionExists(env, filing, tx)) continue;
+    persistable.push(tx);
+  }
+  if (deletedFlagged.length > 0) {
+    await deprecateDeletedMatches(env, filing, deletedFlagged, nowIso);
+  }
+  if (persistable.length === 0) {
+    const closed = await resolveProcessedNoNewRows(
+      env,
+      filing,
+      nowIso,
+      reviewSnapshot,
+      deletedFlagged.length > 0 ? 'deleted_rows_applied' : 'amendment_already_persisted',
+    );
+    return {
+      transactions: [],
+      minConfidence,
+      needsReview: !closed,
+      published: false,
+      reviewReason: deletedFlagged.length > 0 ? 'deleted_rows_applied' : 'amendment_already_persisted',
+    };
+  }
+
   const persisted = await persistNormalizedPublish(
     env,
     filing.docId,
-    transactions,
+    persistable,
     reviewSnapshot,
     nowIso,
     {
@@ -858,7 +949,12 @@ export function scoreFields(
   return { confidence: clamp01(confidence), flags, ticker, amountMin, amountMax, txType };
 }
 
-export { looksLikeHeaderContaminatedAsset } from './extractRouting.ts';
+export {
+  looksLikeHeaderContaminatedAsset,
+  looksLikePtrFormSampleAsset,
+  looksLikeNothingToReport,
+  isDeletedFilingStatus,
+} from './extractRouting.ts';
 
 /**
  * True when an OCR extraction is mostly form chrome / unreadable placeholders
@@ -1548,6 +1644,166 @@ async function routeToReview(
     });
   }
   return entered;
+}
+
+function isAmendedFilingStatus(status: string | null | undefined): boolean {
+  return typeof status === 'string' && /\bamend/i.test(status);
+}
+
+async function matchingLiveTransactionExists(
+  env: Env,
+  filing: Filing,
+  tx: Transaction,
+): Promise<boolean> {
+  if (!filing.filerId || !tx.txDate || !tx.txType) return false;
+  if (!isAmendedFilingStatus(tx.filingStatus) && !isAmendedFilingStatus(filing.filingType)) {
+    return false;
+  }
+  try {
+    const row = await get<{ id: string }>(
+      env.DB,
+      tx.ticker
+        ? `SELECT id FROM transactions
+            WHERE filer_id = ? AND deprecated_at IS NULL AND doc_id <> ?
+              AND tx_date = ? AND tx_type = ? AND ticker = ?
+            LIMIT 1`
+        : `SELECT id FROM transactions
+            WHERE filer_id = ? AND deprecated_at IS NULL AND doc_id <> ?
+              AND tx_date = ? AND tx_type = ? AND ticker IS NULL
+              AND LOWER(asset_name) = LOWER(?)
+            LIMIT 1`,
+      tx.ticker
+        ? [filing.filerId, filing.docId, tx.txDate, tx.txType, tx.ticker]
+        : [filing.filerId, filing.docId, tx.txDate, tx.txType, tx.assetName],
+    );
+    return Boolean(row?.id);
+  } catch {
+    return false;
+  }
+}
+
+async function deprecateDeletedMatches(
+  env: Env,
+  filing: Filing,
+  deleted: FlaggedTx[],
+  nowIso: string,
+): Promise<number> {
+  if (!filing.filerId || deleted.length === 0) return 0;
+  let changes = 0;
+  const reason = `deleted by later official PTR ${filing.docId}`;
+  for (const row of deleted) {
+    const tx = row.tx;
+    if (!tx.txDate || !tx.txType) continue;
+    try {
+      const result = await run(
+        env.DB,
+        tx.ticker
+          ? `UPDATE transactions
+                SET deprecated_at = ?, deprecated_reason = ?
+              WHERE filer_id = ? AND deprecated_at IS NULL AND doc_id <> ?
+                AND tx_date = ? AND tx_type = ? AND ticker = ?`
+          : `UPDATE transactions
+                SET deprecated_at = ?, deprecated_reason = ?
+              WHERE filer_id = ? AND deprecated_at IS NULL AND doc_id <> ?
+                AND tx_date = ? AND tx_type = ? AND ticker IS NULL
+                AND LOWER(asset_name) = LOWER(?)`,
+        tx.ticker
+          ? [nowIso, reason, filing.filerId, filing.docId, tx.txDate, tx.txType, tx.ticker]
+          : [nowIso, reason, filing.filerId, filing.docId, tx.txDate, tx.txType, tx.assetName],
+      );
+      changes += result.meta?.changes ?? 0;
+    } catch (err) {
+      console.warn('deprecateDeletedMatches failed:', filing.docId, (err as Error).message);
+    }
+  }
+  return changes;
+}
+
+async function resolveVerifiedEmpty(
+  env: Env,
+  filing: Filing,
+  nowIso: string,
+  review: ReviewSnapshot | null,
+  resolutionReason: string,
+): Promise<boolean> {
+  return writeResolvedReview(env, filing, nowIso, review, {
+    resolutionKind: 'verified_empty',
+    resolutionReason,
+    ingestStatus: 'verified_empty',
+    reason: resolutionReason,
+  });
+}
+
+async function resolveProcessedNoNewRows(
+  env: Env,
+  filing: Filing,
+  nowIso: string,
+  review: ReviewSnapshot | null,
+  resolutionReason: string,
+): Promise<boolean> {
+  // This doc inserted zero live rows.  trg_review_queue_honest_resolution
+  // aborts resolved=1 + published unless a live transaction exists on THIS
+  // doc_id.  verified_empty is the honest close (migration 0082).
+  return writeResolvedReview(env, filing, nowIso, review, {
+    resolutionKind: 'verified_empty',
+    resolutionReason,
+    ingestStatus: 'verified_empty',
+    reason: resolutionReason,
+  });
+}
+
+async function writeResolvedReview(
+  env: Env,
+  filing: Filing,
+  nowIso: string,
+  review: ReviewSnapshot | null,
+  opts: {
+    resolutionKind: 'verified_empty' | 'published';
+    resolutionReason: string;
+    ingestStatus: string;
+    reason: string;
+  },
+): Promise<boolean> {
+  const nextRevision = review ? review.review_revision + 1 : 1;
+  const transition: [string, any[]] = review
+    ? [
+        `UPDATE review_queue
+            SET resolved = 1,
+                reason = ?,
+                agreement_claim_token = NULL,
+                agreement_claimed_at = NULL,
+                agreement_suppressed_at = NULL,
+                agreement_suppression_reason = NULL,
+                resolution_kind = ?,
+                resolution_reason = ?,
+                resolved_at = ?,
+                review_revision = review_revision + 1
+          WHERE doc_id = ? AND resolved = 0 AND review_revision = ?`,
+        [opts.reason, opts.resolutionKind, opts.resolutionReason, nowIso, filing.docId, review.review_revision],
+      ]
+    : [
+        `INSERT OR IGNORE INTO review_queue (
+            doc_id, reason, payload, created_at, resolved,
+            resolution_kind, resolution_reason, resolved_at
+          ) SELECT ?, ?, '{}', ?, 1, ?, ?, ?
+             WHERE EXISTS (SELECT 1 FROM filings WHERE doc_id = ? AND ingest_status <> 'persisted')`,
+        [filing.docId, opts.reason, nowIso, opts.resolutionKind, opts.resolutionReason, nowIso, filing.docId],
+      ];
+  const results = await batch(env.DB, [
+    transition,
+    [
+      `UPDATE filings
+          SET ingest_status = ?, error = NULL
+        WHERE doc_id = ?
+          AND EXISTS (
+            SELECT 1 FROM review_queue
+             WHERE doc_id = ? AND resolved = 1 AND resolution_kind = ?
+               AND review_revision = ?
+          )`,
+      [opts.ingestStatus, filing.docId, filing.docId, opts.resolutionKind, nextRevision],
+    ],
+  ]);
+  return (results[0]?.meta?.changes ?? 0) > 0;
 }
 
 function reviewReason(
