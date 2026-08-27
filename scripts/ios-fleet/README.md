@@ -36,11 +36,11 @@ Edit the runtime copy only through this repo: change the file here, land the PR,
 | Field | Value | Example |
 | --- | --- | --- |
 | `MARKETING_VERSION` (`CFBundleShortVersionString`) | `1.0.<seq>`, +1 on every rebuild | `1.0.8` |
-| `CURRENT_PROJECT_VERSION` (`CFBundleVersion`) | `1.0.<seq>` (same as marketing) | `1.0.8` |
+| `CURRENT_PROJECT_VERSION` (`CFBundleVersion`) | UTC timestamp `YYYYMMDDHHMM` | `202608270145` |
 
-App Store Connect renders these as `<marketing> (<build>)`, so a ship shows **`1.0.8 (1.0.8)`**. Both fields increment together.
+App Store Connect renders these as `<marketing> (<build>)`, e.g. **`1.0.8 (202608270145)`**.
 
-Owner 2026-08-26: both fields are `1.0.N` again. Apple still requires `CFBundleVersion` to increase *within a marketing train*, so do **not** reuse a train that already shipped a `YYYYMMDDHHMM` timestamp build (Congress `1.0.178` / `202608270037`, DealDex `1.0.55` / `202608262346`, Usage `1.0.14` / `202608250546`, Socratic `1.0.72` / `202608250600`). The script +1s marketing on every rebuild, so the next *normal* ship opens a fresh train `1.0.(N+1)` with matching build `1.0.(N+1)`.
+Marketing versions increment monotonically (`1.0.#`), and `CFBundleVersion` contains the build timestamp so every archive and build is timestamped and uniquely distinguishable in App Store Connect and TestFlight.
 
 `--dry-run` only peeks at the next value and does not consume it, and the sequence file is guarded by an atomic-`mkdir` lock (not `flock(1)`, which does not exist on macOS) so concurrent ships cannot race the counter.
 
