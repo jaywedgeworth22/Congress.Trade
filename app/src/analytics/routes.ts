@@ -289,6 +289,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         dollarsExcludeOptions: true,
         resolvedTickerPct:
           totalTrades > 0 ? round(num(row.resolved_ticker_count) / totalTrades, 4) : null,
+        resolvedEquityTickerPct:
+          num(row.equity_trade_count) > 0
+            ? round(num(row.resolved_equity_ticker_count) / num(row.equity_trade_count), 4)
+            : null,
         netSentiment: netSentiment(buyCount, sellCount),
       });
     });

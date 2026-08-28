@@ -71,6 +71,8 @@ export function buildSummaryQuery(p: CommonFilters): BuiltQuery {
     `SUM(${STOCK_MID}) AS est_volume, ` +
     `SUM(${STOCK_SIGNED}) AS est_net_flow, ` +
     `SUM(CASE WHEN ${TICKER_RESOLVED_SQL} THEN 1 ELSE 0 END) AS resolved_ticker_count, ` +
+    `SUM(CASE WHEN COALESCE(t.asset_type, '') IN ('ST', 'Stock', 'Equity', 'stock', 'equity', 'CS', 'Common Stock') OR (t.asset_type IS NULL AND (t.is_option = 0 OR t.is_option IS NULL)) THEN 1 ELSE 0 END) AS equity_trade_count, ` +
+    `SUM(CASE WHEN (COALESCE(t.asset_type, '') IN ('ST', 'Stock', 'Equity', 'stock', 'equity', 'CS', 'Common Stock') OR (t.asset_type IS NULL AND (t.is_option = 0 OR t.is_option IS NULL))) AND ${TICKER_RESOLVED_SQL} THEN 1 ELSE 0 END) AS resolved_equity_ticker_count, ` +
     'SUM(CASE WHEN t.is_option = 1 THEN 1 ELSE 0 END) AS option_count ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where);
