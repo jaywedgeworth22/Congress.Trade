@@ -29,7 +29,7 @@
     "@aws-sdk/client-s3": "3.1116.0",
     "@google/genai": "^2.18.0",
     "@libsql/client": "^0.17.4",
-    "@sentry/deno": "^10.70.0",
+    "@sentry/deno": "^10.71.0",
     "cheerio": "^1.2.0",
     "fflate": "^0.8.3",
     "hono": "^4.13.3",
