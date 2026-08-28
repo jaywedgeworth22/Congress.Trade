@@ -46,7 +46,6 @@ export const COMMITTEE_SECTOR_RULES: ReadonlyArray<CommitteeRule> = [
   { match: 'veterans', sectors: ['Health Care', 'Real Estate'] },
   { match: 'environment and public works', sectors: ['Utilities', 'Materials', 'Industrials'] },
   { match: 'oversight', sectors: ['Industrials', 'Information Technology', 'Health Care', 'Financials'] },
-  { match: 'budget', sectors: ['Financials', 'Health Care', 'Industrials'] },
   { match: 'appropriations', sectors: ['Industrials', 'Health Care', 'Information Technology', 'Energy'] },
 ];
 
