@@ -702,6 +702,8 @@ export interface Env {
   INGEST_RELAY_URL?: string;
   /** Proxy gateway URL for routing Senate eFD requests. */
   SENATE_PROXY_URL?: string;
+  /** Residential proxy URL (e.g. Tailscale http://100.113.106.39:3128) for all gov scraping/probing. */
+  RESIDENTIAL_PROXY_URL?: string;
   /** Enable Cloudflare Browser Rendering fallback (strictly capped to free tier). */
   SENATE_USE_BROWSER_RENDERING?: string;
   /** Enables the OGE executive-branch (278-T) filings watcher. Infisical-tunable. */
