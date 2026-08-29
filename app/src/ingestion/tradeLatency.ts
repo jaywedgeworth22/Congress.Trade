@@ -19,6 +19,7 @@ import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { notifyReviewQueuePublisher } from './reviewQueueNotify.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
@@ -4128,6 +4129,8 @@ export async function runDisclosureLatencyProbe(
   opts: { force?: boolean; providers?: string[] } = {},
 ): Promise<DisclosureLatencyProbeResult> {
   const envx = env as EnvWithWatch;
+  const proxyUrl = resolveResidentialProxyUrl(envx);
+  const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetchImpl) : fetchImpl;
   if (!opts.force && !(await enabled(envx))) {
     return {
       enabled: false,
@@ -4164,13 +4167,13 @@ export async function runDisclosureLatencyProbe(
   });
   for (const providerId of requested) {
     runs.push(
-      await runProviderProbe(env, definition(providerId), now, fetchImpl, max, {
+      await runProviderProbe(env, definition(providerId), now, effectiveFetch, max, {
         force: opts.force,
         selectedFmpPathId,
       }),
     );
   }
-  await tickLatencyPriceSnapshots(env, now, fetchImpl);
+  await tickLatencyPriceSnapshots(env, now, effectiveFetch);
   return {
     enabled: true,
     fetchedRows: runs.reduce((sum, r) => sum + r.fetchedRows, 0),
