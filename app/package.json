@@ -42,11 +42,11 @@
   "devDependencies": {
     "@fontsource/zilla-slab": "^5.3.0",
     "@sentry/cli": "^3.6.2",
-    "@types/node": "26.2.0",
+    "@types/node": "26.3.0",
     "@typescript-eslint/eslint-plugin": "^8.67.0",
-    "@typescript-eslint/parser": "^8.67.0",
+    "@typescript-eslint/parser": "^8.68.0",
     "@vitest/coverage-v8": "4.1.11",
-    "eslint": "^10.9.0",
+    "eslint": "^10.9.1",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11"
   },
