@@ -25,6 +25,7 @@ import {
   looksLikeSenateAgreementWall,
 } from './senateSource.ts';
 import { isSenateRelayUnreachable, senateRelayAuthHeaders } from './senateRelayHealth.ts';
+import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 
@@ -240,7 +241,13 @@ export async function fetchFiling(
     // /fetch-doc mirrors the upstream status + content-type, so the retry
     // semantics below work unchanged. Found 2026-08-10: the historical
     // backfill discovered ~650 filings whose fetches then all 403'd direct.
-    const senateRelayUrl = row.chamber === 'senate' && env.SENATE_RELAY_URL
+    const residentialProxyUrl = resolveResidentialProxyUrl(env);
+    const effectiveFetch = residentialProxyUrl ? createProxiedFetch(residentialProxyUrl, fetch) : fetch;
+
+    // When residential proxy is configured, document fetches flow directly through
+    // the proxy using the Mac's residential IP. When proxy is not configured, check
+    // for a legacy Senate relay microservice.
+    const senateRelayUrl = !residentialProxyUrl && row.chamber === 'senate' && env.SENATE_RELAY_URL
       ? env.SENATE_RELAY_URL.replace(/\/$/, '')
       : undefined;
     const fetchSenateDocViaRelay = () =>
@@ -296,6 +303,7 @@ export async function fetchFiling(
         signal: lease?.signal,
       },
       { service: 'filing-ingestion', operation: 'head-validate-fetch', dynamicTarget: 'filing-source' },
+      effectiveFetch,
     ).catch(() => null);
 
     if (headRes && !headRes.ok && headRes.status !== 304 && headRes.status !== 405) {
@@ -320,7 +328,7 @@ export async function fetchFiling(
         headers,
         redirect: 'follow',
         signal: lease?.signal,
-      }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
+      }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' }, effectiveFetch);
     if (!res.ok) {
       const notYetPublished = res.status === 404 && shouldRetryFetchStatus(res.status, row.first_seen_at, new Date());
       const message = notYetPublished

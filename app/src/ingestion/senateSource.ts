@@ -36,6 +36,7 @@
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import * as cheerio from 'cheerio';
 import { isSenateRelayUnreachable, senateRelayAuthHeaders } from './senateRelayHealth.ts';
+import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -370,15 +371,15 @@ export async function fetchSenatePtrFilings(
   const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
 
-  // EXCEPTION to the fleet default (server-first, relay fallback).  Imperva
-  // 403s the box datacenter IP (measured 2026-08-09), so Senate eFD stays
-  // Mac/scout relay-first.  Direct is only used when the relay is unreachable.
-  // Prefer an explicitly-passed relayUrl (callers should thread env.SENATE_RELAY_URL
-  // through — see watcher.ts's pollSenate and senateCrawler.ts's runSenateBackfill).
-  // The raw process.env read stays only as a last-resort fallback: calls that
-  // relied solely on it intermittently took the direct path and hit the 403
-  // even with the container env var set.
-  const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
+  const proxyUrl = opts.proxyUrl ?? resolveResidentialProxyUrl();
+  const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetchImpl) : fetchImpl;
+
+  // When a proxy is not configured, check for a legacy relay microservice.
+  // When a residential proxy is configured, the server executes the full eFD session
+  // and search directly through the proxy (bypassing Imperva via residential IP).
+  const relayUrl = !proxyUrl
+    ? opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined)
+    : undefined;
   const relaySecret = opts.relaySecret ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_SECRET : undefined);
   if (relayUrl) {
     try {
@@ -430,7 +431,7 @@ export async function fetchSenatePtrFilings(
 
   while (true) {
     if (!session && !handshakeDone) {
-      session = await establishSenateSession({ kv: opts.kv, politeDelayMs }, fetchImpl);
+      session = await establishSenateSession({ kv: opts.kv, politeDelayMs }, effectiveFetch);
       handshakeDone = true;
     }
     if (!session) break;
@@ -469,7 +470,7 @@ export async function fetchSenatePtrFilings(
           'sec-fetch-site': 'same-origin',
         },
         body: dataBody.toString(),
-      }, { service: 'filing-discovery', operation: 'search-senate-filings' }, fetchImpl);
+      }, { service: 'filing-discovery', operation: 'search-senate-filings' }, effectiveFetch);
 
       const contentType = data.headers.get('content-type') || '';
       if (!data.ok || !contentType.includes('application/json')) {

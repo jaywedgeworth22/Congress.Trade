@@ -759,6 +759,7 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
     kv: env.CONFIG_KV,
     relayUrl: env.SENATE_RELAY_URL,
     relaySecret: env.SENATE_RELAY_SECRET,
+    proxyUrl: env.RESIDENTIAL_PROXY_URL || env.SENATE_PROXY_URL,
   });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
     const filerName = cleanFilerName(f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim()) || null;
