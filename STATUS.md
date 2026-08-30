@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-27 CLAUDE — Litestream sync-interval 5m -> 15m (shared B2 account)
+
+Owner confirmed ST/CT/UM share ONE Backblaze account (daily caps are fleet-wide) and asked for a backup-frequency reduction.  CT coarsened to 15m — data is re-ingestable, and this cuts quiet-period object count plus downstream compaction re-reads 3x.  ST deliberately stays at 300s (live trading DB); UM is already 1h.  Burst caveat unchanged (L0 objects per commit during heavy ingestion).  Rollout: `docs/rollouts/2026-08-27-litestream-sync-15m.md`.
+
 ## 2026-08-27 CLAUDE — Litestream B2 multipart hardening (part-size 10MB)
 
 Preventive port of the ST fix after Usage-Monitor's identical B2 L1-compaction
