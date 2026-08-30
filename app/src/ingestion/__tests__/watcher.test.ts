@@ -153,6 +153,17 @@ describe('runWatcher', () => {
     expect(attempts.map((run) => run.params[2])).toEqual(['failure', 'failure']);
   });
 
+  it('rethrows AbortError instead of recording a source failure when the tick signal aborts', async () => {
+    const { env, dbRuns } = fakeEnv();
+    const controller = new AbortController();
+    controller.abort(new Error('deadline'));
+    await expect(
+      runWatcher(env, new Date('2026-07-04T15:00:00.000Z'), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError', message: 'deadline' });
+    expect(dbRuns.filter((run) => /INSERT INTO source_attempts/i.test(run.sql))).toHaveLength(0);
+    expect(mocks.fetchHouseIndex).not.toHaveBeenCalled();
+  });
+
   it('polls the live House search by default and de-dupes overlap against the bulk index', async () => {
     const { env, dbRuns, queueSends } = fakeEnv();
     mocks.fetchHouseIndex.mockResolvedValueOnce([housePtr('20026001'), housePtr('20026002')]);

@@ -49,6 +49,16 @@ describe('buildSummaryQuery', () => {
     expect(q.sql).toContain('AS option_count');
     expect(q.params).toEqual(['-30 days']);
   });
+
+  it('counts resolvedEquityTickerPct from canonical public_equity, not House CS bonds', () => {
+    const q = buildSummaryQuery({ window: 'all' });
+    expect(q.sql).toContain("= 'public_equity' THEN 1 ELSE 0 END) AS equity_trade_count");
+    expect(q.sql).toContain("= 'public_equity' AND");
+    expect(q.sql).toContain("WHEN upper(trim(coalesce(t.asset_type, ''))) = 'CS' THEN 'fixed_income_corporate'");
+    expect(q.sql).not.toMatch(
+      /IN \('ST', 'Stock', 'Equity', 'stock', 'equity', 'CS', 'Common Stock'\)/,
+    );
+  });
 });
 
 describe('buildTickerLeaderboardQuery', () => {

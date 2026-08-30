@@ -327,7 +327,9 @@ export async function runMaintenancePipeline(
 
   try {
     await runLane('secrets_refresh', () => refreshSecrets(env));
-    result.watcher = await runLane('watcher', () => runWatcher(env, now));
+    result.watcher = await runLane('watcher', () =>
+      runWatcher(env, now, { signal: options.signal }),
+    );
     // Autonomy lanes run before the outbox gate so newly enqueued
     // agreement.check / autopilot.tick messages are visible to the gate probe.
     // A2: deterministic text/html drain runs even when OpenRouter autopilot is

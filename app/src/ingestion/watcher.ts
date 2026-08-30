@@ -939,13 +939,28 @@ function scheduleConfigFor(env: Env): ProbeScheduleConfig {
   }
 }
 
-export async function runWatcher(env: Env, now: Date = new Date()): Promise<WatcherResult> {
+function throwIfWatcherAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error(
+    signal.reason instanceof Error ? signal.reason.message : 'watcher aborted',
+  );
+  error.name = 'AbortError';
+  throw error;
+}
+
+export async function runWatcher(
+  env: Env,
+  now: Date = new Date(),
+  options: { signal?: AbortSignal } = {},
+): Promise<WatcherResult> {
+  throwIfWatcherAborted(options.signal);
   const cfg = await getConfig(env);
   const schedule = scheduleConfigFor(env);
   const result: WatcherResult = { house: 'skipped', senate: 'skipped', executive: 'skipped' };
 
   // HOUSE -----------------------------------------------------------------
   try {
+    throwIfWatcherAborted(options.signal);
     const lastHouse = await getLastPollAt(env, 'house');
     const houseDecision = decideSourcePoll({
       source: 'house',
@@ -982,12 +997,14 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
       }
     }
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     await recordSourceError(env, 'house', now.toISOString(), err);
     result.house = 'failure';
   }
 
   // SENATE ----------------------------------------------------------------
   try {
+    throwIfWatcherAborted(options.signal);
     const lastSenate = await getLastPollAt(env, 'senate');
     const senateDecision = decideSourcePoll({
       source: 'senate',
@@ -1024,6 +1041,7 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
       }
     }
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     await recordSourceError(env, 'senate', now.toISOString(), err);
     result.senate = 'failure';
   }
@@ -1033,6 +1051,7 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   // Fail-soft: an OGE outage must never affect House/Senate polling above.
   // Server-first: direct extapps2.oge.gov, then Mac/scout relay if direct fails.
   try {
+    throwIfWatcherAborted(options.signal);
     const lastExec = await getLastPollAt(env, 'oge');
     const execDecision = decideSourcePoll({
       source: 'executive',
@@ -1073,6 +1092,7 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
       }
     }
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     console.warn('watcher: executive (OGE) source failed:', (err as Error).message);
     // Durable failure receipt so the polling_executive liveness check sees
     // "attempts running, successes stale" instead of silence.
