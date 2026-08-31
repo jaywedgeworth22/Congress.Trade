@@ -132,6 +132,42 @@ export interface PaperMediaExtractResult {
   mediaCount: number;
 }
 
+async function loadMediaAsDataUrl(
+  env: Env,
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const proxyUrl = await resolveResidentialProxyUrl(env);
+    const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetch) : fetch;
+    const res = await trackedFetch(
+      url,
+      {
+        signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      },
+      {
+        service: 'senatePaperMedia',
+        operation: 'fetch_paper_image',
+      },
+      effectiveFetch,
+      { envOverride: env },
+    );
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || (url.endsWith('.png') ? 'image/png' : url.endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 0) {
+        return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
+      }
+    }
+  } catch {
+    // Fail soft to raw URL
+  }
+  return url;
+}
+
 /**
  * OCR public paper page scans via OpenRouter vision (inline base64 data URLs).
  */
