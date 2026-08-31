@@ -171,6 +171,7 @@ export async function fetchHouseIndex(
       directError = new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
     }
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     directError = err instanceof Error ? err : new Error(String(err));
   }
 
@@ -179,6 +180,7 @@ export async function fetchHouseIndex(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url, responseType: 'bytes' }),
+      signal: opts.signal,
     }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' }, opts.fetchImpl);
     if (relayRes.ok) {
       zipBytes = new Uint8Array(await relayRes.arrayBuffer());
@@ -363,6 +365,8 @@ export interface PollHouseLiveSearchOptions {
   delayMs?: number;
   /** Env object for secret resolution. */
   env?: any;
+  /** Cancels active source I/O when the enclosing watcher tick reaches its deadline. */
+  signal?: AbortSignal;
 }
 
 /** Public zero-config proxy relay fallbacks used when no custom proxy secret is provided. */
@@ -432,12 +436,13 @@ export async function pollHouseLiveSearch(
 
       const landing = await trackedFetch(landingTargetUrl, {
         headers: customHeaders,
+        signal: opts.signal,
       }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
       if (landing.ok) jar.absorb(landing);
 
       const baseDelay = opts.delayMs ?? HOUSE_POLITE_DELAY_MS;
       if (baseDelay > 0) {
-        await delay(baseDelay * attempt);
+        await delay(baseDelay * attempt, opts.signal);
       }
 
       // 2) POST search form
@@ -464,6 +469,7 @@ export async function pollHouseLiveSearch(
         method: 'POST',
         headers: postHeaders,
         body: buildHouseSearchBody(year).toString(),
+        signal: opts.signal,
       }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
 
       if (!res.ok) {
@@ -473,11 +479,12 @@ export async function pollHouseLiveSearch(
       const html = await res.text();
       return parseHouseSearchHtml(html, String(year));
     } catch (err) {
+      if (opts.signal?.aborted) throw err;
       lastError = err as Error;
       if (attempt < maxAttempts) {
         const baseDelay = opts.delayMs ?? 1000;
         if (baseDelay > 0) {
-          await delay(baseDelay * attempt);
+          await delay(baseDelay * attempt, opts.signal);
         }
       }
     }
