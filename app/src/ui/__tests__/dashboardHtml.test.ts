@@ -2054,11 +2054,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('kpi-money');
     expect(DASHBOARD_HTML).toContain('class="bp"');
     expect(DASHBOARD_HTML).toContain('.card .v .bp-n { font-size: 28px;');
-    expect(DASHBOARD_HTML).toContain('.card .v .bp-pct { font-size: 20px;');
-    expect(DASHBOARD_HTML).toContain('.card .v .bp-w { font-size: 16px;');
+    expect(DASHBOARD_HTML).toContain('.card .v .bp-pct { font-size: 28px;');
+    expect(DASHBOARD_HTML).toContain('.card .v .bp-w { font-size: 14px;');
     expect(DASHBOARD_HTML).toContain('--trends-gap: 24px');
     expect(DASHBOARD_HTML).toContain("n < 0 ? '\u2212' : ''");
-    expect(DASHBOARD_HTML).toContain('font-size: clamp(12px, 16cqi, 28px)');
+    expect(DASHBOARD_HTML).toContain('.card .v .net, .card .v .kpi-money { white-space: nowrap; max-width: 100%; overflow: hidden; font-size: 28px;');
   });
 
   it('toggles What Is Being Traded between # trades and $ volume, with no rank numbers', () => {
