@@ -433,11 +433,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: row; align-items: baseline; justify-content: center; align-content: center; gap: 0; flex-wrap: nowrap; text-align: center; line-height: 1.2; min-width: 0; overflow: hidden; }
   .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 0; }
-  .card .v .net, .card .v .kpi-money { white-space: nowrap; max-width: 100%; overflow: hidden; font-size: clamp(12px, 16cqi, 28px); }
-  .card .v .bp { display: inline-flex; align-items: baseline; white-space: nowrap; line-height: 1; }
+  .card .v .net, .card .v .kpi-money { white-space: nowrap; max-width: 100%; overflow: hidden; font-size: 28px; font-weight: 700; }
+  .card .v .bp { display: inline-flex; align-items: baseline; justify-content: center; white-space: nowrap; line-height: 1; }
   .card .v .bp-n { font-size: 28px; font-weight: 700; }
-  .card .v .bp-pct { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: 0; }
-  .card .v .bp-w { font-size: 16px; font-weight: 600; margin-left: 0.12em; color: var(--text-dim); }
+  .card .v .bp-pct { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: 0; }
+  .card .v .bp-w { font-size: 14px; font-weight: 500; margin-left: 0.25em; color: var(--text-dim); }
   .kpi-note { font-size: 10px; font-weight: 500; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 6px; color: var(--text-dim); }
   /* Trends snapshot: extras (option footnote, sparkline) live inside .v so
      the figure + extra center as one group under a top-pinned heading. */
@@ -447,6 +447,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     justify-content: center;
     overflow: hidden;
   }
+  #trLagKpis.grid-cards { margin-bottom: 20px; }
+  #trLagKpis .card { min-height: 96px; padding: 16px 14px; }
+  #trLagKpis .card .v { flex: 1; display: flex; flex-direction: row; align-items: center; justify-content: center; margin: auto 0; text-align: center; font-size: 26px; }
+  #trLagKpis .card .v small { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 4px; }
   .kpi-spark {
     display: flex;
     align-items: flex-end;
@@ -1534,15 +1538,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:80; padding:18px; }
   .overlay.open { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:520px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
-  .abtn, .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; min-height:48px; padding:12px 16px; border-radius:var(--radius-pill); font-weight:600; font-size:16px; cursor:pointer; text-decoration:none; box-sizing:border-box; position:relative; z-index:2; -webkit-tap-highlight-color:transparent; }
-  a.abtn { color:#fff; background:#000; border:1px solid #333; }
+  #loginOverlay .modal { max-width: 400px; padding: 26px 24px; }
+  .auth-btn-stack { display:flex; flex-direction:column; gap:10px; margin-top:14px; width:100%; }
+  .auth-btn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; border:1px solid var(--border); transition:border-color .15s, background .15s; font-family:inherit; color:var(--text); -webkit-tap-highlight-color:transparent; }
+  .auth-btn svg { width:18px; height:18px; flex-shrink:0; }
+  .auth-btn.gbtn, .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
+  .auth-btn.gbtn:hover, .gbtn:hover { border-color:var(--accent); }
+  .auth-btn.abtn, .abtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid #333; background:#000; color:#fff; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
+  .auth-btn.abtn:hover, .abtn:hover { border-color:#666; }
+  .auth-btn.xbtn, .xbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid #333; background:#000; color:#fff; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
+  .auth-btn.xbtn:hover, .xbtn:hover { border-color:#666; }
   .modal h2 { margin:0 0 6px; font-size:19px; }
   .modal p.sub { margin:0 0 18px; color:var(--text-dim); font-size:13px; }
   .modal .close { float:right; display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; margin:-10px -10px 0 6px; background:transparent; border:1px solid transparent; border-radius:999px; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
   .modal .close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
-  .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:11px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:600; font-size:14px; cursor:pointer; }
-  .gbtn:hover { border-color:var(--accent); }
-  .gbtn svg { width:18px; height:18px; }
   .divider { display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:12px; margin:16px 0; }
   .divider::before, .divider::after { content:""; flex:1; height:1px; background:var(--border); }
   .field { display:flex; gap:8px; margin-top:6px; }
@@ -2149,6 +2158,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        wide enough to hold it. */
     #trKpis .card { container-type: inline-size; }
     #trKpis .card .v { font-size: min(24px, 19.5cqw); }
+    #trKpis .card .v .net, #trKpis .card .v .kpi-money, #trKpis .card .v .bp-n { font-size: inherit; }
+    #trKpis .card .v .bp-pct { font-size: inherit; }
+    #trKpis .card .v .bp-w { font-size: min(13px, 11cqw); }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
     .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
@@ -2350,6 +2362,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
    One token-derived surface recipe + one easing/duration vocabulary,
    inherited by descendants. These custom props never paint on their own. */
 #view-trends {
+  max-width: 1280px;
+  margin: 0 auto;
   --tr-ease: cubic-bezier(.2, .6, .25, 1);
   --tr-fast: 130ms;
   --tr-med: 170ms;
@@ -3206,13 +3220,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Buys vs sells: directly under Rising Activity (owner 2026-08-15). -->
     <details class="section trends-fold" open>
-      <summary class="tf-h">Buys vs Sells<span class="fold-cue" aria-hidden="true"></span></summary>
+      <summary class="tf-h tchart-summary">
+        <span class="tchart-summary-title">Buys vs Sells</span>
+        <div class="tchart-controls" onclick="event.preventDefault();event.stopPropagation();">
+          <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
+            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
+            <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
+          </div>
+        </div>
+        <span class="fold-cue" aria-hidden="true"></span>
+      </summary>
       <div class="tchart-head" style="margin-bottom:6px;">
         <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
-        <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
-          <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')">#</button>
-          <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
-        </div>
       </div>
       <div id="trTime"></div>
     </details>
@@ -3235,32 +3254,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </details>
     </div>
 
-    <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
-    <details class="section trends-fold" open>
-      <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
-      <!-- The one place the benchmark is spelled out for this surface: the rows,
-           the header tooltip and the row tooltips all say "excess" instead. -->
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
-      <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
-      <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
-    </details>
-
-    <!-- Politicians + Party -->
-    <div class="trend-members-grid">
+    <!-- Politicians: Top Performers (excess return) + Most Active (volume/trades) -->
+    <div class="trend-grid2">
+      <details class="section trends-fold" open>
+        <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+        <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
+        <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
+        <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
+      </details>
       <details class="section trends-fold" open>
         <summary class="tf-h">Most Active Politicians<span class="fold-cue" aria-hidden="true"></span></summary>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </details>
-      <div class="trend-side-stack">
-        <details class="section trends-fold" open>
-          <summary class="tf-h">By Party<span class="fold-cue" aria-hidden="true"></span></summary>
-          <div id="trParties"></div>
-        </details>
-        <details class="section trends-fold" open>
-          <summary class="tf-h">By Asset Type<span class="fold-cue" aria-hidden="true"></span></summary>
-          <div id="trSectors"></div>
-        </details>
-      </div>
+    </div>
+
+    <!-- Category Breakdowns: By Party + By Asset Type -->
+    <div class="trend-grid2">
+      <details class="section trends-fold" open>
+        <summary class="tf-h">By Party<span class="fold-cue" aria-hidden="true"></span></summary>
+        <div id="trParties"></div>
+      </details>
+      <details class="section trends-fold" open>
+        <summary class="tf-h">By Asset Type<span class="fold-cue" aria-hidden="true"></span></summary>
+        <div id="trSectors"></div>
+      </details>
     </div>
 
     <!-- Disclosure timeliness -->
@@ -3689,22 +3706,24 @@ ${speedProofSectionHtml(true)}
     <button class="close" onclick="closeLogin()" aria-label="Close">×</button>
     <h2>Sign In to Congress.Trade</h2>
     <p class="sub">Sign in to manage your account and use Premium research tools.</p>
-    <button class="gbtn" onclick="loginGoogle()">
-      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-      Sign In with Google
-    </button>
-    <a class="abtn" id="appleSignInBtn" href="/auth/apple/start">
-      <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
-        <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
-      </svg>
-      Sign In with Apple
-    </a>
-    <a class="xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#000;color:#fff;border-radius:8px;padding:10px;text-decoration:none;font-weight:600;margin-top:8px">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-      </svg>
-      Sign In with X
-    </a>
+    <div class="auth-btn-stack">
+      <button class="auth-btn gbtn" id="googleSignInBtn" onclick="loginGoogle()">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+        Sign In with Google
+      </button>
+      <a class="auth-btn abtn" id="appleSignInBtn" href="/auth/apple/start" style="display:none">
+        <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
+          <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
+        </svg>
+        Sign In with Apple
+      </a>
+      <a class="auth-btn xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:none">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+        </svg>
+        Sign In with X
+      </a>
+    </div>
     <p class="note" id="loginMsg"></p>
   </div>
 </div>
@@ -12355,6 +12374,7 @@ document.addEventListener('click', function (e) {
 
 /* ---- login modal ---- */
 function openLogin() {
+  syncAppleSignInButton();
   focusTrapReturnEl = document.activeElement;
   el('loginOverlay').classList.add('open');
   syncBodyScrollLock();
@@ -12383,19 +12403,27 @@ function loginX() {
   if (msg) msg.textContent = 'Connecting to X…';
 }
 function syncAppleSignInButton() {
-  var btn = el('appleSignInBtn');
-  if (!btn) return;
-  btn.hidden = false;
-  if (ME.auth && ME.auth.appleWeb) {
-    btn.onclick = null;
-    return;
+  var appleBtn = el('appleSignInBtn');
+  if (appleBtn) {
+    if (ME.auth && ME.auth.appleWeb) {
+      appleBtn.style.display = 'flex';
+      appleBtn.hidden = false;
+      appleBtn.onclick = null;
+    } else {
+      appleBtn.style.display = 'none';
+      appleBtn.hidden = true;
+    }
   }
-  btn.onclick = function (e) {
-    if (e && e.preventDefault) e.preventDefault();
-    var msg = el('loginMsg');
-    if (msg) msg.textContent = 'Sign In with Apple is not configured for this site yet.  Use Google.';
-    return false;
-  };
+  var xBtn = el('xSignInBtn');
+  if (xBtn) {
+    if (ME.auth && ME.auth.xWeb) {
+      xBtn.style.display = 'flex';
+      xBtn.hidden = false;
+    } else {
+      xBtn.style.display = 'none';
+      xBtn.hidden = true;
+    }
+  }
 }
 (function markPhoneChrome() {
   try {

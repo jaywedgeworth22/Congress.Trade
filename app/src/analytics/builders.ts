@@ -704,8 +704,8 @@ export function buildMemberPerformanceLeaderboardQuery(
     'SELECT t.filer_id AS filer_id, MAX(COALESCE(fl.display_name, fl.full_name)) AS full_name, MAX(fl.party) AS party, ' +
     'MAX(fl.photo_url) AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
-    `SUM((${ANNUALIZED_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_annualized_excess, ` +
-    `SUM((${WINSOR_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0) AS avg_excess, ` +
+    `COALESCE(SUM((${ANNUALIZED_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0), AVG(${ANNUALIZED_EXCESS})) AS avg_annualized_excess, ` +
+    `COALESCE(SUM((${WINSOR_EXCESS}) * ${MID}) / NULLIF(SUM(${MID}), 0), AVG(${WINSOR_EXCESS})) AS avg_excess, ` +
     `SUM(CASE WHEN ${ANNUALIZED_EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
     `SUM(${MID}) AS est_volume ` +
     'FROM transactions t ' +
@@ -716,7 +716,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     'CROSS JOIN sx ' +
     whereSql(allWhere) +
     'GROUP BY t.filer_id ' +
-    `HAVING trade_count >= ${minTrades} ` +
+    `HAVING trade_count >= ${minTrades} AND avg_excess IS NOT NULL ` +
     'ORDER BY avg_excess DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
