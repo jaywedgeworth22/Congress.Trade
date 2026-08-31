@@ -2263,6 +2263,9 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
   const paths = isFmpFamilyProvider(provider.id) ? await enabledFmpPathIds(env) : null;
   const pathEnabled =
     !provider.fmpPathId || !paths ? true : paths.has(provider.fmpPathId);
+  const requested = provider.supportsDirectLatest
+    ? await requestedProviderIds(env as EnvWithWatch)
+    : null;
 
   let operationalStatus: LatencySourceStatus = 'unknown';
   let reason = provider.reason;
@@ -2272,6 +2275,12 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     reason = !fmpProbeOn
       ? 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)'
       : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
+  } else if (requested && !requested.includes(provider.id)) {
+    // Filtered out of the probe set — the documented way to retire a
+    // provider (e.g. a dropped subscription) without deleting its key or
+    // its historical observations. Grey OFF, not red error-by-age.
+    operationalStatus = 'off';
+    reason = `OFF: "${provider.id}" not in DISCLOSURE_LATENCY_PROVIDERS`;
   } else if (!provider.supportsDirectLatest) {
     operationalStatus = 'stopped';
   } else if (!configured) {
@@ -2317,6 +2326,41 @@ export async function getDisclosureLatencyProviderStatuses(env: Env): Promise<Di
   const statuses: DisclosureLatencyProviderStatus[] = [];
   for (const provider of PROVIDERS) statuses.push(await providerStatus(env, provider));
   return statuses;
+}
+
+/**
+ * Provider ids the current config expects to be producing latency
+ * observations: the requested set (DISCLOSURE_LATENCY_PROVIDERS, default all
+ * direct providers) minus providers whose switches or keys rule them out.
+ * Feeds pipelineHealth's latency_probes check so an intentionally retired
+ * provider (dropped subscription, filtered out or key removed) stops paging,
+ * while a provider that SHOULD run still pages when it goes quiet.
+ *
+ * Membership providers (UW/Quiver) are key-gated: removing the key is a
+ * deliberate retire, matching how dropped subscriptions are handled.  The
+ * FMP family is switch-gated only (FMP_LATENCY_PROBE_ENABLED /
+ * FMP_LATENCY_PATHS) — a missing FMP key with the switch still on is a
+ * misconfiguration that must page, not a retire.
+ *
+ * Empty set when the disclosure-latency watch itself is off — callers decide
+ * how loud "nothing is expected to run" should be.
+ */
+export async function expectedLatencyProviderIds(env: Env): Promise<Set<string>> {
+  const envx = env as EnvWithWatch;
+  const out = new Set<string>();
+  if (!(await enabled(envx))) return out;
+  for (const id of await requestedProviderIds(envx)) {
+    const def = definition(id);
+    if (!def.supportsDirectLatest) continue;
+    if (isFmpFamilyProvider(id)) {
+      if (!(await isFmpProbeEnabled(env))) continue;
+      if (def.fmpPathId && !(await enabledFmpPathIds(env)).has(def.fmpPathId)) continue;
+    } else if (!(await resolveProviderSecret(env, def))) {
+      continue;
+    }
+    out.add(id);
+  }
+  return out;
 }
 
 

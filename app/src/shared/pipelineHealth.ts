@@ -16,6 +16,7 @@ import {
 import { describeAutopilotHaltReason } from '../extraction/providerHealth.ts';
 import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
 import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
+import { expectedLatencyProviderIds } from '../ingestion/tradeLatency.ts';
 
 export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
 
@@ -90,8 +91,15 @@ export interface PipelineSignals {
    * Latency-probe liveness (same directive): newest observation per provider
    * from trade_provider_observations. Empty array = probes have never
    * recorded anything (loud), null = uncollected.
+   *
+   * `expected` marks providers the current config intends to probe
+   * (DISCLOSURE_LATENCY_PROVIDERS ∩ watch/FMP switches ∩ membership keys —
+   * see expectedLatencyProviderIds). expected=false rows are retired: shown
+   * in details, never paged. Absent = expected, so signal builders that
+   * predate the flag keep the old always-page behavior. lastObservedAt null
+   * = expected but never observed (just-enabled provider) — counts silent.
    */
-  latencyProviders: Array<{ provider: string; lastObservedAt: string }> | null;
+  latencyProviders: Array<{ provider: string; lastObservedAt: string | null; expected?: boolean }> | null;
   /**
    * Named-tunnel Senate relay liveness (issue #1604).  configured reflects
    * SENATE_RELAY_URL; probe is the last GET /health written by the watcher
@@ -432,52 +440,66 @@ export function evaluatePipelineSignals(
   // 12. Latency-monitoring liveness (same owner directive): the provider
   // latency probes (Quiver/UW/FMP observations that feed the latency
   // scorecard) must never go silently dark. Whole-system silence is stalled;
-  // an individual provider gone quiet past the silence threshold is degraded
-  // with the provider named. Age does not retire a row — turn the source
-  // off if it is intentionally decommissioned.
+  // an expected provider gone quiet past the silence threshold is degraded
+  // with the provider named. Providers retired in config (expected=false —
+  // dropped subscription, DISCLOSURE_LATENCY_PROVIDERS filter, switch off)
+  // are listed for context but never page: age alone kept paging retired
+  // Quiver/UW for 17 days of UptimeRobot DOWN (2026-08).
   if (s.latencyProviders === null) {
     checks.push({ id: 'latency_probes', status: 'unknown', detail: 'Latency-probe liveness uncollected', value: null });
-  } else if (s.latencyProviders.length === 0) {
-    checks.push({
-      id: 'latency_probes',
-      status: 'stalled',
-      detail: 'Latency monitoring NOT RUNNING — zero provider observations recorded, ever',
-      value: null,
-    });
   } else {
-    let newestMs = -Infinity;
-    const silent: string[] = [];
-    for (const p of s.latencyProviders) {
-      const ms = Date.parse(p.lastObservedAt);
-      if (!Number.isFinite(ms)) continue;
-      if (ms > newestMs) newestMs = ms;
-      if ((nowMs - ms) / 3_600_000 > t.latencyProviderSilenceHours) {
-        silent.push(`${p.provider} (${Math.round((nowMs - ms) / 3_600_000)}h)`);
-      }
-    }
-    const newestAgeH = newestMs === -Infinity ? Infinity : (nowMs - newestMs) / 3_600_000;
-    if (newestAgeH > t.latencyObservationMaxAgeHours) {
+    const expected = s.latencyProviders.filter((p) => p.expected !== false);
+    const retired = s.latencyProviders.filter((p) => p.expected === false);
+    const retiredNote = retired.length
+      ? `; retired in config (not paged): ${retired.map((p) => p.provider).join(', ')}`
+      : '';
+    if (expected.length === 0) {
       checks.push({
         id: 'latency_probes',
         status: 'stalled',
-        detail: `Latency monitoring SILENT: newest provider observation is `
-          + `${newestAgeH === Infinity ? 'unparseable' : Math.round(newestAgeH) + 'h'} old (threshold ${t.latencyObservationMaxAgeHours}h)`,
-        value: newestAgeH === Infinity ? null : Math.round(newestAgeH),
-      });
-    } else if (silent.length > 0) {
-      checks.push({
-        id: 'latency_probes',
-        status: 'degraded',
-        detail: `Latency provider(s) gone quiet: ${silent.join(', ')} (silence threshold ${t.latencyProviderSilenceHours}h)`,
-        value: silent.length,
+        detail: s.latencyProviders.length === 0
+          ? 'Latency monitoring NOT RUNNING — zero provider observations recorded, ever'
+          : `Latency monitoring NOT RUNNING — no provider is enabled in config${retiredNote}`,
+        value: null,
       });
     } else {
-      checks.push({
-        id: 'latency_probes',
-        status: 'ok',
-        detail: `Latency probes live: newest observation ${newestAgeH < 1 ? Math.round(newestAgeH * 60) + 'm' : Math.round(newestAgeH) + 'h'} ago across ${s.latencyProviders.length} provider(s)`,
-        value: s.latencyProviders.length,
-      });
+      let newestMs = -Infinity;
+      const silent: string[] = [];
+      for (const p of expected) {
+        const ms = p.lastObservedAt === null ? NaN : Date.parse(p.lastObservedAt);
+        if (!Number.isFinite(ms)) {
+          silent.push(`${p.provider} (never observed)`);
+          continue;
+        }
+        if (ms > newestMs) newestMs = ms;
+        if ((nowMs - ms) / 3_600_000 > t.latencyProviderSilenceHours) {
+          silent.push(`${p.provider} (${Math.round((nowMs - ms) / 3_600_000)}h)`);
+        }
+      }
+      const newestAgeH = newestMs === -Infinity ? Infinity : (nowMs - newestMs) / 3_600_000;
+      if (newestAgeH > t.latencyObservationMaxAgeHours) {
+        checks.push({
+          id: 'latency_probes',
+          status: 'stalled',
+          detail: `Latency monitoring SILENT: newest expected-provider observation is `
+            + `${newestAgeH === Infinity ? 'missing' : Math.round(newestAgeH) + 'h'} old (threshold ${t.latencyObservationMaxAgeHours}h)${retiredNote}`,
+          value: newestAgeH === Infinity ? null : Math.round(newestAgeH),
+        });
+      } else if (silent.length > 0) {
+        checks.push({
+          id: 'latency_probes',
+          status: 'degraded',
+          detail: `Latency provider(s) gone quiet: ${silent.join(', ')} (silence threshold ${t.latencyProviderSilenceHours}h)${retiredNote}`,
+          value: silent.length,
+        });
+      } else {
+        checks.push({
+          id: 'latency_probes',
+          status: 'ok',
+          detail: `Latency probes live: newest observation ${newestAgeH < 1 ? Math.round(newestAgeH * 60) + 'm' : Math.round(newestAgeH) + 'h'} ago across ${expected.length} provider(s)${retiredNote}`,
+          value: expected.length,
+        });
+      }
     }
   }
 
@@ -732,9 +754,27 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       env.DB,
       'SELECT provider, MAX(last_observed_at) AS last_observed FROM trade_provider_observations GROUP BY provider',
     );
-    latencyProviders = rows
+    // Config-expected set; null when the resolver itself fails, which leaves
+    // every observed row expected (fails open to the old always-page shape).
+    let expectedIds: Set<string> | null = null;
+    try {
+      expectedIds = await expectedLatencyProviderIds(env);
+    } catch {}
+    const collected: NonNullable<PipelineSignals['latencyProviders']> = rows
       .filter((r) => r.provider && r.last_observed)
-      .map((r) => ({ provider: r.provider, lastObservedAt: r.last_observed }));
+      .map((r) => ({
+        provider: r.provider,
+        lastObservedAt: r.last_observed,
+        expected: expectedIds === null ? true : expectedIds.has(r.provider),
+      }));
+    if (expectedIds) {
+      for (const id of expectedIds) {
+        if (!collected.some((p) => p.provider === id)) {
+          collected.push({ provider: id, lastObservedAt: null, expected: true });
+        }
+      }
+    }
+    latencyProviders = collected;
   } catch {}
 
   let senateRelay: PipelineSignals['senateRelay'] = {

@@ -386,6 +386,71 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     expect(check.detail).toContain('unusual_whales');
   });
 
+  it('a retired provider (expected=false) quiet for weeks does not page; detail still names it', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      latencyProviders: [
+        { provider: 'fmp', lastObservedAt: new Date(nowMs - 1 * 3_600_000).toISOString(), expected: true },
+        { provider: 'quiver', lastObservedAt: new Date(nowMs - 457 * 3_600_000).toISOString(), expected: false },
+        { provider: 'unusual_whales', lastObservedAt: new Date(nowMs - 421 * 3_600_000).toISOString(), expected: false },
+      ],
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'latency_probes')!;
+    expect(check.status).toBe('ok');
+    expect(check.detail).toContain('retired in config');
+    expect(check.detail).toContain('quiver');
+    expect(check.value).toBe(1);
+  });
+
+  it('an expected provider going quiet still pages even alongside retired ones', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      latencyProviders: [
+        { provider: 'fmp', lastObservedAt: new Date(nowMs - 60 * 3_600_000).toISOString(), expected: true },
+        { provider: 'quiver', lastObservedAt: new Date(nowMs - 457 * 3_600_000).toISOString(), expected: false },
+      ],
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'latency_probes')!;
+    // fmp alone is expected and 60h quiet — that is whole-system silence.
+    expect(check.status).toBe('stalled');
+  });
+
+  it('an expected provider with no observation ever is degraded as never observed', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      latencyProviders: [
+        { provider: 'fmp', lastObservedAt: new Date(nowMs - 1 * 3_600_000).toISOString(), expected: true },
+        { provider: 'unusual_whales', lastObservedAt: null, expected: true },
+      ],
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'latency_probes')!;
+    expect(check.status).toBe('degraded');
+    expect(check.detail).toContain('unusual_whales (never observed)');
+  });
+
+  it('every provider retired in config is stalled (latency monitoring off entirely stays loud)', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      latencyProviders: [
+        { provider: 'quiver', lastObservedAt: new Date(nowMs - 457 * 3_600_000).toISOString(), expected: false },
+      ],
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'latency_probes')!;
+    expect(check.status).toBe('stalled');
+    expect(check.detail).toContain('no provider is enabled in config');
+  });
+
+  it('rows without the expected flag keep the old always-page behavior', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      latencyProviders: [
+        { provider: 'fmp', lastObservedAt: new Date(nowMs - 1 * 3_600_000).toISOString() },
+        { provider: 'quiver', lastObservedAt: new Date(nowMs - 457 * 3_600_000).toISOString() },
+      ],
+    }, nowMs);
+    expect(res.checks.find((c) => c.id === 'latency_probes')!.status).toBe('degraded');
+  });
+
   it('a dead Senate relay probe is stalled even when polling_senate is ok', () => {
     const res = evaluatePipelineSignals({
       ...base,
