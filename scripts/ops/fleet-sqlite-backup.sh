@@ -88,19 +88,105 @@ df -h /data / | tail -5
 # ---- Off-host replication (MONET 2026-08-09) --------------------------------
 # B2 = primary offsite (every run, scoped key in /root/.config/rclone).
 # R2 = weekly cold copy (Sundays), ONLY if an [r2] rclone remote is configured
-#      — one copy/week keeps R2 definitively inside its free tier.
+#      -- one copy/week keeps R2 definitively inside its free tier.
 declare -A B2_BUCKET=( [congress]="jays-congress-trade-eu" [socratic]="jays-socratic-trade-eu" [usage-monitor]="jays-usage-monitor-eu" )
 # R2 destination bucket is a DIFFERENT namespace than B2 -- only apps present in
 # this map have a real R2 bucket provisioned. Do not reuse B2_BUCKET names here
 # (fixed 2026-08-12: previous code pushed to "r2:<b2-bucket-name>/weekly/", a
 # bucket name that only exists on B2, so the R2 weekly leg silently failed).
 declare -A R2_BUCKET=( [congress]="congress-trade-bucket" )
+
+# B2-side prune (CLAUDE 2026-08-31): keep the newest B2_KEEP_SETS snapshot
+# sets per app under hetzner/ and delete older sets.  A set = the .db/.sqlite
+# files + .sha256 sidecars sharing one YYYYMMDDTHHMMSSZ stamp.  rclone
+# deletefile against the native [b2] remote is a Class A call (free); without
+# this only the 15-day bucket lifecycle reclaims, projecting ~780 GB steady
+# state at ~52 GB/day of raw snapshots.  Best-effort by contract: a prune
+# failure must never fail the backup run (callers append "|| true").
+B2_KEEP_SETS="${B2_KEEP_SETS:-6}"
+prune_b2_sets() {
+  local app="$1" bucket="$2" current_stamp="$3"
+  local keep="$B2_KEEP_SETS"
+  local listing stamps_all old_stamps stamp name kept_count deleted_count set_fail
+  # Only ever touch the hetzner/ prefix of the three known fleet buckets.
+  case "$bucket" in
+    jays-congress-trade-eu|jays-socratic-trade-eu|jays-usage-monitor-eu) ;;
+    *) echo "[fleet-backup] B2 prune SKIP: unexpected bucket $bucket for $app"; return 0 ;;
+  esac
+  case "$keep" in
+    ''|*[!0-9]*) echo "[fleet-backup] B2 prune SKIP: non-numeric B2_KEEP_SETS=$keep"; return 0 ;;
+  esac
+  if [ "$keep" -lt 1 ]; then
+    echo "[fleet-backup] B2 prune SKIP: B2_KEEP_SETS must be >= 1 (got $keep)"
+    return 0
+  fi
+  if ! listing="$(rclone lsf "b2:${bucket}/hetzner/" --files-only 2>/dev/null)"; then
+    echo "[fleet-backup] B2 prune SKIP: listing failed for $app"
+    return 0
+  fi
+  if [ -z "$listing" ]; then
+    echo "[fleet-backup] B2 prune SKIP: empty listing for $app"
+    return 0
+  fi
+  # Strict stamp parse; warn and never touch names without a parseable stamp.
+  while read -r name; do
+    [ -n "$name" ] || continue
+    if ! printf '%s\n' "$name" | grep -qE '[0-9]{8}T[0-9]{6}Z'; then
+      echo "[fleet-backup] B2 prune WARN: unparseable name skipped: $name"
+    fi
+  done <<< "$listing"
+  # Newest-first distinct stamps; keep the first $keep, delete the rest.
+  stamps_all="$(printf '%s\n' "$listing" | grep -oE '[0-9]{8}T[0-9]{6}Z' | sort -u -r)"
+  if [ -z "$stamps_all" ]; then
+    echo "[fleet-backup] B2 prune SKIP: no parseable snapshot sets for $app"
+    return 0
+  fi
+  kept_count="$(printf '%s\n' "$stamps_all" | head -n "$keep" | grep -c . || true)"
+  old_stamps="$(printf '%s\n' "$stamps_all" | tail -n +"$((keep + 1))")"
+  deleted_count=0
+  for stamp in $old_stamps; do
+    [ -n "$stamp" ] || continue
+    if [ "$stamp" = "$current_stamp" ]; then
+      # Never delete the set this run just uploaded, whatever the math says.
+      echo "[fleet-backup] B2 prune SKIP: refusing to delete current set $stamp for $app"
+      continue
+    fi
+    set_fail=0
+    while read -r name; do
+      [ -n "$name" ] || continue
+      if ! rclone deletefile "b2:${bucket}/hetzner/${name}" 2>/dev/null; then
+        echo "[fleet-backup] B2 prune WARN: delete failed: $name"
+        set_fail=1
+      fi
+    done <<< "$(printf '%s\n' "$listing" | grep -F "$stamp" || true)"
+    if [ "$set_fail" = "0" ]; then
+      deleted_count=$((deleted_count + 1))
+    fi
+  done
+  echo "[fleet-backup] B2 prune OK: $app kept=${kept_count} deleted=${deleted_count}"
+  return 0
+}
+
+# R2 weekly receipt guard (CLAUDE 2026-08-31): the Sunday leg is gated only by
+# day-of-week, so it re-ran on all four Sunday cron ticks.  Success when the
+# receipt exists, says ok:true, and completedAt is today's UTC date; anything
+# missing/stale/failed keeps the retry behavior.
+r2_receipt_ok_today() {
+  local receipt="$1" today
+  [ -f "$receipt" ] || return 1
+  grep -q '"ok":true' "$receipt" || return 1
+  today="$(date -u +%Y-%m-%d)"
+  grep -q "\"completedAt\":\"${today}T" "$receipt" || return 1
+  return 0
+}
+
 for app in congress socratic usage-monitor; do
   dir="$ROOT/$app"; [ -d "$dir" ] || continue
   files=$(ls -1 "$dir" 2>/dev/null | grep "$STAMP" || true)
   [ -n "$files" ] || continue
   if rclone copy "$dir" "b2:${B2_BUCKET[$app]}/hetzner/" --include "*${STAMP}*" --transfers 2 -q; then
     echo "[fleet-backup] B2 offsite OK: $app ($STAMP)"
+    prune_b2_sets "$app" "${B2_BUCKET[$app]}" "$STAMP" || true
   else
     echo "[fleet-backup] B2 offsite FAIL: $app"
   fi
@@ -109,6 +195,10 @@ for app in congress socratic usage-monitor; do
     r2bucket="${R2_BUCKET[$app]:-}"
     if [ -z "$r2bucket" ]; then
       echo "[fleet-backup] R2 weekly skipped: no R2 bucket mapped for $app"
+    elif [ "$app" = "congress" ] && [ "${FLEET_BACKUP_FORCE_WEEKLY:-0}" != "1" ] \
+      && r2_receipt_ok_today "/data/congress-trade/.r2-archive-status.json"; then
+      # Receipt guard: skip the later Sunday cron ticks after one success.
+      echo "[fleet-backup] R2 weekly SKIP: already succeeded today"
     elif rclone listremotes 2>/dev/null | grep -q "^r2:"; then
       if rclone copy "$dir" "r2:${r2bucket}/weekly/" --include "*${STAMP}*" --transfers 2 -q; then
         echo "[fleet-backup] R2 weekly OK: $app"

@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-08-31 CLAUDE — B2 hetzner/ snapshot prune + R2 weekly receipt guard
+
+`scripts/ops/fleet-sqlite-backup.sh` (host cron, 4x/day) was uploading ~52 GB/day of raw snapshots to the three B2 `hetzner/` prefixes with no B2-side prune - only the 15-day bucket lifecycle reclaimed, projecting ~780 GB steady state on the shared capped Backblaze account.  Added `prune_b2_sets()` after each successful offsite upload (keep newest `B2_KEEP_SETS`, default 6, timestamped sets; delete older sets via free Class A `rclone deletefile`; bucket allowlist, strict stamp parsing, never deletes the just-uploaded set, best-effort so a prune failure never fails the backup) and a same-day success receipt guard so the Sunday R2 weekly leg stops re-running on all four Sunday cron ticks.  Post-merge step: install the merged script to `/usr/local/sbin/fleet-sqlite-backup.sh` on fleet-hetzner-nbg1 (backup first); next cron tick exercises it.  Rollout: `docs/rollouts/2026-08-31-b2-hetzner-prune.md`.
+
 ## 2026-08-27 CLAUDE — Litestream sync-interval 5m -> 15m (shared B2 account)
 
 Owner confirmed ST/CT/UM share ONE Backblaze account (daily caps are fleet-wide) and asked for a backup-frequency reduction.  CT coarsened to 15m — data is re-ingestable, and this cuts quiet-period object count plus downstream compaction re-reads 3x.  ST deliberately stays at 300s (live trading DB); UM is already 1h.  Burst caveat unchanged (L0 objects per commit during heavy ingestion).  Rollout: `docs/rollouts/2026-08-27-litestream-sync-15m.md`.
