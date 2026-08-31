@@ -90,8 +90,8 @@ describe('fetcherRetry', () => {
     // Use a ReadableStream without a Content-Length to bypass the initial check
     const body = new ReadableStream({
       start(controller) {
-        // Enqueue chunks that sum to > MAX_RAW_FILING_BYTES
-        const chunk = new Uint8Array(20_000_000);
+        // Enqueue chunks that sum to > MAX_RAW_FILING_BYTES (50MB)
+        const chunk = new Uint8Array(30_000_000);
         controller.enqueue(chunk);
         controller.enqueue(chunk);
         controller.close();
