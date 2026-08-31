@@ -38,3 +38,33 @@
 - Host drift preserved: the deployed copy had intentional local edits from 2026-08-16 that the repo cannot carry (PR #2171 sanitized Coolify volume/container UUIDs out of the public repo) - UUID-pinned `SOCRATIC_VOL`/`UM_VOL`/container greps plus a `SOCRATIC_VOL` fallback.  The install applied this PR's diff ON TOP of the host copy instead of overwriting wholesale, so those greps survive; the two regions are disjoint.
 - DONE: dry-verified stamp parsing against real object names (`rclone lsf b2:jays-congress-trade-eu/hetzner/` shows `congress-trade-YYYYMMDDTHHMMSSZ.db` + `.db.sha256`; 7 distinct stamp sets, zero unparseable names).
 - First real prune happens on the next cron tick (12:15Z); with 7 sets present and keep=6, expect `deleted=2` for congress (the tick uploads set 8), then ~1/tick steady state.  No full backup was run manually.
+
+## Live-run follow-up (same day, second PR)
+
+The first real cron tick (12:15Z) proved candidate selection right and the delete
+mechanism wrong: every app logged `B2 prune WARN: delete failed` for all 12
+candidates and ended `deleted=0`.  Diagnosis on the host: `rclone deletefile
+b2:<bucket>/hetzner/<name>` fails with "is a directory or doesn't exist" even
+though `rclone lsf` lists the exact same path - exact-path object resolution
+(NewObject) does not work under the scoped `fleet-backup-writer-hetzner` key,
+while directory listing does.  `rclone delete "b2:<bucket>/hetzner/" --include
+"/<name>"` deletes the object cleanly (verified live on one stale `.sha256`).
+
+Fix in this follow-up: the prune now uses the anchored `--include` delete, and
+because `rclone delete` exits 0 even when nothing matched, each delete is
+verified by re-listing the prefix and grepping for the exact name; a surviving
+name still logs `delete failed` and withholds the `deleted` count.  One extra
+Class C list call per pruned file (a few per run) - negligible.
+
+Also recorded here because there is no better CT paper trail for it: the
+`congress-trade-bucket` R2 lifecycle rule `bulk-snapshots-14d-expiry` was
+tightened to `bulk-snapshots-7d-expiry` (maxAge 1209600s -> 604800s) via the
+Cloudflare API on 2026-08-31 ~15:20Z, verified by readback.  Rationale: `bulk/`
+is the active daily bulk-snapshot export (~0.65 GB/day, "old runs aren't
+deleted" by design in `app/src/export/routes.ts`); at 14 days it alone reaches
+~9 GB and pushes the bucket past the 10 GB R2 free tier in September.  At 7
+days bulk steady state is ~4.5 GB and the whole bucket lands ~7.2 GB.
+Consumers bootstrap from the latest manifest (`GET /api/export/bulk-snapshot`),
+so a 7-day window is generous.  The other four lifecycle rules were not
+touched.  A durable in-repo retention (writer-side) remains open as a nicer
+future fix.

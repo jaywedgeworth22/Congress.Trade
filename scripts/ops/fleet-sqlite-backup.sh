@@ -98,8 +98,9 @@ declare -A R2_BUCKET=( [congress]="congress-trade-bucket" )
 
 # B2-side prune (CLAUDE 2026-08-31): keep the newest B2_KEEP_SETS snapshot
 # sets per app under hetzner/ and delete older sets.  A set = the .db/.sqlite
-# files + .sha256 sidecars sharing one YYYYMMDDTHHMMSSZ stamp.  rclone
-# deletefile against the native [b2] remote is a Class A call (free); without
+# files + .sha256 sidecars sharing one YYYYMMDDTHHMMSSZ stamp.  Deletes go
+# through rclone delete --include against the native [b2] remote (Class A,
+# free); deletefile is unusable under the scoped writer key (see below).  Without
 # this only the 15-day bucket lifecycle reclaims, projecting ~780 GB steady
 # state at ~52 GB/day of raw snapshots.  Best-effort by contract: a prune
 # failure must never fail the backup run (callers append "|| true").
@@ -154,7 +155,13 @@ prune_b2_sets() {
     set_fail=0
     while read -r name; do
       [ -n "$name" ] || continue
-      if ! rclone deletefile "b2:${bucket}/hetzner/${name}" 2>/dev/null; then
+      # deletefile cannot resolve exact object paths under the scoped
+      # fleet-backup-writer key (NewObject reports "doesn't exist" even though
+      # lsf lists the same path; first live run 2026-08-31 12:15Z deleted 0 of
+      # 12 candidates this way).  An anchored --include delete works, but
+      # exits 0 even when nothing matched, so verify by re-listing.
+      rclone delete "b2:${bucket}/hetzner/" --include "/${name}" 2>/dev/null || true
+      if rclone lsf "b2:${bucket}/hetzner/" --files-only 2>/dev/null | grep -qxF "$name"; then
         echo "[fleet-backup] B2 prune WARN: delete failed: $name"
         set_fail=1
       fi
