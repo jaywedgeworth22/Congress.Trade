@@ -37,32 +37,6 @@ Include parent fund/header as subholding when the row is nested under a fund nam
 Skip blank rows, cover letters, and header-only fund labels without a date.
 Return ONLY JSON: {"transactions":[{"txDate":"YYYY-MM-DD","owner":"self|spouse|joint|dependent|unknown","ticker":null,"assetName":"string","subholding":null,"txType":"P|S|E","amountRange":"$A - $B","rawText":"short quote"}]}`;
 
-async function loadMediaAsDataUrl(
-  env: Env,
-  url: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  try {
-    const proxyUrl = await resolveResidentialProxyUrl(env);
-    const fetcher = proxyUrl ? createProxiedFetch(proxyUrl, trackedFetch) : trackedFetch;
-    const res = await fetcher(url, {
-      signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-    });
-    if (res.ok) {
-      const contentType = res.headers.get('content-type') || (url.endsWith('.png') ? 'image/png' : url.endsWith('.gif') ? 'image/gif' : 'image/jpeg');
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength > 0) {
-        return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
-      }
-    }
-  } catch {
-    // Fail soft to raw URL
-  }
-  return url;
-}
 
 /** True when HTML looks like the eFD paper filing viewer (carousel of page scans). */
 export function isSenatePaperViewerHtml(html: string): boolean {
