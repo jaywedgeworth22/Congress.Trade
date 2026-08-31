@@ -173,3 +173,25 @@ describe('Datadog RUM injection', () => {
     expect(csp).toContain('https://browser-intake-us5-datadoghq.com');
   });
 });
+
+describe('iOS Beta / TestFlight redirect routes', () => {
+  it('redirects /beta, /testflight, /ios, /app to the configured TestFlight or App Store URL', async () => {
+    const app = buildUiRouter();
+    const env = { IOS_TESTFLIGHT_URL: 'https://testflight.apple.com/join/xyz123' } as never;
+
+    for (const path of ['/beta', '/testflight', '/ios', '/app']) {
+      const res = await app.request(`http://localhost${path}`, {}, env);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('https://testflight.apple.com/join/xyz123');
+    }
+  });
+
+  it('falls back to App Store when IOS_APP_STORE_ID is set without custom TestFlight URL', async () => {
+    const app = buildUiRouter();
+    const env = { IOS_APP_STORE_ID: '6798076688' } as never;
+    const res = await app.request('http://localhost/beta', {}, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://apps.apple.com/app/id6798076688');
+  });
+});
+
