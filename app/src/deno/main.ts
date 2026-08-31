@@ -246,9 +246,17 @@ if (!costProfile.disableInternalCron) {
         // with multi-minute deadlines; the 45s tick must not run or starve it.
         { signal: tickAbort.signal, includeDailyJobs: false },
       ));
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let softTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      // Soft abort 5s before hard deadline so active lanes stop claiming and return cleanly
+      const softDeadlineMs = Math.max(5000, tickDeadlineMs - 5000);
+      softTimeoutId = setTimeout(() => {
+        tickAbort.abort(new Error(`Deno cron tick nearing ${tickDeadlineMs}ms deadline`));
+      }, softDeadlineMs);
+
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
+        hardTimeoutId = setTimeout(() => {
           tickAbort.abort(new Error(`Deno cron tick exceeded ${tickDeadlineMs}ms deadline`));
           reject(new Error(`Deno cron tick exceeded ${tickDeadlineMs}ms deadline`));
         }, tickDeadlineMs);
@@ -271,7 +279,8 @@ if (!costProfile.disableInternalCron) {
           console.log('Deno watcher completed', result.watcher);
         }
       } finally {
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        if (softTimeoutId !== undefined) clearTimeout(softTimeoutId);
+        if (hardTimeoutId !== undefined) clearTimeout(hardTimeoutId);
       }
     } catch (err) {
       console.error('Deno cron tick caught error:', err);

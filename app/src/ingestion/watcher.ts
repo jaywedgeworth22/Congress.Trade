@@ -580,13 +580,13 @@ export function inHousePriorYearWindow(now: Date, overlapDays: number): boolean 
  * Poll the House yearly bulk index, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
  */
-async function pollHouse(env: Env, now: Date): Promise<number> {
+async function pollHouse(env: Env, now: Date, signal?: AbortSignal): Promise<number> {
   const nowIso = now.toISOString();
   const year = Number(
     new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' }).format(now),
   );
   const houseRelayUrl = env.HOUSE_RELAY_URL || env.INGEST_RELAY_URL;
-  const all = await fetchHouseIndex(year, { relayUrl: houseRelayUrl });
+  const all = await fetchHouseIndex(year, { relayUrl: houseRelayUrl, signal });
   const ptrs = all.filter((f) => f.isPtr);
 
   const byDoc = new Map<string, DiscoveredFiling>();
@@ -611,13 +611,14 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
       const lastIso = env.CONFIG_KV ? await env.CONFIG_KV.get(HOUSE_PRIOR_YEAR_KV_KEY) : null;
       const lastMs = lastIso ? Date.parse(lastIso) : NaN;
       if (!Number.isFinite(lastMs) || now.getTime() - lastMs >= HOUSE_PRIOR_YEAR_FETCH_INTERVAL_MS) {
-        const prior = (await fetchHouseIndex(year - 1, { relayUrl: houseRelayUrl })).filter((f) => f.isPtr);
+        const prior = (await fetchHouseIndex(year - 1, { relayUrl: houseRelayUrl, signal })).filter((f) => f.isPtr);
         for (const f of prior) {
           if (!byDoc.has(f.pipelineDocId)) byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
         if (env.CONFIG_KV) await env.CONFIG_KV.put(HOUSE_PRIOR_YEAR_KV_KEY, nowIso);
       }
     } catch (err) {
+      if (signal?.aborted) throw err;
       console.warn('watcher: house prior-year index poll failed (current year unaffected):', (err as Error).message);
     }
   }
@@ -628,13 +629,14 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   if (await houseLiveSearchEnabled(env)) {
     let liveErr: Error | null = null;
     try {
-      const live = await pollHouseLiveSearch(year);
+      const live = await pollHouseLiveSearch(year, fetch, { env, signal });
       for (const f of live) {
         if (!byDoc.has(f.pipelineDocId)) {
           byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
       }
     } catch (err) {
+      if (signal?.aborted) throw err;
       liveErr = err as Error;
     }
     // Consecutive-failure counter — fully isolated in its own try/catch. A KV
@@ -725,7 +727,7 @@ export function computeSenateLookbackDays(
  * Poll the Senate efdsearch DataTables API, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
  */
-async function pollSenate(env: Env, now: Date): Promise<number> {
+async function pollSenate(env: Env, now: Date, signal?: AbortSignal): Promise<number> {
   const nowIso = now.toISOString();
   const baseDays = await tunableInt(
     env,
@@ -760,6 +762,7 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
     relayUrl: env.SENATE_RELAY_URL,
     relaySecret: env.SENATE_RELAY_SECRET,
     proxyUrl: env.RESIDENTIAL_PROXY_URL || env.SENATE_PROXY_URL,
+    signal,
   });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
     const filerName = cleanFilerName(f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim()) || null;
@@ -818,7 +821,7 @@ export interface WatcherResult {
 export async function pollExecutive(
   env: Env,
   now: Date,
-  opts: { force?: boolean; maxFilings?: number; dryRun?: boolean } = {},
+  opts: { force?: boolean; maxFilings?: number; dryRun?: boolean; signal?: AbortSignal } = {},
 ): Promise<number | null> {
   const nowIso = now.toISOString();
   const filings = await pollOgeExecutive(env, now, fetch, opts);
@@ -939,13 +942,28 @@ function scheduleConfigFor(env: Env): ProbeScheduleConfig {
   }
 }
 
-export async function runWatcher(env: Env, now: Date = new Date()): Promise<WatcherResult> {
+function throwIfWatcherAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error(
+    signal.reason instanceof Error ? signal.reason.message : 'watcher aborted',
+  );
+  error.name = 'AbortError';
+  throw error;
+}
+
+export async function runWatcher(
+  env: Env,
+  now: Date = new Date(),
+  options: { signal?: AbortSignal } = {},
+): Promise<WatcherResult> {
+  throwIfWatcherAborted(options.signal);
   const cfg = await getConfig(env);
   const schedule = scheduleConfigFor(env);
   const result: WatcherResult = { house: 'skipped', senate: 'skipped', executive: 'skipped' };
 
   // HOUSE -----------------------------------------------------------------
   try {
+    throwIfWatcherAborted(options.signal);
     const lastHouse = await getLastPollAt(env, 'house');
     const houseDecision = decideSourcePoll({
       source: 'house',
@@ -977,17 +995,20 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
         // Skip this poll tick to respect failure backoff
       } else {
         await setLastAttemptAt(env, 'house', now);
-        await pollHouse(env, now);
+        await pollHouse(env, now, options.signal);
         result.house = 'success';
       }
     }
   } catch (err) {
+    if (options.signal?.aborted) throwIfWatcherAborted(options.signal);
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     await recordSourceError(env, 'house', now.toISOString(), err);
     result.house = 'failure';
   }
 
   // SENATE ----------------------------------------------------------------
   try {
+    throwIfWatcherAborted(options.signal);
     const lastSenate = await getLastPollAt(env, 'senate');
     const senateDecision = decideSourcePoll({
       source: 'senate',
@@ -1019,11 +1040,13 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
         // Skip this poll tick to respect failure backoff
       } else {
         await setLastAttemptAt(env, 'senate', now);
-        await pollSenate(env, now);
+        await pollSenate(env, now, options.signal);
         result.senate = 'success';
       }
     }
   } catch (err) {
+    if (options.signal?.aborted) throwIfWatcherAborted(options.signal);
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     await recordSourceError(env, 'senate', now.toISOString(), err);
     result.senate = 'failure';
   }
@@ -1033,6 +1056,7 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   // Fail-soft: an OGE outage must never affect House/Senate polling above.
   // Server-first: direct extapps2.oge.gov, then Mac/scout relay if direct fails.
   try {
+    throwIfWatcherAborted(options.signal);
     const lastExec = await getLastPollAt(env, 'oge');
     const execDecision = decideSourcePoll({
       source: 'executive',
@@ -1068,11 +1092,13 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
         // Skip this poll tick to respect failure backoff
       } else {
         await setLastAttemptAt(env, 'oge', now);
-        const polled = await pollExecutive(env, now);
+        const polled = await pollExecutive(env, now, { signal: options.signal });
         if (polled !== null) result.executive = 'success';
       }
     }
   } catch (err) {
+    if (options.signal?.aborted) throwIfWatcherAborted(options.signal);
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     console.warn('watcher: executive (OGE) source failed:', (err as Error).message);
     // Durable failure receipt so the polling_executive liveness check sees
     // "attempts running, successes stale" instead of silence.

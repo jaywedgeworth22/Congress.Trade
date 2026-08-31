@@ -153,6 +153,34 @@ describe('runWatcher', () => {
     expect(attempts.map((run) => run.params[2])).toEqual(['failure', 'failure']);
   });
 
+  it('rethrows AbortError instead of recording a source failure when the tick signal aborts', async () => {
+    const { env, dbRuns } = fakeEnv();
+    const controller = new AbortController();
+    controller.abort(new Error('deadline'));
+    await expect(
+      runWatcher(env, new Date('2026-07-04T15:00:00.000Z'), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError', message: 'deadline' });
+    expect(dbRuns.filter((run) => /INSERT INTO source_attempts/i.test(run.sql))).toHaveLength(0);
+    expect(mocks.fetchHouseIndex).not.toHaveBeenCalled();
+  });
+
+  it('threads the tick signal into active source I/O and aborts without recording a failure', async () => {
+    const { env, dbRuns } = fakeEnv();
+    const controller = new AbortController();
+    mocks.fetchHouseIndex.mockImplementationOnce(
+      (_year: number | string, opts: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+        expect(opts.signal).toBe(controller.signal);
+        opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true });
+        setTimeout(() => controller.abort(new Error('deadline')), 0);
+      }),
+    );
+
+    await expect(
+      runWatcher(env, new Date('2026-07-04T15:00:00.000Z'), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError', message: 'deadline' });
+    expect(dbRuns.filter((run) => /INSERT INTO source_attempts/i.test(run.sql))).toHaveLength(0);
+  });
+
   it('polls the live House search by default and de-dupes overlap against the bulk index', async () => {
     const { env, dbRuns, queueSends } = fakeEnv();
     mocks.fetchHouseIndex.mockResolvedValueOnce([housePtr('20026001'), housePtr('20026002')]);
@@ -164,7 +192,11 @@ describe('runWatcher', () => {
 
     await runWatcher(env, new Date('2026-07-04T15:00:00.000Z'));
 
-    expect(mocks.pollHouseLiveSearch).toHaveBeenCalledWith(2026);
+    expect(mocks.pollHouseLiveSearch).toHaveBeenCalledWith(
+      2026,
+      expect.any(Function),
+      expect.objectContaining({ env, signal: undefined }),
+    );
     expect(queueSends).toHaveLength(3);
     expect(queueSends).toEqual([
       expect.objectContaining({ docId: 'H-2026-20026001', chamber: 'house' }),
@@ -195,7 +227,11 @@ describe('runWatcher', () => {
 
     await runWatcher(env, new Date('2026-07-04T15:00:00.000Z'));
 
-    expect(mocks.pollHouseLiveSearch).toHaveBeenCalledWith(2026);
+    expect(mocks.pollHouseLiveSearch).toHaveBeenCalledWith(
+      2026,
+      expect.any(Function),
+      expect.objectContaining({ env, signal: undefined }),
+    );
     expect(queueSends).toEqual([expect.objectContaining({ docId: 'H-2026-20026001', chamber: 'house' })]);
     expect(kvPuts.map(([key]) => key)).toContain('last_poll:house');
   });

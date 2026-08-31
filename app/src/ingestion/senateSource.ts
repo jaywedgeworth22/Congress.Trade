@@ -108,8 +108,20 @@ export class CookieJar {
 }
 
 /** Polite small delay between Senate requests. */
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +268,8 @@ export interface FetchSenatePtrFilingsOptions {
   relaySecret?: string;
   /** Optional proxy URL for routing Senate requests. */
   proxyUrl?: string;
+  /** Cancels active source I/O when the enclosing watcher tick reaches its deadline. */
+  signal?: AbortSignal;
 }
 
 /** KV key holding the cached, agreement-accepted eFD session. Shared with the
@@ -276,7 +290,7 @@ export interface SenateSession {
  * fetching report pages sessionless and receiving the agreement wall).
  */
 export async function establishSenateSession(
-  opts: { kv?: any; politeDelayMs?: number } = {},
+  opts: { kv?: any; politeDelayMs?: number; signal?: AbortSignal } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<SenateSession> {
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
@@ -293,6 +307,7 @@ export async function establishSenateSession(
       'sec-fetch-user': '?1',
       'upgrade-insecure-requests': '1',
     },
+    signal: opts.signal,
   }, { service: 'filing-discovery', operation: 'open-senate-search-session' }, fetchImpl);
   if (!landing.ok) throw new Error(`senate GET /search/ -> HTTP ${landing.status}`);
   jar.absorb(landing);
@@ -300,7 +315,7 @@ export async function establishSenateSession(
   const middlewareToken = parseCsrfMiddlewareToken(landingHtml);
   if (!middlewareToken) throw new Error('senate: csrfmiddlewaretoken not found on landing page');
 
-  await delay(politeDelayMs);
+  await delay(politeDelayMs, opts.signal);
 
   // 2) POST agreement acceptance (carry cookies).
   const agreeBody = new URLSearchParams({
@@ -321,10 +336,11 @@ export async function establishSenateSession(
     },
     body: agreeBody.toString(),
     redirect: 'manual',
+    signal: opts.signal,
   }, { service: 'filing-discovery', operation: 'accept-senate-search-terms' }, fetchImpl);
   // 200 or 302 are both fine; we only care that cookies are refreshed.
   jar.absorb(agree);
-  await delay(politeDelayMs);
+  await delay(politeDelayMs, opts.signal);
 
   const csrfCookie = jar.get('csrftoken') ?? middlewareToken;
   const cookieHeader = jar.header();
@@ -395,6 +411,7 @@ export async function fetchSenatePtrFilings(
           submitted_end_date: formatSenateDate(now),
           pageSize,
         }),
+        signal: opts.signal,
       }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
 
       if (res.ok) {
@@ -408,6 +425,7 @@ export async function fetchSenatePtrFilings(
       await res.body?.cancel().catch(() => {});
       console.warn(`senate relay unreachable (HTTP ${res.status}); falling back to direct eFD`);
     } catch (err) {
+      if (opts.signal?.aborted) throw err;
       if (err instanceof Error && err.message.startsWith('senate relay POST')) throw err;
       console.warn('senate relay failed; falling back to direct eFD:', (err as Error).message);
     }
@@ -431,7 +449,7 @@ export async function fetchSenatePtrFilings(
 
   while (true) {
     if (!session && !handshakeDone) {
-      session = await establishSenateSession({ kv: opts.kv, politeDelayMs }, effectiveFetch);
+      session = await establishSenateSession({ kv: opts.kv, politeDelayMs, signal: opts.signal }, effectiveFetch);
       handshakeDone = true;
     }
     if (!session) break;
@@ -470,6 +488,7 @@ export async function fetchSenatePtrFilings(
           'sec-fetch-site': 'same-origin',
         },
         body: dataBody.toString(),
+        signal: opts.signal,
       }, { service: 'filing-discovery', operation: 'search-senate-filings' }, effectiveFetch);
 
       const contentType = data.headers.get('content-type') || '';
@@ -493,7 +512,7 @@ export async function fetchSenatePtrFilings(
 
       if (pageRows.length < pageSize) break;
       if (expectedTotal !== null && rows.length >= expectedTotal) break;
-      if (page + 1 < maxPages) await delay(politeDelayMs);
+      if (page + 1 < maxPages) await delay(politeDelayMs, opts.signal);
     }
 
     if (pageError) {

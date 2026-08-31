@@ -60,6 +60,7 @@ const SELL_VOL = `SUM(CASE WHEN t.tx_type = 'S' THEN ${MID} ELSE 0 END)`;
  *  buy/sell/exchange counts, resolved-ticker count, option count. */
 export function buildSummaryQuery(p: CommonFilters): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
+  const equitySql = canonicalAssetTypeCategorySql('t.asset_type', 't.asset_type_name', 't.is_option');
   const sql =
     'SELECT ' +
     'COUNT(*) AS total_trades, ' +
@@ -71,6 +72,8 @@ export function buildSummaryQuery(p: CommonFilters): BuiltQuery {
     `SUM(${STOCK_MID}) AS est_volume, ` +
     `SUM(${STOCK_SIGNED}) AS est_net_flow, ` +
     `SUM(CASE WHEN ${TICKER_RESOLVED_SQL} THEN 1 ELSE 0 END) AS resolved_ticker_count, ` +
+    `SUM(CASE WHEN ${equitySql} = 'public_equity' THEN 1 ELSE 0 END) AS equity_trade_count, ` +
+    `SUM(CASE WHEN ${equitySql} = 'public_equity' AND ${TICKER_RESOLVED_SQL} THEN 1 ELSE 0 END) AS resolved_equity_ticker_count, ` +
     'SUM(CASE WHEN t.is_option = 1 THEN 1 ELSE 0 END) AS option_count ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where);
