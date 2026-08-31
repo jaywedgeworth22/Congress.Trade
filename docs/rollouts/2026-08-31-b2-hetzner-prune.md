@@ -34,6 +34,7 @@
 
 ## Next Steps & Blockers
 
-- After merge: sync the host copy (back up `/usr/local/sbin/fleet-sqlite-backup.sh` to `/root/fleet-sqlite-backup.sh.pre-prune-<epoch>`, install the merged version, `bash -n` on the host).  Do NOT run a full backup manually; the next cron tick (12:15Z/18:15Z) exercises it.
-- Dry-verify stamp parsing against real object names with `rclone lsf` on one `hetzner/` prefix.
-- First real prune happens on the next cron tick after install; expect `deleted` to be large on the first pass per app (backlog of ~15 days of sets), then settle to ~1/tick.
+- DONE 2026-08-31 11:22Z: host copy synced.  Backed up to `/root/fleet-sqlite-backup.sh.pre-prune-1788175363`, installed the merged version (sha256 `a870f921...0ed5a`), host `bash -n` clean, mode 755 root:root.
+- Host drift preserved: the deployed copy had intentional local edits from 2026-08-16 that the repo cannot carry (PR #2171 sanitized Coolify volume/container UUIDs out of the public repo) - UUID-pinned `SOCRATIC_VOL`/`UM_VOL`/container greps plus a `SOCRATIC_VOL` fallback.  The install applied this PR's diff ON TOP of the host copy instead of overwriting wholesale, so those greps survive; the two regions are disjoint.
+- DONE: dry-verified stamp parsing against real object names (`rclone lsf b2:jays-congress-trade-eu/hetzner/` shows `congress-trade-YYYYMMDDTHHMMSSZ.db` + `.db.sha256`; 7 distinct stamp sets, zero unparseable names).
+- First real prune happens on the next cron tick (12:15Z); with 7 sets present and keep=6, expect `deleted=2` for congress (the tick uploads set 8), then ~1/tick steady state.  No full backup was run manually.
