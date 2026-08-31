@@ -102,6 +102,19 @@ function validAppStoreId(env: Env): string | null {
 }
 
 /**
+ * Resolve the public TestFlight or App Store link for the iOS app.
+ * Prefers explicit IOS_TESTFLIGHT_URL or IOS_BETA_URL, falls back to
+ * the App Store URL when IOS_APP_STORE_ID is set, or the default TestFlight join URL.
+ */
+export function testFlightUrl(env?: Env): string {
+  const custom = (env?.IOS_TESTFLIGHT_URL || env?.IOS_BETA_URL || '').trim();
+  if (custom && /^https?:\/\//i.test(custom)) return custom;
+  const appId = env ? validAppStoreId(env) : null;
+  if (appId) return `https://apps.apple.com/app/id${appId}`;
+  return 'https://testflight.apple.com/join/trade.congress.ios';
+}
+
+/**
  * Build the native Smart App Banner meta tag, or `null` when no App Store id
  * is configured yet. Honored only by Mobile Safari on iOS/iPadOS.
  */

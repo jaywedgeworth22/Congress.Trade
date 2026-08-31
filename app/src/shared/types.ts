@@ -1034,6 +1034,9 @@ export interface Env {
    * this is configured.
    */
   IOS_APP_STORE_ID?: string;
+  /** Public TestFlight join link or beta URL for the iOS app. */
+  IOS_TESTFLIGHT_URL?: string;
+  IOS_BETA_URL?: string;
   /** "true" to force arbitration on when configured. */
   ARBITRATION_ENABLED?: string;
   /** Cross-app import guardrails. Tune down for lean/free-compatible runs. */

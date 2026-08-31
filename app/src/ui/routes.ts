@@ -39,7 +39,7 @@ import {
   type StaticAsset,
 } from './assets.ts';
 import { applyOgMeta, resolveOgMeta, SITE } from './ogMeta.ts';
-import { mountAppLinks } from './appLinks.ts';
+import { mountAppLinks, testFlightUrl } from './appLinks.ts';
 import { DEFAULT_EXECUTIVE_TITLE, executiveTitleFor } from '../shared/executiveTitles.ts';
 import { getSitemapXml } from './sitemap.ts';
 import { TICKER_RESOLVED_SQL } from '../analytics/sql.ts';
@@ -383,6 +383,11 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   r.get('/terms', (c) => c.redirect('/terms-of-service', 301));
   // Shareable pricing entry — dashboard opens the Premium modal via ?pricing=1.
   r.get('/pricing', (c) => c.redirect('/?pricing=1&view=subs', 302));
+  // Shareable iOS TestFlight / Beta links
+  r.get('/beta', (c) => c.redirect(testFlightUrl(c.env), 302));
+  r.get('/testflight', (c) => c.redirect(testFlightUrl(c.env), 302));
+  r.get('/ios', (c) => c.redirect(testFlightUrl(c.env), 302));
+  r.get('/app', (c) => c.redirect(testFlightUrl(c.env), 302));
 
   // robots.txt — allow search engines, block AI/LLM crawlers and scrapers.
   // Follows the same policy as capitoltrades.com/robots.txt.
