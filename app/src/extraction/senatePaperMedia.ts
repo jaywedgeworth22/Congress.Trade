@@ -14,7 +14,9 @@
 import type { Env, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { parseAmountRange } from './amounts.ts';
-import { parseTruncationAwareJson, fetchWithRetry } from './visionLlm.ts';
+import { parseTruncationAwareJson, fetchWithRetry, arrayBufferToBase64 } from './visionLlm.ts';
+import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   OPENROUTER_PURPOSE,
   buildOpenRouterClassifier,
@@ -34,6 +36,7 @@ owner: self if no prefix, spouse if (S), joint if (J), dependent if (DC).
 Include parent fund/header as subholding when the row is nested under a fund name.
 Skip blank rows, cover letters, and header-only fund labels without a date.
 Return ONLY JSON: {"transactions":[{"txDate":"YYYY-MM-DD","owner":"self|spouse|joint|dependent|unknown","ticker":null,"assetName":"string","subholding":null,"txType":"P|S|E","amountRange":"$A - $B","rawText":"short quote"}]}`;
+
 
 /** True when HTML looks like the eFD paper filing viewer (carousel of page scans). */
 export function isSenatePaperViewerHtml(html: string): boolean {
@@ -103,8 +106,44 @@ export interface PaperMediaExtractResult {
   mediaCount: number;
 }
 
+async function loadMediaAsDataUrl(
+  env: Env,
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const proxyUrl = await resolveResidentialProxyUrl(env);
+    const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetch) : fetch;
+    const res = await trackedFetch(
+      url,
+      {
+        signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      },
+      {
+        service: 'senatePaperMedia',
+        operation: 'fetch_paper_image',
+      },
+      effectiveFetch,
+      { envOverride: env },
+    );
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || (url.endsWith('.png') ? 'image/png' : url.endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 0) {
+        return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
+      }
+    }
+  } catch {
+    // Fail soft to raw URL
+  }
+  return url;
+}
+
 /**
- * OCR public paper page scans via OpenRouter vision (image_url to the CDN).
+ * OCR public paper page scans via OpenRouter vision (inline base64 data URLs).
  */
 export async function extractFromSenatePaperMedia(
   env: Env,
@@ -124,10 +163,14 @@ export async function extractFromSenatePaperMedia(
   // Prefer explicit opt, else Grok 4.5 via OpenRouter (matches live senate primary).
   const model = opts.model ?? DEFAULT_MODEL;
 
+  const resolvedUrls = await Promise.all(
+    mediaUrls.slice(0, 12).map((url) => loadMediaAsDataUrl(env, url, opts.signal)),
+  );
+
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: PAPER_OCR_PROMPT },
   ];
-  for (const url of mediaUrls.slice(0, 12)) {
+  for (const url of resolvedUrls) {
     content.push({ type: 'image_url', image_url: { url } });
   }
 

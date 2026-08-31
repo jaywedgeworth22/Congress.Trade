@@ -37,7 +37,7 @@ interface FilingRow {
   first_seen_at?: string | null;
 }
 
-export const MAX_RAW_FILING_BYTES = 25 * 1024 * 1024;
+export const MAX_RAW_FILING_BYTES = 50 * 1024 * 1024;
 const MAX_INGEST_BACKOFF_SECONDS = 900;
 
 export class IngestRetryError extends Error {
