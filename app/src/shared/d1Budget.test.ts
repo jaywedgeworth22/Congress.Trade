@@ -68,7 +68,10 @@ describe('D1 row budgets', () => {
       D1_DAILY_ROWS_READ_BUDGET: '100000',
     } as unknown as Env, new Date('2036-01-02T00:00:00.000Z'));
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('read 8/10'));
+    expect(warn).toHaveBeenCalledWith('d1.budget_soft', expect.objectContaining({
+      read: 8,
+      readBudget: 10,
+    }));
     expect(resolveSecret).toHaveBeenCalledWith(expect.anything(), 'D1_DAILY_ROWS_READ_BUDGET');
   });
 

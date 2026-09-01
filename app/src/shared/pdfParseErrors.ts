@@ -17,6 +17,15 @@ const EXPECTED_PDF_EXCEPTION_NAMES = new Set([
 const EXPECTED_PDF_MESSAGE_RE =
   /bad \(uncompressed\) xref entry|invalid xref|missing pdf header|invalid pdf structure/i;
 
+/** Belt-and-suspenders for SDK auto-capture (CONGRESS-TRADE-1C). */
+export const SENTRY_PDF_IGNORE_ERRORS: Array<string | RegExp> = [
+  'XRefEntryException',
+  'XRefParseException',
+  'InvalidPDFException',
+  'MissingPDFException',
+  /Bad \(uncompressed\) XRef entry/i,
+];
+
 function asErrorShape(reason: unknown): { name: string; message: string } {
   if (reason == null) return { name: '', message: '' };
   if (typeof reason === 'string') return { name: '', message: reason };

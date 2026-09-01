@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-09-01 GROK — Sentry fleet adoption leftovers (DSN out of git, PDF ignore, sparse logs)
+
+`SENTRY_DSN` is no longer a live value in `.prod.vars`.  Infisical/Coolify own it.  `ignoreErrors` + `beforeSend` drop expected unpdf XRef noise (CONGRESS-TRADE-1C).  Health warns go to `Sentry.logger.warn` (`ingest.dead_letter`, `webhook-retry`, and siblings).  No browser Replay SDK.  Deno profiling skipped (SDK has no profiler).  Rollout: `docs/rollouts/2026-09-01-sentry-fleet-adoption.md`.
+
 ## 2026-09-01 GROK — August ops leftovers (#2180 newest-first, #2182 DLQ health, NTR, stream)
 
 `order=desc` snapshots now rank by `COALESCE(first_seen_at, filed_date, tx_date)` so a 2024 backfill cannot occupy API/RSS page 1.  `/api/health` only degrades on **fresh** outbox failures (24h, not `parked:`); a saturated 81-row DLQ no longer masks new stalls.  NTR detector accepts OCR variants; `/api/stream` 400 includes a subscription hint.  Apple webhook mount already live on main (POST `signedPayload required`).  Rollout: `docs/rollouts/2026-09-01-ops-review-open-items.md`.

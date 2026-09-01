@@ -16,6 +16,7 @@ import { datadogCaptureException, initProductionDatadog } from '../shared/datado
 import { resolveProductionDatadogEnv } from '../shared/datadogRuntime.ts';
 import { captureException, initProductionSentry } from '#sentry';
 import { isExpectedPdfParseNoise } from '../shared/pdfParseErrors.ts';
+import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -30,7 +31,7 @@ const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
   e.preventDefault();
   if (isExpectedPdfParseNoise(e.reason)) {
-    console.warn('Global unhandled rejection (expected PDF parse noise):', e.reason);
+    sentryLoggerWarn('pdf.xref_noise', { source: 'unhandledrejection' });
     return;
   }
   console.error('Global unhandled rejection:', e.reason);
@@ -42,7 +43,7 @@ globalThis.addEventListener('error', (e: ErrorEvent) => {
   e.preventDefault();
   const reason = e.error || e.message;
   if (isExpectedPdfParseNoise(reason)) {
-    console.warn('Global uncaught error (expected PDF parse noise):', reason);
+    sentryLoggerWarn('pdf.xref_noise', { source: 'uncaught' });
     return;
   }
   console.error('Global uncaught error:', reason);
@@ -222,7 +223,7 @@ if (!costProfile.disableInternalCron) {
   );
   Deno.cron('Worker scheduled tasks', costProfile.cronSchedule, async () => {
     if (tickInFlight) {
-      console.warn('Deno cron tick skipped: previous tick still running');
+      sentryLoggerWarn('cron.tick_overlap', { runtime: 'deno' });
       return;
     }
     tickInFlight = true;
