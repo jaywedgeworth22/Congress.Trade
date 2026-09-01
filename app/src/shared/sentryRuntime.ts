@@ -9,9 +9,39 @@
  */
 
 import { readBuildInfo } from './buildInfo.ts';
-import { isExpectedPdfParseNoise, sentryEventLooksLikePdfParseNoise } from './pdfParseErrors.ts';
+import {
+  isExpectedPdfParseNoise,
+  sentryEventLooksLikePdfParseNoise,
+  SENTRY_PDF_IGNORE_ERRORS,
+} from './pdfParseErrors.ts';
 import { scrubSentryEvent } from './sentryScrub.ts';
 import type { Env } from './types.ts';
+
+export type SentryLogAttributes = Record<string, string | number | boolean | null>;
+
+type LoggerWarn = (message: string, attributes?: SentryLogAttributes) => void;
+
+let activeLoggerWarn: LoggerWarn | undefined;
+
+/**
+ * Sparse operational log for Sentry Logs.  After a successful SDK init this
+ * goes to `Sentry.logger.warn` only (no console), so Datadog's console hook
+ * does not dual-ship the same line.  Before init, falls back to console.warn
+ * for local/dev.
+ */
+export function sentryLoggerWarn(message: string, attributes?: SentryLogAttributes): void {
+  if (activeLoggerWarn) {
+    try {
+      activeLoggerWarn(message, attributes);
+      return;
+    } catch {
+      // SDK logger threw; do not also console.warn (that would dual-ship).
+      return;
+    }
+  }
+  if (attributes) console.warn(message, attributes);
+  else console.warn(message);
+}
 
 export interface SentrySdkLike {
   init: (options: Record<string, unknown>) => unknown;
@@ -21,6 +51,7 @@ export interface SentrySdkLike {
   setTag?: (key: string, value: string) => void;
   withMonitor?: (name: string, fn: () => unknown, options?: unknown) => unknown;
   consoleLoggingIntegration?: (options?: { levels?: string[] }) => unknown;
+  logger?: { warn?: (message: string, attributes?: SentryLogAttributes) => unknown };
   flush?: (timeout?: number) => Promise<boolean>;
 }
 
@@ -95,6 +126,7 @@ export function buildSentryInitOptions(
     beforeSendTransaction: <T>(event: T) => scrubSentryEvent(event),
     beforeSendLog: <T>(log: T) => scrubSentryEvent(log),
     enableLogs: true,
+    ignoreErrors: SENTRY_PDF_IGNORE_ERRORS,
     tracePropagationTargets: [/^https:\/\/([\w-]+\.)?congress\.trade/],
     ...extras,
   };
@@ -119,6 +151,7 @@ function extractEnvFromHandlerArgs(args: unknown[]): Env | undefined {
 
 export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindings {
   let initialized = false;
+  activeLoggerWarn = undefined;
 
   const initProductionSentry = (
     env: SentryInitInput,
@@ -134,6 +167,12 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
       }
       sdk.init(buildSentryInitOptions(env, tracesSampleRate, extras));
       initialized = true;
+      if (typeof sdk.logger?.warn === 'function') {
+        const warn = sdk.logger.warn.bind(sdk.logger);
+        activeLoggerWarn = (message, attributes) => {
+          warn(message, attributes);
+        };
+      }
       return { initialized: true, reason: 'dsn' };
     } catch (err) {
       console.warn(

@@ -231,7 +231,10 @@ describe('native delivery retry and leases', () => {
     const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
     const { ack, retry } = await queueOnce(env);
     expect(runs.some((entry) => /UPDATE delivery_outbox/i.test(entry.sql))).toBe(true);
-    expect(warn).toHaveBeenCalledWith('delivery outbox completion skipped: missing', 'tx_1');
+    expect(warn).toHaveBeenCalledWith('ingest.dead_letter', {
+      queue: 'delivery',
+      reason: 'outbox_missing',
+    });
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
     warn.mockRestore();

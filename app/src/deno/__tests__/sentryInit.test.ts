@@ -6,6 +6,7 @@ import {
   createSentryBindings,
   resolveProductionSentryEnv,
   resolveSentryDsn,
+  sentryLoggerWarn,
   type SentrySdkLike,
 } from '../../shared/sentryRuntime.ts';
 import { SENTRY_FILTERED_VALUE, scrubSentryEvent } from '../../shared/sentryScrub.ts';
@@ -48,7 +49,34 @@ describe('production Sentry init', () => {
     expect(options.tracesSampleRate).toBe(0.2);
     expect(options.sendDefaultPii).toBe(false);
     expect(typeof options.beforeSend).toBe('function');
+    expect(Array.isArray(options.ignoreErrors)).toBe(true);
+    expect(options.ignoreErrors).toEqual(expect.arrayContaining(['XRefEntryException']));
     expect((options.initialScope as { tags?: { runtime?: string } })?.tags?.runtime).toBe('coolify-docker');
+  });
+
+  it('routes sentryLoggerWarn to the SDK logger after init without console.warn', () => {
+    const warn = vi.fn();
+    const sdk = fakeSdk({ logger: { warn } });
+    const sentry = createSentryBindings(sdk);
+    sentry.initProductionSentry({
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+    });
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sentryLoggerWarn('ingest.dead_letter', { queue: 'ingest', reason: 'governor_cap' });
+    expect(warn).toHaveBeenCalledWith('ingest.dead_letter', {
+      queue: 'ingest',
+      reason: 'governor_cap',
+    });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('falls back to console.warn when Sentry is not initialized', () => {
+    createSentryBindings(fakeSdk());
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sentryLoggerWarn('webhook-retry', { delaySeconds: 5 });
+    expect(spy).toHaveBeenCalledWith('webhook-retry', { delaySeconds: 5 });
+    spy.mockRestore();
   });
 
   it('tags the Coolify image SHA as the Sentry release, not a Deploy id', () => {
@@ -215,6 +243,7 @@ describe('production entry wiring', () => {
     expect(src).toContain('initProductionSentry');
     expect(src).toContain('captureException(err, { tags: { cron: \'deno-tick\' } })');
     expect(src).toContain('isExpectedPdfParseNoise');
+    expect(src).toContain('sentryLoggerWarn');
     expect(src).not.toContain('sentryDummy');
   });
 

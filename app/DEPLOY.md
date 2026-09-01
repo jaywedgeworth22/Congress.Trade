@@ -103,7 +103,9 @@ operator knobs; leftover `DENO_*` aliases are local-test only.
 ## 3a. Sentry
 
 Production Sentry is a Coolify/Infisical `SENTRY_DSN` concern, not a
-`wrangler secret put`.  `SENTRY_ENVIRONMENT=production` is the live value.
+`wrangler secret put` and not a git value in `.prod.vars`.  Infisical is
+canonical; Coolify runtime env is the inject copy.  `SENTRY_ENVIRONMENT=production`
+is the live value.
 
 ## 3a.1 Datadog
 

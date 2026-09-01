@@ -33,6 +33,7 @@
 import type { Env } from './types.ts';
 import type { SqlParam } from './db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
+import { sentryLoggerWarn } from './sentryRuntime.ts';
 
 interface RowDelta {
   read: number;
@@ -205,10 +206,12 @@ function warnIfOverSoft(
   }
   if (warnedDay === day) return; // at most once per isolate per day
   warnedDay = day;
-  const msg =
-    `D1 daily row budget >= ${SOFT_RATIO * 100}% soft threshold: ` +
-    `read ${readTotal ?? '?'}/${rB}, written ${writtenTotal ?? '?'}/${wB}`;
-  console.warn(msg);
+  sentryLoggerWarn('d1.budget_soft', {
+    read: readTotal ?? -1,
+    readBudget: rB,
+    written: writtenTotal ?? -1,
+    writtenBudget: wB,
+  });
 }
 
 /**
@@ -311,10 +314,12 @@ function warnGovernorCap(writer: string, requested: number, allowed: number, cap
   const nowMs = Date.now();
   if (nowMs - governorWarnedAtMs < 60_000) return;
   governorWarnedAtMs = nowMs;
-  const msg =
-    `D1 write governor cap reached: writer=${writer} requested=${requested} ` +
-    `allowed=${allowed} invocationCap=${cap}`;
-  console.warn(msg);
+  sentryLoggerWarn('d1.governor_cap', {
+    writer,
+    requested,
+    allowed,
+    invocationCap: cap,
+  });
 }
 
 /**

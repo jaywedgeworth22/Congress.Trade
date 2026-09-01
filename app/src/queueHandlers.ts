@@ -17,6 +17,7 @@ import { reconnectDeadLetteredOutbox } from './delivery/outbox.ts';
 import { reconnectDeadLetteredIngestionOutbox } from './ingestion/outbox.ts';
 import { executeQueuedCommand } from './client/commands.ts';
 import { updateCommandStatus } from './client/state.ts';
+import { sentryLoggerWarn } from './shared/sentryRuntime.ts';
 
 export async function handleIngestMessage(
   env: Env,
@@ -148,7 +149,10 @@ export async function handleDeadLetterMessage(
     // it completed — completing here permanently abandons the webhook.
     const recovered = await reconnectDeadLetteredOutbox(env, msg.txId, recoveryError.message);
     if (recovered.status === 'missing') {
-      console.warn(`delivery outbox missing for ${msg.txId}`);
+      sentryLoggerWarn('ingest.dead_letter', {
+        queue: 'delivery',
+        reason: 'outbox_missing',
+      });
     }
     return;
   }
@@ -171,7 +175,10 @@ export async function handleDeadLetterMessage(
     { reopenCompleted: msg.type !== 'filing.new' },
   );
   if (recovered.status === 'missing') {
-    console.warn(`ingestion outbox missing for ${msg.docId}`);
+    sentryLoggerWarn('ingest.dead_letter', {
+      queue: 'ingest',
+      reason: 'outbox_missing',
+    });
   }
   if (recovered.status === 'failed') {
     // VISIBLE TERMINAL STATE (autonomy diagnosis 2026-08-09, principle b):

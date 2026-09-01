@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isExpectedPdfParseNoise,
   sentryEventLooksLikePdfParseNoise,
+  SENTRY_PDF_IGNORE_ERRORS,
 } from '../pdfParseErrors.ts';
 
 describe('isExpectedPdfParseNoise', () => {
@@ -32,6 +33,15 @@ describe('isExpectedPdfParseNoise', () => {
     expect(isExpectedPdfParseNoise({ name: 'TypeError', message: 'Cannot read properties of null' })).toBe(false);
     expect(isExpectedPdfParseNoise(null)).toBe(false);
     expect(isExpectedPdfParseNoise(undefined)).toBe(false);
+  });
+});
+
+describe('SENTRY_PDF_IGNORE_ERRORS', () => {
+  it('covers the CONGRESS-TRADE-1C exception name and message', () => {
+    expect(SENTRY_PDF_IGNORE_ERRORS).toContain('XRefEntryException');
+    expect(SENTRY_PDF_IGNORE_ERRORS.some((item) =>
+      item instanceof RegExp && item.test('Bad (uncompressed) XRef entry: 13R'),
+    )).toBe(true);
   });
 });
 

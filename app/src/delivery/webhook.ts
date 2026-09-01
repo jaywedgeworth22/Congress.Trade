@@ -30,6 +30,7 @@ import { resolveSecret } from '../secrets/infisical.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
 import { notifyAdmin } from '../alerts/notify.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
 import {
   checkTargetCircuit,
   parkDelivery,
@@ -486,9 +487,10 @@ async function deliverToSubscription(
       );
     }
     if (attempt < MAX_ATTEMPTS) throw new DeliveryRetryError(lastError, backoffSeconds(attempt));
-    console.warn(
-      `dispatchWebhook: giving up on sub=${sub.id} tx=${tx.id} after ${attempt} attempts: ${lastError}`,
-    );
+    sentryLoggerWarn('webhook-retry', {
+      reason: 'terminal',
+      attempts: attempt,
+    });
     // This is an application-level terminal attempt. Return successfully so
     // Cloudflare does not retry the same attempt another max_retries times.
     // The failed deliveries row is the durable terminal record.

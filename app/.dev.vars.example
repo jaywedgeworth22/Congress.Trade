@@ -231,8 +231,8 @@ APP_BASE_URL=""
 # Throttled to at most one alert per 12h.
 ALERT_EMAIL=""
 
-# Sentry error monitoring (Cloudflare Workers SDK).
-# Get this from Sentry → Projects → congress-trade → Settings → Client Keys (DSN).
+# Sentry error monitoring (@sentry/deno). Production DSN lives in Infisical /
+# Coolify only — never commit a live value. Leave blank locally (SDK no-ops).
 SENTRY_DSN=""
 # Tags events/logs with this environment. Defaults to unset in local dev; the
 # production/preview values are already set as wrangler.toml [vars].
