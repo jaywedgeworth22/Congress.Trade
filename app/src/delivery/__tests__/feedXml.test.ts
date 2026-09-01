@@ -87,7 +87,7 @@ describe('GET /feed.xml', () => {
     expect(body).toContain('ACME &amp; Sons &lt;Corp.&gt;');
     expect(body).not.toContain('ACME & Sons <Corp>');
     // Newest-first snapshot over the shared builder.
-    expect(sql()).toContain('ORDER BY t.cursor_seq DESC');
+    expect(sql()).toContain('ORDER BY COALESCE(t.first_seen_at, t.filed_date, t.tx_date, t.cursor_seq) DESC, t.cursor_seq DESC');
   });
 
   it('passes the shared feed filters through to the query builder', async () => {

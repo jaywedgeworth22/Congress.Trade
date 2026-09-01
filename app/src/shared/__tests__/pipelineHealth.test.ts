@@ -71,6 +71,36 @@ describe('evaluatePipelineSignals', () => {
     expect(res.checks.every((c) => c.status === 'unknown' || c.status === 'ok')).toBe(true);
   });
 
+  it('degrades only on fresh dead-letter items, not a saturated triaged DLQ (#2182)', () => {
+    const triaged: PipelineSignals = {
+      ...cleanSignals,
+      outboxFailed: 81,
+      outboxFailedFresh: 0,
+    };
+    const res = evaluatePipelineSignals(triaged, nowMs);
+    const check = res.checks.find((c) => c.id === 'ingestion_dead_letter');
+    expect(check?.status).toBe('ok');
+    expect(check?.value).toBe(0);
+    expect(check?.detail).toContain('81 triaged');
+    expect(check?.detail).toContain('0 fresh');
+    expect(res.status).toBe('ok');
+  });
+
+  it('still degrades when a fresh outbox failure arrives beside triaged rows', () => {
+    const mixed: PipelineSignals = {
+      ...cleanSignals,
+      outboxFailed: 82,
+      outboxFailedFresh: 1,
+    };
+    const res = evaluatePipelineSignals(mixed, nowMs);
+    const check = res.checks.find((c) => c.id === 'ingestion_dead_letter');
+    expect(check?.status).toBe('degraded');
+    expect(check?.value).toBe(1);
+    expect(check?.detail).toContain('1 fresh');
+    expect(check?.detail).toContain('81 triaged');
+    expect(res.status).toBe('degraded');
+  });
+
   it('flags stalled when 0/N extractions succeed in 24h (403/budget stall case)', () => {
     const stalledSignals: PipelineSignals = {
       ...cleanSignals,

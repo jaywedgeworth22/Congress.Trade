@@ -97,6 +97,9 @@ describe('evaluateExtractQuality — hard-stops', () => {
     expect(looksLikePtrFormSampleAsset('Exemplje Mega Corp.')).toBe(true);
     expect(looksLikeHeaderContaminatedAsset('Exemplje Mega Corp Common Stock')).toBe(true);
     expect(looksLikeNothingToReport('Nothing to report for July 2026')).toBe(true);
+    expect(looksLikeNothingToReport('Nothlng to report for July 2026')).toBe(true);
+    expect(looksLikeNothingToReport('No transactions to report')).toBe(true);
+    expect(looksLikeNothingToReport('Example Mega Corp Common Stock')).toBe(false);
     expect(isDeletedFilingStatus('Deleted')).toBe(true);
     expect(isDeletedFilingStatus('New')).toBe(false);
   });
