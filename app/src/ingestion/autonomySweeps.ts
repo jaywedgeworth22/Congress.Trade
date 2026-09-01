@@ -344,8 +344,8 @@ export async function sweepOgeUndatedFilingDates(
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const pdf = await getDocumentProxy(bytes);
       const { text } = await extractText(pdf, { mergePages: true });
-      if (typeof (pdf as { destroy?: () => void }).destroy === 'function') {
-        (pdf as { destroy: () => void }).destroy();
+      if (typeof (pdf as unknown as { destroy?: () => void }).destroy === 'function') {
+        (pdf as unknown as { destroy: () => void }).destroy();
       }
       const flat = typeof text === 'string' ? text : (text as string[]).join('\n');
       const filedDate = extractPrintedDateFromText(flat);

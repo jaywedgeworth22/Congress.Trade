@@ -122,7 +122,7 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
 
   const initProductionSentry = (
     env: SentryInitInput,
-    tracesSampleRate = resolveSentryTracesSampleRate(env, 0.1),
+    tracesSampleRate = resolveSentryTracesSampleRate(env, 0.2),
   ): SentryInitResult => {
     if (initialized) return { initialized: true, reason: 'dsn' };
     const dsn = resolveSentryDsn(env);
