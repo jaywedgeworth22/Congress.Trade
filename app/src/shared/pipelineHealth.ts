@@ -38,6 +38,12 @@ export interface PipelineSignals {
   outboxPending: number | null;
   outboxOldestAt: string | null;
   outboxFailed: number | null;
+  /**
+   * Failed outbox rows that still count as live degradation: not parked
+   * (`last_error LIKE 'parked:%'`) and updated within 24h.  Saturated
+   * historical DLQ must not mask a new stall (#2182).
+   */
+  outboxFailedFresh?: number | null;
   /** ALL unresolved review_queue rows (eligible + suppressed + terminal). */
   reviewBacklog: number | null;
   reviewEligible: number | null;
@@ -206,18 +212,32 @@ export function evaluatePipelineSignals(
     checks.push({ id: 'ingestion_backlog', status: 'ok', detail: 'Outbox backlog clear', value: 0 });
   }
 
-  // 2. Ingestion dead letter
+  // 2. Ingestion dead letter.  Only FRESH failures degrade: parked rows
+  // (`last_error` prefix `parked:`) and failures older than 24h stay visible
+  // as a triaged count so a saturated DLQ cannot hide a new stall (#2182).
   if (s.outboxFailed === null) {
     checks.push({ id: 'ingestion_dead_letter', status: 'unknown', detail: 'Outbox failure count uncollected', value: null });
-  } else if (s.outboxFailed > 0) {
-    checks.push({
-      id: 'ingestion_dead_letter',
-      status: 'degraded',
-      detail: `${s.outboxFailed} failed outbox item(s) in dead letter state`,
-      value: s.outboxFailed,
-    });
   } else {
-    checks.push({ id: 'ingestion_dead_letter', status: 'ok', detail: 'No failed outbox items', value: 0 });
+    const fresh = s.outboxFailedFresh ?? s.outboxFailed;
+    const triaged = Math.max(0, s.outboxFailed - (fresh ?? 0));
+    if (fresh != null && fresh > 0) {
+      checks.push({
+        id: 'ingestion_dead_letter',
+        status: 'degraded',
+        detail: `${fresh} fresh failed outbox item(s) in 24h` +
+          (triaged > 0 ? ` (${triaged} triaged/parked)` : ''),
+        value: fresh,
+      });
+    } else if (s.outboxFailed > 0) {
+      checks.push({
+        id: 'ingestion_dead_letter',
+        status: 'ok',
+        detail: `${s.outboxFailed} triaged dead-letter item(s); 0 fresh in 24h`,
+        value: 0,
+      });
+    } else {
+      checks.push({ id: 'ingestion_dead_letter', status: 'ok', detail: 'No failed outbox items', value: 0 });
+    }
   }
 
   // 3. Extraction provider success rate
@@ -571,6 +591,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let outboxPending: number | null = null;
   let outboxOldestAt: string | null = null;
   let outboxFailed: number | null = null;
+  let outboxFailedFresh: number | null = null;
   let reviewBacklog: number | null = null;
   let reviewEligible: number | null = null;
   let reviewSuppressed: number | null = null;
@@ -597,11 +618,21 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   } catch {}
 
   try {
-    const res = await get<{ n: number }>(
+    const res = await get<{ n: number; fresh: number }>(
       env.DB,
-      "SELECT COUNT(*) AS n FROM ingestion_outbox WHERE status = 'failed'",
+      `SELECT COUNT(*) AS n,
+              SUM(CASE
+                    WHEN COALESCE(last_error, '') LIKE 'parked:%' THEN 0
+                    WHEN updated_at IS NOT NULL AND updated_at < ? THEN 0
+                    ELSE 1
+                  END) AS fresh
+         FROM ingestion_outbox WHERE status = 'failed'`,
+      [iso24hAgo],
     );
-    if (res) outboxFailed = Number(res.n ?? 0);
+    if (res) {
+      outboxFailed = Number(res.n ?? 0);
+      outboxFailedFresh = Number(res.fresh ?? 0);
+    }
   } catch {}
 
   try {
@@ -794,6 +825,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     outboxPending,
     outboxOldestAt,
     outboxFailed,
+    outboxFailedFresh,
     reviewBacklog,
     reviewEligible,
     reviewSuppressed,

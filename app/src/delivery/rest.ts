@@ -614,9 +614,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   //
   // Ordering: defaults to oldest-first (cursor_seq ASC) so a consumer can sync
   // incrementally by feeding the returned `cursor` back as the next `since`.
-  // Pass ?order=desc for a newest-first "latest trades" snapshot (pair with
-  // ?from= to bound the window); DESC is a snapshot, not a resumable forward
-  // pager, so incremental-sync consumers should keep the asc default.
+  // Pass ?order=desc for a newest-first "latest trades" snapshot ordered by
+  // COALESCE(first_seen_at, filed_date, tx_date) — not ingest cursor, so a
+  // historical backfill cannot occupy page 1 (#2180). Pair with ?from= to
+  // bound the window. DESC is a snapshot, not a resumable forward pager;
+  // incremental-sync consumers should keep the asc default. `sort=cursor`
+  // restores ingest-newest if a caller wants it.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
     // The live feed is fully public — it's the site's SEO/discovery hook. The
@@ -913,7 +916,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   r.get('/stream', async (c) => {
     const subscription = c.req.query('subscription');
     if (!subscription) {
-      return c.json({ error: 'missing ?subscription=' }, 400);
+      return c.json(
+        {
+          error: 'missing ?subscription=',
+          hint: 'SSE is per Premium subscription. Pass ?subscription=<id> and Authorization: Bearer <secret> (or ?token= for native EventSource).',
+        },
+        400,
+      );
     }
     const since = resolveResumeCursor(c.req.query('since'), c.req.header('Last-Event-ID'));
     const token = subscriptionSecretFromRequest(c, true) ?? undefined;
