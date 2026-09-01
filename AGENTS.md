@@ -125,6 +125,42 @@ gh pr checks <number>
 If checks are failing, fix them on the owning branch only when explicitly asked;
 otherwise coordinate through a new integration branch.
 
+## Never Idle-Watch A PR (owner ruling 2026-09-01)
+
+Canonical: `/Users/jay/apps/AGENT-SYNC.md` § Never idle-watch a PR.  Owner, verbatim:
+agents "should never just wait and watch for things to merge since that wastes
+tokens/time and they inevitably almost invariably end up slowly wasting money/quota
+while the PR sits there with conflicts or comments/issues unresolved."
+
+- **Never idle-poll.**  Do not loop on `gh pr view` waiting for a merge, and never
+  spend a turn narrating "standing by" / "waiting for CI" / "waiting on the review
+  bot".  Watching costs tokens and wall-clock and changes nothing.
+- **A PR that is not merging is waiting on an ACTION, not on time.**  Exactly one of
+  these is true, and you fix every one of them yourself:
+  - unresolved review threads (`gh pr view <n> --json reviewThreads`) — triage, reply,
+    resolve;
+  - a merge conflict (`--json mergeable,mergeStateStatus`) — this repo requires
+    branches be kept current with `main` anyway, so `git fetch origin main && git
+    merge origin/main`, resolve, push;
+  - a failing required check (`typecheck + test`, `gitleaks`) — read the log, fix the
+    cause, push;
+  - a check that never dispatched (`gh run list --branch <branch>`) — re-run or
+    re-trigger it;
+  - auto-merge never armed (`--json autoMergeRequest`) — `gh pr merge <n> --squash
+    --auto`.
+- **The loop to run:** open the PR, arm auto-merge immediately, then go do the next
+  useful thing.  If you truly need the result first, take ONE **bounded** wait
+  (`gh pr checks <n> --watch`); when it ends still unmerged, diagnose from the list
+  above — do **not** start another wait.
+- **Review-bot threads block the merge forever** (`required_conversation_resolution`
+  is on).  Triage the whole batch against current HEAD in one pass: fix the real
+  findings, reply with a specific technical reason on the ones already addressed or
+  genuinely wrong, then resolve.  They never resolve themselves.  Do not blind-resolve
+  to force a merge.
+- **Same for background work** — CI, `bash app/scripts/ship.sh`, an ingest or OCR run.
+  If the only thing you would do this turn is check whether something finished, do
+  other useful work or end your turn.
+
 ## Rollout Notes
 
 Major changes, migrations, and infrastructure work must leave a durable
