@@ -33,7 +33,7 @@ describe('buildTransactionsExportQuery', () => {
   it('drops the cursor backstop, orders newest-first, and has no product LIMIT', () => {
     const q = buildTransactionsExportQuery({ ticker: 'aapl' });
     expect(q.sql).not.toContain('cursor_seq > ?');
-    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain('ORDER BY COALESCE(t.first_seen_at, t.filed_date, t.tx_date, t.cursor_seq) DESC, t.cursor_seq DESC');
     // Premium export is the full match set — no silent row cap.
     expect(q.sql).not.toMatch(/\bLIMIT\b/i);
     expect(q.params).toContain('AAPL');

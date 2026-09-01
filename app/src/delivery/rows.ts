@@ -471,6 +471,8 @@ export interface TxQueryParams {
    * Sort expression for snapshot reads. Defaults to cursor_seq so incremental
    * consumers keep the forward-cursor contract; the public UI can request
    * `published` to sort by filing/import time instead of insertion order.
+   * `order=desc` with no explicit sort uses {@link NEWEST_SNAPSHOT_ORDER_SQL}
+   * so a historical backfill cannot occupy page 1 (#2180).
    */
   sort?: 'cursor' | 'published' | 'tx_date';
   /**
@@ -812,6 +814,16 @@ export function buildTxFilters(
 }
 
 /**
+ * Newest-first snapshot order for `order=desc` when the caller did not pick
+ * `sort=cursor` / `sort=tx_date` / `sort=published`.  Uses columns that live
+ * on `transactions` so {@link canNestTransactionKeyset} stays true (no
+ * filings join before LIMIT).  A 2024 backfill with a high ingest cursor
+ * cannot outrank a later-seen 2026 row (#2180).
+ */
+export const NEWEST_SNAPSHOT_ORDER_SQL =
+  'COALESCE(t.first_seen_at, t.filed_date, t.tx_date, t.cursor_seq)';
+
+/**
  * True when the feed WHERE/ORDER only touch `transactions` columns (plus the
  * always-on deprecated_at filter). In that case we can keyset+LIMIT first and
  * join filers/filings/securities_ref afterwards — Turso was reading ~20k+ rows
@@ -834,8 +846,9 @@ function canNestTransactionKeyset(p: TxQueryParams): boolean {
 /**
  * Build the parameterized SQL for `GET /transactions`. Orders by cursor_seq
  * ASC by default (so callers can use the max returned cursor to page forward),
- * or DESC when `order: 'desc'` for a newest-first snapshot; always returns only
- * rows with cursor_seq > since (the reconciliation backstop).
+ * or by {@link NEWEST_SNAPSHOT_ORDER_SQL} DESC when `order: 'desc'` with no
+ * explicit sort (a newest-first snapshot that is not ingest-cursor order).
+ * Always returns only rows with cursor_seq > since (the reconciliation backstop).
  *
  * `chamber` is resolved via the `filers` table (authoritative for seed data),
  * falling back to the owning filing's chamber. The politician's full name and
@@ -860,13 +873,20 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
 
   // Closed enum -> only the literal 'ASC'/'DESC' is interpolated, never caller
   // text. ASC stays the default to keep the forward-cursor paging contract.
+  // DESC without an explicit sort is a "latest trades" snapshot: order by
+  // when we learned / when it was filed / the trade date, not ingest cursor.
+  // `sort=cursor` keeps the old ingest-newest behavior for callers that want it.
   const direction = p.order === 'desc' ? 'DESC' : 'ASC';
   const orderExpr =
     p.sort === 'published'
       ? 'COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq)'
       : p.sort === 'tx_date'
         ? 't.tx_date'
-        : 't.cursor_seq';
+        : p.sort === 'cursor'
+          ? 't.cursor_seq'
+          : p.order === 'desc'
+            ? NEWEST_SNAPSHOT_ORDER_SQL
+            : 't.cursor_seq';
   const orderClause =
     orderExpr === 't.cursor_seq'
       ? `t.cursor_seq ${direction}`
@@ -996,7 +1016,7 @@ export function buildTransactionsExportQuery(
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')} ` : '') +
-    'ORDER BY t.cursor_seq DESC' +
+    `ORDER BY ${NEWEST_SNAPSHOT_ORDER_SQL} DESC, t.cursor_seq DESC` +
     (hasLimit ? ` LIMIT ${limit}` : '');
   return { sql, params, limit, offset: 0 };
 }

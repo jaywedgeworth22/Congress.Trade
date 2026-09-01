@@ -126,7 +126,14 @@ export function looksLikePtrFormSampleAsset(assetName: string | null): boolean {
 
 export function looksLikeNothingToReport(text: string | null | undefined): boolean {
   if (!text) return false;
-  return /nothing\s+to\s+report/i.test(text);
+  return /nothing\s+to\s+report/i.test(text)
+    || /nothlng\s+to\s+report/i.test(text)
+    || /nothlng\s+to\s+rcport/i.test(text)
+    || /no\s+transactions?\s+to\s+report/i.test(text)
+    || /no\s+trades?\s+to\s+report/i.test(text)
+    || /\bnothing\s*2\s*report\b/i.test(text)
+    || /\bno\s+ptr\s+activity\b/i.test(text)
+    || /\bnothing\s+to\s+disclose\b/i.test(text);
 }
 
 export function isDeletedFilingStatus(status: string | null | undefined): boolean {

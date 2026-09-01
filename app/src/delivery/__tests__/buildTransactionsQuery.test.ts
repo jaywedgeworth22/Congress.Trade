@@ -19,6 +19,7 @@ import {
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
   twinCandidateLimit,
+  NEWEST_SNAPSHOT_ORDER_SQL,
   type TxQueryParams,
   type FeedTransactionRow,
   type TransactionRow,
@@ -275,7 +276,7 @@ describe('buildTransactionsQuery', () => {
     const q = buildTransactionsQuery({ limit: 25, offset: 50, order: 'desc' });
     expect(q.limit).toBe(25);
     expect(q.offset).toBe(50);
-    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain(`ORDER BY ${NEWEST_SNAPSHOT_ORDER_SQL} DESC, t.cursor_seq DESC`);
     expect(q.sql).toContain('LIMIT 25 OFFSET 50');
   });
 
@@ -321,11 +322,30 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).not.toContain('DESC');
   });
 
-  it('orders newest-first (ORDER BY cursor_seq DESC) when order is "desc"', () => {
+  it('orders newest-first by learned/filed/trade date when order is "desc" (#2180)', () => {
     const q = buildTransactionsQuery({ order: 'desc' });
-    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain(`ORDER BY ${NEWEST_SNAPSHOT_ORDER_SQL} DESC, t.cursor_seq DESC`);
+    expect(q.sql).not.toMatch(/FROM transactions t WHERE[\s\S]+ORDER BY t\.cursor_seq DESC LIMIT /);
     // The direction is a SQL literal, never a bound param — params unchanged.
     expect(q.params).toEqual([0]);
+  });
+
+  it('keeps ingest-cursor newest-first when sort is explicitly "cursor"', () => {
+    const q = buildTransactionsQuery({ order: 'desc', sort: 'cursor' });
+    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).not.toContain(NEWEST_SNAPSHOT_ORDER_SQL);
+  });
+
+  it('does not let a high ingest cursor outrank a later-seen row in the desc snapshot SQL', () => {
+    const q = buildTransactionsQuery({ order: 'desc', limit: 8 });
+    expect(q.sql).toContain(NEWEST_SNAPSHOT_ORDER_SQL);
+    expect(q.sql).toContain('t.first_seen_at');
+    expect(q.sql).toContain('t.filed_date');
+    expect(q.sql).toContain('t.tx_date');
+    // Nested keyset stays on transactions columns (no filings join before LIMIT).
+    expect(q.sql).toMatch(
+      /FROM transactions t WHERE[\s\S]+ORDER BY COALESCE\(t\.first_seen_at, t\.filed_date, t\.tx_date, t\.cursor_seq\) DESC, t\.cursor_seq DESC LIMIT /,
+    );
   });
 
   it('treats order: "asc" the same as the default (ASC)', () => {
@@ -336,7 +356,7 @@ describe('buildTransactionsQuery', () => {
   it('keeps the cursor backstop + filters intact in desc (snapshot) mode', () => {
     const q = buildTransactionsQuery({ since: 7, ticker: 'aapl', order: 'desc' });
     expect(q.sql).toContain('t.cursor_seq > ?');
-    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain(`ORDER BY ${NEWEST_SNAPSHOT_ORDER_SQL} DESC, t.cursor_seq DESC`);
     // order adds no bound param; same param order as the asc path.
     expect(q.params).toEqual([7, 'AAPL']);
   });
@@ -354,7 +374,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('LIMIT 5');
     expect(q.sql).toContain(TWIN_DEDUPE_SQL);
     const innerWhere = q.sql.match(
-      /SELECT t\.\* FROM transactions t WHERE ([\s\S]+?) ORDER BY t\.cursor_seq DESC LIMIT /,
+      /SELECT t\.\* FROM transactions t WHERE ([\s\S]+?) ORDER BY COALESCE\(t\.first_seen_at, t\.filed_date, t\.tx_date, t\.cursor_seq\) DESC, t\.cursor_seq DESC LIMIT /,
     )?.[1];
     expect(innerWhere).toBeTruthy();
     expect(innerWhere).not.toContain('NOT EXISTS');
