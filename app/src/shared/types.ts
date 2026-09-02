@@ -704,6 +704,10 @@ export interface Env {
   SENATE_PROXY_URL?: string;
   /** Residential proxy URL (e.g. Tailscale http://100.113.106.39:3128) for all gov scraping/probing. */
   RESIDENTIAL_PROXY_URL?: string;
+  RESIDENTIAL_PROXY_HOST?: string;
+  RESIDENTIAL_PROXY_PORT?: string;
+  RESIDENTIAL_PROXY_USERNAME?: string;
+  RESIDENTIAL_PROXY_PASSWORD?: string;
   /** Enable Cloudflare Browser Rendering fallback (strictly capped to free tier). */
   SENATE_USE_BROWSER_RENDERING?: string;
   /** Enables the OGE executive-branch (278-T) filings watcher. Infisical-tunable. */

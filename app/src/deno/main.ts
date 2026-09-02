@@ -5,7 +5,8 @@ import { D1DatabaseShim, KVNamespaceShim, S3BucketShim } from './shims.ts';
 import { DurableQueueAdapter } from './durableQueue.ts';
 import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
-import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
+import { resolveSecret, resolveSecrets, refreshSecrets } from '../secrets/infisical.ts';
+import { resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { resolveDenoCostProfile } from './costProfile.ts';
 import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
@@ -112,6 +113,25 @@ console.log(
     ? 'Datadog RUM enabled for public HTML'
     : `Datadog RUM disabled (${datadogBoot.rumReason})`,
 );
+
+// Resolve residential proxy from Infisical for Senate/House scraping
+const proxySecrets = await resolveSecrets(secretEnv, [
+  'RESIDENTIAL_PROXY_URL',
+  'RESIDENTIAL_PROXY_HOST',
+  'RESIDENTIAL_PROXY_PORT',
+  'RESIDENTIAL_PROXY_USERNAME',
+  'RESIDENTIAL_PROXY_PASSWORD',
+  'SENATE_PROXY_URL',
+]);
+const resolvedProxyUrl = resolveResidentialProxyUrl({
+  ...secretEnv,
+  ...proxySecrets,
+});
+if (resolvedProxyUrl && cachedEnvValues) {
+  cachedEnvValues['RESIDENTIAL_PROXY_URL'] = resolvedProxyUrl;
+  console.log('Residential proxy initialized from Infisical for Senate/House scraping');
+}
+
 const tursoUrlRes = await resolveSecret(secretEnv, 'TURSO_DATABASE_URL');
 const tursoTokenRes = await resolveSecret(secretEnv, 'TURSO_AUTH_TOKEN');
 

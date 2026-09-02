@@ -518,4 +518,15 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     expect(check.status).toBe('degraded');
     expect(check.detail).toContain('stale');
   });
+
+  it('marks senate_relay ok when residential proxy is configured (scout relay retired)', () => {
+    const res = evaluatePipelineSignals({
+      ...base,
+      senateRelay: { configured: false, probe: null },
+      residentialProxyConfigured: true,
+    }, nowMs);
+    const check = res.checks.find((c) => c.id === 'senate_relay')!;
+    expect(check.status).toBe('ok');
+    expect(check.detail).toContain('Residential proxy active');
+  });
 });
