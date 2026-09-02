@@ -237,13 +237,6 @@ export async function extractFromSenatePaperMedia(
     throw new Error('senatePaperMedia: unable to load page scan images from Senate eFD (relay/proxy unreachable)');
   }
 
-  const content: Array<Record<string, unknown>> = [
-    { type: 'text', text: PAPER_OCR_PROMPT },
-  ];
-  for (const url of validDataUrls) {
-    content.push({ type: 'image_url', image_url: { url } });
-  }
-
   const classifierEnrichment = buildOpenRouterClassifier(env, {
     service: 'senatePaperMedia',
     purpose: OPENROUTER_PURPOSE.SENATE_PAPER_OCR,
@@ -251,61 +244,90 @@ export async function extractFromSenatePaperMedia(
     chamber: 'senate',
     keyRef: 'OPENROUTER_API_KEY',
   });
-  const body = {
-    model,
-    messages: [{ role: 'user', content }],
-    temperature: 0,
-    max_tokens: 8000,
-    usage: { include: true },
-    // Keep all CT OpenRouter traffic under one app title for Activity /
-    // Apps analytics; differentiate call sites via trace.feature instead.
-    ...classifierEnrichment,
-  };
 
-  const res = await fetchWithRetry(
-    'https://openrouter.ai/api/v1/chat/completions',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...openRouterAttributionHeaders(),
-      },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    },
-    'senate-paper-media-ocr',
-    { model, spendGuard: { env, provider: 'openrouter' } },
-  );
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`senatePaperMedia: OpenRouter HTTP ${res.status} ${errText.slice(0, 240)}`);
+  // Chunk pages into batches of at most 4 pages to avoid JSON truncation on large filings
+  const CHUNK_SIZE = 4;
+  const chunks: string[][] = [];
+  for (let i = 0; i < validDataUrls.length; i += CHUNK_SIZE) {
+    chunks.push(validDataUrls.slice(i, i + CHUNK_SIZE));
   }
 
-  const payload = await res.json() as {
-    model?: string;
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      cost?: number;
-    };
-  };
+  const allTransactions: ParsedTx[] = [];
+  let lastModel = model;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalCostUsd: number | undefined = undefined;
 
-  const text = payload.choices?.[0]?.message?.content ?? '';
-  const parsed = parseTruncationAwareJson(text);
-  const rawRows = Array.isArray(parsed?.rows) ? parsed.rows : [];
-  const transactions = rawRows.map(mapPaperRow).filter((t): t is ParsedTx => t !== null);
+  for (const chunk of chunks) {
+    const content: Array<Record<string, unknown>> = [
+      { type: 'text', text: PAPER_OCR_PROMPT },
+    ];
+    for (const url of chunk) {
+      content.push({ type: 'image_url', image_url: { url } });
+    }
+
+    const body = {
+      model,
+      messages: [{ role: 'user', content }],
+      temperature: 0,
+      max_tokens: 16000,
+      usage: { include: true },
+      ...classifierEnrichment,
+    };
+
+    const res = await fetchWithRetry(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...openRouterAttributionHeaders(),
+        },
+        body: JSON.stringify(body),
+        signal: opts.signal,
+      },
+      'senate-paper-media-ocr',
+      { model, spendGuard: { env, provider: 'openrouter' } },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`senatePaperMedia: OpenRouter HTTP ${res.status} ${errText.slice(0, 240)}`);
+    }
+
+    const payload = await res.json() as {
+      model?: string;
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        cost?: number;
+      };
+    };
+
+    if (payload.model) lastModel = payload.model;
+    if (typeof payload.usage?.prompt_tokens === 'number') totalPromptTokens += payload.usage.prompt_tokens;
+    if (typeof payload.usage?.completion_tokens === 'number') totalCompletionTokens += payload.usage.completion_tokens;
+    if (typeof payload.usage?.cost === 'number') {
+      totalCostUsd = (totalCostUsd ?? 0) + payload.usage.cost;
+    }
+
+    const text = payload.choices?.[0]?.message?.content ?? '';
+    const parsed = parseTruncationAwareJson(text);
+    const rawRows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+    const transactions = rawRows.map(mapPaperRow).filter((t): t is ParsedTx => t !== null);
+    allTransactions.push(...transactions);
+  }
 
   return {
-    transactions,
-    confidence: transactions.length > 0 ? PAPER_CONFIDENCE : 0.25,
-    modelVersion: `openrouter:${payload.model ?? model}`,
+    transactions: allTransactions,
+    confidence: allTransactions.length > 0 ? PAPER_CONFIDENCE : 0.25,
+    modelVersion: `openrouter:${lastModel}`,
     usage: {
-      promptTokens: payload.usage?.prompt_tokens,
-      completionTokens: payload.usage?.completion_tokens,
-      costUsd: typeof payload.usage?.cost === 'number' ? payload.usage.cost : undefined,
+      promptTokens: totalPromptTokens || undefined,
+      completionTokens: totalCompletionTokens || undefined,
+      costUsd: totalCostUsd,
     },
     mediaCount: mediaUrls.length,
   };
