@@ -69,6 +69,7 @@ on:
       - Effort Issues Sync
       - Shared Package Pin Check
       - Security
+      - Sentry Deploy
     types: [completed]
 
 permissions:
