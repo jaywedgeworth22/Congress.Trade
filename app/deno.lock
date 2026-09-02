@@ -1396,7 +1396,7 @@
         "npm:typescript@^5.6.3",
         "npm:unpdf@^1.8.1",
         "npm:vitest@^4.1.11",
-        "npm:zod@^4.5.2"
+        "npm:zod@^4.5.4"
       ],
       "overrides": {
         "undici": "^7.29.0"
