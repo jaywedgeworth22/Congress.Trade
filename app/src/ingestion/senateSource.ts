@@ -390,12 +390,9 @@ export async function fetchSenatePtrFilings(
   const proxyUrl = opts.proxyUrl ?? resolveResidentialProxyUrl();
   const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetchImpl) : fetchImpl;
 
-  // When a proxy is not configured, check for a legacy relay microservice.
-  // When a residential proxy is configured, the server executes the full eFD session
-  // and search directly through the proxy (bypassing Imperva via residential IP).
-  const relayUrl = !proxyUrl
-    ? opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined)
-    : undefined;
+  // Prefer the primary relay microservice (scout.jays.services named tunnel) when configured.
+  // Direct/proxied fetch is used when the relay is not configured or when the relay is unreachable.
+  const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
   const relaySecret = opts.relaySecret ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_SECRET : undefined);
   if (relayUrl) {
     try {
