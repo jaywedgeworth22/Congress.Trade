@@ -16,6 +16,7 @@ import {
 import { describeAutopilotHaltReason } from '../extraction/providerHealth.ts';
 import { ogeWatchEnabled } from '../ingestion/ogeSource.ts';
 import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
+import { resolveResidentialProxyUrl } from './proxyFetch.ts';
 import { expectedLatencyProviderIds } from '../ingestion/tradeLatency.ts';
 
 export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
@@ -117,9 +118,11 @@ export interface PipelineSignals {
       ok: boolean;
       status: number | null;
       checkedAt: string;
-      host: string | null;
+      host?: string;
     } | null;
   } | null;
+  /** True when a residential proxy is configured (retires the legacy scout relay). */
+  residentialProxyConfigured?: boolean;
 }
 
 export interface PipelineThresholds {
@@ -523,10 +526,15 @@ export function evaluatePipelineSignals(
     }
   }
 
-  // 13. Senate residential relay (issue #1604).  The named tunnel hostname
-  // is permanent; the Mac origin is not.  A dead origin must be loud even
-  // when polling_senate stays ok via the direct eFD fallback.
-  if (s.senateRelay == null) {
+  // 13. Senate residential relay / residential proxy egress (issue #1604).
+  if (s.residentialProxyConfigured) {
+    checks.push({
+      id: 'senate_relay',
+      status: 'ok',
+      detail: 'Residential proxy active for Senate/House scraping (scout relay retired)',
+      value: 0,
+    });
+  } else if (s.senateRelay == null) {
     checks.push({ id: 'senate_relay', status: 'unknown', detail: 'Senate relay liveness uncollected', value: null });
   } else if (!s.senateRelay.configured) {
     checks.push({
@@ -821,6 +829,8 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     senateRelay = null;
   }
 
+  const residentialProxyConfigured = Boolean(resolveResidentialProxyUrl(env));
+
   const signals: PipelineSignals = {
     outboxPending,
     outboxOldestAt,
@@ -841,6 +851,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     pollSources,
     latencyProviders,
     senateRelay,
+    residentialProxyConfigured,
   };
 
   const evaluated = evaluatePipelineSignals(signals, nowMs);

@@ -33,9 +33,25 @@ describe('proxyFetch', () => {
         SENATE_PROXY_URL: 'http://other:8080',
       }),
     ).toBe('http://100.113.106.39:3128');
+    expect(
+      resolveResidentialProxyUrl({
+        RESIDENTIAL_PROXY_HOST: 'proxy.internal',
+        RESIDENTIAL_PROXY_PORT: '8888',
+        RESIDENTIAL_PROXY_USERNAME: 'user1',
+        RESIDENTIAL_PROXY_PASSWORD: 'pass word',
+      }),
+    ).toBe('http://user1:pass%20word@proxy.internal:8888');
+
+    expect(
+      resolveResidentialProxyUrl({
+        RESIDENTIAL_PROXY_HOST: 'proxy.internal',
+        RESIDENTIAL_PROXY_PORT: 8080,
+      }),
+    ).toBe('http://proxy.internal:8080');
   });
 
-  it('returns undefined if no proxy url is set', () => {
+  it('returns undefined if no proxy url or host is set', () => {
     expect(resolveResidentialProxyUrl({})).toBeUndefined();
+    expect(resolveResidentialProxyUrl({ RESIDENTIAL_PROXY_PORT: '8888' })).toBeUndefined();
   });
 });

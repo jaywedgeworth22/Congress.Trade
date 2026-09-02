@@ -61,6 +61,25 @@ export function createProxiedFetch(
 }
 
 /**
+ * Formats host, port, username, and password into a standard HTTP proxy URL.
+ */
+export function formatProxyUrl(opts: {
+  host?: string;
+  port?: string | number;
+  username?: string;
+  password?: string;
+  protocol?: string;
+}): string | undefined {
+  if (!opts.host) return undefined;
+  const portStr = opts.port ? `:${opts.port}` : '';
+  const proto = opts.protocol ? opts.protocol.replace(/:$/, '') : 'http';
+  const auth = opts.username && opts.password
+    ? `${encodeURIComponent(opts.username)}:${encodeURIComponent(opts.password)}@`
+    : '';
+  return `${proto}://${auth}${opts.host.trim()}${portStr}`;
+}
+
+/**
  * Helper to resolve the effective residential proxy URL from Env or process.env.
  */
 export function resolveResidentialProxyUrl(env?: {
@@ -68,14 +87,28 @@ export function resolveResidentialProxyUrl(env?: {
   SENATE_PROXY_URL?: string;
   HTTP_PROXY?: string;
   HTTPS_PROXY?: string;
+  RESIDENTIAL_PROXY_HOST?: string;
+  RESIDENTIAL_PROXY_PORT?: string | number;
+  RESIDENTIAL_PROXY_USERNAME?: string;
+  RESIDENTIAL_PROXY_PASSWORD?: string;
 }): string | undefined {
-  return (
+  const direct =
     env?.RESIDENTIAL_PROXY_URL?.trim() ||
     env?.SENATE_PROXY_URL?.trim() ||
     (typeof process !== 'undefined' ? process.env?.RESIDENTIAL_PROXY_URL?.trim() : undefined) ||
     (typeof process !== 'undefined' ? process.env?.SENATE_PROXY_URL?.trim() : undefined) ||
     (typeof process !== 'undefined' ? process.env?.HTTPS_PROXY?.trim() : undefined) ||
-    (typeof process !== 'undefined' ? process.env?.HTTP_PROXY?.trim() : undefined) ||
-    undefined
-  );
+    (typeof process !== 'undefined' ? process.env?.HTTP_PROXY?.trim() : undefined);
+  if (direct) return direct;
+
+  const host = env?.RESIDENTIAL_PROXY_HOST?.trim() || (typeof process !== 'undefined' ? process.env?.RESIDENTIAL_PROXY_HOST?.trim() : undefined);
+  const port = env?.RESIDENTIAL_PROXY_PORT || (typeof process !== 'undefined' ? process.env?.RESIDENTIAL_PROXY_PORT : undefined);
+  const username = env?.RESIDENTIAL_PROXY_USERNAME?.trim() || (typeof process !== 'undefined' ? process.env?.RESIDENTIAL_PROXY_USERNAME?.trim() : undefined);
+  const password = env?.RESIDENTIAL_PROXY_PASSWORD?.trim() || (typeof process !== 'undefined' ? process.env?.RESIDENTIAL_PROXY_PASSWORD?.trim() : undefined);
+
+  if (host) {
+    return formatProxyUrl({ host, port, username, password });
+  }
+
+  return undefined;
 }
