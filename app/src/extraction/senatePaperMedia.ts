@@ -25,7 +25,7 @@ import {
 } from '../shared/openRouterAttribution.ts';
 
 const EFD_MEDIA_HOST = 'efd-media-public.senate.gov';
-const DEFAULT_MODEL = 'x-ai/grok-4.5';
+const DEFAULT_MODEL = 'google/gemini-2.5-flash';
 const PAPER_CONFIDENCE = 0.85;
 
 const PAPER_OCR_PROMPT = `This is page image(s) of a Senate paper PERIODIC DISCLOSURE OF FINANCIAL TRANSACTIONS form.
@@ -313,16 +313,48 @@ export async function extractFromSenatePaperMedia(
   };
 }
 
-function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
-  const assetName = typeof row.assetName === 'string' ? row.assetName.trim() : '';
-  if (!assetName) return null;
-  const txDateRaw = typeof row.txDate === 'string' ? row.txDate.trim() : '';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(txDateRaw)) return null;
+function normalizeTxDate(raw: unknown): string | null {
+  const t = String(raw ?? '').trim();
+  if (!t) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    const [, mm, dd, yy] = m;
+    const year = yy.length === 2 ? `20${yy}` : yy;
+    return `${year}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  }
+  const iso = new Date(t);
+  if (!isNaN(iso.getTime()) && t.length >= 8) {
+    return iso.toISOString().slice(0, 10);
+  }
+  return null;
+}
 
-  const txType = normalizeTxType(row.txType);
+function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
+  const assetName = typeof row.assetName === 'string'
+    ? row.assetName.trim()
+    : typeof row.asset_name === 'string'
+    ? row.asset_name.trim()
+    : typeof row.identification_of_assets === 'string'
+    ? row.identification_of_assets.trim()
+    : '';
+  if (!assetName) return null;
+
+  const rawDate = row.txDate ?? row.transaction_date ?? row.date ?? row.tx_date;
+  const txDate = normalizeTxDate(rawDate);
+  if (!txDate) return null;
+
+  const rawTxType = row.txType ?? row.transaction_type ?? row.type ?? row.tx_type;
+  const txType = normalizeTxType(rawTxType);
   if (!txType) return null;
 
-  const amountRange = typeof row.amountRange === 'string' ? row.amountRange : '';
+  const amountRange = typeof row.amountRange === 'string'
+    ? row.amountRange
+    : typeof row.amount_of_transaction === 'string'
+    ? row.amount_of_transaction
+    : typeof row.amount === 'string'
+    ? row.amount
+    : '';
   const { min, max } = parseAmountRange(amountRange);
 
   const owner = normalizeOwner(row.owner);
@@ -332,10 +364,10 @@ function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
   const ticker = typeof row.ticker === 'string' && row.ticker.trim()
     ? row.ticker.trim().toUpperCase()
     : null;
-  const rawText = typeof row.rawText === 'string' ? row.rawText : `${assetName} ${txDateRaw} ${txType}`;
+  const rawText = typeof row.rawText === 'string' ? row.rawText : `${assetName} ${txDate} ${txType}`;
 
   return {
-    txDate: txDateRaw,
+    txDate,
     owner,
     assetName,
     ticker,
