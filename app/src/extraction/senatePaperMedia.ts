@@ -17,6 +17,7 @@ import { parseAmountRange } from './amounts.ts';
 import { parseTruncationAwareJson, fetchWithRetry, arrayBufferToBase64 } from './visionLlm.ts';
 import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { senateRelayAuthHeaders } from '../ingestion/senateRelayHealth.ts';
 import {
   OPENROUTER_PURPOSE,
   buildOpenRouterClassifier,
@@ -110,23 +111,88 @@ async function loadMediaAsDataUrl(
   env: Env,
   url: string,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<string | null> {
+  const proxyUrl = await resolveResidentialProxyUrl(env);
+  const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetch) : fetch;
+  const senateRelayUrl = env.SENATE_RELAY_URL ? env.SENATE_RELAY_URL.replace(/\/$/, '') : undefined;
+
+  // 1. Try residential proxy if configured
+  if (proxyUrl) {
+    try {
+      const res = await trackedFetch(
+        url,
+        {
+          signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://efdsearch.senate.gov/',
+          },
+        },
+        {
+          service: 'senatePaperMedia',
+          operation: 'fetch_paper_image_proxy',
+        },
+        effectiveFetch,
+        { envOverride: env },
+      );
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || (url.endsWith('.png') ? 'image/png' : url.endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > 0) {
+          return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Try Senate relay /fetch-doc if configured
+  if (senateRelayUrl) {
+    try {
+      const res = await trackedFetch(
+        `${senateRelayUrl}/fetch-doc`,
+        {
+          method: 'POST',
+          signal,
+          headers: {
+            'content-type': 'application/json',
+            accept: '*/*',
+            ...senateRelayAuthHeaders(env.SENATE_RELAY_SECRET),
+          },
+          body: JSON.stringify({ url }),
+        },
+        {
+          service: 'senatePaperMedia',
+          operation: 'fetch_paper_image_relay',
+        },
+        fetch,
+        { envOverride: env },
+      );
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || (url.endsWith('.png') ? 'image/png' : url.endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > 0) {
+          return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Fallback direct fetch with browser headers & Referer
   try {
-    const proxyUrl = await resolveResidentialProxyUrl(env);
-    const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetch) : fetch;
     const res = await trackedFetch(
       url,
       {
         signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://efdsearch.senate.gov/',
         },
       },
       {
         service: 'senatePaperMedia',
-        operation: 'fetch_paper_image',
+        operation: 'fetch_paper_image_direct',
       },
-      effectiveFetch,
+      fetch,
       { envOverride: env },
     );
     if (res.ok) {
@@ -136,10 +202,9 @@ async function loadMediaAsDataUrl(
         return `data:${contentType.split(';')[0].trim()};base64,${arrayBufferToBase64(buf)}`;
       }
     }
-  } catch {
-    // Fail soft to raw URL
-  }
-  return url;
+  } catch {}
+
+  return null;
 }
 
 /**
@@ -167,10 +232,15 @@ export async function extractFromSenatePaperMedia(
     mediaUrls.slice(0, 12).map((url) => loadMediaAsDataUrl(env, url, opts.signal)),
   );
 
+  const validDataUrls = resolvedUrls.filter((u): u is string => typeof u === 'string' && u.startsWith('data:'));
+  if (validDataUrls.length === 0) {
+    throw new Error('senatePaperMedia: unable to load page scan images from Senate eFD (relay/proxy unreachable)');
+  }
+
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: PAPER_OCR_PROMPT },
   ];
-  for (const url of resolvedUrls) {
+  for (const url of validDataUrls) {
     content.push({ type: 'image_url', image_url: { url } });
   }
 

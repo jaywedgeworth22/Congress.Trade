@@ -15,6 +15,7 @@
 import { isLivenessProbe, livenessResponse } from './liveness.ts';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
+const SENATE_MEDIA_BASE = 'https://efd-media-public.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
 const SENATE_HOME = `${SENATE_BASE}/search/home/`;
 const SENATE_DATA = `${SENATE_BASE}/search/report/data/`;
@@ -137,6 +138,19 @@ function isWallBytes(bytes: Uint8Array): boolean {
   if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
     return false; // %PDF — a real document, never the wall
   }
+  // Image magic numbers (GIF87a/89a, PNG, JPEG, WebP)
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return false; // GIF
+  }
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    return false; // PNG
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return false; // JPEG
+  }
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return false; // RIFF....WEBP
+  }
   const prefix = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
   return looksLikeAgreementWall(prefix);
 }
@@ -145,7 +159,7 @@ async function fetchDocOnce(url: string, session: { cookieHeader: string }) {
   return await fetch(url, {
     headers: {
       ...BROWSER_HEADERS,
-      accept: 'text/html,application/xhtml+xml,application/pdf,*/*',
+      accept: 'text/html,application/xhtml+xml,application/pdf,image/*,*/*',
       cookie: session.cookieHeader,
       referer: SENATE_SEARCH,
     },
@@ -306,15 +320,20 @@ Deno.serve({ port, hostname: '127.0.0.1' }, async (req) => {
     });
   }
 
-  // Document proxy: fetch one efdsearch PTR/paper document through the
+  // Document proxy: fetch one efdsearch PTR/paper document or media image through the
   // residential session. Body: {url}. Upstream status + content-type are
   // mirrored so the app's retry semantics work unchanged.
   if (req.method === 'POST' && url.pathname === '/fetch-doc') {
     try {
       const body = (await req.json()) as { url?: string };
       const target = body.url ?? '';
-      if (!target.startsWith(`${SENATE_BASE}/`)) {
-        return new Response(JSON.stringify({ error: 'url must be on efdsearch.senate.gov' }), {
+      const isAllowed =
+        target.startsWith(`${SENATE_BASE}/`) ||
+        target.startsWith(`${SENATE_MEDIA_BASE}/`) ||
+        target.startsWith('http://efdsearch.senate.gov/') ||
+        target.startsWith('http://efd-media-public.senate.gov/');
+      if (!isAllowed) {
+        return new Response(JSON.stringify({ error: 'url must be on efdsearch.senate.gov or efd-media-public.senate.gov' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
         });
