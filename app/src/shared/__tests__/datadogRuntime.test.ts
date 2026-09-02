@@ -5,6 +5,7 @@ import {
   datadogRumConnectOrigins,
   datadogRumScriptSrc,
   datadogTracesIntakeUrl,
+  canonicalizeDatadogEnv,
   normalizeDatadogSite,
   resolveDatadogBackend,
   resolveDatadogRum,
@@ -69,6 +70,14 @@ describe('fail-closed Datadog backend config', () => {
       site: 'us5.datadoghq.com',
     });
     if (ready.enabled) expect(ready.apiKey).toBe('abc123');
+  });
+
+  it('canonicalizes Coolify DD_ENV=prod to production', () => {
+    const ready = resolveDatadogBackend({
+      DD_API_KEY: 'abc123',
+      DD_ENV: 'prod',
+    });
+    expect(ready).toMatchObject({ enabled: true, env: 'production' });
   });
 
   it('accepts DATADOG_API_KEY alias and explicit site', () => {

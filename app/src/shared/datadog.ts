@@ -118,8 +118,13 @@ export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<Dd
     } else if (backend.agentHost) {
       initOptions.hostname = backend.agentHost;
     }
+    initOptions.llmobs = {
+      mlApp: backend.service || 'congress-trade',
+      agentlessEnabled: !backend.agentHost && !backend.agentUrl,
+    };
     tracer.init(initOptions);
     activeTracer = tracer;
+    (globalThis as { _ddtrace?: DdTracer })._ddtrace = tracer;
     return activeTracer;
   } catch {
     return null;

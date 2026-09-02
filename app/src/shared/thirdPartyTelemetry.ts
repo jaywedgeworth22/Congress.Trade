@@ -22,6 +22,7 @@ import {
 import type { LegacyUsageTelemetryOutboxEventInput } from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { startDatadogSpan } from './datadog.ts';
+import { withDatadogLlmObs } from './datadogLlmobs.ts';
 import type { Env, ThirdPartyUsageTelemetryEvent } from './types.ts';
 
 interface TelemetryContext {
@@ -1096,7 +1097,7 @@ export async function trackedFetch(
 
   const startedAt = Date.now();
   try {
-    const response = await fetchImpl(input, init);
+    const response = await withDatadogLlmObs(mapped.provider, mapped.model, () => fetchImpl(input, init));
     span.setTag('http.status_code', String(response.status));
     if (!response.ok) {
       span.setTag('error', true);

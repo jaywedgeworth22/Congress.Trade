@@ -136,13 +136,24 @@ export function normalizeDatadogSite(raw: string | undefined): DatadogSite | und
   return SITE_SET.has(site) ? site as DatadogSite : undefined;
 }
 
+/** Map Coolify/handoff `prod` onto Datadog `production` so dashboards do not split. */
+export function canonicalizeDatadogEnv(raw: string | undefined): string {
+  const trimmed = trimOrEmpty(raw);
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (lower === 'prod' || lower === 'production') return 'production';
+  return trimmed;
+}
+
 export function resolveDatadogEnvName(input: DatadogInitInput | undefined): string {
-  return firstNonEmpty(
-    input?.DD_ENV,
-    input?.SENTRY_ENVIRONMENT,
-    input?.USAGE_MONITOR_ENVIRONMENT,
-    'production',
-  );
+  return canonicalizeDatadogEnv(
+    firstNonEmpty(
+      input?.DD_ENV,
+      input?.SENTRY_ENVIRONMENT,
+      input?.USAGE_MONITOR_ENVIRONMENT,
+      'production',
+    ),
+  ) || 'production';
 }
 
 export function resolveDatadogVersion(input: DatadogInitInput | undefined): string | undefined {
