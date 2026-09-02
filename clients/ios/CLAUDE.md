@@ -5,7 +5,8 @@
 **Scheme / targets:** `CongressTrade` / `CongressTradeTests`
 **Display name:** Congress.Trade
 **Team:** `CC8UTF7ATG`
-**XcodeGen:** none — new `.swift` files must be added to the target in Xcode (or reported for a human). Do not hand-edit `project.pbxproj`.
+**XcodeGen:** `clients/ios/project.yml` is the source of truth. After adding/removing sources or changing packages/settings: `cd clients/ios && xcodegen generate` (runs `xcodegen-post.py` for objectVersion 100). Do not hand-edit `project.pbxproj`.
+**Sentry Cocoa:** `SentryTelemetry.swift` reads plist-only `SENTRY_DSN` (no hardcoded fallback). Pass `SENTRY_DSN=...` on xcodebuild/CI for release archives. Errors + crashes + hangs only — no Replay, screenshots, view hierarchy, or default PII. dSYM upload is the existing ios-ship lane.
 **Ship:** `bash scripts/ios-ship-testflight.sh` — fleet: `/Users/jay/apps/ios-fleet/README.md`
 
 Binding fleet rule: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. `xcodebuild` / `xcrun simctl` via bash are pre-approved. Do not ask. Do not stand up or narrate Xcode MCP.

@@ -496,7 +496,7 @@ Canonical: `/Users/jay/apps/AGENT-SYNC.md` § iOS agent build loop. Onboarding: 
 - Do **not** stand up, debug, or narrate Xcode MCP (`build_sim`, `mcpbridge`).
 - `xcodebuild` / `xcrun simctl` via bash are pre-approved. Run them. Do not ask.
 - User-visible changes need `xcrun simctl io booted screenshot …` before you claim done.
-- Do not hand-edit `.pbxproj` / entitlements / xibs. New Swift files: create them and report target membership (no XcodeGen here).
+- Do not hand-edit `.pbxproj` / entitlements / xibs. `clients/ios/project.yml` is the XcodeGen source of truth — edit it, then `cd clients/ios && xcodegen generate`.
 - `@Observable` + `@MainActor`; `NavigationStack`; light theme default.
 
 ## iOS native ship (TestFlight, no Xcode UI)
