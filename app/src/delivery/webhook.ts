@@ -230,7 +230,9 @@ export async function dispatchWebhook(
     [msg.txId],
   );
   if (!txRow) {
-    console.warn('dispatchWebhook: transaction not found', msg.txId);
+    // Debug, not warn: this miss path is expected for stale outbox rows and
+    // was ~2.3k Datadog warn events/hour.  Real dispatch failures still warn.
+    console.debug('dispatchWebhook: transaction not found', msg.txId);
     return { outboxComplete: !msg.subscriptionId };
   }
   // Don't push a retracted (un-published) row, e.g. on a retry after unpublish.
