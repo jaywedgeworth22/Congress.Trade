@@ -42,4 +42,17 @@ describe('senate paper media URL extraction', () => {
       'https://efd-media-public.senate.gov/media/a.gif',
     ]);
   });
+
+  it('handles unreachable relay gracefully when loading media', async () => {
+    const { extractFromSenatePaperMedia } = await import('../senatePaperMedia.ts');
+    const mockEnv = {
+      SENATE_RELAY_URL: 'http://127.0.0.1:9999',
+      OPENROUTER_API_KEY: 'test-key',
+    } as any;
+
+    await expect(
+      extractFromSenatePaperMedia(mockEnv, ['https://efd-media-public.senate.gov/media/a.gif']),
+    ).rejects.toThrow('senatePaperMedia: unable to load page scan images');
+  });
 });
+
