@@ -295,11 +295,7 @@ export async function extractFromSenatePaperMedia(
 
   const text = payload.choices?.[0]?.message?.content ?? '';
   const parsed = parseTruncationAwareJson(text);
-  const rawRows = Array.isArray(parsed?.rows)
-    ? parsed.rows
-    : Array.isArray((parsed as Record<string, unknown>)?.transactions)
-    ? ((parsed as Record<string, unknown>).transactions as Array<Record<string, unknown>>)
-    : [];
+  const rawRows = Array.isArray(parsed?.rows) ? parsed.rows : [];
   const transactions = rawRows.map(mapPaperRow).filter((t): t is ParsedTx => t !== null);
 
   return {
