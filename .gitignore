@@ -65,3 +65,6 @@ app/.prod.vars.local
 
 # Latency week tracker samples (may contain ops snapshots)
 docs/latency-week/samples/
+
+# Xcode local build output from clients/ios
+clients/ios/build/

@@ -155,6 +155,11 @@ struct CongressTradeApp: App {
     /// `makeTradeCacheContainer()`.
     private let tradeCacheContainer = CongressTradeApp.makeTradeCacheContainer()
 
+    init() {
+        // Native crashes / hangs need the Cocoa SDK before first paint.
+        SentryTelemetry.start()
+    }
+
     var body: some Scene {
         WindowGroup {
             MainTabView()
