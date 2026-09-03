@@ -3,6 +3,9 @@ import {
   extractSenatePaperMediaUrls,
   isSenatePaperViewerHtml,
 } from '../senatePaperMedia.ts';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const PAPER_SHELL = `<!DOCTYPE HTML><html><title>eFD: View Report</title>
 <body>
@@ -53,6 +56,19 @@ describe('senate paper media URL extraction', () => {
     await expect(
       extractFromSenatePaperMedia(mockEnv, ['https://efd-media-public.senate.gov/media/a.gif']),
     ).rejects.toThrow('senatePaperMedia: unable to load page scan images');
+  });
+});
+
+describe('senate paper OCR prompt', () => {
+  it('tells the model to skip printed IBM/Microsoft examples and read attachments', () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../senatePaperMedia.ts'),
+      'utf8',
+    );
+    expect(src).toMatch(/IBM Corp\. \(stock\) NYSE/);
+    expect(src).toMatch(/Microsoft \(stock\) NASDAQ\/OTC/);
+    expect(src).toMatch(/See Attachment/);
+    expect(src).toMatch(/1X\/XX placeholder years/);
   });
 });
 

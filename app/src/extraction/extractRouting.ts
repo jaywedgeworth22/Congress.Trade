@@ -116,12 +116,24 @@ export function looksLikeHeaderContaminatedAsset(assetName: string | null): bool
 }
 
 /**
- * Printed House PTR sample row ("Example Mega Corp", dated 8/14/12). OCR
- * often reads it as Exemplje. It is form chrome, never a real trade.
+ * Printed PTR sample rows. House: "Example Mega Corp" dated 8/14/12 (OCR often
+ * reads Exemplje). Senate paper: "IBM Corp. (stock) NYSE" dated 2/1/1X and
+ * "(DC) Microsoft (stock) NASDAQ/OTC" dated 2/27/1X, with amount columns that
+ * spell EXAMPLE. Those are form instructions, never live trades. A real IBM or
+ * Microsoft lot will not use that exact printed wording.
  */
 export function looksLikePtrFormSampleAsset(assetName: string | null): boolean {
   if (!assetName) return false;
-  return /exempl(?:je|e)\s+mega\s+corp|\bexample\s+mega\s+corp/i.test(assetName);
+  if (/exempl(?:je|e)\s+mega\s+corp|\bexample\s+mega\s+corp/i.test(assetName)) return true;
+  if (/ibm\s+corp\.?\s*\(\s*stock\s*\)\s*nyse/i.test(assetName)) return true;
+  if (/microsoft\s*\(\s*stock\s*\)\s*nasdaq\s*\/\s*otc/i.test(assetName)) return true;
+  return false;
+}
+
+/** Handwritten "See Attachment" on a Senate paper PTR is a pointer, not a trade. */
+export function looksLikeSeeAttachmentPointer(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /\bsee\s+attach(?:ment|ments)\b/i.test(text);
 }
 
 export function looksLikeNothingToReport(text: string | null | undefined): boolean {

@@ -718,6 +718,45 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).toContain('form_chrome_only');
   });
 
+  it('drops Senate IBM/Microsoft form samples so remaining paper rows can publish', async () => {
+    const { env, cap } = makeEnv([
+      { ticker: 'DBLEX', name: 'DoubleLine Emerging Markets Income', aliases: '[]' },
+    ]);
+    const result = await normalize(
+      env,
+      filing({ extractor: 'senatePaperMedia', docKind: 'senate_html' }),
+      [
+        tx({
+          assetName: 'IBM Corp. (stock) NYSE',
+          ticker: 'IBM',
+          txDate: '2027-02-27',
+          txType: 'S',
+          amountMin: 50001,
+          amountMax: 100000,
+          confidence: 0.85,
+          rawText: 'IBM Corp. (stock) NYSE S 2/27/1X X',
+        }),
+        tx({
+          assetName: 'Doubleline Emg Mkts Inc I',
+          ticker: 'DBLEX',
+          txDate: '2023-02-06',
+          txType: 'S',
+          amountMin: 1001,
+          amountMax: 15000,
+          confidence: 0.85,
+          rawText: 'Doubleline Emg Mkts Inc I (DBLEX) 2/6/23 $1,001-15,000',
+        }),
+      ],
+      { extractor: 'senatePaperMedia' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(true);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].ticker).toBe('DBLEX');
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.reviewRows).toHaveLength(0);
+  });
+
   it('still deprecates matching live rows when the Deleted amendment was already rejected', async () => {
     const { env, cap } = makeEnv(
       [{ ticker: 'VSNT', name: 'Versant Media Group, Inc.', aliases: '[]' }],
