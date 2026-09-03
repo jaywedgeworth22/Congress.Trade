@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-09-03 BF-Publisher — Senate paper IBM/Microsoft form samples
+
+Live queue 4 → 0. Four Senate paper PTRs (Blumenthal May/Dec 2025, Boozman Oct 2022 / Mar 2023) were parked because printed IBM/Microsoft example rows scored `future_tx_date`. Confirmed 73 official lots from eFD page scans. Pipeline now drops those printed examples so the next paper PTRs can publish. Rollout: `docs/rollouts/2026-09-03-senate-paper-form-samples.md`.
+
 ## 2026-09-01 GROK — Sentry fleet adoption leftovers (DSN out of git, PDF ignore, sparse logs)
 
 `SENTRY_DSN` is no longer a live value in `.prod.vars`.  Infisical/Coolify own it.  `ignoreErrors` + `beforeSend` drop expected unpdf XRef noise (CONGRESS-TRADE-1C).  Health warns go to `Sentry.logger.warn` (`ingest.dead_letter`, `webhook-retry`, and siblings).  No browser Replay SDK.  Deno profiling skipped (SDK has no profiler).  Rollout: `docs/rollouts/2026-09-01-sentry-fleet-adoption.md`.

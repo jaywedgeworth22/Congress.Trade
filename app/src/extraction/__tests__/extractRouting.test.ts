@@ -11,6 +11,7 @@ import {
   looksLikePlausibleTradeTable,
   looksLikeHeaderContaminatedAsset,
   looksLikePtrFormSampleAsset,
+  looksLikeSeeAttachmentPointer,
   looksLikeNothingToReport,
   isDeletedFilingStatus,
   shouldEnqueueAgreement,
@@ -102,6 +103,19 @@ describe('evaluateExtractQuality — hard-stops', () => {
     expect(looksLikeNothingToReport('Example Mega Corp Common Stock')).toBe(false);
     expect(isDeletedFilingStatus('Deleted')).toBe(true);
     expect(isDeletedFilingStatus('New')).toBe(false);
+  });
+
+  it('treats Senate PTR IBM/Microsoft printed examples as form chrome, not live trades', () => {
+    expect(looksLikePtrFormSampleAsset('IBM Corp. (stock) NYSE')).toBe(true);
+    expect(looksLikePtrFormSampleAsset('(DC) Microsoft (stock) NASDAQ/OTC')).toBe(true);
+    expect(looksLikePtrFormSampleAsset('Microsoft (stock) NASDAQ/OTC')).toBe(true);
+    expect(looksLikeHeaderContaminatedAsset('IBM Corp. (stock) NYSE')).toBe(true);
+    expect(looksLikePtrFormSampleAsset('International Business Machines')).toBe(false);
+    expect(looksLikePtrFormSampleAsset('Microsoft Corporation')).toBe(false);
+    expect(looksLikePtrFormSampleAsset('MSFT')).toBe(false);
+    expect(looksLikeSeeAttachmentPointer('See Attachment')).toBe(true);
+    expect(looksLikeSeeAttachmentPointer('John Boozman IRA See Attachment')).toBe(true);
+    expect(looksLikeSeeAttachmentPointer('ELCM2 LLC')).toBe(false);
   });
 
   it('hard-stops letterhead-as-asset (Clerk / B81 Cannon)', () => {

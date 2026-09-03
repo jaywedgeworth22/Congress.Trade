@@ -24,6 +24,7 @@ import {
   looksLikeHeaderContaminatedAsset,
   looksLikeNothingToReport,
   looksLikePtrFormSampleAsset,
+  looksLikeSeeAttachmentPointer,
 } from './extractRouting.ts';
 import { all, batch, fromBool, get, parseJson, run } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
@@ -341,6 +342,8 @@ export async function normalize(
   const usableParsed = parsed.filter((p) =>
     !looksLikeHeaderContaminatedAsset(p.assetName)
     && !looksLikePtrFormSampleAsset(p.assetName)
+    && !looksLikeSeeAttachmentPointer(p.assetName)
+    && !looksLikeSeeAttachmentPointer(p.rawText)
     && !looksLikeNothingToReport(p.assetName)
   );
   const droppedFormChrome = parsed.length - usableParsed.length;
@@ -952,6 +955,7 @@ export function scoreFields(
 export {
   looksLikeHeaderContaminatedAsset,
   looksLikePtrFormSampleAsset,
+  looksLikeSeeAttachmentPointer,
   looksLikeNothingToReport,
   isDeletedFilingStatus,
 } from './extractRouting.ts';

@@ -14,6 +14,7 @@
 import type { Env, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { parseAmountRange } from './amounts.ts';
+import { looksLikePtrFormSampleAsset, looksLikeSeeAttachmentPointer } from './extractRouting.ts';
 import { parseTruncationAwareJson, fetchWithRetry, arrayBufferToBase64 } from './visionLlm.ts';
 import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
@@ -36,6 +37,8 @@ txType: B=Buy (Purchase/P), S=Sell (Sale), E=Exchange. Always emit B for buys.
 owner: self if no prefix, spouse if (S), joint if (J), dependent if (DC).
 Include parent fund/header as subholding when the row is nested under a fund name.
 Skip blank rows, cover letters, and header-only fund labels without a date.
+NEVER emit the printed Example rows: "IBM Corp. (stock) NYSE" dated 2/1/1X and "(DC) Microsoft (stock) NASDAQ/OTC" dated 2/27/1X. Their amount columns spell EXAMPLE. They are form instructions, not trades. Do not turn 1X/XX placeholder years into 2027.
+If a row says "See Attachment", skip it and extract the attached schedule pages. You are given every page image — read the typed attachment, not only the PTR grid.
 Return ONLY JSON: {"transactions":[{"txDate":"YYYY-MM-DD","owner":"self|spouse|joint|dependent|unknown","ticker":null,"assetName":"string","subholding":null,"txType":"P|S|E","amountRange":"$A - $B","rawText":"short quote"}]}`;
 
 
@@ -336,6 +339,8 @@ export async function extractFromSenatePaperMedia(
 function normalizeTxDate(raw: unknown): string | null {
   const t = String(raw ?? '').trim();
   if (!t) return null;
+  // Printed example years are "1X" / "XX", not a calendar date.
+  if (/[xX]/.test(t)) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
   const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m) {
@@ -359,6 +364,8 @@ function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
     ? row.identification_of_assets.trim()
     : '';
   if (!assetName) return null;
+  if (looksLikePtrFormSampleAsset(assetName)) return null;
+  if (looksLikeSeeAttachmentPointer(assetName)) return null;
 
   const rawDate = row.txDate ?? row.transaction_date ?? row.date ?? row.tx_date;
   const txDate = normalizeTxDate(rawDate);
