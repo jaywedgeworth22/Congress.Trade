@@ -32,9 +32,13 @@ name: iOS TestFlight ship (Mac runner)
 #      when git HEAD already shipped. Runs inside that window print
 #      "ship-gate: skip" and exit 0 (green, nothing uploaded).
 # Neither kind of skip consumes a build number.
-# To force one run, dispatch manually after exporting IOS_TF_MIN_INTERVAL_SEC,
-# or run the wrapper locally with --force-ship. Changing the standing limit
-# means editing DEFAULT_MIN_INTERVAL_SEC (owner's call, not the workflow's).
+# Hosted macos-latest runners have an empty home each job.  This repo forbids
+# actions/cache (check-actions-runner-policy.mjs), so last-ship state cannot
+# persist.  Treating that empty home as "never shipped" re-archived every
+# cron tick (measured: 1.0.222 on 2026-09-04 from schedule, no iOS change).
+# A scheduled tick with no last-ship file now skips.  Real ships are a push
+# that passed paths: or an explicit workflow_dispatch.  To force one run,
+# dispatch the workflow or run the wrapper locally with --force-ship.
 
 on:
   push:
@@ -71,8 +75,7 @@ jobs:
           # The scheduled gate diffs HEAD against the sha recorded by the last
           # successful ship, which can be many commits back. Default depth-1
           # would make that range uncomputable ("unknown revision") and the
-          # gate would degrade to skipping every tick. The runner workspace
-          # persists, so this is a one-time cost per runner.
+          # gate would degrade to skipping every tick.
           fetch-depth: 0
 
       # Runs FIRST so a tick with nothing to ship costs seconds and cannot go

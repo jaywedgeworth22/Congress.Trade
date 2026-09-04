@@ -86,9 +86,9 @@ check "push -> should_ship" 1 "$(field "$out" should_ship)"
 out="$(run_gate workflow_dispatch demo)"
 check "workflow_dispatch -> should_ship" 1 "$(field "$out" should_ship)"
 
-echo "== 2. scheduled tick with no ship history defers to the ship script =="
+echo "== 2. scheduled tick with no ship history skips (hosted runner is empty) =="
 out="$(run_gate schedule demo)"
-check "no state -> should_ship" 1 "$(field "$out" should_ship)"
+check "no state -> should_ship" 0 "$(field "$out" should_ship)"
 
 echo "== 3. scheduled tick on an already-shipped HEAD skips =="
 set_state demo "$BASE"
