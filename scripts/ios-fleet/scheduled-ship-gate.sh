@@ -105,8 +105,11 @@ for app in $APPS; do
   decision=0
 
   if [[ ! -f "$state" ]]; then
-    log "[${app}] no prior ship recorded (${state}); letting ship-testflight.sh decide."
-    decision=1
+    # Hosted runners start with an empty home.  Treating that as "never
+    # shipped" re-archives every cron tick.  A first ship is a push that
+    # already passed paths: or an explicit workflow_dispatch.
+    log "[${app}] no prior ship recorded (${state}); scheduled tick skips."
+    decision=0
   else
     # Format written by record_successful_ship(): "<unix_ts> <git_sha>"
     last_sha="$(awk 'NR==1{print $2}' "$state" 2>/dev/null || true)"
