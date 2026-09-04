@@ -22,6 +22,9 @@ export type SentryLogAttributes = Record<string, string | number | boolean | nul
 type LoggerWarn = (message: string, attributes?: SentryLogAttributes) => void;
 
 let activeLoggerWarn: LoggerWarn | undefined;
+let activeMetricsCount:
+  | ((name: string, value?: number, options?: { attributes?: SentryLogAttributes }) => unknown)
+  | undefined;
 
 /**
  * Sparse operational log for Sentry Logs.  After a successful SDK init this
@@ -30,6 +33,13 @@ let activeLoggerWarn: LoggerWarn | undefined;
  * for local/dev.
  */
 export function sentryLoggerWarn(message: string, attributes?: SentryLogAttributes): void {
+  if (activeMetricsCount) {
+    try {
+      activeMetricsCount(message, 1, attributes ? { attributes } : undefined);
+    } catch {
+      // Metrics must never break the warn path.
+    }
+  }
   if (activeLoggerWarn) {
     try {
       activeLoggerWarn(message, attributes);
@@ -52,6 +62,13 @@ export interface SentrySdkLike {
   withMonitor?: (name: string, fn: () => unknown, options?: unknown) => unknown;
   consoleLoggingIntegration?: (options?: { levels?: string[] }) => unknown;
   logger?: { warn?: (message: string, attributes?: SentryLogAttributes) => unknown };
+  metrics?: {
+    count?: (
+      name: string,
+      value?: number,
+      options?: { attributes?: SentryLogAttributes },
+    ) => unknown;
+  };
   flush?: (timeout?: number) => Promise<boolean>;
 }
 
@@ -152,6 +169,7 @@ function extractEnvFromHandlerArgs(args: unknown[]): Env | undefined {
 export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindings {
   let initialized = false;
   activeLoggerWarn = undefined;
+  activeMetricsCount = undefined;
 
   const initProductionSentry = (
     env: SentryInitInput,
@@ -172,6 +190,9 @@ export function createSentryBindings(sdk: SentrySdkLike): ProductionSentryBindin
         activeLoggerWarn = (message, attributes) => {
           warn(message, attributes);
         };
+      }
+      if (typeof sdk.metrics?.count === 'function') {
+        activeMetricsCount = sdk.metrics.count.bind(sdk.metrics);
       }
       return { initialized: true, reason: 'dsn' };
     } catch (err) {

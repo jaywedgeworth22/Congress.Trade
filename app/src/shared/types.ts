@@ -784,6 +784,14 @@ export interface Env {
   PREVIEW_DEPLOYMENT?: string;
   /** Uniform trace sampling rate (0-1) for the Sentry Cloudflare SDK; overrides the code default. */
   SENTRY_TRACES_SAMPLE_RATE?: string;
+  /** Browser SDK kill switch (`false`/`0`/`off`/`no`).  Default on when DSN is set. */
+  SENTRY_BROWSER_ENABLED?: string;
+  /** User Feedback widget kill switch.  Default on. */
+  SENTRY_FEEDBACK_ENABLED?: string;
+  /** Web session Replay sample (Designer: default 0). */
+  SENTRY_REPLAY_SESSION_SAMPLE_RATE?: string;
+  /** Web error Replay sample (default 1). */
+  SENTRY_REPLAY_ERROR_SAMPLE_RATE?: string;
   /** Datadog API key for agentless logs + APM intake. */
   DD_API_KEY?: string;
   DATADOG_API_KEY?: string;

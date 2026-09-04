@@ -50,6 +50,19 @@ describe('browserSecurityHeaders', () => {
     expect(on).not.toContain('*');
   });
 
+  it('adds Sentry browser origins only when a DSN-backed script is supplied', () => {
+    const off = buildContentSecurityPolicy();
+    expect(off).not.toContain('browser.sentry-cdn.com');
+    expect(off).not.toContain('ingest.us.sentry.io');
+    const on = buildContentSecurityPolicy({
+      sentryScriptSrc: 'https://browser.sentry-cdn.com/10.70.0/bundle.tracing.replay.feedback.min.js',
+      sentryConnectOrigins: ['https://o1.ingest.us.sentry.io'],
+    });
+    expect(on).toContain('https://browser.sentry-cdn.com');
+    expect(on).toContain('https://o1.ingest.us.sentry.io');
+    expect(on).not.toContain('*');
+  });
+
   it('attaches headers to a completed Hono response', async () => {
     const app = new Hono();
     app.use('*', browserSecurityHeadersMiddleware);

@@ -19,24 +19,29 @@ import type { MiddlewareHandler } from 'hono';
 import { DATADOG_RUM_SCRIPT_ORIGIN } from '../shared/datadogRum.ts';
 import { getDatadogInitInput } from '../shared/datadog.ts';
 import { resolveDatadogRum } from '../shared/datadogRuntime.ts';
+import { resolveSentryBrowser, SENTRY_BROWSER_SCRIPT_ORIGIN } from '../shared/sentryBrowser.ts';
 import type { Env } from '../shared/types.ts';
 import { isSecureRequest, isSecureRequestParts } from './requestProtocol.ts';
 
 export function buildContentSecurityPolicy(opts: {
   rumScriptSrc?: string;
   rumConnectOrigins?: readonly string[];
+  sentryScriptSrc?: string;
+  sentryConnectOrigins?: readonly string[];
 } = {}): string {
   const script = [
     "'self'",
     "'unsafe-inline'",
     'https://static.cloudflareinsights.com',
     ...(opts.rumScriptSrc ? [DATADOG_RUM_SCRIPT_ORIGIN] : []),
+    ...(opts.sentryScriptSrc ? [SENTRY_BROWSER_SCRIPT_ORIGIN] : []),
   ].join(' ');
   const connect = [
     "'self'",
     'https://cloudflareinsights.com',
     'https://static.cloudflareinsights.com',
     ...(opts.rumConnectOrigins ?? []),
+    ...(opts.sentryConnectOrigins ?? []),
   ].join(' ');
   return [
     "default-src 'self'",
@@ -77,14 +82,23 @@ export function browserSecurityHeaders(requestUrl: string, opts: {
   secure?: boolean;
   rumScriptSrc?: string;
   rumConnectOrigins?: readonly string[];
+  sentryScriptSrc?: string;
+  sentryConnectOrigins?: readonly string[];
 } = {}): Headers {
   const headers = new Headers(BASE_HEADERS);
-  if (opts.rumScriptSrc || (opts.rumConnectOrigins && opts.rumConnectOrigins.length > 0)) {
+  const widen =
+    Boolean(opts.rumScriptSrc) ||
+    Boolean(opts.rumConnectOrigins && opts.rumConnectOrigins.length > 0) ||
+    Boolean(opts.sentryScriptSrc) ||
+    Boolean(opts.sentryConnectOrigins && opts.sentryConnectOrigins.length > 0);
+  if (widen) {
     headers.set(
       'Content-Security-Policy',
       buildContentSecurityPolicy({
         rumScriptSrc: opts.rumScriptSrc,
         rumConnectOrigins: opts.rumConnectOrigins,
+        sentryScriptSrc: opts.sentryScriptSrc,
+        sentryConnectOrigins: opts.sentryConnectOrigins,
       }),
     );
   }
@@ -99,14 +113,18 @@ export function browserSecurityHeaders(requestUrl: string, opts: {
 
 export const browserSecurityHeadersMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
+  const env = c.env as Env;
   const rum = resolveDatadogRum({
     ...(getDatadogInitInput() ?? {}),
-    ...(c.env as Env),
+    ...env,
   });
+  const sentry = resolveSentryBrowser(env);
   for (const [name, value] of browserSecurityHeaders(c.req.url, {
     secure: isSecureRequest(c),
     rumScriptSrc: rum.enabled ? rum.scriptSrc : undefined,
     rumConnectOrigins: rum.enabled ? rum.connectOrigins : undefined,
+    sentryScriptSrc: sentry.enabled ? sentry.scriptSrc : undefined,
+    sentryConnectOrigins: sentry.enabled ? [sentry.connectOrigin] : undefined,
   })) {
     c.header(name, value);
   }
