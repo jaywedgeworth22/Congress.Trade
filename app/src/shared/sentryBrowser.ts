@@ -64,26 +64,26 @@ export function sentryIngestOrigin(dsn: string): string | undefined {
   }
 }
 
-export function resolveSentryBrowser(env: SentryBrowserInput): SentryBrowserResolution {
-  const dsn = env.SENTRY_DSN?.trim();
+export function resolveSentryBrowser(env: SentryBrowserInput | undefined): SentryBrowserResolution {
+  const dsn = env?.SENTRY_DSN?.trim();
   if (!dsn) return { enabled: false };
-  if (envFalsy(env.SENTRY_BROWSER_ENABLED)) return { enabled: false };
+  if (envFalsy(env?.SENTRY_BROWSER_ENABLED)) return { enabled: false };
   const connectOrigin = sentryIngestOrigin(dsn);
   if (!connectOrigin) return { enabled: false };
   return {
     enabled: true,
     dsn,
-    environment: env.SENTRY_ENVIRONMENT?.trim() || 'production',
+    environment: env?.SENTRY_ENVIRONMENT?.trim() || 'production',
     scriptSrc: SENTRY_BROWSER_BUNDLE,
     connectOrigin,
-    tracesSampleRate: clampRate(env.SENTRY_TRACES_SAMPLE_RATE, 0.2),
-    replaysSessionSampleRate: clampRate(env.SENTRY_REPLAY_SESSION_SAMPLE_RATE, 0.1),
-    replaysOnErrorSampleRate: clampRate(env.SENTRY_REPLAY_ERROR_SAMPLE_RATE, 1),
-    feedbackEnabled: !envFalsy(env.SENTRY_FEEDBACK_ENABLED),
+    tracesSampleRate: clampRate(env?.SENTRY_TRACES_SAMPLE_RATE, 0.2),
+    replaysSessionSampleRate: clampRate(env?.SENTRY_REPLAY_SESSION_SAMPLE_RATE, 0.1),
+    replaysOnErrorSampleRate: clampRate(env?.SENTRY_REPLAY_ERROR_SAMPLE_RATE, 1),
+    feedbackEnabled: !envFalsy(env?.SENTRY_FEEDBACK_ENABLED),
   };
 }
 
-export function renderSentryBrowserScript(env: SentryBrowserInput): string {
+export function renderSentryBrowserScript(env: SentryBrowserInput | undefined): string {
   const resolved = resolveSentryBrowser(env);
   if (!resolved.enabled) return '';
   const init: Record<string, unknown> = {

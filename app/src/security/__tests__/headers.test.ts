@@ -71,4 +71,18 @@ describe('browserSecurityHeaders', () => {
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000');
   });
+
+  it('keeps nosniff and HSTS when the Sentry browser loader is enabled', async () => {
+    const app = new Hono();
+    app.use('*', browserSecurityHeadersMiddleware);
+    app.get('/health', (c) => c.json({ ok: true }));
+    const response = await app.request('https://congress.trade/health', {}, {
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+    });
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const csp = response.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain('https://browser.sentry-cdn.com');
+    expect(csp).toContain('https://o1.ingest.us.sentry.io');
+  });
 });

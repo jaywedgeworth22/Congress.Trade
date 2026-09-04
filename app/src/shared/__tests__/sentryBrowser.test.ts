@@ -11,7 +11,9 @@ const DSN = 'https://key@o1.ingest.us.sentry.io/1';
 describe('sentry browser loader', () => {
   it('stays dark without a DSN', () => {
     expect(resolveSentryBrowser({}).enabled).toBe(false);
+    expect(resolveSentryBrowser(undefined).enabled).toBe(false);
     expect(renderSentryBrowserScript({})).toBe('');
+    expect(renderSentryBrowserScript(undefined)).toBe('');
   });
 
   it('honors SENTRY_BROWSER_ENABLED=false', () => {

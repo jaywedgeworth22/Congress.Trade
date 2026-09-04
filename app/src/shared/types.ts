@@ -788,7 +788,7 @@ export interface Env {
   SENTRY_BROWSER_ENABLED?: string;
   /** User Feedback widget kill switch.  Default on. */
   SENTRY_FEEDBACK_ENABLED?: string;
-  /** Web session Replay sample (Designer: default 0). */
+  /** Web session Replay sample (Designer 2026-09-04: default 0.1). */
   SENTRY_REPLAY_SESSION_SAMPLE_RATE?: string;
   /** Web error Replay sample (default 1). */
   SENTRY_REPLAY_ERROR_SAMPLE_RATE?: string;

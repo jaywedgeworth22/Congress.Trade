@@ -113,18 +113,38 @@ export function browserSecurityHeaders(requestUrl: string, opts: {
 
 export const browserSecurityHeadersMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
-  const env = c.env as Env;
-  const rum = resolveDatadogRum({
-    ...(getDatadogInitInput() ?? {}),
-    ...env,
-  });
-  const sentry = resolveSentryBrowser(env);
+  const env = (c.env ?? {}) as Env;
+  let rumScriptSrc: string | undefined;
+  let rumConnectOrigins: readonly string[] | undefined;
+  let sentryScriptSrc: string | undefined;
+  let sentryConnectOrigins: readonly string[] | undefined;
+  try {
+    const rum = resolveDatadogRum({
+      ...(getDatadogInitInput() ?? {}),
+      ...env,
+    });
+    if (rum.enabled) {
+      rumScriptSrc = rum.scriptSrc;
+      rumConnectOrigins = rum.connectOrigins;
+    }
+  } catch {
+    // CSP stays tight.  Never skip nosniff/HSTS because telemetry resolution threw.
+  }
+  try {
+    const sentry = resolveSentryBrowser(env);
+    if (sentry.enabled) {
+      sentryScriptSrc = sentry.scriptSrc;
+      sentryConnectOrigins = [sentry.connectOrigin];
+    }
+  } catch {
+    // Same: missing/undefined env must not strip browser security headers.
+  }
   for (const [name, value] of browserSecurityHeaders(c.req.url, {
     secure: isSecureRequest(c),
-    rumScriptSrc: rum.enabled ? rum.scriptSrc : undefined,
-    rumConnectOrigins: rum.enabled ? rum.connectOrigins : undefined,
-    sentryScriptSrc: sentry.enabled ? sentry.scriptSrc : undefined,
-    sentryConnectOrigins: sentry.enabled ? [sentry.connectOrigin] : undefined,
+    rumScriptSrc,
+    rumConnectOrigins,
+    sentryScriptSrc,
+    sentryConnectOrigins,
   })) {
     c.header(name, value);
   }
