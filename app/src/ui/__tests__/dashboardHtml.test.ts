@@ -855,8 +855,15 @@ describe('DASHBOARD_HTML', () => {
 
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
-    expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v3'");
+    expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v4'");
     expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v3'");
+    expect(DASHBOARD_HTML).toContain('function colHiddenKey()');
+    expect(DASHBOARD_HTML).toContain('function colIsDefault(c)');
+    expect(DASHBOARD_HTML).toContain("id: 'country', label: 'Country', sort: 'refCountry', def: false, defAdmin: true");
+    expect(DASHBOARD_HTML).toContain("id: 'conf', label: 'Confidence', sort: 'conf', def: false, defAdmin: true, tier: 'admin'");
+    expect(DASHBOARD_HTML).toContain("id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin'");
+    expect(DASHBOARD_HTML).toContain("id: 'source', label: 'Source', sort: 'source', def: false, defAdmin: false, tier: 'admin'");
+    expect(DASHBOARD_HTML).toContain('hiddenCols = loadHiddenCols().filter(function (id)');
     // Owner follow-up batch #13: the old asset cap (40-54px) sat below
     // asset's own 140px floor, silently pinning it there regardless of
     // content — replaced with a genuinely content-responsive range.
@@ -2040,17 +2047,25 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
   });
 
-  it('places Buys vs Sells immediately after Rising Activity', () => {
-    const rising = DASHBOARD_HTML.indexOf('>Rising Activity<');
+  it('places Top Performers beside What Is Being Traded and Rising Activity beside Most Active', () => {
+    const tickers = DASHBOARD_HTML.indexOf('id="tableTrTickers"');
+    const performers = DASHBOARD_HTML.indexOf('>Top Performers <');
     const buys = DASHBOARD_HTML.indexOf('>Buys vs Sells<');
     const consensus = DASHBOARD_HTML.indexOf('>Consensus Moves<');
-    expect(rising).toBeGreaterThan(-1);
-    expect(buys).toBeGreaterThan(rising);
+    const rising = DASHBOARD_HTML.indexOf('>Rising Activity<');
+    const members = DASHBOARD_HTML.indexOf('>Most Active Politicians<');
+    expect(tickers).toBeGreaterThan(-1);
+    expect(performers).toBeGreaterThan(tickers);
+    expect(buys).toBeGreaterThan(performers);
     expect(consensus).toBeGreaterThan(buys);
+    expect(rising).toBeGreaterThan(consensus);
+    expect(members).toBeGreaterThan(rising);
   });
 
   it('hides Rising Activity on All Time and keeps net-flow / buy-pressure on one line', () => {
     expect(DASHBOARD_HTML).toContain('id="trRisingFold"');
+    expect(DASHBOARD_HTML).toContain('id="trPerformersFold"');
+    expect(DASHBOARD_HTML).toContain('#view-trends .trend-grid2:has(#trRisingFold[hidden]) { grid-template-columns: 1fr; }');
     expect(DASHBOARD_HTML).toContain("getTrWindow() === 'all'");
     expect(DASHBOARD_HTML).toContain('syncRisingActivityVisibility');
     expect(DASHBOARD_HTML).toContain('kpi-money');
@@ -2638,7 +2653,8 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
     expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
-    expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
     expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
     expect(DASHBOARD_HTML).toContain("if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);");
     expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
@@ -5717,7 +5733,10 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
     expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
-    expect(DASHBOARD_HTML).toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
+    expect(DASHBOARD_HTML).toContain('width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('max-width: 100vw;');
+    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
+    expect(DASHBOARD_HTML).not.toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
     expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
     expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
     expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');

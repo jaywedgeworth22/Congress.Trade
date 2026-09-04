@@ -41,8 +41,8 @@ struct TrendsView: View {
                                     tickerSection
                                 }
 
-                                if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
-                                    trendingSection
+                                if !store.topPerformers.isEmpty {
+                                    performersSection
                                 }
 
                                 if !store.volumeSeries.isEmpty {
@@ -57,8 +57,8 @@ struct TrendsView: View {
 
                                 marketCapCard
 
-                                if !store.topPerformers.isEmpty {
-                                    performersSection
+                                if store.selectedTimeRange != .all, !store.trendingAssets.isEmpty {
+                                    trendingSection
                                 }
 
                                 if !store.memberLeaderboard.isEmpty {

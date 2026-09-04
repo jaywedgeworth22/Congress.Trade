@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-04 GROK — Trends card swap, full-bleed filter, Trades column defaults
+
+Rising Activity and Top Performers swapped so the four-column Rising table
+gets the later equal-width pair.  Sticky Trends/Trades filters break out to
+`100vw` to kill the grey notches under the white header (1280px Trends
+column was shorter than `header.top`).  Public Trades defaults hide Country
+(Confidence / Latency / Source were already admin-only).  Admins keep
+Country / Confidence / Latency on and only hide Source.  Key
+`feed-cols-hidden-v4` (+ `-admin`).  Rollout:
+`docs/rollouts/2026-09-04-trends-layout-cols.md`.  Board `1f0f2bd4`.
+
 ## 2026-09-03 BF-Publisher — Senate paper IBM/Microsoft form samples
 
 Live queue 4 → 0. Four Senate paper PTRs (Blumenthal May/Dec 2025, Boozman Oct 2022 / Mar 2023) were parked because printed IBM/Microsoft example rows scored `future_tx_date`. Confirmed 73 official lots from eFD page scans. Pipeline now drops those printed examples so the next paper PTRs can publish. Rollout: `docs/rollouts/2026-09-03-senate-paper-form-samples.md`.
