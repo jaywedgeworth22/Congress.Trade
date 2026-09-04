@@ -50,6 +50,19 @@ describe('browserSecurityHeaders', () => {
     expect(on).not.toContain('*');
   });
 
+  it('adds Sentry browser origins only when a DSN-backed script is supplied', () => {
+    const off = buildContentSecurityPolicy();
+    expect(off).not.toContain('browser.sentry-cdn.com');
+    expect(off).not.toContain('ingest.us.sentry.io');
+    const on = buildContentSecurityPolicy({
+      sentryScriptSrc: 'https://browser.sentry-cdn.com/10.70.0/bundle.tracing.replay.feedback.min.js',
+      sentryConnectOrigins: ['https://o1.ingest.us.sentry.io'],
+    });
+    expect(on).toContain('https://browser.sentry-cdn.com');
+    expect(on).toContain('https://o1.ingest.us.sentry.io');
+    expect(on).not.toContain('*');
+  });
+
   it('attaches headers to a completed Hono response', async () => {
     const app = new Hono();
     app.use('*', browserSecurityHeadersMiddleware);
@@ -57,5 +70,19 @@ describe('browserSecurityHeaders', () => {
     const response = await app.request('https://congress.trade/health');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000');
+  });
+
+  it('keeps nosniff and HSTS when the Sentry browser loader is enabled', async () => {
+    const app = new Hono();
+    app.use('*', browserSecurityHeadersMiddleware);
+    app.get('/health', (c) => c.json({ ok: true }));
+    const response = await app.request('https://congress.trade/health', {}, {
+      SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
+    });
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const csp = response.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain('https://browser.sentry-cdn.com');
+    expect(csp).toContain('https://o1.ingest.us.sentry.io');
   });
 });

@@ -46,6 +46,7 @@ import { TICKER_RESOLVED_SQL } from '../analytics/sql.ts';
 import { getDatadogInitInput } from '../shared/datadog.ts';
 import { resolveDatadogRum } from '../shared/datadogRuntime.ts';
 import { renderDatadogRumScript } from '../shared/datadogRum.ts';
+import { renderSentryBrowserScript } from '../shared/sentryBrowser.ts';
 
 /**
  * Analytics injection was removed (CT-AUD-P1-15).
@@ -315,7 +316,7 @@ async function renderDashboard(env: Env, requestUrl: string): Promise<string> {
   });
   let html = DASHBOARD_HTML
     .split('%LOGO_DISPLAY%').join(logoDisplay)
-    .split('%GA_SCRIPT%').join(datadogRumScript(env));
+    .split('%GA_SCRIPT%').join(telemetryScripts(env));
   html = applyOgMeta(html, og);
   return html;
 }
@@ -327,8 +328,12 @@ function datadogRumScript(env: Env): string {
   }));
 }
 
+function telemetryScripts(env: Env): string {
+  return datadogRumScript(env) + renderSentryBrowserScript(env);
+}
+
 function renderLegalHtml(html: string, env: Env): string {
-  return html.split('%GA_SCRIPT%').join(datadogRumScript(env));
+  return html.split('%GA_SCRIPT%').join(telemetryScripts(env));
 }
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
