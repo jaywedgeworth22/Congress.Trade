@@ -752,6 +752,37 @@ describe('tradeLatency', () => {
       expect(result.errors.some((e) => /HTTP_403/.test(e))).toBe(true);
     });
 
+    it('stays running when last observation is stale but probes still succeed', async () => {
+      const stale = new Date(Date.now() - 95 * 3_600_000).toISOString();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+        DB: {
+          prepare(sql: string) {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() {
+                if (String(sql).includes('trade_provider_observations')) {
+                  return { last_obs: stale };
+                }
+                if (String(sql).includes('provider_probe_runs')) {
+                  return { last_ok: new Date().toISOString() };
+                }
+                return null;
+              },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const statuses = await getDisclosureLatencyProviderStatuses(env);
+      const fmp = statuses.find((s) => s.id === 'fmp');
+      expect(fmp?.operationalStatus).toBe('running');
+      expect(fmp?.reason).toMatch(/probes still succeeding/);
+    });
+
     it('marks a configured provider error when last observation is older than 24h', async () => {
       const stale = new Date(Date.now() - 95 * 3_600_000).toISOString();
       const env = {

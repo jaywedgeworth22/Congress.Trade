@@ -19,7 +19,6 @@ import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
-import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { notifyReviewQueuePublisher } from './reviewQueueNotify.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
@@ -2274,7 +2273,9 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     operationalStatus = 'off';
     reason = !fmpProbeOn
       ? 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)'
-      : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
+      : provider.fmpPathId === 'rapidapi'
+        ? 'OFF: FMP path "rapidapi" not in FMP_LATENCY_PATHS — RapidAPI FMP product has no house/senate-latest (HTTP 404, rechecked 2026-09-04). Dual free-tier keys on stable are the congress probe.'
+        : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
   } else if (requested && !requested.includes(provider.id)) {
     // Filtered out of the probe set — the documented way to retire a
     // provider (e.g. a dropped subscription) without deleting its key or
@@ -2300,8 +2301,24 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
       if (Number.isFinite(ms)) {
         const ageH = (Date.now() - ms) / 3_600_000;
         if (ageH > 24) {
-          operationalStatus = 'error';
-          reason = `${provider.label} last observation ${Math.round(ageH)}h ago (threshold 24h)`;
+          let lastOkMs = NaN;
+          try {
+            const run = await get<{ last_ok: string | null }>(
+              env.DB,
+              'SELECT MAX(ran_at) AS last_ok FROM provider_probe_runs WHERE provider = ? AND ok = 1',
+              [provider.id],
+            );
+            lastOkMs = run?.last_ok ? Date.parse(run.last_ok) : NaN;
+          } catch {
+            /* table may not exist yet */
+          }
+          const lastOkAgeH = Number.isFinite(lastOkMs) ? (Date.now() - lastOkMs) / 3_600_000 : Infinity;
+          if (lastOkAgeH <= 24) {
+            reason = `${provider.label} last new observation ${Math.round(ageH)}h ago; probes still succeeding (${Math.round(lastOkAgeH)}h)`;
+          } else {
+            operationalStatus = 'error';
+            reason = `${provider.label} last observation ${Math.round(ageH)}h ago (threshold 24h)`;
+          }
         }
       }
     } catch {
@@ -4173,8 +4190,11 @@ export async function runDisclosureLatencyProbe(
   opts: { force?: boolean; providers?: string[] } = {},
 ): Promise<DisclosureLatencyProbeResult> {
   const envx = env as EnvWithWatch;
-  const proxyUrl = resolveResidentialProxyUrl(envx);
-  const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetchImpl) : fetchImpl;
+  // Commercial JSON APIs (FMP / UW / QQ) go direct. The residential proxy is
+  // for Clerk/eFD/OGE HTML (Imperva). After RESIDENTIAL_PROXY_URL was set for
+  // Senate/House scraping (2026-09-02), FMP observations went silent ~42h —
+  // live house/senate-latest still 200 from this Mac without the proxy.
+  const effectiveFetch = fetchImpl;
   if (!opts.force && !(await enabled(envx))) {
     return {
       enabled: false,

@@ -1,5 +1,14 @@
 # Current Handoff
 
+## 2026-09-04 GROK — FMP latency ERROR + duplicate Exec health rows
+
+Latency · FMP Stable ERROR was 42h without observations while both free-tier
+keys still 200 on house/senate-latest.  Probes no longer go through the
+residential proxy (that hop is for Clerk/eFD).  RapidAPI congress endpoints
+still 404 — leave `FMP_LATENCY_PATHS=stable`.  Source Health had two Exec
+rows (`executive` + `oge`); SQL now canonicalizes to one.  Rollout:
+`docs/rollouts/2026-09-04-fmp-exec-health.md`.  Board `d09acd0a`.
+
 ## 2026-09-04 GROK — Trends card swap, full-bleed filter, Trades column defaults
 
 Rising Activity and Top Performers swapped so the four-column Rising table
