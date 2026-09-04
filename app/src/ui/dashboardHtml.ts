@@ -271,6 +271,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trends .section:has(> .table-wrap) { width: 100%; min-width: 0; max-width: 100%; }
     #view-trends .section:has(> .table-wrap) > .table-wrap { width: 100%; }
     #view-trends .section:has(> .table-wrap) > .table-wrap > table { width: 100%; min-width: 560px; }
+    /* Top Performers sits in the 0.75fr slot of .trend-grid-split.  The 560px
+       floor would overflow that column the way Rising Activity used to. */
+    #view-trends .trend-grid-split .section:has(> .table-wrap) > .table-wrap > table { min-width: 0; }
     /* A long one-line subtitle (Top Performers) must wrap at a readable
        measure instead of inflating the card's fit-content width past its
        own table. 68ch ≈ ideal reading measure. */
@@ -986,6 +989,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 29px; }
   .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: var(--trends-gap, 24px); }
   .trend-grid-split > *, .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
+  /* All Time hides Rising Activity; let Most Active use the full row. */
+  #view-trends .trend-grid2:has(#trRisingFold[hidden]) { grid-template-columns: 1fr; }
   @media (max-width: 760px) {
     .trend-grid2 { grid-template-columns: 1fr; }
     .trend-grid-split { grid-template-columns: 1fr; }
@@ -1811,18 +1816,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .trades-only-filters { margin-bottom:14px; }
   /* Filter chrome: sits in the white header band (main padding-top is 0),
      viewport-full-bleed, already at the sticky rest position so it does
-     not slide-then-pin.  A negative-margin pull-up against main
-     overflow-x:clip used to clip the white strip and leave a cool-grey
-     gap; chips then jumped onto the header divider on scroll.  White
-     (or --panel) paint goes edge to edge; chips keep the same inset as
-     the header wordmark, a few pixels under the title. */
+     not slide-then-pin.  #view-trends is max-width 1280px centered, so a
+     pad-only negative margin left cool-grey notches under header.top
+     (measured 45px each side at 1440px).  100vw + 50% - 50vw breaks out of
+     that box and out of main's 1800px cap so the strip matches the header
+     edge to edge.  html overflow-x:clip hides any 100vw scrollbar gutter.
+     Chips keep --ct-main-pad, same inset as the header wordmark. */
   .trades-toolbars, #trendsSharedFilters {
     position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
     box-sizing: border-box;
-    width: calc(100% + 2 * var(--ct-main-pad, 35px));
-    max-width: none;
-    margin-left: calc(-1 * var(--ct-main-pad, 35px));
-    margin-right: calc(-1 * var(--ct-main-pad, 35px));
+    width: 100vw;
+    max-width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
     margin-top: 0; margin-bottom: 12px;
     padding: 4px var(--ct-main-pad, 35px) 10px;
     background: var(--panel);
@@ -2362,6 +2368,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
    One token-derived surface recipe + one easing/duration vocabulary,
    inherited by descendants. These custom props never paint on their own. */
 #view-trends {
+  /* Cards stay 1280px.  Sticky filters break out to 100vw (see
+     .trades-toolbars / #trendsSharedFilters) so they match header.top. */
   max-width: 1280px;
   margin: 0 auto;
   --tr-ease: cubic-bezier(.2, .6, .25, 1);
@@ -2927,8 +2935,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
      generic toolbar-select width:100% mobile shorthand.  Do not set
-     width/max-width here — that used to beat the padding-based full-bleed
-     (calc(100% + 2*pad)) and left a gap on the right of the filter bar. */
+     width/max-width here — that used to beat the 100vw full-bleed strip
+     and left a grey notch on the right of the filter bar. */
   #view-trends #trendsSharedFilters,
   #view-trades #tradesSharedFilters {
     display: flex !important;
@@ -3172,7 +3180,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
 
-    <!-- What is being traded + Heating up -->
+    <!-- What is being traded + Top Performers (owner 2026-09-04: Rising
+         Activity moved to the later equal-width pair so its four columns
+         are not cramped in this 0.75fr slot). -->
     <div class="trend-grid-split">
       <details class="section trends-fold" open>
         <summary class="tf-h tchart-summary">
@@ -3200,25 +3210,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </table>
         </div>
       </details>
-      <details class="section trends-fold" id="trRisingFold" open>
-        <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
-        <div class="table-wrap">
-          <table id="tableTrTrending">
-            <thead>
-              <tr>
-                <th scope="col" style="min-width: 90px;">Asset</th>
-                <th scope="col">Trades</th>
-                <th scope="col">Change</th>
-                <th scope="col">Politicians</th>
-              </tr>
-            </thead>
-            <tbody id="trTrending"></tbody>
-          </table>
-        </div>
+      <details class="section trends-fold" id="trPerformersFold" open>
+        <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
+        <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
+        <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
+        <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
       </details>
     </div>
 
-    <!-- Buys vs sells: directly under Rising Activity (owner 2026-08-15). -->
+    <!-- Buys vs sells: full-width chart after the first Trends pair. -->
     <details class="section trends-fold" open>
       <summary class="tf-h tchart-summary">
         <span class="tchart-summary-title">Buys vs Sells</span>
@@ -3254,13 +3254,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </details>
     </div>
 
-    <!-- Politicians: Top Performers (excess return) + Most Active (volume/trades) -->
+    <!-- Politicians: Rising Activity (four columns, needs the equal pair) + Most Active -->
     <div class="trend-grid2">
-      <details class="section trends-fold" open>
-        <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
-        <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
-        <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
-        <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
+      <details class="section trends-fold" id="trRisingFold" open>
+        <summary class="tf-h">Rising Activity<span class="fold-cue" aria-hidden="true"></span></summary>
+        <div class="table-wrap">
+          <table id="tableTrTrending">
+            <thead>
+              <tr>
+                <th scope="col" style="min-width: 90px;">Asset</th>
+                <th scope="col">Trades</th>
+                <th scope="col">Change</th>
+                <th scope="col">Politicians</th>
+              </tr>
+            </thead>
+            <tbody id="trTrending"></tbody>
+          </table>
+        </div>
       </details>
       <details class="section trends-fold" open>
         <summary class="tf-h">Most Active Politicians<span class="fold-cue" aria-hidden="true"></span></summary>
@@ -4885,10 +4895,10 @@ var TRADES_COLS = [
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, defAdmin: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, defAdmin: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first learned about this trade. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
@@ -4898,10 +4908,17 @@ var TRADES_COLS = [
     var n = plainCleaningNote(r.cleaningNote || '');
     return clipTextHtml(n, '—', n);
   } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
+  { id: 'source', label: 'Source', sort: 'source', def: false, defAdmin: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
-var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
+var COL_HIDDEN_KEY = 'feed-cols-hidden-v4';
 var COL_ORDER_KEY = 'feed-cols-order-v3';
+function colHiddenKey() {
+  return isAdminView() ? COL_HIDDEN_KEY + '-admin' : COL_HIDDEN_KEY;
+}
+function colIsDefault(c) {
+  if (isAdminView() && Object.prototype.hasOwnProperty.call(c, 'defAdmin')) return !!c.defAdmin;
+  return !!c.def;
+}
 function isAdminView() {
   return typeof ME !== 'undefined' && !!(ME.admin && ME.admin.allowed);
 }
@@ -4931,9 +4948,9 @@ function chooserCols() {
   }));
 }
 function availableCols() { return orderedCols(TRADES_COLS.filter(canUseColumn)); }
-function defaultHidden() { return availableCols().filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
-function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
-function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
+function defaultHidden() { return availableCols().filter(function (c) { return !colIsDefault(c); }).map(function (c) { return c.id; }); }
+function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(colHiddenKey())); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
+function saveHiddenCols(h) { try { localStorage.setItem(colHiddenKey(), JSON.stringify(h)); } catch (e) {} }
 var hiddenCols = loadHiddenCols();
 function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
 function visibleCols() { return availableCols().filter(function (c) { return isColVisible(c.id); }); }
@@ -12239,7 +12256,7 @@ function loadMe() {
       updateGateRow();
       updateDeliveryGate();
       applyPricingAvailability();
-      hiddenCols = hiddenCols.filter(function (id) {
+      hiddenCols = loadHiddenCols().filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
       });
       renderTradesHeader();
