@@ -12718,17 +12718,22 @@ function copyFromData(btn) {
   copyText(btn && btn.getAttribute ? (btn.getAttribute('data-copy') || '') : '');
 }
 /* Surface ?login= / ?checkout= / ?billing= outcomes after a hosted redirect,
-   then scrub them from the URL so a refresh doesn't re-toast. */
+   then scrub them from the URL so a refresh doesn't re-toast.
+   ?billing=manage is the iOS fallback for website/Stripe Premium: wait
+   for /auth/me, then run manageBilling() (portal or Sign In).  Do not treat
+   ?billing=portal (Stripe return URL) as a manage request. */
 function handleAuthQueryParams() {
   var p = new URLSearchParams(window.location.search);
   var login = p.get('login'), checkout = p.get('checkout');
+  var billing = p.get('billing');
   if (login === 'ok') showToast('Signed in.');
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
   else if (login === 'expired') showToast('That sign-in session expired.  Try Google or Apple again.', true);
   else if (login === 'unverified') showToast('Sign-in failed.  Verify your email with Google first.', true);
   if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
   else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
-  if (login || checkout || p.get('billing')) {
+  if (billing === 'manage') window.__pendingManageBilling = true;
+  if (login || checkout || billing) {
     p.delete('login'); p.delete('checkout'); p.delete('billing');
     var qs = p.toString();
     window.history.replaceState({}, '', window.location.pathname + (qs ? ('?' + qs) : ''));
@@ -13585,9 +13590,13 @@ loadMe().then(function () {
   } else {
     loadTrends(); // Trends is the default landing view
   }
+  if (window.__pendingManageBilling) {
+    window.__pendingManageBilling = false;
+    manageBilling();
+  }
 });
 
-handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
+handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= / ?billing= after redirects
 loadTrades().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
 // /api/admin/poll-config 401s for every anonymous visitor (console noise —
 // issue #1457). It now only loads from inside loadMe().then() above, gated

@@ -181,6 +181,17 @@ final class CongressTradeAPIClient {
     /// manage.
     static let appStoreManageSubscriptionsURL = URL(string: "https://apps.apple.com/account/subscriptions")!
 
+    /// Website path that can reach Stripe Customer Portal for an existing
+    /// web/Stripe subscriber.  Guideline 3.1.1: manage existing web billing,
+    /// never start web checkout.  The site honors `?billing=manage` after
+    /// `/auth/me` and runs `manageBilling()`.
+    var webManageSubscriptionURL: URL {
+        var components = URLComponents(url: originURL, resolvingAgainstBaseURL: false) ?? URLComponents()
+        components.path = "/"
+        components.queryItems = [URLQueryItem(name: "billing", value: "manage")]
+        return components.url ?? originURL
+    }
+
     /// Site origin (scheme + host) with the `/api/client/v1` path stripped.
     /// Auth (`/auth/*`), document (`/api/documents/*`), and logo endpoints live
     /// at the origin, not under the client API prefix.
@@ -864,10 +875,11 @@ final class CongressTradeAPIClient {
     /// Mints a short-lived Stripe-hosted Billing Portal URL for the
     /// signed-in user's Stripe customer (`POST /billing/portal`,
     /// `app/src/billing/routes.ts` — web parity; origin-level, not under
-    /// `/api/client/v1/*`). Callers should treat any failure (401 not signed
-    /// in, 503 portal not configured, 400 no Stripe customer yet, offline)
-    /// as "show a helpful message" rather than falling back to the App Store
-    /// URL — a Stripe subscriber has nothing to manage there.
+    /// `/api/client/v1/*`). Sends the same session Bearer as `/api/client/v1`
+    /// (`makeRequest` → `AuthHeaderInterceptor`). The server must accept
+    /// Bearer here (`getCurrentUserFromRequest`); cookie-only auth 401s a
+    /// signed-in iOS user. Callers must not fall back to the App Store URL
+    /// on failure — a Stripe subscriber has nothing to manage there.
     func billingPortalURL(idempotencyKey: String = UUID().uuidString) async throws -> URL {
         var request = try makeRequest(originURL.appendingPathComponent("billing/portal"))
         request.httpMethod = "POST"

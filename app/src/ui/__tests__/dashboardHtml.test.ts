@@ -647,6 +647,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('if (!portalConfigured())');
     expect(DASHBOARD_HTML).toContain('Manage Subscription');
     expect(DASHBOARD_HTML).toContain("credentials: 'same-origin'");
+    expect(DASHBOARD_HTML).toContain("billing === 'manage'");
+    expect(DASHBOARD_HTML).toContain('window.__pendingManageBilling');
   });
 
   it('sends stable per-operation idempotency keys for Stripe writes', () => {
