@@ -30,13 +30,17 @@ import {
   createBillingPortalSession,
   verifyStripeSignature,
   stripeEventLivemodeMatchesKey,
+  stripeObjectId,
+  retrieveStripeSubscription,
 } from './stripe.ts';
 import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
 import {
   linkCustomerToUser,
   parseSubscription,
   applySubscription,
+  applyRetrievedStripeSubscription,
   endSubscription,
+  subscriptionIdFromInvoice,
 } from './subscription.ts';
 import {
   claimStripeWebhookEvent,
@@ -59,14 +63,6 @@ function requestIdForStripe(c: Context): { id: string } | { error: string } {
 
 function stripeOperationKey(operation: string, userId: string, requestId?: string): string {
   return ['congress-trade', operation, userId, requestId].filter(Boolean).join(':');
-}
-
-/** Stripe expandable-id fields may be either an id string or `{ id }`. */
-function stripeObjectId(value: unknown): string | undefined {
-  if (typeof value === 'string' && value.length > 0) return value;
-  if (!value || typeof value !== 'object') return undefined;
-  const id = (value as Record<string, unknown>).id;
-  return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
 /** Public-facing origin for redirects (APP_BASE_URL, else request origin). */
@@ -312,9 +308,39 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
           await linkCustomerToUser(c.env, userId, customerId);
           break;
         }
+        case 'invoice.paid':
+        case 'invoice.payment_succeeded': {
+          // Trial converting to paid arrives as invoice.paid with
+          // billing_reason=subscription_cycle.  The matching
+          // customer.subscription.updated can miss the user row (batch
+          // EXISTS) or never be subscribed.  Retrieve the live Subscription
+          // and apply it so status cannot stay trialing after Stripe charged.
+          const invoice = (obj ?? {}) as Record<string, unknown>;
+          const subscriptionId = subscriptionIdFromInvoice(invoice);
+          if (!subscriptionId) break;
+          const live = await retrieveStripeSubscription(c.env, subscriptionId);
+          await applyRetrievedStripeSubscription(c.env, live, {
+            id: event.id,
+            created: event.created,
+            type: 'customer.subscription.updated',
+          });
+          break;
+        }
         case 'customer.subscription.created':
         case 'customer.subscription.updated': {
-          const sub = parseSubscription(obj ?? {});
+          let sub = parseSubscription(obj ?? {});
+          if (!sub || !sub.priceId) {
+            const subscriptionId = sub?.id ?? stripeObjectId((obj ?? {}).id);
+            if (subscriptionId) {
+              try {
+                const live = await retrieveStripeSubscription(c.env, subscriptionId);
+                const parsedLive = parseSubscription(live);
+                if (parsedLive) sub = parsedLive;
+              } catch (err) {
+                console.warn('stripe subscription retrieve failed:', (err as Error).message);
+              }
+            }
+          }
           if (!sub) throw new Error(`malformed ${event.type} payload`);
           const affectedUserId = await applySubscription(c.env, sub, {
             id: event.id,

@@ -3675,6 +3675,13 @@ ${speedProofSectionHtml(true)}
         <thead><tr><th>Last Login</th><th>Email</th><th>Name</th><th>Plan</th></tr></thead>
         <tbody id="diagLogins"></tbody>
       </table>
+      <h3 style="margin-top:14px">Premium Members</h3>
+      <p class="sub">Everyone currently on Premium.&nbsp; Trial and Paid are listed separately.&nbsp; Stripe and Apple show as the billing source, with Sandbox or Production.</p>
+      <div id="diagPremiumCards" class="diag-grid" aria-live="polite"></div>
+      <table>
+        <thead><tr><th>Email</th><th>Plan</th><th>Billing</th><th>Source</th><th>Environment</th><th>Period End</th><th>Stripe</th></tr></thead>
+        <tbody id="diagPremiumRoster"></tbody>
+      </table>
     </div>
     <div class="section">
       <h3>LLM Spend &amp; Extraction Metrics (30 Days)</h3>
@@ -7985,6 +7992,7 @@ function loadDiagnostics() {
   if (users) users.innerHTML = '<div class="state">Loading users…</div>';
   if (logins) logins.innerHTML = stateRow(4, 'Loading recent logins…');
   if (settingsTable) settingsTable.innerHTML = stateRow(4, 'Loading settings…');
+  loadPremiumRoster();
   return fetch('/api/admin/diagnostics', { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) {
@@ -8039,7 +8047,11 @@ function loadDiagnostics() {
       if (users) {
         users.innerHTML =
           diagMetricCard('Users', stats.totalUsers) +
-          diagMetricCard('Subscribed', stats.subscribedUsers) +
+          diagMetricCard('Premium', stats.premiumUsers != null ? stats.premiumUsers : stats.subscribedUsers) +
+          diagMetricCard('Trial', stats.trialUsers) +
+          diagMetricCard('Paid', stats.paidUsers) +
+          diagMetricCard('Stripe', stats.stripeUsers) +
+          diagMetricCard('Apple', stats.appleUsers) +
           diagMetricCard('Delivery Subs', (stats.activeDeliverySubscriptions || 0) + ' / ' + (stats.deliverySubscriptions || 0)) +
           diagMetricCard('Admins', stats.adminUsers) +
           diagMetricCard('Logins 24h', stats.loginsLast24h);
@@ -8050,7 +8062,7 @@ function loadDiagnostics() {
           logins.innerHTML = stateRow(4, 'No recent logins found.');
         } else {
           logins.innerHTML = loginRows.map(function (u) {
-            var plan = [u.plan, u.subscriptionStatus].filter(Boolean).join(' · ') || '—';
+            var plan = loginPlanLabel(u.plan, u.subscriptionStatus);
             return '<tr class="row">' +
               '<td class="muted">' + esc(dateTimeText(u.lastLoginAt)) + '</td>' +
               '<td>' + esc(u.email || '—') + '</td>' +
@@ -8090,6 +8102,58 @@ function diagMetricCard(label, value) {
     '<div class="diag-head"><div class="diag-title">' + esc(label) + '</div></div>' +
     '<div class="v">' + esc(value == null ? 0 : value) + '</div>' +
   '</div>';
+}
+
+function loginPlanLabel(plan, status) {
+  var planText = plan === 'annual' ? 'Annual' : (plan === 'monthly' ? 'Monthly' : '');
+  var billing = status === 'trialing' ? 'Trial' : (status === 'active' ? 'Paid' : (status || ''));
+  var parts = [planText, billing].filter(Boolean);
+  return parts.length ? parts.join('  ·  ') : '—';
+}
+
+function loadPremiumRoster() {
+  var cards = el('diagPremiumCards');
+  var body = el('diagPremiumRoster');
+  if (cards) cards.innerHTML = '<div class="state">Loading Premium members…</div>';
+  if (body) body.innerHTML = stateRow(7, 'Loading Premium members…');
+  return fetch('/api/admin/premium-roster', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var summary = data.summary || {};
+      if (cards) {
+        cards.innerHTML =
+          diagMetricCard('Premium', summary.total) +
+          diagMetricCard('Trial', summary.trial) +
+          diagMetricCard('Paid', summary.paid) +
+          diagMetricCard('Stripe', summary.stripe) +
+          diagMetricCard('Apple', summary.apple) +
+          diagMetricCard('Sandbox', summary.sandbox) +
+          diagMetricCard('Production', summary.production);
+      }
+      var rows = data.members || [];
+      if (body) {
+        if (rows.length === 0) {
+          body.innerHTML = stateRow(7, 'No Premium members yet.');
+        } else {
+          body.innerHTML = rows.map(function (m) {
+            return '<tr class="row">' +
+              '<td>' + esc(m.email || '—') + '</td>' +
+              '<td class="muted">' + esc(m.plan || '—') + '</td>' +
+              '<td>' + esc(m.billing || '—') + '</td>' +
+              '<td class="muted">' + esc(m.source || '—') + '</td>' +
+              '<td class="muted">' + esc(m.environment || '—') + '</td>' +
+              '<td class="muted">' + esc(dateTimeText(m.periodEnd)) + '</td>' +
+              '<td class="muted">' + esc(m.stripeMatch || '—') + '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+    })
+    .catch(function (e) {
+      var msg = isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load Premium members: ' + e.message);
+      if (cards) cards.innerHTML = '<div class="state">' + esc(msg) + '</div>';
+      if (body) body.innerHTML = stateRow(7, msg);
+    });
 }
 
 function refreshInfisicalSecrets() {
@@ -13516,6 +13580,8 @@ el('diagSettings').innerHTML = stateRow(4, 'Loading…');
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
+if (el('diagPremiumCards')) el('diagPremiumCards').innerHTML = '<div class="state">Loading Premium members…</div>';
+if (el('diagPremiumRoster')) el('diagPremiumRoster').innerHTML = stateRow(7, 'Loading…');
 if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
 // ?view= aliases must accept the visible tab names (#1458): Directory is
