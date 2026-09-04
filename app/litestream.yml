@@ -52,6 +52,16 @@ snapshot:
   # history for restore headroom, matching Socratic.Trade's B2 target.
   retention: 168h
 
+# Product compaction is L0 + bounded L1 + 24h snapshots.  L2 and L3 are OFF.
+# Mirror ST litestream.coolify.yml / UM litestream.yml.  Do NOT add a second
+# or third item unless L2/L3 are intentionally product-on again.
+# Do NOT add verify-compaction: true.
+# Litestream 0.5.x has no disable-L2 flag — one levels entry makes MaxLevel()=1
+# so NextLevel(1) is snapshot.  Removing L2/L3 is the backoff against mega-
+# compaction retry storms that burn shared Backblaze Class B/C caps.
+levels:
+  - interval: 30s
+
 dbs:
   - path: /data/congress-trade/db.sqlite
     replica:
