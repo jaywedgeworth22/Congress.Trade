@@ -386,6 +386,8 @@ describe('probe wiring: lease denial wins regardless of the schedule', () => {
   it('never calls runProbe for a provider the server has handed off', async () => {
     setHandoff(h.kv, 'quiver', true, PEAK);
     setHandoff(h.kv, 'unusual_whales', true, PEAK);
+    await requestMacProbeLease(h.env, { provider: 'quiver', holderId: 'mac-laptop', now: PEAK });
+    await requestMacProbeLease(h.env, { provider: 'unusual_whales', holderId: 'mac-laptop', now: PEAK });
     const runProbe = vi.fn(async () => 'fetched');
     const outcome = await runLeasedLatencyProbe(h.env, runProbe, PEAK);
     expect(runProbe).not.toHaveBeenCalled();
@@ -399,6 +401,7 @@ describe('probe wiring: lease denial wins regardless of the schedule', () => {
     // subset of the set the lease granted, never a union with anything else.
     setHandoff(h.kv, 'quiver', true, PEAK); // mac's lane
     setHandoff(h.kv, 'unusual_whales', false, PEAK); // server's lane
+    await requestMacProbeLease(h.env, { provider: 'quiver', holderId: 'mac-laptop', now: PEAK });
     const seen: string[][] = [];
     await runLeasedLatencyProbe(
       h.env,

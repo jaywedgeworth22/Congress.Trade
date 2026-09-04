@@ -1,5 +1,11 @@
 # Current Handoff
 
+## 2026-09-04 GROK — FMP lease reclaim (scout retired deadlock)
+
+#2307 is live (`d4e5cc4a`) but FMP stayed `handed_off` with no Mac scout.
+Server now reclaims when no live Mac lease exists.  Board `d09acd0a`.
+Rollout: `docs/rollouts/2026-09-04-fmp-lease-reclaim.md`.
+
 ## 2026-09-04 GROK — FMP latency ERROR + duplicate Exec health rows
 
 Latency · FMP Stable ERROR was 42h without observations while both free-tier
