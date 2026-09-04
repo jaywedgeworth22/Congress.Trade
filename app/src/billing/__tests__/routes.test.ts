@@ -111,6 +111,10 @@ function fakeEnv(
           if (/SELECT \* FROM users WHERE id/i.test(sql)) {
             return ((rows.get(this._p[0] as string) ?? null) as unknown) as T | null;
           }
+          if (/FROM stripe_subscription_event_state WHERE subscription_id/i.test(sql)) {
+            const state = subscriptionEvents.get(this._p[0] as string);
+            return (state ? { last_event_id: state.eventId } : null) as T | null;
+          }
           if (/SELECT processed_at FROM stripe_webhook_events/i.test(sql)) {
             const event = webhookEvents.get(this._p[0] as string);
             return (event ? { processed_at: event.processedAt } : null) as T | null;
@@ -180,42 +184,60 @@ function fakeEnv(
             return { success: true, meta: { changes } } as unknown as D1Result;
           }
           if (/SET\s+stripe_customer_id = \?,\s+stripe_subscription_id/i.test(sql)) {
-            const [
-              cust, sub, status, plan, cpe, cape, trial, id, expectedCustomer,
-              stateSub, created, priority, eventId, sameSub, newerCreated,
-              sameSecondCreated, eventType, crossStatus,
-            ] = p as [
-              string, string, string, string | null, string | null, number, string | null, string,
-              string, string, number, number, string, string, number, number, string, string,
-            ];
-            const r = rows.get(id);
-            const applied = subscriptionEvents.get(stateSub);
-            const current = r?.stripe_subscription_id ? subscriptionEvents.get(r.stripe_subscription_id) : undefined;
-            const crossSubscriptionAllowed = current && (
-              current.created < newerCreated
-              || (
-                current.created === sameSecondCreated
-                && eventType === 'customer.subscription.created'
-                && (crossStatus === 'active' || crossStatus === 'trialing')
-                && (r?.subscription_status === 'canceled' || r?.subscription_status === 'incomplete_expired')
-              )
-            );
-            if (
-              r
-              && (r.stripe_customer_id === null || r.stripe_customer_id === expectedCustomer)
-              && applied?.created === created
-              && applied.priority === priority
-              && applied.eventId === eventId
-              && (
-                r.stripe_subscription_id === null
-                || r.stripe_subscription_id === sameSub
-                || crossSubscriptionAllowed
-              )
-            ) Object.assign(r, {
-              stripe_customer_id: cust, stripe_subscription_id: sub, subscription_status: status,
-              plan, current_period_end: cpe, cancel_at_period_end: cape, trial_end: trial,
-            });
-            if (r?.subscription_status === status) counters.subscriptionApplies += 1;
+            if (/EXISTS/i.test(sql)) {
+              const [
+                cust, sub, status, plan, cpe, cape, trial, id, expectedCustomer,
+                stateSub, created, priority, eventId, sameSub, newerCreated,
+                sameSecondCreated, eventType, crossStatus,
+              ] = p as [
+                string, string, string, string | null, string | null, number, string | null, string,
+                string, string, number, number, string, string, number, number, string, string,
+              ];
+              const r = rows.get(id);
+              const applied = subscriptionEvents.get(stateSub);
+              const current = r?.stripe_subscription_id ? subscriptionEvents.get(r.stripe_subscription_id) : undefined;
+              const crossSubscriptionAllowed = current && (
+                current.created < newerCreated
+                || (
+                  current.created === sameSecondCreated
+                  && eventType === 'customer.subscription.created'
+                  && (crossStatus === 'active' || crossStatus === 'trialing')
+                  && (r?.subscription_status === 'canceled' || r?.subscription_status === 'incomplete_expired')
+                )
+              );
+              if (
+                r
+                && (r.stripe_customer_id === null || r.stripe_customer_id === expectedCustomer)
+                && applied?.created === created
+                && applied.priority === priority
+                && applied.eventId === eventId
+                && (
+                  r.stripe_subscription_id === null
+                  || r.stripe_subscription_id === sameSub
+                  || crossSubscriptionAllowed
+                )
+              ) Object.assign(r, {
+                stripe_customer_id: cust, stripe_subscription_id: sub, subscription_status: status,
+                plan: plan ?? r.plan, current_period_end: cpe, cancel_at_period_end: cape, trial_end: trial,
+              });
+              if (r?.subscription_status === status) counters.subscriptionApplies += 1;
+            } else {
+              const [cust, sub, status, plan, cpe, cape, trial, id, expectedCustomer, sameSub] = p as [
+                string, string, string, string | null, string | null, number, string | null, string, string, string,
+              ];
+              const r = rows.get(id);
+              if (
+                r
+                && (r.stripe_customer_id === null || r.stripe_customer_id === expectedCustomer)
+                && (r.stripe_subscription_id === null || r.stripe_subscription_id === sameSub)
+              ) {
+                Object.assign(r, {
+                  stripe_customer_id: cust, stripe_subscription_id: sub, subscription_status: status,
+                  plan: plan ?? r.plan, current_period_end: cpe, cancel_at_period_end: cape, trial_end: trial,
+                });
+                counters.subscriptionApplies += 1;
+              }
+            }
           } else if (/SET stripe_customer_id = \?[\s\S]+stripe_customer_id IS NULL/i.test(sql)) {
             const [customerId, userId] = p as [string, string, string];
             const r = rows.get(userId);
@@ -656,6 +678,51 @@ describe('billing router', () => {
     };
     const app = buildBillingRouter();
     const res = await postWebhook(app, env, event);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+    expect(rows.get('u1')?.subscription_status).toBe('active');
+    expect(rows.get('u1')!.plan).toBe('monthly');
+  });
+
+  it('POST /webhook invoice.paid (subscription_cycle) applies live Stripe active over trialing', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'trialing', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: '2030-01-15T00:00:00.000Z',
+      cancel_at_period_end: 0, trial_end: '2030-01-15T00:00:00.000Z',
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const { env, rows } = fakeEnv({
+      STRIPE_WEBHOOK_SECRET: 'whsec',
+      STRIPE_SECRET_KEY: 'sk_test_123',
+    }, [seed]);
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes('/v1/subscriptions/sub_1')) {
+        return new Response(JSON.stringify({
+          id: 'sub_1',
+          status: 'active',
+          customer: 'cus_1',
+          livemode: false,
+          items: { data: [{ price: { id: 'price_m' } }] },
+          trial_end: null,
+        }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${String(url)}`);
+    }));
+    const res = await postWebhook(buildBillingRouter(), env, {
+      id: 'evt_invoice_paid_1',
+      created: 2_000,
+      type: 'invoice.paid',
+      livemode: false,
+      data: {
+        object: {
+          id: 'in_1',
+          billing_reason: 'subscription_cycle',
+          parent: { subscription_details: { subscription: 'sub_1' } },
+          customer: 'cus_1',
+        },
+      },
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ received: true });
     expect(rows.get('u1')?.subscription_status).toBe('active');

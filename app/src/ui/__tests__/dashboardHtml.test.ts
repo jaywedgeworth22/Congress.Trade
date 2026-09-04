@@ -154,6 +154,19 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('Admin Premium Members roster uses Title Case chrome and Trial vs Paid copy', () => {
+    expect(DASHBOARD_HTML).toContain('>Premium Members</h3>');
+    expect(DASHBOARD_HTML).toContain('Everyone currently on Premium.&nbsp; Trial and Paid are listed separately.&nbsp; Stripe and Apple show as the billing source, with Sandbox or Production.');
+    expect(DASHBOARD_HTML).toContain('<th>Email</th><th>Plan</th><th>Billing</th><th>Source</th><th>Environment</th><th>Period End</th><th>Stripe</th>');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/premium-roster'");
+    expect(DASHBOARD_HTML).toContain("diagMetricCard('Trial'");
+    expect(DASHBOARD_HTML).toContain("diagMetricCard('Paid'");
+    expect(DASHBOARD_HTML).toContain("diagMetricCard('Sandbox'");
+    expect(DASHBOARD_HTML).toContain("diagMetricCard('Production'");
+    expect(DASHBOARD_HTML).not.toMatch(/Premium Members[\s\S]{0,800}subscription_status/);
+    expect(DASHBOARD_HTML).not.toMatch(/Premium Members[\s\S]{0,800}livemode/);
+  });
+
   it('preserves same-day timestamp precision while clamping future dates', () => {
     const sortVal = loadSortVal();
     const today = new Date().toISOString().slice(0, 10);
