@@ -721,6 +721,46 @@ describe('tradeLatency', () => {
       expect(marked).toBe(true);
     });
 
+    it('retries one FMP key through the residential proxy after both free-tier keys 429', async () => {
+      const kv = new Map<string, string>();
+      let fetchCalls = 0;
+      const fetchImpl = (async () => {
+        fetchCalls += 1;
+        return new Response(JSON.stringify({ 'Error Message': 'Bandwidth Limit Reach' }), { status: 429 });
+      }) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_API_KEY: 'k1',
+        FMP_API_KEY: 'k2',
+        RESIDENTIAL_PROXY_URL: 'http://127.0.0.1:3128',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() { return null; },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const result = await runDisclosureLatencyProbe(env, new Date('2026-08-05T15:00:00.000Z'), fetchImpl, {
+        force: true,
+        providers: ['fmp'],
+      });
+      // Direct key1 + other key + proxy retry. Node has no Deno HTTP client so
+      // the proxy wrapper is identity, but the extra attempt still fires.
+      expect(fetchCalls).toBeGreaterThanOrEqual(3);
+      expect(result.fetchedRows).toBe(0);
+      expect(result.errors.some((e) => /HTTP_429/.test(e))).toBe(true);
+    });
+
     it('does not treat Quiver HTTP 403 as a successful empty feed', async () => {
       const fetchImpl = (async () =>
         new Response(JSON.stringify({ detail: 'Upgrade your subscription plan to access this dataset.' }), {
@@ -750,6 +790,37 @@ describe('tradeLatency', () => {
       });
       expect(result.fetchedRows).toBe(0);
       expect(result.errors.some((e) => /HTTP_403/.test(e))).toBe(true);
+    });
+
+    it('stays running when last observation is stale but probes still succeed', async () => {
+      const stale = new Date(Date.now() - 95 * 3_600_000).toISOString();
+      const env = {
+        FMP_LATENCY_API_KEY: 'k1',
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        CONFIG_KV: { get: async () => null, put: async () => {} },
+        DB: {
+          prepare(sql: string) {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() {
+                if (String(sql).includes('trade_provider_observations')) {
+                  return { last_obs: stale };
+                }
+                if (String(sql).includes('provider_probe_runs')) {
+                  return { last_ok: new Date().toISOString() };
+                }
+                return null;
+              },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const statuses = await getDisclosureLatencyProviderStatuses(env);
+      const fmp = statuses.find((s) => s.id === 'fmp');
+      expect(fmp?.operationalStatus).toBe('running');
+      expect(fmp?.reason).toMatch(/probes still succeeding/);
     });
 
     it('marks a configured provider error when last observation is older than 24h', async () => {
@@ -823,8 +894,9 @@ describe('tradeLatency', () => {
       const rapid = defaultStatuses.find((s) => s.id === 'fmp_rapidapi');
       // Default ON for stable — not grey OFF (owner: FMP is for CT latency).
       expect(fmp?.operationalStatus).toBe('running');
-      // RapidAPI path default OFF (congress endpoints not on marketplace product).
+      // RapidAPI path default OFF (no house/senate/executive disclosure feed).
       expect(rapid?.operationalStatus).toBe('off');
+      expect(rapid?.reason).toMatch(/executive-latest/i);
       expect(fmp?.configured).toBe(true);
       expect(rapid?.configured).toBe(true);
       expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);

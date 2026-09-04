@@ -109,8 +109,9 @@ current Datadog account.
   legacy `FMP_DISCLOSURE_WATCH_ENABLED` / `FMP_DISCLOSURE_WATCH_LIMIT`,
   **FMP family (default ON for CT when keys present):** `FMP_LATENCY_PROBE_ENABLED`
   (explicit false/off disables; grey OFF), `FMP_LATENCY_PATHS` (default **`stable`**
-  only — RapidAPI FMP product auth works but **house/senate-latest 404** as of
-  2026-08; opt in `stable,rapidapi` if marketplace gains congress endpoints),
+  only — RapidAPI FMP auth works but **house/senate-latest 404** and **no
+  OGE/executive-latest** as of 2026-09-04; opt in `stable,rapidapi` only if
+  marketplace gains those disclosure endpoints),
   optional `FMP_STABLE_BASE_URL` / `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST`,
   `FMP_RAPIDAPI_KEY` **or shared `RAPIDAPI_KEY`** (ST marketplace convention —
   never free-tier `FMP_LATENCY_*` on the RapidAPI host),
@@ -150,7 +151,7 @@ current Datadog account.
   recesses or the Clerk changes publication times — no redeploy.
   Production should keep these set in Infisical:
   `DISCLOSURE_LATENCY_WATCH_ENABLED=true`,
-  `DISCLOSURE_LATENCY_PROVIDERS=fmp,unusual_whales,quiver` (add `fmp_rapidapi` only if product supports congress),
+  `DISCLOSURE_LATENCY_PROVIDERS=fmp` (add `unusual_whales,quiver` only after paid/trial keys; add `fmp_rapidapi` only if marketplace lists house/senate/executive-latest),
   `DISCLOSURE_LATENCY_WATCH_LIMIT=100`,
   `FMP_LATENCY_PROBE_ENABLED` unset (default ON) or false to disable spend,
   `FMP_LATENCY_PATHS=stable`,

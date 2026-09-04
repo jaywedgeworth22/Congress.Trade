@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-04 GROK — FMP latency ERROR + duplicate Exec health rows
+
+Latency · FMP Stable ERROR was 42h without observations while both free-tier
+keys still 200 on house/senate-latest.  Probes go direct; a 429 retries the
+other key then one hop through the Senate residential proxy.  RapidAPI has
+no house/senate-latest (404) and no OGE/executive-latest (400/404) —
+leave `FMP_LATENCY_PATHS=stable`.  Ticker enrichment stays with
+Socratic.Trade.  UW/QQ stay retired until paid/trial.  Source Health had
+two Exec rows (`executive` + `oge`); SQL now canonicalizes to one.
+Rollout: `docs/rollouts/2026-09-04-fmp-exec-health.md`.  Board `d09acd0a`.
+
 ## 2026-09-04 GROK — Trends card swap, full-bleed filter, Trades column defaults
 
 Rising Activity and Top Performers swapped so the four-column Rising table

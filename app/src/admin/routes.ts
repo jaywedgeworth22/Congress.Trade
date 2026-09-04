@@ -3427,13 +3427,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       last_new_at: string | null;
     }>(
       c.env.DB,
-      `SELECT source,
+      `SELECT CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
               MAX(polled_at)                              AS last_polled_at,
               COUNT(*)                                    AS poll_count,
               COALESCE(SUM(new_count), 0)                 AS total_new,
               MAX(CASE WHEN new_count > 0 THEN polled_at END) AS last_new_at
          FROM ingest_log
-        GROUP BY source`,
+        GROUP BY 1`,
     );
 
     const attempts = await optionalAll<{
@@ -3446,8 +3446,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env,
       `WITH ranked AS (
-         SELECT id, source, attempted_at, outcome, new_count, error,
-                ROW_NUMBER() OVER (PARTITION BY source ORDER BY attempted_at DESC, id DESC) AS rn
+         SELECT id,
+                CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
+                attempted_at, outcome, new_count, error,
+                ROW_NUMBER() OVER (
+                  PARTITION BY CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END
+                  ORDER BY attempted_at DESC, id DESC
+                ) AS rn
            FROM source_attempts
        )
        SELECT id, source, attempted_at, outcome, new_count, error
@@ -3463,7 +3468,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       attemptsBySource.set(attempt.source, list);
     }
     const aggregateBySource = new Map(rows.map((row) => [row.source, row]));
-    const sourceNames = new Set<string>(['house', 'senate', ...rows.map((row) => row.source), ...attempts.map((row) => row.source)]);
+    const sourceNames = new Set<string>(['house', 'senate', 'executive', ...rows.map((row) => row.source), ...attempts.map((row) => row.source)]);
 
     const sources = [];
     for (const source of sourceNames) {
@@ -3512,6 +3517,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         avgSeenToImportedSec: await observedSeenToImportedLag(c.env, source, latencyResetAt),
       });
     }
+    const sourceOrder = ['house', 'senate', 'executive'];
+    sources.sort((a, b) => {
+      const ia = sourceOrder.indexOf(a.source);
+      const ib = sourceOrder.indexOf(b.source);
+      if (ia < 0 && ib < 0) return a.source.localeCompare(b.source);
+      if (ia < 0) return 1;
+      if (ib < 0) return -1;
+      return ia - ib;
+    });
 
     const timeline = await optionalAll<{
       source: string;
@@ -3523,7 +3537,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env,
       `SELECT 
-         source,
+         CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
          strftime('%Y-%m-%dT%H:00:00.000Z', attempted_at) AS hour,
          COUNT(*) AS total,
          SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) AS failures,
@@ -3531,7 +3545,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          COALESCE(SUM(new_count), 0) AS new_filings
         FROM source_attempts
        WHERE attempted_at >= datetime('now', '-24 hours')
-       GROUP BY source, hour
+       GROUP BY 1, hour
        ORDER BY hour ASC`,
     );
 
@@ -3542,7 +3556,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       error: string | null;
     }>(
       c.env,
-      `SELECT id, source, attempted_at, error
+      `SELECT id,
+              CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
+              attempted_at, error
          FROM source_attempts
         WHERE outcome = 'failure'
         ORDER BY attempted_at DESC, id DESC
@@ -4237,16 +4253,34 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         : op === 'error' ? 'error'
         : op === 'stopped' ? 'warn'
         : 'unknown';
+      const probeStats = await optionalAll<{
+        last_used_at: string | null;
+        calls_total: number;
+        calls_last_24h: number;
+        calls_today: number;
+        errors_last_24h: number;
+      }>(
+        c.env,
+        `SELECT MAX(ran_at) AS last_used_at,
+                COUNT(*) AS calls_total,
+                SUM(CASE WHEN ran_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+                SUM(CASE WHEN ran_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+                SUM(CASE WHEN ok = 0 AND ran_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+           FROM provider_probe_runs
+          WHERE provider = ?`,
+        [last24, today, last24, path.providerId],
+      );
+      const ps = probeStats[0];
       connections.push({
         id: `latency:${path.providerId}`,
         label: `Latency · ${path.label}`,
         status: diagStatus,
         configured: st?.configured ?? false,
-        lastUsedAt: null,
-        callsTotal: 0,
-        callsLast24h: 0,
-        callsToday: 0,
-        errorsLast24h: 0,
+        lastUsedAt: ps?.last_used_at ?? null,
+        callsTotal: ps?.calls_total ?? 0,
+        callsLast24h: ps?.calls_last_24h ?? 0,
+        callsToday: ps?.calls_today ?? 0,
+        errorsLast24h: ps?.errors_last_24h ?? 0,
         note: st?.reason ?? `Default OFF. Path ${path.pathId} → ${path.defaultBaseUrl}`,
       });
     }
@@ -10678,10 +10712,12 @@ async function setLatencyResetAt(env: Env, value: string): Promise<void> {
 
 /** Observed average seconds between the most recent polls for a source. */
 async function observedAvgInterval(env: Env, source: string): Promise<number | null> {
+  const aliases = source === 'executive' ? ['executive', 'oge', 'exec'] : [source];
+  const placeholders = aliases.map(() => '?').join(', ');
   const rows = await all<{ polled_at: string }>(
     env.DB,
-    'SELECT polled_at FROM ingest_log WHERE source = ? ORDER BY polled_at DESC LIMIT 50',
-    [source],
+    `SELECT polled_at FROM ingest_log WHERE source IN (${placeholders}) ORDER BY polled_at DESC LIMIT 50`,
+    aliases,
   );
   if (rows.length < 2) return null;
   // rows are DESC; compute deltas between consecutive timestamps.
