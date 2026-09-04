@@ -56,7 +56,8 @@ describe('production Sentry init', () => {
 
   it('routes sentryLoggerWarn to the SDK logger after init without console.warn', () => {
     const warn = vi.fn();
-    const sdk = fakeSdk({ logger: { warn } });
+    const count = vi.fn();
+    const sdk = fakeSdk({ logger: { warn }, metrics: { count } });
     const sentry = createSentryBindings(sdk);
     sentry.initProductionSentry({
       SENTRY_DSN: 'https://key@o1.ingest.us.sentry.io/1',
@@ -66,6 +67,9 @@ describe('production Sentry init', () => {
     expect(warn).toHaveBeenCalledWith('ingest.dead_letter', {
       queue: 'ingest',
       reason: 'governor_cap',
+    });
+    expect(count).toHaveBeenCalledWith('ingest.dead_letter', 1, {
+      attributes: { queue: 'ingest', reason: 'governor_cap' },
     });
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
