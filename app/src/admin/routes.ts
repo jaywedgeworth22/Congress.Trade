@@ -10,6 +10,7 @@
  *   POST  /review/:docId            -> {decision:'confirm'|'reject', edits?}
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /diagnostics              -> connection status + recent app errors
+ *   GET   /premium-roster           -> Premium members (trial vs paid, Stripe vs Apple)
  *   GET   /subscriptions            -> admin list of subscriptions
  *   POST  /subscriptions            -> operator-provisioned subscription
  *   POST  /subscriptions/:id/rotate-secret -> rotate signing secret (shown-once if generated)
@@ -105,6 +106,7 @@ import { fetchLlamaParseCredits } from '../extraction/llamaParseCredits.ts';
 import { mapFiling } from '../delivery/rows.ts';
 import { verifyAccessJwt, certsUrl } from './access.ts';
 import { adminRuntimeConfig } from './identity.ts';
+import { buildPremiumRoster, localPremiumCounts } from './premiumRoster.ts';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
@@ -849,6 +851,11 @@ interface DiagnosticError {
 interface DiagnosticUserStats {
   totalUsers: number;
   subscribedUsers: number;
+  premiumUsers: number;
+  trialUsers: number;
+  paidUsers: number;
+  stripeUsers: number;
+  appleUsers: number;
   deliverySubscriptions: number;
   activeDeliverySubscriptions: number;
   adminUsers: number;
@@ -4760,9 +4767,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     );
     const userRow = userRows[0];
     const deliverySubRow = deliverySubRows[0];
+    const premiumCounts = await localPremiumCounts(c.env).catch(() => ({
+      premiumUsers: userRow?.subscribed_users ?? 0,
+      trialUsers: 0,
+      paidUsers: 0,
+      stripeUsers: userRow?.subscribed_users ?? 0,
+      appleUsers: 0,
+    }));
     const userStats: DiagnosticUserStats = {
       totalUsers: userRow?.total_users ?? 0,
-      subscribedUsers: userRow?.subscribed_users ?? 0,
+      subscribedUsers: premiumCounts.premiumUsers,
+      premiumUsers: premiumCounts.premiumUsers,
+      trialUsers: premiumCounts.trialUsers,
+      paidUsers: premiumCounts.paidUsers,
+      stripeUsers: premiumCounts.stripeUsers,
+      appleUsers: premiumCounts.appleUsers,
       deliverySubscriptions: deliverySubRow?.total ?? 0,
       activeDeliverySubscriptions: deliverySubRow?.active ?? 0,
       adminUsers: adminConfig.allow.size,
@@ -4838,6 +4857,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       errors: errors.slice(0, 75),
       errorCount: errors.length,
     });
+  });
+
+  // --- GET /premium-roster ------------------------------------------------
+  // Admin Premium Members: email, plan, Trial|Paid, Stripe|Apple
+  // (Sandbox vs Production), with a live Stripe overlay.  Heals stale
+  // local `trialing` when Stripe already shows `active`.
+  r.get('/premium-roster', async (c) => {
+    return c.json(await buildPremiumRoster(c.env));
   });
 
   // --- POST /diagnostics/secrets/refresh ----------------------------------
