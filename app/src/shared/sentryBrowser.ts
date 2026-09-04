@@ -2,9 +2,9 @@
  * Public-web Sentry browser loader for Congress.Trade.
  *
  * The ingest DSN is public-by-design (same as NEXT_PUBLIC_ / VITE_ client
- * DSNs).  Never interpolates SENTRY_AUTH_TOKEN.  Designer 2026-09-04: web
- * session Replay stays 0%.  Error Replay is 100% masked.  Feedback is on
- * unless SENTRY_FEEDBACK_ENABLED is an explicit falsy.
+ * DSNs).  Never interpolates SENTRY_AUTH_TOKEN.  Designer 2026-09-04 update:
+ * web session Replay defaults to 10%.  Error Replay is 100% masked.
+ * Feedback is on unless SENTRY_FEEDBACK_ENABLED is an explicit falsy.
  *
  * Kill switches: SENTRY_BROWSER_ENABLED=false, SENTRY_FEEDBACK_ENABLED=false,
  * sample-rate env vars.  Unset SENTRY_DSN → empty string (CSP stays tight).
@@ -77,7 +77,7 @@ export function resolveSentryBrowser(env: SentryBrowserInput): SentryBrowserReso
     scriptSrc: SENTRY_BROWSER_BUNDLE,
     connectOrigin,
     tracesSampleRate: clampRate(env.SENTRY_TRACES_SAMPLE_RATE, 0.2),
-    replaysSessionSampleRate: clampRate(env.SENTRY_REPLAY_SESSION_SAMPLE_RATE, 0),
+    replaysSessionSampleRate: clampRate(env.SENTRY_REPLAY_SESSION_SAMPLE_RATE, 0.1),
     replaysOnErrorSampleRate: clampRate(env.SENTRY_REPLAY_ERROR_SAMPLE_RATE, 1),
     feedbackEnabled: !envFalsy(env.SENTRY_FEEDBACK_ENABLED),
   };

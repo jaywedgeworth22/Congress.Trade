@@ -20,17 +20,17 @@ describe('sentry browser loader', () => {
     );
   });
 
-  it('defaults session Replay to 0 and error Replay to 1 with Feedback on', () => {
+  it('defaults session Replay to 0.1 and error Replay to 1 with Feedback on', () => {
     const resolved = resolveSentryBrowser({ SENTRY_DSN: DSN });
     expect(resolved.enabled).toBe(true);
     if (!resolved.enabled) return;
-    expect(resolved.replaysSessionSampleRate).toBe(0);
+    expect(resolved.replaysSessionSampleRate).toBe(0.1);
     expect(resolved.replaysOnErrorSampleRate).toBe(1);
     expect(resolved.feedbackEnabled).toBe(true);
     expect(resolved.connectOrigin).toBe('https://o1.ingest.us.sentry.io');
     expect(resolved.scriptSrc.startsWith(SENTRY_BROWSER_SCRIPT_ORIGIN)).toBe(true);
     const html = renderSentryBrowserScript({ SENTRY_DSN: DSN });
-    expect(html).toContain('replaysSessionSampleRate":0');
+    expect(html).toContain('replaysSessionSampleRate":0.1');
     expect(html).toContain('feedbackIntegration');
     expect(html).toContain('maskAllText:true');
   });
