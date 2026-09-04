@@ -622,12 +622,13 @@ export async function configuredServerProviders(env: Env): Promise<LatencyProbeP
  *
  * Server-preferred rules:
  *   • healthy (needScout=false) → acquire/renew and probe.
- *   • handed off (needScout=true) and the Mac's tenure still has time → RELEASE
- *     and do not fetch. This is the fix for the leak: previously the server
- *     kept fetching a provider it had already handed to the Mac.
- *   • handed off but the Mac's tenure is spent → preempt and run one reclaim
- *     probe. The owner wants the server back whenever it can do the work, so a
- *     succeeding Mac never keeps a lane indefinitely.
+ *   • handed off (needScout=true) and a live Mac lease is inside tenure →
+ *     RELEASE and do not fetch (Mac scout is covering).
+ *   • handed off, server still holds the row (first tick after the 3rd error)
+ *     → RELEASE once so a living Mac can acquire.
+ *   • handed off with no live Mac lease (scout retired / crashed / expired)
+ *     or Mac tenure spent → server reclaims. Without this, needScout stayed
+ *     true after the 2026-09-02 scout retirement and FMP sat silent 42h+.
  */
 export async function planServerLatencyProbe(
   env: Env,
@@ -668,37 +669,61 @@ export async function planServerLatencyProbe(
       continue;
     }
 
-    // Handed off. Reclaim only once the Mac has had its full window.
-    if (macTenureExhausted(current, tenureMs, now)) {
-      const decision = await acquireProbeLease(env, {
-        provider,
-        holder: 'server',
-        holderId: SERVER_LEASE_HOLDER_ID,
-        ttlMs,
-        reason: 'reclaim probe after mac tenure',
-        now,
-        preemptMacAfterMs: tenureMs,
-      });
+    const macLive = Boolean(current && current.holder === 'mac' && !current.expired);
+    const serverLive = Boolean(current && current.holder === 'server' && !current.expired);
+
+    // Live Mac still inside its tenure: drop the server lease so the scout
+    // is not double-polled.
+    if (macLive && current && !macTenureExhausted(current, tenureMs, now)) {
+      await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
       lanes.push({
         provider,
-        probe: decision.granted,
-        action: decision.granted ? 'reclaimed' : 'blocked',
-        detail: decision.granted
-          ? `mac tenure of ${Math.round(tenureMs / 3600000)}h elapsed; server reclaiming the lane`
-          : (decision.detail ?? 'lane unavailable'),
-        lease: decision.lease ?? decision.current,
+        probe: false,
+        action: 'handed_off',
+        detail: health?.needScoutReason ?? 'handed off to mac scout',
+        lease: current,
       });
       continue;
     }
 
-    // Still the Mac's window: give the lane back so it is not double-polled.
-    await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
+    // First tick after needScout flipped: server still holds the row. Release
+    // once so a living Mac scout can acquire. The next tick reclaims if the
+    // Mac never showed (scout retired 2026-09-02; FMP sat handed_off 42h+).
+    if (serverLive) {
+      await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
+      lanes.push({
+        provider,
+        probe: false,
+        action: 'handed_off',
+        detail: health?.needScoutReason ?? 'handed off to mac scout',
+        lease: current,
+      });
+      continue;
+    }
+
+    // No live Mac holder (expired / never acquired) or Mac tenure spent.
+    const reclaimingMac = macLive;
+    const decision = await acquireProbeLease(env, {
+      provider,
+      holder: 'server',
+      holderId: SERVER_LEASE_HOLDER_ID,
+      ttlMs,
+      reason: reclaimingMac
+        ? 'reclaim probe after mac tenure'
+        : 'mac scout not holding the lane; server reclaiming',
+      now,
+      preemptMacAfterMs: tenureMs,
+    });
     lanes.push({
       provider,
-      probe: false,
-      action: 'handed_off',
-      detail: health?.needScoutReason ?? 'handed off to mac scout',
-      lease: current,
+      probe: decision.granted,
+      action: decision.granted ? (reclaimingMac ? 'reclaimed' : 'acquired') : 'blocked',
+      detail: decision.granted
+        ? reclaimingMac
+          ? `mac tenure of ${Math.round(tenureMs / 3600000)}h elapsed; server reclaiming the lane`
+          : 'no live mac lease; server reclaiming the lane'
+        : (decision.detail ?? 'lane unavailable'),
+      lease: decision.lease ?? decision.current,
     });
   }
 
