@@ -33,6 +33,7 @@ import { logProbeCadence } from './probeCadenceLog.ts';
 import { ALL_CHAMBERS, previousSuccessfulProbeAt, recordProbeRun } from './probeRunLog.ts';
 import { scheduleCtPublishSnapshot } from './latencyPriceSnapshots.ts';
 import { closeProviderMissingStubIfOfficialPersisted, findOfficialCounterpartDocIdForObservation } from './providerMissingStubClose.ts';
+import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 
 type Chamber = 'house' | 'senate' | 'executive';
 /**
@@ -96,10 +97,13 @@ type EnvWithWatch = Env & {
   /**
    * Comma-separated FMP path ids eligible when FMP_LATENCY_PROBE_ENABLED is on:
    * `stable` (id=fmp) and/or `rapidapi` (id=fmp_rapidapi).
-   * Default **stable only** — the RapidAPI FMP product authenticates but does
-   * **not** expose house/senate-latest (HTTP 404 verified 2026-08-06). Opt in
-   * with `stable,rapidapi` if the marketplace product gains those endpoints;
-   * when both are enabled the probe loop **rotates** (one path per cycle).
+   * Default **stable only**. RapidAPI FMP authenticates (`/v3/profile/AAPL`
+   * 200) but has no house/senate-latest (404) and no OGE/executive-latest
+   * (stable 404; RapidAPI 400, same as company key-executives — not an OGE
+   * feed). Rechecked 2026-09-04. Dual free-tier keys on stable are the
+   * congress probe. Opt in with `stable,rapidapi` only if the marketplace
+   * later lists those disclosure endpoints; when both are enabled the probe
+   * loop **rotates** (one path per cycle).
    */
   FMP_LATENCY_PATHS?: string;
   /** Override base for stable FMP disclosures (default financialmodelingprep.com/stable). */
@@ -1426,7 +1430,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). OPT-IN only: RapidAPI FMP product auth works but house/senate-latest return 404 (product gap, not bad key — verified 2026-08-06). Default FMP_LATENCY_PATHS=stable. Enable with FMP_LATENCY_PATHS=stable,rapidapi if marketplace adds congress endpoints.',
+      'FMP via RapidAPI (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). OPT-IN only: marketplace auth works but house/senate-latest 404 and executive-latest is not an OGE feed (400, same as company key-executives; FMP stable executive-latest 404). Rechecked 2026-09-04. Default FMP_LATENCY_PATHS=stable. Ticker enrichment stays with Socratic.Trade.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -2079,6 +2083,10 @@ export interface FetchFmpRowsOpts {
 /**
  * Fetch house+senate latest disclosures from an FMP path (stable or RapidAPI).
  * Path bases are injectable so alternate hosts can race without code edits.
+ *
+ * FMP has no OGE/executive-latest feed (stable HTTP 404; RapidAPI 400 is the
+ * same gateway rejection as company key-executives, not political 278-T).
+ * Rechecked 2026-09-04. Do not add fetchOne('executive') until that 200s.
  */
 async function fetchFmpRows(
   apiKey: string,
@@ -2274,7 +2282,7 @@ async function providerStatus(env: Env, provider: ProviderDefinition): Promise<D
     reason = !fmpProbeOn
       ? 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)'
       : provider.fmpPathId === 'rapidapi'
-        ? 'OFF: FMP path "rapidapi" not in FMP_LATENCY_PATHS — RapidAPI FMP product has no house/senate-latest (HTTP 404, rechecked 2026-09-04). Dual free-tier keys on stable are the congress probe.'
+        ? 'OFF: FMP path "rapidapi" not in FMP_LATENCY_PATHS — RapidAPI has no house/senate-latest (404) and no OGE/executive-latest (400/404, rechecked 2026-09-04). Dual free-tier keys on stable are the congress probe. Ticker enrichment stays with Socratic.Trade.'
         : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
   } else if (requested && !requested.includes(provider.id)) {
     // Filtered out of the probe set — the documented way to retire a
@@ -3958,9 +3966,16 @@ async function runProviderProbe(
         };
       }
       let fetchErr: Error | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
+      let currentFetch = fetchImpl;
+      let usedResidentialProxy = false;
+      // Dual free-tier keys go direct (owner: two keys ≈ 2× daily HTTP).
+      // On 429: other key first, then one retry of the current key through
+      // the Senate residential proxy (IP diversity). Never wrap every FMP
+      // probe in that proxy — that hop is for Clerk/eFD Imperva and silenced
+      // observations for ~42h after 2026-09-02.
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace, fetchOpts);
+          const rows = await provider.fetchRows(apiKey, max, currentFetch, pace, fetchOpts);
           fetchedRows = rows.length;
           freshRows = rows;
           await upsertProviderRows(env, provider.id, rows, nowIso);
@@ -3974,13 +3989,22 @@ async function runProviderProbe(
           fetchErr = err as Error;
           const msg = fetchErr.message || '';
           const is429 = /FMP_HTTP_429|HTTP_429/.test(msg);
-          if (is429 && isFmpStable && fmpSelection && attempt === 0) {
-            await markFmpSlotHttp429(env, fmpSelection.slot, now);
+          if (!is429 || !isFmpStable || !fmpSelection) break;
+          await markFmpSlotHttp429(env, fmpSelection.slot, now);
+          if (attempt === 0) {
             const retry = await selectFmpLatencyKey(env, now, { force: true, schedule });
             if (retry && retry.slot !== fmpSelection.slot) {
               fmpSelection = retry;
               apiKey = retry.apiKey;
               await addFmpLatencyUsed(env, retry.slot, FMP_LATENCY_CALLS_PER_RUN, now);
+              continue;
+            }
+          }
+          if (!usedResidentialProxy) {
+            const proxyUrl = resolveResidentialProxyUrl(envx);
+            if (proxyUrl) {
+              currentFetch = createProxiedFetch(proxyUrl, fetchImpl);
+              usedResidentialProxy = true;
               continue;
             }
           }
@@ -4190,10 +4214,11 @@ export async function runDisclosureLatencyProbe(
   opts: { force?: boolean; providers?: string[] } = {},
 ): Promise<DisclosureLatencyProbeResult> {
   const envx = env as EnvWithWatch;
-  // Commercial JSON APIs (FMP / UW / QQ) go direct. The residential proxy is
-  // for Clerk/eFD/OGE HTML (Imperva). After RESIDENTIAL_PROXY_URL was set for
-  // Senate/House scraping (2026-09-02), FMP observations went silent ~42h —
-  // live house/senate-latest still 200 from this Mac without the proxy.
+  // Commercial JSON APIs go direct. The residential proxy is for Clerk/eFD/OGE
+  // HTML (Imperva). After RESIDENTIAL_PROXY_URL was set for Senate/House
+  // scraping (2026-09-02), wrapping FMP in that hop silenced observations
+  // ~42h — live house/senate-latest still 200 without the proxy. Dual free
+  // keys stay on direct fetch; a 429 may retry one key through the proxy.
   const effectiveFetch = fetchImpl;
   if (!opts.force && !(await enabled(envx))) {
     return {

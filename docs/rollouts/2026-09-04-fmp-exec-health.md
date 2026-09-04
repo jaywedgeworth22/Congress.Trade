@@ -20,10 +20,25 @@ Three different FMP cards:
    Commercial JSON APIs now go **direct**.
 3. **Latency · FMP RapidAPI** — OFF on purpose.  Rechecked 2026-09-04:
    RapidAPI FMP product still 404s `house-latest` / `senate-latest`
-   ("Endpoint does not exist") while `/v3/profile/AAPL` is 200.  Enabling
-   it would rotate away from the working dual stable keys and cut useful
-   frequency.  Do not set `FMP_LATENCY_PATHS=stable,rapidapi` until the
-   marketplace lists those congress endpoints.
+   ("Endpoint does not exist").  It also has **no OGE/executive disclosure
+   feed**: FMP stable `executive-latest` is HTTP 404; RapidAPI
+   `executive-latest` is HTTP 400 (same gateway rejection as company
+   `key-executives`, which is C-suite bios, not 278-T).  `/v3/profile/AAPL`
+   is 200, so ticker enrichment could use RapidAPI, but CT leaves that to
+   Socratic.Trade.  Enabling RapidAPI for congress would rotate away from
+   the working dual stable keys and cut useful frequency.  Do not set
+   `FMP_LATENCY_PATHS=stable,rapidapi` until the marketplace lists those
+   disclosure endpoints.
+
+Dual free-tier keys stay on **direct** fetch (owner: two keys ≈ 2× daily
+HTTP; both 200 from this Mac).  A 429 retries the other key, then one
+retry of the current key through `RESIDENTIAL_PROXY_URL` (Senate Imperva
+hop).  Do not wrap every FMP probe in that proxy — that is what silenced
+observations for ~42h.
+
+Unusual Whales and Quiver stay retired (`DISCLOSURE_LATENCY_PROVIDERS=fmp`)
+until the owner adds paid or trial keys after FMP latency has been healthy
+for a while.
 
 Source Health mapped both `executive` and `oge` ingest sources to the
 label **Exec**, so a live OGE poller and an empty `executive` alias showed
