@@ -7,16 +7,17 @@
  *   POST /billing/portal    -> { url } : open the Stripe Billing Portal (auth required)
  *   POST /billing/webhook   -> Stripe event sink (signature-verified, no auth)
  *
- * Identity comes from the end-user session cookie (auth/session.ts). Entitlement
- * is derived purely from the user's billing fields (entitlement.ts). The webhook
- * is the source of truth for subscription state — checkout/portal just kick off
- * hosted Stripe flows.
+ * Identity comes from the end-user session cookie or Authorization Bearer
+ * (auth/session.ts). Native iOS sends Bearer; the browser keeps the cookie.
+ * Entitlement is derived purely from the user's billing fields
+ * (entitlement.ts). The webhook is the source of truth for subscription
+ * state — checkout/portal just kick off hosted Stripe flows.
  */
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { BillingPlan, Env } from '../shared/types.ts';
-import { getCurrentUser } from '../auth/session.ts';
+import { getCurrentUser, getCurrentUserFromRequest } from '../auth/session.ts';
 import { getUserById } from '../auth/users.ts';
 import { PREMIUM_STATUSES, resolveEntitlementAsync } from './entitlement.ts';
 import { notifyPremiumActivation } from './premiumActivationAlert.ts';
@@ -234,8 +235,11 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /billing/portal -----------------------------------------------
+  // Cookie OR Bearer.  iOS Manage Subscription for website/Stripe Premium
+  // POSTs here with the native session token; cookie-only getCurrentUser
+  // 401'd those callers and the Account sheet told them to sign out.
   r.post('/portal', async (c) => {
-    const user = await getCurrentUser(c);
+    const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'sign in first', needLogin: true }, 401);
     if (!(await portalConfiguredAsync(c.env))) return c.json({ error: 'billing portal not configured' }, 503);
     if (!user.stripeCustomerId) return c.json({ error: 'no billing account yet' }, 400);

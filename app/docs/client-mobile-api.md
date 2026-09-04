@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-08-20
+Last updated: 2026-09-03
 
 This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -274,6 +274,15 @@ on `entitlement.premium`. `"apple_anonymous"` only ever appears in the
 anonymous redeem route's own response body (above) — it is device-scoped, not
 `User`-keyed, so no `resolveEntitlementAsync` response (bootstrap/me/etc.)
 ever returns it.
+
+iOS Manage Subscription: `source == "apple"` opens the App Store
+subscriptions page.  `stripe` or `null` (website Premium) POSTs
+`/billing/portal` with the session Bearer.  That route must accept Bearer
+(`getCurrentUserFromRequest`); cookie-only auth 401s a signed-in iOS user.
+On portal failure other than offline, iOS opens
+`https://congress.trade/?billing=manage` (website `manageBilling()` after
+`/auth/me`) instead of telling the user to sign out.  Native iOS never
+starts `/billing/checkout`.
 
 - Implemented now: bootstrap, `me`, feed, trade detail, ticker detail,
   politician detail (`member` endpoint), `preferences` GET/PUT, subscription listing, and command-backed

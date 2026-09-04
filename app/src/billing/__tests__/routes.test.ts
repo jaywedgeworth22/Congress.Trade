@@ -330,6 +330,28 @@ describe('billing router', () => {
     expect(res.status).toBe(401);
   });
 
+  it('POST /portal accepts a native Bearer session (iOS Manage Subscription)', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'active', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    vi.stubGlobal('fetch', async () => Response.json({ id: 'bps_1', url: 'https://stripe.test/portal' }));
+    const sessionKv = {
+      get: async (name: string) => name === 'sess:session-token' ? JSON.stringify({ userId: 'u1' }) : null,
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ STRIPE_SECRET_KEY: 'sk_test', CONFIG_KV: sessionKv }, [seed]);
+    const res = await buildBillingRouter().request('http://localhost/portal', {
+      method: 'POST',
+      headers: { authorization: 'Bearer session-token', 'Idempotency-Key': 'portal-bearer-1' },
+    }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: 'https://stripe.test/portal' });
+  });
+
   it('POST /checkout stays disabled when only Billing Portal is configured', async () => {
     const seed: URow = {
       id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'canceled', plan: 'monthly',

@@ -550,9 +550,9 @@ struct PremiumSheet: View {
     }
 
     /// Same `resolveManageSubscriptionURL` routing as the account sheet — see
-    /// `Store/ManageSubscription.swift`. On failure this shows an inline
-    /// message rather than ever falling back to the App Store link for a
-    /// Stripe subscriber, who has nothing to manage there.
+    /// `Store/ManageSubscription.swift`.  Stripe/web portal failure opens the
+    /// website manage path rather than the App Store or a sign-out message.
+    /// Offline stays inline.
     private func openManageSubscription() async {
         manageSubscriptionError = nil
         isOpeningManageSubscription = true

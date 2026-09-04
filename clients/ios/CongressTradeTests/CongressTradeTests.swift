@@ -2096,6 +2096,113 @@ final class CongressTradeTests: XCTestCase {
         )
     }
 
+    // MARK: - Manage Subscription (Apple vs website/Stripe)
+
+    func testWebManageSubscriptionURLIsBillingManageOnOrigin() {
+        let client = CongressTradeAPIClient(
+            baseURL: URL(string: "https://example.test/api/client/v1")!,
+            tokenStore: MemoryTokenStore(token: nil)
+        )
+        XCTAssertEqual(client.webManageSubscriptionURL.absoluteString, "https://example.test/?billing=manage")
+        XCTAssertFalse(client.webManageSubscriptionURL.absoluteString.contains("checkout"))
+        XCTAssertFalse(client.webManageSubscriptionURL.absoluteString.contains("pricing"))
+    }
+
+    @MainActor
+    func testManageSubscriptionAppleStaysOnAppStoreEvenIfPortalWould401() {
+        let web = URL(string: "https://example.test/?billing=manage")!
+        let outcome = CongressTradeStore.outcome(
+            entitlementSource: "apple",
+            webFallbackURL: web,
+            portalResult: .failure(
+                APIError.server(status: 401, message: "sign in first", retryAfterSeconds: nil)
+            )
+        )
+        XCTAssertEqual(outcome, .url(CongressTradeAPIClient.appStoreManageSubscriptionsURL))
+    }
+
+    @MainActor
+    func testManageSubscriptionStripeOpensMintedPortalURL() {
+        let portal = URL(string: "https://billing.stripe.com/p/session/live")!
+        let web = URL(string: "https://example.test/?billing=manage")!
+        let outcome = CongressTradeStore.outcome(
+            entitlementSource: "stripe",
+            webFallbackURL: web,
+            portalResult: .success(portal)
+        )
+        XCTAssertEqual(outcome, .url(portal))
+    }
+
+    @MainActor
+    func testManageSubscriptionStripe401OpensWebsiteNotSignOutCopy() {
+        let web = URL(string: "https://example.test/?billing=manage")!
+        let error = APIError.server(status: 401, message: "sign in first", retryAfterSeconds: nil)
+        let outcome = CongressTradeStore.outcome(
+            entitlementSource: "stripe",
+            webFallbackURL: web,
+            portalResult: .failure(error)
+        )
+        XCTAssertEqual(outcome, .url(web))
+        XCTAssertTrue(CongressTradeStore.shouldOpenWebManageFallback(for: error))
+
+        let message = CongressTradeStore.portalFailureMessage(for: error)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("sign out"))
+        XCTAssertTrue(message.contains(".  "))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("congress.trade"))
+    }
+
+    @MainActor
+    func testManageSubscriptionNilSource401OpensWebsite() {
+        let web = URL(string: "https://example.test/?billing=manage")!
+        let outcome = CongressTradeStore.outcome(
+            entitlementSource: nil,
+            webFallbackURL: web,
+            portalResult: .failure(
+                APIError.server(status: 401, message: "sign in first", retryAfterSeconds: nil)
+            )
+        )
+        XCTAssertEqual(outcome, .url(web))
+    }
+
+    @MainActor
+    func testManageSubscriptionStripeOfflineStaysInApp() {
+        let web = URL(string: "https://example.test/?billing=manage")!
+        let error = APIError.transport(URLError(.notConnectedToInternet))
+        XCTAssertFalse(CongressTradeStore.shouldOpenWebManageFallback(for: error))
+        let outcome = CongressTradeStore.outcome(
+            entitlementSource: "stripe",
+            webFallbackURL: web,
+            portalResult: .failure(error)
+        )
+        guard case .failed(let message) = outcome else {
+            return XCTFail("offline Stripe manage should stay in-app, not open Safari")
+        }
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("offline"))
+        XCTAssertTrue(message.contains(".  "))
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("sign out"))
+    }
+
+    func testBillingPortalURLPostsBearerToOriginPortal() async throws {
+        let session = makeSession()
+        let client = CongressTradeAPIClient(
+            baseURL: Self.baseURL,
+            tokenStore: MemoryTokenStore(token: "native-session"),
+            session: session
+        )
+        let sawExpected = XCTestExpectation(description: "portal POST carried the session Bearer")
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/billing/portal")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer native-session")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "idempotency-key"), "portal-key-1")
+            sawExpected.fulfill()
+            return Self.response(for: request, json: #"{"url":"https://billing.stripe.com/p/session/test"}"#)
+        }
+        let url = try await client.billingPortalURL(idempotencyKey: "portal-key-1")
+        XCTAssertEqual(url.absoluteString, "https://billing.stripe.com/p/session/test")
+        await fulfillment(of: [sawExpected], timeout: 1)
+    }
+
     func testFilingPDFNeverOpensSafariCheckout() throws {
         XCTAssertEqual(FilingPDFAccess.action(isPremium: false), .showPremiumSheet)
         XCTAssertEqual(FilingPDFAccess.action(isPremium: true), .fetchInApp)

@@ -1205,10 +1205,10 @@ struct AccountQuickMenu: View {
         }
     }
 
-    /// Premium entry point. The Manage Subscription path is the pre-existing
-    /// `resolveManageSubscriptionURL` routing, preserved exactly; only the
-    /// not-yet-premium path changed, from a straight jump into the StoreKit
-    /// purchase sheet to `PremiumSheet` (what you get, the plans, a way out).
+    /// Premium entry point. Manage Subscription routes through
+    /// `resolveManageSubscriptionURL` (App Store for Apple; Stripe portal,
+    /// then website `/?billing=manage`, for web/Stripe). The not-yet-premium
+    /// path opens `PremiumSheet` (what you get, the plans, a way out).
     @ViewBuilder
     private var billingRow: some View {
         if store.isPremium {
@@ -1245,8 +1245,9 @@ struct AccountQuickMenu: View {
     }
 
     /// Routes by `entitlementSource` — see `Store/ManageSubscription.swift`.
-    /// A failure stays put and shows `manageSubscriptionError` inline instead
-    /// of silently closing on a dead link.
+    /// A URL (portal, App Store, or website manage fallback) closes the
+    /// sheet and opens it.  Offline / remaining failures stay put with
+    /// `manageSubscriptionError` instead of a dead App Store link.
     private func openManageSubscription() async {
         manageSubscriptionError = nil
         isOpeningManageSubscription = true
