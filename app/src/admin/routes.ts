@@ -90,7 +90,7 @@ import {
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
-import { storedReviewBlocksSmallerVisionSubmit } from '../extraction/visionSubmitGuard.ts';
+import { storedReviewBlocksSmallerVisionSubmit, storedReviewTransactionCount } from '../extraction/visionSubmitGuard.ts';
 import { PIPELINE_TX_SOURCES_SQL, VISION_SUPERSEDE_REASON } from '../extraction/sourceSupersede.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
 import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
@@ -2803,6 +2803,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
+    // N-of-M under-transcription guard: don't let confirm/manual silently
+    // shrink a filing to fewer rows than the stored extraction itself
+    // claimed/held. This is what let Kupor (E-2026-scott-a-kupor-01-09-2026-278t)
+    // get manually confirmed with 1 of 3 real transactions — nothing compared
+    // the confirm against the extraction's own completeness signal.
+    const storedCount = storedReviewTransactionCount(review.payload);
+    if (storedCount > rawEdits.length && body.acknowledgeUnderTranscription !== true) {
+      return c.json(
+        {
+          error: `confirm has fewer transactions (${rawEdits.length}) than the stored extraction found (${storedCount}) — pass acknowledgeUnderTranscription: true to confirm anyway, or add the missing rows`,
+        },
+        409,
+      );
+    }
+
     const filing = await get<{ filer_id: string | null; first_seen_at: string | null; filed_date: string | null; filing_status: string | null }>(
       c.env.DB,
       'SELECT filer_id, first_seen_at, filed_date, filing_status FROM filings WHERE doc_id = ?',
