@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-05 CLAUDE — Grok usage-cap pickup: full-stack audit landed + debug-sql P0 fixed
+
+GROK hit its usage cap with the 2026-08-31 full-stack audit (board `f74642d0`) staged
+but never committed, and several already-merged PRs still marked IN PR/IN PROGRESS in
+this file and the effort log.  Landed the report (`docs/audits/2026-08-31-full-stack-audit.md`),
+fixed ranked item #1 — `POST /api/admin/debug-sql` had no prod guard (PR #2318, merged) —
+and corrected the stale status lines below.  Remaining ranked items (feed sort contract
+`#2180`, Coolify zero-downtime, manual-confirm N-of-M guard, DLQ drain, etc.) are still open;
+see the audit for the ordered list.  Grok's other Congress.Trade branches were all already
+merged; nothing else was in flight.
+
 ## 2026-09-04 GROK — FMP lease reclaim (scout retired deadlock)
 
 #2307 is live (`d4e5cc4a`) but FMP stayed `handed_off` with no Mac scout.
