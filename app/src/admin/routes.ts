@@ -345,6 +345,14 @@ async function isExplicitOpenAdmin(env: EnvWithAdmin): Promise<boolean> {
   return openInDev === 'true' && !isProduction;
 }
 
+/** True in production — used to fail closed on dev-only debug endpoints regardless of admin auth. */
+async function isProductionEnvironment(env: EnvWithAdmin): Promise<boolean> {
+  const sentryEnvironment = (await resolveSecret(env, 'SENTRY_ENVIRONMENT')).value;
+  const usageEnvironment =
+    (await resolveSecret(env, 'USAGE_MONITOR_ENVIRONMENT')).value ?? env.USAGE_MONITOR_ENVIRONMENT;
+  return sentryEnvironment === 'production' || usageEnvironment === 'production';
+}
+
 function adminActor(c: { req: { header(name: string): string | undefined } }): string {
   const accessEmail =
     c.req.header('Cf-Access-Authenticated-User-Email') ||
@@ -9117,13 +9125,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /debug-sql -----------------------------------------------------
-  // Development ONLY tool for running arbitrary sql queries to debug state
+  // Development ONLY tool for running arbitrary sql queries to debug state.
+  // Fails closed in production: a stolen/XSS'd admin session must not turn
+  // into arbitrary SQL against the live database (2026-08-31 full-stack audit).
   r.post('/debug-sql', async (c) => {
+    if (await isProductionEnvironment(c.env as EnvWithAdmin)) {
+      return c.json({ error: 'debug-sql is disabled in production' }, 403);
+    }
     const { query, params = [] } = (await c.req.json().catch(() => ({}))) as { query?: string; params?: any[] };
     if (!query) {
       return c.json({ error: 'query is required' }, 400);
     }
-    
+
     try {
       const results = await all(c.env.DB, query, params);
       return c.json({ ok: true, results });
