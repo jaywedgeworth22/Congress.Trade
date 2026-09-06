@@ -20,8 +20,13 @@ test("ios-ship.yml keeps the ship gate and never uses secrets in if", () => {
   assert.match(yml, /id: gate/);
   assert.match(yml, /if: steps\.gate\.outputs\.should_ship == '1'/);
   assert.match(yml, /ios-appstore-gm-prepare\.sh/);
-  assert.match(yml, /secrets\.ASC_KEY_ID/);
-  assert.match(yml, /ASC_KEY_ID: \$\{\{ secrets\.ASC_KEY_ID \}\}/);
+  assert.match(yml, /Load Infisical signing secrets/);
+  assert.match(yml, /secrets\.INFISICAL_PROJECT_ID/);
+  assert.match(yml, /secrets\.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/);
+  assert.match(yml, /infisical login --method=universal-auth/);
+  assert.match(yml, /ASC_KEY_ID/);
+  assert.doesNotMatch(yml, /secrets\.ASC_KEY_ID/);
+  assert.doesNotMatch(yml, /ASC_KEY_ID: \$\{\{ secrets\.ASC_KEY_ID \}\}/);
   assert.doesNotMatch(yml, /if:.*secrets\./);
   assert.doesNotMatch(yml, /ios-ship-testflight\.sh["'\s].*--force-ship/);
   assert.match(yml, /workflow_dispatch/);
