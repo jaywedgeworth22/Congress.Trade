@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-06 GROK — fleet-sqlite-backup.sh single-flight + complete retention + timeout
+
+Housekeeper mitigated overlapping ST `sqlite3 .backup` on the box (no flock;
+KEEP_COUNT preferred incomplete dumps).  Canonical script now flocks
+`/var/lock/fleet-sqlite-backup.lock`, ignores dumps without `.sha256` or with
+a `.db-journal`, and bounds `.backup` with `FLEET_BACKUP_TIMEOUT` (default
+30m).  Host install after merge: `/usr/local/sbin/fleet-sqlite-backup.sh` on
+`fleet-hetzner-nbg1` (diff-on-top of UUID-pinned host copy).  No Coolify bake.
+Board `e1f66898`.  Rollout:
+`docs/rollouts/2026-09-06-sqlite-backup-single-flight.md`.
+
 ## 2026-09-05 CLAUDE — Grok usage-cap pickup: full-stack audit landed + debug-sql P0 fixed
 
 GROK hit its usage cap with the 2026-08-31 full-stack audit (board `f74642d0`) staged
