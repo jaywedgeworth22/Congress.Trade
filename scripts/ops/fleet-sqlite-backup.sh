@@ -2,14 +2,46 @@
 # Consistent SQLite snapshots for fleet apps + optional off-host copy.
 # Complements Hetzner daily host backups (RPO ~24h host-level).
 # This script aims for app-level RPO of ~hours and clean .backup files.
+#
+# Hardening (2026-09-06, board e1f66898):
+#   1) in-script flock -n single-flight (same path as the host cron wrapper)
+#   2) local retention only counts/deletes COMPLETE dumps (.sha256 present, no
+#      .db-journal sidecar); incomplete files never occupy KEEP_COUNT slots
+#   3) timeout around sqlite3 .backup (FLEET_BACKUP_TIMEOUT, default 30m)
+# Host install after merge: /usr/local/sbin/fleet-sqlite-backup.sh on
+# fleet-hetzner-nbg1 (apply on top of the UUID-pinned host copy; do not
+# overwrite wholesale).  Not a Coolify image bake.
 set -euo pipefail
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
 KEEP_DAYS="${FLEET_BACKUP_KEEP_DAYS:-7}"
+KEEP_COUNT="${FLEET_BACKUP_KEEP_COUNT:-3}"
+FLEET_BACKUP_TIMEOUT="${FLEET_BACKUP_TIMEOUT:-30m}"
+LOCKFILE="${FLEET_BACKUP_LOCKFILE:-/var/lock/fleet-sqlite-backup.lock}"
 ROOT="/data/backups"
-LOG="/var/log/fleet-backup/sqlite-${STAMP}.log"
-mkdir -p "$ROOT" /var/log/fleet-backup
-exec > >(tee -a "$LOG") 2>&1
-echo "[fleet-backup] start $STAMP"
+
+# A dump is complete only when the .db exists, a matching .sha256 sidecar
+# exists, and sqlite3 is not still writing a rollback journal.  Incomplete
+# files must never win KEEP_COUNT / KEEP_DAYS over a finished snapshot.
+dump_is_complete() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  [ -s "$f" ] || return 1
+  [ -f "${f}.sha256" ] || return 1
+  [ ! -e "${f}-journal" ]
+}
+
+sqlite_backup_with_timeout() {
+  local src="$1" dest="$2"
+  local tmo="${FLEET_BACKUP_TIMEOUT:-30m}"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 30s "$tmo" sqlite3 "$src" ".backup '$dest'"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout -k 30s "$tmo" sqlite3 "$src" ".backup '$dest'"
+  else
+    echo "[fleet-backup] WARN timeout(1) missing; sqlite3 .backup has no bound"
+    sqlite3 "$src" ".backup '$dest'"
+  fi
+}
 
 backup_one() {
   local name="$1" src="$2" dest_dir="$3"
@@ -24,21 +56,133 @@ backup_one() {
   fi
   local dest="$dest_dir/${name}-${STAMP}.db"
   if command -v sqlite3 >/dev/null 2>&1; then
-    sqlite3 "$src" ".backup '$dest'"
+    if ! sqlite_backup_with_timeout "$src" "$dest"; then
+      echo "[fleet-backup] FAIL $name sqlite3 .backup timed out or failed (timeout=${FLEET_BACKUP_TIMEOUT}): $src"
+      rm -f "$dest" "${dest}-journal" "${dest}-wal" "${dest}.sha256"
+      return 0
+    fi
   else
     # online-safe-ish copy if sqlite3 missing
     cp -a "$src" "$dest"
     [ -f "${src}-wal" ] && cp -a "${src}-wal" "${dest}-wal" || true
   fi
-  # integrity
+  # integrity + checksum: sha256 is the completeness marker for retention
   if sqlite3 "$dest" "PRAGMA integrity_check;" | head -1 | grep -qx ok; then
     echo "[fleet-backup] OK $name -> $dest ($(du -h "$dest" | awk '{print $1}'))"
+    sha256sum "$dest" > "${dest}.sha256"
   else
     echo "[fleet-backup] WARN $name integrity not clean: $dest"
+    rm -f "${dest}.sha256"
   fi
-  # checksum
-  sha256sum "$dest" > "${dest}.sha256"
 }
+
+prune_incomplete_dumps() {
+  local dir f
+  [ -d "$ROOT" ] || return 0
+  for dir in "$ROOT"/*; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.db; do
+      [ -f "$f" ] || continue
+      if dump_is_complete "$f"; then
+        continue
+      fi
+      echo "[fleet-backup] prune-incomplete $f"
+      rm -f "$f" "${f}.sha256" "${f}-journal" "${f}-wal"
+    done
+  done
+}
+
+prune_by_age() {
+  local f s db
+  [ -d "$ROOT" ] || return 0
+  case "$KEEP_DAYS" in
+    ''|*[!0-9]*)
+      echo "[fleet-backup] retention SKIP: non-numeric FLEET_BACKUP_KEEP_DAYS=$KEEP_DAYS"
+      return 0
+      ;;
+  esac
+  # Age-prune only complete dumps so an incomplete newer file cannot keep a
+  # finished snapshot from being the one KEEP_DAYS considers.
+  find "$ROOT" -type f -name '*.db' -mtime +"$KEEP_DAYS" -print 2>/dev/null | while read -r f; do
+    dump_is_complete "$f" || continue
+    echo "[fleet-backup] prune-age $f"
+    rm -f "$f" "${f}.sha256"
+  done || true
+  find "$ROOT" -type f -name '*.sqlite' -mtime +"$KEEP_DAYS" -print -delete 2>/dev/null || true
+  find "$ROOT" -type f -name '*.sha256' -mtime +"$KEEP_DAYS" -print 2>/dev/null | while read -r s; do
+    db="${s%.sha256}"
+    if [ ! -f "$db" ]; then
+      echo "[fleet-backup] prune-age-orphan $s"
+      rm -f "$s"
+    fi
+  done || true
+}
+
+prune_by_keep_count() {
+  local dir f n
+  [ -d "$ROOT" ] || return 0
+  case "$KEEP_COUNT" in
+    ''|*[!0-9]*)
+      echo "[fleet-backup] retention SKIP: non-numeric FLEET_BACKUP_KEEP_COUNT=$KEEP_COUNT"
+      return 0
+      ;;
+  esac
+  if [ "$KEEP_COUNT" -lt 1 ]; then
+    echo "[fleet-backup] retention SKIP: FLEET_BACKUP_KEEP_COUNT must be >= 1 (got $KEEP_COUNT)"
+    return 0
+  fi
+  for dir in "$ROOT"/*; do
+    [ -d "$dir" ] || continue
+    n=0
+    # Newest-first; skip anything that is not a complete dump so a live
+    # .db-journal or missing .sha256 cannot occupy a KEEP_COUNT slot.
+    ls -1t "$dir"/*.db 2>/dev/null | while read -r f; do
+      [ -f "$f" ] || continue
+      dump_is_complete "$f" || continue
+      n=$((n + 1))
+      if [ "$n" -gt "$KEEP_COUNT" ]; then
+        echo "[fleet-backup] prune-count $f"
+        rm -f "$f" "${f}.sha256"
+      fi
+    done || true
+  done
+}
+
+apply_local_retention() {
+  prune_incomplete_dumps
+  prune_by_age
+  prune_by_keep_count
+}
+
+if [ "${FLEET_BACKUP_LIB_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+# Single-flight: same inode as the host cron wrapper
+# (flock -n /var/lock/fleet-sqlite-backup.lock ...).  flock(2) grants a
+# second lock to the same process, so the wrapper and this script compose.
+if ! command -v flock >/dev/null 2>&1; then
+  echo "[fleet-backup] FAIL flock not found (util-linux required for single-flight)" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$LOCKFILE")" || {
+  echo "[fleet-backup] FAIL cannot create lock dir $(dirname "$LOCKFILE")" >&2
+  exit 1
+}
+exec 9>"$LOCKFILE" || {
+  echo "[fleet-backup] FAIL cannot open lock $LOCKFILE" >&2
+  exit 1
+}
+if ! flock -n 9; then
+  echo "[fleet-backup] SKIP already running (lock held: $LOCKFILE)" >&2
+  exit 0
+fi
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG="/var/log/fleet-backup/sqlite-${STAMP}.log"
+mkdir -p "$ROOT" /var/log/fleet-backup
+exec > >(tee -a "$LOG") 2>&1
+echo "[fleet-backup] start $STAMP"
 
 # Socratic: Coolify docker volume
 SOCRATIC_VOL=$(docker volume ls -q | grep -E 'socratic.*prod-app-data|prod-app-data' | head -1 || true)
@@ -72,16 +216,9 @@ if [ -n "$UM_VOL" ] && [ -f "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" ];
   backup_one "usage-monitor-vol" "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" "$ROOT/usage-monitor"
 fi
 
-# retention: age-based (default 7d) AND keep-count (default 3 newest .db per app dir)
-KEEP_COUNT="${FLEET_BACKUP_KEEP_COUNT:-3}"
-find "$ROOT" -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sha256' \) -mtime +"$KEEP_DAYS" -print -delete || true
-for dir in "$ROOT"/*; do
-  [ -d "$dir" ] || continue
-  ls -1t "$dir"/*.db 2>/dev/null | tail -n +"$((KEEP_COUNT + 1))" | while read -r f; do
-    echo "[fleet-backup] prune-count $f"
-    rm -f "$f" "${f}.sha256"
-  done || true
-done
+# retention: drop incomplete dumps first, then age-based (default 7d) AND
+# keep-count (default 3 newest COMPLETE .db per app dir)
+apply_local_retention
 echo "[fleet-backup] done $STAMP"
 df -h /data / | tail -5
 
