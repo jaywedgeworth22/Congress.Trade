@@ -45,6 +45,13 @@ export interface PipelineSignals {
   extractionAttempts24h: number | null;
   extractionOk24h: number | null;
   lastExtractionSuccessAt: string | null;
+  /**
+   * Submission receipts from the Mac/server local-vision workers in 24h
+   * (ingestion_decisions.source='local_mac').  These workers publish scans
+   * without writing extraction_runs, so a healthy local drain used to read
+   * as "no extraction attempts" (stalled) to the health check.
+   */
+  localWorkerActivity24h: number | null;
   autopilotHaltReason: string | null;
   latestTxCreatedAt: string | null;
   /**
@@ -242,7 +249,8 @@ export function evaluatePipelineSignals(
   } else {
     const halted = Boolean(s.autopilotHaltReason);
     const backlog = s.reviewBacklog ?? 0;
-    if (halted || backlog > 0) {
+    const localActive = (s.localWorkerActivity24h ?? 0) > 0;
+    if (halted || (backlog > 0 && !localActive)) {
       checks.push({
         id: 'extraction_provider',
         status: 'stalled',
@@ -250,6 +258,15 @@ export function evaluatePipelineSignals(
           ? `No extraction attempts in 24h while autopilot is halted (${s.autopilotHaltReason})`
           : `No extraction attempts in 24h while review backlog is ${backlog}`,
         value: 0,
+      });
+    } else if (localActive) {
+      // The Mac/server local-vision workers publish scans without writing
+      // extraction_runs; a busy local drain is activity, not a stall.
+      checks.push({
+        id: 'extraction_provider',
+        status: 'degraded',
+        detail: `No provider extraction runs in 24h; local vision worker active (${s.localWorkerActivity24h} submissions) while review backlog is ${backlog}`,
+        value: s.localWorkerActivity24h ?? 0,
       });
     } else {
       checks.push({ id: 'extraction_provider', status: 'ok', detail: 'No extraction attempts in 24h', value: 0 });
@@ -557,6 +574,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let extractionAttempts24h: number | null = null;
   let extractionOk24h: number | null = null;
   let lastExtractionSuccessAt: string | null = null;
+  let localWorkerActivity24h: number | null = null;
   let autopilotHaltReason: string | null = null;
   let latestTxCreatedAt: string | null = null;
   let dishonestResolutionCount: number | null = null;
@@ -593,6 +611,16 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
       extractionOk24h = Number(res.ok_count ?? 0);
       lastExtractionSuccessAt = res.last_success ?? null;
     }
+  } catch {}
+
+  try {
+    const res = await get<{ n: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS n FROM ingestion_decisions
+        WHERE source = 'local_mac' AND created_at >= ?`,
+      [iso24hAgo],
+    );
+    if (res) localWorkerActivity24h = Number(res.n ?? 0);
   } catch {}
 
   try {
@@ -761,6 +789,7 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     extractionAttempts24h,
     extractionOk24h,
     lastExtractionSuccessAt,
+    localWorkerActivity24h,
     autopilotHaltReason,
     latestTxCreatedAt,
     dishonestResolutionCount,
