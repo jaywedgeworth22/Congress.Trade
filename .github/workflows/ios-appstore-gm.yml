@@ -59,11 +59,15 @@ jobs:
             NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 brew install infisical/get-cli/infisical
           fi
           command -v infisical >/dev/null 2>&1 || { echo "::error::Infisical CLI is not installed."; exit 1; }
-          if [ -z "${INFISICAL_PROJECT_ID:-}" ]; then
+          if [ -z "${INFISICAL_PROJECT_ID}" ]; then
             echo "::error::Missing INFISICAL_PROJECT_ID GitHub secret."; exit 1
           fi
-          CLIENT_ID="${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID:-${INFISICAL_CLIENT_ID:-}}"
-          CLIENT_SECRET="${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET:-${INFISICAL_CLIENT_SECRET:-}}"
+          CLIENT_ID="${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID}"
+          CLIENT_SECRET="${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET}"
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+            CLIENT_ID="${INFISICAL_CLIENT_ID}"
+            CLIENT_SECRET="${INFISICAL_CLIENT_SECRET}"
+          fi
           if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
             echo "::error::Missing Infisical machine identity."; exit 1
           fi
