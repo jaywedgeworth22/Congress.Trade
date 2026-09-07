@@ -14,7 +14,11 @@
 import type { Env, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { parseAmountRange } from './amounts.ts';
-import { looksLikePtrFormSampleAsset, looksLikeSeeAttachmentPointer } from './extractRouting.ts';
+import {
+  looksLikePtrFormSampleAsset,
+  looksLikePtrFormSampleRow,
+  looksLikeSeeAttachmentPointer,
+} from './extractRouting.ts';
 import { parseTruncationAwareJson, fetchWithRetry, arrayBufferToBase64 } from './visionLlm.ts';
 import { createProxiedFetch, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
@@ -341,18 +345,28 @@ function normalizeTxDate(raw: unknown): string | null {
   if (!t) return null;
   // Printed example years are "1X" / "XX", not a calendar date.
   if (/[xX]/.test(t)) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (m) {
-    const [, mm, dd, yy] = m;
-    const year = yy.length === 2 ? `20${yy}` : yy;
-    return `${year}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  const currentYear = new Date().getFullYear();
+  let parsedDate: string | null = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+    parsedDate = t;
+  } else {
+    const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m) {
+      const [, mm, dd, yy] = m;
+      const year = yy.length === 2 ? `20${yy}` : yy;
+      parsedDate = `${year}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    } else {
+      const iso = new Date(t);
+      if (!isNaN(iso.getTime()) && t.length >= 8) {
+        parsedDate = iso.toISOString().slice(0, 10);
+      }
+    }
   }
-  const iso = new Date(t);
-  if (!isNaN(iso.getTime()) && t.length >= 8) {
-    return iso.toISOString().slice(0, 10);
-  }
-  return null;
+  if (!parsedDate) return null;
+  const y = parseInt(parsedDate.slice(0, 4), 10);
+  // Do not accept dates beyond current calendar year (guards against 1X parsed as 2027 etc.)
+  if (isNaN(y) || y > currentYear) return null;
+  return parsedDate;
 }
 
 function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
@@ -393,6 +407,10 @@ function mapPaperRow(row: Record<string, unknown>): ParsedTx | null {
     : null;
   const rawText = typeof row.rawText === 'string' ? row.rawText : `${assetName} ${txDate} ${txType}`;
 
+  if (looksLikePtrFormSampleRow({ assetName, rawText, amountRange, txDate, amountMin: min, amountMax: max })) {
+    return null;
+  }
+
   return {
     txDate,
     owner,
@@ -427,4 +445,236 @@ function normalizeOwner(raw: unknown): Owner {
   // Owner is a closed enum (self|spouse|joint|dependent). Unspecified/blank PTR
   // rows match vision extraction: default to self rather than inventing "unknown".
   return 'self';
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * Renders a clean, standalone multi-page reader for Senate paper PTRs.
+ * The upstream eFD paper shell requires scripts and relative resources that 404
+ * or fail under CSP sandbox. This viewer displays the scanned pages sequentially
+ * using the public efd-media-public.senate.gov image links with zero script dependencies.
+ */
+export function renderSenatePaperViewer(
+  mediaUrls: string[],
+  docId?: string,
+  sourceUrl?: string | null,
+): string {
+  const pageCount = mediaUrls.length;
+  const title = docId ? `Senate Paper Disclosure — ${escapeHtml(docId)}` : 'Senate Paper Disclosure';
+  const sourceLink = sourceUrl
+    ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="source-link">View original on eFD &rarr;</a>`
+    : '';
+
+  const pagesHtml = mediaUrls
+    .map((url, idx) => {
+      const pageNum = idx + 1;
+      return `
+      <section class="paper-page-card" id="page-${pageNum}">
+        <div class="page-header">
+          <span class="page-badge">Page ${pageNum} of ${pageCount}</span>
+          <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="raw-image-link" download>Download Image</a>
+        </div>
+        <div class="image-wrapper">
+          <img class="paper-scan-img" src="${escapeHtml(url)}" alt="Page scan ${pageNum} of ${pageCount}" loading="${pageNum <= 2 ? 'eager' : 'lazy'}" />
+        </div>
+      </section>`;
+    })
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card-bg: #141c2b;
+      --border: #233047;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --badge-bg: #1e293b;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --card-bg: #ffffff;
+        --border: #e2e8f0;
+        --text: #0f172a;
+        --text-muted: #64748b;
+        --accent: #0284c7;
+        --badge-bg: #f1f5f9;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      padding: 1.5rem 1rem 4rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .header-links {
+      display: flex;
+      gap: 1rem;
+      font-size: 0.875rem;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    .main-container {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+    .paper-page-card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 1.25rem;
+      background-color: var(--badge-bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+    .page-badge {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .image-wrapper {
+      padding: 1rem;
+      display: flex;
+      justify-content: center;
+      background-color: #fff; /* Scanned documents require white background for readability */
+    }
+    .paper-scan-img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border: 1px solid #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>${title}</h1>
+      <p style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem;">
+        Official multi-page public disclosure scan (${pageCount} page${pageCount === 1 ? '' : 's'})
+      </p>
+    </div>
+    <div class="header-links">
+      ${sourceLink}
+    </div>
+  </header>
+  <main class="main-container">
+    ${pagesHtml}
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * Enhances stored Senate HTML (paper viewer shell or electronic tables) so that
+ * when served read-only under CSP sandbox ('sandbox' disables all scripts),
+ * the document renders cleanly and legibly instead of as a broken shell.
+ */
+export function enhanceSenateHtmlDocument(
+  html: string,
+  docId?: string,
+  sourceUrl?: string | null,
+): string {
+  if (isSenatePaperViewerHtml(html)) {
+    const urls = extractSenatePaperMediaUrls(html);
+    if (urls.length > 0) {
+      return renderSenatePaperViewer(urls, docId, sourceUrl);
+    }
+  }
+
+  // If it's an electronic report or fallback, ensure styling is present so it renders legibly
+  // under sandbox CSP where external stylesheets are blocked.
+  if (html.includes('<table') && !html.includes('/* fallback-injected-style */')) {
+    const fallbackStyle = `
+<style id="ct-fallback-style">
+  /* fallback-injected-style */
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 1.5rem;
+    color: #1e293b;
+    background: #f8fafc;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0 2rem;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  th, td {
+    border: 1px solid #cbd5e1;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    font-size: 0.875rem;
+  }
+  th {
+    background: #f1f5f9;
+    font-weight: 600;
+  }
+  tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+</style>`;
+    if (html.includes('</head>')) {
+      return html.replace('</head>', `${fallbackStyle}\n</head>`);
+    } else {
+      return `${fallbackStyle}\n${html}`;
+    }
+  }
+
+  return html;
 }

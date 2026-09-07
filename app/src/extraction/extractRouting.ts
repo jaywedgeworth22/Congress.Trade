@@ -124,9 +124,70 @@ export function looksLikeHeaderContaminatedAsset(assetName: string | null): bool
  */
 export function looksLikePtrFormSampleAsset(assetName: string | null): boolean {
   if (!assetName) return false;
-  if (/exempl(?:je|e)\s+mega\s+corp|\bexample\s+mega\s+corp/i.test(assetName)) return true;
-  if (/ibm\s+corp\.?\s*\(\s*stock\s*\)\s*nyse/i.test(assetName)) return true;
-  if (/microsoft\s*\(\s*stock\s*\)\s*nasdaq\s*\/\s*otc/i.test(assetName)) return true;
+  const clean = assetName.trim();
+  if (/exempl(?:je|e)\s+mega\s+corp|\bexample\s+mega\s+corp/i.test(clean)) return true;
+  if (/ibm\s+corp\.?\s*(?:\(\s*stock\s*\))?\s*nyse/i.test(clean)) return true;
+  if (/^(?:\(dc\)\s*)?microsoft\s*(?:\(\s*stock\s*\))?\s*nasdaq\s*\/\s*otc/i.test(clean)) return true;
+  return false;
+}
+
+/**
+ * Checks if an extracted transaction row matches the printed sample rows
+ * found on House or Senate PTR forms (e.g. Example Mega Corp or Senate Form 278-T
+ * IBM / Microsoft sample rows). Matches on asset name, raw OCR text, placeholder
+ * date years (e.g. 1X OCR'd as 2027), or "EXAMPLE" amount ranges.
+ */
+export function looksLikePtrFormSampleRow(row: {
+  assetName?: string | null;
+  rawText?: string | null;
+  amountRange?: string | null;
+  txDate?: string | null;
+  amountMin?: number | null;
+  amountMax?: number | null;
+}): boolean {
+  const asset = (row.assetName || '').trim();
+  const raw = (row.rawText || '').trim();
+  const amount = (row.amountRange || '').trim();
+  const date = (row.txDate || '').trim();
+
+  if (looksLikePtrFormSampleAsset(asset)) return true;
+  if (looksLikePtrFormSampleAsset(raw)) return true;
+
+  // Amount column spells EXAMPLE or raw text has EXAMPLE with sample tickers/assets
+  if (/\bexample\b/i.test(amount) || /\bexample\b/i.test(raw)) {
+    if (/microsoft|ibm|mega\s+corp/i.test(asset) || /microsoft|ibm|mega\s+corp/i.test(raw)) {
+      return true;
+    }
+  }
+
+  // Senate form 278-T printed sample dates: 2/1/1X or 2/27/1X
+  if (/(?:2\/1\/1[xX0-9]|2\/27\/1[xX0-9])/i.test(raw)) {
+    if (/microsoft|ibm/i.test(asset) || /microsoft|ibm/i.test(raw)) {
+      return true;
+    }
+  }
+
+  // Raw text contains template exchange pairings with Microsoft or IBM
+  if (/(?:nasdaq\s*\/\s*otc|nyse)/i.test(raw)) {
+    if (/\bmicrosoft\b|\bibm\b/i.test(raw) && /\(stock\)/i.test(raw)) {
+      return true;
+    }
+  }
+
+  // If asset is precisely "Microsoft" or "IBM" and extracted date is in a future year (from 1X OCR artifact)
+  const currentYear = new Date().getFullYear();
+  if (/^(?:\(dc\)\s*)?(?:microsoft|ibm(?:\s+corp\.?)?)$/i.test(asset)) {
+    if (date) {
+      const parsedYear = parseInt(date.slice(0, 4), 10);
+      if (!isNaN(parsedYear) && parsedYear > currentYear) {
+        return true;
+      }
+    }
+    if (/\bexample\b/i.test(raw)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
