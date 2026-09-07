@@ -1467,8 +1467,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu-pop.open { display:block; }
   .menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px; font-family:var(--sans); text-decoration:none; box-sizing:border-box; }
   .menu-section-label { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--text); padding:4px 12px 6px; margin-top:16px; }
-  .menu-pop > .menu-section-label:first-of-type,
-  .acct-mobile-menu > .menu-section-label:first-of-type { margin-top:2px; }
+  .who + .menu-section-label,
+  .acct-auth-group + .menu-section-label,
+  .menu-section-label:first-child { margin-top:2px; }
   .menu-divider { border-top:1px solid var(--border); margin:12px 6px 6px; }
   .menu-pop button:hover, .menu-pop a:hover { background:var(--panel-2); }
   .menu-pop .who { padding:4px 12px 10px; font-size:13px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

@@ -4427,8 +4427,9 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     // Section headings are 15px uppercase bold with top margin between sections.
     expect(DASHBOARD_HTML).toContain('.menu-section-label { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--text); padding:4px 12px 6px; margin-top:16px; }');
     // First section label does not have large top margin.
-    expect(DASHBOARD_HTML).toContain('.menu-pop > .menu-section-label:first-of-type,');
-    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu > .menu-section-label:first-of-type { margin-top:2px; }');
+    expect(DASHBOARD_HTML).toContain('.who + .menu-section-label,');
+    expect(DASHBOARD_HTML).toContain('.acct-auth-group + .menu-section-label,');
+    expect(DASHBOARD_HTML).toContain('.menu-section-label:first-child { margin-top:2px; }');
     // Menu items are 13.5px with comfortable padding.
     expect(DASHBOARD_HTML).toContain('.menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px;');
     // Menu divider precedes Sign Out.
