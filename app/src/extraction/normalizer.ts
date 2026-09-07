@@ -24,6 +24,7 @@ import {
   looksLikeHeaderContaminatedAsset,
   looksLikeNothingToReport,
   looksLikePtrFormSampleAsset,
+  looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
 } from './extractRouting.ts';
 import { all, batch, fromBool, get, parseJson, run } from '../shared/db.ts';
@@ -342,6 +343,7 @@ export async function normalize(
   const usableParsed = parsed.filter((p) =>
     !looksLikeHeaderContaminatedAsset(p.assetName)
     && !looksLikePtrFormSampleAsset(p.assetName)
+    && !looksLikePtrFormSampleRow(p)
     && !looksLikeSeeAttachmentPointer(p.assetName)
     && !looksLikeSeeAttachmentPointer(p.rawText)
     && !looksLikeNothingToReport(p.assetName)
@@ -955,6 +957,7 @@ export function scoreFields(
 export {
   looksLikeHeaderContaminatedAsset,
   looksLikePtrFormSampleAsset,
+  looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
   looksLikeNothingToReport,
   isDeletedFilingStatus,

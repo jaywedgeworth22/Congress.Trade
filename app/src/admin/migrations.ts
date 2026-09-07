@@ -1325,6 +1325,25 @@ export const GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS = [
   'ALTER TABLE trade_latency_candidates ADD COLUMN congress_window_start TEXT',
 ] as const;
 
+/**
+ * 0097_unblock_not_found_house_phantoms.sql
+ */
+export const UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS = [
+  `DELETE FROM ingestion_outbox
+   WHERE doc_id IN (
+     SELECT doc_id FROM filings
+     WHERE chamber = 'house'
+       AND ingest_status = 'not_found'
+       AND raw_object_key IS NULL
+       AND (error LIKE '%phantom%' OR error LIKE '%scout frontier-probe%')
+   )`,
+  `DELETE FROM filings
+   WHERE chamber = 'house'
+     AND ingest_status = 'not_found'
+     AND raw_object_key IS NULL
+     AND (error LIKE '%phantom%' OR error LIKE '%scout frontier-probe%')`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -1459,6 +1478,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
   // 0096_gov_probe_intervals_and_24h_snapshots.sql
   ...GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
+  // 0097_unblock_not_found_house_phantoms.sql
+  ...UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
