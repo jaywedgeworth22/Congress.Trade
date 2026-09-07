@@ -290,13 +290,22 @@ export function evaluatePipelineSignals(
           : `No extraction attempts in 24h while review backlog is ${backlog}`,
         value: 0,
       });
-    } else if (localActive) {
+    } else if (localActive && backlog > 0) {
       // The Mac/server local-vision workers publish scans without writing
-      // extraction_runs; a busy local drain is activity, not a stall.
+      // extraction_runs; a busy local drain with backlog is activity, not a
+      // stall — but still degraded while provider extractors stay idle.
       checks.push({
         id: 'extraction_provider',
         status: 'degraded',
         detail: `No provider extraction runs in 24h; local vision worker active (${s.localWorkerActivity24h} submissions) while review backlog is ${backlog}`,
+        value: s.localWorkerActivity24h ?? 0,
+      });
+    } else if (localActive) {
+      // Local workers cleared the backlog; provider idle is healthy.
+      checks.push({
+        id: 'extraction_provider',
+        status: 'ok',
+        detail: `No provider extraction runs in 24h; local vision worker active (${s.localWorkerActivity24h} submissions) and review backlog clear`,
         value: s.localWorkerActivity24h ?? 0,
       });
     } else {
