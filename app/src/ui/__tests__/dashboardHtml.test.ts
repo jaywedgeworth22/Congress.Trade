@@ -4423,6 +4423,22 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(DASHBOARD_HTML).toContain('.acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }');
   });
 
+  it('makes account menu section headings larger than item labels with inter-section spacing', () => {
+    // Section headings are 15px uppercase bold with top margin between sections.
+    expect(DASHBOARD_HTML).toContain('.menu-section-label { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--text); padding:4px 12px 6px; margin-top:16px; }');
+    // First section label does not have large top margin.
+    expect(DASHBOARD_HTML).toContain('.menu-pop > .menu-section-label:first-of-type,');
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu > .menu-section-label:first-of-type { margin-top:2px; }');
+    // Menu items are 13.5px with comfortable padding.
+    expect(DASHBOARD_HTML).toContain('.menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px;');
+    // Menu divider precedes Sign Out.
+    expect(DASHBOARD_HTML).toContain('.menu-divider { border-top:1px solid var(--border); margin:12px 6px 6px; }');
+    expect(DASHBOARD_HTML).toContain("'<div class=\"menu-divider\"></div>' +\n          '<button type=\"button\" onclick=\"logout()\">Sign Out</button>'");
+    expect(DASHBOARD_HTML).toContain("'<div class=\"menu-divider\"></div>' +\n      '<button type=\"button\" onclick=\"closeAcctMobileMenu();logout()\">Sign Out</button>'");
+    // Mobile media query scales up section labels to 17px.
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu .menu-section-label { font-size: 17px; margin-top: 14px; }');
+  });
+
   it('#3 removes the top-of-page Trends disclaimer banner and relocates its short line into the hamburger menu', () => {
     // Banner + its JS are fully gone (see the "adds a collapsible disclaimer"
     // rewrite above for the full negative-assertion list).
