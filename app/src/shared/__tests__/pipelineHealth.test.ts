@@ -19,6 +19,7 @@ describe('evaluatePipelineSignals', () => {
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
+    localWorkerActivity24h: 0,
     autopilotHaltReason: null,
     latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
     dishonestResolutionCount: 0,
@@ -57,6 +58,7 @@ describe('evaluatePipelineSignals', () => {
       extractionAttempts24h: null,
       extractionOk24h: null,
       lastExtractionSuccessAt: null,
+      localWorkerActivity24h: 0,
       autopilotHaltReason: null,
       latestTxCreatedAt: null,
       dishonestResolutionCount: null,
@@ -194,6 +196,41 @@ describe('evaluatePipelineSignals', () => {
     expect(providerCheck?.status).toBe('stalled');
   });
 
+  it('marks extraction_provider degraded when local workers are active with backlog and no provider runs', () => {
+    const localBusy: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 3,
+      reviewEligible: 3,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
+      extractionAttempts24h: 0,
+      extractionOk24h: 0,
+      localWorkerActivity24h: 4,
+    };
+    const res = evaluatePipelineSignals(localBusy, nowMs);
+    const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
+    expect(providerCheck?.status).toBe('degraded');
+    expect(providerCheck?.detail).toContain('local vision worker active');
+    expect(providerCheck?.detail).toContain('backlog is 3');
+  });
+
+  it('marks extraction_provider ok when local workers are active and review backlog is clear', () => {
+    const localClear: PipelineSignals = {
+      ...cleanSignals,
+      reviewBacklog: 0,
+      reviewEligible: 0,
+      reviewSuppressed: 0,
+      reviewTerminal: 0,
+      extractionAttempts24h: 0,
+      extractionOk24h: 0,
+      localWorkerActivity24h: 2,
+    };
+    const res = evaluatePipelineSignals(localClear, nowMs);
+    const providerCheck = res.checks.find((c) => c.id === 'extraction_provider');
+    expect(providerCheck?.status).toBe('ok');
+    expect(providerCheck?.detail).toContain('review backlog clear');
+  });
+
   it('flags stalled when outbox pending items exceed max age threshold', () => {
     const oldestMs = nowMs - (120 * 60 * 1000); // 120m old, > 90m limit
     const outboxStallSignals: PipelineSignals = {
@@ -295,6 +332,7 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     extractionAttempts24h: 10,
     extractionOk24h: 10,
     lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(),
+    localWorkerActivity24h: 0,
     autopilotHaltReason: null,
     latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
     dishonestResolutionCount: 0,
