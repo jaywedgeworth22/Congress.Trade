@@ -11,6 +11,7 @@ import {
   looksLikePlausibleTradeTable,
   looksLikeHeaderContaminatedAsset,
   looksLikePtrFormSampleAsset,
+  looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
   looksLikeNothingToReport,
   isDeletedFilingStatus,
@@ -116,6 +117,40 @@ describe('evaluateExtractQuality — hard-stops', () => {
     expect(looksLikeSeeAttachmentPointer('See Attachment')).toBe(true);
     expect(looksLikeSeeAttachmentPointer('John Boozman IRA See Attachment')).toBe(true);
     expect(looksLikeSeeAttachmentPointer('ELCM2 LLC')).toBe(false);
+
+    // Row-level detection (e.g. Blumenthal template row OCR)
+    expect(looksLikePtrFormSampleRow({
+      assetName: 'Microsoft',
+      rawText: '(DC) Microsoft (stock) NASDAQ/OTC 2/27/1X EXAMPLE',
+      amountRange: 'EXAMPLE',
+      txDate: '2027-01-17',
+    })).toBe(true);
+    expect(looksLikePtrFormSampleRow({
+      assetName: 'Microsoft',
+      rawText: 'Microsoft 2/27/1X',
+      amountRange: '$1,001 - $15,000',
+      txDate: '2027-02-27',
+    })).toBe(true);
+    expect(looksLikePtrFormSampleRow({
+      assetName: '(DC) Microsoft',
+      rawText: '(DC) Microsoft',
+      amountRange: 'EXAMPLE',
+      txDate: '2026-01-01',
+    })).toBe(true);
+
+    // Real live trades must NOT be treated as sample rows
+    expect(looksLikePtrFormSampleRow({
+      assetName: 'Microsoft Corporation',
+      rawText: 'Microsoft Corporation common stock purchase',
+      amountRange: '$1,001 - $15,000',
+      txDate: '2026-03-15',
+    })).toBe(false);
+    expect(looksLikePtrFormSampleRow({
+      assetName: 'MSFT',
+      rawText: 'MSFT buy',
+      amountRange: '$15,001 - $50,000',
+      txDate: '2026-05-10',
+    })).toBe(false);
   });
 
   it('hard-stops letterhead-as-asset (Clerk / B81 Cannon)', () => {

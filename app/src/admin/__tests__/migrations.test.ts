@@ -67,6 +67,7 @@ import {
   APPLE_SUBSCRIPTIONS_NULLABLE_USER_SCHEMA_STATEMENTS,
   X_AUTH_SCHEMA_STATEMENTS,
   GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
+  UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
 } from '../migrations.ts';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema.ts';
 import {
@@ -292,7 +293,16 @@ describe('admin migration bootstrap', () => {
       ...X_AUTH_SCHEMA_STATEMENTS,
       ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
       ...GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
+      ...UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
     ]);
+  });
+
+  it('unblocks House phantom not_found rows (0097)', () => {
+    const sql = UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS.join('\n');
+    expect(sql).toContain("ingest_status = 'not_found'");
+    expect(sql).toContain("error LIKE '%phantom%'");
+    expect(sql).toContain("DELETE FROM ingestion_outbox");
+    expect(sql).toContain("DELETE FROM filings");
   });
 
   it('includes the persisted admin allowlist + audit trail (0090)', () => {
