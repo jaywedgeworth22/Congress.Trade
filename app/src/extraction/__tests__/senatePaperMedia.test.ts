@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   extractSenatePaperMediaUrls,
   isSenatePaperViewerHtml,
+  renderSenatePaperViewer,
+  enhanceSenateHtmlDocument,
 } from '../senatePaperMedia.ts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -71,4 +73,45 @@ describe('senate paper OCR prompt', () => {
     expect(src).toMatch(/1X\/XX placeholder years/);
   });
 });
+
+describe('senate paper viewer and HTML enhancement', () => {
+  it('renders a clean, standalone multi-page reader for paper filings', () => {
+    const mediaUrls = [
+      'https://efd-media-public.senate.gov/media/2026/2/000/000/000000145.gif',
+      'https://efd-media-public.senate.gov/media/2026/2/000/000/000000146.gif',
+    ];
+    const docId = 'S-16afdd38-c0ec-4e37-bc05-cbd82901b43f';
+    const sourceUrl = 'https://efdsearch.senate.gov/search/view/paper/16afdd38-c0ec-4e37-bc05-cbd82901b43f/';
+    const rendered = renderSenatePaperViewer(mediaUrls, docId, sourceUrl);
+
+    expect(rendered).toContain('<!DOCTYPE html>');
+    expect(rendered).toContain(docId);
+    expect(rendered).toContain('Page 1 of 2');
+    expect(rendered).toContain('Page 2 of 2');
+    expect(rendered).toContain('https://efd-media-public.senate.gov/media/2026/2/000/000/000000145.gif');
+    expect(rendered).toContain('https://efd-media-public.senate.gov/media/2026/2/000/000/000000146.gif');
+    // Must NOT contain any script tags because it serves under CSP sandbox
+    expect(rendered).not.toContain('<script');
+  });
+
+  it('transforms Senate paper viewer HTML shell into image viewer', () => {
+    const enhanced = enhanceSenateHtmlDocument(PAPER_SHELL, 'S-test-paper', 'https://example.com/source');
+    expect(enhanced).toContain('Page 1 of 2');
+    expect(enhanced).toContain('https://efd-media-public.senate.gov/media/2026/2/000/000/000000145.gif');
+    expect(enhanced).not.toContain('<script');
+  });
+
+  it('injects fallback CSS into electronic Senate table HTML', () => {
+    const enhanced = enhanceSenateHtmlDocument(ELECTRONIC_PTR, 'S-test-elec');
+    expect(enhanced).toContain('/* fallback-injected-style */');
+    expect(enhanced).toContain('table {');
+    expect(enhanced).toContain('AAPL');
+  });
+
+  it('returns plain text or non-table HTML as-is', () => {
+    const plain = 'Plain text content without tables';
+    expect(enhanceSenateHtmlDocument(plain)).toBe(plain);
+  });
+});
+
 
