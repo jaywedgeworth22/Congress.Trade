@@ -241,6 +241,7 @@ import {
   type ProviderFailureStatus,
 } from '../extraction/providerFailure.ts';
 import { pushExtractionTelemetry } from '../extraction/telemetry.ts';
+import { enhanceSenateHtmlDocument } from '../extraction/senatePaperMedia.ts';
 import {
   inspectUsageTelemetryFallback,
   recordMeasuredThirdPartyUsage,
@@ -5827,9 +5828,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const docId = c.req.param('docId');
     if (!docId?.trim()) return c.json({ error: 'docId is required' }, 400);
     try {
-      const filingRow = await get<{ raw_object_key: string | null }>(
+      const filingRow = await get<{ raw_object_key: string | null; source_url: string | null }>(
         c.env.DB,
-        `SELECT raw_object_key FROM filings WHERE doc_id = ?`,
+        `SELECT raw_object_key, source_url FROM filings WHERE doc_id = ?`,
         [docId],
       );
       if (!filingRow?.raw_object_key) {
@@ -5858,6 +5859,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       };
       if (contentType.toLowerCase().includes('html')) {
         headers['content-security-policy'] = 'sandbox';
+        const rawText = typeof (obj as any).text === 'function'
+          ? await (obj as any).text()
+          : await new Response(obj.body).text();
+        const enhanced = enhanceSenateHtmlDocument(rawText, docId, filingRow.source_url);
+        return new Response(enhanced, { headers });
       }
       return new Response(obj.body, { headers });
     } catch (err) {
