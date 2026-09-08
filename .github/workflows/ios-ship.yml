@@ -214,6 +214,8 @@ jobs:
 
       - name: Ship CongressTrade to TestFlight
         if: steps.gate.outputs.should_ship == '1'
+        env:
+          IOS_TF_RELEASE_NOTES: "1"  # Jay 2026-09-08: publish ASC What to Test
         run: |
           # Wrapper resolves the in-repo fleet script (scripts/ios-fleet/) and
           # enforces the stable-Xcode rule; it falls back to the host copy only
