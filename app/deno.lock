@@ -4,8 +4,6 @@
     "npm:@cloudflare/workers-types@^4.20240718.0": "4.20260702.1",
     "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
     "npm:@google/genai@^2.13.0": "2.13.0",
-    "npm:@libsql/client@*": "0.17.4",
-    "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
     "npm:@sentry/deno@^10.70.0": "10.70.0",
     "npm:cheerio@^1.2.0": "1.2.0",
@@ -19,7 +17,8 @@
     "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.6.2",
     "npm:zod@^4.4.3": "4.4.3",
-    "npm:@aws-sdk/client-s3@3.1126.0": "3.1126.0"
+    "npm:@aws-sdk/client-s3@3.1126.0": "3.1126.0",
+    "npm:@libsql/client@0.18": "0.18.0"
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.6.2": {
@@ -1678,6 +1677,34 @@
       "dependencies": [
         "tslib"
       ]
+    },
+    "@libsql/client@0.18.0": {
+      "integrity": "sha512-zMCCo58vv7w27j7+cnt/GW+X6/Rih6cHZ86PKi0AxCMOqMfrVgG9OZ5lW2bDMJhSeOjsv2szH2nJF3A9l36UmA==",
+      "dependencies": [
+        "@libsql/core",
+        "@libsql/hrana-client",
+        "js-base64",
+        "libsql",
+        "promise-limit"
+      ]
+    },
+    "@libsql/core@0.18.0": {
+      "integrity": "sha512-N8RR2CIpcgtbKZnXs2KVpw2lJQfinUj3I56e7qRDRpK18Hty0Rr8nr00VmFb4R/DsqOanPB/TaP3+QAQLZeXMg==",
+      "dependencies": [
+        "js-base64"
+      ]
+    },
+    "@types/node@26.4.1": {
+      "integrity": "sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==",
+      "dependencies": [
+        "undici-types"
+      ]
+    },
+    "js-base64@3.9.3": {
+      "integrity": "sha512-uwYQp+VJ38FVvtim6qNbit6e9uT6dwWQ4Y1+H9TxhW5hcHjpHwoxlR0nMpqUmIFOmu4VqMxwdJA88gIVuZJQ/g=="
+    },
+    "ws@8.21.3": {
+      "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="
     }
   },
   "redirects": {
@@ -1727,7 +1754,7 @@
       "npm:@aws-sdk/client-s3@3.1126.0",
       "npm:@cloudflare/workers-types@^4.20240718.0",
       "npm:@google/genai@^2.13.0",
-      "npm:@libsql/client@~0.17.4",
+      "npm:@libsql/client@0.18",
       "npm:@sentry/cloudflare@^10.66.0",
       "npm:@sentry/deno@^10.70.0",
       "npm:cheerio@^1.2.0",
@@ -1744,7 +1771,7 @@
         "npm:@aws-sdk/client-s3@3.1126.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.20.0",
-        "npm:@libsql/client@~0.17.4",
+        "npm:@libsql/client@~0.18.0",
         "npm:@sentry/cli@^3.7.0",
         "npm:@sentry/deno@^10.73.0",
         "npm:@types/node@26.4.0",
