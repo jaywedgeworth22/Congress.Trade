@@ -251,7 +251,7 @@ export function dropJunkAgreementRows(rows: readonly ParsedTx[]): ParsedTx[] {
 }
 
 function majority(count: number, total: number): boolean {
-  return total > 0 && count * 2 >= total;
+  return total > 0 && count * 2 > total;
 }
 
 /**

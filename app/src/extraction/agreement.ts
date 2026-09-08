@@ -2037,12 +2037,18 @@ async function deferForBudgetExhausted(
   await rollbackUnspentAttempt(env, docId, claimToken, nextUtcMidnight());
 }
 
-/** Per-doc USD ceiling stopped a live call; keep stored extracts and retry later. */
+/**
+ * Per-doc USD ceiling blocked usable live reads with no quality survivor.
+ * Lifetime per-doc spend does not reset at UTC midnight — terminalize into
+ * human review instead of deferring forever like the daily budget path.
+ */
 async function deferForDocBudgetStop(
   env: Env,
   docId: string,
   tier: number,
+  models: Record<string, string>,
   claimToken: string,
+  max: number,
 ): Promise<void> {
   if (!(await ownsUnresolvedReview(env, docId, claimToken))) {
     await releaseAgreementClaim(env, docId, claimToken);
@@ -2055,7 +2061,8 @@ async function deferForDocBudgetStop(
     reason: 'doc_budget_stop',
     payload: { resolvedBy: 'agreement-cascade', tier, detail: 'per_doc_ceiling' },
   });
-  await rollbackUnspentAttempt(env, docId, claimToken, nextUtcMidnight());
+  await leaveInReviewHighPriority(env, docId, tier, models, null, 'doc_budget_stop', claimToken);
+  await finishTerminalClaim(env, docId, claimToken, max);
 }
 
 /**
@@ -2401,7 +2408,7 @@ export async function handleAgreementCheck(
         await finishTerminalClaim(env, docId, claimed.token, max);
       } else if (res.outcome === 'skipped' && res.reason === 'doc_budget_stop') {
         await refundLlmBudget(env, budget, readsNeeded);
-        await deferForDocBudgetStop(env, docId, tier, claimed.token);
+        await deferForDocBudgetStop(env, docId, tier, modelLabels(models), claimed.token, max);
       } else if (res.outcome === 'skipped') {
         if (res.reason === 'review_resolved_or_claim_lost') {
           await releaseAgreementClaim(env, docId, claimed.token);
@@ -2459,7 +2466,7 @@ export async function handleAgreementCheck(
       await finishTerminalClaim(env, docId, claimed.token, max);
     } else if (res.outcome === 'skipped' && res.reason === 'doc_budget_stop') {
       await refundLlmBudget(env, budget, readsNeeded);
-      await deferForDocBudgetStop(env, docId, 1, claimed.token);
+      await deferForDocBudgetStop(env, docId, 1, modelLabels(tier1Models), claimed.token, max);
     } else if (res.outcome === 'skipped') {
       if (res.reason === 'review_resolved_or_claim_lost') {
         await releaseAgreementClaim(env, docId, claimed.token);

@@ -8,7 +8,7 @@ import {
   resolveAgreedRows,
   sameRowSet,
 } from '../agreement.ts';
-import { estimateLiveReadCostUsd, runCandidateOnDoc, type BakeoffCandidate } from '../bakeoff.ts';
+import { estimateLiveReadCostUsd, runCandidateOnDoc, unaffordableCandidateResult, type BakeoffCandidate } from '../bakeoff.ts';
 import { DEFAULT_LLM_DOC_USD_CEILING } from '../../shared/llmSpend.ts';
 
 const DOC = 'H-2026-9116328';
@@ -95,6 +95,19 @@ describe('quality-gated agree-to-publish', () => {
         expect.arrayContaining(['openrouter:~google/gemini-flash-latest', 'openrouter:openai/gpt-5.6-luna']),
       );
       expect(decision.qualityModels).not.toContain('openrouter:anthropic/claude-haiku-4.5');
+    }
+  });
+
+  it('publishes a single stored quality survivor (stored-only evidence, empty lineup)', () => {
+    const decision = decideAgreementPublish(
+      [],
+      [read('openai/gpt-5.6-luna', lunaRows)],
+      true,
+    );
+    expect(decision.action).toBe('publish');
+    if (decision.action === 'publish') {
+      expect(decision.rows).toHaveLength(3);
+      expect(decision.qualityModels).toEqual(['openrouter:openai/gpt-5.6-luna']);
     }
   });
 
@@ -292,6 +305,63 @@ describe('runCandidateOnDoc reuses cache before the per-doc ceiling', () => {
     expect(result.skippedUnaffordable).toBeUndefined();
     expect(fetchMock).toHaveBeenCalled();
     expect(result.ok).toBe(false);
+  });
+
+  it('marks daily USD/credit ceiling rejection as skippedUnaffordable', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const env = {
+      OPENROUTER_API_KEY: 'sk-or-test',
+      LLM_DAILY_USD_CEILING: '0.01',
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return this;
+            },
+            async first() {
+              if (/SUM\(usd\).*doc_id/i.test(sql)) {
+                return { usd: 0 };
+              }
+              if (/FROM extraction_runs/i.test(sql)) {
+                return null;
+              }
+              return null;
+            },
+            async all() {
+              if (/FROM llm_spend\b/i.test(sql) || /llm_spend_settlement/i.test(sql)) {
+                return { results: [{ provider: 'openrouter', usd: 10 }] };
+              }
+              return { results: [] };
+            },
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+    } as unknown as import('../../shared/types.ts').Env;
+
+    const result = await runCandidateOnDoc(
+      env,
+      { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+      DOC,
+      bytes,
+      { apiKey: 'sk-or-test', skipCache: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.skippedUnaffordable).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('unaffordableCandidateResult sets skippedUnaffordable for callers', () => {
+    const result = unaffordableCandidateResult(
+      { provider: 'openrouter', model: 'x-ai/grok-4.5' },
+      DOC,
+      'llm daily usd budget exceeded',
+    );
+    expect(result.ok).toBe(false);
+    expect(result.skippedUnaffordable).toBe(true);
   });
 
   it('still latches a live OpenRouter call once the per-doc USD ceiling is spent', async () => {

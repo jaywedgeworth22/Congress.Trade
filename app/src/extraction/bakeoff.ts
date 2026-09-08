@@ -1362,20 +1362,9 @@ export async function runCandidateOnDoc(
   // ceiling would halt that failover here anyway.
   const spendGate = await checkLlmSpendCeiling(env, provider);
   if (!spendGate.allowed) {
-    const error = llmBudgetHaltMessage(spendGate);
-    return {
-      provider: candidate.provider,
-      model: candidate.model,
-      docId,
-      ok: false,
-      error,
-      failure: classifyProviderFailure(candidate.provider, candidate.model, error) ?? undefined,
-      latencyMs: 0,
-      rowCount: 0,
-      rowKeys: [],
-      avgConfidence: 0,
-      rows: [],
-    };
+    // Daily USD/credit ceiling — same unaffordable signal as the per-doc latch so
+    // an earlier quality survivor can still publish instead of model_read_failed.
+    return unaffordableCandidateResult(candidate, docId, llmBudgetHaltMessage(spendGate));
   }
 
   const started = Date.now();

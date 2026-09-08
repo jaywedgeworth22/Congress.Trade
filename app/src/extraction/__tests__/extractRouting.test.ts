@@ -211,6 +211,22 @@ describe('evaluateExtractQuality — hard-stops', () => {
     expect(evaluateExtractQuality([])).toEqual({ ok: true });
   });
 
+  it('does not hard-stop on exactly 50% placeholder junk (strict majority)', () => {
+    const mixed = [
+      tx({ assetName: '........................................', ticker: null }),
+      tx({ assetName: 'Apple Inc', ticker: 'AAPL' }),
+    ];
+    expect(evaluateExtractQuality(mixed)).toEqual({ ok: true });
+  });
+
+  it('does not hard-stop on exactly 50% null-amount junk (strict majority)', () => {
+    const mixed = [
+      tx({ amountMin: null, amountMax: null, assetName: 'Apple Inc' }),
+      tx({ amountMin: 1001, amountMax: 15000, assetName: 'Microsoft' }),
+    ];
+    expect(evaluateExtractQuality(mixed)).toEqual({ ok: true });
+  });
+
   it('hard-stops majority placeholder assets', () => {
     const junk = [
       tx({ assetName: '........................................', ticker: null }),

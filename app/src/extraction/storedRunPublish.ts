@@ -129,7 +129,9 @@ export async function maybePublishFromStoredRuns(
         continue;
       }
 
-      const decision = decideAgreementPublish(reads, [], true);
+      // Stored-only sweep: lineup is empty; quality survivors are stored evidence
+      // so decideAgreementPublish admits the single-survivor (>=1) publish path.
+      const decision = decideAgreementPublish([], reads, true);
       const parsed = decision.action === 'publish' ? decision.rows : null;
       if (!parsed || parsed.length === 0) {
         out.skipped += 1;
