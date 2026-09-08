@@ -6,6 +6,9 @@ import {
   allowOpenRouterFiles,
   classifyHouseExtractRoute,
   evaluateExtractQuality,
+  isJunkAgreementRow,
+  dropJunkAgreementRows,
+  isPlaceholderAgreementAsset,
   isHouseElectronicDocId,
   isHousePaperScanDocId,
   looksLikePlausibleTradeTable,
@@ -207,6 +210,36 @@ describe('evaluateExtractQuality — hard-stops', () => {
     expect(evaluateExtractQuality([tx()])).toEqual({ ok: true });
     expect(evaluateExtractQuality([])).toEqual({ ok: true });
   });
+
+  it('hard-stops majority placeholder assets', () => {
+    const junk = [
+      tx({ assetName: '........................................', ticker: null }),
+      tx({ assetName: 'Unparsed Historical Filing', ticker: null }),
+      tx({ assetName: '......s', ticker: null }),
+    ];
+    expect(evaluateExtractQuality(junk)).toEqual({ ok: false, reason: 'placeholder_asset' });
+    expect(isPlaceholderAgreementAsset('........................................')).toBe(true);
+  });
+
+  it('hard-stops majority null-amount rows even when dates are present', () => {
+    const junk = [
+      tx({ amountMin: null, amountMax: null, assetName: 'Apple Inc' }),
+      tx({ amountMin: null, amountMax: null, assetName: 'Microsoft' }),
+      tx({ amountMin: null, amountMax: null, assetName: 'Nvidia' }),
+    ];
+    expect(evaluateExtractQuality(junk)).toEqual({ ok: false, reason: 'null_amount' });
+  });
+
+  it('drops placeholder and null-amount rows so they cannot vote', () => {
+    const rows = [
+      tx(),
+      tx({ assetName: '......s', ticker: null, confidence: 0.99 }),
+      tx({ amountMin: null, amountMax: null, assetName: 'Ghost Co', confidence: 0.99 }),
+    ];
+    expect(isJunkAgreementRow(rows[1])).toBe(true);
+    expect(isJunkAgreementRow(rows[2])).toBe(true);
+    expect(dropJunkAgreementRows(rows)).toEqual([rows[0]]);
+  });
 });
 
 describe('agreement hard-stop', () => {
@@ -219,6 +252,8 @@ describe('agreement hard-stop', () => {
       reviewReason: 'form_chrome_only,letterhead_as_asset',
     })).toBe(false);
     expect(shouldSkipAgreementForReviewReason('form_chrome_only,extract_empty_failure')).toBe(true);
+    expect(shouldSkipAgreementForReviewReason('placeholder_asset')).toBe(true);
+    expect(shouldSkipAgreementForReviewReason('null_amount')).toBe(true);
     expect(shouldSkipAgreementForReviewReason('agreement_cascade_unresolved')).toBe(false);
   });
 
