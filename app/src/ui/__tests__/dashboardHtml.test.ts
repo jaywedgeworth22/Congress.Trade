@@ -1953,15 +1953,14 @@ describe('DASHBOARD_HTML', () => {
       expect(DASHBOARD_HTML).not.toContain('.flowrow .flabel { flex: 1 1 auto; font-size: 15px; font-weight: 600; min-width: 0; overflow: hidden;');
       // Justified stats line: every stat is a flex item, free width is shared
       // evenly around the bullets, and a "N buys / N sells" pair never breaks.
-      expect(DASHBOARD_HTML).toContain('.flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 2ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }');
       expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fstat { white-space: nowrap; }');
-      expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fsep { flex: 0 0 auto; }');
-      // Narrow cards: inline flow so a wrap never strands a bullet at the
-      // bar edge (the .flowrow is the size container).
-      expect(DASHBOARD_HTML).toContain('.flowrow { margin: 12px 0; container-type: inline-size; }');
-      expect(DASHBOARD_HTML).toContain("return '<div class=\"fchip n' + items.length + '\">'");
-      expect(DASHBOARD_HTML).toContain('@container (max-width: 469px) {\n    .flowrow .fchip.n3 { display: block; }\n    .flowrow .fchip.n3 > .fstat, .flowrow .fchip.n3 > .fsep { display: inline; }\n  }');
-      expect(DASHBOARD_HTML).toContain('@container (max-width: 559px) {\n    .flowrow .fchip:not(.n3) { display: block; }\n    .flowrow .fchip:not(.n3) > .fstat, .flowrow .fchip:not(.n3) > .fsep { display: inline; }\n  }');
+      // Owner 2026-09-08: no bullet separators between the stats, so no
+      // narrow-card fallback is needed either — the row wraps stat by stat.
+      expect(DASHBOARD_HTML).toContain('.flowrow { margin: 12px 0; }');
+      expect(DASHBOARD_HTML).not.toContain('class="fsep"');
+      expect(DASHBOARD_HTML).not.toContain('@container (max-width');
+      expect(DASHBOARD_HTML).not.toContain('container-type: inline-size; }\n  .flowrow:first-child');
       // Dense table stat lines: whole parts, a too-narrow cell wraps only at
       // the bullet instead of clipping the sells count.
       expect(DASHBOARD_HTML).toContain('.stack-under > span { white-space: normal; }');
@@ -6528,14 +6527,6 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain("if (v === 'trades' || v === 'people' || v === 'subs' || v === 'review' || v === 'admin') {\n        document.documentElement.setAttribute('data-view', v);");
   });
 
-  it('centres nav + account on the header + filter-strip white band on desktop', () => {
-    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    header.top > nav.tabs, header.top > #acct { position: relative; top: calc(var(--ct-filter-h, 0px) / 2); }\n  }');
-    expect(DASHBOARD_HTML).toContain("var strip = document.querySelector('.view.active .trades-toolbars, .view.active #trendsSharedFilters');");
-    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-filter-h', (strip ? strip.getBoundingClientRect().height : 0) + 'px');");
-    // Re-measured on every tab switch and on the boot-time restore.
-    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the active view's filter strip");
-    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the restored view's filter strip");
-  });
 
   it('enlarges the wordmark on desktop and keeps the compact 40px lockup on phones', () => {
     expect(DASHBOARD_HTML).toContain('.brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain;');
@@ -6546,13 +6537,21 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');
     // Both phone blocks carry the reset: the <=768px grid header and the
     // <=720px / coarse-pointer block (anchored on their neighbouring rules).
-    expect(DASHBOARD_HTML).toContain('    .brand { font-size: 15px; margin-left: 1ch; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
-    expect(DASHBOARD_HTML).toContain('    html[data-theme="light"] header.top { background: #fff; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
-    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+    // Phones (owner 2026-09-08: larger there too): the wordmark fills the
+    // brand cell up to 280px; the <=768px grid block, the <=720px / coarse
+    // block and phone-chrome all carry it.
+    expect(DASHBOARD_HTML).toContain('    .brand-logo { width:280px; max-width:100%; height:auto; }\n    /* Replace the theme-toggle');
+    expect(DASHBOARD_HTML).toContain("control keeps its own column, so it never gets squeezed off. */\n    .brand-logo { width:280px; max-width:100%; height:auto; }");
+    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:280px; max-width:100%; height:auto; }');
+    expect(DASHBOARD_HTML).not.toContain('.brand-logo { width:auto; height:40px;');
+    expect(DASHBOARD_HTML).toContain(':root { --ct-header-h: 62px; --ct-main-pad: 12px; }');
   });
 
   it('steps Trends card titles up to 18px, a step above the 15px flow-row labels', () => {
     expect(DASHBOARD_HTML).toMatch(/#view-trends details\.trends-fold > summary \{\n(?:  \/\*[\s\S]*?\*\/\n)?  font-size: 18px;\n  font-weight: 650;/);
+    // Every card heading is the same size — the phone-only 14px shrink of the
+    // What Is Being Traded / Buys vs Sells titles is gone (owner 2026-09-08).
+    expect(DASHBOARD_HTML).not.toContain('.tchart-summary-title { font-size: 14px; }');
     // Nested Lag Distribution / Slowest Filers captions do not grow with them.
     expect(DASHBOARD_HTML).toContain('#view-trends .timeliness-panel > h3 {\n  font-size: 14px;');
     // Phones: labels/figures a notch smaller so a 375px card still fits.
@@ -6567,8 +6566,8 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(r.estNetFlowUsd)");
     expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(v.estNetFlowUsd)");
     expect(DASHBOARD_HTML).not.toContain("•\\u00a0\\u00a0net ' + netHtml(");
-    // Each stat is its own flex item; separators carry the wider gap.
-    expect(DASHBOARD_HTML).toContain(".join('<span class=\"fsep\" aria-hidden=\"true\">' + SEP_DOT + '</span>')");
+    // Each stat is its own flex item, joined by a plain space (no bullets).
+    expect(DASHBOARD_HTML).toContain("'<span class=\"fstat\">' + h + '</span>'; }).join(' ') + '</div>'");
     expect(DASHBOARD_HTML).toContain("flowChipHtml([esc(buySellText(r.buyCount, r.sellCount)), esc(polFull(r.uniqueMembers)), esc(assetFull(r.uniqueTickers)),");
     expect(DASHBOARD_HTML).toContain("flowChipHtml([esc(buySellText(v.buys, v.sells)), esc(polFull(v.members)), 'net volume ' + netHtml(v.estNetFlowUsd)])");
     // The " / " inside a buys/sells pair keeps its two NBSPs each side.

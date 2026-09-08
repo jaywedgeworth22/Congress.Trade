@@ -353,8 +353,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   header.top {
     display: flex; align-items: center; gap: 16px;
     /* Symmetric vertical pad so nav.tabs + #acct (align-items:center) sit
-       centered in the white band.  Side pads reach the content column:
-       max() keeps the plain 35px inset until the column cap engages. */
+       centered on the wordmark row (owner 2026-09-08: the filter strip sits
+       under the logo, so the header row is the band to center on).  Side
+       pads reach the content column: max() keeps the plain 35px inset until
+       the column cap engages. */
     padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
@@ -402,16 +404,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  /* Owner 2026-09-08: nav + account "vertically centered in the white
-     space".  On Trends / Trades that white band is header.top PLUS the
-     sticky filter strip flush under it, so the cluster drops by half the
-     strip's height (--ct-filter-h, measured by syncChromeMetrics(); 0 on
-     views without a strip).  position:relative leaves layout and the
-     --ct-header-h measurement untouched.  Desktop only: phones dock
-     nav.tabs at the bottom and use the hamburger account control. */
-  @media (min-width: 769px) and (hover: hover) {
-    header.top > nav.tabs, header.top > #acct { position: relative; top: calc(var(--ct-filter-h, 0px) / 2); }
-  }
   nav.tabs a {
     position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
@@ -1254,7 +1246,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      "Government / Municipal Debt" onto two lines.  .drawer-kv / .def-grid /
      .hbar.ledger keep the ledger contract; only .flowrow changed.  .flabel
      still wraps rather than ellipsizes so a label is never truncated. ---- */
-  .flowrow { margin: 12px 0; container-type: inline-size; }
+  .flowrow { margin: 12px 0; }
   .flowrow:first-child { margin-top: 2px; }
   /* Owner 2026-09-08 (supersedes the bounded-label column above for these
      rows): the label owns the row and "total volume ~$X" pins to the bar's
@@ -1265,30 +1257,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .fval { flex: 0 0 auto; text-align: right; font-size: 13px; font-weight: 600; font-style: italic; color: var(--text); white-space: nowrap; }
   .flowrow .fval .est-money { font-family: var(--mono); font-weight: 600; font-style: italic; color: inherit; }
   /* The stats line reads like a justified sentence: every stat is a flex item
-     and the free width is shared evenly around the bullet separators
-     (space-between), so the line stretches from the bar's left edge to its
-     right edge while each "N buys / N sells" pair stays tight. */
-  .flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+     and the free width is shared evenly between them (space-between), so the
+     line stretches from the bar's left edge to its right edge while each
+     "N buys / N sells" pair stays tight.  No bullet separators (owner
+     2026-09-08: the spacing alone separates the items; the dots looked odd).
+     On phones the line wraps stat by stat; 2ch is the floor between
+     neighbours on a full line. */
+  .flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 2ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
   .flowrow .fchip .fstat { white-space: nowrap; }
-  .flowrow .fchip .fsep { flex: 0 0 auto; }
-  /* Narrow cards (phones, tablets, and the two-column Trends cards below
-     ~1230px): the stats cannot share one line, and under space-between a
-     separator that lands on a wrap boundary is pinned to the bar edge on its
-     own.  Fall back to inline flow there: stats stay nowrap and the only
-     break opportunity is SEP_DOT's regular space before the bullet, so a
-     continuation line starts "•   stat" and no line ends with a stranded
-     bullet.  Thresholds are per stat count (.n3 = By Party, .n4 = the
-     asset-type / sector / market-cap rows) and clear a line with 4-digit
-     counts; the query sizes on the .flowrow container (the card), not the
-     viewport. */
-  @container (max-width: 469px) {
-    .flowrow .fchip.n3 { display: block; }
-    .flowrow .fchip.n3 > .fstat, .flowrow .fchip.n3 > .fsep { display: inline; }
-  }
-  @container (max-width: 559px) {
-    .flowrow .fchip:not(.n3) { display: block; }
-    .flowrow .fchip:not(.n3) > .fstat, .flowrow .fchip:not(.n3) > .fsep { display: inline; }
-  }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
   /* Owner follow-up batch #14: desktop keeps the full party name; mobile
@@ -2120,13 +2096,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        on the Trades/Trends filter bars. */
     html, body { width:100%; max-width:100%; overflow-x:clip; }
     body { background: var(--bg); font-size: 13px; }
-    :root { --ct-header-h: 52px; --ct-main-pad: 12px; }
+    :root { --ct-header-h: 62px; --ct-main-pad: 12px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 6px 10px 0; align-items: center; backdrop-filter: none;
     }
     .brand { font-size: 15px; margin-left: 1ch; }
-    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
+    /* Owner 2026-09-08: larger on phones too.  The wordmark fills the 1fr
+       brand cell up to 280px (56px tall at the 5:1 ratio); the account
+       control keeps its own column, so it never gets squeezed off. */
+    .brand-logo { width:280px; max-width:100%; height:auto; }
     .pill { padding: 3px 7px; }
     /* Full-bleed dock like Socratic.Trade console — not a floating glass pill.
        bottom:0 with safe-area padding INSIDE the painted bar so it sits
@@ -2374,10 +2353,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* #/$ metric toggles stay on the SAME line as the heading.  What Is
        Being Traded and Buys vs Sells share one size — do not shrink the
        Buys vs Sells pair below the ticker-rank pair. */
-    /* Keep title + both toggle groups + HIDE cue on one summary line on phones. */
+    /* Keep title + both toggle groups + HIDE cue on one summary line on phones
+       with tighter gaps only — owner 2026-09-08: every card heading is the
+       same size, so the title is NOT shrunk here. */
     #view-trends summary.tchart-summary { gap: 5px; }
     #view-trends summary.tchart-summary .tchart-controls { gap: 5px; }
-    #view-trends summary.tchart-summary .tchart-summary-title { font-size: 14px; }
     #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
@@ -2959,7 +2939,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px 0; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
-    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
+    .brand-logo { width:280px; max-width:100%; height:auto; }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -2970,7 +2950,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html.phone-chrome .acct-desktop { display: none !important; }
   html.phone-chrome .acct-mobile { display: inline-flex !important; }
   html.phone-chrome .brand { margin-left: 1ch; }
-  html.phone-chrome .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
+  html.phone-chrome .brand-logo { width:280px; max-width:100%; height:auto; }
   @media (max-width: 720px), (hover: none) and (pointer: coarse) {
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
@@ -11169,18 +11149,19 @@ function setPricingProof() {
    2026-09-08: "an extra space on either side of every •").  Exactly ONE of
    them, the regular space just before the bullet, is a line-break
    opportunity; the rest are NBSPs.  So wherever a stat line has to wrap
-   (phone cards, narrow tables) it breaks BEFORE a bullet and the
+   (narrow table cells) it breaks BEFORE a bullet and the
    continuation line starts "•   stat" — never a bullet stranded at the end
    of the previous line.  The " / " inside a buys/sells pair keeps its two
    NBSPs, so the pair reads tighter than the gaps between stats. */
 var SEP_DOT = '\\u00a0\\u00a0 •\\u00a0\\u00a0\\u00a0';
 /* "total volume ~$X" for the top-right of a flow row (items are HTML). */
 function totalVolumeHtml(n) { return '<span class="fval-k">total volume</span> ' + estUsd(n); }
-/* Justified stats line under a flow bar: each stat is its own flex item with
-   the bullet separators between them (see .flowrow .fchip). Items are HTML. */
+/* Stats line under a flow bar: each stat is its own flex item and the free
+   width is shared between them (see .flowrow .fchip).  No separators — owner
+   2026-09-08: the spacing alone separates the items.  Items are HTML; the
+   single space between spans is ignored by the flex container. */
 function flowChipHtml(items) {
-  return '<div class="fchip n' + items.length + '">' + items.map(function (h) { return '<span class="fstat">' + h + '</span>'; })
-    .join('<span class="fsep" aria-hidden="true">' + SEP_DOT + '</span>') + '</div>';
+  return '<div class="fchip">' + items.map(function (h) { return '<span class="fstat">' + h + '</span>'; }).join(' ') + '</div>';
 }
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
@@ -13020,7 +13001,6 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
     } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
-    syncChromeMetrics(); // --ct-filter-h follows the active view's filter strip
     if (b.dataset.view === 'trades') {
       window.scrollTo({ top: 0, behavior: 'auto' });
       requestAnimationFrame(function () {
@@ -13312,11 +13292,6 @@ function syncChromeMetrics() {
        can sit in the white header). */
     document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingLeft);
   }
-  /* Height of the sticky filter strip flush under the header on the active
-     view (Trends / Trades), 0 elsewhere: nav.tabs / #acct centre on the
-     header + strip band (see the header.top > nav.tabs rule). */
-  var strip = document.querySelector('.view.active .trades-toolbars, .view.active #trendsSharedFilters');
-  document.documentElement.style.setProperty('--ct-filter-h', (strip ? strip.getBoundingClientRect().height : 0) + 'px');
 }
 function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
@@ -13781,7 +13756,6 @@ loadMe().then(function () {
     if (TAB_PAGE_TITLES[initialView]) setDocumentTitle(TAB_PAGE_TITLES[initialView]);
     var view = el('view-' + initialView);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
-    syncChromeMetrics(); // --ct-filter-h follows the restored view's filter strip
     if (initialView === 'trades') window.scrollTo({ top: 0, behavior: 'auto' });
     if (initialView === 'people') loadPeopleDirectory();
     if (initialView === 'review' && canUseAdmin()) loadReview();
