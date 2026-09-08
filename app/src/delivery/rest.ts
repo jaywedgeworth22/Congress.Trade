@@ -33,6 +33,7 @@ import { getDatadogInitInput } from '../shared/datadog.ts';
 import { checkPipelineHealth, type PipelineHealth } from '../shared/pipelineHealth.ts';
 import { probeSenateRelay } from '../ingestion/senateRelayHealth.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
+import { enhanceSenateHtmlDocument } from '../extraction/senatePaperMedia.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
   asAssetCategories,
@@ -1537,9 +1538,16 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   // Stored senate filings are text/html authored by a third party (eFD).
   // Serving them inline from our origin must never execute their markup in
   // our origin context: CSP sandbox (no allow-scripts, no allow-same-origin)
-  // still renders the static document read-only. PDFs don't need it.
+  // still renders the static document read-only. We enhance Senate HTML
+  // (extracting paper scans into a clean multi-page reader or injecting table CSS)
+  // so it renders legibly and reliably under sandbox CSP. PDFs stream as-is.
   if (contentType.toLowerCase().includes('html')) {
     headers['content-security-policy'] = 'sandbox';
+    const rawText = typeof (obj as any).text === 'function'
+      ? await (obj as any).text()
+      : await new Response(obj.body).text();
+    const enhanced = enhanceSenateHtmlDocument(rawText, docId, filingRow.source_url);
+    return new Response(enhanced, { headers });
   }
   return new Response(obj.body, { headers });
 }

@@ -920,6 +920,36 @@ describe('normalize', () => {
     ]);
     expect(result2.needsReview).toBe(true);
     expect(String(cap2.reviewRows[0][1])).toContain('future_tx_date');
+
+    // 3. Blumenthal paper PTR template rows (Microsoft/IBM with 1X placeholder years)
+    // are dropped as form-chrome up front, preventing false future_tx_date review blocks.
+    const { env: env3, cap: cap3 } = makeEnv([
+      { ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' },
+      { ticker: 'MSFT', name: 'Microsoft Corporation', aliases: '[]' },
+    ]);
+    const result3 = await normalize(env3, filing({ filedDate: '2026-08-01' }), [
+      tx({
+        assetName: 'Apple Inc.',
+        ticker: 'AAPL',
+        txDate: '2026-07-15',
+        amountMin: 1001,
+        amountMax: 15000,
+        confidence: 0.98,
+        rawText: 'Apple Inc. purchase 2026-07-15',
+      }),
+      tx({
+        assetName: 'Microsoft',
+        ticker: 'MSFT',
+        txDate: '2027-01-17', // 1X OCR artifact
+        amountMin: 1001,
+        amountMax: 15000,
+        confidence: 0.85,
+        rawText: '(DC) Microsoft (stock) NASDAQ/OTC 2/27/1X EXAMPLE',
+      }),
+    ]);
+    expect(result3.needsReview).toBe(false);
+    expect(result3.transactions.length).toBe(1);
+    expect(cap3.reviewRows.length).toBe(0);
   });
 
   it('local vision publishes dated siblings when one grid row omitted the date', async () => {
