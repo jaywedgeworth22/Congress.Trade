@@ -1956,6 +1956,15 @@ describe('DASHBOARD_HTML', () => {
       expect(DASHBOARD_HTML).toContain('.flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }');
       expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fstat { white-space: nowrap; }');
       expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fsep { flex: 0 0 auto; }');
+      // Narrow cards: inline flow so a wrap never strands a bullet at the
+      // bar edge (the .flowrow is the size container).
+      expect(DASHBOARD_HTML).toContain('.flowrow { margin: 12px 0; container-type: inline-size; }');
+      expect(DASHBOARD_HTML).toContain('@container (max-width: 539px) {\n    .flowrow .fchip { display: block; }\n    .flowrow .fchip .fstat, .flowrow .fchip .fsep { display: inline; }\n  }');
+      // Dense table stat lines: whole parts, a too-narrow cell wraps only at
+      // the bullet instead of clipping the sells count.
+      expect(DASHBOARD_HTML).toContain('.stack-under > span { white-space: normal; }');
+      expect(DASHBOARD_HTML).toContain('.stack-under .nb { white-space: nowrap; }');
+      expect(DASHBOARD_HTML).not.toContain('.stack-under > span { white-space: nowrap; }');
     });
 
     it('caps the drawer ledger so a wide desktop drawer cannot re-open the void', () => {
@@ -2148,8 +2157,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
     // Top Performers / Most Active Politicians: single merged stat line
     // (no separate rank column, no split-bar visualization).
-    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' buys' + SEP_DOT + Math.round(100 * (r.winRate || 0)) + '% win'");
-    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' trades' + SEP_DOT + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells'");
+    expect(DASHBOARD_HTML).toContain("'<span class=\"nb\">' + fmtCount(r.tradeCount) + ' buys</span>' + SEP_DOT +\n        '<span class=\"nb\">' + Math.round(100 * (r.winRate || 0)) + '% win</span>'");
+    expect(DASHBOARD_HTML).toContain("'<span class=\"nb\">' + fmtCount(r.tradeCount) + ' trades</span>' + SEP_DOT +\n        '<span class=\"nb\">' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells</span>'");
   });
 
   it('surfaces source error and stale status instead of showing only successful polls', () => {
@@ -6521,7 +6530,10 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     // Intrinsic size attributes so the 5:1 box is known before the PNG loads
     // (no header-height jump for the sticky filter offset).
     expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');
-    expect(DASHBOARD_HTML).toContain('    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+    // Both phone blocks carry the reset: the <=768px grid header and the
+    // <=720px / coarse-pointer block (anchored on their neighbouring rules).
+    expect(DASHBOARD_HTML).toContain('    .brand { font-size: 15px; margin-left: 1ch; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+    expect(DASHBOARD_HTML).toContain('    html[data-theme="light"] header.top { background: #fff; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
     expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
   });
 
@@ -6534,7 +6546,9 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
   });
 
   it('labels flow-row figures "total volume" / "net volume" and widens every bullet gap', () => {
-    expect(DASHBOARD_HTML).toContain("var SEP_DOT = '\\u00a0\\u00a0\\u00a0•\\u00a0\\u00a0\\u00a0';");
+    // Three spaces each side; the one regular space (before the bullet) is
+    // the only break opportunity, so a wrapped line starts with the bullet.
+    expect(DASHBOARD_HTML).toContain("var SEP_DOT = '\\u00a0\\u00a0 •\\u00a0\\u00a0\\u00a0';");
     expect(DASHBOARD_HTML).toContain("function totalVolumeHtml(n) { return '<span class=\"fval-k\">total volume</span> ' + estUsd(n); }");
     expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(r.estNetFlowUsd)");
     expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(v.estNetFlowUsd)");
@@ -6545,6 +6559,6 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain("flowChipHtml([esc(buySellText(v.buys, v.sells)), esc(polFull(v.members)), 'net volume ' + netHtml(v.estNetFlowUsd)])");
     // The " / " inside a buys/sells pair keeps its two NBSPs each side.
     expect(DASHBOARD_HTML).toContain("'\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(sells) + ' sell'");
-    expect(DASHBOARD_HTML).toContain('5+ buys &nbsp;&nbsp;&bull;&nbsp;&nbsp; stocks only &nbsp;&nbsp;&bull;&nbsp;&nbsp; +/-200% cap per trade');
+    expect(DASHBOARD_HTML).toContain('5+ buys&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;stocks only&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;+/-200% cap per trade');
   });
 });

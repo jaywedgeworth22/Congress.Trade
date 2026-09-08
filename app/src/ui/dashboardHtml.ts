@@ -1150,7 +1150,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     color: var(--text-dim);
     line-height: 1.35;
   }
-  .stack-under > span { white-space: nowrap; }
+  /* Each .nb part ("1,234 trades", "1,000 buys / 234 sells") stays whole; the
+     line itself may break, and SEP_DOT's regular space before the bullet is
+     the only place it can, so a too-narrow cell wraps to "•   1,000 buys /
+     234 sells" instead of clipping the sells count (seen at 375px and 900px
+     with 4-digit counts). */
+  .stack-under > span { white-space: normal; }
+  .stack-under .nb { white-space: nowrap; }
   .stack-under .split-wrap { display: inline-flex; }
   .stack-under .split { display: none; }
   /* Top Performers / Most Active Politicians: larger, vertically centered
@@ -1222,7 +1228,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      "Government / Municipal Debt" onto two lines.  .drawer-kv / .def-grid /
      .hbar.ledger keep the ledger contract; only .flowrow changed.  .flabel
      still wraps rather than ellipsizes so a label is never truncated. ---- */
-  .flowrow { margin: 12px 0; }
+  .flowrow { margin: 12px 0; container-type: inline-size; }
   .flowrow:first-child { margin-top: 2px; }
   /* Owner 2026-09-08 (supersedes the bounded-label column above for these
      rows): the label owns the row and "total volume ~$X" pins to the bar's
@@ -1239,6 +1245,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
   .flowrow .fchip .fstat { white-space: nowrap; }
   .flowrow .fchip .fsep { flex: 0 0 auto; }
+  /* Narrow cards (phones, tablets, and the two-column Trends cards below
+     ~1230px): the stats cannot share one line, and under space-between a
+     separator that lands on a wrap boundary is pinned to the bar edge on its
+     own.  Fall back to inline flow there: stats stay nowrap and the only
+     break opportunity is SEP_DOT's regular space before the bullet, so a
+     continuation line starts "•   stat" and no line ends with a stranded
+     bullet.  540px clears a 4-stat line with 3-digit counts; the query sizes
+     on the .flowrow container (the card), not the viewport. */
+  @container (max-width: 539px) {
+    .flowrow .fchip { display: block; }
+    .flowrow .fchip .fstat, .flowrow .fchip .fsep { display: inline; }
+  }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
   /* Owner follow-up batch #14: desktop keeps the full party name; mobile
@@ -3255,7 +3273,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <details class="section trends-fold" id="trPerformersFold" open>
         <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
         <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
-        <p class="sub">5+ buys &nbsp;&nbsp;&bull;&nbsp;&nbsp; stocks only &nbsp;&nbsp;&bull;&nbsp;&nbsp; +/-200% cap per trade</p>
+        <p class="sub">5+ buys&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;stocks only&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;+/-200% cap per trade</p>
         <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
       </details>
     </div>
@@ -11115,11 +11133,15 @@ function setPricingProof() {
     : '';
 }
 
-/* Stat-line separator: three NBSPs each side of the bullet (owner 2026-09-08:
-   "an extra space on either side of every •").  The " / " inside a
-   buys/sells pair keeps its two, so the pair reads tighter than the gaps
-   between stats. */
-var SEP_DOT = '\\u00a0\\u00a0\\u00a0•\\u00a0\\u00a0\\u00a0';
+/* Stat-line separator: three spaces each side of the bullet (owner
+   2026-09-08: "an extra space on either side of every •").  Exactly ONE of
+   them, the regular space just before the bullet, is a line-break
+   opportunity; the rest are NBSPs.  So wherever a stat line has to wrap
+   (phone cards, narrow tables) it breaks BEFORE a bullet and the
+   continuation line starts "•   stat" — never a bullet stranded at the end
+   of the previous line.  The " / " inside a buys/sells pair keeps its two
+   NBSPs, so the pair reads tighter than the gaps between stats. */
+var SEP_DOT = '\\u00a0\\u00a0 •\\u00a0\\u00a0\\u00a0';
 /* "total volume ~$X" for the top-right of a flow row (items are HTML). */
 function totalVolumeHtml(n) { return '<span class="fval-k">total volume</span> ' + estUsd(n); }
 /* Justified stats line under a flow bar: each stat is its own flex item with
@@ -11208,7 +11230,8 @@ function loadTrPerformers() {
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = fmtCount(r.tradeCount) + ' buys' + SEP_DOT + Math.round(100 * (r.winRate || 0)) + '% win';
+      var statLine = '<span class="nb">' + fmtCount(r.tradeCount) + ' buys</span>' + SEP_DOT +
+        '<span class="nb">' + Math.round(100 * (r.winRate || 0)) + '% win</span>';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
@@ -11367,7 +11390,8 @@ function loadTrMembers() {
       // district, which they do not hold (EXEC-MCCORMICK does carry a state).
       var metaBits = memberBranchBits(r, EXEC_TITLE_FULL).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = fmtCount(r.tradeCount) + ' trades' + SEP_DOT + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
+      var statLine = '<span class="nb">' + fmtCount(r.tradeCount) + ' trades</span>' + SEP_DOT +
+        '<span class="nb">' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells</span>';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
