@@ -6516,6 +6516,8 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
 
   it('enlarges the wordmark on desktop and keeps the compact 40px lockup on phones', () => {
     expect(DASHBOARD_HTML).toContain('.brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain;');
+    // >=1100px: never narrower than the 368px default filter row.
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 1100px) { .brand-logo { width:clamp(368px, 30vw, 400px); } }');
     // Intrinsic size attributes so the 5:1 box is known before the PNG loads
     // (no header-height jump for the sticky filter offset).
     expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');

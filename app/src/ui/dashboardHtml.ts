@@ -370,6 +370,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      The 30vw cap keeps it from crowding nav.tabs on 900-1300px laptops; the
      phone / coarse-pointer block below restores the compact 40px lockup. */
   .brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
+  /* From 1100px the wordmark also floors at the default filter row's 368px
+     (30vw alone only crosses 368px at 1227px).  1100px is where a signed-in
+     account cluster (~270px) still fits beside a 368px logo + 319px nav
+     without wrapping nav.tabs onto a second line. */
+  @media (min-width: 1100px) { .brand-logo { width:clamp(368px, 30vw, 400px); } }
   .brand-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .brand .dot { color: var(--accent); }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
