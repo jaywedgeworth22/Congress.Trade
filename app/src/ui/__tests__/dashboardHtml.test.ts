@@ -1959,7 +1959,9 @@ describe('DASHBOARD_HTML', () => {
       // Narrow cards: inline flow so a wrap never strands a bullet at the
       // bar edge (the .flowrow is the size container).
       expect(DASHBOARD_HTML).toContain('.flowrow { margin: 12px 0; container-type: inline-size; }');
-      expect(DASHBOARD_HTML).toContain('@container (max-width: 539px) {\n    .flowrow .fchip { display: block; }\n    .flowrow .fchip .fstat, .flowrow .fchip .fsep { display: inline; }\n  }');
+      expect(DASHBOARD_HTML).toContain("return '<div class=\"fchip n' + items.length + '\">'");
+      expect(DASHBOARD_HTML).toContain('@container (max-width: 469px) {\n    .flowrow .fchip.n3 { display: block; }\n    .flowrow .fchip.n3 > .fstat, .flowrow .fchip.n3 > .fsep { display: inline; }\n  }');
+      expect(DASHBOARD_HTML).toContain('@container (max-width: 559px) {\n    .flowrow .fchip:not(.n3) { display: block; }\n    .flowrow .fchip:not(.n3) > .fstat, .flowrow .fchip:not(.n3) > .fsep { display: inline; }\n  }');
       // Dense table stat lines: whole parts, a too-narrow cell wraps only at
       // the bullet instead of clipping the sells count.
       expect(DASHBOARD_HTML).toContain('.stack-under > span { white-space: normal; }');
@@ -6518,9 +6520,21 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain('padding: 4px calc(50vw - 50%) 10px;');
     expect(DASHBOARD_HTML).not.toContain('padding: 4px var(--ct-main-pad, 35px) 10px;');
     expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 100px); z-index: 9;');
-    // Tab switch + boot-time restore keep html[data-view] in sync.
+    // Tab switch + boot-time restore keep html[data-view] in sync, and the
+    // head bootstrap stamps a deep-linked / remembered view before first paint.
     expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', b.dataset.view);");
     expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', initialView);");
+    expect(DASHBOARD_HTML).toContain("if (!v) { try { v = localStorage.getItem('ct-active-tab'); } catch (e2) {} }");
+    expect(DASHBOARD_HTML).toContain("if (v === 'trades' || v === 'people' || v === 'subs' || v === 'review' || v === 'admin') {\n        document.documentElement.setAttribute('data-view', v);");
+  });
+
+  it('centres nav + account on the header + filter-strip white band on desktop', () => {
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    header.top > nav.tabs, header.top > #acct { position: relative; top: calc(var(--ct-filter-h, 0px) / 2); }\n  }');
+    expect(DASHBOARD_HTML).toContain("var strip = document.querySelector('.view.active .trades-toolbars, .view.active #trendsSharedFilters');");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-filter-h', (strip ? strip.getBoundingClientRect().height : 0) + 'px');");
+    // Re-measured on every tab switch and on the boot-time restore.
+    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the active view's filter strip");
+    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the restored view's filter strip");
   });
 
   it('enlarges the wordmark on desktop and keeps the compact 40px lockup on phones', () => {

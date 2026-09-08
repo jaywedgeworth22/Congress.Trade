@@ -151,6 +151,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#08111f' : '#eff3f8');
   })();
+  // Header column before first paint: header.top pads out to the active
+  // view's content column (--ct-col-max via html[data-view]).  The static
+  // markup says "trends"; a deep link (?view=trades) or a remembered tab
+  // would otherwise paint on the 1280px Trends column and jump once the app
+  // script restores the view.  Same aliases / precedence as that restore.
+  (function () {
+    try {
+      var aliases = { feed: 'trades', delivery: 'subs', alerts: 'subs', push: 'subs' };
+      var v = new URL(window.location.href).searchParams.get('view');
+      if (!v) { try { v = localStorage.getItem('ct-active-tab'); } catch (e2) {} }
+      v = aliases[v] || v;
+      if (v === 'trades' || v === 'people' || v === 'subs' || v === 'review' || v === 'admin') {
+        document.documentElement.setAttribute('data-view', v);
+      }
+    } catch (e) {}
+  })();
 </script>
 <style>
   :root {
@@ -386,6 +402,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  /* Owner 2026-09-08: nav + account "vertically centered in the white
+     space".  On Trends / Trades that white band is header.top PLUS the
+     sticky filter strip flush under it, so the cluster drops by half the
+     strip's height (--ct-filter-h, measured by syncChromeMetrics(); 0 on
+     views without a strip).  position:relative leaves layout and the
+     --ct-header-h measurement untouched.  Desktop only: phones dock
+     nav.tabs at the bottom and use the hamburger account control. */
+  @media (min-width: 769px) and (hover: hover) {
+    header.top > nav.tabs, header.top > #acct { position: relative; top: calc(var(--ct-filter-h, 0px) / 2); }
+  }
   nav.tabs a {
     position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
@@ -1251,11 +1277,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      own.  Fall back to inline flow there: stats stay nowrap and the only
      break opportunity is SEP_DOT's regular space before the bullet, so a
      continuation line starts "•   stat" and no line ends with a stranded
-     bullet.  540px clears a 4-stat line with 3-digit counts; the query sizes
-     on the .flowrow container (the card), not the viewport. */
-  @container (max-width: 539px) {
-    .flowrow .fchip { display: block; }
-    .flowrow .fchip .fstat, .flowrow .fchip .fsep { display: inline; }
+     bullet.  Thresholds are per stat count (.n3 = By Party, .n4 = the
+     asset-type / sector / market-cap rows) and clear a line with 4-digit
+     counts; the query sizes on the .flowrow container (the card), not the
+     viewport. */
+  @container (max-width: 469px) {
+    .flowrow .fchip.n3 { display: block; }
+    .flowrow .fchip.n3 > .fstat, .flowrow .fchip.n3 > .fsep { display: inline; }
+  }
+  @container (max-width: 559px) {
+    .flowrow .fchip:not(.n3) { display: block; }
+    .flowrow .fchip:not(.n3) > .fstat, .flowrow .fchip:not(.n3) > .fsep { display: inline; }
   }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
@@ -11147,7 +11179,7 @@ function totalVolumeHtml(n) { return '<span class="fval-k">total volume</span> '
 /* Justified stats line under a flow bar: each stat is its own flex item with
    the bullet separators between them (see .flowrow .fchip). Items are HTML. */
 function flowChipHtml(items) {
-  return '<div class="fchip">' + items.map(function (h) { return '<span class="fstat">' + h + '</span>'; })
+  return '<div class="fchip n' + items.length + '">' + items.map(function (h) { return '<span class="fstat">' + h + '</span>'; })
     .join('<span class="fsep" aria-hidden="true">' + SEP_DOT + '</span>') + '</div>';
 }
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
@@ -12988,6 +13020,7 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
     } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
+    syncChromeMetrics(); // --ct-filter-h follows the active view's filter strip
     if (b.dataset.view === 'trades') {
       window.scrollTo({ top: 0, behavior: 'auto' });
       requestAnimationFrame(function () {
@@ -13279,6 +13312,11 @@ function syncChromeMetrics() {
        can sit in the white header). */
     document.documentElement.style.setProperty('--ct-main-pad', getComputedStyle(mainEl).paddingLeft);
   }
+  /* Height of the sticky filter strip flush under the header on the active
+     view (Trends / Trades), 0 elsewhere: nav.tabs / #acct centre on the
+     header + strip band (see the header.top > nav.tabs rule). */
+  var strip = document.querySelector('.view.active .trades-toolbars, .view.active #trendsSharedFilters');
+  document.documentElement.style.setProperty('--ct-filter-h', (strip ? strip.getBoundingClientRect().height : 0) + 'px');
 }
 function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
@@ -13743,7 +13781,7 @@ loadMe().then(function () {
     if (TAB_PAGE_TITLES[initialView]) setDocumentTitle(TAB_PAGE_TITLES[initialView]);
     var view = el('view-' + initialView);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
-    
+    syncChromeMetrics(); // --ct-filter-h follows the restored view's filter strip
     if (initialView === 'trades') window.scrollTo({ top: 0, behavior: 'auto' });
     if (initialView === 'people') loadPeopleDirectory();
     if (initialView === 'review' && canUseAdmin()) loadReview();
