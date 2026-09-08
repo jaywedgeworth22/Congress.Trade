@@ -1232,6 +1232,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     white-space: nowrap;
     min-width: 0;
   }
+  /* ---- Committee Sector Conflicts (owner 2026-09-08): the politician's
+     name and as much committee text as fits come first; the rest of the
+     committee list is one hover (title) or one click (any non-asset cell
+     opens the politician's drawer) away.  Fixed layout + colgroup so the
+     nowrap committee string can no longer balloon the table into horizontal
+     scroll (measured: 995px committee cell in a 1238px card, names squeezed
+     to 97px).  Committees render one per line, clamped to two, with a
+     "+N more" tail. ---- */
+  /* 720px floor: phones scroll the card horizontally (the table used to be
+     1442px there) while ticker, side pill and dollar figure stay whole. */
+  #view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 720px; }
+  #view-trends .conflicts-table .c-pol { width: 23%; }
+  #view-trends .conflicts-table .c-com { width: 32%; }
+  #view-trends .conflicts-table .c-sec { width: 17%; }
+  #view-trends .conflicts-table .c-ast { width: 9%; }
+  #view-trends .conflicts-table .c-side { width: 9%; }
+  #view-trends .conflicts-table .c-est { width: 10%; }
+  #view-trends .conflicts-table td:has(.member-cell) { width: auto; max-width: none; }
+  #view-trends .conflicts-table td { overflow: hidden; text-overflow: ellipsis; }
+  #view-trends .conflicts-table td.committees { white-space: normal; line-height: 1.35; }
+  #view-trends .conflicts-table .committee-lines { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  #view-trends .conflicts-table .committee-line { display: block; }
+  #view-trends .conflicts-table .committee-line .more { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  #view-trends .conflicts-table td.est, #view-trends .conflicts-table th.est { text-align: right; }
+  #view-trends .conflicts-table tbody tr.conflict-row td[data-member] { cursor: pointer; }
+  #view-trends .conflicts-table tbody tr.conflict-row:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  @media (max-width: 768px) { #view-trends .conflicts-table th, #view-trends .conflicts-table td { padding-left: 8px; padding-right: 8px; } }
   /* ---- Flow rows (sector / market-cap / asset-type / party): label + value
      on a top line, a full-width bar, then the stats line beneath — no
      hard-coded indent, so it stays aligned at every width.
@@ -3386,9 +3413,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Committee conflicts (journalistic accountability lens) -->
     <details class="section trends-fold" open>
       <summary class="tf-h">Committee Sector Conflicts<span class="fold-cue" aria-hidden="true"></span></summary>
-      <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.</p>
-      <div class="table-wrap"><table>
-        <thead><tr><th scope="col">Politician</th><th scope="col">Committee</th><th scope="col">Sector</th><th scope="col">Asset</th><th scope="col">Side</th><th scope="col">Est. $</th></tr></thead>
+      <p class="sub">Disclosed trades in sectors that a politician&rsquo;s committees oversee (curated committee→sector map).&nbsp; Observational — not evidence of impropriety.&nbsp; Hover a committee cell for the full list; click a row for the politician.</p>
+      <div class="table-wrap"><table class="conflicts-table" id="tableTrConflicts">
+        <colgroup><col class="c-pol"><col class="c-com"><col class="c-sec"><col class="c-ast"><col class="c-side"><col class="c-est"></colgroup>
+        <thead><tr><th scope="col">Politician</th><th scope="col">Committee</th><th scope="col">Sector</th><th scope="col">Asset</th><th scope="col">Side</th><th scope="col" class="est">Est. $</th></tr></thead>
         <tbody id="trConflicts"><tr><td colspan="6" class="state">Loading…</td></tr></tbody>
       </table></div>
     </details>
@@ -10212,6 +10240,25 @@ function syncRisingActivityVisibility() {
   fold.hidden = hide;
 }
 
+/* "House Committee on Financial Services" -> "House Financial Services": the
+   chamber + "Committee on" boilerplate repeats on every row, so the part that
+   differs gets the column width.  Select / Joint / Subcommittee names pass
+   through untouched; the cell's tooltip always carries the full names. */
+function shortCommittee(name) {
+  return String(name || '').replace(/^(House|Senate) Committee on (?:the )?/i, '$1 ');
+}
+/* Committee cell: one committee per line, clamped to two lines by CSS
+   (.committee-lines), "+N more" on the second line when the list is longer,
+   full list in the title.  extraAttrs carries the row's data-member so the
+   cell opens the politician's drawer like the rest of the row. */
+function committeeCellHtml(list, extraAttrs) {
+  var all = Array.isArray(list) ? list.filter(Boolean) : (list ? [String(list)] : []);
+  if (!all.length) return '<td class="muted committees"' + (extraAttrs || '') + '>—</td>';
+  var lines = all.slice(0, 2).map(function (c) { return esc(shortCommittee(c)); });
+  if (all.length > 2) lines[1] += ' <span class="more">+' + (all.length - 2) + ' more</span>';
+  return '<td class="muted committees"' + (extraAttrs || '') + ' title="' + esc(all.join('\\n')) + '">' +
+    '<div class="committee-lines">' + lines.map(function (l) { return '<span class="committee-line">' + l + '</span>'; }).join('') + '</div></td>';
+}
 /* Committee sector conflicts for the current Trends window. */
 function loadTrConflicts() {
   var body = el('trConflicts');
@@ -10228,18 +10275,21 @@ function loadTrConflicts() {
       var memberAttr = r.filerId
         ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
         : ' class="member-cell"';
-      var committees = Array.isArray(r.viaCommittees) ? r.viaCommittees.join(', ') : (r.viaCommittees || '—');
+      // Every cell except Asset opens the politician's drawer (the click
+      // delegation resolves [data-member] before [data-asset], so the ticker
+      // keeps its own company link only if its cell carries no data-member).
+      var rowMember = r.filerId ? ' data-member="' + esc(r.filerId) + '"' : '';
       var side = typeName[r.txType] || r.txType || '—';
       var asset = r.ticker || '—';
-      return '<tr class="row">' +
-        '<td><div' + memberAttr + '><span class="name-line">' + esc(name) + '</span></div></td>' +
-        '<td class="muted">' + esc(committees) + '</td>' +
-        '<td class="muted">' + esc(r.sector || '—') + '</td>' +
+      return '<tr class="row conflict-row">' +
+        '<td' + rowMember + '><div' + memberAttr + ' title="' + esc(name) + '"><span class="name-line">' + esc(name) + '</span></div></td>' +
+        committeeCellHtml(r.viaCommittees, rowMember) +
+        '<td class="muted sector"' + rowMember + ' title="' + esc(r.sector || '') + '">' + esc(r.sector || '—') + '</td>' +
         '<td>' + (r.ticker
           ? '<span class="clickable" data-asset="' + esc(r.ticker) + '">' + esc(asset) + '</span>'
           : esc(asset)) + '</td>' +
-        '<td><span class="dirpill ' + esc(r.txType || '') + '">' + esc(side) + '</span></td>' +
-        '<td class="est">' + estUsd(r.estAmountUsd) + '</td></tr>';
+        '<td' + rowMember + ' title="' + esc(side) + '"><span class="dirpill ' + esc(r.txType || '') + '">' + esc(side) + '</span></td>' +
+        '<td class="est"' + rowMember + '>' + estUsd(r.estAmountUsd) + '</td></tr>';
     }).join('');
   }).catch(function (e) {
     body.innerHTML = stateRow(6, 'Could not load: ' + e.message);
