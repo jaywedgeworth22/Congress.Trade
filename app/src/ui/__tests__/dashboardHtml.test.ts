@@ -6582,9 +6582,11 @@ describe('Committee Sector Conflicts table (owner 2026-09-08)', () => {
   it('uses a fixed-layout colgroup so the committee text cannot balloon the table', () => {
     expect(DASHBOARD_HTML).toContain('<table class="conflicts-table" id="tableTrConflicts">');
     expect(DASHBOARD_HTML).toContain('<colgroup><col class="c-pol"><col class="c-com"><col class="c-sec"><col class="c-ast"><col class="c-side"><col class="c-est"></colgroup>');
-    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 600px; }');
-    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-pol { width: 25%; }');
-    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-com { width: 35%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 720px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-pol { width: 23%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-com { width: 32%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-sec { width: 17%; }');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px) { #view-trends .conflicts-table th, #view-trends .conflicts-table td { padding-left: 8px; padding-right: 8px; } }');
     // The generic Trends "squeeze the name cell" rule is lifted for this table.
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table td:has(.member-cell) { width: auto; max-width: none; }');
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table td.est, #view-trends .conflicts-table th.est { text-align: right; }');

@@ -1240,13 +1240,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      scroll (measured: 995px committee cell in a 1238px card, names squeezed
      to 97px).  Committees render one per line, clamped to two, with a
      "+N more" tail. ---- */
-  #view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 600px; } /* 600px floor: phones scroll the card horizontally (was 1442px), Asset/Side/Est. stay legible */
-  #view-trends .conflicts-table .c-pol { width: 25%; }
-  #view-trends .conflicts-table .c-com { width: 35%; }
-  #view-trends .conflicts-table .c-sec { width: 15%; }
-  #view-trends .conflicts-table .c-ast { width: 8%; }
-  #view-trends .conflicts-table .c-side { width: 8%; }
-  #view-trends .conflicts-table .c-est { width: 9%; }
+  /* 720px floor: phones scroll the card horizontally (the table used to be
+     1442px there) while ticker, side pill and dollar figure stay whole. */
+  #view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 720px; }
+  #view-trends .conflicts-table .c-pol { width: 23%; }
+  #view-trends .conflicts-table .c-com { width: 32%; }
+  #view-trends .conflicts-table .c-sec { width: 17%; }
+  #view-trends .conflicts-table .c-ast { width: 9%; }
+  #view-trends .conflicts-table .c-side { width: 9%; }
+  #view-trends .conflicts-table .c-est { width: 10%; }
   #view-trends .conflicts-table td:has(.member-cell) { width: auto; max-width: none; }
   #view-trends .conflicts-table td { overflow: hidden; text-overflow: ellipsis; }
   #view-trends .conflicts-table td.committees { white-space: normal; line-height: 1.35; }
@@ -1256,6 +1258,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .conflicts-table td.est, #view-trends .conflicts-table th.est { text-align: right; }
   #view-trends .conflicts-table tbody tr.conflict-row td[data-member] { cursor: pointer; }
   #view-trends .conflicts-table tbody tr.conflict-row:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  @media (max-width: 768px) { #view-trends .conflicts-table th, #view-trends .conflicts-table td { padding-left: 8px; padding-right: 8px; } }
   /* ---- Flow rows (sector / market-cap / asset-type / party): label + value
      on a top line, a full-width bar, then the stats line beneath — no
      hard-coded indent, so it stays aligned at every width.
@@ -10285,7 +10288,7 @@ function loadTrConflicts() {
         '<td>' + (r.ticker
           ? '<span class="clickable" data-asset="' + esc(r.ticker) + '">' + esc(asset) + '</span>'
           : esc(asset)) + '</td>' +
-        '<td' + rowMember + '><span class="dirpill ' + esc(r.txType || '') + '">' + esc(side) + '</span></td>' +
+        '<td' + rowMember + ' title="' + esc(side) + '"><span class="dirpill ' + esc(r.txType || '') + '">' + esc(side) + '</span></td>' +
         '<td class="est"' + rowMember + '>' + estUsd(r.estAmountUsd) + '</td></tr>';
     }).join('');
   }).catch(function (e) {
