@@ -3,7 +3,6 @@
   "specifiers": {
     "npm:@cloudflare/workers-types@^4.20240718.0": "4.20260702.1",
     "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
-    "npm:@google/genai@^2.13.0": "2.13.0",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
     "npm:@sentry/deno@^10.70.0": "10.70.0",
     "npm:cheerio@^1.2.0": "1.2.0",
@@ -18,7 +17,8 @@
     "npm:zod@^4.4.3": "4.4.3",
     "npm:@aws-sdk/client-s3@3.1126.0": "3.1126.0",
     "npm:@libsql/client@0.18": "0.18.0",
-    "npm:node-html-parser@^9.0.3": "9.0.3"
+    "npm:node-html-parser@^9.0.3": "9.0.3",
+    "npm:@google/genai@^2.21.0": "2.21.0"
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.6.2": {
@@ -1712,6 +1712,52 @@
         "css-select",
         "entities@8.0.0"
       ]
+    },
+    "@google/genai@2.21.0": {
+      "integrity": "sha512-+PDtco2/Z0ONdzCGekCoCT+O1VJS9xJQNN4XzQpXG/t3El/SWWMkCWlFRO1KmivOHPa4Q0VjUYu1HBKCZ/v33Q==",
+      "dependencies": [
+        "google-auth-library",
+        "p-retry",
+        "protobufjs",
+        "ws"
+      ],
+      "scripts": true
+    },
+    "gaxios@7.3.1": {
+      "integrity": "sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ==",
+      "dependencies": [
+        "extend",
+        "https-proxy-agent",
+        "node-fetch"
+      ]
+    },
+    "google-auth-library@10.9.1": {
+      "integrity": "sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==",
+      "dependencies": [
+        "base64-js",
+        "ecdsa-sig-formatter",
+        "gaxios",
+        "gcp-metadata",
+        "google-logging-utils",
+        "jws"
+      ]
+    },
+    "protobufjs@7.6.6": {
+      "integrity": "sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==",
+      "dependencies": [
+        "@protobufjs/aspromise",
+        "@protobufjs/base64",
+        "@protobufjs/codegen",
+        "@protobufjs/eventemitter",
+        "@protobufjs/fetch",
+        "@protobufjs/float",
+        "@protobufjs/path",
+        "@protobufjs/pool",
+        "@protobufjs/utf8",
+        "@types/node",
+        "long"
+      ],
+      "scripts": true
     }
   },
   "redirects": {
@@ -1760,7 +1806,7 @@
     "dependencies": [
       "npm:@aws-sdk/client-s3@3.1126.0",
       "npm:@cloudflare/workers-types@^4.20240718.0",
-      "npm:@google/genai@^2.13.0",
+      "npm:@google/genai@^2.21.0",
       "npm:@libsql/client@0.18",
       "npm:@sentry/cloudflare@^10.66.0",
       "npm:@sentry/deno@^10.70.0",
@@ -1777,7 +1823,7 @@
       "dependencies": [
         "npm:@aws-sdk/client-s3@3.1126.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
-        "npm:@google/genai@^2.20.0",
+        "npm:@google/genai@^2.21.0",
         "npm:@libsql/client@~0.18.0",
         "npm:@sentry/cli@^3.7.0",
         "npm:@sentry/deno@^10.73.0",
