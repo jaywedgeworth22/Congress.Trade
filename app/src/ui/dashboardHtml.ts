@@ -1465,15 +1465,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .menu { position:relative; }
   .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:12px; min-width:min(420px, calc(100vw - 24px)); max-width:min(440px, calc(100vw - 16px)); box-shadow:0 18px 44px rgba(0,0,0,.28); display:none; z-index:30; }
   .menu-pop.open { display:block; }
-  .menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:12px 12px; border-radius:10px; cursor:pointer; font-size:15px; font-family:var(--sans); text-decoration:none; box-sizing:border-box; }
-  .menu-section-label { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--text-dim); padding:10px 12px 4px; }
+  .menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px; font-family:var(--sans); text-decoration:none; box-sizing:border-box; }
+  .menu-section-label { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--text); padding:4px 12px 6px; margin-top:16px; }
+  .who + .menu-section-label,
+  .acct-auth-group + .menu-section-label,
+  .menu-section-label:first-child { margin-top:2px; }
+  .menu-divider { border-top:1px solid var(--border); margin:12px 6px 6px; }
   .menu-pop button:hover, .menu-pop a:hover { background:var(--panel-2); }
-  .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .menu-pop .who { padding:4px 12px 10px; font-size:13px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu-pop .theme-row {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
-    margin:4px 2px 6px; padding:8px 10px; border:none; border-radius:0;
+    margin:2px 0 4px; padding:6px 12px; border:none; border-radius:0;
   }
-  .menu-pop .theme-row-label { font-size:12px; color:var(--text-dim); flex:0 0 auto; }
+  .menu-pop .theme-row-label { font-size:13.5px; color:var(--text-dim); flex:0 0 auto; }
   .theme-seg {
     display:inline-flex; align-items:center; gap:2px; padding:2px;
     border:1px solid var(--border); border-radius:9px; background:var(--bg);
@@ -2890,6 +2894,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       overflow: auto; padding: 18px 16px; border-radius: 18px; z-index: 70;
     }
     .acct-mobile-menu .btn, .acct-mobile-menu button { min-height: 48px; font-size: 16px; }
+    .acct-mobile-menu .menu-section-label { font-size: 17px; margin-top: 14px; }
     .overlay { align-items: flex-end; padding: 0; }
     .overlay .modal {
       max-width: none; width: 100%;
@@ -12411,6 +12416,7 @@ function renderAccount() {
             ? '<button type="button" onclick="manageBilling()">Manage Subscription</button>'
             : '') +
           adminMenuHtml('closeAcctMenu();') +
+          '<div class="menu-divider"></div>' +
           '<button type="button" onclick="logout()">Sign Out</button>' +
           '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
@@ -12428,6 +12434,7 @@ function renderAccount() {
         ? '<button type="button" onclick="closeAcctMobileMenu();manageBilling()">Manage Subscription</button>'
         : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
+      '<div class="menu-divider"></div>' +
       '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();

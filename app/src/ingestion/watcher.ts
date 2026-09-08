@@ -349,18 +349,17 @@ export async function insertFilingIfNew(
   // reachable: atomically reopen only the narrowly-tagged provider seed.  The
   // outbox statement above has already created the durable fetch hand-off.
   let upgradedProviderSeed = false;
+  let upgradedNotFound = false;
   if ((res.meta?.changes ?? 0) === 0) {
-    const [providerSeed] = await all<{ doc_id: string }>(
+    const [existingRow] = await all<{ doc_id: string; ingest_status: string; extractor: string | null }>(
       env.DB,
-      `SELECT doc_id FROM filings
+      `SELECT doc_id, ingest_status, extractor FROM filings
         WHERE doc_id = ?
-          AND ingest_status = 'provider_seeded'
-          AND extractor = 'fmp-senate-latest'
           AND raw_object_key IS NULL
         LIMIT 1`,
       [f.docId],
     );
-    if (providerSeed) {
+    if (existingRow && existingRow.ingest_status === 'provider_seeded' && existingRow.extractor === 'fmp-senate-latest') {
       const upgrade = await run(
         env.DB,
         `UPDATE filings
@@ -395,6 +394,63 @@ export async function insertFilingIfNew(
         ],
       );
       upgradedProviderSeed = (upgrade.meta?.changes ?? 0) > 0;
+    } else if (existingRow && existingRow.ingest_status === 'not_found') {
+      // Unblock official filings that collided with prior frontier-probe phantoms
+      // (observed 2026-07-30 sequential burst H-2026-20035076..20035975, e.g.
+      // Cisneros H-2026-20035190, Taylor H-2026-20035146 / H-2026-20035392).
+      const upgrade = await run(
+        env.DB,
+        `UPDATE filings
+          SET chamber = ?,
+              filer_id = COALESCE(?, filer_id),
+              filed_date = COALESCE(?, filed_date),
+              source_url = ?,
+              raw_object_key = NULL,
+              ingest_status = 'new',
+              doc_kind = ?,
+              extractor = NULL,
+              model_version = NULL,
+              confidence = NULL,
+              first_seen_at = ?,
+              prev_probe_at = COALESCE(?, prev_probe_at),
+              probe_interval_sec = COALESCE(?, probe_interval_sec),
+              source_updated_at = NULL,
+              error = NULL
+        WHERE doc_id = ?
+          AND ingest_status = 'not_found'
+          AND raw_object_key IS NULL`,
+        [
+          f.chamber,
+          filerId ?? null,
+          filedDate,
+          f.sourceUrl,
+          docKind,
+          nowIso,
+          opts?.prevProbeAt ?? null,
+          opts?.probeIntervalSec ?? null,
+          f.docId,
+        ],
+      );
+      if ((upgrade.meta?.changes ?? 0) > 0) {
+        upgradedNotFound = true;
+        // Re-arm ingestion_outbox so the fetcher picks it up
+        await run(
+          env.DB,
+          `INSERT INTO ingestion_outbox
+             (doc_id, chamber, source_url, status, attempts, available_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, 'pending', 0, ?, NULL, ?, ?)
+           ON CONFLICT(doc_id) DO UPDATE SET
+             chamber = excluded.chamber,
+             source_url = excluded.source_url,
+             status = 'pending',
+             attempts = 0,
+             available_at = excluded.available_at,
+             last_error = NULL,
+             updated_at = excluded.updated_at`,
+          [f.docId, f.chamber, f.sourceUrl, nowIso, nowIso, nowIso],
+        );
+        await enqueueIngestionOutboxNow(env, f.docId);
+      }
     }
   }
   // Backfill filed_date when a later, richer discovery of the same doc supplies
@@ -436,7 +492,7 @@ export async function insertFilingIfNew(
       f.docId,
     ]);
   }
-  return (res.meta?.changes ?? 0) > 0 || upgradedProviderSeed ? 'inserted' : 'duplicate';
+  return (res.meta?.changes ?? 0) > 0 || upgradedProviderSeed || upgradedNotFound ? 'inserted' : 'duplicate';
 }
 
 /** Enqueue the canonical filing.new INGEST_QUEUE message for a discovered filing. */
