@@ -12,13 +12,13 @@
     "npm:fflate@~0.8.3": "0.8.3",
     "npm:hono@^4.12.31": "4.12.31",
     "npm:jsonrepair@^3.15.0": "3.15.0",
-    "npm:node-html-parser@9": "9.0.0",
     "npm:pdf-lib@^1.17.1": "1.17.1",
     "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.6.2",
     "npm:zod@^4.4.3": "4.4.3",
     "npm:@aws-sdk/client-s3@3.1126.0": "3.1126.0",
-    "npm:@libsql/client@0.18": "0.18.0"
+    "npm:@libsql/client@0.18": "0.18.0",
+    "npm:node-html-parser@^9.0.3": "9.0.3"
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.6.2": {
@@ -1705,6 +1705,13 @@
     },
     "ws@8.21.3": {
       "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="
+    },
+    "node-html-parser@9.0.3": {
+      "integrity": "sha512-iaQ9rokcYNp99IY0h82q04Wtc27SObRT+OEytdJh0bFv2IN0fypnU63KUNVavkPSiwsmIELG1eUenajGhzrvpg==",
+      "dependencies": [
+        "css-select",
+        "entities@8.0.0"
+      ]
     }
   },
   "redirects": {
@@ -1761,7 +1768,7 @@
       "npm:fflate@~0.8.3",
       "npm:hono@^4.12.31",
       "npm:jsonrepair@^3.15.0",
-      "npm:node-html-parser@9",
+      "npm:node-html-parser@^9.0.3",
       "npm:pdf-lib@^1.17.1",
       "npm:unpdf@^1.6.2",
       "npm:zod@^4.4.3"
@@ -1783,7 +1790,7 @@
         "npm:fflate@~0.8.3",
         "npm:hono@^4.13.5",
         "npm:jsonrepair@^3.15.0",
-        "npm:node-html-parser@^9.0.2",
+        "npm:node-html-parser@^9.0.3",
         "npm:pdf-lib@^1.17.1",
         "npm:typescript@^5.6.3",
         "npm:unpdf@^1.8.1",
