@@ -40,16 +40,18 @@ import {
   classifyProviderFailure,
   type ProviderFailureStatus,
 } from './providerFailure.ts';
-import { priceBenchmarkUsage } from './benchmarkMetrics.ts';
+import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import {
   assertDocLlmSpendAllowed,
   checkLlmSpendCeiling,
+  isLlamaParseProvider,
   isLlmDocBudgetHalt,
   llmBudgetHaltMessage,
   LlmDocBudgetExceededError,
   LlmSpendSettlementError,
   settleLlmSpend,
 } from '../shared/llmSpend.ts';
+
 import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 import { assertOpenRouterBudgetCircuitAllowsCall } from '../shared/openRouterBudgetCircuit.ts';
 import { IngestRetryError } from '../ingestion/fetcher.ts';
@@ -217,6 +219,12 @@ export interface CandidateDocResult {
   };
   /** Indicates if this result was loaded from the extraction_runs cache (prevents duplicate db inserts) */
   cached?: boolean;
+  /**
+   * True when this slot was not invoked because the next live call would
+   * exceed the remaining per-doc USD ceiling or the daily LLM USD/credit
+   * ceiling. Not a provider failure.
+   */
+  skippedUnaffordable?: boolean;
 }
 
 /** Per-model rollup across all documents. */
@@ -1206,6 +1214,75 @@ export function candidateSpendUsd(
   return priced.costUsd;
 }
 
+/** Conservative planning cost when the rate card cannot price a model. */
+const UNPRICEABLE_READ_COST_USD = 0.05;
+
+/**
+ * Load the latest successful extraction_runs row for this provider:model.
+ * Returns null on miss / pre-migration / malformed JSON. $0 — no spend gate.
+ */
+export async function loadCachedCandidateRows(
+  env: Env,
+  candidate: BakeoffCandidate,
+  docId: string,
+): Promise<ParsedTx[] | null> {
+  try {
+    const cachedRunResult = await env.DB?.prepare(
+      `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`,
+    ).bind(docId, candidate.provider, candidate.model).first<{ result_json: string }>();
+    if (!cachedRunResult?.result_json) return null;
+    const parsed = JSON.parse(cachedRunResult.result_json) as ParsedTx[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cachedCandidateResult(
+  candidate: BakeoffCandidate,
+  docId: string,
+  rows: ParsedTx[],
+): CandidateDocResult {
+  return {
+    provider: candidate.provider,
+    model: candidate.model,
+    docId,
+    ok: true,
+    latencyMs: 0,
+    rowCount: rows.length,
+    rowKeys: rows.map(arbitrationRowKey),
+    avgConfidence: meanConfidence(rows),
+    rows,
+    cached: true,
+  };
+}
+
+export function unaffordableCandidateResult(
+  candidate: BakeoffCandidate,
+  docId: string,
+  error: string,
+): CandidateDocResult {
+  return {
+    provider: candidate.provider,
+    model: candidate.model,
+    docId,
+    ok: false,
+    error: error.slice(0, 300),
+    failure: classifyProviderFailure(candidate.provider, candidate.model, error) ?? undefined,
+    latencyMs: 0,
+    rowCount: 0,
+    rowKeys: [],
+    avgConfidence: 0,
+    rows: [],
+    skippedUnaffordable: true,
+  };
+}
+
+/** Planning cost of one live read; unpriceable models get a conservative stand-in. */
+export function estimateLiveReadCostUsd(candidate: BakeoffCandidate): number {
+  return estimateNominalReadCostUsd(candidate.provider, candidate.model) ?? UNPRICEABLE_READ_COST_USD;
+}
+
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
 export async function runCandidateOnDoc(
   env: Env,
@@ -1230,26 +1307,26 @@ export async function runCandidateOnDoc(
       rows: [],
     };
   }
+
+  // Reuse prior rows BEFORE any spend gate. H-2026-9116328 died on the
+  // per-doc ceiling while a good prior extract sat unused because this
+  // lookup used to run after assertDocLlmSpendAllowed.
+  if (!invocation?.skipCache) {
+    const cached = await loadCachedCandidateRows(env, candidate, docId);
+    if (cached) return cachedCandidateResult(candidate, docId, cached);
+  }
+
   // Per-doc cap + skip when rows already exist (unless admin reprocess path
   // calls with a dedicated reprocess flag later). Live extraction never
-  // re-spends on docs that already have transactions.
+  // re-spends on docs that already have transactions. Also refuse a live
+  // call whose estimated cost would overshoot the remaining ceiling.
+  const reprocess = (invocation as { reprocess?: boolean } | undefined)?.reprocess === true;
+  const estimatedUsd = isLlamaParseProvider(provider) ? 0 : estimateLiveReadCostUsd(candidate);
   try {
-    await assertDocLlmSpendAllowed(env, docId, {
-      reprocess: (invocation as { reprocess?: boolean } | undefined)?.reprocess === true,
-    });
+    await assertDocLlmSpendAllowed(env, docId, { reprocess, estimatedUsd, provider });
   } catch (err) {
     if (err instanceof LlmDocBudgetExceededError || isLlmDocBudgetHalt(err)) {
-      return {
-        ...base,
-        ok: false,
-        error: (err as Error).message.slice(0, 300),
-        failure: classifyProviderFailure(provider, model, (err as Error).message) ?? undefined,
-        latencyMs: 0,
-        rowCount: 0,
-        rowKeys: [],
-        avgConfidence: 0,
-        rows: [],
-      };
+      return unaffordableCandidateResult(candidate, docId, (err as Error).message);
     }
     throw err;
   }
@@ -1277,36 +1354,6 @@ export async function runCandidateOnDoc(
     };
   }
 
-  // Reuse prior rows for ordinary repeat reads, but never for benchmark paths
-  // that need fresh provider latency/usage/cost measurements.
-  if (!invocation?.skipCache) {
-    try {
-      const cachedRunResult = await env.DB?.prepare(
-        `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
-      ).bind(docId, provider, model).first<{ result_json: string }>();
-
-      if (cachedRunResult?.result_json) {
-        const parsed = JSON.parse(cachedRunResult.result_json) as ParsedTx[];
-        // result_json stores JSON.stringify(result.rows), not CandidateDocResult.
-        if (Array.isArray(parsed)) {
-          return {
-            ...base,
-            ok: true,
-            latencyMs: 0,
-            rowCount: parsed.length,
-            rowKeys: parsed.map(arbitrationRowKey),
-            avgConfidence: meanConfidence(parsed),
-            rows: parsed,
-            cached: true,
-          };
-        }
-      }
-    } catch {
-      // extraction_runs may not exist before migration, or an old row may be
-      // malformed. Either case falls through to the provider call.
-    }
-  }
-
   // GOVERNOR 1: hard daily USD ceiling, enforced fail-closed at this single
   // choke point (every extraction/benchmark/bakeoff/agreement provider call
   // dispatches here) BEFORE any money is spent. Budget halts are terminal for
@@ -1315,18 +1362,9 @@ export async function runCandidateOnDoc(
   // ceiling would halt that failover here anyway.
   const spendGate = await checkLlmSpendCeiling(env, provider);
   if (!spendGate.allowed) {
-    const error = llmBudgetHaltMessage(spendGate);
-    return {
-      ...base,
-      ok: false,
-      error,
-      failure: classifyProviderFailure(provider, model, error) ?? undefined,
-      latencyMs: 0,
-      rowCount: 0,
-      rowKeys: [],
-      avgConfidence: 0,
-      rows: [],
-    };
+    // Daily USD/credit ceiling — same unaffordable signal as the per-doc latch so
+    // an earlier quality survivor can still publish instead of model_read_failed.
+    return unaffordableCandidateResult(candidate, docId, llmBudgetHaltMessage(spendGate));
   }
 
   const started = Date.now();

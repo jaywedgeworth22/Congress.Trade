@@ -13,6 +13,7 @@
  */
 
 import type { Filing, ParsedTx } from '../shared/types.ts';
+import { isJunkAssetString } from './nameNormalizer.ts';
 
 /** Same publish cap the normalizer uses; duplicated to avoid an import cycle. */
 export const EXTRACT_ROW_LIMIT = 200;
@@ -226,10 +227,38 @@ function isMalformedAmount(tx: ParsedTx): boolean {
   return tx.amountMin == null && tx.amountMax == null;
 }
 
+/** Placeholder / form-chrome / empty asset names must not win agreement votes. */
+export function isPlaceholderAgreementAsset(assetName: string | null | undefined): boolean {
+  if (looksLikeHeaderContaminatedAsset(assetName ?? null)) return true;
+  if (looksLikeColumnHeaderAsset(assetName ?? null)) return true;
+  return isJunkAssetString(assetName);
+}
+
+export function isNullAmountRow(tx: ParsedTx): boolean {
+  return isMalformedAmount(tx);
+}
+
+/**
+ * Row-level agreement junk: placeholder assets or missing brackets.
+ * These rows cannot beat a coherent sibling in majority / confidence picks.
+ */
+export function isJunkAgreementRow(tx: ParsedTx): boolean {
+  return isPlaceholderAgreementAsset(tx.assetName) || isNullAmountRow(tx);
+}
+
+export function dropJunkAgreementRows(rows: readonly ParsedTx[]): ParsedTx[] {
+  return rows.filter((tx) => !isJunkAgreementRow(tx));
+}
+
+function majority(count: number, total: number): boolean {
+  return total > 0 && count * 2 > total;
+}
+
 /**
  * Hard-stop before more model spend. Empty extracts are not junk — they are
- * just empty. Letterhead-as-asset, column headers, row-limit floods, and
- * majority missing-date + malformed-amount reads are junk.
+ * just empty. Letterhead-as-asset, column headers, row-limit floods,
+ * majority missing-date + malformed-amount, placeholder assets, and
+ * null-amount reads are junk.
  */
 export function evaluateExtractQuality(transactions: readonly ParsedTx[]): ExtractQuality {
   const rows = transactions ?? [];
@@ -264,11 +293,21 @@ export function evaluateExtractQuality(transactions: readonly ParsedTx[]): Extra
     return { ok: false, reason: 'low_confidence_junk' };
   }
 
+  const placeholders = rows.filter((tx) => isPlaceholderAgreementAsset(tx.assetName));
+  if (majority(placeholders.length, rows.length)) {
+    return { ok: false, reason: 'placeholder_asset' };
+  }
+
+  const nullAmounts = rows.filter((tx) => isNullAmountRow(tx));
+  if (majority(nullAmounts.length, rows.length)) {
+    return { ok: false, reason: 'null_amount' };
+  }
+
   return { ok: true };
 }
 
 const AGREEMENT_HARD_STOP_RE =
-  /form_chrome|letterhead_as_asset|column_header_as_asset|ocr_unusable|extraction_row_limit|missing_tx_date_malformed_amount|low_confidence_junk|letterhead/i;
+  /form_chrome|letterhead_as_asset|column_header_as_asset|ocr_unusable|extraction_row_limit|missing_tx_date_malformed_amount|low_confidence_junk|letterhead|placeholder_asset|null_amount/i;
 
 /** Review-queue reasons that must never spend the agreement trio. */
 export function shouldSkipAgreementForReviewReason(reason: string | null | undefined): boolean {

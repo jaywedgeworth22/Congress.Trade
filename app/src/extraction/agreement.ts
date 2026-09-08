@@ -75,6 +75,9 @@ import {
   runCandidateOnDoc,
   persistExtractionRun,
   upgradeRetiredDisclosureCandidate,
+  cachedCandidateResult,
+  estimateLiveReadCostUsd,
+  unaffordableCandidateResult,
   type BakeoffCandidate,
   type CandidateDocResult,
   type CandidateInvocation,
@@ -98,8 +101,13 @@ import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { recordProviderHealth } from './providerHealth.ts';
-import { shouldSkipAgreementForReviewReason } from './extractRouting.ts';
+import {
+  shouldSkipAgreementForReviewReason,
+  dropJunkAgreementRows,
+  evaluateExtractQuality,
+} from './extractRouting.ts';
 import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
+import { isUsdMeteredExtractionProvider, LLM_DOC_BUDGET_ERROR_MARKER } from '../shared/llmSpend.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -305,10 +313,12 @@ export function sameRowSet(
   b: CandidateDocResult,
   normalizeText = true,
 ): boolean {
-  if (!a.ok || !b.ok || a.rows.length === 0) return false;
-  if (a.rows.length !== b.rows.length) return false;
-  const ka = a.rows.map((tx) => materialRowFingerprint(tx, normalizeText));
-  const kb = b.rows.map((tx) => materialRowFingerprint(tx, normalizeText));
+  if (!a.ok || !b.ok) return false;
+  const aRows = dropJunkAgreementRows(a.rows);
+  const bRows = dropJunkAgreementRows(b.rows);
+  if (aRows.length === 0 || aRows.length !== bRows.length) return false;
+  const ka = aRows.map((tx) => materialRowFingerprint(tx, normalizeText));
+  const kb = bRows.map((tx) => materialRowFingerprint(tx, normalizeText));
   if (ka.some((k) => k === null) || kb.some((k) => k === null)) return false;
   const sortedA = (ka as string[]).sort();
   const sortedB = (kb as string[]).sort();
@@ -334,8 +344,12 @@ export function sameRowSet(
  * published row internally coherent.
  */
 export function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean): ParsedTx[] {
-  if (!normalizeText) return reads[0]?.rows ?? [];
-  const grouped = reads.map((r) => {
+  const cleaned = reads.map((r) => ({
+    ...r,
+    rows: r.ok ? dropJunkAgreementRows(r.rows) : [],
+  }));
+  if (!normalizeText) return cleaned[0]?.rows ?? [];
+  const grouped = cleaned.map((r) => {
     const byFingerprint = new Map<string, ParsedTx[]>();
     for (const tx of r.rows) {
       const fp = materialRowFingerprint(tx, true) ?? '';
@@ -365,6 +379,154 @@ export function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: bo
     }
   }
   return resolved;
+}
+
+/** Stable cheap-first order: lowest estimated live-read cost, original index as tie-break. */
+export function orderModelsCheapFirst<T extends BakeoffCandidate>(models: readonly T[]): T[] {
+  return models
+    .map((model, index) => ({ model, index, cost: estimateLiveReadCostUsd(model) }))
+    .sort((a, b) => a.cost - b.cost || a.index - b.index)
+    .map((entry) => entry.model);
+}
+
+export function qualityGateAgreementRead(read: CandidateDocResult): CandidateDocResult | null {
+  if (!read.ok || read.skippedUnaffordable) return null;
+  const rows = dropJunkAgreementRows(read.rows);
+  if (rows.length === 0) return null;
+  if (!evaluateExtractQuality(rows).ok) return null;
+  return { ...read, rows, rowCount: rows.length };
+}
+
+function uniqueQualityReads(reads: CandidateDocResult[]): CandidateDocResult[] {
+  const seen = new Set<string>();
+  const out: CandidateDocResult[] = [];
+  for (const read of reads) {
+    const gated = qualityGateAgreementRead(read);
+    if (!gated) continue;
+    const id = `${gated.provider}:${gated.model}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(gated);
+  }
+  return out;
+}
+
+export type AgreementPublishDecision =
+  | { action: 'publish'; rows: ParsedTx[]; qualityModels: string[] }
+  | { action: 'disagree'; reason?: string }
+  | { action: 'empty' }
+  | { action: 'junk'; flags: string[] }
+  | { action: 'budget_stop' }
+  | { action: 'model_read_failed' };
+
+/**
+ * Quality-gated agree-to-publish: junk / placeholder / null-amount extracts
+ * cannot vote, stored coherent extracts can, and a per-doc budget stop is
+ * not treated as material disagreement. A single quality survivor publishes
+ * when later slots are unaffordable or a stored coherent extract exists —
+ * never when a live sibling still needs a retry (429 / auth / timeout).
+ */
+export function decideAgreementPublish(
+  lineupReads: CandidateDocResult[],
+  storedReads: CandidateDocResult[],
+  normalizeText: boolean,
+): AgreementPublishDecision {
+  const providerFailed = lineupReads.some((read) => !read.ok && !read.skippedUnaffordable);
+  const unaffordable = lineupReads.some((read) => read.skippedUnaffordable);
+  const successful = lineupReads.filter((read) => read.ok);
+  if (providerFailed) return { action: 'model_read_failed' };
+
+  const quality = uniqueQualityReads([...lineupReads, ...storedReads]);
+  if (quality.length >= 2) {
+    const unanimous = quality.every((read, index) => index === 0 || sameRowSet(quality[0], read, normalizeText));
+    if (unanimous) {
+      return {
+        action: 'publish',
+        rows: resolveAgreedRows(quality, normalizeText),
+        qualityModels: quality.map((read) => `${read.provider}:${read.model}`),
+      };
+    }
+    const majority = buildMajorityRows(quality, quality.length, normalizeText);
+    if (majority.ok) {
+      return {
+        action: 'publish',
+        rows: majority.rows,
+        qualityModels: quality.map((read) => `${read.provider}:${read.model}`),
+      };
+    }
+    return { action: 'disagree', reason: majority.reason ?? 'no_majority' };
+  }
+
+  if (quality.length === 1) {
+    if (unaffordable || storedReads.length > 0) {
+      return {
+        action: 'publish',
+        rows: quality[0].rows,
+        qualityModels: [`${quality[0].provider}:${quality[0].model}`],
+      };
+    }
+    return { action: 'disagree', reason: 'quality_gated_insufficient_reads' };
+  }
+  if (
+    successful.length > 0
+    && allSuccessfulReadsEmpty(successful)
+    && quality.length === 0
+    && !unaffordable
+  ) {
+    return { action: 'empty' };
+  }
+  if (quality.length === 0 && successful.some((read) => read.rows.length > 0)) {
+    const flags = new Set<string>();
+    for (const read of successful) {
+      const qualityResult = evaluateExtractQuality(read.rows);
+      if (!qualityResult.ok && qualityResult.reason) flags.add(qualityResult.reason);
+    }
+    if (flags.size === 0) flags.add('placeholder_asset');
+    return { action: 'junk', flags: [...flags] };
+  }
+  if (unaffordable) return { action: 'budget_stop' };
+  return { action: 'disagree' };
+}
+
+async function loadStoredQualityReads(
+  env: Env,
+  docId: string,
+  exclude: Set<string>,
+): Promise<CandidateDocResult[]> {
+  let rows: Array<{ provider: string; model: string; result_json: string | null }>;
+  try {
+    rows = await all(
+      env.DB,
+      `SELECT provider, model, result_json
+         FROM extraction_runs
+        WHERE doc_id = ? AND ok = 1
+        ORDER BY created_at DESC`,
+      [docId],
+    );
+  } catch {
+    return [];
+  }
+  const latest = new Map<string, CandidateDocResult>();
+  for (const row of rows) {
+    const id = `${row.provider}:${row.model}`;
+    if (exclude.has(id) || latest.has(id)) continue;
+    let parsed: ParsedTx[] = [];
+    try {
+      const raw = row.result_json ? JSON.parse(row.result_json) : [];
+      parsed = Array.isArray(raw) ? raw as ParsedTx[] : [];
+    } catch {
+      continue;
+    }
+    const gated = qualityGateAgreementRead(
+      cachedCandidateResult(
+        { provider: row.provider as BakeoffCandidate['provider'], model: row.model },
+        docId,
+        parsed,
+      ),
+    );
+    if (gated) latest.set(id, gated);
+  }
+  return [...latest.values()];
 }
 
 /**
@@ -823,27 +985,48 @@ async function readAndPersist(
   invocations?: CandidateInvocation[],
   signal?: AbortSignal,
 ): Promise<CandidateDocResult[]> {
-  const reads: CandidateDocResult[] = [];
-  for (const [index, m] of models.entries()) {
+  const ranked = models
+    .map((model, index) => ({
+      model,
+      invocation: invocations?.[index],
+      index,
+      cost: estimateLiveReadCostUsd(model),
+    }))
+    .sort((a, b) => a.cost - b.cost || a.index - b.index);
+  const byLabel = new Map<string, CandidateDocResult>();
+  let stopUsdMetered = false;
+  let usdStopError = LLM_DOC_BUDGET_ERROR_MARKER;
+  for (const entry of ranked) {
     signal?.throwIfAborted();
+    if (stopUsdMetered && isUsdMeteredExtractionProvider(entry.model.provider)) {
+      byLabel.set(
+        label(entry.model),
+        unaffordableCandidateResult(entry.model, docId, usdStopError),
+      );
+      continue;
+    }
     const r = await runCandidateOnDoc(
       env,
-      m,
+      entry.model,
       docId,
       bytes,
-      invocations?.[index],
+      entry.invocation,
       signal,
     );
     signal?.throwIfAborted();
-    if (!r.cached) {
+    if (r.skippedUnaffordable && isUsdMeteredExtractionProvider(entry.model.provider)) {
+      stopUsdMetered = true;
+      usdStopError = r.error || LLM_DOC_BUDGET_ERROR_MARKER;
+    }
+    if (!r.cached && !r.skippedUnaffordable) {
       await persistExtractionRun(env, r, 'agreement', runBatchId);
       // Feed the per-provider:model rolling health window (billing/auth
       // breaker) from cascade reads too. Best-effort by construction.
-      await recordProviderHealth(env, m, r.ok, r.error);
+      await recordProviderHealth(env, entry.model, r.ok, r.error);
     }
-    reads.push(r);
+    byLabel.set(label(entry.model), r);
   }
-  return reads;
+  return models.map((model) => byLabel.get(label(model))!);
 }
 
 /**
@@ -1004,18 +1187,29 @@ export async function processAgreementDoc(
     options.invocations,
     options.signal,
   );
-  const [rA, rB, rC] = [reads[0], reads[1], reads[2] ?? null];
-  await prepareAgreementReads(env, reads);
+  const storedReads = await loadStoredQualityReads(
+    env,
+    docId,
+    new Set(lineup.map((model) => label(model))),
+  );
+  await prepareAgreementReads(env, [...reads, ...storedReads]);
 
-  if (!rA.ok || !rB.ok || (rC !== null && !rC.ok)) {
-    return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed' };
+  const lineupRows = (): Record<string, number | string> => ({
+    [label(models.a)]: reads[0]?.ok ? reads[0].rowCount : (reads[0]?.skippedUnaffordable ? 'BUDGET' : 'ERR'),
+    [label(models.b)]: reads[1]?.ok ? reads[1].rowCount : (reads[1]?.skippedUnaffordable ? 'BUDGET' : 'ERR'),
+    ...(models.c ? {
+      [label(models.c)]: reads[2]?.ok ? reads[2].rowCount : (reads[2]?.skippedUnaffordable ? 'BUDGET' : 'ERR'),
+    } : {}),
+  });
+
+  const decision = decideAgreementPublish(reads, storedReads, normalizeText);
+  if (decision.action === 'model_read_failed') {
+    return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed', rows: lineupRows() };
   }
-
-  // Empty×empty: every model "succeeded" with zero rows — total extract failure.
-  // Must not look like material disagreement (which escalates) or soft cascade
-  // park. Handled by handleAgreementCheck / leaveInReview via hard-fail flags.
-  const successfulReads = rC ? [rA, rB, rC] : [rA, rB];
-  if (allSuccessfulReadsEmpty(successfulReads)) {
+  if (decision.action === 'budget_stop') {
+    return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'doc_budget_stop', rows: lineupRows() };
+  }
+  if (decision.action === 'empty') {
     return {
       docId,
       outcome: 'agree_but_hardfail',
@@ -1023,38 +1217,39 @@ export async function processAgreementDoc(
       rowCount: 0,
       flags: ['extract_empty_failure'],
       reason: 'extract_empty_failure',
-      rows: {
-        [label(models.a)]: 0,
-        [label(models.b)]: 0,
-        ...(models.c ? { [label(models.c)]: 0 } : {}),
-      },
+      rows: lineupRows(),
     };
   }
-
-  const agree = sameRowSet(rA, rB, normalizeText)
-    && (!rC || (sameRowSet(rA, rC, normalizeText) && sameRowSet(rB, rC, normalizeText)));
-  if (!agree) {
+  if (decision.action === 'junk') {
     return {
       docId,
-      outcome: 'disagree',
-      rows: {
-        [label(models.a)]: rA.ok ? rA.rowCount : 'ERR',
-        [label(models.b)]: rB.ok ? rB.rowCount : 'ERR',
-        ...(models.c ? { [label(models.c)]: rC && rC.ok ? rC.rowCount : 'ERR' } : {}),
-      },
+      outcome: 'agree_but_hardfail',
+      tier: audit?.tier ?? (models.c ? 2 : 1),
+      rowCount: 0,
+      flags: decision.flags,
+      reason: decision.flags[0] ?? 'placeholder_asset',
+      rows: lineupRows(),
     };
+  }
+  if (decision.action === 'disagree') {
+    return { docId, outcome: 'disagree', rows: lineupRows() };
   }
 
   const frow = await loadFilingRow(env, docId);
   if (!frow) return { docId, outcome: 'skipped', reason: 'filing row missing' };
 
-  const agreedReads = rC ? [rA, rB, rC] : [rA, rB];
-  return finalizePublish(env, frow, docId, resolveAgreedRows(agreedReads, normalizeText), dryRun, {
+  const labels = modelLabels(models);
+  for (const [index, modelId] of decision.qualityModels.entries()) {
+    if (!Object.values(labels).includes(modelId)) {
+      labels[`stored${index}`] = modelId;
+    }
+  }
+  return finalizePublish(env, frow, docId, decision.rows, dryRun, {
     tier: audit?.tier ?? (models.c ? 2 : 1),
-    models: modelLabels(models),
+    models: labels,
     claimToken: audit?.claimToken,
     reviewRevision: operatorReviewRevision,
-    unanimous: true,
+    unanimous: decision.qualityModels.length >= 2,
     votes: audit?.votes,
   });
 }
@@ -1525,34 +1720,26 @@ export async function processAgreementCascadeTier2(
     undefined,
     signal,
   );
-
-  await prepareAgreementReads(env, reads);
-
-  const [rA, rB, rC] = reads;
+  const storedReads = await loadStoredQualityReads(
+    env,
+    docId,
+    new Set(lineup.map((model) => label(model))),
+  );
+  await prepareAgreementReads(env, [...reads, ...storedReads]);
 
   const frow = await loadFilingRow(env, docId);
   if (!frow) return { docId, outcome: 'skipped', reason: 'filing row missing' };
 
   const labels = modelLabels(models);
+  const decision = decideAgreementPublish(reads, storedReads, normalizeText);
 
-  // 3-way unanimity → publish exactly as the original agreement path (tier 2).
-  const unanimous = rA.ok && rB.ok && rC.ok
-    && sameRowSet(rA, rB, normalizeText) && sameRowSet(rA, rC, normalizeText) && sameRowSet(rB, rC, normalizeText);
-  if (unanimous) {
-    return finalizePublish(env, frow, docId, resolveAgreedRows([rA, rB, rC], normalizeText), dryRun, {
-      tier: 2, models: labels, unanimous: true, claimToken, reviewRevision: operatorReviewRevision,
-    });
-  }
-
-  // A provider failure is operational, not semantic disagreement. Return a
-  // retryable skip so the autonomous handler applies bounded backoff/cap logic;
-  // never count an error as "saw nothing" in a false 2/3 publish quorum.
-  if (!rA.ok || !rB.ok || !rC.ok) {
+  if (decision.action === 'model_read_failed') {
     return { docId, outcome: 'skipped', tier: 3, reason: 'model_read_failed' };
   }
-
-  // Empty×empty×empty: total extract failure (not majority disagreement).
-  if (allSuccessfulReadsEmpty(reads)) {
+  if (decision.action === 'budget_stop') {
+    return { docId, outcome: 'skipped', tier: 2, reason: 'doc_budget_stop' };
+  }
+  if (decision.action === 'empty') {
     if (dryRun) {
       return {
         docId,
@@ -1565,29 +1752,77 @@ export async function processAgreementCascadeTier2(
     }
     return markExtractEmptyFailure(env, docId, 2, labels, claimToken);
   }
-
-  // Tier 3 — majority resolve over the three reads (no extra model calls).
-  const consensus = buildConsensusRows([
-    { model: labels.a, rows: rA.rows },
-    { model: labels.b, rows: rB.rows },
-    { model: labels.c, rows: rC.rows },
-  ]);
-  const majority = buildMajorityRows(reads, 3, normalizeText);
-  const votes = voteSummary(consensus, 3);
-  if (!majority.ok) {
-    if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason: majority.reason };
-    return leaveInReviewHighPriority(env, docId, 3, labels, votes, majority.reason ?? 'no_majority', claimToken);
+  if (decision.action === 'junk') {
+    if (dryRun) {
+      return {
+        docId,
+        outcome: 'agree_but_hardfail',
+        tier: 2,
+        rowCount: 0,
+        flags: decision.flags,
+        reason: decision.flags[0],
+      };
+    }
+    return leaveInReviewHighPriority(
+      env, docId, 2, labels, null, decision.flags.join(','), claimToken,
+    );
+  }
+  if (decision.action === 'disagree') {
+    const [rA, rB, rC] = reads;
+    if (rA?.ok && rB?.ok && rC?.ok) {
+      const consensus = buildConsensusRows([
+        { model: labels.a, rows: rA.rows },
+        { model: labels.b, rows: rB.rows },
+        { model: labels.c, rows: rC.rows },
+      ]);
+      const majority = buildMajorityRows(reads, 3, normalizeText);
+      const votes = voteSummary(consensus, 3);
+      if (!majority.ok) {
+        const reason = majority.reason ?? decision.reason ?? 'no_majority';
+        if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason };
+        return leaveInReviewHighPriority(env, docId, 3, labels, votes, reason, claimToken);
+      }
+      const res = await finalizePublish(env, frow, docId, majority.rows, dryRun, {
+        tier: 3,
+        models: labels,
+        claimToken,
+        reviewRevision: operatorReviewRevision,
+        unanimous: false,
+        votes,
+      });
+      if (res.outcome === 'agree_but_hardfail') {
+        if (dryRun) return res;
+        return leaveInReviewHighPriority(
+          env, docId, 3, labels, votes, `hard_fail:${(res.flags ?? []).join(',')}`, claimToken,
+        );
+      }
+      return res;
+    }
+    const reason = decision.reason ?? 'no_majority';
+    if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason };
+    return leaveInReviewHighPriority(env, docId, 3, labels, null, reason, claimToken);
   }
 
-  const res = await finalizePublish(env, frow, docId, majority.rows, dryRun, {
-    tier: 3,
+  for (const [index, modelId] of decision.qualityModels.entries()) {
+    if (!Object.values(labels).includes(modelId)) {
+      labels[`stored${index}`] = modelId;
+    }
+  }
+  const quality = uniqueQualityReads([...reads, ...storedReads]);
+  const unanimous = quality.length >= 2
+    && quality.every((read, index) => index === 0 || sameRowSet(quality[0], read, normalizeText));
+  const consensus = buildConsensusRows(
+    quality.map((read) => ({ model: `${read.provider}:${read.model}`, rows: read.rows })),
+  );
+  const votes = unanimous ? undefined : voteSummary(consensus, quality.length);
+  const res = await finalizePublish(env, frow, docId, decision.rows, dryRun, {
+    tier: unanimous ? 2 : 3,
     models: labels,
     claimToken,
     reviewRevision: operatorReviewRevision,
-    unanimous: false,
+    unanimous,
     votes,
   });
-  // A hard-fail on the majority row set is NOT publishable — flag high-priority.
   if (res.outcome === 'agree_but_hardfail') {
     if (dryRun) return res;
     return leaveInReviewHighPriority(
@@ -1800,6 +2035,34 @@ async function deferForBudgetExhausted(
     payload: { resolvedBy: 'agreement-cascade', tier, budget, detail: 'budget_exhausted' },
   });
   await rollbackUnspentAttempt(env, docId, claimToken, nextUtcMidnight());
+}
+
+/**
+ * Per-doc USD ceiling blocked usable live reads with no quality survivor.
+ * Lifetime per-doc spend does not reset at UTC midnight — terminalize into
+ * human review instead of deferring forever like the daily budget path.
+ */
+async function deferForDocBudgetStop(
+  env: Env,
+  docId: string,
+  tier: number,
+  models: Record<string, string>,
+  claimToken: string,
+  max: number,
+): Promise<void> {
+  if (!(await ownsUnresolvedReview(env, docId, claimToken))) {
+    await releaseAgreementClaim(env, docId, claimToken);
+    return;
+  }
+  await recordIngestionDecision(env.DB, {
+    docId,
+    action: 'review_opened',
+    source: 'agreement',
+    reason: 'doc_budget_stop',
+    payload: { resolvedBy: 'agreement-cascade', tier, detail: 'per_doc_ceiling' },
+  });
+  await leaveInReviewHighPriority(env, docId, tier, models, null, 'doc_budget_stop', claimToken);
+  await finishTerminalClaim(env, docId, claimToken, max);
 }
 
 /**
@@ -2143,6 +2406,9 @@ export async function handleAgreementCheck(
       ) {
         // markExtractEmptyFailure already applied inside tier-2 empty path.
         await finishTerminalClaim(env, docId, claimed.token, max);
+      } else if (res.outcome === 'skipped' && res.reason === 'doc_budget_stop') {
+        await refundLlmBudget(env, budget, readsNeeded);
+        await deferForDocBudgetStop(env, docId, tier, modelLabels(models), claimed.token, max);
       } else if (res.outcome === 'skipped') {
         if (res.reason === 'review_resolved_or_claim_lost') {
           await releaseAgreementClaim(env, docId, claimed.token);
@@ -2198,6 +2464,9 @@ export async function handleAgreementCheck(
         );
       }
       await finishTerminalClaim(env, docId, claimed.token, max);
+    } else if (res.outcome === 'skipped' && res.reason === 'doc_budget_stop') {
+      await refundLlmBudget(env, budget, readsNeeded);
+      await deferForDocBudgetStop(env, docId, 1, modelLabels(tier1Models), claimed.token, max);
     } else if (res.outcome === 'skipped') {
       if (res.reason === 'review_resolved_or_claim_lost') {
         await releaseAgreementClaim(env, docId, claimed.token);
