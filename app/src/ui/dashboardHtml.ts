@@ -91,7 +91,7 @@ function speedProofSectionHtml(admin: boolean): string {
 }
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-view="trends">
 <head>
 %GA_SCRIPT%
 <meta charset="utf-8" />
@@ -325,10 +325,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   body.drawer-open { overflow: hidden; }
   a { color: var(--accent); text-decoration: none; }
-  :root { --ct-header-h: 68px; --ct-main-pad: 35px; --trends-gap: 24px; }
+  /* --ct-col-max is the content column the header chrome and the sticky
+     filter chips align to (owner 2026-09-08: "bound by the same max width as
+     the middle cards").  Trends caps its cards at 1280px; every other view
+     fills main's 1800px cap minus its 35px side pads.  --ct-header-h is the
+     pre-JS guess for the wordmark band (80px logo + 10px pads at >=1333px);
+     syncChromeMetrics() overwrites it with the measured height. */
+  :root { --ct-header-h: 100px; --ct-main-pad: 35px; --trends-gap: 24px; --ct-col-max: 1730px; }
+  html[data-view="trends"] { --ct-col-max: 1280px; }
   html { overflow-x: clip; }
   header.top {
-    display: flex; align-items: center; gap: 16px; padding: 14px 35px 4px;
+    display: flex; align-items: center; gap: 16px;
+    /* Symmetric vertical pad so nav.tabs + #acct (align-items:center) sit
+       centered in the white band.  Side pads reach the content column:
+       max() keeps the plain 35px inset until the column cap engages. */
+    padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
@@ -353,7 +364,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Wordmark face (owner-chosen typewriter slab), self-hosted Zilla Slab first
      with a local typewriter-slab fallback stack. */
   .brand { display:inline-flex; align-items:center; gap:0; min-width:0; flex:0 1 auto; }
-  .brand-logo { height:40px; width:auto; max-width:min(360px, 62vw); object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
+  /* Owner 2026-09-08: the wordmark is at least as wide as the Trends/Trades
+     filter row (~370px at the default "3 Months / All / All / sides" state),
+     so it is sized by WIDTH and the 5:1 PNG sets the height (80px at 400px).
+     The 30vw cap keeps it from crowding nav.tabs on 900-1300px laptops; the
+     phone / coarse-pointer block below restores the compact 40px lockup. */
+  .brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
   .brand-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .brand .dot { color: var(--accent); }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
@@ -1187,32 +1203,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     white-space: nowrap;
     min-width: 0;
   }
-  /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
-     a full-width bar, then the stats chip flush-left beneath — no hard-coded
-     indent, so it stays aligned at every width.
+  /* ---- Flow rows (sector / market-cap / asset-type / party): label + value
+     on a top line, a full-width bar, then the stats line beneath — no
+     hard-coded indent, so it stays aligned at every width.
 
-     The top line follows the SAME ledger contract as .drawer-kv / .def-grid:
-     a bounded label column, then the value LEFT-aligned at one shared entry
-     guide. It used to be justify-content:space-between, which pinned the $ to
-     the far right and opened a measured 67–88% blank gap on 19 rows of the
-     first screen a visitor sees — the owner's loudest complaint ("70+% of the
-     screen width blank between them and its hard to even tell if they are
-     related"). No leader dots and no right-aligned values: leaders are a
-     table-of-contents device for values pinned to a page edge, and a ragged
-     left edge makes the eye re-find the start of every number.
-
-     The 180px cap (not the drawer's 35%) is sized for these labels: they are
-     13px sentence-case DATA (sector / asset-type names), not the drawer's
-     10.5px uppercase eyebrows. 180px clears the longest real label
-     ("Communication Services", 156px) with slack; the 58% floor keeps the
-     value column usable below a ~270px container. .flabel wraps rather than
-     ellipsizes so a label is never truncated. ---- */
-  .flowrow { margin: 11px 0; }
+     History: the top line used to follow the .drawer-kv / .def-grid ledger
+     contract (bounded 180px label column, value LEFT-aligned on one shared
+     entry guide) after the owner flagged a bare space-between figure with a
+     67–88% blank gap as unreadable.  On 2026-09-08 the owner asked for the
+     opposite here, with the figure LABELLED ("total volume ~$X"), set in the
+     category's weight and italic, and pinned to the bar's far edge — the
+     label text now ties the two ends together, and the 180px cap wrapped
+     "Government / Municipal Debt" onto two lines.  .drawer-kv / .def-grid /
+     .hbar.ledger keep the ledger contract; only .flowrow changed.  .flabel
+     still wraps rather than ellipsizes so a label is never truncated. ---- */
+  .flowrow { margin: 12px 0; }
   .flowrow:first-child { margin-top: 2px; }
-  .flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr; align-items: baseline; column-gap: 14px; margin-bottom: 5px; }
-  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }
-  .flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text); white-space: nowrap; }
-  .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+  /* Owner 2026-09-08 (supersedes the bounded-label column above for these
+     rows): the label owns the row and "total volume ~$X" pins to the bar's
+     right edge in the label's weight (italic), so a long label such as
+     "Government / Municipal Debt" never wraps under a 180px cap. */
+  .flowrow .ftop { display: flex; align-items: baseline; justify-content: space-between; column-gap: 14px; margin-bottom: 6px; }
+  .flowrow .flabel { flex: 1 1 auto; font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }
+  .flowrow .fval { flex: 0 0 auto; text-align: right; font-size: 13px; font-weight: 600; font-style: italic; color: var(--text); white-space: nowrap; }
+  .flowrow .fval .est-money { font-family: var(--mono); font-weight: 600; font-style: italic; color: inherit; }
+  /* The stats line reads like a justified sentence: every stat is a flex item
+     and the free width is shared evenly around the bullet separators
+     (space-between), so the line stretches from the bar's left edge to its
+     right edge while each "N buys / N sells" pair stays tight. */
+  .flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+  .flowrow .fchip .fstat { white-space: nowrap; }
+  .flowrow .fchip .fsep { flex: 0 0 auto; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:19px; }
   /* Owner follow-up batch #14: desktop keeps the full party name; mobile
@@ -1825,16 +1846,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      (measured 45px each side at 1440px).  100vw + 50% - 50vw breaks out of
      that box and out of main's 1800px cap so the strip matches the header
      edge to edge.  html overflow-x:clip hides any 100vw scrollbar gutter.
-     Chips keep --ct-main-pad, same inset as the header wordmark. */
+     The horizontal pad is the exact inverse of that breakout margin, so
+     the chips' content box lands back on the content column (same column
+     header.top pads to) while the white band stays edge to edge. */
   .trades-toolbars, #trendsSharedFilters {
-    position: sticky; top: var(--ct-header-h, 68px); z-index: 9;
+    position: sticky; top: var(--ct-header-h, 100px); z-index: 9;
     box-sizing: border-box;
     width: 100vw;
     max-width: 100vw;
     margin-left: calc(50% - 50vw);
     margin-right: calc(50% - 50vw);
     margin-top: 0; margin-bottom: 12px;
-    padding: 4px var(--ct-main-pad, 35px) 10px;
+    padding: 4px calc(50vw - 50%) 10px;
     background: var(--panel);
     border-bottom: none;
     overflow: visible;
@@ -2048,6 +2071,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       padding: 6px 10px 0; align-items: center; backdrop-filter: none;
     }
     .brand { font-size: 15px; margin-left: 1ch; }
+    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
     .pill { padding: 3px 7px; }
     /* Full-bleed dock like Socratic.Trade console — not a floating glass pill.
        bottom:0 with safe-area padding INSIDE the painted bar so it sits
@@ -2278,6 +2302,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
     .hbar .hlabel { width: 92px; font-size: 12px; }
     .hbar .hval { width: auto; min-width: 56px; }
+    .flowrow .flabel { font-size: 14px; }
+    .flowrow .fval { font-size: 12px; }
+    .flowrow .fchip { font-size: 11.5px; }
     /* Trends tables are dense; on phones drop the 120px buy/sell bar (the
        "3 buys / 3 sells" text stays) and the long company name so the ticker +
        numeric columns all fit without horizontal scroll. */
@@ -2411,7 +2438,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 #view-trends h3.tf-h,
 #view-trends details.trends-fold > summary.tf-h,
 #view-trends details.trends-fold > summary {
-  font-size: 15px;
+  /* Owner 2026-09-08: 18px so card titles stay a step above the 15px
+     By Party / By Asset Type / By Market Cap / By Sector row labels. */
+  font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.01em;
   line-height: 1.25;
@@ -2495,6 +2524,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* Nested "Lag Distribution" / "Slowest Filers" sub-headers are NOT section
    starters: dim small-caps cadence so they read as captions. */
 #view-trends .timeliness-panel > h3 {
+  font-size: 14px;
   padding-left: 0;
   color: var(--text-dim);
   letter-spacing: .03em;
@@ -2874,6 +2904,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px 0; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
+    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -2884,6 +2915,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html.phone-chrome .acct-desktop { display: none !important; }
   html.phone-chrome .acct-mobile { display: inline-flex !important; }
   html.phone-chrome .brand { margin-left: 1ch; }
+  html.phone-chrome .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }
   @media (max-width: 720px), (hover: none) and (pointer: coarse) {
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
@@ -2964,7 +2996,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" height="40" decoding="async" /></div>
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></div>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</a>
     <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
@@ -3218,7 +3250,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <details class="section trends-fold" id="trPerformersFold" open>
         <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
         <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
-        <p class="sub">5+ buys &nbsp;&bull;&nbsp; stocks only &nbsp;&bull;&nbsp; +/-200% cap per trade</p>
+        <p class="sub">5+ buys &nbsp;&nbsp;&bull;&nbsp;&nbsp; stocks only &nbsp;&nbsp;&bull;&nbsp;&nbsp; +/-200% cap per trade</p>
         <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
       </details>
     </div>
@@ -11078,16 +11110,28 @@ function setPricingProof() {
     : '';
 }
 
+/* Stat-line separator: three NBSPs each side of the bullet (owner 2026-09-08:
+   "an extra space on either side of every •").  The " / " inside a
+   buys/sells pair keeps its two, so the pair reads tighter than the gaps
+   between stats. */
+var SEP_DOT = '\\u00a0\\u00a0\\u00a0•\\u00a0\\u00a0\\u00a0';
+/* "total volume ~$X" for the top-right of a flow row (items are HTML). */
+function totalVolumeHtml(n) { return '<span class="fval-k">total volume</span> ' + estUsd(n); }
+/* Justified stats line under a flow bar: each stat is its own flex item with
+   the bullet separators between them (see .flowrow .fchip). Items are HTML. */
+function flowChipHtml(items) {
+  return '<div class="fchip">' + items.map(function (h) { return '<span class="fstat">' + h + '</span>'; })
+    .join('<span class="fsep" aria-hidden="true">' + SEP_DOT + '</span>') + '</div>';
+}
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
   var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
-  var breadth = polFull(r.uniqueMembers) + '\\u00a0\\u00a0•\\u00a0\\u00a0' + assetFull(r.uniqueTickers);
   return '<div class="flowrow">' +
     '<div class="ftop"><span class="flabel" title="' + esc(title || label) + '">' + esc(label) + '</span>' +
-      '<span class="fval">' + estUsd(r.estVolumeUsd) + '</span></div>' +
+      '<span class="fval">' + totalVolumeHtml(r.estVolumeUsd) + '</span></div>' +
     '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-    '<div class="fchip">' + esc(buySellText(r.buyCount, r.sellCount)) +
-      '\\u00a0\\u00a0•\\u00a0\\u00a0' + esc(breadth) + '\\u00a0\\u00a0•\\u00a0\\u00a0net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
+    flowChipHtml([esc(buySellText(r.buyCount, r.sellCount)), esc(polFull(r.uniqueMembers)), esc(assetFull(r.uniqueTickers)),
+      'net volume ' + netHtml(r.estNetFlowUsd)]) + '</div>';
 }
 
 /* Some sector strings vary by provider/vintage for the same real GICS sector
@@ -11159,7 +11203,7 @@ function loadTrPerformers() {
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win';
+      var statLine = fmtCount(r.tradeCount) + ' buys' + SEP_DOT + Math.round(100 * (r.winRate || 0)) + '% win';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
@@ -11318,7 +11362,7 @@ function loadTrMembers() {
       // district, which they do not hold (EXEC-MCCORMICK does carry a state).
       var metaBits = memberBranchBits(r, EXEC_TITLE_FULL).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
-      var statLine = fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
+      var statLine = fmtCount(r.tradeCount) + ' trades' + SEP_DOT + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells';
       return '<tr class="row">' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl, r.partyBucket, true) +
           '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
@@ -11343,9 +11387,9 @@ function loadTrParties() {
       var w = Math.round(100 * v.estVolumeUsd / maxVol);
       return '<div class="flowrow">' +
         '<div class="ftop"><span class="flabel">' + pdot(k) + esc(names[k]) + '</span>' +
-          '<span class="fval">' + estUsd(v.estVolumeUsd) + '</span></div>' +
+          '<span class="fval">' + totalVolumeHtml(v.estVolumeUsd) + '</span></div>' +
         '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-        '<div class="fchip">' + esc(buySellText(v.buys, v.sells)) + '\\u00a0\\u00a0•\\u00a0\\u00a0' + esc(polFull(v.members)) + '\\u00a0\\u00a0•\\u00a0\\u00a0net ' + netHtml(v.estNetFlowUsd) + '</div></div>';
+        flowChipHtml([esc(buySellText(v.buys, v.sells)), esc(polFull(v.members)), 'net volume ' + netHtml(v.estNetFlowUsd)]) + '</div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
@@ -12906,6 +12950,8 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
     b.setAttribute('aria-selected', 'true');
     if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);
     try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
+    /* header.top pads out to the active view's content column (--ct-col-max). */
+    document.documentElement.setAttribute('data-view', b.dataset.view);
     try {
       var u = new URL(window.location.href);
       u.searchParams.set('view', b.dataset.view);
@@ -13660,6 +13706,7 @@ loadMe().then(function () {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     initialBtn.classList.add('active');
     initialBtn.setAttribute('aria-selected', 'true');
+    document.documentElement.setAttribute('data-view', initialView);
     // Restoring a non-Trends tab that wasn't in the request URL (e.g. from
     // localStorage) — the server-rendered <title> only knows about ?view=,
     // so it's still the plain default here and needs the same fix-up the
