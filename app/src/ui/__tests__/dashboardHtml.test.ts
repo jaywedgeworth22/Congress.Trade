@@ -6575,3 +6575,40 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain('5+ buys&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;stocks only&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;+/-200% cap per trade');
   });
 });
+
+// ---- owner 2026-09-08: Committee Sector Conflicts — names + committees first,
+// the rest on hover or via the row click into the politician's drawer. -------
+describe('Committee Sector Conflicts table (owner 2026-09-08)', () => {
+  it('uses a fixed-layout colgroup so the committee text cannot balloon the table', () => {
+    expect(DASHBOARD_HTML).toContain('<table class="conflicts-table" id="tableTrConflicts">');
+    expect(DASHBOARD_HTML).toContain('<colgroup><col class="c-pol"><col class="c-com"><col class="c-sec"><col class="c-ast"><col class="c-side"><col class="c-est"></colgroup>');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 600px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-pol { width: 25%; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-com { width: 35%; }');
+    // The generic Trends "squeeze the name cell" rule is lifted for this table.
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table td:has(.member-cell) { width: auto; max-width: none; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table td.est, #view-trends .conflicts-table th.est { text-align: right; }');
+  });
+
+  it('renders committees one per line, clamped to two, with the full list in the tooltip', () => {
+    expect(DASHBOARD_HTML).toContain("function shortCommittee(name) {\n  return String(name || '').replace(/^(House|Senate) Committee on (?:the )?/i, '$1 ');");
+    expect(DASHBOARD_HTML).toContain('function committeeCellHtml(list, extraAttrs) {');
+    expect(DASHBOARD_HTML).toContain("if (all.length > 2) lines[1] += ' <span class=\"more\">+' + (all.length - 2) + ' more</span>';");
+    expect(DASHBOARD_HTML).toContain("' title=\"' + esc(all.join('\\n')) + '\">'");
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .committee-lines { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table td.committees { white-space: normal; line-height: 1.35; }');
+    // The old comma-joined nowrap cell is gone.
+    expect(DASHBOARD_HTML).not.toContain("var committees = Array.isArray(r.viaCommittees) ? r.viaCommittees.join(', ')");
+  });
+
+  it('opens the politician drawer from any cell except the ticker, which keeps its company link', () => {
+    expect(DASHBOARD_HTML).toContain("var rowMember = r.filerId ? ' data-member=\"' + esc(r.filerId) + '\"' : '';");
+    expect(DASHBOARD_HTML).toContain("return '<tr class=\"row conflict-row\">' +\n        '<td' + rowMember + '><div' + memberAttr + ' title=\"' + esc(name) + '\"><span class=\"name-line\">' + esc(name) + '</span></div></td>' +\n        committeeCellHtml(r.viaCommittees, rowMember) +");
+    expect(DASHBOARD_HTML).toContain("'<td class=\"muted sector\"' + rowMember + ' title=\"' + esc(r.sector || '') + '\">' + esc(r.sector || '—') + '</td>' +");
+    // Asset cell: no data-member, so [data-asset] resolves for the ticker.
+    expect(DASHBOARD_HTML).toContain("'<td>' + (r.ticker\n          ? '<span class=\"clickable\" data-asset=\"' + esc(r.ticker) + '\">' + esc(asset) + '</span>'");
+    expect(DASHBOARD_HTML).toContain("'<td class=\"est\"' + rowMember + '>' + estUsd(r.estAmountUsd) + '</td></tr>';");
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table tbody tr.conflict-row td[data-member] { cursor: pointer; }');
+    expect(DASHBOARD_HTML).toContain('Hover a committee cell for the full list; click a row for the politician.');
+  });
+});
