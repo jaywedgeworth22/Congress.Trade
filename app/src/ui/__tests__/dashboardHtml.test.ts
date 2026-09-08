@@ -1938,18 +1938,35 @@ describe('DASHBOARD_HTML', () => {
   // edge-push. Measured on Trends at 1440x900 before this landed: 19 flow rows
   // with a 67-88% blank run; after: 6-24%, all 19 on one guide.
   describe('ledger rows (label + value on one shared entry guide)', () => {
-    it('gives the Trends flow rows the .drawer-kv contract instead of space-between', () => {
-      expect(DASHBOARD_HTML).toContain(
-        '.flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr;',
-      );
-      // The value is left-aligned at the start of column 2, never pinned right.
-      expect(DASHBOARD_HTML).toContain('.flowrow .fval { justify-self: start;');
-      expect(DASHBOARD_HTML).toContain('.flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }');
-      expect(DASHBOARD_HTML).toContain('.flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text);');
-      expect(DASHBOARD_HTML).not.toContain('.flowrow .fval { justify-self: start; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text-dim);');
-      expect(DASHBOARD_HTML).not.toContain('.flowrow .ftop { display: flex;');
+    it('flow rows (owner 2026-09-08): label owns the row, "total volume" pins to the bar edge, stats line is justified', () => {
+      // Supersedes the bounded-label-column contract for .flowrow ONLY: the
+      // owner asked for the figure right-aligned to the bar's far edge, in the
+      // label's weight (italic), so a long label ("Government / Municipal
+      // Debt") never wraps under a 180px cap.  .drawer-kv / .def-grid / the
+      // ledger .hbar rows keep the shared-entry-guide rule below.
+      expect(DASHBOARD_HTML).toContain('.flowrow .ftop { display: flex; align-items: baseline; justify-content: space-between; column-gap: 14px; margin-bottom: 6px; }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .flabel { flex: 1 1 auto; font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: break-word; color: var(--text); }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fval { flex: 0 0 auto; text-align: right; font-size: 13px; font-weight: 600; font-style: italic; color: var(--text); white-space: nowrap; }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fval .est-money { font-family: var(--mono); font-weight: 600; font-style: italic; color: inherit; }');
+      expect(DASHBOARD_HTML).not.toContain('.flowrow .ftop { display: grid; grid-template-columns: min(58%, 180px) 1fr;');
       // A label is shortened, never truncated — .flabel must not ellipsize.
-      expect(DASHBOARD_HTML).not.toContain('.flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden;');
+      expect(DASHBOARD_HTML).not.toContain('.flowrow .flabel { flex: 1 1 auto; font-size: 15px; font-weight: 600; min-width: 0; overflow: hidden;');
+      // Justified stats line: every stat is a flex item, free width is shared
+      // evenly around the bullets, and a "N buys / N sells" pair never breaks.
+      expect(DASHBOARD_HTML).toContain('.flowrow .fchip { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 1ch; row-gap: 2px; margin-top: 6px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fstat { white-space: nowrap; }');
+      expect(DASHBOARD_HTML).toContain('.flowrow .fchip .fsep { flex: 0 0 auto; }');
+      // Narrow cards: inline flow so a wrap never strands a bullet at the
+      // bar edge (the .flowrow is the size container).
+      expect(DASHBOARD_HTML).toContain('.flowrow { margin: 12px 0; container-type: inline-size; }');
+      expect(DASHBOARD_HTML).toContain("return '<div class=\"fchip n' + items.length + '\">'");
+      expect(DASHBOARD_HTML).toContain('@container (max-width: 469px) {\n    .flowrow .fchip.n3 { display: block; }\n    .flowrow .fchip.n3 > .fstat, .flowrow .fchip.n3 > .fsep { display: inline; }\n  }');
+      expect(DASHBOARD_HTML).toContain('@container (max-width: 559px) {\n    .flowrow .fchip:not(.n3) { display: block; }\n    .flowrow .fchip:not(.n3) > .fstat, .flowrow .fchip:not(.n3) > .fsep { display: inline; }\n  }');
+      // Dense table stat lines: whole parts, a too-narrow cell wraps only at
+      // the bullet instead of clipping the sells count.
+      expect(DASHBOARD_HTML).toContain('.stack-under > span { white-space: normal; }');
+      expect(DASHBOARD_HTML).toContain('.stack-under .nb { white-space: nowrap; }');
+      expect(DASHBOARD_HTML).not.toContain('.stack-under > span { white-space: nowrap; }');
     });
 
     it('caps the drawer ledger so a wide desktop drawer cannot re-open the void', () => {
@@ -2142,8 +2159,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
     // Top Performers / Most Active Politicians: single merged stat line
     // (no separate rank column, no split-bar visualization).
-    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' buys\\u00a0\\u00a0•\\u00a0\\u00a0' + Math.round(100 * (r.winRate || 0)) + '% win'");
-    expect(DASHBOARD_HTML).toContain("fmtCount(r.tradeCount) + ' trades\\u00a0\\u00a0•\\u00a0\\u00a0' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells'");
+    expect(DASHBOARD_HTML).toContain("'<span class=\"nb\">' + fmtCount(r.tradeCount) + ' buys</span>' + SEP_DOT +\n        '<span class=\"nb\">' + Math.round(100 * (r.winRate || 0)) + '% win</span>'");
+    expect(DASHBOARD_HTML).toContain("'<span class=\"nb\">' + fmtCount(r.tradeCount) + ' trades</span>' + SEP_DOT +\n        '<span class=\"nb\">' + fmtCount(r.buyCount || 0) + ' buys\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(r.sellCount || 0) + ' sells</span>'");
   });
 
   it('surfaces source error and stale status instead of showing only successful polls', () => {
@@ -6482,5 +6499,80 @@ describe('web frontend bug fixes, accessibility enhancements, and mobile polish'
     expect(DASHBOARD_HTML).toContain('150);');
     expect(DASHBOARD_HTML).toContain('syncDirectoryUrl()');
     expect(DASHBOARD_HTML).toContain("u.searchParams.set('dmode', DIRECTORY_MODE)");
+  });
+});
+
+// ---- owner 2026-09-08: header/filter chrome on the content column + Trends
+// flow-row polish (bigger labels, "total volume" on the bar edge, "net
+// volume", wider bullet gaps, justified stats line). ------------------------
+describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
+  it('binds header.top and the sticky filter chips to the active view content column', () => {
+    expect(DASHBOARD_HTML).toContain(':root { --ct-header-h: 100px; --ct-main-pad: 35px; --trends-gap: 24px; --ct-col-max: 1730px; }');
+    expect(DASHBOARD_HTML).toContain('html[data-view="trends"] { --ct-col-max: 1280px; }');
+    expect(DASHBOARD_HTML).toContain('<html lang="en" data-view="trends">');
+    // Symmetric vertical pad (nav + account centered in the white band); side
+    // pads reach the column once its cap engages, 35px before that.
+    expect(DASHBOARD_HTML).toContain('padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));');
+    expect(DASHBOARD_HTML).not.toContain('padding: 14px 35px 4px;');
+    // Filter strip stays full-bleed (100vw breakout) but its pad is the exact
+    // inverse of that margin, so the chips sit on the column, not at 35px.
+    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
+    expect(DASHBOARD_HTML).toContain('padding: 4px calc(50vw - 50%) 10px;');
+    expect(DASHBOARD_HTML).not.toContain('padding: 4px var(--ct-main-pad, 35px) 10px;');
+    expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 100px); z-index: 9;');
+    // Tab switch + boot-time restore keep html[data-view] in sync, and the
+    // head bootstrap stamps a deep-linked / remembered view before first paint.
+    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', b.dataset.view);");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', initialView);");
+    expect(DASHBOARD_HTML).toContain("if (!v) { try { v = localStorage.getItem('ct-active-tab'); } catch (e2) {} }");
+    expect(DASHBOARD_HTML).toContain("if (v === 'trades' || v === 'people' || v === 'subs' || v === 'review' || v === 'admin') {\n        document.documentElement.setAttribute('data-view', v);");
+  });
+
+  it('centres nav + account on the header + filter-strip white band on desktop', () => {
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    header.top > nav.tabs, header.top > #acct { position: relative; top: calc(var(--ct-filter-h, 0px) / 2); }\n  }');
+    expect(DASHBOARD_HTML).toContain("var strip = document.querySelector('.view.active .trades-toolbars, .view.active #trendsSharedFilters');");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-filter-h', (strip ? strip.getBoundingClientRect().height : 0) + 'px');");
+    // Re-measured on every tab switch and on the boot-time restore.
+    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the active view's filter strip");
+    expect(DASHBOARD_HTML).toContain("syncChromeMetrics(); // --ct-filter-h follows the restored view's filter strip");
+  });
+
+  it('enlarges the wordmark on desktop and keeps the compact 40px lockup on phones', () => {
+    expect(DASHBOARD_HTML).toContain('.brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain;');
+    // >=1100px: never narrower than the 368px default filter row.
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 1100px) { .brand-logo { width:clamp(368px, 30vw, 400px); } }');
+    // Intrinsic size attributes so the 5:1 box is known before the PNG loads
+    // (no header-height jump for the sticky filter offset).
+    expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');
+    // Both phone blocks carry the reset: the <=768px grid header and the
+    // <=720px / coarse-pointer block (anchored on their neighbouring rules).
+    expect(DASHBOARD_HTML).toContain('    .brand { font-size: 15px; margin-left: 1ch; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+    expect(DASHBOARD_HTML).toContain('    html[data-theme="light"] header.top { background: #fff; }\n    .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:auto; height:40px; max-width:min(360px, 62vw); }');
+  });
+
+  it('steps Trends card titles up to 18px, a step above the 15px flow-row labels', () => {
+    expect(DASHBOARD_HTML).toMatch(/#view-trends details\.trends-fold > summary \{\n(?:  \/\*[\s\S]*?\*\/\n)?  font-size: 18px;\n  font-weight: 650;/);
+    // Nested Lag Distribution / Slowest Filers captions do not grow with them.
+    expect(DASHBOARD_HTML).toContain('#view-trends .timeliness-panel > h3 {\n  font-size: 14px;');
+    // Phones: labels/figures a notch smaller so a 375px card still fits.
+    expect(DASHBOARD_HTML).toContain('    .flowrow .flabel { font-size: 14px; }');
+  });
+
+  it('labels flow-row figures "total volume" / "net volume" and widens every bullet gap', () => {
+    // Three spaces each side; the one regular space (before the bullet) is
+    // the only break opportunity, so a wrapped line starts with the bullet.
+    expect(DASHBOARD_HTML).toContain("var SEP_DOT = '\\u00a0\\u00a0 •\\u00a0\\u00a0\\u00a0';");
+    expect(DASHBOARD_HTML).toContain("function totalVolumeHtml(n) { return '<span class=\"fval-k\">total volume</span> ' + estUsd(n); }");
+    expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(r.estNetFlowUsd)");
+    expect(DASHBOARD_HTML).toContain("'net volume ' + netHtml(v.estNetFlowUsd)");
+    expect(DASHBOARD_HTML).not.toContain("•\\u00a0\\u00a0net ' + netHtml(");
+    // Each stat is its own flex item; separators carry the wider gap.
+    expect(DASHBOARD_HTML).toContain(".join('<span class=\"fsep\" aria-hidden=\"true\">' + SEP_DOT + '</span>')");
+    expect(DASHBOARD_HTML).toContain("flowChipHtml([esc(buySellText(r.buyCount, r.sellCount)), esc(polFull(r.uniqueMembers)), esc(assetFull(r.uniqueTickers)),");
+    expect(DASHBOARD_HTML).toContain("flowChipHtml([esc(buySellText(v.buys, v.sells)), esc(polFull(v.members)), 'net volume ' + netHtml(v.estNetFlowUsd)])");
+    // The " / " inside a buys/sells pair keeps its two NBSPs each side.
+    expect(DASHBOARD_HTML).toContain("'\\u00a0\\u00a0/\\u00a0\\u00a0' + fmtCount(sells) + ' sell'");
+    expect(DASHBOARD_HTML).toContain('5+ buys&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;stocks only&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;+/-200% cap per trade');
   });
 });
