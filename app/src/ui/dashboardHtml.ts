@@ -402,6 +402,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   html:not([data-view="trades"]):not([data-view="trends"]) #ctFilters { display: none; }
   html[data-view="trends"] #tradesExtraFilters { display: none; }
+  /* Same hide at ID-ID specificity: the phone block's
+     #ctFilters #tradesExtraFilters display:flex rule (2,0,0) would
+     otherwise outrank the rule above (1,1,1) and leave the Trades search
+     visible on the Trends tab on phones / coarse-pointer tablets. */
+  html[data-view="trends"] #ctFilters #tradesExtraFilters { display: none; }
   #ctFilters .trades-toolbars {
     position: static; width: auto; max-width: none; margin: 0; padding: 0;
     background: transparent; flex: 1 1 auto; min-width: 0;

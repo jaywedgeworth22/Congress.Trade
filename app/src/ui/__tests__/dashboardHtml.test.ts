@@ -6674,6 +6674,10 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('nav.tabs { display: flex; gap: 4px; margin-left: 0; flex-wrap: nowrap; align-self: center; grid-column: 2; grid-row: 1; }');
     expect(DASHBOARD_HTML).toContain('html:not([data-view="trades"]):not([data-view="trends"]) #ctFilters { display: none; }');
     expect(DASHBOARD_HTML).toContain('html[data-view="trends"] #tradesExtraFilters { display: none; }');
+    // Codex P2 on #2353: the phone-block `#ctFilters #tradesExtraFilters { display:flex }`
+    // (2,0,0) outranked that hide (1,1,1) — the Trades search stayed visible on
+    // Trends for phones / coarse tablets.  ID-ID hide keeps it off there too.
+    expect(DASHBOARD_HTML).toContain('html[data-view="trends"] #ctFilters #tradesExtraFilters { display: none; }');
     expect(DASHBOARD_HTML).toContain('#view-trades, #view-trends { padding-top: 16px; }');
     // Header still sticky, and never gets a transform/filter (fixed popovers).
     expect(DASHBOARD_HTML).toContain('position: sticky; top: 0; z-index: 10;\n    width: 100%; box-sizing: border-box;');
