@@ -206,7 +206,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        Distinct from --radius (card/section/modal corner radius) — don't
        conflate the two. */
     --radius-pill: 999px;
+    /* Header control radius: nav tabs, filter chips, time select, search
+       field, account cluster and pager buttons share ONE corner radius so the
+       header row reads as a single grammar (owner 2026-09-09: "filter bubble
+       shape equally rounded with equal radius as the site section tab
+       shapes").  Popovers/menus use --radius; --radius-pill stays for
+       badges / status pills / toggles that are not header controls. */
+    --radius-ctl:  8px;
     --control-h:   34px;
+    /* Bottom edge of the wordmark block (phones: header row 1) measured by
+       syncChromeMetrics(); the account sheet anchors under it. */
+    --ct-brand-h:  80px;
     --mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans:      "Inter", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   }
@@ -236,6 +246,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      (e.g. .row-flex/.plan-grid set display and would otherwise override the
      UA's [hidden]{display:none} — the entitlement cues rely on it). */
   [hidden] { display: none !important; }
+  /* Admin-only chrome (Review / Admin tabs, [data-admin-only] blocks) is
+     gated on html.ct-admin, which applyAdminVisibility() sets from
+     canUseAdmin() — nothing admin-ish is reachable by CSS alone before
+     /auth/me resolves, and no [hidden] toggle can leak it back. */
+  html:not(.ct-admin) [data-admin-tab="true"], html:not(.ct-admin) [data-admin-only] { display: none !important; }
   /* ---- theme toggle ---- */
   /* ---- resizable feed columns ---- */
   /* No reserved right gutter: when a table genuinely overflows, the scrollbar
@@ -341,28 +356,63 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   body.drawer-open { overflow: hidden; }
   a { color: var(--accent); text-decoration: none; }
-  /* --ct-col-max is the content column the header chrome and the sticky
-     filter chips align to (owner 2026-09-08: "bound by the same max width as
+  /* --ct-col-max is the content column the header chrome (tabs, account,
+     filter row) aligns to (owner 2026-09-08: "bound by the same max width as
      the middle cards").  Trends caps its cards at 1280px; every other view
      fills main's 1800px cap minus its 35px side pads.  --ct-header-h is the
-     pre-JS guess for the wordmark band (80px logo + 10px pads at >=1333px);
-     syncChromeMetrics() overwrites it with the measured height. */
+     pre-JS guess for the full header band (80px logo beside two 34px control
+     rows + 10px pads at >=1333px; the filters now live INSIDE header.top, so
+     nothing is sticky under it) — syncChromeMetrics() overwrites it with the
+     measured height; phones/popovers/account sheet read it. */
   :root { --ct-header-h: 100px; --ct-main-pad: 35px; --trends-gap: 24px; --ct-col-max: 1730px; }
   html[data-view="trends"] { --ct-col-max: 1280px; }
   html { overflow-x: clip; }
   header.top {
-    display: flex; align-items: center; gap: 16px;
-    /* Symmetric vertical pad so nav.tabs + #acct (align-items:center) sit
-       centered on the wordmark row (owner 2026-09-08: the filter strip sits
-       under the logo, so the header row is the band to center on).  Side
-       pads reach the content column: max() keeps the plain 35px inset until
-       the column cap engages. */
+    /* Owner 2026-09-09: two-row header grid.  The wordmark spans both rows
+       on the left; row 1 = section tabs + account cluster, row 2 = the
+       shared Trades/Trends filter row (#ctFilters, moved out of the views
+       so it carries over between tabs and sits beside the logo instead of
+       under it).  Rows are the shared control height so the logo's 80px
+       centre lines up with the two 34px rows + 12px gap.  Side pads reach
+       the content column: max() keeps the plain 35px inset until the
+       column cap engages.
+       NEVER add transform / filter / overflow:hidden here: the filter
+       popovers are position:fixed children of this sticky header and any
+       of those would re-root them (clipped popovers). */
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);
+    row-gap: 12px; column-gap: 24px;
+    align-items: center;
     padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
     width: 100%; box-sizing: border-box;
   }
+  header.top .brand { grid-column: 1; grid-row: 1 / 3; align-self: center; display: block; line-height: 0; }
+  header.top #acct { grid-column: 3; grid-row: 1; justify-self: end; }
+  /* Shared filter row (Trades + Trends): right of the logo, under the tabs.
+     Hidden on views that have no filters; #tradesExtraFilters (search) is
+     Trades-only.  html[data-view] is stamped pre-paint and on every tab
+     switch, so this never flashes. */
+  header.top #ctFilters {
+    grid-column: 2 / -1; grid-row: 2;
+    display: flex; align-items: center; gap: 12px; min-width: 0; min-height: var(--control-h, 34px);
+  }
+  html:not([data-view="trades"]):not([data-view="trends"]) #ctFilters { display: none; }
+  html[data-view="trends"] #tradesExtraFilters { display: none; }
+  #ctFilters .trades-toolbars {
+    position: static; width: auto; max-width: none; margin: 0; padding: 0;
+    background: transparent; flex: 1 1 auto; min-width: 0;
+  }
+  #ctFilters .toolbar { margin: 0; flex-wrap: nowrap; }
+  /* Reset chip: only rendered once a filter departs from the defaults
+     (refreshIosFilterSummaries() toggles [hidden]). */
+  .ct-filter-reset { flex: 0 0 auto; height: var(--control-h, 34px); min-height: 0; padding: 0 10px; border-radius: var(--radius-ctl); font-size: 12px; }
+  /* Content column starts below the header row; the old sticky strips
+     carried their own bottom margin. */
+  #view-trades, #view-trends { padding-top: 16px; }
   /* Zilla Slab (Typotheque/Mozilla), SIL OFL 1.1 — latin 700 subset via @fontsource, embedded so no external font request. */
   @font-face { font-family:'Zilla Slab'; font-style:normal; font-weight:700; font-display:swap; src:url(/assets/zilla-slab-700.woff2) format('woff2'); }
   /* Inter (Rasmus Andersson), SIL OFL 1.1 — self-hosted latin subset, the
@@ -403,12 +453,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill.off { color: var(--text-dim); }
   .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-  nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  /* Header row 1, column 2.  Never justify-self:center/end here: the tabs
+     sit flush against the logo so the eye travels logo → sections →
+     filters on one left edge. */
+  nav.tabs { display: flex; gap: 4px; margin-left: 0; flex-wrap: nowrap; align-self: center; grid-column: 2; grid-row: 1; }
   nav.tabs a {
     position: relative;
     background: transparent; color: var(--text-dim); border: 1px solid transparent;
-    padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: var(--sans);
-    text-decoration: none; display: inline-block;
+    height: var(--control-h, 34px); box-sizing: border-box; padding: 0 13px; border-radius: var(--radius-ctl); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--sans);
+    text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap;
     /* PR #2075 swapped these from <button> to <a href> for crawlability.
        A <button> centers its label via the UA stylesheet; an <a> inherits
        text-align:start, so without this the fixed mobile dock (grid cells,
@@ -418,7 +471,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     text-align: center;
   }
   nav.tabs a:hover { color: var(--text); background: var(--panel); }
-  nav.tabs a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+  nav.tabs a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); font-weight: 600; }
+  nav.tabs a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Admin-only tabs (Review Queue / Admin · Cadence) are long labels that
+     crowd row 1 at laptop widths; desktop shows their short data-mobile
+     label and keeps the full text in the tooltip.  Phones already render
+     data-mobile under the icon. */
+  @media (min-width: 769px) and (hover: hover) {
+    nav.tabs a[data-admin-tab] { font-size: 0; }
+    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile) / ""; font-size: 13px; }
+  }
   .tab-count-badge {
     display: none;
     min-width: 18px;
@@ -985,15 +1047,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pager { margin-top:14px; justify-content:space-between; gap:12px; }
   .pager.pager-top { margin-top:0; margin-bottom:12px; }
   .pager.pager-bottom { margin-top:14px; }
-  .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width:auto; }
-  .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; }
+  .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-ctl); overflow: hidden; width:auto; height: var(--control-h, 34px); box-sizing: border-box; }
+  .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; height: 100%; min-height: 0; font-size: 13px; }
+  .pager-controls .trades-page-msg { font-size: 13px; }
+  .pager-controls .btn.sm { font-size: 13px; }
+  .trades-page-msg .pg-short { display: none; }
+  /* The generic .pager-controls span padding/borders belong to the counter
+     box, not to its inner long/short text spans. */
+  .pager-controls .pg-long, .pager-controls .pg-short { padding: 0; border: 0; }
+  .pager-tools select, .pager-tools .feed-options-btn { height: var(--control-h, 34px); box-sizing: border-box; border-radius: var(--radius-ctl); font-size: 13px; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   /* Owner punch list #6: .note's global margin-top:8px throws "Page 1 of 56"
      off-center inside the pager control box (align-items:center centers the
      margin box, not the text) — zero it out here so the text itself centers. */
   .pager-controls .note { margin-top: 0; }
-  .pager select { padding:5px 9px; font-size:12px; width:auto; }
+  .pager select { padding:0 9px; font-size:13px; width:auto; }
   /* Rows + Export live in the top control band.  Bottom pager is range +
      page buttons only — do not park tools at the end of the list. */
   .pager-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
@@ -1006,11 +1075,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Guest Sign In + Upgrade as one joined control (matches segmented filters). */
   .acct-auth-group {
     display:inline-flex; align-items:center; border:1px solid var(--border);
-    border-radius:var(--radius-pill); overflow:hidden; background:var(--panel-2);
+    border-radius:var(--radius-ctl); overflow:hidden; background:var(--panel-2);
+    height:var(--control-h, 34px); box-sizing:border-box;
   }
   .acct-auth-group .btn {
     border:none !important; border-radius:0 !important; box-shadow:none !important;
-    min-height:32px; padding:0 14px;
+    height:100%; min-height:0; padding:0 14px; font-size:13px; font-weight:600;
+    display:inline-flex; align-items:center;
   }
   .acct-auth-group .btn + .btn { border-left:1px solid var(--border) !important; }
   .acct-auth-group .btn.ghost { background:transparent; }
@@ -1543,11 +1614,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      is a blue-tinted gray, which on a 1px circular border reads as a stray
      blue ring around the headshot. */
   .acct .avatar.lg { width:28px; height:28px; cursor:pointer; border-color:transparent; }
-  .acct-menu-btn { display:flex; align-items:center; gap:7px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:999px; padding:3px 8px 3px 3px; cursor:pointer; font-family:var(--sans); max-width:230px; }
+  .acct-menu-btn { display:flex; align-items:center; gap:7px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:var(--radius-ctl); height:var(--control-h, 34px); box-sizing:border-box; padding:0 10px 0 3px; cursor:pointer; font-family:var(--sans); font-size:13px; max-width:230px; }
+  .acct-desktop > .btn.sm { height:var(--control-h, 34px); box-sizing:border-box; display:inline-flex; align-items:center; border-radius:var(--radius-ctl); font-size:13px; padding:0 12px; }
   .acct-menu-btn:hover { background:var(--panel-2); }
   .acct-menu-btn .acct-caret { color:var(--text-dim); font-size:11px; }
   .menu { position:relative; }
-  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:12px; min-width:min(420px, calc(100vw - 24px)); max-width:min(440px, calc(100vw - 16px)); box-shadow:0 18px 44px rgba(0,0,0,.28); display:none; z-index:30; }
+  .menu-pop { position:absolute; right:0; top:40px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:12px; min-width:min(420px, calc(100vw - 24px)); max-width:min(440px, calc(100vw - 16px)); box-shadow:0 18px 44px rgba(0,0,0,.28); display:none; z-index:30; }
   .menu-pop.open { display:block; }
   .menu-pop button, .menu-pop a { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px; font-family:var(--sans); text-decoration:none; box-sizing:border-box; }
   .menu-section-label { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--text); padding:4px 12px 6px; margin-top:16px; }
@@ -1620,6 +1692,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-mobile-menu .badge { justify-self:start; margin:0 2px 2px; }
   .acct-mobile-menu .menu { width:100%; }
   .acct-mobile-menu .acct-menu-btn { width:100%; max-width:none; justify-content:space-between; }
+  /* Phone sheet: Sign In / Upgrade become stacked full-width rows (same
+     shape as the login modal's provider buttons), not the joined desktop pair. */
+  .acct-mobile-menu .acct-auth-group { display:flex; flex-direction:column; gap:8px; border:0; background:transparent; border-radius:0; overflow:visible; height:auto; }
+  .acct-mobile-menu .acct-auth-group .btn { width:100%; height:44px; min-height:44px; border:1px solid var(--border) !important; border-radius:var(--radius-ctl) !important; justify-content:flex-start; padding:0 16px; font-size:16px; font-weight:500; }
+  .acct-mobile-menu .acct-auth-group .btn + .btn { border-left:1px solid var(--border) !important; }
   .acct-mobile-menu .menu-pop { position:static; box-shadow:none; border:none; padding:4px 0 0; min-width:0; max-width:none; }
   /* Owner punch list #2: ~8px gap between the avatar photo and the email text
      (the mobile "who" row combines both — the desktop .menu-pop .who row is
@@ -1633,14 +1710,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:520px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
   #loginOverlay .modal { max-width: 400px; padding: 26px 24px; }
   .auth-btn-stack { display:flex; flex-direction:column; gap:10px; margin-top:14px; width:100%; }
-  .auth-btn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; border:1px solid var(--border); transition:border-color .15s, background .15s; font-family:inherit; color:var(--text); -webkit-tap-highlight-color:transparent; }
-  .auth-btn svg { width:18px; height:18px; flex-shrink:0; }
-  .auth-btn.gbtn, .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
+  /* Sign-in providers: one base rule shaped like Socratic.Trade's login
+     buttons (owner 2026-09-09) — full-width 44px rows, 10px corners,
+     mark + label left-aligned, 19px/500 label.  Provider colours below. */
+  .auth-btn, .auth-btn.gbtn, .gbtn, .auth-btn.abtn, .abtn, .auth-btn.xbtn, .xbtn {
+    display:inline-flex; align-items:center; justify-content:flex-start; text-align:left; gap:12px;
+    width:100%; height:44px; min-height:44px; padding:0 16px; box-sizing:border-box;
+    border:1px solid var(--border); border-radius:10px;
+    font-size:19px; font-weight:500; line-height:1; font-family:inherit;
+    cursor:pointer; text-decoration:none; color:var(--text);
+    transition:border-color .15s, background .15s; -webkit-tap-highlight-color:transparent;
+  }
+  .auth-btn svg { width:20px; height:20px; flex:0 0 20px; }
+  .auth-btn.gbtn, .gbtn { background:var(--panel-2); color:var(--text); }
   .auth-btn.gbtn:hover, .gbtn:hover { border-color:var(--accent); }
-  .auth-btn.abtn, .abtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid #333; background:#000; color:#fff; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
-  .auth-btn.abtn:hover, .abtn:hover { border-color:#666; }
-  .auth-btn.xbtn, .xbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:44px; min-height:44px; padding:0 16px; border-radius:10px; border:1px solid #333; background:#000; color:#fff; font-weight:600; font-size:14px; cursor:pointer; text-decoration:none; box-sizing:border-box; }
-  .auth-btn.xbtn:hover, .xbtn:hover { border-color:#666; }
+  .auth-btn.abtn, .abtn, .auth-btn.xbtn, .xbtn { border-color:#333; background:#000; color:#fff; }
+  .auth-btn.abtn:hover, .abtn:hover, .auth-btn.xbtn:hover, .xbtn:hover { border-color:#666; }
   .modal h2 { margin:0 0 6px; font-size:19px; }
   .modal p.sub { margin:0 0 18px; color:var(--text-dim); font-size:13px; }
   .modal .close { float:right; display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; margin:-10px -10px 0 6px; background:transparent; border:1px solid transparent; border-radius:999px; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
@@ -1760,29 +1845,43 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   /* iOS-style filter dropdowns (Trades + Trends). The old H/S/P chip strip
      is now a Menu + check-style list, same as FeedControlBar. */
-  .ios-filter { position: relative; flex: 0 0 auto; }
+  .ios-filter { position: relative; flex: 0 0 auto; display: inline-flex; }
   .ios-filter-btn {
     display: inline-flex; align-items: center; gap: 6px;
-    height: var(--control-h, 34px); padding: 0 10px;
-    border: 1px solid var(--border); border-radius: 999px;
+    height: var(--control-h, 34px); box-sizing: border-box; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-ctl);
     background: var(--panel); color: var(--text);
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    white-space: nowrap;
   }
+  .ios-filter-btn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .ios-filter-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ios-filter-btn[aria-expanded="true"] { border-color: var(--accent); background: var(--panel-2); }
   .ios-filter-btn::after {
     content: ""; width: 0; height: 0; margin-left: 2px;
     border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
     border-top: 4px solid currentColor; opacity: .55;
   }
-  /* Dropdowns are menus, not the old H/S/P toggles — keep the closed
-     pill on the default chrome even when a filter is active.  The label
-     already shows House / D / Buys. */
-  .ios-filter.has-sel .ios-filter-btn { background: var(--panel); color: var(--text); border-color: var(--border); }
+  /* An active filter tints its closed chip (accent ink + faint accent
+     wash) so a narrowed feed is visible at a glance without opening the
+     menu; the label still spells it out (House / D / Buys). */
+  .ios-filter.has-sel .ios-filter-btn {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
+  /* Multi-selects ("House+Senate", "Buys+Sells+Exch") stay one chip width
+     so the row keeps its search box at laptop widths; the branch chip gets
+     room for "House+Senate+Executive" (170px) and every summary carries its
+     full text as a tooltip (setSummary()). */
+  .ios-filter-lbl { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+  #qChamber .ios-filter-lbl, #trChamber .ios-filter-lbl { max-width: 176px; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
-    padding: 6px; border-radius: 16px;
+    padding: 6px; border-radius: var(--radius);
     background: var(--panel);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -1795,7 +1894,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     display: flex; align-items: center; gap: 8px;
     width: 100%; text-align: left; border: 0; background: transparent;
     color: var(--text); font: inherit; font-size: 14px; padding: 9px 10px;
-    border-radius: 10px; cursor: pointer;
+    border-radius: var(--radius-ctl); cursor: pointer;
   }
   .ios-filter-item:hover, .ios-filter-clear:hover { background: var(--panel-2); }
   .ios-filter-item.on { background: transparent; font-weight: 600; }
@@ -1809,7 +1908,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .ios-filter.party-chips,
   .ios-filter.side-chips,
   .ios-filter.branch-filters {
-    display: block; overflow: visible; border: none; border-radius: 0;
+    display: inline-flex; overflow: visible; border: none; border-radius: 0;
     background: transparent; margin: 0; gap: 0;
   }
   .ios-filter .ios-filter-item.branch-toggle,
@@ -1885,7 +1984,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pill-select-el {
     appearance:none; -webkit-appearance:none; -moz-appearance:none;
     width:auto; field-sizing:content; max-width:100%; height:100%; border:1px solid var(--border); background:var(--panel);
-    color:var(--text); border-radius:var(--radius-pill); font:600 12px var(--sans);
+    color:var(--text); border-radius:var(--radius-ctl); font:600 13px var(--sans);
     padding:0 26px 0 30px; cursor:pointer;
     background-repeat:no-repeat; background-position:right 8px center;
     background-image:url('data:image/svg+xml;utf8,<svg fill="%2334435b" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
@@ -1899,37 +1998,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      no leading icon glyph on desktop or mobile (id/oninput/aria-label on the
      <input> untouched). */
   .icon-field { position:relative; display:inline-flex; align-items:center; min-width:0; }
-  .icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }
-  .shared-filters { margin-bottom:10px; }
-  .trades-only-filters { margin-bottom:14px; }
-  /* Filter chrome: sits in the white header band (main padding-top is 0),
-     viewport-full-bleed, already at the sticky rest position so it does
-     not slide-then-pin.  #view-trends is max-width 1280px centered, so a
-     pad-only negative margin left cool-grey notches under header.top
-     (measured 45px each side at 1440px).  100vw + 50% - 50vw breaks out of
-     that box and out of main's 1800px cap so the strip matches the header
-     edge to edge.  html overflow-x:clip hides any 100vw scrollbar gutter.
-     The horizontal pad is the exact inverse of that breakout margin, so
-     the chips' content box lands back on the content column (same column
-     header.top pads to) while the white band stays edge to edge. */
-  .trades-toolbars, #trendsSharedFilters {
-    position: sticky; top: var(--ct-header-h, 100px); z-index: 9;
-    box-sizing: border-box;
-    width: 100vw;
-    max-width: 100vw;
-    margin-left: calc(50% - 50vw);
-    margin-right: calc(50% - 50vw);
-    margin-top: 0; margin-bottom: 12px;
-    padding: 4px calc(50vw - 50%) 10px;
-    background: var(--panel);
-    border-bottom: none;
-    overflow: visible;
-    -webkit-backdrop-filter: none; backdrop-filter: none;
+  .icon-input { padding:0 12px 0 32px; border-radius:var(--radius-ctl); height:var(--control-h); box-sizing:border-box; width:100%; font-size:13px; }
+  /* Leading magnifier so the search field reads as search, not a free text box. */
+  #qSearchField::before {
+    content: ""; position: absolute; left: 11px; top: 50%; width: 14px; height: 14px; margin-top: -7px;
+    pointer-events: none; opacity: .6;
+    background: currentColor;
+    -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>') center / contain no-repeat;
+    mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>') center / contain no-repeat;
   }
+  #qSearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  .shared-filters, .trades-only-filters { margin-bottom:0; }
+  /* Filter chrome lives in header.top row 2 (#ctFilters) — see the header
+     grid rules.  The Trends copy (#trendsSharedFilters) is a hidden state
+     mirror: trParams()/getTrWindow() still read it and the chip sync keeps
+     it in step with the header controls. */
   .trades-toolbars .toolbar,
   #trendsSharedFilters.toolbar { margin-bottom: 0; }
-  html[data-theme="light"] .trades-toolbars,
-  html[data-theme="light"] #trendsSharedFilters { background: #fff; }
+  #trendsSharedFilters[data-filter-mirror] { display: none !important; }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
      toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
      search fields + Search button. display:contents on both toolbar divs
@@ -1940,13 +2026,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      the $ pill that used to close this row is gone — no orphaned auto-margin
      or trailing gap left behind; search is now the last item.) */
   @media (min-width: 769px) {
-    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }
+    .trades-toolbars { display:flex; flex-wrap:nowrap; align-items:center; gap:12px; margin:0; min-width:0; }
     .trades-toolbars #tradesSharedFilters,
     .trades-toolbars #tradesExtraFilters { display:contents; }
     .trades-toolbars .pill-select.pill-cal { order:1; }
     .trades-toolbars .filter-groups { order:2; }
-    .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 200px; }
+    .trades-toolbars #qSearchField { order:3; flex: 1 1 220px; min-width: 180px; max-width: 420px; }
     .pager-top .trades-sort-mobile { display: none; }
+  }
+  /* Laptop: tighter header gutters; a signed-in admin's row 1 (six tabs +
+     badge + Account) drops the badge/label so the tabs never wrap. */
+  @media (max-width: 1332px) {
+    header.top { column-gap: 16px; }
+    nav.tabs a { padding: 0 12px; }
+    html.ct-admin .acct-desktop > .badge, html.ct-admin .acct-label, html.ct-admin .acct-caret { display: none; }
+    html.ct-admin .acct-menu-btn { padding-right: 3px; }
+  }
+  /* Below 1200px the filter row may not fit beside the logo once several
+     chips are multi-selected: let it wrap onto a second line (the header
+     row grows; the search keeps its 180px floor instead of collapsing). */
+  @media (max-width: 1199px) {
+    #ctFilters .trades-toolbars { flex-wrap: wrap; row-gap: 8px; }
+  }
+  @media (max-width: 1099px) {
+    .acct-desktop > .badge, .acct-menu-btn .acct-label, .acct-menu-btn .acct-caret { display: none; }
+    .acct-menu-btn { padding-right: 3px; }
+    /* Six admin tabs + two lit badges beside a 300px wordmark. */
+    html.ct-admin nav.tabs { gap: 2px; }
+    html.ct-admin nav.tabs a { padding: 0 9px; }
+  }
+  /* Small desktop window (769-999px, mouse): the wordmark stays on row 1
+     beside the tabs and the filter row takes the full column underneath
+     (there is no room right of the logo for five controls + search). */
+  @media (min-width: 769px) and (max-width: 999px) and (hover: hover) {
+    header.top { grid-template-rows: auto var(--control-h, 34px); row-gap: 10px; column-gap: 12px; }
+    header.top .brand { grid-row: 1; }
+    nav.tabs { flex-wrap: wrap; }
+    nav.tabs a { padding: 0 9px; }
+    header.top #ctFilters { grid-column: 1 / -1; grid-row: 2; }
+    html:not([data-view="trades"]):not([data-view="trends"]) header.top { grid-template-rows: auto; row-gap: 0; }
+    .trades-toolbars #qSearchField { max-width: none; }
+    /* Row 1 has to hold logo + four tabs + account at 769px: a slightly
+       narrower wordmark (200px at 769px) keeps the tabs on one line. */
+    .brand-logo { width: min(368px, 26vw); }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -2129,10 +2251,41 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     html, body { width:100%; max-width:100%; overflow-x:clip; }
     body { background: var(--bg); font-size: 13px; }
     :root { --ct-header-h: 62px; --ct-main-pad: 12px; }
+    /* Phone header: row 1 = wordmark + account button, row 2 = the shared
+       filter row (chips scroll sideways in one row; search stacks under on
+       Trades).  nav.tabs is the fixed bottom dock (below) so it takes no
+       grid cell here. */
     header.top {
-      display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
+      display: grid; grid-template-columns: minmax(0, 1fr) 44px; grid-template-rows: auto auto;
+      column-gap: 8px; row-gap: 0;
       padding: 6px 10px 0; align-items: center; backdrop-filter: none;
     }
+    header.top .brand { grid-column: 1; grid-row: 1; }
+    header.top #acct { grid-column: 2; grid-row: 1; justify-self: end; }
+    header.top #ctFilters { grid-column: 1 / -1; grid-row: 2; display: block; padding: 4px 4px 8px; min-width: 0; }
+    #ctFilters .trades-toolbars { display: block; position: static; margin: 0; padding: 0; width: auto; }
+    #ctFilters #tradesSharedFilters {
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+      overflow-x: auto; overflow-y: visible; scrollbar-width: none;
+      /* 4px inner pad (offset by margin) keeps the 2px+2px focus-visible
+         ring inside the scroll box instead of clipped top and bottom. */
+      padding: 4px 2px; margin: -4px -2px;
+    }
+    #ctFilters #tradesSharedFilters::-webkit-scrollbar { display: none; }
+    #ctFilters .ct-filter-reset { display: none; }
+    #ctFilters .ios-filter-btn { height: 40px; padding: 0 8px; }
+    /* Search sits 6px under the chip row (the base #ctFilters .toolbar
+       margin:0 rule would zero it) and stays its own flex row on
+       coarse-pointer tablets >=769px, where the desktop display:contents
+       merge would otherwise flatten it into the block wrapper. */
+    #ctFilters #tradesExtraFilters { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    /* The generic mobile .toolbar input shorthand resets padding; keep room
+       for the magnifier on the search field. */
+    #ctFilters .icon-input { padding-left: 32px; }
+    #ctFilters .pill-select { height: 40px; }
+    #ctFilters .pill-select-el { padding: 8px 24px 8px 28px; font-size: 12px; }
+    .ios-filter-pop { border-radius: 12px; }
+    #view-trades, #view-trends { padding-top: 14px; }
     .brand { font-size: 15px; margin-left: 1ch; }
     /* Owner 2026-09-08: larger on phones too.  The wordmark fills the 1fr
        brand cell up to 280px (56px tall at the 5:1 ratio); the account
@@ -2169,9 +2322,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       html[data-theme="light"] nav.tabs { background: #fff; }
     }
     nav.tabs a {
+      display: block; height: auto; white-space: normal;
       padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;
       border-radius: 0; border: 0; background: transparent;
     }
+    nav.tabs a[data-admin-tab] { font-size: 0; }
     nav.tabs a.active {
       background: transparent;
       box-shadow: none;
@@ -2201,22 +2356,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        tighten padding for six, with no extra class or JS needed.  The
        label clamp keeps "Directory" / "Delivery" on one line down to
        320px so ellipsis stays a last resort, not the normal render. */
-    nav.tabs:has(a[data-admin-tab]:not([hidden])) a {
+    html.ct-admin nav.tabs a {
       padding-left: 1px;
       padding-right: 1px;
     }
-    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {
+    html.ct-admin nav.tabs a::before {
       font-size: 14px;
       margin-bottom: 2px;
     }
-    nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {
+    html.ct-admin nav.tabs a::after {
       font-size: clamp(8px, 2.3vw, 9px);
     }
     /* right:max(4px, calc(50% - 22px)) on .tab-count-badge above assumes the
        ~97.5px four-tab cell; on ~53-65px six-tab cells that offset crowds
        the centered icon, so pin the badge to the corner instead. */
-    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,
-    nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge.is-on {
+    html.ct-admin nav.tabs .tab-count-badge,
+    html.ct-admin nav.tabs .tab-count-badge.is-on {
       right: 3px;
       min-width: 14px;
       height: 14px;
@@ -2301,6 +2456,48 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .pager-top .feed-options { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
     .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
+    /* Owner 2026-09-09: the top band is ONE 40px row — [Sort ▾|↕] [‹ 3/12 ›] [50/pg].
+       The sort select + direction button are a joined segment; page
+       controls drop first/last and show a short "page / count" (.pg-short
+       span from the pager writer) so the row fits 320px; the rows select
+       reads "N/pg" (syncPageSizeLabels()).  The count message moves to the
+       bottom pager only. */
+    #view-trades .pager-top { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; justify-content: flex-start; margin: 0 0 12px; }
+    #view-trades .pager-top #tradesCountMsgTop { display: none; }
+    #tradesSortMobile {
+      display: inline-flex; align-items: center; gap: 0; flex: 0 0 auto; height: 40px; box-sizing: border-box;
+      border: 1px solid var(--border); border-radius: var(--radius-ctl); overflow: hidden; background: var(--panel);
+    }
+    #tradesSortMobile .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    #tradesSortMobile #mobileSortKey {
+      border: 0; border-radius: 0; height: 100%; min-height: 0; width: auto; field-sizing: content; max-width: min(104px, 22vw);
+      padding: 0 18px 0 6px; font: 600 12px var(--sans); background-color: transparent; color: var(--text);
+      text-overflow: ellipsis;
+    }
+    #tradesSortMobile #mobileSortDirBtn {
+      flex: 0 0 32px; width: 32px; height: 100%; min-height: 0; border: 0 !important; border-left: 1px solid var(--border) !important;
+      border-radius: 0 !important; padding: 0; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+    }
+    /* Page controls take whatever is left (flex-basis 0 + min-width 0 so the
+       band never overflows at 320px); the counter is the only thing that
+       gives way, and it never falls below the width of "9 / 99". */
+    #view-trades .pager-top .pager-controls { flex: 1 1 0; min-width: 0; margin: 0; height: 40px; box-sizing: border-box; border-radius: var(--radius-ctl); }
+    #view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }
+    #view-trades .pager-top [data-pager-prev], #view-trades .pager-top [data-pager-next] { flex: 0 0 34px; width: 34px; min-width: 34px; height: 38px; min-height: 0; padding: 0; font-size: 13px; }
+    #view-trades .pager-top .trades-page-msg { flex: 1 1 0; min-width: 0; text-align: center; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+    #view-trades .pager-top .trades-page-msg .pg-long { display: none; }
+    #view-trades .pager-top .trades-page-msg .pg-short { display: inline; }
+    #view-trades .pager-top .pager-tools { flex: 0 0 auto; }
+    #view-trades .pager-top .pager-tools select {
+      height: 40px; min-height: 40px; width: auto; field-sizing: content; padding: 0 18px 0 6px; font: 600 12px var(--sans); border-radius: var(--radius-ctl);
+      /* Own chevron (same glyph as the time select) instead of the native
+         arrow box: ~18px narrower, which is the page counter's breathing room at 320px. */
+      appearance: none; -webkit-appearance: none; background-color: var(--panel); background-repeat: no-repeat; background-position: right 4px center;
+      background-image: url('data:image/svg+xml;utf8,<svg fill="%2334435b" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    }
+    html[data-theme="dark"] #view-trades .pager-top .pager-tools select {
+      background-image: url('data:image/svg+xml;utf8,<svg fill="%23b8c7dd" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    }
     /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
        Timeframe is content-sized (not flex-grown).  ID selectors beat the
        later 720px toolbar flex-wrap re-flex. */
@@ -2317,12 +2514,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
       flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 6px;
-    }
-    #tradesToolbars, #trendsSharedFilters {
-      position: sticky; top: var(--ct-header-h, 52px); z-index: 9;
-      padding: 4px 12px 8px;
-      overflow: visible;
-      border-bottom: none;
     }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
@@ -2987,9 +3178,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
     .acct-mobile-menu {
-      position: fixed; left: 12px; right: 12px; top: calc(var(--ct-header-h, 52px) + 8px);
+      /* Anchored under the wordmark row (--ct-brand-h), not the whole
+         header: the filter row is header row 2 and the sheet covers it. */
+      position: fixed; left: 12px; right: 12px; top: calc(var(--ct-brand-h, 62px) + 8px);
       min-width: 0; max-width: none;
-      max-height: min(82vh, calc(100dvh - var(--ct-header-h, 52px) - 20px));
+      max-height: min(82vh, calc(100dvh - var(--ct-brand-h, 62px) - 20px));
       overflow: auto; padding: 18px 16px; border-radius: 18px; z-index: 70;
     }
     .acct-mobile-menu .btn, .acct-mobile-menu button { min-height: 48px; font-size: 16px; }
@@ -3010,13 +3203,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        pad stays 0 so the white filter strip sits under the title. */
     :root { --ct-main-pad: 14px; }
     main { padding: 0 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
-    #tradesToolbars, #trendsSharedFilters { padding: 4px 14px 8px; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
     .toolbar .time-filter-wrap { flex: 0 1 auto; }
     .toolbar .trends-filter-row { flex: 0 1 auto; }
-    #view-trends .toolbar { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
-    #view-trends .toolbar .time-filter-wrap { flex: 0 0 auto; }
-    #view-trends .toolbar .trends-filter-row { flex: 0 1 auto; width: auto; }
     .grid-cards { gap: 12px; margin-bottom: 20px; }
     .card { padding: 14px 16px; }
     .section { padding: 18px; margin-bottom: 18px; }
@@ -3037,21 +3226,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        breakpoint's footer rule, scaled to this block's tighter 26px base. */
     footer { padding: 26px 18px calc(58px + env(safe-area-inset-bottom)); }
   }
-  /* Two IDs so this wins over the Trends toolbar flex-wrap rule and the
-     generic toolbar-select width:100% mobile shorthand.  Do not set
-     width/max-width here — that used to beat the 100vw full-bleed strip
-     and left a grey notch on the right of the filter bar. */
-  #view-trends #trendsSharedFilters,
-  #view-trades #tradesSharedFilters {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    align-items: center;
-  }
-  #view-trends #trendsSharedFilters > .pill-select.pill-cal,
-  #view-trades #tradesSharedFilters > .pill-select.pill-cal {
-    flex: 0 0 auto;
-    width: max-content;
-  }
+  /* The Trends filter markup is a hidden state mirror (see #ctFilters). */
+  #view-trends #trendsSharedFilters[data-filter-mirror] { display: none !important; }
+  #ctFilters #tradesSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; width: max-content; }
 
 
 
@@ -3062,33 +3239,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 
 <header class="top">
-  <div class="brand" aria-label="Congress.Trade">
-    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></div>
+  <a class="brand" href="/?view=trends" aria-label="Congress.Trade - home" onclick="event.preventDefault(); showView('trends'); window.scrollTo({ top: 0 });">
+    <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></a>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</a>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends">Trends</a>
     <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
     <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
-    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
     <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
-    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
-</header>
-
-<main>
-  <!-- #2071: do not put #banner here. A first-child status strip sits
-       between header.top and the sticky filter rows. Feed status lives
-       inside each filtered view, after that view's filter row, and stays
-       hidden until setBanner() has a real error. -->
-
-  <!-- ================= TRADES (LIVE FEED) ================= -->
-  <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
-    <!-- Owner punch list #9: desktop (>768px) merges #tradesSharedFilters and
-         #tradesExtraFilters onto one row via #tradesToolbars (display:contents on
-         both children + flex order, see CSS). Neither inner div's own
-         direct-children markup changes, so the <=768px ID-scoped grid on
-         #tradesExtraFilters (DO-NOT-BREAK) is untouched — this wrapper is a
-         no-op box at mobile widths. -->
+  <!-- Shared filter row (Trades + Trends).  Owner punch list #9 merged the
+       Trades feed's two toolbars onto one row via #tradesToolbars
+       (display:contents on both children + flex order, see CSS); owner
+       2026-09-09 moved that whole block up here so the filters sit right of
+       the logo and carry over between Trades and Trends.  Ids/handlers are
+       unchanged; #tradesExtraFilters (search) hides on Trends via
+       html[data-view].  The <=768px ID-scoped grid on #tradesExtraFilters
+       (DO-NOT-BREAK) is untouched. -->
+  <div id="ctFilters" class="ct-filters" role="group" aria-label="Filters - apply to Trends and Trades">
     <div class="trades-toolbars" id="tradesToolbars">
     <!-- Shared filter row (mirrored on Trends) -->
     <div class="toolbar shared-filters" id="tradesSharedFilters">
@@ -3145,14 +3315,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="tradesExtraFilters">
-      <span class="icon-field" id="qSearchField" style="min-width:0;flex:1">
-        <input id="qSearch" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
+      <span class="icon-field" id="qSearchField">
+        <input id="qSearch" type="search" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
       </span>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
       <input type="hidden" id="qMember" value="" />
       <input type="hidden" id="qTicker" value="" />
     </div>
     </div>
+    <button type="button" class="btn ghost sm ct-filter-reset" id="ctFilterReset" onclick="resetSharedFilters()" title="Reset filters to defaults" hidden>Reset</button>
+  </div>
+</header>
+
+<main>
+  <!-- #2071: do not put #banner here. A first-child status strip sits
+       between header.top and the sticky filter rows. Feed status lives
+       inside each filtered view, after that view's filter row, and stays
+       hidden until setBanner() has a real error. -->
+
+  <!-- ================= TRADES (LIVE FEED) ================= -->
+  <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
+    <!-- The Trades/Trends filter row (#tradesToolbars) lives in header.top
+         (#ctFilters) so it carries over between the two tabs. -->
     <div class="banner feed-banner" hidden></div>
     <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
@@ -3163,7 +3347,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="row-flex pager pager-top" data-pager="top">
       <div class="trades-sort-mobile" id="tradesSortMobile">
         <label class="lbl" for="mobileSortKey">Sort</label>
-        <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
+        <select id="mobileSortKey" aria-label="Sort by" title="Sort by" onchange="handleMobileSortKeyChange()"></select>
         <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
       </div>
       <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
@@ -3226,7 +3410,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
-    <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">
+    <!-- State mirror only (hidden): trParams()/getTrWindow() and the chip
+         sync read these ids; the visible controls are #ctFilters in
+         header.top. -->
+    <div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters" hidden aria-hidden="true" data-filter-mirror>
       <span class="pill-select pill-cal">
         <select id="trGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
           <option value="30d">Month</option>
@@ -3838,19 +4025,19 @@ ${speedProofSectionHtml(true)}
     <div class="auth-btn-stack">
       <button class="auth-btn gbtn" id="googleSignInBtn" onclick="loginGoogle()">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-        Sign In with Google
+        Sign in with Google
       </button>
       <a class="auth-btn abtn" id="appleSignInBtn" href="/auth/apple/start" style="display:none">
-        <svg viewBox="0 0 170 170" width="18" height="18" fill="currentColor" aria-hidden="true">
+        <svg viewBox="0 0 170 170" width="20" height="20" fill="currentColor" aria-hidden="true">
           <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.83.13-9.67-1.92-14.52-6.13-3.23-2.75-7.14-7.46-11.75-14.13-6.53-9.47-11.73-20.08-15.58-31.8-3.86-11.73-5.79-22.9-5.79-33.52 0-14.88 3.75-27.18 11.24-36.9 7.49-9.72 17.06-14.65 28.71-14.78 4.71 0 10.08 1.18 16.12 3.54 6.03 2.36 10.08 3.54 12.14 3.54 1.83 0 5.92-1.22 12.27-3.66 6.35-2.44 11.48-3.58 15.39-3.42 12.37.52 22.25 4.88 29.62 13.08-11.05 6.67-16.48 15.77-16.3 27.31.18 9.07 3.57 16.65 10.17 22.75 6.6 6.1 14.58 9.54 23.94 10.32-2.12 6.53-4.9 13.11-8.35 19.74zM119.22 31.78c0-7.07 2.53-13.67 7.59-19.8 5.06-6.13 11.46-9.75 19.2-10.86.36 1.44.54 2.76.54 3.96 0 7.07-2.61 13.79-7.83 20.16-5.22 6.37-11.66 9.87-19.32 10.51-.12-1.32-.18-2.65-.18-3.97z"/>
         </svg>
-        Sign In with Apple
+        Sign in with Apple
       </a>
       <a class="auth-btn xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:none">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
         </svg>
-        Sign In with X
+        Sign in with X
       </a>
     </div>
     <p class="note" id="loginMsg"></p>
@@ -5387,7 +5574,7 @@ function updateTradesCountMsg(shown) {
   if (typeof stampWindowChips === 'function') stampWindowChips();
   if (!realDataLoaded) {
     setAll('[data-trades-count]', function (n) { n.textContent = ''; });
-    setAll('[data-trades-page]', function (n) { n.textContent = ''; });
+    setAll('[data-trades-page]', function (n) { n.textContent = ''; n.title = ''; n.removeAttribute('data-page-text'); });
     setAll('[data-pager-first],[data-pager-prev],[data-pager-next],[data-pager-last]', function (n) { n.disabled = true; });
     return;
   }
@@ -5406,7 +5593,13 @@ function updateTradesCountMsg(shown) {
     msg.classList.add('tick-animate');
   });
   setAll('[data-trades-page]', function (pageMsg) {
-    pageMsg.textContent = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
+    var longText = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
+    var shortText = fmtCount(tradesPage + 1) + '/' + fmtCount(pageCount);
+    // Two spans: desktop shows the long form, the phone top band swaps to the
+    // short one (CSS, <=768px pager rules) — one visible node, read once.
+    pageMsg.innerHTML = '<span class="pg-long">' + longText + '</span><span class="pg-short">' + shortText + '</span>';
+    pageMsg.title = longText;
+    pageMsg.setAttribute('data-page-text', longText); // clean copy: textContent is now both spans
   });
   var disFirst = tradesPage <= 0 || loadingPage;
   var disLast = tradesPage >= maxPage || end >= total || loadingPage;
@@ -5927,6 +6120,7 @@ document.addEventListener('change', function(e) {
 
 function handleTradesTextFilter() {
   tradesPage = 0;
+  if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
   renderTrades();
   if (tradesSearchTimer) clearTimeout(tradesSearchTimer);
   tradesSearchTimer = setTimeout(function () { fetchPage(); syncFilterUrl(); }, 250);
@@ -12431,6 +12625,9 @@ function updatePremiumCues() {
 }
 function applyAdminVisibility() {
   var allowed = canUseAdmin();
+  // CSS gate: html:not(.ct-admin) hides every [data-admin-tab] / [data-admin-only]
+  // node, so admin chrome never paints before /auth/me resolves.
+  document.documentElement.classList.toggle('ct-admin', allowed);
   document.querySelectorAll('[data-admin-tab="true"]').forEach(function (b) { b.hidden = !allowed; });
   // Admin-only blocks inside public views (e.g. the delivery management
   // section on the Alerts tab). Default hidden in markup so anon never
@@ -12851,6 +13048,7 @@ function onSharedWindowChange(src) {
   if (typeof updateTrWindowLabels === 'function') updateTrWindowLabels();
   if (typeof loadTrends === 'function') loadTrends();
   if (typeof resetTradesPage === 'function') resetTradesPage();
+  if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
 }
 function openExportCsvDialog() {
   if (!ME.user) {
@@ -13019,7 +13217,6 @@ function showView(name, scrollId) {
     showToast('Admin access required.', true);
     return;
   }
-  if (btn.getAttribute('data-admin-tab') === 'true') btn.hidden = false;
   if (typeof btn.click === 'function') btn.click();
   if (scrollId) {
     var node = el(scrollId);
@@ -13041,14 +13238,20 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
       if (ME.user) { showToast('Admin access required.', true); } else { openLogin(); }
       return;
     }
-    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    // Re-tapping the active tab scrolls back to the top instead of
+    // re-running the view's loaders.
+    if (b.classList.contains('active') && e && e.isTrusted) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); x.removeAttribute('aria-current'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
     b.setAttribute('aria-selected', 'true');
+    b.setAttribute('aria-current', 'page');
     if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);
     try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
     /* header.top pads out to the active view's content column (--ct-col-max). */
     document.documentElement.setAttribute('data-view', b.dataset.view);
+    // Reset chip re-evaluates per view (search text only counts on Trades).
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     try {
       var u = new URL(window.location.href);
       u.searchParams.set('view', b.dataset.view);
@@ -13341,6 +13544,8 @@ function syncChromeMetrics() {
   var mainEl = document.querySelector('main');
   if (header) {
     document.documentElement.style.setProperty('--ct-header-h', header.getBoundingClientRect().height + 'px');
+    var brand = header.querySelector('.brand');
+    if (brand) document.documentElement.style.setProperty('--ct-brand-h', Math.round(brand.getBoundingClientRect().bottom) + 'px');
   }
   if (mainEl) {
     /* Horizontal inset, not padding-top (that is 0 so the filter strip
@@ -13352,7 +13557,7 @@ function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
     var f = el(id); if (!f) return;
     var lbl = f.querySelector('[data-ios-summary]');
-    if (lbl) lbl.textContent = text || '';
+    if (lbl) { lbl.textContent = text || ''; lbl.title = text || ''; }
     f.classList.toggle('has-sel', !!has);
   }
   function chamberSummary(id) {
@@ -13379,6 +13584,47 @@ function refreshIosFilterSummaries() {
   chamberSummary('qChamber'); chamberSummary('trChamber');
   partySummary('qPartyGroup'); partySummary('trPartyGroup');
   sideSummary('qSideGroup'); sideSummary('trSideGroup');
+  // Reset chip: visible only once something departs from the defaults
+  // (any chip on, a non-90d window, or search text on Trades).
+  var resetBtn = el('ctFilterReset');
+  if (resetBtn) {
+    var dirty = !!document.querySelector('#tradesSharedFilters .ios-filter.has-sel');
+    var win = el('tradesGlobalWindow');
+    if (win && win.value !== '90d') dirty = true;
+    var q = el('qSearch');
+    if (q && q.value && document.documentElement.getAttribute('data-view') === 'trades') dirty = true;
+    resetBtn.hidden = !dirty;
+  }
+}
+/* Header "Reset" chip: back to the defaults (all branches / parties /
+   sides, 3-month window, empty search) in one tap. */
+function resetSharedFilters() {
+  document.querySelectorAll('.branch-toggle').forEach(function (b) {
+    b.classList.remove('on'); b.setAttribute('aria-pressed', 'false');
+  });
+  try { localStorage.setItem('shared-chambers-v2', JSON.stringify([])); localStorage.setItem('shared-chambers-v1', JSON.stringify([])); } catch (_e) {}
+  if (typeof applyPartySelection === 'function') applyPartySelection([]);
+  try { localStorage.setItem('shared-parties-v1', JSON.stringify([])); } catch (_e) {}
+  if (typeof applySideSelection === 'function') applySideSelection([]);
+  try { localStorage.setItem('shared-sides-v1', JSON.stringify([])); } catch (_e) {}
+  var win = el('tradesGlobalWindow');
+  document.querySelectorAll('select.shared-window').forEach(function (sel) { sel.value = '90d'; });
+  var q = el('qSearch');
+  if (q) q.value = '';
+  // One fetch: onSharedWindowChange → resetTradesPage() refetches with the
+  // cleared search; cancel any pending debounced search fetch first.
+  if (typeof tradesSearchTimer !== 'undefined' && tradesSearchTimer) { clearTimeout(tradesSearchTimer); tradesSearchTimer = null; }
+  if (typeof onSharedWindowChange === 'function') onSharedWindowChange(win || { value: '90d' });
+  refreshIosFilterSummaries();
+  if (typeof syncFilterUrl === 'function') syncFilterUrl();
+}
+/* Phone top band reads "50/pg"; desktop keeps "50 rows". */
+function syncPageSizeLabels() {
+  var short = false;
+  try { short = document.documentElement.classList.contains('phone-chrome') || (window.matchMedia && window.matchMedia('(max-width: 768px)').matches); } catch (_e) {}
+  document.querySelectorAll('[data-page-size] option').forEach(function (o) {
+    o.textContent = short ? o.value + '/pg' : o.value + ' rows';
+  });
 }
 function initIosFilterMenus() {
   document.addEventListener('click', function (e) {
@@ -13422,10 +13668,12 @@ function initIosFilterMenus() {
   window.addEventListener('resize', function () {
     syncChromeMetrics();
     repositionOpenIosFilters();
+    syncPageSizeLabels();
   });
   refreshIosFilterSummaries();
 }
 initIosFilterMenus();
+syncPageSizeLabels();
 syncChromeMetrics();
 if (typeof ResizeObserver !== 'undefined') {
   var chromeRo = new ResizeObserver(syncChromeMetrics);
@@ -13669,6 +13917,16 @@ if ('MutationObserver' in window) {
 /* Escape closes transient overlays. */
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { closePanels(); closeDrawer(); closeLogin(); closePricing(); }
+  // "/" focuses the header search on Trades (not while typing, no modifiers).
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    var t = e.target;
+    var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    var q = el('qSearch');
+    var menuOpen = !!document.querySelector('.ios-filter-pop:not([hidden]), .menu-pop.open, .acct-mobile-menu.open');
+    if (!typing && !menuOpen && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {
+      e.preventDefault(); q.focus(); q.select();
+    }
+  }
 });
 
 // Build the feed header from the column registry (also attaches sort handlers).
@@ -13746,6 +14004,7 @@ function resolveViewId(raw) {
 }
 
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
+applyAdminVisibility(); // anon default: html.ct-admin off until /auth/me says otherwise
 loadMe().then(function () {
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
   if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
@@ -13799,11 +14058,13 @@ loadMe().then(function () {
 
   var initialBtn = document.querySelector('nav.tabs a[data-view="' + initialView + '"]');
   if (initialBtn && initialView !== 'trends') {
-    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); x.removeAttribute('aria-current'); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     initialBtn.classList.add('active');
     initialBtn.setAttribute('aria-selected', 'true');
+    initialBtn.setAttribute('aria-current', 'page');
     document.documentElement.setAttribute('data-view', initialView);
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     // Restoring a non-Trends tab that wasn't in the request URL (e.g. from
     // localStorage) — the server-rendered <title> only knows about ?view=,
     // so it's still the plain default here and needs the same fix-up the
@@ -13821,6 +14082,11 @@ loadMe().then(function () {
     }
     if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
+    // The head script may have stamped html[data-view] from a ?view= /
+    // remembered tab that then fell back here (admin-gated, unknown) —
+    // restamp so the header filter row shows for Trends.
+    document.documentElement.setAttribute('data-view', 'trends');
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     loadTrends(); // Trends is the default landing view
   }
   if (window.__pendingManageBilling) {
