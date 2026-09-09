@@ -237,7 +237,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends"');
     expect(DASHBOARD_HTML).toContain('class="active" id="tab-trends"');
     expect(DASHBOARD_HTML).toContain('<nav class="tabs" role="tablist" aria-label="Primary views">');
-    expect(DASHBOARD_HTML).toContain('role="tab" aria-selected="true" aria-controls="view-trends"');
+    expect(DASHBOARD_HTML).toContain('role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends"');
     expect(DASHBOARD_HTML).toContain('role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false"');
     expect(DASHBOARD_HTML).toContain("x.setAttribute('aria-selected', 'false')");
     expect(DASHBOARD_HTML).toContain("view.setAttribute('aria-hidden', 'false')");
@@ -388,7 +388,7 @@ describe('DASHBOARD_HTML', () => {
   it('keeps document.title in sync with the active tab and open drawer (SEOSOCIAL-04)', () => {
     // Tab-switch path: sets the title right after marking the clicked tab active.
     expect(DASHBOARD_HTML).toContain(
-      "b.setAttribute('aria-selected', 'true');\n    if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);",
+      "b.setAttribute('aria-current', 'page');\n    if (TAB_PAGE_TITLES[b.dataset.view]) setDocumentTitle(TAB_PAGE_TITLES[b.dataset.view]);",
     );
     // Boot-time restore-from-localStorage path (no ?view= in the request URL,
     // so the server-rendered <title> couldn't have known which tab this is).
@@ -686,9 +686,9 @@ describe('DASHBOARD_HTML', () => {
 
   it('offers Google and Apple sign-in without email magic-link', () => {
     expect(DASHBOARD_HTML).toContain('id="loginOverlay"');
-    expect(DASHBOARD_HTML).toContain('Sign In with Google');
+    expect(DASHBOARD_HTML).toContain('Sign in with Google');
     expect(DASHBOARD_HTML).toContain('id="appleSignInBtn"');
-    expect(DASHBOARD_HTML).toContain('Sign In with Apple');
+    expect(DASHBOARD_HTML).toContain('Sign in with Apple');
     expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/google/start'");
     expect(DASHBOARD_HTML).toContain("window.location.href = '/auth/apple/start'");
     expect(DASHBOARD_HTML).not.toContain('id="magicEmail"');
@@ -2680,11 +2680,11 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).toContain('id="trGlobalWindow"');
     expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
     expect(DASHBOARD_HTML).not.toContain('<em class="tr-window-label"');
-    expect(DASHBOARD_HTML).toContain('#tradesToolbars, #trendsSharedFilters');
-    expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
-    expect(DASHBOARD_HTML).toContain('width: 100vw;');
-    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
-    expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
+    // The filter row lives in header.top row 2 (owner 2026-09-09); the old
+    // sticky 100vw strips are gone.
+    expect(DASHBOARD_HTML).toContain('header.top #ctFilters {');
+    expect(DASHBOARD_HTML).not.toContain('position: sticky; top: var(--ct-header-h, 52px); z-index: 9;');
+    expect(DASHBOARD_HTML).not.toContain('margin-left: calc(50% - 50vw);');
     expect(DASHBOARD_HTML).toContain("if (savedW == null && !w) w = (k && DEFAULT_CAP[k]) || minColWidth(k);");
     expect(DASHBOARD_HTML).toContain('html, body { width:100%; max-width:100%; overflow-x:clip; }');
     expect(DASHBOARD_HTML).not.toContain('main { max-width: none; min-width:0; overflow-x:clip;');
@@ -3673,7 +3673,7 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).toContain('class="tr-window-select shared-window pill-select-el"');
     // New pill CSS resolves through the shared tokens, with a dark-mode chevron swap.
     expect(DASHBOARD_HTML).toContain('.pill-select-el {');
-    expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-pill); font:600 12px var(--sans);');
+    expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-ctl); font:600 13px var(--sans);');
     expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] .pill-select-el {');
   });
 
@@ -3697,7 +3697,9 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(DASHBOARD_HTML).not.toContain('icon-field-ic');
     expect(DASHBOARD_HTML).not.toContain('👤</span>');
     expect(DASHBOARD_HTML).not.toContain('<span class="icon-field-ic"');
-    expect(DASHBOARD_HTML).toContain('.icon-input { padding:0 14px; border-radius:var(--radius-pill); height:var(--control-h); }');
+    // Header-control radius + room for the CSS magnifier (#qSearchField::before).
+    expect(DASHBOARD_HTML).toContain('.icon-input { padding:0 12px 0 32px; border-radius:var(--radius-ctl); height:var(--control-h); box-sizing:border-box; width:100%; font-size:13px; }');
+    expect(search!.getAttribute('type')).toBe('search');
   });
 
   it('enlarges + tile-backs the mobile trades-card logo without touching the desktop table logo size', () => {
@@ -4526,7 +4528,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
       /<div class="trades-toolbars" id="tradesToolbars">[\s\S]*?<div class="toolbar shared-filters" id="tradesSharedFilters">[\s\S]*?<div class="toolbar trades-only-filters" id="tradesExtraFilters">[\s\S]*?<\/div>\s*<\/div>/,
     );
     expect(wrapMatch).not.toBeNull();
-    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .trades-toolbars { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:10px; }');
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) {\n    .trades-toolbars { display:flex; flex-wrap:nowrap; align-items:center; gap:12px; margin:0; min-width:0; }');
     expect(DASHBOARD_HTML).toContain('.trades-toolbars #tradesSharedFilters,\n    .trades-toolbars #tradesExtraFilters { display:contents; }');
     // Desired order: timeframe, groups+ⓘ, unified search, stats.
     expect(DASHBOARD_HTML).toContain('.trades-toolbars .pill-select.pill-cal { order:1; }');
@@ -4562,9 +4564,17 @@ describe('MONET web punch list 2 (LANE W1)', () => {
     expect(mainKids[0]?.tagName.toLowerCase()).toBe('section');
     expect(mainKids.some((n) => n.id === 'banner' || /\bbanner\b/.test(n.getAttribute('class') || ''))).toBe(false);
 
+    // Owner 2026-09-09: #tradesToolbars now lives in header.top (#ctFilters),
+    // so the Trades banner is the first thing inside #view-trades and the
+    // Trends filter markup is a hidden state mirror followed by #banner.
     const tradesFilters = document.querySelector('#tradesToolbars');
+    expect(tradesFilters?.closest('header.top')).not.toBeNull();
+    expect(tradesFilters?.closest('#ctFilters')).not.toBeNull();
     const trendsFilters = document.querySelector('#trendsSharedFilters');
-    const tradesBanner = tradesFilters?.nextElementSibling;
+    expect(trendsFilters?.getAttribute('hidden')).not.toBeNull();
+    expect(trendsFilters?.getAttribute('aria-hidden')).toBe('true');
+    expect(trendsFilters?.hasAttribute('data-filter-mirror')).toBe(true);
+    const tradesBanner = document.querySelector('#view-trades')?.childNodes.find((n) => n.nodeType === 1) as any;
     const trendsBanner = trendsFilters?.nextElementSibling;
     expect(tradesBanner?.classList.contains('feed-banner')).toBe(true);
     expect(tradesBanner?.getAttribute('hidden')).not.toBeNull();
@@ -4605,7 +4615,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
 
   it('#10 keeps the timeframe pill as the first control on both the Trades and Trends shared filter rows', () => {
     const feedRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters" id="tradesSharedFilters">([\s\S]*?)<div class="filter-groups">/);
-    const trendsRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters">([\s\S]*?)<div class="filter-groups">/);
+    const trendsRow = DASHBOARD_HTML.match(/<div class="toolbar shared-filters trends-filter-row" id="trendsSharedFilters"[^>]*>([\s\S]*?)<div class="filter-groups">/);
     expect(feedRow).not.toBeNull();
     expect(trendsRow).not.toBeNull();
     expect(feedRow![1]).toContain('pill-cal');
@@ -5777,15 +5787,15 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
   it('paints a solid white header through the sticky filters', () => {
     expect(DASHBOARD_HTML).toContain('html[data-theme="light"] header.top {\n    background: #fff;');
     expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }');
-    expect(DASHBOARD_HTML).toContain('html[data-theme="light"] .trades-toolbars');
-    expect(DASHBOARD_HTML).toContain('html[data-theme="light"] #trendsSharedFilters { background: #fff; }');
-    expect(DASHBOARD_HTML).toContain('width: 100vw;');
-    expect(DASHBOARD_HTML).toContain('max-width: 100vw;');
-    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
+    // Owner 2026-09-09: the filters sit INSIDE header.top (row 2 of its
+    // grid), so the header's own white paints behind them — no separate
+    // full-bleed strip to keep in sync.
+    expect(DASHBOARD_HTML).not.toContain('html[data-theme="light"] .trades-toolbars');
+    expect(DASHBOARD_HTML).not.toContain('width: 100vw;');
+    expect(DASHBOARD_HTML).not.toContain('margin-left: calc(50% - 50vw);');
     expect(DASHBOARD_HTML).not.toContain('width: calc(100% + 2 * var(--ct-main-pad, 35px));');
-    expect(DASHBOARD_HTML).toContain('margin-top: 0; margin-bottom: 12px;');
+    expect(DASHBOARD_HTML).toContain('#ctFilters .trades-toolbars {\n    position: static; width: auto; max-width: none; margin: 0; padding: 0;\n    background: transparent; flex: 1 1 auto; min-width: 0;');
     expect(DASHBOARD_HTML).toContain('border-bottom: none; background: var(--panel);');
-    expect(DASHBOARD_HTML).toContain('border-bottom: none;\n    overflow: visible;');
     expect(DASHBOARD_HTML).toContain(':root { --ct-main-pad: 14px; }');
     expect(DASHBOARD_HTML).toContain('main { padding: 0 var(--ct-main-pad, 35px) var(--ct-main-pad, 35px);');
     expect(DASHBOARD_HTML).toContain('#view-people, #view-review, #view-subs, #view-admin {\n    padding-top: var(--ct-main-pad, 35px);');
@@ -5857,7 +5867,7 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
 describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
   it('clears leftover chip overflow so Parties and Trade Type can open', () => {
     expect(DASHBOARD_HTML).toContain('.ios-filter.party-chips,\n  .ios-filter.side-chips,\n  .ios-filter.branch-filters {');
-    expect(DASHBOARD_HTML).toContain('display: block; overflow: visible; border: none; border-radius: 0;');
+    expect(DASHBOARD_HTML).toContain('display: inline-flex; overflow: visible; border: none; border-radius: 0;');
     expect(DASHBOARD_HTML).toContain('function placeIosFilterPop(btn, pop)');
     expect(DASHBOARD_HTML).toContain("pop.style.position = 'fixed'");
   });
@@ -5871,7 +5881,9 @@ describe('iOS filter menus stay usable (overflow + menu-row chrome)', () => {
   it('does not fill dropdown rows or the closed pill with toggle-blue', () => {
     expect(DASHBOARD_HTML).toContain('.ios-filter-item.on { background: transparent; font-weight: 600; }');
     expect(DASHBOARD_HTML).toContain('.ios-filter-item.on::after { content: "✓";');
-    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--panel); color: var(--text); border-color: var(--border); }');
+    // Active filter = accent ink + faint wash on the closed chip (owner
+    // 2026-09-09), never the solid toggle-blue fill.
+    expect(DASHBOARD_HTML).toContain('.ios-filter.has-sel .ios-filter-btn {\n    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));\n    color: var(--accent);\n    background: color-mix(in srgb, var(--accent) 8%, var(--panel));');
     expect(DASHBOARD_HTML).not.toContain('.ios-filter-item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }');
     expect(DASHBOARD_HTML).not.toContain('.ios-filter.has-sel .ios-filter-btn { background: var(--accent); color: #fff; border-color: var(--accent); }');
   });
@@ -6188,8 +6200,8 @@ describe('iOS language + Capitol Ledger harvest (issues #1529 / #1459)', () => {
 
 describe('mobile web chrome polish (issue #2016)', () => {
   it('keeps Trends and Trades filters on one nowrap row with a content-sized timeframe', () => {
-    expect(DASHBOARD_HTML).toContain('#view-trends #trendsSharedFilters');
-    expect(DASHBOARD_HTML).toContain('flex-wrap: nowrap !important;');
+    expect(DASHBOARD_HTML).toContain('#view-trends #trendsSharedFilters[data-filter-mirror] { display: none !important; }');
+    expect(DASHBOARD_HTML).toContain('#ctFilters #tradesSharedFilters {\n      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;\n      overflow-x: auto; overflow-y: visible; scrollbar-width: none;');
     expect(DASHBOARD_HTML).toContain('field-sizing:content');
     expect(DASHBOARD_HTML).toContain('>3 Months</option>');
     expect(DASHBOARD_HTML).not.toContain('>Past 3 Months</option>');
@@ -6273,17 +6285,19 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     expect(navTabsA).toContain('text-align: center;');
   });
 
-  it('shrinks the six-tab (signed-in admin) mobile dock via :has() rather than assuming four tabs', () => {
-    // :has() reacts to the same [hidden] toggle the admin-tab JS already
-    // flips, so six-tab detection needs no dedicated class or extra JS.
-    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a {');
-    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::before {');
-    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) a::after {');
+  it('shrinks the six-tab (signed-in admin) mobile dock via the html.ct-admin gate rather than assuming four tabs', () => {
+    // Owner 2026-09-09: admin tabs are gated on html.ct-admin (set by
+    // applyAdminVisibility() from canUseAdmin()), so the six-tab shrink keys
+    // off the same class — no [hidden] :has() probe, no extra JS.
+    expect(DASHBOARD_HTML).toContain('html.ct-admin nav.tabs a {');
+    expect(DASHBOARD_HTML).toContain('html.ct-admin nav.tabs a::before {');
+    expect(DASHBOARD_HTML).toContain('html.ct-admin nav.tabs a::after {');
+    expect(DASHBOARD_HTML).not.toContain('nav.tabs:has(a[data-admin-tab]:not([hidden]))');
     expect(DASHBOARD_HTML).toContain('font-size: clamp(8px, 2.3vw, 9px);');
     // The default badge offset (right: max(4px, calc(50% - 22px))) assumes
     // the four-tab ~97.5px cell and crowds the centered icon on six ~53-65px
     // cells, so the six-tab case pins it to a fixed corner inset instead.
-    expect(DASHBOARD_HTML).toContain('nav.tabs:has(a[data-admin-tab]:not([hidden])) .tab-count-badge,');
+    expect(DASHBOARD_HTML).toContain('html.ct-admin nav.tabs .tab-count-badge,');
     expect(DASHBOARD_HTML).toContain('right: 3px;');
     // Measured live at 390px and 320px (Chrome DevTools MCP, six tabs
     // visible, see .review-shots/tabbar/after-{390,320}-6tab.png): the
@@ -6514,12 +6528,13 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     // pads reach the column once its cap engages, 35px before that.
     expect(DASHBOARD_HTML).toContain('padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));');
     expect(DASHBOARD_HTML).not.toContain('padding: 14px 35px 4px;');
-    // Filter strip stays full-bleed (100vw breakout) but its pad is the exact
-    // inverse of that margin, so the chips sit on the column, not at 35px.
-    expect(DASHBOARD_HTML).toContain('margin-left: calc(50% - 50vw);');
-    expect(DASHBOARD_HTML).toContain('padding: 4px calc(50vw - 50%) 10px;');
-    expect(DASHBOARD_HTML).not.toContain('padding: 4px var(--ct-main-pad, 35px) 10px;');
-    expect(DASHBOARD_HTML).toContain('position: sticky; top: var(--ct-header-h, 100px); z-index: 9;');
+    // Owner 2026-09-09: the filter row is header.top grid row 2 (right of
+    // the wordmark, under the tabs) — it inherits the header's column pads,
+    // so the old 100vw breakout strip and its inverse pad are gone.
+    expect(DASHBOARD_HTML).toContain('header.top #ctFilters {\n    grid-column: 2 / -1; grid-row: 2;');
+    expect(DASHBOARD_HTML).not.toContain('margin-left: calc(50% - 50vw);');
+    expect(DASHBOARD_HTML).not.toContain('padding: 4px calc(50vw - 50%) 10px;');
+    expect(DASHBOARD_HTML).not.toContain('position: sticky; top: var(--ct-header-h, 100px); z-index: 9;');
     // Tab switch + boot-time restore keep html[data-view] in sync, and the
     // head bootstrap stamps a deep-linked / remembered view before first paint.
     expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', b.dataset.view);");
@@ -6613,5 +6628,138 @@ describe('Committee Sector Conflicts table (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain("'<td class=\"est\"' + rowMember + '>' + estUsd(r.estAmountUsd) + '</td></tr>';");
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table tbody tr.conflict-row td[data-member] { cursor: pointer; }');
     expect(DASHBOARD_HTML).toContain('Hover a committee cell for the full list; click a row for the politician.');
+  });
+});
+
+/**
+ * Owner 2026-09-09: header chrome rework — filters right of the logo (one
+ * row shared by Trades + Trends), one control radius across tabs / chips /
+ * selects / search / account, admin tabs gated on html.ct-admin, ST-style
+ * sign-in buttons, and a single-row phone pager band.
+ */
+describe('header chrome rework (owner 2026-09-09)', () => {
+  it('moves the shared filter row into header.top beside the wordmark and mirrors state on Trends', () => {
+    const document = parse(DASHBOARD_HTML);
+    const header = document.querySelector('header.top');
+    expect(header).not.toBeNull();
+    const kids = header!.childNodes.filter((n) => n.nodeType === 1).map((n: any) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.classList.contains('brand') ? '.brand' : '') + (n.classList.contains('tabs') ? '.tabs' : ''));
+    expect(kids).toEqual(['a.brand', 'nav.tabs', 'div#acct', 'div#ctFilters']);
+    // Brand is a real link home (Trends) — no more inert div.
+    const brand = document.querySelector('header.top a.brand');
+    expect(brand?.getAttribute('href')).toBe('/?view=trends');
+    expect(brand?.getAttribute('onclick')).toContain("showView('trends')");
+    // The whole #tradesToolbars block moved as-is: ids / handlers unchanged,
+    // Reset chip is the last child of the group.
+    const ctf = document.querySelector('#ctFilters');
+    expect(ctf?.getAttribute('role')).toBe('group');
+    const ctfKids = ctf!.childNodes.filter((n) => n.nodeType === 1).map((n: any) => n.id);
+    expect(ctfKids).toEqual(['tradesToolbars', 'ctFilterReset']);
+    expect(document.querySelector('#ctFilters #tradesSharedFilters #tradesGlobalWindow')).not.toBeNull();
+    expect(document.querySelector('#ctFilters #tradesSharedFilters #qChamber .ios-filter-btn')).not.toBeNull();
+    expect(document.querySelector('#ctFilters #tradesExtraFilters #qSearchField #qSearch')).not.toBeNull();
+    expect(document.querySelector('#ctFilters #qMember')?.getAttribute('type')).toBe('hidden');
+    expect(document.querySelector('#view-trades #tradesToolbars')).toBeNull();
+    // Trends keeps its ids as a hidden mirror (trParams()/getTrWindow() read them).
+    const mirror = document.querySelector('#view-trends #trendsSharedFilters');
+    expect(mirror?.getAttribute('hidden')).not.toBeNull();
+    expect(mirror?.getAttribute('aria-hidden')).toBe('true');
+    expect(mirror?.hasAttribute('data-filter-mirror')).toBe(true);
+    expect(document.querySelector('#trendsSharedFilters #trGlobalWindow')).not.toBeNull();
+    expect(DASHBOARD_HTML).toContain("var ch = chamberParam('trChamber');");
+    // Two-row header grid: brand spans both rows, tabs row 1, filters row 2;
+    // hidden on views without filters; search hidden on Trends.
+    expect(DASHBOARD_HTML).toContain('grid-template-columns: auto minmax(0, 1fr) auto;\n    grid-template-rows: var(--control-h, 34px) var(--control-h, 34px);\n    row-gap: 12px; column-gap: 24px;');
+    expect(DASHBOARD_HTML).toContain('header.top .brand { grid-column: 1; grid-row: 1 / 3; align-self: center;');
+    expect(DASHBOARD_HTML).toContain('header.top #acct { grid-column: 3; grid-row: 1; justify-self: end; }');
+    expect(DASHBOARD_HTML).toContain('nav.tabs { display: flex; gap: 4px; margin-left: 0; flex-wrap: nowrap; align-self: center; grid-column: 2; grid-row: 1; }');
+    expect(DASHBOARD_HTML).toContain('html:not([data-view="trades"]):not([data-view="trends"]) #ctFilters { display: none; }');
+    expect(DASHBOARD_HTML).toContain('html[data-view="trends"] #tradesExtraFilters { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades, #view-trends { padding-top: 16px; }');
+    // Header still sticky, and never gets a transform/filter (fixed popovers).
+    expect(DASHBOARD_HTML).toContain('position: sticky; top: 0; z-index: 10;\n    width: 100%; box-sizing: border-box;');
+    // Laptop + small-window fallbacks.
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 1332px) {\n    header.top { column-gap: 16px; }');
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (max-width: 999px) and (hover: hover) {');
+    expect(DASHBOARD_HTML).toContain('header.top #ctFilters { grid-column: 1 / -1; grid-row: 2; }');
+  });
+
+  it('shares one control radius across tabs, chips, selects, search, account and pager', () => {
+    expect(DASHBOARD_HTML).toContain('--radius-ctl:  8px;');
+    expect(DASHBOARD_HTML).toContain('height: var(--control-h, 34px); box-sizing: border-box; padding: 0 13px; border-radius: var(--radius-ctl);');
+    expect(DASHBOARD_HTML).toContain('border: 1px solid var(--border); border-radius: var(--radius-ctl);\n    background: var(--panel); color: var(--text);');
+    expect(DASHBOARD_HTML).not.toContain('border: 1px solid var(--border); border-radius: 999px;\n    background: var(--panel); color: var(--text);');
+    expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-ctl); overflow:hidden; background:var(--panel-2);');
+    expect(DASHBOARD_HTML).toContain('border-radius:var(--radius-ctl); height:var(--control-h, 34px); box-sizing:border-box; padding:0 10px 0 3px;');
+    expect(DASHBOARD_HTML).toContain('border-radius: var(--radius-ctl); overflow: hidden; width:auto; height: var(--control-h, 34px);');
+    // Popovers / menus keep the larger card radius.
+    expect(DASHBOARD_HTML).toContain('padding: 6px; border-radius: var(--radius);');
+    expect(DASHBOARD_HTML).toContain('.ios-filter-btn[aria-expanded="true"] { border-color: var(--accent); background: var(--panel-2); }');
+    // Desktop shortens the admin tab labels to their data-mobile text.
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    nav.tabs a[data-admin-tab] { font-size: 0; }\n    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile); font-size: 13px; }');
+  });
+
+  it('gates Review / Admin chrome on html.ct-admin set from canUseAdmin()', () => {
+    expect(DASHBOARD_HTML).toContain('html:not(.ct-admin) [data-admin-tab="true"], html:not(.ct-admin) [data-admin-only] { display: none !important; }');
+    expect(DASHBOARD_HTML).toContain("document.documentElement.classList.toggle('ct-admin', allowed);");
+    // showView() no longer force-unhides an admin tab; the boot path runs the
+    // gate before /auth/me resolves so anon never sees admin chrome.
+    expect(DASHBOARD_HTML).not.toContain("if (btn.getAttribute('data-admin-tab') === 'true') btn.hidden = false;");
+    expect(DASHBOARD_HTML).toContain('applyAdminVisibility(); // anon default: html.ct-admin off until /auth/me says otherwise\nloadMe().then(function () {');
+    const document = parse(DASHBOARD_HTML);
+    for (const id of ['tab-review', 'tab-admin']) {
+      const a = document.querySelector('#' + id);
+      expect(a?.getAttribute('data-admin-tab')).toBe('true');
+      expect(a?.getAttribute('hidden')).not.toBeNull();
+    }
+  });
+
+  it('shapes the sign-in buttons like Socratic.Trade (full-width, left-aligned mark + 19px label)', () => {
+    expect(DASHBOARD_HTML).toContain('.auth-btn, .auth-btn.gbtn, .gbtn, .auth-btn.abtn, .abtn, .auth-btn.xbtn, .xbtn {\n    display:inline-flex; align-items:center; justify-content:flex-start; text-align:left; gap:12px;\n    width:100%; height:44px; min-height:44px; padding:0 16px; box-sizing:border-box;\n    border:1px solid var(--border); border-radius:10px;\n    font-size:19px; font-weight:500; line-height:1;');
+    expect(DASHBOARD_HTML).toContain('.auth-btn svg { width:20px; height:20px; flex:0 0 20px; }');
+    expect(DASHBOARD_HTML).not.toContain('justify-content:center; gap:10px; width:100%; height:44px;');
+    expect(DASHBOARD_HTML).toContain('Sign in with Google');
+    expect(DASHBOARD_HTML).toContain('Sign in with Apple');
+    expect(DASHBOARD_HTML).toContain('Sign in with X');
+    expect(DASHBOARD_HTML).not.toContain('>Sign In with ');
+    expect(DASHBOARD_HTML).not.toContain('Sign In with Google\n');
+    // Phone account sheet stacks Sign In / Upgrade as full-width rows.
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu .acct-auth-group { display:flex; flex-direction:column; gap:8px;');
+    expect(DASHBOARD_HTML).toContain('.acct-mobile-menu .acct-auth-group .btn { width:100%; height:44px; min-height:44px;');
+  });
+
+  it('phones: one-row header filters and a single 40px pager band (sort | page | rows)', () => {
+    expect(DASHBOARD_HTML).toContain('header.top {\n      display: grid; grid-template-columns: minmax(0, 1fr) 44px; grid-template-rows: auto auto;');
+    expect(DASHBOARD_HTML).toContain('header.top #ctFilters { grid-column: 1 / -1; grid-row: 2; display: block; padding: 4px 4px 8px; min-width: 0; }');
+    expect(DASHBOARD_HTML).toContain('#ctFilters #tradesSharedFilters::-webkit-scrollbar { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#ctFilters .ios-filter-btn { height: 40px; padding: 0 8px; }');
+    // The fixed dock resets the desktop inline-flex/height on nav.tabs a.
+    expect(DASHBOARD_HTML).toContain('nav.tabs a {\n      display: block; height: auto; white-space: normal;\n      padding: 6px 2px; min-height: 44px; font-size: 0; min-width: 0;');
+    // Account sheet anchors under the wordmark row, not the whole header.
+    expect(DASHBOARD_HTML).toContain('top: calc(var(--ct-brand-h, 62px) + 8px);');
+    expect(DASHBOARD_HTML).toContain("document.documentElement.style.setProperty('--ct-brand-h', Math.round(brand.getBoundingClientRect().bottom) + 'px');");
+    // Pager band.
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; justify-content: flex-start; margin: 0 0 12px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top #tradesCountMsgTop { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#tradesSortMobile {\n      display: inline-flex; align-items: center; gap: 0; flex: 0 0 auto; height: 40px;');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }');
+    expect(DASHBOARD_HTML).toContain("#view-trades .pager-top .trades-page-msg::before { content: attr(data-short);");
+    expect(DASHBOARD_HTML).toContain("pageMsg.setAttribute('data-short', fmtCount(tradesPage + 1) + ' / ' + fmtCount(pageCount));");
+    expect(DASHBOARD_HTML).toContain("n.textContent = ''; n.removeAttribute('data-short'); n.title = '';");
+    expect(DASHBOARD_HTML).toContain("o.textContent = short ? o.value + '/pg' : o.value + ' rows';");
+    expect(DASHBOARD_HTML).toContain('initIosFilterMenus();\nsyncPageSizeLabels();\nsyncChromeMetrics();');
+    expect(DASHBOARD_HTML).toContain('<select id="mobileSortKey" aria-label="Sort by" title="Sort by" onchange="handleMobileSortKeyChange()"></select>');
+  });
+
+  it('adds the Reset chip, aria-current, active-tab re-tap and the "/" search shortcut', () => {
+    expect(DASHBOARD_HTML).toContain('<button type="button" class="btn ghost sm ct-filter-reset" id="ctFilterReset" onclick="resetSharedFilters()" title="Reset filters to defaults" hidden>Reset</button>');
+    expect(DASHBOARD_HTML).toContain('function resetSharedFilters() {');
+    expect(DASHBOARD_HTML).toContain("var dirty = !!document.querySelector('#tradesSharedFilters .ios-filter.has-sel');");
+    expect(DASHBOARD_HTML).toContain("if (win && win.value !== '90d') dirty = true;");
+    expect(DASHBOARD_HTML).toContain('resetBtn.hidden = !dirty;');
+    expect(DASHBOARD_HTML).toContain("b.setAttribute('aria-current', 'page');");
+    expect(DASHBOARD_HTML).toContain("initialBtn.setAttribute('aria-current', 'page');");
+    expect(DASHBOARD_HTML).toContain("if (b.classList.contains('active') && e && e.isTrusted) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }");
+    expect(DASHBOARD_HTML).toContain("if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {");
+    expect(DASHBOARD_HTML).toContain("if (!typing && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {");
   });
 });
