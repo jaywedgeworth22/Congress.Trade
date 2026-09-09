@@ -1873,8 +1873,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
   /* Multi-selects ("House+Senate", "Buys+Sells+Exch") stay one chip width
-     so the row keeps its search box at laptop widths. */
+     so the row keeps its search box at laptop widths; the branch chip gets
+     room for "House+Senate+Executive" (170px) and every summary carries its
+     full text as a tooltip (setSummary()). */
   .ios-filter-lbl { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+  #qChamber .ios-filter-lbl, #trChamber .ios-filter-lbl { max-width: 176px; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
@@ -5571,7 +5574,7 @@ function updateTradesCountMsg(shown) {
   if (typeof stampWindowChips === 'function') stampWindowChips();
   if (!realDataLoaded) {
     setAll('[data-trades-count]', function (n) { n.textContent = ''; });
-    setAll('[data-trades-page]', function (n) { n.textContent = ''; n.title = ''; });
+    setAll('[data-trades-page]', function (n) { n.textContent = ''; n.title = ''; n.removeAttribute('data-page-text'); });
     setAll('[data-pager-first],[data-pager-prev],[data-pager-next],[data-pager-last]', function (n) { n.disabled = true; });
     return;
   }
@@ -5596,6 +5599,7 @@ function updateTradesCountMsg(shown) {
     // short one (CSS, <=768px pager rules) — one visible node, read once.
     pageMsg.innerHTML = '<span class="pg-long">' + longText + '</span><span class="pg-short">' + shortText + '</span>';
     pageMsg.title = longText;
+    pageMsg.setAttribute('data-page-text', longText); // clean copy: textContent is now both spans
   });
   var disFirst = tradesPage <= 0 || loadingPage;
   var disLast = tradesPage >= maxPage || end >= total || loadingPage;
@@ -13553,7 +13557,7 @@ function refreshIosFilterSummaries() {
   function setSummary(id, text, has) {
     var f = el(id); if (!f) return;
     var lbl = f.querySelector('[data-ios-summary]');
-    if (lbl) lbl.textContent = text || '';
+    if (lbl) { lbl.textContent = text || ''; lbl.title = text || ''; }
     f.classList.toggle('has-sel', !!has);
   }
   function chamberSummary(id) {

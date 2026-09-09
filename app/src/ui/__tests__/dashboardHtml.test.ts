@@ -6706,6 +6706,8 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('@media (max-width: 1199px) {\n    #ctFilters .trades-toolbars { flex-wrap: wrap; row-gap: 8px; }');
     expect(DASHBOARD_HTML).toContain('<span class="icon-field" id="qSearchField">');
     expect(DASHBOARD_HTML).toContain('.ios-filter-lbl { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis;');
+    expect(DASHBOARD_HTML).toContain('#qChamber .ios-filter-lbl, #trChamber .ios-filter-lbl { max-width: 176px; }');
+    expect(DASHBOARD_HTML).toContain("if (lbl) { lbl.textContent = text || ''; lbl.title = text || ''; }");
   });
 
   it('gates Review / Admin chrome on html.ct-admin set from canUseAdmin()', () => {
@@ -6754,6 +6756,7 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('#view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }');
     // Long/short page text are sibling spans; the phone band swaps them so
     expect(DASHBOARD_HTML).toContain("var shortText = fmtCount(tradesPage + 1) + '/' + fmtCount(pageCount);");
+    expect(DASHBOARD_HTML).toContain("pageMsg.setAttribute('data-page-text', longText);");
     expect(DASHBOARD_HTML).toContain("pageMsg.innerHTML = '<span class=\"pg-long\">' + longText + '</span><span class=\"pg-short\">' + shortText + '</span>';");
     expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-page-msg .pg-long { display: none; }');
     expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-page-msg .pg-short { display: inline; }');
