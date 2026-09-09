@@ -6462,8 +6462,9 @@ describe('web frontend bug fixes, accessibility enhancements, and mobile polish'
     expect(DASHBOARD_HTML).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />');
   });
 
-  it('ensures dark mode badge contrast by setting .tag.B, .tag.P and .tag.E to dark text', () => {
-    expect(DASHBOARD_HTML).toMatch(/\.tag\.B,\s*\.tag\.P\s*\{[^}]*color:\s*#080c17/);
+  it('keeps badge contrast per theme: Buy is white on light mode\'s deep green, dark ink on dark mode\'s bright green (owner 2026-09-09)', () => {
+    expect(DASHBOARD_HTML).toMatch(/\.tag\.B,\s*\.tag\.P\s*\{[^}]*color:\s*#fff/);
+    expect(DASHBOARD_HTML).toContain('html[data-theme="dark"] .tag.B, html[data-theme="dark"] .tag.P { color: #080c17; }');
     expect(DASHBOARD_HTML).toMatch(/\.tag\.E\s*\{[^}]*color:\s*#080c17/);
   });
 

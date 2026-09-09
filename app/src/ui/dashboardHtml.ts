@@ -657,7 +657,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .avatar.party-D::after { border: 2px solid var(--party-d); }
   .avatar.party-R::after { border: 2px solid var(--party-r); }
   .avatar.party-O::after { border: 2px solid var(--party-o); }  .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
-  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); color: #080c17; }
+  /* Owner 2026-09-09: "Buy" reads white on the green pill, like "Sell" on
+     the red one — near-black ink was unreadable on light mode's #15803d.
+     Dark mode keeps the dark ink: its --buy is the bright #22c55e, where
+     white would fail contrast (the dark-mode badge-contrast test below). */
+  .tag.B, .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); color: #fff; }
+  html[data-theme="dark"] .tag.B, html[data-theme="dark"] .tag.P { color: #080c17; }
   .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
   .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); color: #080c17; }
   .conf { font-family: var(--mono); font-size: 12px; }
