@@ -6668,7 +6668,7 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain("var ch = chamberParam('trChamber');");
     // Two-row header grid: brand spans both rows, tabs row 1, filters row 2;
     // hidden on views without filters; search hidden on Trends.
-    expect(DASHBOARD_HTML).toContain('grid-template-columns: auto minmax(0, 1fr) auto;\n    grid-template-rows: var(--control-h, 34px) var(--control-h, 34px);\n    row-gap: 12px; column-gap: 24px;');
+    expect(DASHBOARD_HTML).toContain('grid-template-columns: auto minmax(0, 1fr) auto;\n    grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);\n    row-gap: 12px; column-gap: 24px;');
     expect(DASHBOARD_HTML).toContain('header.top .brand { grid-column: 1; grid-row: 1 / 3; align-self: center;');
     expect(DASHBOARD_HTML).toContain('header.top #acct { grid-column: 3; grid-row: 1; justify-self: end; }');
     expect(DASHBOARD_HTML).toContain('nav.tabs { display: flex; gap: 4px; margin-left: 0; flex-wrap: nowrap; align-self: center; grid-column: 2; grid-row: 1; }');
@@ -6695,7 +6695,17 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('padding: 6px; border-radius: var(--radius);');
     expect(DASHBOARD_HTML).toContain('.ios-filter-btn[aria-expanded="true"] { border-color: var(--accent); background: var(--panel-2); }');
     // Desktop shortens the admin tab labels to their data-mobile text.
-    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    nav.tabs a[data-admin-tab] { font-size: 0; }\n    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile); font-size: 13px; }');
+    // Short label is decorative (alt "") so the accessible name stays
+    // "Review Queue" / "Admin · Cadence"; the full text is the tooltip.
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    nav.tabs a[data-admin-tab] { font-size: 0; }\n    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile) / ""; font-size: 13px; }');
+    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Review Queue" hidden>Review Queue');
+    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence');
+    // Laptop widths: the filter row may wrap instead of overflowing its track;
+    // the search field has no inline min-width:0 so its 180px floor applies.
+    expect(DASHBOARD_HTML).toContain('grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 1199px) {\n    #ctFilters .trades-toolbars { flex-wrap: wrap; row-gap: 8px; }');
+    expect(DASHBOARD_HTML).toContain('<span class="icon-field" id="qSearchField">');
+    expect(DASHBOARD_HTML).toContain('.ios-filter-lbl { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis;');
   });
 
   it('gates Review / Admin chrome on html.ct-admin set from canUseAdmin()', () => {
@@ -6742,9 +6752,19 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('#view-trades .pager-top #tradesCountMsgTop { display: none; }');
     expect(DASHBOARD_HTML).toContain('#tradesSortMobile {\n      display: inline-flex; align-items: center; gap: 0; flex: 0 0 auto; height: 40px;');
     expect(DASHBOARD_HTML).toContain('#view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }');
-    expect(DASHBOARD_HTML).toContain("#view-trades .pager-top .trades-page-msg::before { content: attr(data-short);");
-    expect(DASHBOARD_HTML).toContain("pageMsg.setAttribute('data-short', fmtCount(tradesPage + 1) + ' / ' + fmtCount(pageCount));");
-    expect(DASHBOARD_HTML).toContain("n.textContent = ''; n.removeAttribute('data-short'); n.title = '';");
+    // Long/short page text are sibling spans; the phone band swaps them so
+    expect(DASHBOARD_HTML).toContain("var shortText = fmtCount(tradesPage + 1) + '/' + fmtCount(pageCount);");
+    expect(DASHBOARD_HTML).toContain("pageMsg.innerHTML = '<span class=\"pg-long\">' + longText + '</span><span class=\"pg-short\">' + shortText + '</span>';");
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-page-msg .pg-long { display: none; }');
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .trades-page-msg .pg-short { display: inline; }');
+    expect(DASHBOARD_HTML).toContain('.trades-page-msg .pg-short { display: none; }');
+    expect(DASHBOARD_HTML).not.toContain('data-short');
+    // Band never overflows 320px: page controls are the flexible member.
+    expect(DASHBOARD_HTML).toContain('#view-trades .pager-top .pager-controls { flex: 1 1 0; min-width: 0;');
+    expect(DASHBOARD_HTML).toContain('max-width: min(104px, 22vw);');
+    // Search keeps a 6px gap under the chips and its own flex row on
+    // coarse-pointer tablets (ID-ID beats the >=769 display:contents merge).
+    expect(DASHBOARD_HTML).toContain('#ctFilters #tradesExtraFilters { display: flex; align-items: center; gap: 8px; margin-top: 6px; }');
     expect(DASHBOARD_HTML).toContain("o.textContent = short ? o.value + '/pg' : o.value + ' rows';");
     expect(DASHBOARD_HTML).toContain('initIosFilterMenus();\nsyncPageSizeLabels();\nsyncChromeMetrics();');
     expect(DASHBOARD_HTML).toContain('<select id="mobileSortKey" aria-label="Sort by" title="Sort by" onchange="handleMobileSortKeyChange()"></select>');
@@ -6758,8 +6778,15 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('resetBtn.hidden = !dirty;');
     expect(DASHBOARD_HTML).toContain("b.setAttribute('aria-current', 'page');");
     expect(DASHBOARD_HTML).toContain("initialBtn.setAttribute('aria-current', 'page');");
+    // Boot fallback to Trends restamps html[data-view] (the head script may
+    // have stamped an admin-gated ?view= that then fell back).
+    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', 'trends');\n    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();\n    loadTrends(); // Trends is the default landing view");
+    // "/" never steals focus from an open filter popover or menu.
+    expect(DASHBOARD_HTML).toContain("var menuOpen = !!document.querySelector('.ios-filter-pop:not([hidden]), .menu-pop.open, .acct-mobile-menu.open');");
+    // Reset issues one fetch (no debounced search fetch racing resetTradesPage).
+    expect(DASHBOARD_HTML).toContain("if (typeof tradesSearchTimer !== 'undefined' && tradesSearchTimer) { clearTimeout(tradesSearchTimer); tradesSearchTimer = null; }");
     expect(DASHBOARD_HTML).toContain("if (b.classList.contains('active') && e && e.isTrusted) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }");
     expect(DASHBOARD_HTML).toContain("if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {");
-    expect(DASHBOARD_HTML).toContain("if (!typing && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {");
+    expect(DASHBOARD_HTML).toContain("if (!typing && !menuOpen && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {");
   });
 });

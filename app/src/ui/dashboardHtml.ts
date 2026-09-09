@@ -381,7 +381,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        of those would re-root them (clipped popovers). */
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: var(--control-h, 34px) var(--control-h, 34px);
+    grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);
     row-gap: 12px; column-gap: 24px;
     align-items: center;
     padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));
@@ -398,7 +398,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      switch, so this never flashes. */
   header.top #ctFilters {
     grid-column: 2 / -1; grid-row: 2;
-    display: flex; align-items: center; gap: 12px; min-width: 0;
+    display: flex; align-items: center; gap: 12px; min-width: 0; min-height: var(--control-h, 34px);
   }
   html:not([data-view="trades"]):not([data-view="trends"]) #ctFilters { display: none; }
   html[data-view="trends"] #tradesExtraFilters { display: none; }
@@ -479,7 +479,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      data-mobile under the icon. */
   @media (min-width: 769px) and (hover: hover) {
     nav.tabs a[data-admin-tab] { font-size: 0; }
-    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile); font-size: 13px; }
+    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile) / ""; font-size: 13px; }
   }
   .tab-count-badge {
     display: none;
@@ -1050,6 +1050,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-ctl); overflow: hidden; width:auto; height: var(--control-h, 34px); box-sizing: border-box; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; height: 100%; min-height: 0; font-size: 13px; }
   .pager-controls .trades-page-msg { font-size: 13px; }
+  .pager-controls .btn.sm { font-size: 13px; }
+  .trades-page-msg .pg-short { display: none; }
+  /* The generic .pager-controls span padding/borders belong to the counter
+     box, not to its inner long/short text spans. */
+  .pager-controls .pg-long, .pager-controls .pg-short { padding: 0; border: 0; }
   .pager-tools select, .pager-tools .feed-options-btn { height: var(--control-h, 34px); box-sizing: border-box; border-radius: var(--radius-ctl); font-size: 13px; }
   .pager-controls button + button { border-left: 1px solid var(--border) !important; }
   .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
@@ -1867,6 +1872,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .ios-filter-ico { font-size: 13px; line-height: 1; }
   .ios-filter-ico.sides { display: inline-flex; align-items: center; gap: 3px; }
+  /* Multi-selects ("House+Senate", "Buys+Sells+Exch") stay one chip width
+     so the row keeps its search box at laptop widths. */
+  .ios-filter-lbl { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
   .ios-filter-lbl:empty { display: none; }
   .ios-filter-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 196px;
@@ -2029,10 +2037,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     header.top { column-gap: 16px; }
     nav.tabs a { padding: 0 12px; }
     html.ct-admin .acct-desktop > .badge, html.ct-admin .acct-label, html.ct-admin .acct-caret { display: none; }
+    html.ct-admin .acct-menu-btn { padding-right: 3px; }
+  }
+  /* Below 1200px the filter row may not fit beside the logo once several
+     chips are multi-selected: let it wrap onto a second line (the header
+     row grows; the search keeps its 180px floor instead of collapsing). */
+  @media (max-width: 1199px) {
+    #ctFilters .trades-toolbars { flex-wrap: wrap; row-gap: 8px; }
   }
   @media (max-width: 1099px) {
     .acct-desktop > .badge, .acct-menu-btn .acct-label, .acct-menu-btn .acct-caret { display: none; }
     .acct-menu-btn { padding-right: 3px; }
+    /* Six admin tabs + two lit badges beside a 300px wordmark. */
+    html.ct-admin nav.tabs { gap: 2px; }
+    html.ct-admin nav.tabs a { padding: 0 9px; }
   }
   /* Small desktop window (769-999px, mouse): the wordmark stays on row 1
      beside the tabs and the filter row takes the full column underneath
@@ -2043,6 +2061,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     nav.tabs { flex-wrap: wrap; }
     nav.tabs a { padding: 0 9px; }
     header.top #ctFilters { grid-column: 1 / -1; grid-row: 2; }
+    html:not([data-view="trades"]):not([data-view="trends"]) header.top { grid-template-rows: auto; row-gap: 0; }
     .trades-toolbars #qSearchField { max-width: none; }
     /* Row 1 has to hold logo + four tabs + account at 769px: a slightly
        narrower wordmark (200px at 769px) keeps the tabs on one line. */
@@ -2244,11 +2263,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #ctFilters .trades-toolbars { display: block; position: static; margin: 0; padding: 0; width: auto; }
     #ctFilters #tradesSharedFilters {
       display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
-      overflow-x: auto; overflow-y: visible; scrollbar-width: none; padding: 0; margin: 0;
+      overflow-x: auto; overflow-y: visible; scrollbar-width: none;
+      /* 4px inner pad (offset by margin) keeps the 2px+2px focus-visible
+         ring inside the scroll box instead of clipped top and bottom. */
+      padding: 4px 2px; margin: -4px -2px;
     }
     #ctFilters #tradesSharedFilters::-webkit-scrollbar { display: none; }
     #ctFilters .ct-filter-reset { display: none; }
     #ctFilters .ios-filter-btn { height: 40px; padding: 0 8px; }
+    /* Search sits 6px under the chip row (the base #ctFilters .toolbar
+       margin:0 rule would zero it) and stays its own flex row on
+       coarse-pointer tablets >=769px, where the desktop display:contents
+       merge would otherwise flatten it into the block wrapper. */
+    #ctFilters #tradesExtraFilters { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
     /* The generic mobile .toolbar input shorthand resets padding; keep room
        for the magnifier on the search field. */
     #ctFilters .icon-input { padding-left: 32px; }
@@ -2426,10 +2453,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .pager-top .feed-options { display: none; }
     .pager .pager-tools select, .pager .pager-tools .btn { width: auto; min-height: 36px; }
     .pager .trades-sort-mobile, .pager .trades-count-msg { flex: 0 0 auto; }
-    /* Owner 2026-09-09: the top band is ONE 40px row — [Sort ▾|↕] [‹ 3 / 12 ›] [50/pg].
+    /* Owner 2026-09-09: the top band is ONE 40px row — [Sort ▾|↕] [‹ 3/12 ›] [50/pg].
        The sort select + direction button are a joined segment; page
-       controls drop first/last and show a short "page / count" (data-short,
-       set by the pager writer) so the row fits 320px; the rows select
+       controls drop first/last and show a short "page / count" (.pg-short
+       span from the pager writer) so the row fits 320px; the rows select
        reads "N/pg" (syncPageSizeLabels()).  The count message moves to the
        bottom pager only. */
     #view-trades .pager-top { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; justify-content: flex-start; margin: 0 0 12px; }
@@ -2440,20 +2467,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     #tradesSortMobile .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     #tradesSortMobile #mobileSortKey {
-      border: 0; border-radius: 0; height: 100%; min-height: 0; width: auto; field-sizing: content; max-width: 104px;
-      padding: 0 20px 0 8px; font: 600 13px var(--sans); background-color: transparent; color: var(--text);
+      border: 0; border-radius: 0; height: 100%; min-height: 0; width: auto; field-sizing: content; max-width: min(104px, 22vw);
+      padding: 0 18px 0 6px; font: 600 12px var(--sans); background-color: transparent; color: var(--text);
+      text-overflow: ellipsis;
     }
     #tradesSortMobile #mobileSortDirBtn {
-      flex: 0 0 36px; width: 36px; height: 100%; min-height: 0; border: 0 !important; border-left: 1px solid var(--border) !important;
+      flex: 0 0 32px; width: 32px; height: 100%; min-height: 0; border: 0 !important; border-left: 1px solid var(--border) !important;
       border-radius: 0 !important; padding: 0; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
     }
-    #view-trades .pager-top .pager-controls { flex: 1 1 auto; min-width: 0; margin: 0; height: 40px; box-sizing: border-box; border-radius: var(--radius-ctl); }
+    /* Page controls take whatever is left (flex-basis 0 + min-width 0 so the
+       band never overflows at 320px); the counter is the only thing that
+       gives way, and it never falls below the width of "9 / 99". */
+    #view-trades .pager-top .pager-controls { flex: 1 1 0; min-width: 0; margin: 0; height: 40px; box-sizing: border-box; border-radius: var(--radius-ctl); }
     #view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }
-    #view-trades .pager-top [data-pager-prev], #view-trades .pager-top [data-pager-next] { flex: 0 0 auto; min-width: 38px; height: 38px; min-height: 0; padding: 0; font-size: 14px; }
-    #view-trades .pager-top .trades-page-msg { flex: 1 1 auto; min-width: 36px; text-align: center; padding: 0 4px; font-size: 0; white-space: nowrap; overflow: hidden; }
-    #view-trades .pager-top .trades-page-msg::before { content: attr(data-short); font-size: 12px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+    #view-trades .pager-top [data-pager-prev], #view-trades .pager-top [data-pager-next] { flex: 0 0 34px; width: 34px; min-width: 34px; height: 38px; min-height: 0; padding: 0; font-size: 13px; }
+    #view-trades .pager-top .trades-page-msg { flex: 1 1 0; min-width: 0; text-align: center; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+    #view-trades .pager-top .trades-page-msg .pg-long { display: none; }
+    #view-trades .pager-top .trades-page-msg .pg-short { display: inline; }
     #view-trades .pager-top .pager-tools { flex: 0 0 auto; }
-    #view-trades .pager-top .pager-tools select { height: 40px; min-height: 40px; width: auto; field-sizing: content; padding: 0 20px 0 8px; font: 600 13px var(--sans); border-radius: var(--radius-ctl); }
+    #view-trades .pager-top .pager-tools select {
+      height: 40px; min-height: 40px; width: auto; field-sizing: content; padding: 0 18px 0 6px; font: 600 12px var(--sans); border-radius: var(--radius-ctl);
+      /* Own chevron (same glyph as the time select) instead of the native
+         arrow box: ~18px narrower, which is the page counter's breathing room at 320px. */
+      appearance: none; -webkit-appearance: none; background-color: var(--panel); background-repeat: no-repeat; background-position: right 4px center;
+      background-image: url('data:image/svg+xml;utf8,<svg fill="%2334435b" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    }
+    html[data-theme="dark"] #view-trades .pager-top .pager-tools select {
+      background-image: url('data:image/svg+xml;utf8,<svg fill="%23b8c7dd" height="14" viewBox="0 0 24 24" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    }
     /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
        Timeframe is content-sized (not flex-grown).  ID selectors beat the
        later 720px toolbar flex-wrap re-flex. */
@@ -3201,9 +3242,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends">Trends</a>
     <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
     <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
-    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
     <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
-    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
   <!-- Shared filter row (Trades + Trends).  Owner punch list #9 merged the
@@ -3271,7 +3312,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <!-- Trades-only extras -->
     <div class="toolbar trades-only-filters" id="tradesExtraFilters">
-      <span class="icon-field" id="qSearchField" style="min-width:0;flex:1">
+      <span class="icon-field" id="qSearchField">
         <input id="qSearch" type="search" class="icon-input" placeholder="Search name, ticker, state, party…" aria-label="Search trades by politician, asset, state, or party" oninput="handleTradesTextFilter()" />
       </span>
       <!-- Legacy aliases kept hidden so old deep links / tests migrating can still hydrate -->
@@ -5530,7 +5571,7 @@ function updateTradesCountMsg(shown) {
   if (typeof stampWindowChips === 'function') stampWindowChips();
   if (!realDataLoaded) {
     setAll('[data-trades-count]', function (n) { n.textContent = ''; });
-    setAll('[data-trades-page]', function (n) { n.textContent = ''; n.removeAttribute('data-short'); n.title = ''; });
+    setAll('[data-trades-page]', function (n) { n.textContent = ''; n.title = ''; });
     setAll('[data-pager-first],[data-pager-prev],[data-pager-next],[data-pager-last]', function (n) { n.disabled = true; });
     return;
   }
@@ -5549,10 +5590,12 @@ function updateTradesCountMsg(shown) {
     msg.classList.add('tick-animate');
   });
   setAll('[data-trades-page]', function (pageMsg) {
-    pageMsg.textContent = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
-    // Phone top band renders this short form via ::before (see the <=768px pager rules).
-    pageMsg.setAttribute('data-short', fmtCount(tradesPage + 1) + ' / ' + fmtCount(pageCount));
-    pageMsg.title = pageMsg.textContent;
+    var longText = 'Page ' + fmtCount(tradesPage + 1) + ' of ' + fmtCount(pageCount);
+    var shortText = fmtCount(tradesPage + 1) + '/' + fmtCount(pageCount);
+    // Two spans: desktop shows the long form, the phone top band swaps to the
+    // short one (CSS, <=768px pager rules) — one visible node, read once.
+    pageMsg.innerHTML = '<span class="pg-long">' + longText + '</span><span class="pg-short">' + shortText + '</span>';
+    pageMsg.title = longText;
   });
   var disFirst = tradesPage <= 0 || loadingPage;
   var disLast = tradesPage >= maxPage || end >= total || loadingPage;
@@ -13563,7 +13606,10 @@ function resetSharedFilters() {
   var win = el('tradesGlobalWindow');
   document.querySelectorAll('select.shared-window').forEach(function (sel) { sel.value = '90d'; });
   var q = el('qSearch');
-  if (q && q.value) { q.value = ''; if (typeof handleTradesTextFilter === 'function') handleTradesTextFilter(); }
+  if (q) q.value = '';
+  // One fetch: onSharedWindowChange → resetTradesPage() refetches with the
+  // cleared search; cancel any pending debounced search fetch first.
+  if (typeof tradesSearchTimer !== 'undefined' && tradesSearchTimer) { clearTimeout(tradesSearchTimer); tradesSearchTimer = null; }
   if (typeof onSharedWindowChange === 'function') onSharedWindowChange(win || { value: '90d' });
   refreshIosFilterSummaries();
   if (typeof syncFilterUrl === 'function') syncFilterUrl();
@@ -13872,7 +13918,8 @@ document.addEventListener('keydown', function (e) {
     var t = e.target;
     var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
     var q = el('qSearch');
-    if (!typing && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {
+    var menuOpen = !!document.querySelector('.ios-filter-pop:not([hidden]), .menu-pop.open, .acct-mobile-menu.open');
+    if (!typing && !menuOpen && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {
       e.preventDefault(); q.focus(); q.select();
     }
   }
@@ -14031,6 +14078,11 @@ loadMe().then(function () {
     }
     if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
+    // The head script may have stamped html[data-view] from a ?view= /
+    // remembered tab that then fell back here (admin-gated, unknown) —
+    // restamp so the header filter row shows for Trends.
+    document.documentElement.setAttribute('data-view', 'trends');
+    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
     loadTrends(); // Trends is the default landing view
   }
   if (window.__pendingManageBilling) {
