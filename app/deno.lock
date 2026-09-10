@@ -5,6 +5,7 @@
     "npm:@cloudflare/workers-types@^4.20240718.0": "4.20260702.1",
     "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
     "npm:@google/genai@^2.21.0": "2.21.0",
+    "npm:@libsql/client@*": "0.18.0",
     "npm:@libsql/client@0.18": "0.18.0",
     "npm:@sentry/cli@^3.7.0": "3.7.0",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
@@ -21,7 +22,7 @@
     "npm:fflate@~0.8.3": "0.8.3",
     "npm:hono@^4.13.7": "4.13.7",
     "npm:jsonrepair@^3.15.0": "3.15.0",
-    "npm:node-html-parser@^9.0.3": "9.0.3",
+    "npm:node-html-parser@^9.0.4": "9.0.4",
     "npm:pdf-lib@^1.17.1": "1.17.1",
     "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.8.1",
@@ -1431,8 +1432,8 @@
     "entities@7.0.1": {
       "integrity": "sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA=="
     },
-    "entities@8.0.0": {
-      "integrity": "sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA=="
+    "entities@8.1.0": {
+      "integrity": "sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA=="
     },
     "es-module-lexer@2.3.2": {
       "integrity": "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw=="
@@ -1922,11 +1923,11 @@
       "integrity": "sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==",
       "bin": true
     },
-    "node-html-parser@9.0.3": {
-      "integrity": "sha512-iaQ9rokcYNp99IY0h82q04Wtc27SObRT+OEytdJh0bFv2IN0fypnU63KUNVavkPSiwsmIELG1eUenajGhzrvpg==",
+    "node-html-parser@9.0.4": {
+      "integrity": "sha512-reUSrZkF1rO7hEYe5mJwtbVcQ6mB5QrViCZH6Wv+iz3er/PA9Q50gol15dMLQRDfdli4VzqPMPR24HNRFgVKFw==",
       "dependencies": [
         "css-select",
-        "entities@8.0.0"
+        "entities@8.1.0"
       ]
     },
     "nth-check@2.1.1": {
@@ -2358,7 +2359,7 @@
       "npm:fflate@~0.8.3",
       "npm:hono@^4.13.7",
       "npm:jsonrepair@^3.15.0",
-      "npm:node-html-parser@^9.0.3",
+      "npm:node-html-parser@^9.0.4",
       "npm:pdf-lib@^1.17.1",
       "npm:unpdf@^1.6.2",
       "npm:zod@^4.4.3"
@@ -2380,7 +2381,7 @@
         "npm:fflate@~0.8.3",
         "npm:hono@^4.13.7",
         "npm:jsonrepair@^3.15.0",
-        "npm:node-html-parser@^9.0.3",
+        "npm:node-html-parser@^9.0.4",
         "npm:pdf-lib@^1.17.1",
         "npm:typescript@^5.6.3",
         "npm:unpdf@^1.8.1",
