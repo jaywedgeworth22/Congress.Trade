@@ -202,9 +202,10 @@ Deno.cron (paid: * * * * *) → watcher (House + Senate eFD + OGE)
 
 - **Branch protection** on `main`: PRs required, `typecheck + test` required,
   no force push/deletion.
-- **Senate eFD** depends on the named tunnel `https://scout.jays.services`.
-  Never "fix" an outage by changing `SENATE_RELAY_URL`.  Scraping still uses
-  the agreement-gate + CSRF flow (`src/ingestion/senateSource.ts`).
+- **Senate eFD** uses Coolify + `RESIDENTIAL_PROXY_URL` (physical-device /
+  WireGuard proxy).  Mac `scout/` is retired (#2351).  `SENATE_RELAY_URL` is
+  optional — unset it if the origin is gone; never mint a new URL by hand.
+  Scraping still uses the agreement-gate + CSRF flow (`src/ingestion/senateSource.ts`).
 - **House bulk XML** refreshes ~daily; `pollHouseLiveSearch()` overlays the
   intraday live-search result when enabled.
 - **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
