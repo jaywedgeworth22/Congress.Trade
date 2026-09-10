@@ -1,7 +1,7 @@
 /**
  * src/ingestion/detectionRoutes.ts
  *
- * Residential scout (scout/congress-scout.mjs) endpoints — all INGEST_TOKEN-gated:
+ * Ingest/detection endpoints (Mac scout/congress-scout.mjs retired #2351) — all INGEST_TOKEN-gated:
  *
  *   POST /api/ingest/detection
  *     Push each filing the scout detects on primary gov sources. Latency
