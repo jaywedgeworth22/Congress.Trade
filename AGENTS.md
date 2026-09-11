@@ -214,43 +214,28 @@ production ingestion jobs unless the user explicitly asks.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
-## `SENATE_RELAY_URL` is static (READ THIS — it must never need a manual update)
+## Senate eFD egress (Mac `scout/` retired 2026-09-09)
 
-Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress, so the Coolify
-Deno process reaches it through a relay on the owner's Mac.  The address is
-permanent:
-```
-SENATE_RELAY_URL=https://scout.jays.services
-```
+Senate eFD (`efdsearch.senate.gov`) blocks datacenter egress.  As of #2351 the
+Mac `scout/` folder is **deleted** (relay, tunnel wrappers, residential-proxy
+daemon, congress-scout).  Coolify owns Senate scraping; residential IP bounce
+goes through the little physical-device / WireGuard proxy via
+`RESIDENTIAL_PROXY_URL` (Infisical).  Do not resurrect `scout/` on the Mac.
 
-POST `/fetch-ptr` and `/fetch-doc` on that origin require
-`Authorization: Bearer $SENATE_RELAY_SECRET` (Infisical CT prod + Mac
-`~/.secrets/senate-relay.env`). `GET /health` stays public. Do not rotate the
-URL when adding the secret.
+Preferred path (see `docs/rollouts/2026-09-02-retire-scout-relay-use-residential-proxy.md`
+and `docs/rollouts/2026-09-09-retire-mac-scout-folder.md`):
 
-That hostname is served by the **named** Cloudflare tunnel `Jay's Tunnel`
-(`6fa2a97c-b4f8-420d-94ae-bd9858aff4b6`), run by the `senate-tunnel` pm2 entry
-via `scout/run-senate-tunnel.sh`.  Ingress is configured Cloudflare-side
-(`config_src=cloudflare`) and pushed to cloudflared on connect; there is no
-local `config.yml` to drift.  Restarting the tunnel, rebooting the Mac, or
-reinstalling cloudflared all reconnect to the **same** hostname.
+- Configure `RESIDENTIAL_PROXY_URL` (or `RESIDENTIAL_PROXY_HOST`/`PORT`/`USERNAME`/`PASSWORD`)
+  to the always-on physical-device proxy — **not** the retired Mac Tailscale
+  listener at `100.113.106.39:3128`.
+- `SENATE_RELAY_URL` is **optional**.  If set, consumers still prefer it for
+  `/fetch-ptr` and `/fetch-doc`; if the origin is gone, **unset** it in Infisical
+  so search/docs use residential proxy / box egress instead of probing a dead
+  host.  Never "fix" an outage by minting a new relay URL by hand.
 
-**Never "fix" a Senate outage by updating `SENATE_RELAY_URL` to a new URL.**
-Before 2026-08-12 the tunnel was a TryCloudflare quick tunnel that minted a new
-random hostname on every start, and updating the env var by hand was documented
-as the remedy.  That manual step is what silently failed on 2026-08-11 — four
-hostnames across three restarts while the server dialled a dead one, with pm2
-reporting the tunnel "online" throughout.  If the Senate path is down now, the
-cause is the relay, the tunnel process, or upstream — not the URL.  See
-`scout/README.md` "Senate relay tunnel".
-
-When the named-tunnel origin is down (Cloudflare 502/5xx), search and
-`/fetch-doc` fall back to the box's own eFD egress instead of failing closed
-on a sleeping Mac.  `#1610`'s `/fetch-doc` contract is unchanged when the
-relay answers.  `GET /api/health/senate-relay` live-probes the origin so a
-dead laptop pages in minutes.  Remaining host dependency and the always-on
-residential fix: `docs/rollouts/2026-08-17-senate-relay-host-dependency.md`
-(issue #1604).
+`ecosystem.config.js` no longer registers `scout`, `senate-relay`, or
+`senate-tunnel` (those scripts are gone).  Broader server-side handoff cleanup
+(`scoutHandoff.ts`, latency probe enums) stays a follow-up.
 
 ## Credential testing (public-safe)
 
